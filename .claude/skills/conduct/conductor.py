@@ -23,6 +23,7 @@ LLM-driven harness both target.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -185,10 +186,48 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
 
 
 def _state_path(opts: ConductOptions) -> Path:
+    try:
+        rel_plan = (
+            opts.plan_path.resolve().relative_to(opts.repo_root.resolve()).as_posix()
+        )
+    except ValueError:
+        rel_plan = opts.plan_path.resolve().as_posix()
+    digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
+    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+
+
+def _legacy_state_path(opts: ConductOptions) -> Path:
     return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}.json"
 
 
+def _migrate_legacy_state_file(opts: ConductOptions) -> None:
+    """Rename a pre-digest state file to the digest-suffixed path.
+
+    Only migrates when the legacy file's recorded `plan_path` matches the current
+    plan, to avoid hijacking a same-basename neighbour's state.
+    """
+    sp = _state_path(opts)
+    legacy = _legacy_state_path(opts)
+    if sp.exists() or not legacy.exists():
+        return
+    try:
+        recorded = json.loads(legacy.read_text()).get("plan_path")
+    except (OSError, ValueError):
+        return
+    if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
+        return
+    sp.parent.mkdir(parents=True, exist_ok=True)
+    legacy.rename(sp)
+    legacy_lock = legacy.with_suffix(legacy.suffix + ".lock")
+    if legacy_lock.exists():
+        try:
+            legacy_lock.unlink()
+        except OSError:
+            pass
+
+
 def _load_or_init_state(opts: ConductOptions) -> dict:
+    _migrate_legacy_state_file(opts)
     sp = _state_path(opts)
     if sp.exists():
         state = json.loads(sp.read_text())
@@ -471,7 +510,16 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
-            return _handback(opts, state, phase, "skipped", iteration, strategy, strategy_reason, warnings)
+            return _handback(
+                opts,
+                state,
+                phase,
+                "skipped",
+                iteration,
+                strategy,
+                strategy_reason,
+                warnings,
+            )
 
         # Step 5: run tests.
         result = opts.test_runner(test_cmd, opts.test_timeout)
@@ -481,14 +529,10 @@ def _run_phase(
             # typically exercises live-data behaviour an implementer cannot
             # auto-repair (reprocess a transcript, hit a staging API, etc.).
             if phase.validation_command:
-                vresult = opts.test_runner(
-                    phase.validation_command, opts.test_timeout
-                )
+                vresult = opts.test_runner(phase.validation_command, opts.test_timeout)
                 if vresult.returncode != 0 or vresult.timed_out:
                     state["status"] = "awaiting_user"
-                    state["blocker"] = (
-                        f"Phase {phase.label} validation failed"
-                    )
+                    state["blocker"] = f"Phase {phase.label} validation failed"
                     _persist_state(opts, state)
                     return ConductResult(
                         status="awaiting_user",
@@ -500,7 +544,16 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
-            return _handback(opts, state, phase, "passed", iteration, strategy, strategy_reason, warnings)
+            return _handback(
+                opts,
+                state,
+                phase,
+                "passed",
+                iteration,
+                strategy,
+                strategy_reason,
+                warnings,
+            )
 
         # Step 6: fix loop.
         state["iteration_count"] += 1
@@ -722,8 +775,11 @@ def conduct(opts: ConductOptions) -> ConductResult:
         # degraded mode (sequential spawn + test fallback) for every phase.
         # That's a valid choice but often an oversight in the plan template.
         internal = state.setdefault("_internal", {})
-        if phases and not any(p.has_any_slot() for p in phases) \
-                and not internal.get("slot_warning_shown"):
+        if (
+            phases
+            and not any(p.has_any_slot() for p in phases)
+            and not internal.get("slot_warning_shown")
+        ):
             internal["slot_warning_shown"] = True
             state.setdefault("warnings_for_next_handback", []).append(
                 "no phase declares Impl files: / Test files: / Test command: / "
@@ -737,7 +793,9 @@ def conduct(opts: ConductOptions) -> ConductResult:
         if idx >= len(phases):
             state["status"] = "complete"
             _persist_state(opts, state)
-            return ConductResult(status="complete", state=state, summary="All phases complete")
+            return ConductResult(
+                status="complete", state=state, summary="All phases complete"
+            )
 
         phase = phases[idx]
         try:
@@ -791,7 +849,9 @@ def _retry_after_hook_failure(
             return ConductResult(status="schema_error", state=state, summary=str(exc))
         # SKILL.md Step 6: if implementer flagged test_contract_mismatch, the
         # next iteration respawns the test-writer instead.
-        if respawn_role == "implementer" and report.get("flags", {}).get("test_contract_mismatch"):
+        if respawn_role == "implementer" and report.get("flags", {}).get(
+            "test_contract_mismatch"
+        ):
             respawn_role = "test-writer"
         else:
             respawn_role = "implementer"
@@ -809,7 +869,9 @@ def _retry_after_hook_failure(
                         f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
                     )
                     _persist_state(opts, state)
-                    return ConductResult(status="blocked", state=state, summary=state["blocker"])
+                    return ConductResult(
+                        status="blocked", state=state, summary=state["blocker"]
+                    )
                 prior_diff = _staged_diff(opts.repo_root)
                 _reset_index(opts.repo_root)
                 hook_output = result.output
@@ -830,7 +892,14 @@ def _retry_after_hook_failure(
         if commit_outcome.status != "running":
             return commit_outcome
         return _handback(
-            opts, state, phase, "passed", iteration, "sequential", "post-hook-fix", warnings
+            opts,
+            state,
+            phase,
+            "passed",
+            iteration,
+            "sequential",
+            "post-hook-fix",
+            warnings,
         )
 
 

@@ -87,13 +87,13 @@ This prevents subagent fix-loops from chasing issues they didn't introduce.
 
 ### 4. State file load
 
-`<repo-root>/.conduct/state-<plan-basename>.json`, where repo-root comes from `git rev-parse --show-toplevel`.
+`<repo-root>/.conduct/state-<plan-id>.json`, where repo-root comes from `git rev-parse --show-toplevel` and `plan-id` is the plan basename plus a short SHA-1 digest of its repo-relative path (e.g., `state-foo-3a1f9b8c4d2e.json`). The digest disambiguates plans that share a basename across different directories. A pre-digest state file (`state-<basename>.json`) is automatically migrated to the digest-suffixed name on the next load when its recorded `plan_path` matches the active plan.
 
 - If present and `--resume`: load and continue from `phase_index`. Refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
 - If present without `--resume`: warn, print state summary, suggest `--resume` or `--abort-run`, exit.
 - If absent: initialise with `base_sha = git rev-parse HEAD`, `phase_index = 0`, `iteration_count = 0`, `status = "running"`.
 
-Acquire an advisory lock on `.conduct/state-<plan-basename>.json.lock` before any write (see `lock.py` shipped with this skill).
+Acquire an advisory lock on `.conduct/state-<plan-id>.json.lock` before any write (see `lock.py` shipped with this skill).
 
 ### 5. Phase parsing
 
@@ -186,7 +186,7 @@ On zero exit, append `"validation passed"` to the phase warnings and continue to
 No classifier. On any failure (test failure OR pre-commit hook failure at the boundary commit in Step 8):
 
 - Increment `state.iteration_count`. Persist state immediately (crash recovery).
-- If `iteration_count > N`: set `state.status = "blocked"`, handback with message `Phase <label> stalled after <N> iterations; see .conduct/state-<plan>.json for diff and failure history.` Do not auto-advance.
+- If `iteration_count > N`: set `state.status = "blocked"`, handback with message `Phase <label> stalled after <N> iterations; see .conduct/state-<plan-id>.json for diff and failure history.` Do not auto-advance.
 - Else **reset the index before respawn**: capture `git diff --cached` into `{{PRIOR_DIFF}}`, then run `git reset` (mixed, no `--hard`) to clear the staging area. The respawned implementer starts from a clean index with the prior diff visible only inside its prompt — this prevents stale staged content from a failed attempt silently mixing into the next iteration.
 - Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = full runner output (or hook output, if the failure came from the boundary commit).
 - Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration, same inputs. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again).
@@ -234,7 +234,7 @@ No keyword heuristic watches for "proceed" — the user copies the printed comma
 
 ## State File
 
-Path: `<repo-root>/.conduct/state-<plan-basename>.json`. `.conduct/` is git-ignored (Phase 5).
+Path: `<repo-root>/.conduct/state-<plan-id>.json`, where `plan-id` is the basename plus a short SHA-1 digest of the repo-relative plan path. `.conduct/` is git-ignored (Phase 5). Pre-digest state files (`state-<basename>.json`) are migrated automatically on the next load when their recorded `plan_path` matches the active plan.
 
 Schema:
 
@@ -285,7 +285,6 @@ If you need a stronger guarantee, review the phase `Test command:` lines before 
 - **No agent wall-clock timeout.** The `Agent` tool is synchronous within the parent turn and exposes no PID, so `--agent-timeout` is not enforceable in v1. Mitigated by the fix-loop cap plus explicit iteration counts in prompts. Test-runner timeout is real because the test command is a subprocess.
 - **Rogue commits are detected, not prevented.** Subagents are instructed to stage only; a subagent that runs `git commit` anyway is caught by the HEAD-comparison check in Step 8, flagged in state, and handed back to the user rather than auto-corrected.
 - **Schema errors do not retry.** A subagent that emits malformed JSON triggers `schema_error` status and immediate handback. The user decides whether to adjust the prompt template or re-invoke.
-- **State-file path collision on same-basename plans.** Claude's state file is `.conduct/state-<plan-basename>.json`. Two plans with the same basename at different paths (e.g., `docs/dev_plans/foo.md` and `archive/foo.md`) map to the same state file — last writer wins. The Codex mirror disambiguates via `state-<basename>-<digest>.json`; aligning the Claude side is tracked in `docs/BACKLOG.md`. Workaround until then: keep plan basenames unique, or pass distinct `--plan-id`-style overrides if one exists.
 - **Resume gating is advisory on Claude, enforced on Codex.** Claude loads any existing state file unconditionally; `opts.resume` only refreshes `resume_base_sha`. Codex hard-stops on `state_exists and not --resume`. In practice the orchestrator is expected to pass `--resume` when resuming, but Claude will not refuse if you forget.
 - **Clean-context enforcement is instruction-based on Claude.** Codex enforces worker isolation at the harness layer via `fork_context: false` in its SKILL frontmatter. Claude relies on the "Do not thread parent conversation context" instruction being followed by main Claude. Same intended behaviour; weaker enforcement.
 
