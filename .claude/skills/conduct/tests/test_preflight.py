@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from conductor import ConductOptions, run_preflight
 from marker import (
     compute_plan_hash,
     marker_is_stale,
@@ -96,10 +97,8 @@ def test_preflight_marker_in_body_does_not_falsely_validate(tmp_path):
     Without a real trailing marker, preflight must report 'no marker' rather
     than picking up the in-body example.
     """
-    body = (
-        PHASE_BODY
-        + textwrap.dedent(
-            """
+    body = PHASE_BODY + textwrap.dedent(
+        """
 
             ## Notes
 
@@ -111,7 +110,6 @@ def test_preflight_marker_in_body_does_not_falsely_validate(tmp_path):
             <!-- reviewed: 2025-12-02 @ fedcba9876543210fedcba9876543210fedcba98 -->
             ```
             """
-        )
     )
     plan = _scratch_plan(tmp_path, body)
     assert read_marker(plan) is None
@@ -122,10 +120,8 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
     """Same scenario, but with a real trailing marker. The conductor must hash
     against the body (in-body examples included) and accept.
     """
-    body = (
-        PHASE_BODY
-        + textwrap.dedent(
-            """
+    body = PHASE_BODY + textwrap.dedent(
+        """
 
             ## Notes
 
@@ -133,7 +129,6 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
 
                 <!-- reviewed: 2025-12-01 @ 0123456789abcdef0123456789abcdef01234567 -->
             """
-        )
     )
     plan = _scratch_plan(tmp_path, body)
     write_marker(plan)
@@ -209,3 +204,104 @@ def test_preflight_workspace_edits_below_marker_do_not_invalidate(tmp_path):
     )
     plan.write_text(text + workspace)
     assert marker_is_stale(plan) is False
+
+
+# ---------------------------------------------------------------------------
+# Marker auto-refresh on resume (above-marker amendments mid-run)
+# ---------------------------------------------------------------------------
+
+
+def _opts(plan: Path, *, resume: bool, repo: Path) -> "ConductOptions":
+    return ConductOptions(
+        plan_path=plan,
+        repo_root=repo,
+        spawn=lambda req: "",
+        lint_check=lambda: None,
+        resume=resume,
+    )
+
+
+def _git_init(tmp_path: Path) -> Path:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "harness@test"], cwd=str(tmp_path), check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Harness"], cwd=str(tmp_path), check=True
+    )
+    (tmp_path / "README.md").write_text("seed\n")
+    subprocess.run(["git", "add", "README.md"], cwd=str(tmp_path), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "seed"], cwd=str(tmp_path), check=True)
+    return tmp_path
+
+
+def test_run_preflight_hard_stops_on_stale_marker_without_resume(tmp_path, capsys):
+    """Initial run (no --resume) on a stale marker must hard-stop — refreshing
+    here would silently bless drift between /review-plan and the first phase.
+    """
+    repo = _git_init(tmp_path)
+    plan = repo / "20260508-scratch.md"
+    plan.write_text(textwrap.dedent(PHASE_BODY))
+    write_marker(plan)
+    plan.write_text(plan.read_text().replace("First thing", "First thing (edited)"))
+
+    result = run_preflight(_opts(plan, resume=False, repo=repo))
+
+    assert result is not None
+    assert result.status == "preflight_fail"
+    assert result.summary == "stale review marker"
+    # Marker line is unchanged: the SHA recorded in the marker still points at
+    # the pre-edit hash, and the in-place plan file still carries the original
+    # marker.
+    assert marker_is_stale(plan) is True
+
+
+def test_run_preflight_auto_refreshes_marker_on_resume(tmp_path, capsys):
+    """When a phase legitimately amends the contract section above the marker,
+    --resume preflight rewrites the marker rather than failing — the user has
+    already committed to this plan by starting the run.
+    """
+    repo = _git_init(tmp_path)
+    plan = repo / "20260508-scratch.md"
+    plan.write_text(textwrap.dedent(PHASE_BODY))
+    write_marker(plan)
+    pre_marker = read_marker(plan)
+    assert pre_marker is not None
+
+    plan.write_text(plan.read_text().replace("First thing", "First thing (edited)"))
+    assert marker_is_stale(plan) is True  # sanity
+
+    result = run_preflight(_opts(plan, resume=True, repo=repo))
+
+    assert result is None  # preflight passes
+    # Marker has been rewritten in place to match the new content.
+    assert marker_is_stale(plan) is False
+    post_marker = read_marker(plan)
+    assert post_marker is not None
+    assert post_marker[1] != pre_marker[1]  # SHA refreshed
+    assert post_marker[1] == compute_plan_hash(plan)
+    # User-visible info trail on stderr.
+    captured = capsys.readouterr()
+    assert "auto-refreshed on resume" in captured.err
+    assert pre_marker[1][:12] in captured.err
+    assert post_marker[1][:12] in captured.err
+
+
+def test_run_preflight_resume_without_marker_still_hard_stops(tmp_path):
+    """--resume does not bless an unmarked plan. Only stale (= already-marked-
+    but-content-drifted) markers are auto-refreshed; missing markers still
+    require /review-plan.
+    """
+    repo = _git_init(tmp_path)
+    plan = repo / "20260508-scratch.md"
+    plan.write_text(textwrap.dedent(PHASE_BODY))
+    # No write_marker call — plan is unmarked.
+
+    result = run_preflight(_opts(plan, resume=True, repo=repo))
+
+    assert result is not None
+    assert result.status == "preflight_fail"
+    assert result.summary == "no review marker"
+    assert read_marker(plan) is None  # still unmarked

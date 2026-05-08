@@ -28,12 +28,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
 from lock import StateLock
-from marker import compute_plan_hash, marker_is_stale, read_marker
+from marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from parser import Phase, files_overlap, parse_phases
 from runner import TestResult, run_tests
 from schema import SchemaError, parse_report
@@ -159,12 +160,30 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
         )
     stale = marker_is_stale(opts.plan_path)
     if stale is True:
-        return ConductResult(
-            status="preflight_fail",
-            state={},
-            summary="stale review marker",
-            diagnostic=f"Run: /review-plan {opts.plan_path}",
-        )
+        if opts.resume:
+            # A phase legitimately amended the contract section above the
+            # marker (workspace edits below the marker do not affect the hash
+            # by construction, so a stale marker on resume always means an
+            # above-marker edit). Rewrite the marker in place rather than
+            # forcing the user to re-run /review-plan: the user has already
+            # committed to this plan by starting the run, and an interrupted
+            # phase is not a good moment to demand a fresh review pass. Initial
+            # runs (no --resume) keep the hard-stop — refreshing there would
+            # silently bless drift between /review-plan and the first phase.
+            old_iso, old_sha = marker  # type: ignore[misc]
+            new_sha = write_marker(opts.plan_path)
+            print(
+                "conduct: review marker auto-refreshed on resume "
+                f"(was {old_iso} @ {old_sha[:12]}, now @ {new_sha[:12]})",
+                file=sys.stderr,
+            )
+        else:
+            return ConductResult(
+                status="preflight_fail",
+                state={},
+                summary="stale review marker",
+                diagnostic=f"Run: /review-plan {opts.plan_path}",
+            )
 
     lint_check = opts.lint_check or (lambda: default_lint_check(opts.repo_root))
     lint_diag = lint_check()
@@ -326,6 +345,16 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         if "plan_content_hash" not in state:
             state["plan_content_hash"] = compute_plan_hash(opts.plan_path)
             mutated = True
+        elif opts.resume:
+            # Preflight has already validated that the current plan hash
+            # matches the (possibly auto-refreshed) marker, so resync the
+            # stored hash to the current one. Without this, a marker auto-
+            # refresh on resume would leave state.plan_content_hash pointing
+            # at the pre-edit hash indefinitely.
+            current_hash = compute_plan_hash(opts.plan_path)
+            if state["plan_content_hash"] != current_hash:
+                state["plan_content_hash"] = current_hash
+                mutated = True
         if "last_summary" not in state:
             state["last_summary"] = ""
             mutated = True
