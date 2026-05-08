@@ -47,7 +47,7 @@ from conduct.conductor import (
     pause_phase,
 )
 from conduct.lock import StateLock
-from conduct.marker import compute_plan_hash, write_marker
+from conduct.marker import compute_plan_hash, marker_is_stale, write_marker
 from conduct.runner import TestResult as _TestResult  # rename — pytest tries to collect any class named Test*
 
 
@@ -1208,61 +1208,42 @@ def test_resume_rejects_state_from_different_plan_path(repo):
     assert spawner.calls == []
 
 
-def test_resume_rejects_reviewed_plan_hash_drift(repo):
+def test_resume_after_manual_review_resyncs_state_hash(repo, capsys):
     plan = _scratch_plan(repo, PLAN_TWO_PHASES)
-    spawner = StubSpawner(repo)
-    spawner.script(
-        "implementer",
-        0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
-    )
-    spawner.script("test-writer", 0, lambda req, r: _test_report())
+
+    def make_spawner():
+        spawner = StubSpawner(repo)
+        spawner.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "x=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        spawner.script("test-writer", 0, lambda req, r: _test_report())
+        return spawner
 
     first = conduct(
         ConductOptions(
             plan_path=plan,
             repo_root=repo,
-            spawn=spawner,
+            spawn=make_spawner(),
             test_runner=StubTestRunner(queue=[_passing()]),
         )
     )
     assert first.status == "awaiting_user"
+    pre_state = json.loads(_state_file(repo, plan).read_text())
+    pre_hash = pre_state["plan_content_hash"]
 
     plan.write_text(
-        textwrap.dedent(
-            """\
-            # Scratch
-            ## Implementation Checklist
-
-            ### Phase 1: First
-
-            **Impl files:** src/a.py
-            **Test files:** tests/test_a.py
-            **Test command:** `true`
-
-            - [x] one
-
-            ### Phase X: Inserted
-
-            **Impl files:** src/x.py
-            **Test files:** tests/test_x.py
-            **Test command:** `true`
-
-            - [ ] inserted
-
-            ### Phase 2: Second
-
-            **Impl files:** src/b.py
-            **Test files:** tests/test_b.py
-            **Test command:** `true`
-
-            - [ ] two
-            """
-        )
+        plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second reviewed")
     )
     write_marker(plan)
+    assert marker_is_stale(plan) is False
+    assert compute_plan_hash(plan) != pre_hash
 
-    second_spawner = StubSpawner(repo)
+    second_spawner = make_spawner()
     result = conduct(
         ConductOptions(
             plan_path=plan,
@@ -1272,9 +1253,72 @@ def test_resume_rejects_reviewed_plan_hash_drift(repo):
             resume=True,
         )
     )
-    assert result.status == "preflight_fail"
-    assert "state does not match current reviewed plan" in result.summary
-    assert second_spawner.calls == []
+    assert result.status == "awaiting_user"
+    post_state = json.loads(_state_file(repo, plan).read_text())
+    assert post_state["plan_content_hash"] == compute_plan_hash(plan)
+    assert post_state["plan_content_hash"] != pre_hash
+    assert [p["label"] for p in result.state["completed_phases"]] == ["1", "2"]
+    assert second_spawner.calls
+    assert "auto-refreshed on resume" not in capsys.readouterr().err
+
+
+def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
+    repo, capsys
+):
+    """End-to-end: complete phase 1, amend the contract above the marker,
+    then resume without tripping Codex's active plan_content_hash check.
+    """
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+
+    def make_spawner():
+        spawner = StubSpawner(repo)
+        spawner.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "x=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        spawner.script("test-writer", 0, lambda req, r: _test_report())
+        return spawner
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+    pre_state = json.loads(_state_file(repo, plan).read_text())
+    pre_hash = pre_state["plan_content_hash"]
+
+    plan.write_text(plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second amended"))
+    new_plan_hash = compute_plan_hash(plan)
+    assert new_plan_hash != pre_hash
+    assert marker_is_stale(plan) is True
+
+    second_spawner = make_spawner()
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=second_spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+
+    assert result.status == "awaiting_user"
+    post_state = json.loads(_state_file(repo, plan).read_text())
+    assert post_state["plan_content_hash"] == compute_plan_hash(plan)
+    assert post_state["plan_content_hash"] != pre_hash
+    assert marker_is_stale(plan) is False
+    assert [p["label"] for p in result.state["completed_phases"]] == ["1", "2"]
+    assert second_spawner.calls
+    assert "auto-refreshed on resume" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

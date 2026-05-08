@@ -1214,3 +1214,64 @@ def test_legacy_state_migration_skipped_when_legacy_is_symlink(repo):
     assert legacy.is_symlink()
     assert victim.exists()
     assert not _state_file_for(plan, repo).exists()
+
+
+def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
+    repo, capsys
+):
+    """End-to-end: complete phase 1 → edit the contract section above the marker
+    (simulating a phase that legitimately amended the plan) → /conduct --resume
+    should auto-refresh the marker AND resync state.plan_content_hash to the
+    new value rather than leaving it pointing at the pre-edit hash.
+    """
+    from marker import compute_plan_hash
+
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n")
+            if req.phase_label == "1"
+            else _stage(r, "src/b.py", "y=2\n"),
+            _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing(), _passing()])
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
+    )
+    assert first.status == "awaiting_user"
+    pre_state = json.loads(_state_file_for(plan, repo).read_text())
+    pre_hash = pre_state["plan_content_hash"]
+
+    # Phase 2 amends the contract section above the marker. The marker hash is
+    # now stale; the workspace below the marker is untouched.
+    text = plan.read_text()
+    assert "Phase 2: Second" in text
+    plan.write_text(text.replace("Phase 2: Second", "Phase 2: Second (refined)"))
+    new_plan_hash = compute_plan_hash(plan)
+    assert new_plan_hash != pre_hash  # sanity
+
+    second = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            resume=True,
+        )
+    )
+    assert second.status == "awaiting_user"
+    # Marker line itself was rewritten; state's recorded hash matches it.
+    post_state = json.loads(_state_file_for(plan, repo).read_text())
+    assert post_state["plan_content_hash"] == compute_plan_hash(plan)
+    assert post_state["plan_content_hash"] != pre_hash
+    # Stderr trail confirms preflight took the auto-refresh path, not the
+    # hard-stop path.
+    assert "auto-refreshed on resume" in capsys.readouterr().err
