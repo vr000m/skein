@@ -84,11 +84,13 @@ The plan MUST contain a marker line written by `/review-plan` after user accepta
 
 The marker acts as a **contract / workspace divider**. Everything above the marker is the immutable contract (objective, requirements, phase blocks, technical specs). Everything below is workspace — `## Progress` (per-phase completion), `## Findings` (durable notes), and similar. The hash covers the contract only, so editing the workspace during a run does NOT invalidate the marker.
 
-The template-placeholder line `<!-- reviewed: YYYY-MM-DD @ <hash> -->` does not count as a real marker — a plan that still carries the placeholder is treated as unmarked and rejected. (`/review-plan` consumes the placeholder as the divider on first review and replaces it with the dated marker.)
-
 - Match against regex `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$`. The last unfenced, column-zero match wins; marker-shaped text inside fenced code blocks or indented prose is ignored.
+- The template-placeholder line `<!-- reviewed: YYYY-MM-DD @ <hash> -->` does **not** count as a real marker — a plan that still carries the placeholder is treated as unmarked and rejected. (`/review-plan` consumes the placeholder as the divider on first review and replaces it with the dated marker.)
 - Recompute the plan's content hash: take the plan with the marker line and everything after it stripped, pipe to `git hash-object --stdin`. Compare to the SHA recorded in the marker.
-- If marker absent OR hash mismatches → hard-stop with: `Run: /review-plan <plan-path>` and exit.
+- If marker absent → hard-stop with: `Run: /review-plan <plan-path>` and exit.
+- If hash mismatches (stale marker):
+  - **Initial run** (no `--resume`): hard-stop with the same message. A stale marker before the first phase means the plan drifted between `/review-plan` and `/conduct`; re-review.
+  - **`--resume`**: rewrite the marker in place with today's date and the new hash, log `conduct: review marker auto-refreshed on resume (was <iso> @ <old12>, now @ <new12>)` to stderr, and proceed. By construction workspace edits below the marker do not affect the hash, so a stale marker on resume always means a phase legitimately amended the contract section above the marker — refreshing preserves the divider invariant without forcing a re-review mid-run. State's `plan_content_hash` is resynced to the new value on the same load.
 
 ### 3. Optional pre-commit health check
 

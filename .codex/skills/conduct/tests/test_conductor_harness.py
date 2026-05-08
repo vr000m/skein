@@ -47,7 +47,7 @@ from conduct.conductor import (
     pause_phase,
 )
 from conduct.lock import StateLock
-from conduct.marker import compute_plan_hash, write_marker
+from conduct.marker import compute_plan_hash, marker_is_stale, write_marker
 from conduct.runner import TestResult as _TestResult  # rename — pytest tries to collect any class named Test*
 
 
@@ -1275,6 +1275,54 @@ def test_resume_rejects_reviewed_plan_hash_drift(repo):
     assert result.status == "preflight_fail"
     assert "state does not match current reviewed plan" in result.summary
     assert second_spawner.calls == []
+
+
+def test_resume_auto_refreshed_marker_resyncs_state_hash(repo, capsys):
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+
+    def make_spawner():
+        spawner = StubSpawner(repo)
+        spawner.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "x=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        spawner.script("test-writer", 0, lambda req, r: _test_report())
+        return spawner
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+
+    plan.write_text(plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second amended"))
+    assert marker_is_stale(plan) is True
+
+    second_spawner = make_spawner()
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=second_spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+
+    assert result.status == "awaiting_user"
+    assert result.state["plan_content_hash"] == compute_plan_hash(plan)
+    assert marker_is_stale(plan) is False
+    assert [p["label"] for p in result.state["completed_phases"]] == ["1", "2"]
+    assert second_spawner.calls
+    assert "auto-refreshed on resume" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

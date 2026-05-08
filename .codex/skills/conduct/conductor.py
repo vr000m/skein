@@ -31,12 +31,13 @@ import os
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from .lock import LockError, StateLock, lock_is_held
-from .marker import compute_plan_hash, marker_is_stale, read_marker
+from .marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from .parser import Phase, files_overlap, parse_phases
 from .runner import TestResult, run_tests
 from .schema import SchemaError, parse_report
@@ -88,6 +89,7 @@ class ConductOptions:
     max_iterations: int = 3
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
+    marker_auto_refreshed: bool = field(default=False, init=False)
 
 
 @dataclass
@@ -198,6 +200,7 @@ def _diagnostic_tail(output: str, *, max_chars: int = 2000) -> str:
 
 def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
     """Returns None on success, else a ConductResult describing the hard stop."""
+    opts.marker_auto_refreshed = False
     if not opts.plan_path.exists():
         return ConductResult(
             status="preflight_fail",
@@ -216,12 +219,22 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
         )
     stale = marker_is_stale(opts.plan_path)
     if stale is True:
-        return ConductResult(
-            status="preflight_fail",
-            state={},
-            summary="stale review marker",
-            diagnostic=f"Run: /review-plan {opts.plan_path}",
-        )
+        if opts.resume:
+            old_iso, old_sha = marker
+            new_sha = write_marker(opts.plan_path)
+            print(
+                "conduct: review marker auto-refreshed on resume "
+                f"(was {old_iso} @ {old_sha[:12]}, now @ {new_sha[:12]})",
+                file=sys.stderr,
+            )
+            opts.marker_auto_refreshed = True
+        else:
+            return ConductResult(
+                status="preflight_fail",
+                state={},
+                summary="stale review marker",
+                diagnostic=f"Run: /review-plan {opts.plan_path}",
+            )
 
     lint_diag = opts.lint_check() if opts.lint_check is not None else None
     if lint_diag:
@@ -362,6 +375,8 @@ def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, boo
     sp = _state_path(opts)
     if sp.exists():
         state = _normalize_loaded_state(_migrate_loaded_state(json.loads(sp.read_text())))
+        if opts.resume and opts.marker_auto_refreshed:
+            state["plan_content_hash"] = plan_hash
         return state, True
     return _init_state(opts, plan_hash), False
 
@@ -1045,6 +1060,8 @@ def conduct(opts: ConductOptions) -> ConductResult:
             return pre
 
         plan_hash = compute_plan_hash(opts.plan_path)
+        if state_exists and opts.resume and opts.marker_auto_refreshed:
+            state["plan_content_hash"] = plan_hash
         if state_exists and not _state_matches_plan(state, opts, plan_hash):
             return _state_mismatch_result(opts, state, plan_hash)
         if not state_exists:
