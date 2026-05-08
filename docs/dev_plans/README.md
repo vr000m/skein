@@ -4,6 +4,7 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
+| 2026-05-08 | fix | conduct-state-path-digest | In Review | feature/conduct-state-path-digest | `docs/dev_plans/20260422-feature-conduct-skill.md` |
 | 2026-05-01 | feature | plan-progress-section | In Review | feature/plan-progress-section | N/A (small refactor) |
 | 2026-05-01 | fix | conduct-em-dash-headings | Merged | feature/conduct-em-dash-headings | N/A (small fix) |
 | 2026-04-22 | feature | deep-review-incremental-continuation | In Review | feature/deep-review-incremental-continuation | N/A (small refactor) |

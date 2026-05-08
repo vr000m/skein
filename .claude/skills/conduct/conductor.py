@@ -23,7 +23,9 @@ LLM-driven harness both target.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -184,11 +186,136 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
 # ---------------------------------------------------------------------------
 
 
+class UnsafeConductPathError(RuntimeError):
+    pass
+
+
+# Cap on legacy state-file size during migration. Bounds attacker-supplied
+# JSON: a planted multi-GB file in `.conduct/` would otherwise OOM the load.
+_MAX_LEGACY_STATE_BYTES = 1 * 1024 * 1024  # 1 MiB
+
+
+def _ensure_safe_conduct_dir(repo_root: Path) -> Path:
+    """Mirror of Codex `_ensure_safe_conduct_dir`: refuse `.conduct/` when it
+    is a symlink or non-directory. Ports the path-safety helper that PR-cb05a15
+    added on the Codex side."""
+    conduct_dir = repo_root / ".conduct"
+    if conduct_dir.exists():
+        if conduct_dir.is_symlink() or not conduct_dir.is_dir():
+            raise UnsafeConductPathError(f"unsafe conduct dir: {conduct_dir}")
+        return conduct_dir
+    conduct_dir.mkdir(parents=True, exist_ok=True)
+    if conduct_dir.is_symlink() or not conduct_dir.is_dir():
+        raise UnsafeConductPathError(f"unsafe conduct dir: {conduct_dir}")
+    return conduct_dir
+
+
+def _ensure_safe_fs_path(path: Path, *, expect_dir: Optional[bool] = None) -> None:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    if path.is_symlink():
+        raise UnsafeConductPathError(f"unsafe conduct path: {path}")
+    if expect_dir is True and not path.is_dir():
+        raise UnsafeConductPathError(f"expected directory at conduct path: {path}")
+    if expect_dir is False and path.is_dir():
+        raise UnsafeConductPathError(f"expected file at conduct path: {path}")
+
+
+def _safe_write_text(path: Path, text: str) -> None:
+    _ensure_safe_fs_path(path, expect_dir=False)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o644)
+    try:
+        os.write(fd, text.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
+    """Open the legacy state file refusing to follow symlinks, capped at
+    `_MAX_LEGACY_STATE_BYTES`. Returns None if the file is missing, a symlink,
+    or exceeds the cap — all of which mean migration must abort silently."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        st = os.fstat(fd)
+        if st.st_size > _MAX_LEGACY_STATE_BYTES:
+            return None
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES)
+    finally:
+        os.close(fd)
+
+
+# `_state_path` is intentionally module-private but is also imported by tests
+# in both the Claude and Codex mirrors as a stable test seam. Treat it as a
+# semi-public path helper: rename only with a coordinated test update.
 def _state_path(opts: ConductOptions) -> Path:
+    try:
+        rel_plan = (
+            opts.plan_path.resolve().relative_to(opts.repo_root.resolve()).as_posix()
+        )
+    except ValueError:
+        rel_plan = opts.plan_path.resolve().as_posix()
+    digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
+    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+
+
+def _legacy_state_path(opts: ConductOptions) -> Path:
     return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}.json"
 
 
+def _migrate_legacy_state_file(opts: ConductOptions) -> None:
+    """Rename a pre-digest state file to the digest-suffixed path.
+
+    Migration is path-driven (file rename), distinct from Codex's
+    `_migrate_loaded_state` which is content-driven (schema-version migration
+    on already-loaded JSON). If both helpers ever live in the same conductor,
+    path migration MUST run first so the schema migration sees the new path.
+
+    Only migrates when the legacy file's recorded `plan_path` matches the
+    current plan; missing `plan_path` is treated as ambiguous and migrated
+    optimistically (the file is still in `.conduct/state-<basename>.json`,
+    which by construction is unique per basename in this directory).
+    """
+    sp = _state_path(opts)
+    legacy = _legacy_state_path(opts)
+    if sp.exists() or not legacy.exists() or legacy.is_symlink():
+        return
+
+    raw = _safe_read_legacy_state(legacy)
+    if raw is None:
+        return
+    try:
+        recorded = json.loads(raw.decode("utf-8", errors="strict")).get("plan_path")
+    except (UnicodeDecodeError, ValueError):
+        return
+    if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
+        return
+
+    try:
+        _ensure_safe_conduct_dir(opts.repo_root)
+        _ensure_safe_fs_path(sp, expect_dir=False)
+        legacy.rename(sp)
+    except (FileNotFoundError, FileExistsError, OSError, UnsafeConductPathError):
+        # Concurrent migrator or symlink races: bail. The next load will
+        # observe whichever file landed at sp.
+        return
+    legacy_lock = legacy.with_suffix(legacy.suffix + ".lock")
+    if legacy_lock.exists():
+        try:
+            legacy_lock.unlink()
+        except OSError:
+            pass
+
+
 def _load_or_init_state(opts: ConductOptions) -> dict:
+    _migrate_legacy_state_file(opts)
     sp = _state_path(opts)
     if sp.exists():
         state = json.loads(sp.read_text())
@@ -226,8 +353,8 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
 
 def _persist_state(opts: ConductOptions, state: dict) -> None:
     sp = _state_path(opts)
-    sp.parent.mkdir(parents=True, exist_ok=True)
-    sp.write_text(json.dumps(state, indent=2))
+    _ensure_safe_conduct_dir(opts.repo_root)
+    _safe_write_text(sp, json.dumps(state, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +598,16 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
-            return _handback(opts, state, phase, "skipped", iteration, strategy, strategy_reason, warnings)
+            return _handback(
+                opts,
+                state,
+                phase,
+                "skipped",
+                iteration,
+                strategy,
+                strategy_reason,
+                warnings,
+            )
 
         # Step 5: run tests.
         result = opts.test_runner(test_cmd, opts.test_timeout)
@@ -481,14 +617,10 @@ def _run_phase(
             # typically exercises live-data behaviour an implementer cannot
             # auto-repair (reprocess a transcript, hit a staging API, etc.).
             if phase.validation_command:
-                vresult = opts.test_runner(
-                    phase.validation_command, opts.test_timeout
-                )
+                vresult = opts.test_runner(phase.validation_command, opts.test_timeout)
                 if vresult.returncode != 0 or vresult.timed_out:
                     state["status"] = "awaiting_user"
-                    state["blocker"] = (
-                        f"Phase {phase.label} validation failed"
-                    )
+                    state["blocker"] = f"Phase {phase.label} validation failed"
                     _persist_state(opts, state)
                     return ConductResult(
                         status="awaiting_user",
@@ -500,7 +632,16 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
-            return _handback(opts, state, phase, "passed", iteration, strategy, strategy_reason, warnings)
+            return _handback(
+                opts,
+                state,
+                phase,
+                "passed",
+                iteration,
+                strategy,
+                strategy_reason,
+                warnings,
+            )
 
         # Step 6: fix loop.
         state["iteration_count"] += 1
@@ -708,7 +849,16 @@ def conduct(opts: ConductOptions) -> ConductResult:
         return pre
 
     sp = _state_path(opts)
-    sp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ensure_safe_conduct_dir(opts.repo_root)
+        _ensure_safe_fs_path(sp, expect_dir=False)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="preflight_fail",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
         state = _load_or_init_state(opts)
@@ -722,8 +872,11 @@ def conduct(opts: ConductOptions) -> ConductResult:
         # degraded mode (sequential spawn + test fallback) for every phase.
         # That's a valid choice but often an oversight in the plan template.
         internal = state.setdefault("_internal", {})
-        if phases and not any(p.has_any_slot() for p in phases) \
-                and not internal.get("slot_warning_shown"):
+        if (
+            phases
+            and not any(p.has_any_slot() for p in phases)
+            and not internal.get("slot_warning_shown")
+        ):
             internal["slot_warning_shown"] = True
             state.setdefault("warnings_for_next_handback", []).append(
                 "no phase declares Impl files: / Test files: / Test command: / "
@@ -737,7 +890,9 @@ def conduct(opts: ConductOptions) -> ConductResult:
         if idx >= len(phases):
             state["status"] = "complete"
             _persist_state(opts, state)
-            return ConductResult(status="complete", state=state, summary="All phases complete")
+            return ConductResult(
+                status="complete", state=state, summary="All phases complete"
+            )
 
         phase = phases[idx]
         try:
@@ -791,7 +946,9 @@ def _retry_after_hook_failure(
             return ConductResult(status="schema_error", state=state, summary=str(exc))
         # SKILL.md Step 6: if implementer flagged test_contract_mismatch, the
         # next iteration respawns the test-writer instead.
-        if respawn_role == "implementer" and report.get("flags", {}).get("test_contract_mismatch"):
+        if respawn_role == "implementer" and report.get("flags", {}).get(
+            "test_contract_mismatch"
+        ):
             respawn_role = "test-writer"
         else:
             respawn_role = "implementer"
@@ -809,7 +966,9 @@ def _retry_after_hook_failure(
                         f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
                     )
                     _persist_state(opts, state)
-                    return ConductResult(status="blocked", state=state, summary=state["blocker"])
+                    return ConductResult(
+                        status="blocked", state=state, summary=state["blocker"]
+                    )
                 prior_diff = _staged_diff(opts.repo_root)
                 _reset_index(opts.repo_root)
                 hook_output = result.output
@@ -830,7 +989,14 @@ def _retry_after_hook_failure(
         if commit_outcome.status != "running":
             return commit_outcome
         return _handback(
-            opts, state, phase, "passed", iteration, "sequential", "post-hook-fix", warnings
+            opts,
+            state,
+            phase,
+            "passed",
+            iteration,
+            "sequential",
+            "post-hook-fix",
+            warnings,
         )
 
 
@@ -842,6 +1008,15 @@ def _retry_after_hook_failure(
 def pause_phase(opts: ConductOptions) -> ConductResult:
     """`--pause-phase`: stash work, mark state paused, exit."""
     sp = _state_path(opts)
+    try:
+        _ensure_safe_fs_path(sp, expect_dir=False)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="blocked",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     if not sp.exists():
         return ConductResult(status="awaiting_user", state={}, summary="no active run")
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
@@ -860,6 +1035,17 @@ def abort_run(opts: ConductOptions) -> ConductResult:
     sp = _state_path(opts)
     lockfile = sp.with_suffix(sp.suffix + ".lock")
     lockdir = sp.with_suffix(sp.suffix + ".lock.lockdir")
+    try:
+        _ensure_safe_fs_path(sp, expect_dir=False)
+        _ensure_safe_fs_path(lockfile, expect_dir=False)
+        _ensure_safe_fs_path(lockdir, expect_dir=True)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="blocked",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     # Acquire the lock while we tear down so we don't race with a running
     # conductor. We delete the lockfile afterwards, which is safe because
     # the StateLock context manager has already released the fd/lockdir by

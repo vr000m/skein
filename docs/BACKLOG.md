@@ -6,10 +6,6 @@ Convention: group by originating feature. When an item lands, move it to the rel
 
 ## /conduct (from `docs/dev_plans/20260422-feature-conduct-skill.md`, merged via PR #11)
 
-### Correctness
-
-- **Align Claude state-file path with Codex** — Claude currently writes `.conduct/state-<plan-basename>.json`, which collides when two plans share a basename at different paths (e.g. `docs/dev_plans/foo.md` and `archive/foo.md`); last writer wins and resume mis-associates. Codex already uses `state-<basename>-<digest>.json`. Port the digest suffix to `.claude/skills/conduct/conductor.py::_state_path` + update `SKILL.md § State File`, and verify on-disk migration for any pre-existing state files. Tracked in `SKILL.md § Known Limitations`.
-
 ### Product / scope
 
 - **Skill namespacing** (`workflow:dev-plan`, `workflow:conduct`, …) — evaluate after conduct proves the workflow in practice.

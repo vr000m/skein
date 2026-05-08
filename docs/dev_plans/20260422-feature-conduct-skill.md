@@ -622,13 +622,13 @@ Post-merge check (2026-04-23) cross-referenced `.claude/skills/conduct/conductor
 
 | Area | Claude | Codex |
 | --- | --- | --- |
-| State file path | `.conduct/state-<plan-basename>.json` | `.conduct/state-<plan-basename>-<digest>.json` (digest disambiguates same-basename plans at different paths) |
+| State file path | `.conduct/state-<plan-basename>-<digest>.json` (aligned with Codex via PR #19; pre-digest files are migrated automatically on next load) | `.conduct/state-<plan-basename>-<digest>.json` (digest disambiguates same-basename plans at different paths) |
 | Resume gating | Loads any existing state unconditionally; `opts.resume` only refreshes `resume_base_sha`. | Hard-stops on `state_exists and not --resume`; also refuses on plan-hash / path drift. |
 | Clean-context enforcement | Prose instruction in SKILL.md ("Do not thread parent conversation context"). | `fork_context: false` in SKILL frontmatter — harness-level guarantee. |
 | Delegation-unavailable handling | Not needed (`Agent` tool always available). | Explicit `DELEGATION_UNAVAILABLE_MESSAGE` hard-stop when runtime can't delegate. |
-| Path safety | `lock.py` handles symlink refusal on the lockfile only. | `_ensure_safe_conduct_dir` / `_ensure_safe_fs_path` / `UnsafeConductPathError` cover the whole `.conduct/` subtree. |
+| Path safety | `_ensure_safe_conduct_dir` / `_ensure_safe_fs_path` / `_safe_write_text` cover the state file (ported from Codex via PR #19); `lock.py` continues to handle symlink refusal on the lockfile. | `_ensure_safe_conduct_dir` / `_ensure_safe_fs_path` / `UnsafeConductPathError` cover the whole `.conduct/` subtree. |
 
-The state-path collision on Claude is a real (if rare) latent bug: two plans with the same basename at different paths map to the same state file; last writer wins. SKILL.md now documents it as a known limitation and `docs/BACKLOG.md` tracks the alignment fix. The resume-gating and enforcement-mechanism differences are intentional given runtime capabilities, not bugs.
+The state-path collision on Claude was fixed in PR #19: the digest suffix matches the Codex layout, and pre-digest state files are migrated to the new name on the next load. The same PR ports the `_ensure_safe_conduct_dir` / `_safe_write_text` path-safety helpers from Codex, so the `Path safety` row above is also closed for the state file (lockfile symlink handling still lives in `lock.py`). The resume-gating and clean-context-enforcement differences are intentional given runtime capabilities, not bugs.
 
 ### Follow-up Work
 
