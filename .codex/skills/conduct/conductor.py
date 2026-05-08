@@ -32,7 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -89,7 +89,6 @@ class ConductOptions:
     max_iterations: int = 3
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
-    marker_auto_refreshed: bool = field(default=False, init=False)
 
 
 @dataclass
@@ -200,7 +199,6 @@ def _diagnostic_tail(output: str, *, max_chars: int = 2000) -> str:
 
 def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
     """Returns None on success, else a ConductResult describing the hard stop."""
-    opts.marker_auto_refreshed = False
     if not opts.plan_path.exists():
         return ConductResult(
             status="preflight_fail",
@@ -227,7 +225,6 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
                 f"(was {old_iso} @ {old_sha[:12]}, now @ {new_sha[:12]})",
                 file=sys.stderr,
             )
-            opts.marker_auto_refreshed = True
         else:
             return ConductResult(
                 status="preflight_fail",
@@ -375,8 +372,13 @@ def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, boo
     sp = _state_path(opts)
     if sp.exists():
         state = _normalize_loaded_state(_migrate_loaded_state(json.loads(sp.read_text())))
-        if opts.resume and opts.marker_auto_refreshed:
-            state["plan_content_hash"] = plan_hash
+        if opts.resume:
+            # Preflight has already validated that the current plan hash
+            # matches the marker, whether the marker was auto-refreshed here
+            # or manually refreshed between conduct sessions. Resync the
+            # stored hash so the resume gate tracks the reviewed plan.
+            if state["plan_content_hash"] != plan_hash:
+                state["plan_content_hash"] = plan_hash
         return state, True
     return _init_state(opts, plan_hash), False
 
@@ -1060,8 +1062,13 @@ def conduct(opts: ConductOptions) -> ConductResult:
             return pre
 
         plan_hash = compute_plan_hash(opts.plan_path)
-        if state_exists and opts.resume and opts.marker_auto_refreshed:
-            state["plan_content_hash"] = plan_hash
+        if state_exists and opts.resume:
+            # Preflight has already validated that the current plan hash
+            # matches the marker, whether the marker was auto-refreshed here
+            # or manually refreshed between conduct sessions. Resync the
+            # stored hash so the resume gate tracks the reviewed plan.
+            if state["plan_content_hash"] != plan_hash:
+                state["plan_content_hash"] = plan_hash
         if state_exists and not _state_matches_plan(state, opts, plan_hash):
             return _state_mismatch_result(opts, state, plan_hash)
         if not state_exists:
