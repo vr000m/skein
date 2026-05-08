@@ -1277,7 +1277,12 @@ def test_resume_rejects_reviewed_plan_hash_drift(repo):
     assert second_spawner.calls == []
 
 
-def test_resume_auto_refreshed_marker_resyncs_state_hash(repo, capsys):
+def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
+    repo, capsys
+):
+    """End-to-end: complete phase 1, amend the contract above the marker,
+    then resume without tripping Codex's active plan_content_hash check.
+    """
     plan = _scratch_plan(repo, PLAN_TWO_PHASES)
 
     def make_spawner():
@@ -1302,8 +1307,12 @@ def test_resume_auto_refreshed_marker_resyncs_state_hash(repo, capsys):
         )
     )
     assert first.status == "awaiting_user"
+    pre_state = json.loads(_state_file(repo, plan).read_text())
+    pre_hash = pre_state["plan_content_hash"]
 
     plan.write_text(plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second amended"))
+    new_plan_hash = compute_plan_hash(plan)
+    assert new_plan_hash != pre_hash
     assert marker_is_stale(plan) is True
 
     second_spawner = make_spawner()
@@ -1318,7 +1327,9 @@ def test_resume_auto_refreshed_marker_resyncs_state_hash(repo, capsys):
     )
 
     assert result.status == "awaiting_user"
-    assert result.state["plan_content_hash"] == compute_plan_hash(plan)
+    post_state = json.loads(_state_file(repo, plan).read_text())
+    assert post_state["plan_content_hash"] == compute_plan_hash(plan)
+    assert post_state["plan_content_hash"] != pre_hash
     assert marker_is_stale(plan) is False
     assert [p["label"] for p in result.state["completed_phases"]] == ["1", "2"]
     assert second_spawner.calls
