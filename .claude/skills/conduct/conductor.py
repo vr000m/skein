@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -185,6 +186,75 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
 # ---------------------------------------------------------------------------
 
 
+class UnsafeConductPathError(RuntimeError):
+    pass
+
+
+# Cap on legacy state-file size during migration. Bounds attacker-supplied
+# JSON: a planted multi-GB file in `.conduct/` would otherwise OOM the load.
+_MAX_LEGACY_STATE_BYTES = 1 * 1024 * 1024  # 1 MiB
+
+
+def _ensure_safe_conduct_dir(repo_root: Path) -> Path:
+    """Mirror of Codex `_ensure_safe_conduct_dir`: refuse `.conduct/` when it
+    is a symlink or non-directory. Ports the path-safety helper that PR-cb05a15
+    added on the Codex side."""
+    conduct_dir = repo_root / ".conduct"
+    if conduct_dir.exists():
+        if conduct_dir.is_symlink() or not conduct_dir.is_dir():
+            raise UnsafeConductPathError(f"unsafe conduct dir: {conduct_dir}")
+        return conduct_dir
+    conduct_dir.mkdir(parents=True, exist_ok=True)
+    if conduct_dir.is_symlink() or not conduct_dir.is_dir():
+        raise UnsafeConductPathError(f"unsafe conduct dir: {conduct_dir}")
+    return conduct_dir
+
+
+def _ensure_safe_fs_path(path: Path, *, expect_dir: Optional[bool] = None) -> None:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    if path.is_symlink():
+        raise UnsafeConductPathError(f"unsafe conduct path: {path}")
+    if expect_dir is True and not path.is_dir():
+        raise UnsafeConductPathError(f"expected directory at conduct path: {path}")
+    if expect_dir is False and path.is_dir():
+        raise UnsafeConductPathError(f"expected file at conduct path: {path}")
+
+
+def _safe_write_text(path: Path, text: str) -> None:
+    _ensure_safe_fs_path(path, expect_dir=False)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o644)
+    try:
+        os.write(fd, text.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
+    """Open the legacy state file refusing to follow symlinks, capped at
+    `_MAX_LEGACY_STATE_BYTES`. Returns None if the file is missing, a symlink,
+    or exceeds the cap — all of which mean migration must abort silently."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        st = os.fstat(fd)
+        if st.st_size > _MAX_LEGACY_STATE_BYTES:
+            return None
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES)
+    finally:
+        os.close(fd)
+
+
+# `_state_path` is intentionally module-private but is also imported by tests
+# in both the Claude and Codex mirrors as a stable test seam. Treat it as a
+# semi-public path helper: rename only with a coordinated test update.
 def _state_path(opts: ConductOptions) -> Path:
     try:
         rel_plan = (
@@ -203,21 +273,39 @@ def _legacy_state_path(opts: ConductOptions) -> Path:
 def _migrate_legacy_state_file(opts: ConductOptions) -> None:
     """Rename a pre-digest state file to the digest-suffixed path.
 
-    Only migrates when the legacy file's recorded `plan_path` matches the current
-    plan, to avoid hijacking a same-basename neighbour's state.
+    Migration is path-driven (file rename), distinct from Codex's
+    `_migrate_loaded_state` which is content-driven (schema-version migration
+    on already-loaded JSON). If both helpers ever live in the same conductor,
+    path migration MUST run first so the schema migration sees the new path.
+
+    Only migrates when the legacy file's recorded `plan_path` matches the
+    current plan; missing `plan_path` is treated as ambiguous and migrated
+    optimistically (the file is still in `.conduct/state-<basename>.json`,
+    which by construction is unique per basename in this directory).
     """
     sp = _state_path(opts)
     legacy = _legacy_state_path(opts)
-    if sp.exists() or not legacy.exists():
+    if sp.exists() or not legacy.exists() or legacy.is_symlink():
+        return
+
+    raw = _safe_read_legacy_state(legacy)
+    if raw is None:
         return
     try:
-        recorded = json.loads(legacy.read_text()).get("plan_path")
-    except (OSError, ValueError):
+        recorded = json.loads(raw.decode("utf-8", errors="strict")).get("plan_path")
+    except (UnicodeDecodeError, ValueError):
         return
     if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
         return
-    sp.parent.mkdir(parents=True, exist_ok=True)
-    legacy.rename(sp)
+
+    try:
+        _ensure_safe_conduct_dir(opts.repo_root)
+        _ensure_safe_fs_path(sp, expect_dir=False)
+        legacy.rename(sp)
+    except (FileNotFoundError, FileExistsError, OSError, UnsafeConductPathError):
+        # Concurrent migrator or symlink races: bail. The next load will
+        # observe whichever file landed at sp.
+        return
     legacy_lock = legacy.with_suffix(legacy.suffix + ".lock")
     if legacy_lock.exists():
         try:
@@ -265,8 +353,8 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
 
 def _persist_state(opts: ConductOptions, state: dict) -> None:
     sp = _state_path(opts)
-    sp.parent.mkdir(parents=True, exist_ok=True)
-    sp.write_text(json.dumps(state, indent=2))
+    _ensure_safe_conduct_dir(opts.repo_root)
+    _safe_write_text(sp, json.dumps(state, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -761,7 +849,16 @@ def conduct(opts: ConductOptions) -> ConductResult:
         return pre
 
     sp = _state_path(opts)
-    sp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        _ensure_safe_conduct_dir(opts.repo_root)
+        _ensure_safe_fs_path(sp, expect_dir=False)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="preflight_fail",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
         state = _load_or_init_state(opts)
@@ -911,6 +1008,15 @@ def _retry_after_hook_failure(
 def pause_phase(opts: ConductOptions) -> ConductResult:
     """`--pause-phase`: stash work, mark state paused, exit."""
     sp = _state_path(opts)
+    try:
+        _ensure_safe_fs_path(sp, expect_dir=False)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="blocked",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     if not sp.exists():
         return ConductResult(status="awaiting_user", state={}, summary="no active run")
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
@@ -929,6 +1035,17 @@ def abort_run(opts: ConductOptions) -> ConductResult:
     sp = _state_path(opts)
     lockfile = sp.with_suffix(sp.suffix + ".lock")
     lockdir = sp.with_suffix(sp.suffix + ".lock.lockdir")
+    try:
+        _ensure_safe_fs_path(sp, expect_dir=False)
+        _ensure_safe_fs_path(lockfile, expect_dir=False)
+        _ensure_safe_fs_path(lockdir, expect_dir=True)
+    except UnsafeConductPathError as exc:
+        return ConductResult(
+            status="blocked",
+            state={},
+            summary="unsafe conduct state path",
+            diagnostic=str(exc),
+        )
     # Acquire the lock while we tear down so we don't race with a running
     # conductor. We delete the lockfile afterwards, which is safe because
     # the StateLock context manager has already released the fd/lockdir by

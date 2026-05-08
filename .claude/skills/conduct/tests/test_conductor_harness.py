@@ -1139,3 +1139,78 @@ def test_legacy_state_file_not_migrated_when_plan_path_differs(repo):
     )
     assert legacy.exists()
     assert not _state_file_for(plan, repo).exists()
+
+
+def test_legacy_state_file_migrates_optimistically_when_plan_path_missing(repo):
+    """If the legacy file lacks a plan_path field, migrate optimistically."""
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    legacy = state_dir / f"state-{plan.stem}.json"
+    legacy.write_text(json.dumps({"phase_index": 0, "iteration_count": 0}))
+
+    from conductor import _migrate_legacy_state_file
+
+    _migrate_legacy_state_file(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    assert not legacy.exists()
+    assert _state_file_for(plan, repo).exists()
+
+
+def test_conduct_refuses_symlinked_state_path(repo):
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    victim = repo / "victim.txt"
+    victim.write_text("keep me\n")
+    sp = _state_file_for(plan, repo)
+    sp.symlink_to(victim)
+
+    spawner = StubSpawner(repo)
+    result = conduct(
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner()
+        )
+    )
+    assert result.status == "preflight_fail"
+    assert "unsafe conduct state path" in result.summary
+    assert victim.read_text() == "keep me\n"
+    assert spawner.calls == []
+
+
+def test_abort_run_refuses_symlinked_state_path(repo):
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    victim = repo / "victim.txt"
+    victim.write_text("keep me\n")
+    sp = _state_file_for(plan, repo)
+    sp.symlink_to(victim)
+
+    result = abort_run(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    assert result.status == "blocked"
+    assert victim.read_text() == "keep me\n"
+    assert sp.is_symlink()
+
+
+def test_legacy_state_migration_skipped_when_legacy_is_symlink(repo):
+    """A symlinked legacy state file must not be followed during migration."""
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    victim = repo / "victim.json"
+    victim.write_text(json.dumps({"plan_path": str(plan)}))
+    legacy = state_dir / f"state-{plan.stem}.json"
+    legacy.symlink_to(victim)
+
+    from conductor import _migrate_legacy_state_file
+
+    _migrate_legacy_state_file(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    assert legacy.is_symlink()
+    assert victim.exists()
+    assert not _state_file_for(plan, repo).exists()
