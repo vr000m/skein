@@ -170,7 +170,7 @@ def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
             # phase is not a good moment to demand a fresh review pass. Initial
             # runs (no --resume) keep the hard-stop — refreshing there would
             # silently bless drift between /review-plan and the first phase.
-            old_iso, old_sha = marker  # type: ignore[misc]
+            old_iso, old_sha = marker
             new_sha = write_marker(opts.plan_path)
             print(
                 "conduct: review marker auto-refreshed on resume "
