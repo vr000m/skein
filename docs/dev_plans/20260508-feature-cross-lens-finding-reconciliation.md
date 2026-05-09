@@ -173,7 +173,7 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 
 ## Progress
 
-- [ ] Phase 1: Standalone reconciler + GENERIC block + extended parity script
+- [x] Phase 1: Standalone reconciler + GENERIC block + extended parity script
 - [ ] Phase 2: Update report templates to surface provenance
 - [ ] Phase 3: Wire reconciliation step into orchestrator prose
 - [ ] Phase 4: Final acceptance + promote
