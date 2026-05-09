@@ -168,7 +168,7 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 - `/review-plan`, `/review`, `/security-review`, and `/deep-review` run on this PR before merge with all findings addressed.
 - `just promote-skills` run as a separate post-merge action (after merge to main, not on this branch).
 
-<!-- reviewed: 2026-05-09 @ 907259d620d43b199f1afa6f15a10b913b56e2af -->
+<!-- reviewed: 2026-05-09 @ ce1f2fc85716252807c70cf99eb6fe3c81e892c1 -->
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
