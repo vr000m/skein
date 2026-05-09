@@ -1,6 +1,6 @@
 # Task: Cross-lens finding reconciliation in `deep-review` and `review-plan`
 
-**Status**: Not Started
+**Status**: In Progress
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/cross-lens-reconciliation
@@ -176,7 +176,7 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 - [x] Phase 1: Standalone reconciler + GENERIC block + extended parity script
 - [x] Phase 2: Update report templates to surface provenance
 - [x] Phase 3: Wire reconciliation step into orchestrator prose
-- [ ] Phase 4: Final acceptance + promote
+- [x] Phase 4: Final acceptance + promote
 
 ## Findings
 
