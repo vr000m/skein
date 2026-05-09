@@ -175,7 +175,7 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 
 - [x] Phase 1: Standalone reconciler + GENERIC block + extended parity script
 - [x] Phase 2: Update report templates to surface provenance
-- [ ] Phase 3: Wire reconciliation step into orchestrator prose
+- [x] Phase 3: Wire reconciliation step into orchestrator prose
 - [ ] Phase 4: Final acceptance + promote
 
 ## Findings
@@ -184,8 +184,10 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 - **Phase 2 reviewer (advisory, 2026-05-09):** `mixed-severity` merge currently keeps only the highest-severity lens's `summary`/`evidence`/`suggestion` text; lower-severity lens content is dropped beyond the `Lenses:` citation. The GENERIC block does not document a rule for concatenating per-lens evidence on merge. Phase 3 should either codify "highest-severity row wins; rest cited via Lenses only" in the GENERIC block, or extend the merge to preserve per-lens evidence.
 
 ## Issues & Solutions
-
-(none yet)
+- **Phase 3 reviewer (Important Scope, 2026-05-09):** GENERIC FINDING SCHEMA AND MERGE block does not document the mixed-severity text-preservation rule (highest-severity row's summary/evidence/suggestion wins; other lenses cited via `Lenses:` only). Phase 4 should add a one-line clause to the GENERIC block in all four SKILL.md files (parity-checked).
+- **Phase 3 reviewer (Minor Clarity, 2026-05-09):** rendered report template (Reconciliation line, Lenses field, Related findings subsection) has no automated test coverage — the harness validates JSON, not the rendered markdown. Phase 4 should either add a small renderer in `run-fixtures.sh`, or explicitly accept the gap and document the unverified surface.
+- **Phase 3 reviewer (Minor Clarity, 2026-05-09):** `.claude/skills/deep-review/SKILL.md` Step 3.5 lacks a forward pointer from the fan-out section, unlike the Codex mirror which has the inline note. Phase 4 should add the cross-reference.
+- **Phase 3 test-writer adjustment (2026-05-09):** `test-determinism.sh` originally hard-required `shuf`/`gshuf` (GNU coreutils). Conductor edited the harness inline to add a portable awk+sort fallback so the test runs on stock macOS without `brew install coreutils` (which was denied by user policy). Determinism semantics preserved: 5 distinct shuffles per fixture, all asserted byte-identical and matching expected canonical output.
 
 ## Final Results
 
