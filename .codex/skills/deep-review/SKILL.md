@@ -233,7 +233,7 @@ If the documentation is up to date, say so concisely.
 6. If subagent delegation is unavailable in the current Codex environment, run the same enabled
    lenses sequentially in the main session using the same prompt contract and findings format rather
    than failing the review.
-7. Wait for every lens to finish, then consolidate and deduplicate findings.
+7. Wait for every lens to finish, then run the reconciliation pass: collect lens output as JSON-Lines and pipe through `scripts/reconcile-findings.sh` (see [Reconcile Findings (Step 3.5)](#reconcile-findings-step-35)). No LLM call inside this step — matching is structural on `(file, line, category)` only.
 8. If delegation was used, close every completed or failed lens agent after its result has been
    captured. Keep an agent open only if the review is intentionally paused and you expect to resume
    that exact agent later.
@@ -340,6 +340,28 @@ when no review brief is present.
 
   All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
+
+## Reconcile Findings (Step 3.5)
+
+After every lens subagent has returned and before the consolidated report is emitted to the main context, run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3.5**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block above; the orchestrator never asks a model to decide whether two findings are the same defect.
+
+Procedure:
+
+1. **Collect lens output as JSON-Lines.** For each completed lens (Logic, Security, Spec, Architecture, Documentation), serialise its returned findings into the schema documented in the GENERIC block — one JSON object per line, fields `{lens, severity, category, file, line, summary, evidence, suggestion}`. Errored or timed-out lenses are tracked separately for the report header (per the GENERIC block) and are NOT fed into reconciliation. The combined stream is written to `findings.jsonl`.
+2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
+
+   ```
+   cat findings.jsonl | scripts/reconcile-findings.sh
+   ```
+
+   The script emits canonical reconciled JSON on stdout: `{summary: {raw, merged, unique, related}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+3. **Render the JSON into the report template.** Use the report template in the [Output](#output) section: the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+4. **Emit the rendered report.** Hand off to suppression and triage. The reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
+
+Forbidden inside Step 3.5:
+- LLM calls of any kind. The merge rule is structural.
+- Free-text similarity matching across lens summaries. Lenses run in fresh context with no shared vocabulary; their summaries paraphrase the same defect differently and would never match.
+- Mutating the canonical sort order in the rendered report. The script's output order is the report's order.
 
 ## Suppression Rules
 

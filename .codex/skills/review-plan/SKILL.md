@@ -328,9 +328,31 @@ If every reference checks out, say so. Do not manufacture findings. A clean lens
 ```
 <!-- END GENERIC LENS PROMPT: codebase-claims -->
 
-### Step 3: Merge Findings by Severity
+### Step 3: Reconcile Findings
 
-When all four lens agents return, merge their outputs. The merge logic is:
+After every lens agent has returned (Step 2) and before the report is presented to the user (Step 5), run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block below; the orchestrator never asks a model to decide whether two lens findings describe the same plan-level issue.
+
+The merge logic — schema, signature, severity policy, canonical sort, and related-findings cross-reference — is documented authoritatively in the GENERIC block. Read it as the binding contract; the prose around it walks through how the orchestrator applies it.
+
+Procedure:
+
+1. **Collect lens output as JSON-Lines.** For each of the four lens agents (architecture, sequencing, spec-and-testing, codebase-claims), serialise its returned findings into the schema documented in the GENERIC block — one JSON object per line, fields `{lens, severity, category, file, line, summary, evidence, suggestion}`. Errored or timed-out lenses are tracked separately for the report header (per the GENERIC block) and are NOT fed into reconciliation. The combined stream is written to `findings.jsonl`.
+2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
+
+   ```
+   cat findings.jsonl | scripts/reconcile-findings.sh
+   ```
+
+   The script emits canonical reconciled JSON on stdout: `{summary: {raw, merged, unique, related}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+3. **Render the JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+4. **Hand off to Step 4 and Step 5.** The reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
+
+Forbidden inside Step 3:
+- LLM calls of any kind. The merge rule is structural.
+- Free-text similarity matching across lens summaries. Lenses run in fresh context with no shared vocabulary; their summaries paraphrase the same defect differently and would never match.
+- Mutating the canonical sort order in the rendered report. The script's output order is the report's order.
+
+The merge contract is:
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
 - **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.

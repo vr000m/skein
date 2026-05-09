@@ -5,11 +5,13 @@
 # through scripts/reconcile-findings.sh and diff stdout against the
 # corresponding tests/reconciliation/expected/*.md file.
 #
-# Note on filename convention: per the dev plan's Phase 2 slot the
-# expected files use the .md extension, but the *content* is the
-# canonical JSON output of the reconciler script. Phase 2 exercises
-# script -> expected-output parity; rendered markdown templates land
-# in the orchestrator prose in Phase 3.
+# Contract: expected/*.md files are the canonical JSON output of
+# scripts/reconcile-findings.sh. Rendering to the human-readable
+# markdown report template lives in deep-review/review-plan SKILL.md
+# Step 3.5 (orchestrator prose, not a script) and is therefore not
+# exercised by this harness. The .md extension is retained for
+# continuity with the Phase 2 fixtures; it does not imply the file
+# contains rendered markdown.
 #
 # Additional invariant asserted here: shuffled-order.jsonl (input
 # reversed relative to two-lens-merge.jsonl) MUST produce byte-identical
