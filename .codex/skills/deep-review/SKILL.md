@@ -395,10 +395,14 @@ The consolidated report should include:
 
 **Overall**: [one-line summary]
 
+**Reconciliation**: raw=N merged=M unique=U related=R
+
 ### Critical
 - **[Category]**: [Finding]
+  - Lenses: [logic, security]
   - Evidence: [what was found]
   - Suggestion: [what to change]
+  - Related findings: **[Other Category]** [Severity] at same file:line — [one-line cross-reference]
 
 ### Important
 - ...
@@ -410,6 +414,8 @@ The consolidated report should include:
 **Next steps**: Review these findings and decide which ones to apply. Update the plan or code with
 the accepted changes, then rerun `/deep-review` if the snapshot changed.
 ```
+
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
 
 If the review is clean, say so concisely and note any residual risks or lenses that were skipped.
 

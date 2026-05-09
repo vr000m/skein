@@ -1,0 +1,2 @@
+{"lens":"security","severity":"Critical","category":"injection","file":"src/db.py","line":17,"summary":"unsanitised input","evidence":"user param interpolated","suggestion":"use parameterised query"}
+{"lens":"logic","severity":"Critical","category":"injection","file":"src/db.py","line":17,"summary":"sql concatenation","evidence":"string concat with user input","suggestion":"prepared statement"}

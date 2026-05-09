@@ -348,10 +348,14 @@ Present the merged findings to the user. Format:
 
 **Overall**: [one-line summary covering all four lenses]
 
+**Reconciliation**: raw=N merged=M unique=U related=R
+
 ### Critical
-- **[Lens] / [Category]**: [Finding]
+- **[Category]**: [Finding]
+  - Lenses: [architecture, sequencing]
   - Evidence: [what was found in codebase or plan]
   - Suggestion: [what to add/change in the plan]
+  - Related findings: **[Other Category]** [Severity] at same file:line — [one-line cross-reference]
 
 ### Important
 - ...
@@ -363,6 +367,8 @@ Present the merged findings to the user. Format:
 **Next steps**: Review these findings and decide which ones to incorporate into the plan.
 Update the plan with `/dev-plan update` for any accepted changes.
 ```
+
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `Lenses:` field replaces the prior `[Lens] / [Category]` prefix and uniformly handles ≥1 source lens — single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped. The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
 
 If the merged review is clean (no Critical or Important findings), say so concisely and proceed.
 

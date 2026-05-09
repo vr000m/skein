@@ -1,0 +1,2 @@
+{"lens":"logic","severity":"Important","category":"correctness","file":"src/foo.py","line":42,"summary":"minor off-by-one","evidence":"loop runs N+1 times","suggestion":"use range(N)"}
+{"lens":"security","severity":"Critical","category":"correctness","file":"src/foo.py","line":42,"summary":"unbounded loop","evidence":"may overrun buffer","suggestion":"bounds check"}
