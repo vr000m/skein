@@ -174,13 +174,14 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 ## Progress
 
 - [x] Phase 1: Standalone reconciler + GENERIC block + extended parity script
-- [ ] Phase 2: Update report templates to surface provenance
+- [x] Phase 2: Update report templates to surface provenance
 - [ ] Phase 3: Wire reconciliation step into orchestrator prose
 - [ ] Phase 4: Final acceptance + promote
 
 ## Findings
 
-(append findings here as work proceeds)
+- **Phase 2 reviewer (advisory, 2026-05-09):** `tests/reconciliation/expected/*.md` files currently contain raw reconciler JSON output rather than rendered markdown reports. The test-writer deferred template rendering to Phase 3 since the rendering procedure lives in the orchestrator prose that Phase 3 wires in. Phase 3 should either update `expected/*.md` to be rendered markdown after wiring the orchestrator step, or update `run-fixtures.sh` to render before diffing. Tracking as a Phase 3 follow-up rather than a Phase 2 fix loop.
+- **Phase 2 reviewer (advisory, 2026-05-09):** `mixed-severity` merge currently keeps only the highest-severity lens's `summary`/`evidence`/`suggestion` text; lower-severity lens content is dropped beyond the `Lenses:` citation. The GENERIC block does not document a rule for concatenating per-lens evidence on merge. Phase 3 should either codify "highest-severity row wins; rest cited via Lenses only" in the GENERIC block, or extend the merge to preserve per-lens evidence.
 
 ## Issues & Solutions
 
