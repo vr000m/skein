@@ -36,6 +36,12 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - Skipped or timed-out lenses are called out under "Residual Risks"
 - Markdown is well-formed and renders cleanly
 
+## Reconciliation
+
+- Report includes a `Lenses:` field on every finding (sorted alphabetically, deduplicated); merged findings cite ≥2 lenses
+- No two findings share an identical `(file, line, category)` signature in the same severity tier — a duplicate signature means the merge step did not run or its output was lost
+- Reconciliation step receives only lens return strings (JSON-Lines via `scripts/reconcile-findings.sh`); no parent conversation context is passed to it
+
 ## Continuation Safety
 
 - If `--continue` was used and stored `head_commit == HEAD`, only `errored`/`timed_out` lenses were re-run; completed lens findings were reused

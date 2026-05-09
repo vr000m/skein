@@ -333,14 +333,21 @@ If every reference checks out, say so. Do not manufacture findings. A clean lens
 When all four lens agents return, merge their outputs. The merge logic is:
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
-- **Finding schema**: every finding has the five fields `{category, severity, finding, evidence, suggestion}`.
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
 - **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
-- **Category values**: `category ∈ {Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference}` — no other values. `Nonexistent Reference` is reserved for `codebase-claims` lens findings about paths, APIs, or dependencies that do not exist or have moved.
-- **Merge order**: group all findings by severity (Critical → Important → Minor). Within each severity tier, group by lens for traceability.
-- **Empty lenses**: a lens that returns "no issues" or an empty finding list is dropped from the output silently — do not list it as a separate "no findings" section.
-- **All-empty case**: if all four lenses return empty, the merged report says "No findings — plan looks ready" explicitly.
-- **Duplicates**: if two lenses flag the same underlying issue, collapse to the highest severity and note the cross-lens overlap rather than listing twice.
-- **Errored or timed-out lenses**: report as `errored` / `timed_out`, not omitted.
+- **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
+- **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
+- **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
+- **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
+- **Empty input**: reconciliation still emits the structured report with `summary: {raw: 0, merged: 0, unique: 0, related: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
+- **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
+
+  ```
+  cat findings.jsonl | scripts/reconcile-findings.sh
+  ```
+
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
 
 ### Step 4: Self-Check Against Rubric

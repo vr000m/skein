@@ -84,6 +84,58 @@ for skill in "${managed_skills[@]}"; do
 	fi
 done
 
+# --- GENERIC FINDING SCHEMA AND MERGE block parity ---------------------
+#
+# The reconciliation contract block (delimited by HTML-comment markers
+# inside SKILL.md) is the single point of contact between SKILL.md prose
+# and `scripts/reconcile-findings.sh`. The same block content MUST exist
+# byte-identically in both deep-review and review-plan, on both the
+# Claude and Codex sides. Modelled on
+# `scripts/check-trunk-snippet-parity.sh`'s extraction approach.
+
+GENERIC_TARGETS=(
+	"$ROOT_DIR/.claude/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/.claude/skills/review-plan/SKILL.md"
+	"$ROOT_DIR/.codex/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/.codex/skills/review-plan/SKILL.md"
+)
+
+extract_generic() {
+	# Print the lines strictly between the BEGIN and END markers.
+	awk '
+		/<!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->/ { found=1; next }
+		/<!-- END GENERIC FINDING SCHEMA AND MERGE -->/ { exit }
+		found { print }
+	' "$1"
+}
+
+generic_canonical=""
+generic_canonical_path=""
+
+for path in "${GENERIC_TARGETS[@]}"; do
+	if [[ ! -f "$path" ]]; then
+		echo "drift: GENERIC block target missing: $path"
+		PARITY_DIFF=1
+		continue
+	fi
+	block="$(extract_generic "$path")"
+	if [[ -z "$block" ]]; then
+		echo "drift: GENERIC FINDING SCHEMA AND MERGE block not found in $path"
+		PARITY_DIFF=1
+		continue
+	fi
+	if [[ -z "$generic_canonical" ]]; then
+		generic_canonical="$block"
+		generic_canonical_path="$path"
+		continue
+	fi
+	if [[ "$block" != "$generic_canonical" ]]; then
+		echo "drift: GENERIC block in $path differs from $generic_canonical_path"
+		diff <(printf '%s\n' "$generic_canonical") <(printf '%s\n' "$block") || true
+		PARITY_DIFF=1
+	fi
+done
+
 if [[ "$PARITY_DIFF" -eq 1 ]]; then
 	echo "check-prompt-parity failed"
 	exit 1

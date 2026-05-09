@@ -323,15 +323,23 @@ when no review brief is present.
 
 ## Findings Format
 
-Every lens must return structured findings with:
-- `severity`: `Critical`, `Important`, or `Minor`
-- `category`: `Logic`, `Security`, `Spec`, `Architecture`, or `Documentation`
-- `file:line`
-- `evidence`
-- `suggestion`
+<!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
+- **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
+- **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
+- **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
+- **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
+- **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
+- **Empty input**: reconciliation still emits the structured report with `summary: {raw: 0, merged: 0, unique: 0, related: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
+- **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
-When multiple lenses flag the same file:line, keep the higher-severity finding and note the overlap
-in the consolidated report.
+  ```
+  cat findings.jsonl | scripts/reconcile-findings.sh
+  ```
+
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
+<!-- END GENERIC FINDING SCHEMA AND MERGE -->
 
 ## Suppression Rules
 
