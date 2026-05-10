@@ -103,7 +103,8 @@ read -r -d '' CASE1_EXPECTED <<'JSON' || true
     "raw": 1,
     "merged": 0,
     "unique": 1,
-    "related": 0
+    "related": 0,
+    "dropped": 0
   },
   "findings": [
     {
@@ -144,7 +145,8 @@ read -r -d '' CASE2_EXPECTED <<'JSON' || true
     "raw": 2,
     "merged": 1,
     "unique": 1,
-    "related": 0
+    "related": 0,
+    "dropped": 0
   },
   "findings": [
     {
@@ -184,7 +186,8 @@ read -r -d '' CASE3_EXPECTED <<'JSON' || true
     "raw": 2,
     "merged": 0,
     "unique": 2,
-    "related": 1
+    "related": 1,
+    "dropped": 0
   },
   "findings": [
     {
@@ -236,7 +239,8 @@ read -r -d '' CASE4_EXPECTED <<'JSON' || true
     "raw": 0,
     "merged": 0,
     "unique": 0,
-    "related": 0
+    "related": 0,
+    "dropped": 0
   },
   "findings": [],
   "related": []

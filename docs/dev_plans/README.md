@@ -14,6 +14,7 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
+| 2026-05-08 | feature | cross-lens-finding-reconciliation | Complete | feature/cross-lens-reconciliation | `docs/dev_plans/20260508-feature-cross-lens-finding-reconciliation.md` |
 | 2026-05-04 | feature | skill-improvements-from-usage-report | Complete | feature/skill-improvements-from-usage-report | `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md` |
 | 2026-03-15 | feature | review-plan-skill | Complete | feat/review-plan-skill | N/A (small feature) |
 | 2026-03-13 | feature | spec-compliance-check | Complete | feat/rfc-finder-skill | `docs/dev_plans/20260313-feature-spec-compliance-check.md` |

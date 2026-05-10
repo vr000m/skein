@@ -1,11 +1,11 @@
 # Task: Cross-lens finding reconciliation in `deep-review` and `review-plan`
 
-**Status**: In Progress
+**Status**: Complete
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/cross-lens-reconciliation
 **Created**: 2026-05-08
-**Completed**: (fill when done)
+**Completed**: 2026-05-10
 
 ## Objective
 
@@ -184,11 +184,35 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 - **Phase 2 reviewer (advisory, 2026-05-09):** `mixed-severity` merge currently keeps only the highest-severity lens's `summary`/`evidence`/`suggestion` text; lower-severity lens content is dropped beyond the `Lenses:` citation. The GENERIC block does not document a rule for concatenating per-lens evidence on merge. Phase 3 should either codify "highest-severity row wins; rest cited via Lenses only" in the GENERIC block, or extend the merge to preserve per-lens evidence.
 
 ## Issues & Solutions
-- **Phase 3 reviewer (Important Scope, 2026-05-09):** GENERIC FINDING SCHEMA AND MERGE block does not document the mixed-severity text-preservation rule (highest-severity row's summary/evidence/suggestion wins; other lenses cited via `Lenses:` only). Phase 4 should add a one-line clause to the GENERIC block in all four SKILL.md files (parity-checked).
-- **Phase 3 reviewer (Minor Clarity, 2026-05-09):** rendered report template (Reconciliation line, Lenses field, Related findings subsection) has no automated test coverage — the harness validates JSON, not the rendered markdown. Phase 4 should either add a small renderer in `run-fixtures.sh`, or explicitly accept the gap and document the unverified surface.
-- **Phase 3 reviewer (Minor Clarity, 2026-05-09):** `.claude/skills/deep-review/SKILL.md` Step 3.5 lacks a forward pointer from the fan-out section, unlike the Codex mirror which has the inline note. Phase 4 should add the cross-reference.
+- **Phase 3 reviewer (Important Scope, 2026-05-09)** — *resolved 2026-05-10*: GENERIC FINDING SCHEMA AND MERGE block now documents the mixed-severity text-preservation rule (highest-severity row's summary/evidence/suggestion wins; other lenses cited via `Lenses:` only). Clause added to the GENERIC block in all four SKILL.md files; parity check still passes byte-identically.
+- **Phase 3 reviewer (Minor Clarity, 2026-05-09)** — *accepted 2026-05-10*: rendered report template (Reconciliation line, Lenses field, Related findings subsection) has no automated test coverage — the harness validates JSON, not the rendered markdown. Gap accepted explicitly (see Final Results > Follow-up Work); a renderer in `run-fixtures.sh` is its own piece of work.
+- **Phase 3 reviewer (Minor Clarity, 2026-05-09)** — *resolved 2026-05-10*: `.claude/skills/deep-review/SKILL.md` now has a forward pointer to Step 3.5 at the end of Section 2 (Spawn Fresh-Context Subagents). The Codex mirror already had the equivalent inline note in its numbered fan-out step (line ~236).
 - **Phase 3 test-writer adjustment (2026-05-09):** `test-determinism.sh` originally hard-required `shuf`/`gshuf` (GNU coreutils). Conductor edited the harness inline to add a portable awk+sort fallback so the test runs on stock macOS without `brew install coreutils` (which was denied by user policy). Determinism semantics preserved: 5 distinct shuffles per fixture, all asserted byte-identical and matching expected canonical output.
 
 ## Final Results
 
-(fill on completion)
+### Summary
+
+Shipped cross-lens finding reconciliation across `deep-review` and `review-plan` in four phases. Phase 1 introduced the standalone reconciler script (`scripts/reconcile-findings.sh`) as the single source of truth, promoted the GENERIC FINDING SCHEMA AND MERGE block into a structured contract embedded byte-identically in four SKILL.md files, and extended `check-prompt-parity.sh` to gate that block. Phase 2 added the `Lenses:` provenance field, `Reconciliation:` summary line, and `Related findings` subsection to both report templates, and stood up the `tests/reconciliation/` harness with eight per-edge-case fixtures. Phase 3 wired the explicit "Step 3.5: Reconcile findings" step into the orchestrator prose for both skills (Claude + Codex mirrors) and added the determinism harness. Phase 4 ran the consolidated test suite and addressed three Phase 3 reviewer follow-ups plus a deep-review pass.
+
+### Outcomes
+
+- `scripts/reconcile-findings.sh` — single source of truth for the merge rule, canonical sort, related-callouts, and the `summary.{raw, merged, unique, related, dropped}` envelope. Uses `jq` when available; falls back to a hand-written awk parser that handles `\"`, `\\`, `\n`, `\t` escape sequences.
+- GENERIC FINDING SCHEMA AND MERGE block — byte-identical across `.claude/skills/{deep-review,review-plan}/SKILL.md` and the two Codex mirrors. Documents the signature, severity tie-break, mixed-severity text-preservation rule, `Lenses:` provenance, canonical sort, empty-input shape, and the literal pipe-through-script command.
+- Report templates — both skills render `Reconciliation: raw=N merged=M unique=U related=R`, the always-populated `Lenses:` field, and the `Related findings` subsection.
+- Orchestrator wiring — explicit "Step 3.5: Reconcile findings" prose in Claude `deep-review` (+ forward pointer from fan-out), Claude `review-plan`, and both Codex mirrors. The step explicitly forbids LLM calls; matching is structural only.
+- Parity infrastructure — `scripts/check-prompt-parity.sh` extended to extract+diff the GENERIC block across the four SKILL.md files, assert `scripts/reconcile-findings.sh` is present and executable, and parse `.env` without `eval`. The 4-way GENERIC duplication is documented in-file as an accepted trade-off.
+- Test coverage — 8 fixtures + run-fixtures.sh, test-determinism.sh (5 shuffles per fixture, awk+sort fallback for stock macOS), and test-reconciler-unit.sh covering single pass-through / two-lens merge / related-callout / empty input.
+
+### Learnings
+
+- Promoting the merge rule into a parity-checked block embedded in SKILL.md prose (rather than a transcluded shared file) is cheap to enforce and survives the Claude/Codex split cleanly. The 4-way duplication overhead is small because the parity script catches drift immediately.
+- Determinism is a first-class invariant for review tooling: shuffling lens-arrival order across 5 permutations per fixture caught one tie-break ambiguity early. Without that harness the bug would have surfaced as flaky reports.
+- The awk fallback parser took two iterations: the original greedy regex `[^"]*` truncated on escaped quotes inside lens evidence. The replacement walks the string honouring `\\` and `\"` so escapes round-trip safely.
+- Counting `merged` by distinct lenses per signature (not raw rows) avoids over-counting when a single lens emits the same finding twice — that case is single-source noise, not cross-lens reconciliation.
+
+### Follow-up Work
+
+- **Renderer test coverage** (accepted gap, Minor): the rendered markdown report template (Reconciliation line, Lenses field, Related findings subsection) is not exercised by an automated test — the harness diffs the JSON envelope only. A small renderer in `tests/reconciliation/run-fixtures.sh` is the obvious next step, but is a separate piece of work and not blocking for this PR.
+- **`summary.dropped` end-to-end visibility**: the script now counts JSON-Lines parse failures and emits the count in the envelope plus a stderr warning. The orchestrator prose does not yet surface `dropped > 0` in the rendered report header — currently the user only sees it via stderr. Worth threading through the report template if observed in practice.
+- **The three Phase 3 reviewer items** above (mixed-severity text-preservation clause, deep-review forward pointer, renderer-coverage gap) are now addressed in this commit.

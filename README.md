@@ -10,8 +10,8 @@ Reusable skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 | fan-out | Yes | Yes | Parallel agent orchestration via worktrees |
 | content-draft | Yes | Yes | Draft content following style guidelines |
 | content-review | Yes | Yes | Review content against style guidelines |
-| deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents |
-| review-plan | Yes | Yes | Audit a dev plan via four parallel fresh-context lenses (architecture, sequencing, spec-and-testing, codebase-claims) before implementation |
+| deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents; reconciles findings by structural signature |
+| review-plan | Yes | Yes | Audit a dev plan via four parallel fresh-context lenses (architecture, sequencing, spec-and-testing, codebase-claims) before implementation; reconciles findings by structural signature |
 | rfc-finder | Yes | Yes | Find and link to IETF RFCs and related drafts |
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |

@@ -10,10 +10,13 @@
 #
 # Stdout: Canonical JSON of the form:
 #   {
-#     "summary": {"raw": N, "merged": M, "unique": U, "related": R},
+#     "summary": {"raw": N, "merged": M, "unique": U, "related": R, "dropped": D},
 #     "findings": [ ... reconciled findings, sorted ... ],
 #     "related":  [ ... cross-references ... ]
 #   }
+#
+# Sentinel: missing or empty `line` is normalised to -1 in the parse step
+# so that absent line numbers sort distinctly from real line 0.
 #
 # Merge rule:
 #   - Group findings by the structural signature (file, line, category).
@@ -59,13 +62,15 @@ sev_rank() {
 
 # Emit a canonical empty report.
 emit_empty() {
-	cat <<'EOF'
+	local dropped="${1:-0}"
+	cat <<EOF
 {
   "summary": {
     "raw": 0,
     "merged": 0,
     "unique": 0,
-    "related": 0
+    "related": 0,
+    "dropped": ${dropped}
   },
   "findings": [],
   "related": []
@@ -74,7 +79,7 @@ EOF
 }
 
 if [[ -z "${input// }" ]]; then
-	emit_empty
+	emit_empty 0
 	exit 0
 fi
 
@@ -87,7 +92,8 @@ fi
 parse_tsv() {
 	if [[ "$HAVE_JQ" -eq 1 ]]; then
 		# jq path: robust, handles arbitrary JSON. Skip lines that are
-		# not JSON objects.
+		# not JSON objects. Missing/empty `line` -> -1 sentinel so absent
+		# values sort distinctly from real line 0.
 		printf '%s\n' "$input" | jq -rR '
 			. as $line |
 			try (fromjson | select(type == "object")) catch empty |
@@ -99,7 +105,7 @@ parse_tsv() {
 				(.severity // "" | tostring),
 				(.category // "" | tostring),
 				(.file // "" | tostring),
-				((.line // "") | tostring),
+				((if (.line == null or .line == "") then -1 else .line end) | tostring),
 				(.lens // "" | tostring),
 				(.summary // "" | tostring),
 				(.evidence // "" | tostring),
@@ -110,41 +116,89 @@ parse_tsv() {
 		'
 	else
 		# awk fallback: minimal parser for flat JSON objects of the
-		# expected shape. Strings may not contain unescaped braces,
-		# quotes, or backslashes.
+		# expected shape. Handles \", \\, \n, \t escape sequences inside
+		# string fields. Missing/empty `line` -> -1 sentinel.
 		printf '%s\n' "$input" | awk '
-			function unesc(s) {
-				gsub(/\\\\"/, "\"", s); gsub(/\\\\n/, "\n", s); gsub(/\\\\t/, "\t", s); gsub(/\\\\\\\\/, "\\", s); return s
+			function unesc(s,    out, i, n, c, nx) {
+				# Decode JSON string escapes: \" \\ \n \t \/ \r \b \f.
+				out = ""
+				n = length(s)
+				for (i = 1; i <= n; i++) {
+					c = substr(s, i, 1)
+					if (c == "\\" && i < n) {
+						nx = substr(s, i + 1, 1)
+						if (nx == "\"") { out = out "\""; i++ }
+						else if (nx == "\\") { out = out "\\"; i++ }
+						else if (nx == "n") { out = out "\n"; i++ }
+						else if (nx == "t") { out = out "\t"; i++ }
+						else if (nx == "r") { out = out "\r"; i++ }
+						else if (nx == "/") { out = out "/"; i++ }
+						else if (nx == "b") { out = out "\b"; i++ }
+						else if (nx == "f") { out = out "\f"; i++ }
+						else { out = out c }
+					} else {
+						out = out c
+					}
+				}
+				return out
 			}
-			function field(json, key,    re, m, val) {
+			function find_key(json, key,    re, pos) {
 				re = "\"" key "\"[[:space:]]*:[[:space:]]*"
-				if (match(json, re "\"[^\"]*\"")) {
-					val = substr(json, RSTART + RLENGTH - (RLENGTH - index(substr(json, RSTART), "\"" key "\"") - length(key) - 2))
-					# simpler: use a different approach below
+				if (match(json, re)) {
+					return RSTART + RLENGTH
 				}
-				# Use a simpler regex-based extract on the original string.
-				if (match(json, "\"" key "\"[[:space:]]*:[[:space:]]*\"[^\"]*\"")) {
-					val = substr(json, RSTART, RLENGTH)
-					sub("\"" key "\"[[:space:]]*:[[:space:]]*\"", "", val)
-					sub("\"$", "", val)
-					return val
+				return 0
+			}
+			function read_string(json, start,    i, n, c, esc_n, raw) {
+				# Caller has already advanced past the opening ".
+				# Walk forward, honouring \\ and \" so the string ends
+				# at the FIRST unescaped ".
+				n = length(json)
+				raw = ""
+				for (i = start; i <= n; i++) {
+					c = substr(json, i, 1)
+					if (c == "\\") {
+						# copy the escape pair verbatim; unesc() handles it.
+						if (i + 1 <= n) {
+							raw = raw substr(json, i, 2)
+							i++
+							continue
+						} else {
+							raw = raw c
+							continue
+						}
+					}
+					if (c == "\"") {
+						return raw
+					}
+					raw = raw c
 				}
-				if (match(json, "\"" key "\"[[:space:]]*:[[:space:]]*[0-9]+")) {
-					val = substr(json, RSTART, RLENGTH)
-					sub("\"" key "\"[[:space:]]*:[[:space:]]*", "", val)
-					return val
+				return raw
+			}
+			function field(json, key,    pos, c, num) {
+				pos = find_key(json, key)
+				if (pos == 0) return ""
+				c = substr(json, pos, 1)
+				if (c == "\"") {
+					return unesc(read_string(json, pos + 1))
+				}
+				# numeric or other bare token
+				if (match(substr(json, pos), /^-?[0-9]+/)) {
+					num = substr(substr(json, pos), RSTART, RLENGTH)
+					return num
 				}
 				return ""
 			}
 			function esc(s) { gsub(/\t/, "\\t", s); gsub(/\n/, "\\n", s); return s }
 			/^[[:space:]]*$/ { next }
-			!/^[[:space:]]*\{/ { next }
+			!/^[[:space:]]*\{/ { dropped++; next }
 			{
 				lens = field($0, "lens")
 				severity = field($0, "severity")
 				category = field($0, "category")
 				file = field($0, "file")
 				line = field($0, "line")
+				if (line == "") line = "-1"
 				summary = field($0, "summary")
 				evidence = field($0, "evidence")
 				suggestion = field($0, "suggestion")
@@ -152,11 +206,14 @@ parse_tsv() {
 				else if (severity == "Important") rank = 1
 				else if (severity == "Minor") rank = 2
 				else rank = 3
-				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", rank, severity, category, file, line, lens, esc(summary), esc(evidence), esc(suggestion)
+				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", rank, esc(severity), esc(category), esc(file), line, esc(lens), esc(summary), esc(evidence), esc(suggestion)
 			}
 		'
 	fi
 }
+
+# Count input lines (non-blank) for dropped detection.
+input_nonblank=$(printf '%s\n' "$input" | awk 'NF { c++ } END { print c+0 }')
 
 tsv="$(parse_tsv)"
 
@@ -166,8 +223,19 @@ if [[ -n "$tsv" ]]; then
 	raw=$(printf '%s\n' "$tsv" | grep -c '^' || true)
 fi
 
+# A line is "dropped" if it contained non-whitespace but didn't parse into a
+# row. We compare the count of non-blank input lines against successfully
+# parsed rows.
+dropped=$(( input_nonblank - raw ))
+if [[ "$dropped" -lt 0 ]]; then
+	dropped=0
+fi
+if [[ "$dropped" -gt 0 ]]; then
+	echo "warning: $dropped input line(s) failed to parse and were dropped" >&2
+fi
+
 if [[ "$raw" -eq 0 ]]; then
-	emit_empty
+	emit_empty "$dropped"
 	exit 0
 fi
 
@@ -195,6 +263,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 		joined = ""
 		prev = ""
 		for (i = 1; i <= n; i++) {
+			if (sorted_lens[i] == "") continue
 			if (sorted_lens[i] == prev) continue
 			if (joined != "") joined = joined ","
 			joined = joined sorted_lens[i]
@@ -273,16 +342,23 @@ if [[ -n "$final_tsv" ]]; then
 	merged_count=$(printf '%s\n' "$final_tsv" | grep -c '^' || true)
 fi
 
-# A "merged" record (in the summary sense) is one that combined >=2 raw
-# findings. Compute by re-scanning the original sorted stream.
+# A "merged" record (in the summary sense) is one that combined findings
+# from >=2 distinct lenses (cross-lens dedup). Single-lens duplicates do
+# NOT count as merged — those represent a single source emitting the same
+# finding twice, not cross-lens reconciliation.
 combined_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
 	{
 		sig = $3 SUBSEP $4 SUBSEP $5
-		c[sig]++
+		# Track distinct lenses per signature.
+		key = sig SUBSEP $6
+		if (!(key in seen)) {
+			seen[key] = 1
+			distinct[sig]++
+		}
 	}
 	END {
 		merged = 0
-		for (s in c) if (c[s] > 1) merged++
+		for (s in distinct) if (distinct[s] > 1) merged++
 		print merged
 	}
 ')
@@ -334,7 +410,7 @@ emit_findings_pretty() {
 			lenses_json = lenses_json "]"
 			sev = jesc($2); cat = jesc($3); file = jesc($4); line = $5
 			summary = jesc($7); evidence = jesc($8); suggestion = jesc($9)
-			line_field = (line ~ /^[0-9]+$/) ? line : ("\"" jesc(line) "\"")
+			line_field = (line ~ /^-?[0-9]+$/) ? line : ("\"" jesc(line) "\"")
 			printf "    {\n"
 			printf "      \"severity\": \"%s\",\n", sev
 			printf "      \"category\": \"%s\",\n", cat
@@ -376,7 +452,7 @@ emit_related_pretty() {
 			if (!first) printf ",\n"
 			first = 0
 			fa = jesc($1); la = $2; ca = jesc($3); cb = jesc($4)
-			la_field = (la ~ /^[0-9]+$/) ? la : ("\"" jesc(la) "\"")
+			la_field = (la ~ /^-?[0-9]+$/) ? la : ("\"" jesc(la) "\"")
 			printf "    {\n"
 			printf "      \"file\": \"%s\",\n", fa
 			printf "      \"line\": %s,\n", la_field
@@ -396,7 +472,8 @@ cat <<EOF
     "raw": $raw,
     "merged": $combined_groups,
     "unique": $unique_count,
-    "related": $related_count
+    "related": $related_count,
+    "dropped": $dropped
   },
   "findings": $findings_json,
   "related": $related_json

@@ -3,7 +3,8 @@
     "raw": 2,
     "merged": 0,
     "unique": 2,
-    "related": 1
+    "related": 1,
+    "dropped": 0
   },
   "findings": [
     {

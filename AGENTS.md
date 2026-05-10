@@ -20,7 +20,7 @@ Requires: `brew install just shellcheck shfmt`
 ```
 .claude/skills/     Claude Code skills (SKILL.md per skill)
 .codex/skills/      Codex CLI skills (mirrored structure)
-scripts/            Shell scripts for sync/promote/bootstrap/check
+scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity
 docs/dev_plans/     Development plans
 justfile            Task runner config
 .env.example        Template for local env overrides
@@ -44,11 +44,11 @@ Global is authoritative, repo is a mirror:
 Recommended development workflow using skills:
 
 1. `/dev-plan create feature xyz` — Create the plan; on `create` only, dispatches one fresh-context Explore subagent that returns structured codebase facts (verified paths, observed patterns, dependency versions, verified git refs) which land above the review marker. `update` and `complete` do not re-explore
-2. `/review-plan` — Audit the plan by dispatching four parallel fresh-context lens agents (`architecture`, `sequencing`, `spec-and-testing`, `codebase-claims`); merges findings by severity, blocks until complete, and on acceptance writes a review marker footer consumed by `/conduct`. Cost: three high-reasoning lenses plus one cheap factual lens per run
+2. `/review-plan` — Audit the plan by dispatching four parallel fresh-context lens agents (`architecture`, `sequencing`, `spec-and-testing`, `codebase-claims`); reconciles findings by structural `(file, line, category)` signature and surfaces same-location-different-category findings as cross-references; blocks until complete, and on acceptance writes a review marker footer consumed by `/conduct`. Cost: three high-reasoning lenses plus one cheap factual lens per run
 3. Address review findings, update plan as needed
 4. `/conduct` — Walk a reviewed linear plan phase by phase, delegating implementation + tests per phase to harness-native clean-context subagents while preserving the shared review-marker, phase-slot, report-schema, and handback contracts. On `--resume`, a stale review marker is auto-refreshed in place (above-marker amendments mid-run no longer require a re-run of `/review-plan`); initial runs and missing markers still hard-stop. State-file naming and resume-guard details may vary by harness implementation (pair with `/fan-out` at the outer layer when phases themselves fan out)
 5. `/fan-out` — Fan out independent tasks to parallel agents (or implement manually)
-6. `/deep-review` — Run a multi-lens code review after implementation and before merge
+6. `/deep-review` — Run a multi-lens code review after implementation and before merge. Reconciles findings by structural signature to suppress false-positive amplification across lenses.
 
 Skills delegate heavy phases (research, analysis, report generation) to subagents and return only the structured result to the main context. This keeps main context lean and preserves token budgets on long sessions. User-facing I/O (confirmations, applying edits, presenting results) stays in the main context.
 
