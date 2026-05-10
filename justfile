@@ -23,6 +23,14 @@ check-prompt-parity:
 check-trunk-snippet-parity:
     ./scripts/check-trunk-snippet-parity.sh
 
+reconciliation-tests:
+    ./scripts/check-prompt-parity.sh
+    ./scripts/check-trunk-snippet-parity.sh
+    bash tests/reconciliation/test-renderer.sh
+    bash tests/reconciliation/run-fixtures.sh
+    bash tests/reconciliation/test-determinism.sh
+    bash tests/reconciliation/test-reconciler-unit.sh
+
 lint-scripts:
     shellcheck scripts/*.sh
     shfmt -d scripts/*.sh

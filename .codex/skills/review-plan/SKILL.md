@@ -395,7 +395,7 @@ Present the merged findings to the user. Format them clearly:
   - Lenses: [architecture, sequencing]
   - Evidence: [what was found in codebase or plan]
   - Suggestion: [what to add/change in the plan]
-  - Related findings: **[Other Category]** [Severity] at same file:line — [one-line cross-reference]
+  - Related findings: **[Other Category]** [Severity] at same file:line
 
 ### Important
 - ...

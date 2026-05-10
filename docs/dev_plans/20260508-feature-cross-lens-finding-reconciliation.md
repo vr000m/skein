@@ -79,7 +79,7 @@ This is the last NOT FIXED badge from the 2026-05-04 usage-report skill-improvem
 
 **Impl files:** (none — verification phase)
 **Test files:** (none — runs existing scripts)
-**Test command:** `just check-sync && just check-prompt-parity && just check-trunk-snippet-parity && bash tests/reconciliation/run-fixtures.sh && bash tests/reconciliation/test-determinism.sh && bash tests/reconciliation/test-reconciler-unit.sh`
+**Test command:** `just check-sync && just reconciliation-tests`
 
 - Run the full local test suite once. All Phase 1-3 edits should already keep parity green at every prior boundary; this phase is the consolidated check.
 - Run `just promote-skills` as the final acceptance step **after merge to main** (separate post-merge action, NOT a commit on this branch). Document the post-merge step in the PR description.
@@ -138,7 +138,7 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 - [x] Determinism: `tests/reconciliation/test-determinism.sh` shuffles lens-arrival order with `shuf` and asserts byte-identical output across 5 shuffles per fixture.
 - [x] Parity: `just check-prompt-parity` (extended to cover SKILL.md GENERIC blocks) gates every phase boundary commit. `just check-trunk-snippet-parity` continues to gate the unrelated trunk snippet.
 - [x] End-to-end: run `/deep-review` against a known feature branch (this branch itself, after Phase 3 lands), capture report, verify it shows merged findings with `Lenses:` provenance and a populated `Reconciliation:` line.
-- [x] Renderer: `tests/reconciliation/test-renderer.sh` pipes each fixture envelope through `scripts/render-reconciled-report.sh` and diffs against `expected/<name>.rendered.md` goldens; asserts the `dropped=D` iff invariant.
+- [x] Renderer: `tests/reconciliation/test-renderer.sh` pipes each fixture envelope through `scripts/render-reconciled-report.sh` and diffs against `expected/<name>.rendered.md` goldens; asserts the `dropped=D` iff invariant and byte-identical `jq`/awk fallback rendering.
 
 ### Test Results
 
@@ -215,6 +215,6 @@ Shipped cross-lens finding reconciliation across `deep-review` and `review-plan`
 
 ### Follow-up Work
 
-- **Renderer test coverage** — *resolved 2026-05-10*: added `scripts/render-reconciled-report.sh` as a deterministic reference renderer (jq path + awk fallback, both byte-identical), `tests/reconciliation/test-renderer.sh` to diff each fixture's rendered output against `expected/<name>.rendered.md` goldens, and a new `dropped-input` fixture exercising the parse-failure path. 10/10 renderer cases pass alongside the existing 10/10 envelope, 7/7 determinism (2 trivial-skip), and 4/4 unit tests.
+- **Renderer test coverage** — *resolved 2026-05-10*: added `scripts/render-reconciled-report.sh` as a deterministic reference renderer (jq path + awk fallback, both byte-identical), `tests/reconciliation/test-renderer.sh` to diff each fixture's rendered output against `expected/<name>.rendered.md` goldens, and `dropped-input` plus `escaped-delimiters` fixtures exercising parse-failure handling and string delimiters/backslashes. The renderer harness also compares `jq` and awk fallback output byte-for-byte when `jq` is installed.
 - **`summary.dropped` end-to-end visibility** — *resolved 2026-05-10*: the report template's `**Reconciliation**:` line now includes `dropped=D` whenever `summary.dropped > 0` (omitted when zero, to keep the common case terse). Threaded through all four SKILL.md mirrors (`.claude/{deep-review,review-plan}` + `.codex/{deep-review,review-plan}`); the renderer enforces the conditional and `test-renderer.sh` asserts the iff invariant.
 - **The three Phase 3 reviewer items** above (mixed-severity text-preservation clause, deep-review forward pointer, renderer-coverage gap) are now addressed in this commit.

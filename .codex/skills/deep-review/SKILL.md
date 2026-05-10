@@ -425,7 +425,7 @@ The consolidated report should include:
   - Lenses: [logic, security]
   - Evidence: [what was found]
   - Suggestion: [what to change]
-  - Related findings: **[Other Category]** [Severity] at same file:line — [one-line cross-reference]
+  - Related findings: **[Other Category]** [Severity] at same file:line
 
 ### Important
 - ...

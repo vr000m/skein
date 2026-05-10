@@ -52,7 +52,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			(.lenses | join(",")),
 			.summary, .evidence, .suggestion
-		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | @tsv
+		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("\t")
 	')"
 
 	# Related cross-references. Columns: file  line  cat_a  cat_b
@@ -61,7 +61,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			.file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			.categories[0], .categories[1]
-		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | @tsv
+		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("\t")
 	')"
 else
 	# Fallback: minimal awk JSON walker. Sufficient for the well-formed
@@ -312,8 +312,8 @@ fi
 findings_file="$(mktemp)"
 related_file="$(mktemp)"
 trap 'rm -f "$findings_file" "$related_file"' EXIT
-printf '%s\n' "$findings_tsv" > "$findings_file"
-printf '%s\n' "$related_tsv" > "$related_file"
+printf '%s\n' "$findings_tsv" >"$findings_file"
+printf '%s\n' "$related_tsv" >"$related_file"
 
 # Render finding sections in canonical order: Critical, Important, Minor,
 # then any other severities (e.g. unknown) sorted alphabetically.
@@ -325,7 +325,7 @@ emit_section() {
 		return 0
 	fi
 	printf '\n### %s\n' "$sev"
-	while IFS=$'\t' read -r r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion; do
+	while IFS=$'\t' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion; do
 		# Decode \t / \n that the parser escaped so multi-line evidence
 		# round-trips into rendered output.
 		decode() { printf '%s' "$1" | sed -e 's/\\t/	/g' -e 's/\\n/\

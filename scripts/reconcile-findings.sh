@@ -53,10 +53,10 @@ input="$(cat)"
 # Severity rank: lower number = higher severity.
 sev_rank() {
 	case "$1" in
-		Critical) echo 0 ;;
-		Important) echo 1 ;;
-		Minor) echo 2 ;;
-		*) echo 3 ;;
+	Critical) echo 0 ;;
+	Important) echo 1 ;;
+	Minor) echo 2 ;;
+	*) echo 3 ;;
 	esac
 }
 
@@ -78,7 +78,7 @@ emit_empty() {
 EOF
 }
 
-if [[ -z "${input// }" ]]; then
+if [[ -z "${input// /}" ]]; then
 	emit_empty 0
 	exit 0
 fi
@@ -111,8 +111,8 @@ parse_tsv() {
 				(.evidence // "" | tostring),
 				(.suggestion // "" | tostring)
 			]
-			| map(gsub("\t"; "\\t") | gsub("\n"; "\\n"))
-			| @tsv
+			| map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n"))
+			| join("\t")
 		'
 	else
 		# awk fallback: minimal parser for flat JSON objects of the
@@ -226,7 +226,7 @@ fi
 # A line is "dropped" if it contained non-whitespace but didn't parse into a
 # row. We compare the count of non-blank input lines against successfully
 # parsed rows.
-dropped=$(( input_nonblank - raw ))
+dropped=$((input_nonblank - raw))
 if [[ "$dropped" -lt 0 ]]; then
 	dropped=0
 fi
@@ -369,7 +369,7 @@ if [[ -n "$related_tsv" ]]; then
 	# Each pair contributes one cross-reference record; count deduped
 	# unordered pairs as half (we emitted both directions).
 	dir_count=$(printf '%s\n' "$related_tsv" | grep -c '^' || true)
-	related_count=$(( dir_count / 2 ))
+	related_count=$((dir_count / 2))
 fi
 
 # Emit JSON. Use jq if present for robust string escaping; otherwise
