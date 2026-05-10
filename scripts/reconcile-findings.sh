@@ -34,7 +34,7 @@
 #   severity (Critical, Important, Minor) -> category -> file -> line
 #   -> sorted lenses (joined with comma).
 #
-# Empty input -> emits {"summary":{"raw":0,...},"findings":[],"related":[]}.
+# Empty input -> emits {"schema_version":1,"summary":{"raw":0,...},"findings":[],"related":[]}.
 #
 # Dependencies: bash + awk + sort. `jq`, when present, is used for safer
 # JSON parsing; otherwise a careful awk fallback is used. No new install

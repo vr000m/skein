@@ -387,7 +387,7 @@ After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before
 - **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, and `suggestion` text is preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
 - **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
 - **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
-- **Empty input**: reconciliation still emits the structured report with `summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Empty input**: reconciliation still emits the structured report with `schema_version: 1, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
 - **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
 - **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
@@ -412,7 +412,7 @@ Procedure:
    cat findings.jsonl | scripts/reconcile-findings.sh
    ```
 
-   The script emits canonical reconciled JSON on stdout: `{summary: {raw, merged, unique, related}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+   The script emits canonical reconciled JSON on stdout: `{schema_version: 1, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Render the JSON into the report template.** Use the report template in [Step 5](#5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
 4. **Emit the rendered report.** Hand off to Step 4 (Apply Suppression) and Step 5 (Present Findings). The reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
 
