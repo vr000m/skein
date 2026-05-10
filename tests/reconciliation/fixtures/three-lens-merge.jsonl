@@ -1,0 +1,3 @@
+{"lens":"architecture","severity":"Important","category":"coupling","file":"src/svc.py","line":99,"summary":"tight coupling","evidence":"direct import of impl","suggestion":"introduce interface"}
+{"lens":"logic","severity":"Important","category":"coupling","file":"src/svc.py","line":99,"summary":"hidden dependency","evidence":"global var reference","suggestion":"inject"}
+{"lens":"security","severity":"Important","category":"coupling","file":"src/svc.py","line":99,"summary":"trust boundary","evidence":"reaches across module","suggestion":"isolate"}

@@ -1,0 +1,2 @@
+{"lens":"logic","severity":"Important","category":"correctness","file":"src/api.py","line":88,"summary":"null deref","evidence":"missing guard","suggestion":"add check"}
+{"lens":"security","severity":"Critical","category":"authz","file":"src/api.py","line":88,"summary":"missing auth check","evidence":"endpoint reachable without token","suggestion":"add @require_auth"}

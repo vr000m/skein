@@ -1,0 +1,3 @@
+{"lens":"logic","severity":"Critical","category":"correctness","file":"src/x.py","line":7,"summary":"divide by zero","evidence":"denominator unchecked","suggestion":"guard with if"}
+this line is not JSON and must be dropped
+{"lens":"security","severity":"Important","category":"input","file":"src/x.py","line":15,"summary":"unvalidated arg","evidence":"raw query string used","suggestion":"validate"}

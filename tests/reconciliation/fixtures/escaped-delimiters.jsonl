@@ -1,0 +1,2 @@
+{"lens":"logic","severity":"Critical","category":"parser","file":"src/[weird]{file}.py","line":42,"summary":"handles brackets [] and braces {} with slash \\ and quote \"","evidence":"array [ marker ] object { marker } combo \\\" ] } [ { end","suggestion":"preserve backslash \\ and quoted \" text"}
+{"lens":"security","severity":"Important","category":"parser","file":"src/[weird]{file}.py","line":42,"summary":"same spot different category uses [ ] { } safely","evidence":"literal delimiters ] [ } { stay in strings","suggestion":"keep fallback depth counters string-aware"}

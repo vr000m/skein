@@ -375,11 +375,52 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Documen
 If documentation is up to date, say so.
 ```
 
+After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before report emission.
+
 ### 3. Deduplicate Findings
 
-- If multiple lenses flag the same file:line, keep the highest-severity finding and note the overlap.
-- If the same issue appears in more than one lens, treat that as corroboration, not as separate findings.
-- Sort the final list by severity before presenting it.
+<!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
+- **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
+- **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
+- **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
+- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, and `suggestion` text is preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
+- **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
+- **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
+- **Summary semantics**: `merged` counts signatures corroborated by ≥2 distinct lenses; `unique` counts signatures reported by exactly one lens (single-source). Invariant: `merged + unique == len(findings)`. `related` counts cross-category cross-references at the same `(file, line)`; cross-file related pairs are NOT representable in this schema (the renderer asserts this invariant).
+- **Empty input**: reconciliation still emits the structured report with `schema_version: 1, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
+- **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
+- **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
+
+  ```
+  cat findings.jsonl | scripts/reconcile-findings.sh
+  ```
+
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
+<!-- END GENERIC FINDING SCHEMA AND MERGE -->
+
+### 3.5. Reconcile Findings
+
+After every lens subagent has returned (Step 2) and before the report is emitted to the user (Step 5), run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3.5**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block above; the orchestrator never asks a model to decide whether two findings are the same defect.
+
+Procedure:
+
+1. **Collect lens output as JSON-Lines.** For each completed lens (Logic, Security, Spec, Architecture, Documentation), serialise its returned findings into the schema documented in the GENERIC block — one JSON object per line, fields `{lens, severity, category, file, line, summary, evidence, suggestion}`. Errored or timed-out lenses are tracked separately for the report header (per the GENERIC block) and are NOT fed into reconciliation. The combined stream is written to `findings.jsonl`.
+2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
+
+   ```
+   cat findings.jsonl | scripts/reconcile-findings.sh
+   ```
+
+   The script emits canonical reconciled JSON on stdout: `{schema_version: 1, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+3. **Render the JSON into the report template.** Use the report template in [Step 5](#5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+4. **Emit the rendered report.** Hand off to Step 4 (Apply Suppression) and Step 5 (Present Findings). The reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
+
+Forbidden inside Step 3.5:
+- LLM calls of any kind. The merge rule is structural.
+- Free-text similarity matching across lens summaries. Lenses run in fresh context with no shared vocabulary; their summaries paraphrase the same defect differently and would never match.
+- Mutating the canonical sort order in the rendered report. The script's output order is the report's order.
 
 ### 4. Apply Suppression
 
@@ -401,10 +442,14 @@ Return findings in a structured report:
 
 **Overall**: [one-line summary]
 
+**Reconciliation**: raw=N merged=M unique=U related=R[ dropped=D]
+
 ### Critical
 - **[Category]**: [Finding]
+  - Lenses: [logic, security]
   - Evidence: [what was verified in the codebase]
   - Suggestion: [specific plan or code change]
+  - Related findings: **[Other Category]** [Severity] at same file:line — [one-line cross-reference]
 
 ### Important
 - ...
@@ -415,6 +460,8 @@ Return findings in a structured report:
 ---
 **Next steps**: Review the findings, decide which ones to keep, and update the plan or code accordingly.
 ```
+
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier. `scripts/render-reconciled-report.sh` is the reference renderer that encodes these rules and is exercised by `tests/reconciliation/test-renderer.sh`.
 
 If the review is clean, say so concisely and call out any residual risks or skipped lenses.
 

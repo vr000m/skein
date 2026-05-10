@@ -1,0 +1,2 @@
+{"lens":"logic","severity":"Minor","category":"style","file":"src/util.py","line":10,"summary":"unused import","evidence":"import os never used","suggestion":"remove import"}
+{"lens":"logic","severity":"Minor","category":"style","file":"src/util.py","line":55,"summary":"long line","evidence":"line exceeds 120 chars","suggestion":"wrap"}

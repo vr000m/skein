@@ -26,14 +26,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
-	# Safelist parser: `source .env` is unsafe (executes arbitrary shell). Only
-	# pull the keys this script reads, and only when they look like a plain
-	# assignment to a quoted or bare value.
-	while IFS= read -r line; do
-		case "$line" in
-		MANAGED_SKILLS=*) eval "export $line" ;;
-		esac
-	done < <(grep -E '^(MANAGED_SKILLS)=' "$ROOT_DIR/.env" || true)
+	# Safelist parser: `source .env` is unsafe (executes arbitrary shell), and
+	# `eval` would execute embedded $(...) / backticks. Pull only the
+	# MANAGED_SKILLS key, strip the prefix, strip surrounding quotes, and
+	# export the literal value. The per-skill regex validator further down
+	# remains the defence-in-depth check on the value's contents.
+	raw="$(grep -E '^MANAGED_SKILLS=' "$ROOT_DIR/.env" | head -n1 || true)"
+	if [[ -n "$raw" ]]; then
+		val="${raw#MANAGED_SKILLS=}"
+		# Strip surrounding double or single quotes if present.
+		val="${val#\"}"
+		val="${val%\"}"
+		val="${val#\'}"
+		val="${val%\'}"
+		export MANAGED_SKILLS="$val"
+	fi
 fi
 
 MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out review-plan rfc-finder spec-compliance update-docs}"
@@ -83,6 +90,78 @@ for skill in "${managed_skills[@]}"; do
 		PARITY_DIFF=1
 	fi
 done
+
+# --- GENERIC FINDING SCHEMA AND MERGE block parity ---------------------
+#
+# The reconciliation contract block (delimited by HTML-comment markers
+# inside SKILL.md) is the single point of contact between SKILL.md prose
+# and `scripts/reconcile-findings.sh`. The same block content MUST exist
+# byte-identically in both deep-review and review-plan, on both the
+# Claude and Codex sides. Modelled on
+# `scripts/check-trunk-snippet-parity.sh`'s extraction approach.
+
+# The GENERIC block is intentionally duplicated across deep-review and
+# review-plan SKILL.md (Claude + Codex = 4 copies). The duplication is
+# enforced byte-identical by this parity check rather than transcluded
+# from a shared file. Future divergence between deep-review and
+# review-plan would require breaking this check intentionally and
+# replacing it with per-skill blocks.
+GENERIC_TARGETS=(
+	"$ROOT_DIR/.claude/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/.claude/skills/review-plan/SKILL.md"
+	"$ROOT_DIR/.codex/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/.codex/skills/review-plan/SKILL.md"
+)
+
+extract_generic() {
+	# Print the lines strictly between the BEGIN and END markers.
+	awk '
+		/<!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->/ { found=1; next }
+		/<!-- END GENERIC FINDING SCHEMA AND MERGE -->/ { exit }
+		found { print }
+	' "$1"
+}
+
+generic_canonical=""
+generic_canonical_path=""
+
+for path in "${GENERIC_TARGETS[@]}"; do
+	if [[ ! -f "$path" ]]; then
+		echo "drift: GENERIC block target missing: $path"
+		PARITY_DIFF=1
+		continue
+	fi
+	block="$(extract_generic "$path")"
+	if [[ -z "$block" ]]; then
+		echo "drift: GENERIC FINDING SCHEMA AND MERGE block not found in $path"
+		PARITY_DIFF=1
+		continue
+	fi
+	if [[ -z "$generic_canonical" ]]; then
+		generic_canonical="$block"
+		generic_canonical_path="$path"
+		continue
+	fi
+	if [[ "$block" != "$generic_canonical" ]]; then
+		echo "drift: GENERIC block in $path differs from $generic_canonical_path"
+		diff <(printf '%s\n' "$generic_canonical") <(printf '%s\n' "$block") || true
+		PARITY_DIFF=1
+	fi
+done
+
+# --- scripts/reconcile-findings.sh existence + executable bit ----------
+#
+# The GENERIC FINDING SCHEMA AND MERGE block in every SKILL.md cites
+# `scripts/reconcile-findings.sh` as the single source of truth for the
+# merge rule. If the script is missing or non-executable, the prose
+# contract is broken. Surface it here rather than waiting for a runtime
+# failure inside `/deep-review` or `/review-plan`.
+
+reconciler="$ROOT_DIR/scripts/reconcile-findings.sh"
+if [[ ! -f "$reconciler" || ! -x "$reconciler" ]]; then
+	echo "drift: scripts/reconcile-findings.sh missing or non-executable"
+	PARITY_DIFF=1
+fi
 
 if [[ "$PARITY_DIFF" -eq 1 ]]; then
 	echo "check-prompt-parity failed"

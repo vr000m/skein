@@ -7,7 +7,7 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - Every enabled lens produced findings or an explicit "no issues" statement
 - The Spec lens ran iff the dev-plan `## Review Focus` section listed RFCs or specs (skip is justified otherwise)
 - Lenses that timed out or errored are reported as `timed_out` / `errored`, not silently dropped
-- Findings are deduplicated across lenses (same file:line collapsed to highest severity, overlap noted)
+- Findings are reconciled across lenses per the Reconciliation section below — same `(file, line, category)` signature merges, same `(file, line)` different category emits a Related findings cross-reference (no collapse)
 
 ## Finding Quality
 
@@ -35,6 +35,12 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - One-line overall summary at the top
 - Skipped or timed-out lenses are called out under "Residual Risks"
 - Markdown is well-formed and renders cleanly
+
+## Reconciliation
+
+- Report includes a `Lenses:` field on every finding (sorted alphabetically, deduplicated); merged findings cite ≥2 lenses
+- No two findings share an identical `(file, line, category)` signature in the same severity tier — a duplicate signature means the merge step did not run or its output was lost
+- Reconciliation step receives only lens return strings (JSON-Lines via `scripts/reconcile-findings.sh`); no parent conversation context is passed to it
 
 ## Continuation Safety
 

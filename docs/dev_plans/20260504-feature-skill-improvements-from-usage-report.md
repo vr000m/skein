@@ -541,6 +541,8 @@ Run on the full PR diff after Phase 5. **Critical: 0; Important: 3; Minor: 2.** 
 
 (populated by `/conduct`)
 
+- **Cross-branch dependency (deep-review scope/reconciliation badge)** — *2026-05-10*: the `expected_delta_NOT_FIXED = 3` badge flip at lines 191/232 includes the **deep-review (scope/reconciliation)** row. That gap is being closed by `feature/cross-lens-reconciliation` (plan: `docs/dev_plans/20260508-feature-cross-lens-finding-reconciliation.md`), which ships `scripts/reconcile-findings.sh`, the `Lenses:` provenance field, and the deterministic Step 3.5 reconciliation pass. When this plan reaches Phase 5 (badge flip), cite the merged SHA from that branch as the FIXED commit reference for the scope/reconciliation row.
+
 ## Final Results
 
 (populated by `/conduct`)
