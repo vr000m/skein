@@ -1,9 +1,9 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 2,
     "merged": 1,
-    "unique": 1,
+    "unique": 0,
     "related": 0,
     "dropped": 0
   },

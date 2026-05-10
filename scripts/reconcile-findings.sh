@@ -10,10 +10,21 @@
 #
 # Stdout: Canonical JSON of the form:
 #   {
+#     "schema_version": 2,
 #     "summary": {"raw": N, "merged": M, "unique": U, "related": R, "dropped": D},
 #     "findings": [ ... reconciled findings, sorted ... ],
 #     "related":  [ ... cross-references ... ]
 #   }
+#
+# Summary semantics:
+#   raw     = total parsed input findings (after dropping malformed lines).
+#   merged  = signatures corroborated by >=2 distinct lenses.
+#   unique  = signatures reported by exactly one lens (single-source).
+#   related = same-(file,line)-different-category cross-references between
+#             merged findings (cross-file pairs are NOT representable —
+#             see emit_related_pretty).
+#   dropped = non-blank input lines that failed to parse.
+# Invariant: merged + unique == len(findings).
 #
 # Sentinel: missing or empty `line` is normalised to -1 in the parse step
 # so that absent line numbers sort distinctly from real line 0.
@@ -34,7 +45,7 @@
 #   severity (Critical, Important, Minor) -> category -> file -> line
 #   -> sorted lenses (joined with comma).
 #
-# Empty input -> emits {"schema_version":1,"summary":{"raw":0,...},"findings":[],"related":[]}.
+# Empty input -> emits {"schema_version":2,"summary":{"raw":0,...},"findings":[],"related":[]}.
 #
 # Dependencies: bash + awk + sort. `jq`, when present, is used for safer
 # JSON parsing; otherwise a careful awk fallback is used. No new install
@@ -63,7 +74,14 @@ sev_rank() {
 # Schema version for the JSON envelope. Bump when the envelope shape
 # changes in a way that breaks downstream consumers (renderer, SKILL.md
 # prose). Renderer asserts this matches its expected version.
-ENVELOPE_SCHEMA_VERSION=1
+#
+# v2: `summary.unique` redefined as the count of reconciled findings
+#     reported by exactly one lens (single-source). Previously it was a
+#     redundant copy of the total reconciled-findings count. The new
+#     definition gives `merged + unique = findings.length`, with `merged`
+#     = signatures corroborated by >=2 lenses and `unique` = signatures
+#     reported by only one lens.
+ENVELOPE_SCHEMA_VERSION=2
 
 # Emit a canonical empty report.
 emit_empty() {
@@ -370,7 +388,33 @@ combined_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
 	}
 ')
 
-unique_count="$merged_count"
+# `unique` = signatures reported by exactly one lens (single-source).
+# `merged` (combined_groups above) = signatures with >=2 lenses.
+# Invariant: merged + unique == merged_count == findings.length.
+single_source_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
+	{
+		sig = $3 SUBSEP $4 SUBSEP $5
+		key = sig SUBSEP $6
+		if (!(key in seen)) {
+			seen[key] = 1
+			distinct[sig]++
+		}
+	}
+	END {
+		single = 0
+		for (s in distinct) if (distinct[s] == 1) single++
+		print single
+	}
+')
+unique_count="$single_source_groups"
+
+# Invariant check: merged + unique must equal the total reconciled findings.
+# A mismatch indicates a bug in either the combined_groups or single_source_groups
+# awk passes (or that signatures somehow ended up in neither bucket).
+if ((combined_groups + unique_count != merged_count)); then
+	echo "internal error: merged($combined_groups) + unique($unique_count) != findings($merged_count)" >&2
+	exit 2
+fi
 related_count=0
 if [[ -n "$related_tsv" ]]; then
 	# Each pair contributes one cross-reference record; count deduped
@@ -440,10 +484,19 @@ emit_related_pretty() {
 	fi
 	# Filter to one direction per pair: emit when category_self < category_other
 	# (so each unordered pair appears exactly once with categories sorted asc).
+	# Invariant: file_a == file_b and line_a == line_b — `related` cross-
+	# references are emitted only for findings sharing the SAME (file, line)
+	# but different categories, because `related_tsv` is built by grouping
+	# on (file, line). Cross-file related pairs are NOT representable in this
+	# schema; the assertion below makes that invariant explicit.
 	local one_dir
 	one_dir="$(printf '%s\n' "$related_tsv" | awk -F '\t' '
 		{
 			# fields: file_a line_a cat_a cat_b file_b line_b
+			if ($1 != $5 || $2 != $6) {
+				printf "internal error: related pair crosses (file,line): %s:%s vs %s:%s\n", $1, $2, $5, $6 > "/dev/stderr"
+				exit 2
+			}
 			# canonical pair: smaller category first
 			if ($3 < $4) print $0
 		}

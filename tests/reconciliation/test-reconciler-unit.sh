@@ -7,7 +7,14 @@
 #   Stdin:  JSON-Lines findings
 #           {lens, severity, category, file, line, summary, evidence, suggestion}
 #   Stdout: canonical JSON
-#           {summary: {raw, merged, unique, related}, findings: [...], related: [...]}
+#           {schema_version: 2,
+#            summary: {raw, merged, unique, related, dropped},
+#            findings: [...], related: [...]}
+#
+#   Summary semantics:
+#     merged  = signatures corroborated by >=2 distinct lenses.
+#     unique  = signatures reported by exactly one lens (single-source).
+#     merged + unique == len(findings).
 #
 #   Merge rule: group by (file, line, category); merged findings concatenate
 #   sorted-unique `lenses`. Same (file, line) but different category groups
@@ -99,7 +106,7 @@ CASE1_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE1_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 1,
     "merged": 0,
@@ -142,11 +149,11 @@ CASE2_INPUT='{"lens":"security","severity":"Critical","category":"injection","fi
 
 read -r -d '' CASE2_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 2,
     "merged": 1,
-    "unique": 1,
+    "unique": 0,
     "related": 0,
     "dropped": 0
   },
@@ -184,7 +191,7 @@ CASE3_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE3_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 2,
     "merged": 0,
@@ -238,7 +245,7 @@ CASE4_INPUT=''
 
 read -r -d '' CASE4_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 0,
     "merged": 0,
