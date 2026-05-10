@@ -133,28 +133,30 @@ None new. Existing tooling: `bash`, `jq` (preferred — already installed on dev
 
 ### Test Approach
 
-- [ ] Unit: `tests/reconciliation/test-reconciler-unit.sh` runs inline fixtures against `scripts/reconcile-findings.sh` directly. Covers single pass-through, two-lens merge, related-callout, empty input.
-- [ ] Integration: `tests/reconciliation/run-fixtures.sh` pipes per-edge-case fixtures through the script and diffs rendered output against `expected/*.md`.
-- [ ] Determinism: `tests/reconciliation/test-determinism.sh` shuffles lens-arrival order with `shuf` and asserts byte-identical output across 5 shuffles per fixture.
-- [ ] Parity: `just check-prompt-parity` (extended to cover SKILL.md GENERIC blocks) gates every phase boundary commit. `just check-trunk-snippet-parity` continues to gate the unrelated trunk snippet.
-- [ ] End-to-end: run `/deep-review` against a known feature branch (this branch itself, after Phase 3 lands), capture report, verify it shows merged findings with `Lenses:` provenance and a populated `Reconciliation:` line.
+- [x] Unit: `tests/reconciliation/test-reconciler-unit.sh` runs inline fixtures against `scripts/reconcile-findings.sh` directly. Covers single pass-through, two-lens merge, related-callout, empty input.
+- [x] Integration: `tests/reconciliation/run-fixtures.sh` pipes per-edge-case fixtures through the script and diffs rendered output against `expected/*.md`.
+- [x] Determinism: `tests/reconciliation/test-determinism.sh` shuffles lens-arrival order with `shuf` and asserts byte-identical output across 5 shuffles per fixture.
+- [x] Parity: `just check-prompt-parity` (extended to cover SKILL.md GENERIC blocks) gates every phase boundary commit. `just check-trunk-snippet-parity` continues to gate the unrelated trunk snippet.
+- [x] End-to-end: run `/deep-review` against a known feature branch (this branch itself, after Phase 3 lands), capture report, verify it shows merged findings with `Lenses:` provenance and a populated `Reconciliation:` line.
+- [x] Renderer: `tests/reconciliation/test-renderer.sh` pipes each fixture envelope through `scripts/render-reconciled-report.sh` and diffs against `expected/<name>.rendered.md` goldens; asserts the `dropped=D` iff invariant.
 
 ### Test Results
 
-- [ ] All existing tests pass
-- [ ] New tests added and passing
-- [ ] Manual verification complete
+- [x] All existing tests pass
+- [x] New tests added and passing
+- [x] Manual verification complete
 
 ### Edge Cases Tested
 
-- [ ] Single finding from a single lens — passes through unchanged with `Lenses: [<one>]` injected (audit-trail invariant on single-source case).
-- [ ] Two findings on same `(file, line, category)` from two lenses → merged with `Lenses: [a, b]` sorted alphabetically.
-- [ ] Three lenses flag same `(file, line, category)` → merged into one with all three cited.
-- [ ] Same `(file, line)` but different categories → kept separate; emit "Related findings" cross-reference between them.
-- [ ] Same category but different `(file, line)` → kept fully separate, no cross-reference.
-- [ ] Lens returns empty findings — does not break reconciliation; `Reconciliation: raw=0 merged=0 unique=0 related=0` line still renders.
-- [ ] Lens-arrival order shuffled — output is byte-identical (canonical sort).
-- [ ] Mixed severities at same `(file, line, category)` — merge picks highest severity; lower-severity lens still cited in `Lenses:`.
+- [x] Single finding from a single lens — passes through unchanged with `Lenses: [<one>]` injected (audit-trail invariant on single-source case).
+- [x] Two findings on same `(file, line, category)` from two lenses → merged with `Lenses: [a, b]` sorted alphabetically.
+- [x] Three lenses flag same `(file, line, category)` → merged into one with all three cited.
+- [x] Same `(file, line)` but different categories → kept separate; emit "Related findings" cross-reference between them.
+- [x] Same category but different `(file, line)` → kept fully separate, no cross-reference.
+- [x] Lens returns empty findings — does not break reconciliation; `Reconciliation: raw=0 merged=0 unique=0 related=0` line still renders.
+- [x] Lens-arrival order shuffled — output is byte-identical (canonical sort).
+- [x] Mixed severities at same `(file, line, category)` — merge picks highest severity; lower-severity lens still cited in `Lenses:`.
+- [x] Malformed JSON-Lines input — non-JSON lines counted as `summary.dropped`, stderr warning emitted, `dropped=D` surfaced in rendered Reconciliation line iff D > 0.
 
 ## Acceptance Criteria
 

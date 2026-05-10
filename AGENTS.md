@@ -20,7 +20,8 @@ Requires: `brew install just shellcheck shfmt`
 ```
 .claude/skills/     Claude Code skills (SKILL.md per skill)
 .codex/skills/      Codex CLI skills (mirrored structure)
-scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity
+scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity/render
+tests/              Reconciliation test harnesses (fixtures, determinism, renderer)
 docs/dev_plans/     Development plans
 justfile            Task runner config
 .env.example        Template for local env overrides
