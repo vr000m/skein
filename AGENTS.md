@@ -10,6 +10,7 @@ just promote-skills     # Set repo -> global (intentional overwrite)
 just bootstrap-skills   # Init missing managed skills on new machine
 just bootstrap-skills-force  # Force overwrite bootstrap
 just check-sync         # Validate sync state
+just reconciliation-tests  # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts       # shellcheck + shfmt on scripts/
 ```
 
