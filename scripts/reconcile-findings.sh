@@ -10,7 +10,7 @@
 #
 # Stdout: Canonical JSON of the form:
 #   {
-#     "schema_version": 2,
+#     "schema_version": 1,
 #     "summary": {"raw": N, "merged": M, "unique": U, "related": R, "dropped": D},
 #     "findings": [ ... reconciled findings, sorted ... ],
 #     "related":  [ ... cross-references ... ]
@@ -45,7 +45,7 @@
 #   severity (Critical, Important, Minor) -> category -> file -> line
 #   -> sorted lenses (joined with comma).
 #
-# Empty input -> emits {"schema_version":2,"summary":{"raw":0,...},"findings":[],"related":[]}.
+# Empty input -> emits {"schema_version":1,"summary":{"raw":0,...},"findings":[],"related":[]}.
 #
 # Dependencies: bash + awk + sort. `jq`, when present, is used for safer
 # JSON parsing; otherwise a careful awk fallback is used. No new install
@@ -74,14 +74,7 @@ sev_rank() {
 # Schema version for the JSON envelope. Bump when the envelope shape
 # changes in a way that breaks downstream consumers (renderer, SKILL.md
 # prose). Renderer asserts this matches its expected version.
-#
-# v2: `summary.unique` redefined as the count of reconciled findings
-#     reported by exactly one lens (single-source). Previously it was a
-#     redundant copy of the total reconciled-findings count. The new
-#     definition gives `merged + unique = findings.length`, with `merged`
-#     = signatures corroborated by >=2 lenses and `unique` = signatures
-#     reported by only one lens.
-ENVELOPE_SCHEMA_VERSION=2
+ENVELOPE_SCHEMA_VERSION=1
 
 # Emit a canonical empty report.
 emit_empty() {

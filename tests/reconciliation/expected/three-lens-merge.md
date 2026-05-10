@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "summary": {
     "raw": 3,
     "merged": 1,

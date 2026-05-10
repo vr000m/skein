@@ -40,7 +40,7 @@ input="$(cat)"
 # Schema version this renderer understands. MUST match the
 # `schema_version` field emitted by scripts/reconcile-findings.sh. Bump
 # in lockstep when the envelope shape changes.
-EXPECTED_SCHEMA_VERSION=2
+EXPECTED_SCHEMA_VERSION=1
 
 # Extract the schema_version with a portable awk match (avoids requiring
 # jq for the assertion itself). Missing field is treated as absent and

@@ -7,7 +7,7 @@
 #   Stdin:  JSON-Lines findings
 #           {lens, severity, category, file, line, summary, evidence, suggestion}
 #   Stdout: canonical JSON
-#           {schema_version: 2,
+#           {schema_version: 1,
 #            summary: {raw, merged, unique, related, dropped},
 #            findings: [...], related: [...]}
 #
@@ -106,7 +106,7 @@ CASE1_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE1_EXPECTED <<'JSON' || true
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "summary": {
     "raw": 1,
     "merged": 0,
@@ -149,7 +149,7 @@ CASE2_INPUT='{"lens":"security","severity":"Critical","category":"injection","fi
 
 read -r -d '' CASE2_EXPECTED <<'JSON' || true
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "summary": {
     "raw": 2,
     "merged": 1,
@@ -191,7 +191,7 @@ CASE3_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE3_EXPECTED <<'JSON' || true
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "summary": {
     "raw": 2,
     "merged": 0,
@@ -245,7 +245,7 @@ CASE4_INPUT=''
 
 read -r -d '' CASE4_EXPECTED <<'JSON' || true
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "summary": {
     "raw": 0,
     "merged": 0,
