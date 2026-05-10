@@ -37,6 +37,37 @@ fi
 
 input="$(cat)"
 
+# Schema version this renderer understands. MUST match the
+# `schema_version` field emitted by scripts/reconcile-findings.sh. Bump
+# in lockstep when the envelope shape changes.
+EXPECTED_SCHEMA_VERSION=1
+
+# Extract the schema_version with a portable awk match (avoids requiring
+# jq for the assertion itself). Missing field is treated as absent and
+# rejected so legacy/unversioned envelopes fail loudly rather than
+# silently misparse. The regex tolerates pretty-printed multi-line
+# envelopes and single-line ones alike.
+actual_schema_version="$(printf '%s' "$input" | awk '
+	BEGIN { found = "" }
+	{
+		if (match($0, /"schema_version"[[:space:]]*:[[:space:]]*-?[0-9]+/)) {
+			s = substr($0, RSTART, RLENGTH)
+			sub(/.*:[[:space:]]*/, "", s)
+			found = s
+			exit
+		}
+	}
+	END { print found }
+')"
+if [[ -z "$actual_schema_version" ]]; then
+	echo "render-reconciled-report: input envelope missing schema_version (expected $EXPECTED_SCHEMA_VERSION)" >&2
+	exit 2
+fi
+if [[ "$actual_schema_version" != "$EXPECTED_SCHEMA_VERSION" ]]; then
+	echo "render-reconciled-report: schema_version mismatch (got $actual_schema_version, expected $EXPECTED_SCHEMA_VERSION)" >&2
+	exit 2
+fi
+
 if [[ "$HAVE_JQ" -eq 1 ]]; then
 	# Pull the summary block as five integers, tab-separated.
 	read -r raw merged unique related dropped < <(printf '%s' "$input" | jq -r '
@@ -106,10 +137,15 @@ else
 		{ all = (all == "" ? $0 : all "\n" $0) }
 		END {
 			# --- summary block ---
+			# Single source of truth for summary keys. Adding a new key here
+			# (and to the matching jq filter above) is the only edit needed
+			# to extend the envelope; ordering is determined by this list,
+			# not by hard-coded indexes downstream.
+			n_keys = split("raw merged unique related dropped", key_list, " ")
 			if (match(all, /"summary"[[:space:]]*:[[:space:]]*\{[^}]*\}/)) {
 				sb = substr(all, RSTART, RLENGTH)
-				for (k_i = 1; k_i <= 5; k_i++) {
-					key = (k_i == 1 ? "raw" : k_i == 2 ? "merged" : k_i == 3 ? "unique" : k_i == 4 ? "related" : "dropped")
+				for (k_i = 1; k_i <= n_keys; k_i++) {
+					key = key_list[k_i]
 					if (match(sb, "\"" key "\"[[:space:]]*:[[:space:]]*-?[0-9]+")) {
 						val = substr(sb, RSTART, RLENGTH)
 						sub(/.*:[[:space:]]*/, "", val)
@@ -118,10 +154,12 @@ else
 						sums[key] = "0"
 					}
 				}
-				printf "SUMMARY\t%s\t%s\t%s\t%s\t%s\n", sums["raw"], sums["merged"], sums["unique"], sums["related"], sums["dropped"]
 			} else {
-				printf "SUMMARY\t0\t0\t0\t0\t0\n"
+				for (k_i = 1; k_i <= n_keys; k_i++) sums[key_list[k_i]] = "0"
 			}
+			printf "SUMMARY"
+			for (k_i = 1; k_i <= n_keys; k_i++) printf "\t%s", sums[key_list[k_i]]
+			printf "\n"
 
 			# --- findings array ---
 			if (match(all, /"findings"[[:space:]]*:[[:space:]]*\[/)) {

@@ -7,7 +7,7 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - Every enabled lens produced findings or an explicit "no issues" statement
 - The Spec lens ran iff the dev-plan `## Review Focus` section listed RFCs or specs (skip is justified otherwise)
 - Lenses that timed out or errored are reported as `timed_out` / `errored`, not silently dropped
-- Findings are deduplicated across lenses (same file:line collapsed to highest severity, overlap noted)
+- Findings are reconciled across lenses per the Reconciliation section below — same `(file, line, category)` signature merges, same `(file, line)` different category emits a Related findings cross-reference (no collapse)
 
 ## Finding Quality
 

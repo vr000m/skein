@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "summary": {
     "raw": 0,
     "merged": 0,

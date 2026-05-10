@@ -1,4 +1,5 @@
 {
+  "schema_version": 1,
   "summary": {
     "raw": 3,
     "merged": 1,
@@ -13,9 +14,9 @@
       "file": "src/svc.py",
       "line": 99,
       "lenses": ["architecture", "logic", "security"],
-      "summary": "trust boundary",
-      "evidence": "reaches across module",
-      "suggestion": "isolate"
+      "summary": "tight coupling",
+      "evidence": "direct import of impl",
+      "suggestion": "introduce interface"
     }
   ],
   "related": []

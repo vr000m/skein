@@ -60,11 +60,17 @@ sev_rank() {
 	esac
 }
 
+# Schema version for the JSON envelope. Bump when the envelope shape
+# changes in a way that breaks downstream consumers (renderer, SKILL.md
+# prose). Renderer asserts this matches its expected version.
+ENVELOPE_SCHEMA_VERSION=1
+
 # Emit a canonical empty report.
 emit_empty() {
 	local dropped="${1:-0}"
 	cat <<EOF
 {
+  "schema_version": ${ENVELOPE_SCHEMA_VERSION},
   "summary": {
     "raw": 0,
     "merged": 0,
@@ -286,9 +292,10 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 			best_lens = $6
 		} else {
 			# Highest severity wins (lowest rank). Tie-break on lens name
-			# (alpha desc) so the chosen representative text is stable
-			# under shuffled lens-arrival order.
-			if ($1 < best_rank || ($1 == best_rank && $6 > best_lens)) {
+			# (alphabetical: lexicographically smallest lens wins) so the
+			# chosen representative text is stable under shuffled
+			# lens-arrival order and matches the documented contract.
+			if ($1 < best_rank || ($1 == best_rank && $6 < best_lens)) {
 				best_rank = $1; best_sev = $2
 				best_summary = $7; best_evidence = $8; best_suggestion = $9
 				best_lens = $6
@@ -468,6 +475,7 @@ related_json="$(emit_related_pretty)"
 
 cat <<EOF
 {
+  "schema_version": ${ENVELOPE_SCHEMA_VERSION},
   "summary": {
     "raw": $raw,
     "merged": $combined_groups,

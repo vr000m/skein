@@ -99,6 +99,7 @@ CASE1_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE1_EXPECTED <<'JSON' || true
 {
+  "schema_version": 1,
   "summary": {
     "raw": 1,
     "merged": 0,
@@ -141,6 +142,7 @@ CASE2_INPUT='{"lens":"security","severity":"Critical","category":"injection","fi
 
 read -r -d '' CASE2_EXPECTED <<'JSON' || true
 {
+  "schema_version": 1,
   "summary": {
     "raw": 2,
     "merged": 1,
@@ -155,9 +157,9 @@ read -r -d '' CASE2_EXPECTED <<'JSON' || true
       "file": "src/db.py",
       "line": 17,
       "lenses": ["logic", "security"],
-      "summary": "unsanitised input",
-      "evidence": "user param interpolated",
-      "suggestion": "use parameterised query"
+      "summary": "sql concatenation",
+      "evidence": "string concat with user input",
+      "suggestion": "prepared statement"
     }
   ],
   "related": []
@@ -182,6 +184,7 @@ CASE3_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE3_EXPECTED <<'JSON' || true
 {
+  "schema_version": 1,
   "summary": {
     "raw": 2,
     "merged": 0,
@@ -235,6 +238,7 @@ CASE4_INPUT=''
 
 read -r -d '' CASE4_EXPECTED <<'JSON' || true
 {
+  "schema_version": 1,
   "summary": {
     "raw": 0,
     "merged": 0,

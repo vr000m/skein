@@ -332,6 +332,7 @@ when no review brief is present.
 - **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
 - **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
 - **Empty input**: reconciliation still emits the structured report with `summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
 - **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
