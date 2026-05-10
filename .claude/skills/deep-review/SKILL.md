@@ -440,7 +440,7 @@ Return findings in a structured report:
 
 **Overall**: [one-line summary]
 
-**Reconciliation**: raw=N merged=M unique=U related=R
+**Reconciliation**: raw=N merged=M unique=U related=R[ dropped=D]
 
 ### Critical
 - **[Category]**: [Finding]
@@ -459,7 +459,7 @@ Return findings in a structured report:
 **Next steps**: Review the findings, decide which ones to keep, and update the plan or code accordingly.
 ```
 
-The `Reconciliation:` summary line is always rendered (zeros for empty input). The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier. `scripts/render-reconciled-report.sh` is the reference renderer that encodes these rules and is exercised by `tests/reconciliation/test-renderer.sh`.
 
 If the review is clean, say so concisely and call out any residual risks or skipped lenses.
 
