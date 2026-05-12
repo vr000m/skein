@@ -5,7 +5,7 @@
 **Priority**: Medium
 **Branch**: feature/conduct-autonomous-mode
 **Created**: 2026-05-12
-**Last revised**: 2026-05-12 (post-/review-plan, round 3)
+**Last revised**: 2026-05-12 (post-/review-plan, round 3 + Phase 1 bootstrap correction: codex mirror is the codex runtime's responsibility, not claude's)
 
 ## Objective
 
@@ -47,7 +47,7 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
   Single-exit precondition: gate fires only when conduct() would otherwise return `status=complete` — never on intermediate `--resume`. Detection priority (workflows dropped): `just ci` → `make ci` → `npm run ci` → `cargo test --all`. `--ci-cmd CMD` overrides detection.
 - **`plan-id` derivation is shared with state-file naming.** `plan-id = sha1(abs(plan_path).encode()).hexdigest()[:12]`. Stored in `state["plan_id"]` on first state write so main Claude reads it from state, not by re-computing. State-file naming (`.conduct/state-<basename>-<plan-id>.json`) reuses the same derivation; the plan reuses the existing conduct convention rather than inventing a new one. If conduct's current state-file naming uses a different scheme, the implementer reconciles (Phase 3 first task) — either by adopting the existing scheme as the canonical `plan-id` or by introducing both fields with documented semantics.
 - **Lock-release contention during `awaiting_ci_parity`.** Between the lock release at step (2) above and main Claude's `--resume`, another `/conduct` invocation could acquire the lock. Defined behaviour: a `/conduct --resume <plan>` invocation observing `status=awaiting_ci_parity` follows the four-sub-case preflight (present/stale/malformed/absent) above. A `/conduct <plan>` invocation without `--resume` against this state hard-fails preflight with `state shows awaiting_ci_parity; use --resume to consume the ci-parity result or --skip-ci-parity to abandon the gate`. A separate `/conduct --resume <other-plan>` with a different plan_id is unaffected (different state file, different lock). Test: `ci-parity-resume-during-awaiting-without-result-file` covers the same-plan re-resume case.
-- **Mirror parity** between `.claude/skills/conduct/` and `.codex/skills/conduct/` is mandatory and lands phase-by-phase. **Each phase boundary produces two commits** (when `--split-mirror-commits=True`): impl commit followed by mirror commit. The `False` default preserves today's single-commit behaviour for all existing users.
+- **Mirror parity** between `.claude/skills/conduct/` and `.codex/skills/conduct/` is the **runtime's own responsibility**: a claude-driven `/conduct` only lands `.claude/` changes; the codex-driven `/conduct` lands `.codex/` changes (in a separate run, against the same plan). `--split-mirror-commits=True` keeps the two-commit-per-boundary mechanism available for cases where a single runtime intentionally co-lands both sides (e.g. a maintainer manually invoking it from the side that owns both mirrors). The `False` default preserves today's single-commit behaviour for all existing users.
 - **`scripts/check-prompt-parity.sh` MUST be extended to check `*-prompt.md` parity** AND must not be invoked from any pre-commit hooks chain. Pre-implementation step (Phase 3, first task): grep `.pre-commit-config.yaml` and other hook configurations to confirm absence; if present, exempt the impl commit or refactor the hook to run only at the mirror-commit boundary. A new acceptance test `phase-3-impl-commit-lands-with-hooks-enabled-in-intermediate-state` confirms the impl commit succeeds with hooks on even though mirror is still lagging.
 - **State schema evolution is forward-compatible.** Phases 1 and 2 write state with `schema_version: 1` plus tolerated extras (`stall_signatures`, `stall_count`, `autonomous`, `plan_id`). Phase 3 — the phase that adds the final v2 fields (`ci_parity_result`, `ci_parity_request`, `ci_parity_request_written_at`, `ci_parity_dispatched`, `ci_parity_missing_resume_count`) — bumps `schema_version: 2`.
 
@@ -110,14 +110,11 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
   8. Post-8d `just check-sync && just check-prompt-parity`. On non-zero exit, route into Step 6.
   9. Record mirror `commit_sha` as the next-phase baseline (overrides impl `commit_sha` for baseline purposes; both immutable once written).
 - Update SKILL.md: Step 6 rewrite (stall-aware dual cap with helper-owns-increment invariant); Step 8 rewrite (explicit sub-step list); State File section adds `stall_signatures`, `stall_count`, `plan_id`, unknown-schema_version forward-compat contract; Step 4 preflight section adds "custom `--lint-check` overrides MUST NOT invoke `just check-sync` or `just check-prompt-parity`"; bootstrap note for `--split-mirror-commits` introduction.
-- **Bootstrap procedure for Phase 1's own boundary** (manual; the conducting agent — human or main-Claude orchestrator — runs this verbatim):
+- **Bootstrap procedure for Phase 1's own boundary** (manual; the conducting agent — human or main-Claude orchestrator — runs this verbatim on the claude-driven side):
   1. Stage exactly: `.claude/skills/conduct/conductor.py`, `.claude/skills/conduct/progress.py`, `.claude/skills/conduct/SKILL.md`, `.claude/skills/conduct/tests/test_progress_detector.py`, `.claude/skills/conduct/tests/test_conductor_harness.py`, `.claude/skills/conduct/tests/test_diff_stat_canonicalisation.py`.
   2. Commit: `git commit -m "conduct(phase 1): progress-aware iteration bound + single helper + split-commit mechanism"`.
-  3. Run `scripts/sync-skills.sh`.
-  4. Stage exactly: `.codex/skills/conduct/conductor.py`, `.codex/skills/conduct/progress.py`, `.codex/skills/conduct/SKILL.md`.
-  5. Commit: `git commit -m "conduct(phase 1): mirror sync"`.
-  6. Run `just check-sync` (passes). Note: extended `just check-prompt-parity` does NOT yet exist; the current rubric-only script also passes.
-  7. Confirm `git log -2 --oneline` shows the two commits in order.
+  3. The codex mirror lands separately when codex-driven `/conduct` runs against this same plan. `scripts/sync-skills.sh` is **NOT** invoked here — it syncs global → repo (refreshes repo from `~/.claude/skills/` and `~/.codex/skills/`), which is the wrong direction for landing a Phase 1 boundary, and it would clobber the just-staged working tree.
+  4. `just check-sync` will report drift between `.claude/skills/conduct/` and global until `scripts/promote-skills.sh` runs in Phase 4 — that is expected during phased implementation and does not block boundary commits.
 
 **Tests in `test_progress_detector.py`:**
 - 5 signature cases (a)–(e) on `iteration_signature` pure function.
@@ -143,7 +140,7 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
 - `stall-threshold-greater-than-max-iterations-warns` — invoke with `--stall-threshold 5 --max-iterations 3`; assert startup warning emitted.
 - `stall-threshold-greater-than-max-iterations-legacy-dominates` — same misconfiguration plus a stalled phase; assert handback at iter 4 with blocker `max_iterations exceeded (legacy)` (proves legacy cap dominates as documented, not just warned).
 
-**Mirror commit** propagates `.claude/skills/conduct/{progress.py,conductor.py,SKILL.md}` into `.codex/skills/conduct/`. `just check-sync` MUST be green after this commit.
+**Mirror commit**: handled by codex-driven `/conduct` against this same plan, not by the claude-driven run. The claude-driven boundary is a single commit covering `.claude/skills/conduct/{progress.py,conductor.py,SKILL.md}` plus tests.
 
 ### Phase 2 — `--autonomous` flag, explicit phase loop, auto-advance, `LockAcquisitionCounter` test fixture
 
@@ -190,7 +187,7 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
 - `max-phases-cap-respects-post-8d-count` — boundary case: `--max-phases 2`, 3-phase fixture; assert phase 3 never enters `_run_phase` (the loop's max_phases check fires on the post-8d count immediately after phase 2 completes).
 - **Regression** in `test_conductor_harness.py`: `legacy-no-flags-handback-per-phase` — no flags; `LockAcquisitionCounter == N` for N phases (one lock acquisition per `--resume`); byte-for-byte handback message preserved.
 
-**Mirror commit** propagates `.claude/skills/conduct/{conductor.py,SKILL.md}` → `.codex/skills/conduct/`. Boundary commits for this phase use the `--split-mirror-commits=True` flag introduced in Phase 1.
+**Mirror commit**: handled by codex-driven `/conduct` against this same plan. Claude-driven boundary commits for this phase land `.claude/skills/conduct/{conductor.py,SKILL.md}` and tests in a single commit.
 
 ### Phase 3 — End-of-plan CI-parity gate + schema bump + mandatory parity-script extension + `tests/parity/` directory
 
@@ -270,7 +267,7 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
 - `ci-parity-prompt-included` — deliberate divergence in `ci-parity-prompt.md`; assert script fails (proves the new prompt is in scope).
 - `phase-3-impl-commit-lands-with-hooks-enabled-in-intermediate-state` — replay the Phase-3 impl commit on a fixture branch with pre-commit hooks enabled; assert the commit lands cleanly even though mirrors are intermediate.
 
-**Mirror commit** propagates `.claude/skills/conduct/*` → `.codex/skills/conduct/*` and is then verified by the just-updated extended script.
+**Mirror commit**: handled by codex-driven `/conduct` against this same plan. The extended `scripts/check-prompt-parity.sh` lands in the claude-side commit and will report parity drift until the codex-side mirror commit lands — that is expected during phased implementation and is verified end-to-end in Phase 4.
 
 ### Phase 4 — Acceptance and promote
 
