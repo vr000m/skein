@@ -29,6 +29,7 @@ import os
 import shutil
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -36,8 +37,43 @@ from typing import Callable, Optional
 from lock import StateLock
 from marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from parser import Phase, files_overlap, parse_phases
+from progress import compute_staged_diff_stat, iteration_signature
 from runner import TestResult, run_tests
 from schema import SchemaError, parse_report
+
+
+# Module-level flag: emit the unknown-schema_version warning exactly once per
+# Python process. Reset implicitly on a fresh process (e.g. a new --resume).
+_UNKNOWN_SCHEMA_VERSION_WARNED: bool = False
+
+
+# Tolerated-extras field set for the v1 "known subset" forward-compat contract.
+# Future versions add only optional fields or fields with documented safe
+# defaults; required-semantics fields require an ``incompatible_with_pre_vN:
+# true`` marker that older loaders hard-fail on (not implemented yet — this is
+# the v1 contract that lands in Phase 1).
+_V1_KNOWN_FIELDS = frozenset(
+    {
+        "plan_path",
+        "plan_content_hash",
+        "base_sha",
+        "resume_base_sha",
+        "phase_index",
+        "current_phase_title",
+        "completed_phases",
+        "last_summary",
+        "iteration_count",
+        "status",
+        "blocker",
+        "warnings_for_next_handback",
+        "_internal",
+        # Tolerated extras introduced in Phase 1 (still schema_version=1):
+        "stall_signatures",
+        "stall_count",
+        "plan_id",
+        "schema_version",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +120,21 @@ class ConductOptions:
     test_cmd_override: Optional[str] = None
     test_timeout: float = 300.0
     max_iterations: int = 3
+    # Progress-aware autonomous-runway cap. Default 8 leaves headroom for a
+    # progressing phase while the legacy `max_iterations` (default 3) still
+    # dominates when smaller (see startup validator in `_validate_options`).
+    max_iterations_ceiling: int = 8
+    # Stall threshold: N matching signatures in a row block the fix-loop with
+    # blocker `stall_threshold exceeded`. Helper-call semantics: signature 1
+    # → stall_count 0; signature 2 (matching) → stall_count 1; signature 3
+    # (matching) → stall_count 2 → blocks at threshold 2.
+    stall_threshold: int = 2
+    # Disable progress detection (legacy behaviour). When True, signatures are
+    # still computed but never counted as stalls.
+    no_progress_detection: bool = False
+    # Split the per-phase boundary commit into two commits (impl + mirror sync).
+    # Default False preserves today's single-commit-per-boundary behaviour.
+    split_mirror_commits: bool = False
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
 
@@ -95,6 +146,163 @@ class ConductResult:
     summary: str
     next_command: Optional[str] = None
     diagnostic: Optional[str] = None
+
+
+def _validate_options(opts: ConductOptions) -> None:
+    """Startup validator. Emits one warning per misconfiguration.
+
+    Currently only checks ``stall_threshold >= max_iterations`` while progress
+    detection is enabled — under that configuration the legacy cap will always
+    fire before the stall threshold can, so the stall configuration is
+    effectively dead (and probably a typo).
+    """
+    if not opts.no_progress_detection and opts.stall_threshold >= opts.max_iterations:
+        warnings.warn(
+            f"conduct: stall_threshold={opts.stall_threshold} is "
+            f">= max_iterations={opts.max_iterations}; legacy cap will "
+            "always fire first (stall detection effectively disabled).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+def _check_iteration_bound(
+    state: dict,
+    opts: ConductOptions,
+    signature: str,
+) -> Optional[ConductResult]:
+    """Single source of truth for ``iteration_count += 1`` and the dual-cap +
+    stall check across all three fix-loop call sites.
+
+    Semantics (helper-owns-increment invariant):
+
+    1. ``state["iteration_count"] += 1`` — only place in the module.
+    2. Push ``signature`` onto ``state["stall_signatures"]``, truncate to
+       length 2 (oldest first).
+    3. If the new entry equals the previous entry, ``state["stall_count"] +=
+       1``; else reset ``state["stall_count"] = 0``.
+    4. Return blocked ``ConductResult("stall_threshold exceeded", ...)`` if
+       ``state["stall_count"] >= opts.stall_threshold`` (unless progress
+       detection is disabled).
+    5. Return blocked ``ConductResult("max_iterations_ceiling exceeded", ...)``
+       if ``state["iteration_count"] > opts.max_iterations_ceiling``.
+    6. Return blocked ``ConductResult("max_iterations exceeded (legacy)",
+       ...)`` if ``state["iteration_count"] > opts.max_iterations``.
+    7. Otherwise return ``None``.
+
+    Call ORDER at each site MUST be: observe the failure (compute the
+    signature from ``failing_tests`` + ``compute_staged_diff_stat``), then
+    invoke this helper. This preserves byte-identical iteration_count
+    semantics with today's code, where the bump always fires AFTER the failure
+    is observable.
+    """
+    state["iteration_count"] = state.get("iteration_count", 0) + 1
+
+    history = list(state.get("stall_signatures") or [])
+    prev_sig = history[-1] if history else None
+    history.append(signature)
+    # Rolling window of length 2, oldest first.
+    if len(history) > 2:
+        history = history[-2:]
+    state["stall_signatures"] = history
+
+    if prev_sig is not None and signature == prev_sig:
+        state["stall_count"] = state.get("stall_count", 0) + 1
+    else:
+        state["stall_count"] = 0
+
+    # Stall threshold fires first (it represents "no progress", which is a
+    # stronger signal than "ran out of attempts"). Disabled when
+    # `no_progress_detection` is set.
+    if not opts.no_progress_detection and state["stall_count"] >= opts.stall_threshold:
+        state["status"] = "blocked"
+        state["blocker"] = "stall_threshold exceeded"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    if state["iteration_count"] > opts.max_iterations_ceiling:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations_ceiling exceeded"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    if state["iteration_count"] > opts.max_iterations:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations exceeded (legacy)"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    return None
+
+
+def _extract_failing_tests_from_output(output: str) -> list[str]:
+    """Best-effort pytest failing-test extractor for the stall signature.
+
+    Looks for lines emitted by pytest's failure summary (``FAILED <nodeid>``).
+    Returns the sorted, de-duplicated list of node ids found, or ``[]`` if no
+    such lines are present. The diff stat then carries the signal alone — a
+    stalled implementer typically produces both an unchanged failing set AND
+    an unchanged diff, so signature collision is preserved either way.
+    """
+    if not output:
+        return []
+    found: set[str] = set()
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FAILED "):
+            # ``FAILED tests/x.py::test_y - AssertionError: ...``
+            rest = stripped[len("FAILED ") :].strip()
+            nodeid = rest.split(" ", 1)[0]
+            if nodeid:
+                found.add(nodeid)
+    return sorted(found)
+
+
+def _extract_failing_hook_ids(output: str) -> list[str]:
+    """Best-effort pre-commit failing-hook-id extractor for the stall signature.
+
+    pre-commit's per-hook summary lines look like ``ruff.....Failed`` or
+    ``ruff-format.....Failed``. Captures the hook id before the dotted leader
+    and returns sorted, de-duplicated ids. Returns ``[]`` if nothing parses —
+    the diff stat then carries the signal alone.
+    """
+    if not output:
+        return []
+    found: set[str] = set()
+    for line in output.splitlines():
+        # pre-commit hook lines have the form '<hook-id>....Failed' (variable
+        # dot count, with optional surrounding whitespace).
+        stripped = line.strip()
+        if "Failed" not in stripped or "." not in stripped:
+            continue
+        # Split on the first run of dots; the head is the hook id.
+        head = stripped
+        # Walk forward until we hit a '.'; everything to that point is the id.
+        dot = head.find(".")
+        if dot <= 0:
+            continue
+        candidate = head[:dot].strip()
+        # Filter obvious non-ids (paths, file names with spaces).
+        if not candidate or " " in candidate or "/" in candidate:
+            continue
+        # Skip anything that looks like a normal sentence (capitalised word
+        # followed by lowercase prose) — hook ids are short kebab-case tokens.
+        if len(candidate) > 64:
+            continue
+        # The tail must indicate failure.
+        if "Failed" not in stripped[dot:]:
+            continue
+        found.add(candidate)
+    return sorted(found)
 
 
 # ---------------------------------------------------------------------------
@@ -333,11 +541,74 @@ def _migrate_legacy_state_file(opts: ConductOptions) -> None:
             pass
 
 
+def _compute_plan_id(plan_path: Path) -> str:
+    """Derive a stable 12-char plan-id from the absolute plan path.
+
+    Matches the convention re-used by ``_state_path`` (which digests the
+    repo-relative path); the spec calls for ``sha1(abs(plan_path))[:12]`` so
+    callers — including a future autonomous main-Claude orchestrator — can
+    re-derive the id without re-loading state. Different formula from the
+    existing state-file digest is intentional: state-file naming is scoped to
+    a repo-root, while plan_id is scoped to the absolute filesystem path so
+    cross-worktree main-Claude flows agree on the id.
+    """
+    abs_path = plan_path.resolve().as_posix()
+    return hashlib.sha1(abs_path.encode("utf-8")).hexdigest()[:12]
+
+
+def _maybe_warn_unknown_schema_version(version: int) -> None:
+    """Emit the unknown-≥1 schema_version forward-compat warning at most once
+    per Python process. A fresh ``--resume`` invocation re-fires the warning
+    because module-level state resets at process start.
+    """
+    global _UNKNOWN_SCHEMA_VERSION_WARNED
+    if _UNKNOWN_SCHEMA_VERSION_WARNED:
+        return
+    _UNKNOWN_SCHEMA_VERSION_WARNED = True
+    warnings.warn(
+        f"state file written by newer schema_version={version}; "
+        "reading known fields only",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
+def _apply_v1_defaults(state: dict, opts: ConductOptions) -> bool:
+    """Populate v1 default values for fields the loader is responsible for.
+
+    Returns True iff the state dict was mutated (caller persists on True).
+    Centralises forward-compat defaults: even when reading an unknown
+    ``schema_version`` >=1, the loader still backfills known-field defaults
+    so the in-memory state object satisfies the documented v1 contract.
+    """
+    mutated = False
+    if "stall_signatures" not in state:
+        state["stall_signatures"] = []
+        mutated = True
+    if "stall_count" not in state:
+        state["stall_count"] = 0
+        mutated = True
+    if "plan_id" not in state:
+        state["plan_id"] = _compute_plan_id(opts.plan_path)
+        mutated = True
+    if "schema_version" not in state:
+        # Absent is treated as 1 per the forward-compat rule.
+        state["schema_version"] = 1
+        mutated = True
+    return mutated
+
+
 def _load_or_init_state(opts: ConductOptions) -> dict:
     _migrate_legacy_state_file(opts)
     sp = _state_path(opts)
     if sp.exists():
         state = json.loads(sp.read_text())
+        # Forward-compat: handle unknown schema_version BEFORE backfill so the
+        # warning fires against the raw on-disk value. Known set right now is
+        # {absent, 1, 2}; Phase 1 writes 1, Phase 3 will write 2.
+        sv = state.get("schema_version")
+        if sv is not None and isinstance(sv, int) and sv >= 1 and sv not in (1, 2):
+            _maybe_warn_unknown_schema_version(sv)
         # Backfill keys that older state files may be missing so the on-disk
         # schema converges to what SKILL.md documents. Persist immediately so
         # a crash before the next write does not leave backfill-in-memory only.
@@ -358,6 +629,8 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         if "last_summary" not in state:
             state["last_summary"] = ""
             mutated = True
+        if _apply_v1_defaults(state, opts):
+            mutated = True
         if opts.resume:
             state["resume_base_sha"] = _head_sha(opts.repo_root)
             state["status"] = "running"
@@ -375,6 +648,10 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         "iteration_count": 0,
         "status": "running",
         "blocker": None,
+        "stall_signatures": [],
+        "stall_count": 0,
+        "plan_id": _compute_plan_id(opts.plan_path),
+        "schema_version": 1,
     }
     _persist_state(opts, state)
     return state
@@ -538,7 +815,14 @@ def _run_phase(
     state: dict,
     phase: Phase,
 ) -> ConductResult:
-    state["iteration_count"] = 0
+    # Phase-start reset is guarded on entering a NEW phase (different title
+    # from the one persisted in state). Without this guard, --resume mid-phase
+    # would clobber the persisted iteration_count / stall_signatures and let
+    # the fix-loop bound re-start at zero.
+    if state.get("current_phase_title") != phase.title:
+        state["iteration_count"] = 0
+        state["stall_signatures"] = []
+        state["stall_count"] = 0
     state["current_phase_title"] = phase.title
     # Keep on-disk phase_index aligned with the number of already-completed
     # phases so external readers see a live counter that matches SKILL.md's
@@ -672,21 +956,18 @@ def _run_phase(
                 warnings,
             )
 
-        # Step 6: fix loop.
-        state["iteration_count"] += 1
+        # Step 6: fix loop. Signature is observed BEFORE the helper bumps the
+        # counter — same ordering as today's pre-refactor code, where the
+        # increment fired after the failure was visible to the conductor.
+        failing_tests = _extract_failing_tests_from_output(result.output)
+        signature = iteration_signature(
+            failing_tests, compute_staged_diff_stat(opts.repo_root)
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=result.output[-2000:],
-            )
+        if bound is not None:
+            bound.diagnostic = result.output[-2000:]
+            return bound
 
         # Capture staged diff, reset index, then choose respawn role.
         prior_diff = _staged_diff(opts.repo_root)
@@ -786,35 +1067,52 @@ def _commit_phase(
             proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
 
     if proc.returncode != 0:
-        # Pre-commit hook failure → route into fix loop.
-        state["iteration_count"] += 1
+        # Pre-commit hook failure → route into fix loop. The hook output is
+        # the failure signal here; extract the failing hook ids (e.g. ruff,
+        # ruff-format) so a stuck formatter loop is recognised as a stall.
+        hook_output = proc.stdout + proc.stderr
+        failing_hook_ids = _extract_failing_hook_ids(hook_output)
+        signature = iteration_signature(
+            failing_hook_ids, compute_staged_diff_stat(opts.repo_root)
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled at boundary commit after "
-                f"{opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=(proc.stdout + proc.stderr)[-2000:],
-            )
+        if bound is not None:
+            bound.diagnostic = hook_output[-2000:]
+            return bound
         # Signal the caller to re-enter the loop. We do this by returning a
         # special marker the caller checks. But simpler: raise a sentinel.
-        raise _CommitHookFailure(output=proc.stdout + proc.stderr)
+        raise _CommitHookFailure(output=hook_output)
 
-    new_head = _head_sha(opts.repo_root)
+    impl_head = _head_sha(opts.repo_root)
+
+    # Step 8c / 8d / post-8d: mirror commit chain, gated on the opt-in flag.
+    # On any non-zero exit we re-raise `_CommitHookFailure` so the same Step 6
+    # fix-loop machinery used for hook failures handles the recovery — the
+    # plan calls for each of the three failure modes (sync, commit, post-check)
+    # to route through Step 6.
+    mirror_head: Optional[str] = None
+    if opts.split_mirror_commits:
+        try:
+            mirror_head = _run_mirror_commit_chain(opts, phase)
+        except _MirrorCommitChainFailure as exc:
+            raise _CommitHookFailure(output=exc.output) from exc
+
+    # The recorded commit_sha — used as the next phase's baseline — is the
+    # mirror commit when split-mirror-commits is on (so a follow-up phase
+    # starts from a tree where mirrors are in sync), else the impl commit.
+    baseline_sha = mirror_head if mirror_head is not None else impl_head
     completed = {
         "index": phase.position,
         "label": phase.label,
         "title": phase.title,
-        "commit_sha": new_head,
+        "commit_sha": baseline_sha,
         "tests": "passed",
         "iterations": state["iteration_count"],
     }
+    if mirror_head is not None:
+        completed["impl_commit_sha"] = impl_head
+        completed["mirror_commit_sha"] = mirror_head
     state.setdefault("completed_phases", []).append(completed)
     # Clear resume_base_sha after the first successful commit of a resumed
     # run. SKILL.md Step 8: subsequent phases in the same process use the
@@ -823,6 +1121,100 @@ def _commit_phase(
     # (HEAD has advanced past the resume baseline by phase 1's own commit).
     state.pop("resume_base_sha", None)
     return ConductResult(status="running", state=state, summary="")
+
+
+class _MirrorCommitChainFailure(Exception):
+    """Raised from `_run_mirror_commit_chain` on a Step 8c/8d/post-8d non-zero
+    exit so `_commit_phase` can re-route it through Step 6 via the existing
+    `_CommitHookFailure` channel."""
+
+    def __init__(self, output: str) -> None:
+        self.output = output
+
+
+def _run_mirror_commit_chain(opts: ConductOptions, phase: Phase) -> str:
+    """Step 8c → 8d → post-8d. Returns the mirror commit's HEAD SHA on success.
+
+    Sub-steps:
+
+    - 8c: ``scripts/sync-skills.sh`` as a subprocess, cwd=repo_root. Non-zero
+      → raise.
+    - 8d: ``git add`` only the ``.codex/`` paths the sync touched (discovered
+      via ``git status --porcelain`` filtered to ``.codex/``), then ``git
+      commit -m "conduct: phase <label> mirror sync"``. We do NOT ``git add
+      -A`` (would sweep in unrelated untracked artefacts).
+    - Post-8d: ``just check-sync && just check-prompt-parity``. Non-zero → raise.
+    """
+    sync_script = opts.repo_root / "scripts" / "sync-skills.sh"
+    sync_proc = subprocess.run(
+        ["bash", str(sync_script)],
+        cwd=str(opts.repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if sync_proc.returncode != 0:
+        raise _MirrorCommitChainFailure(
+            output="Step 8c sync-skills.sh failed:\n"
+            + (sync_proc.stdout or "")
+            + (sync_proc.stderr or "")
+        )
+
+    # 8d: discover the .codex/ paths the sync touched, add only those.
+    porcelain = _git(
+        ["status", "--porcelain", "--", ".codex/"], opts.repo_root, check=False
+    )
+    codex_paths: list[str] = []
+    for line in (porcelain.stdout or "").splitlines():
+        # Porcelain format: XY <path>; XY are status codes.
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        # Renames look like "old -> new"; record the new side.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        if path.startswith(".codex/"):
+            codex_paths.append(path)
+    if codex_paths:
+        add_proc = _git(["add", "--", *codex_paths], opts.repo_root, check=False)
+        if add_proc.returncode != 0:
+            raise _MirrorCommitChainFailure(
+                output="Step 8d git add failed:\n"
+                + (add_proc.stdout or "")
+                + (add_proc.stderr or "")
+            )
+
+    commit_msg = f"conduct: phase {phase.label} mirror sync"
+    commit_proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
+    if commit_proc.returncode != 0:
+        # Allow a no-op mirror commit (sync produced no diff): in that case
+        # the impl commit IS the mirror baseline and we treat this as success
+        # by returning the current HEAD unchanged.
+        head_after = _head_sha(opts.repo_root)
+        if not codex_paths:
+            return head_after
+        raise _MirrorCommitChainFailure(
+            output="Step 8d git commit failed:\n"
+            + (commit_proc.stdout or "")
+            + (commit_proc.stderr or "")
+        )
+
+    # Post-8d: just check-sync && just check-prompt-parity.
+    post_proc = subprocess.run(
+        ["bash", "-c", "just check-sync && just check-prompt-parity"],
+        cwd=str(opts.repo_root),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if post_proc.returncode != 0:
+        raise _MirrorCommitChainFailure(
+            output="Post-8d check-sync / check-prompt-parity failed:\n"
+            + (post_proc.stdout or "")
+            + (post_proc.stderr or "")
+        )
+
+    return _head_sha(opts.repo_root)
 
 
 class _CommitHookFailure(Exception):
@@ -873,6 +1265,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
     Mirrors SKILL.md Step 9: every phase boundary returns control to the user.
     Tests drive multi-phase runs by re-invoking with ``resume=True``.
     """
+    _validate_options(opts)
     pre = run_preflight(opts)
     if pre is not None:
         return pre
@@ -987,17 +1380,15 @@ def _retry_after_hook_failure(
         if test_cmd is not None:
             result = opts.test_runner(test_cmd, opts.test_timeout)
             if result.returncode != 0 or result.timed_out:
-                state["iteration_count"] += 1
+                failing_tests = _extract_failing_tests_from_output(result.output)
+                signature = iteration_signature(
+                    failing_tests, compute_staged_diff_stat(opts.repo_root)
+                )
+                bound = _check_iteration_bound(state, opts, signature)
                 _persist_state(opts, state)
-                if state["iteration_count"] > opts.max_iterations:
-                    state["status"] = "blocked"
-                    state["blocker"] = (
-                        f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-                    )
-                    _persist_state(opts, state)
-                    return ConductResult(
-                        status="blocked", state=state, summary=state["blocker"]
-                    )
+                if bound is not None:
+                    bound.diagnostic = result.output[-2000:]
+                    return bound
                 prior_diff = _staged_diff(opts.repo_root)
                 _reset_index(opts.repo_root)
                 hook_output = result.output
