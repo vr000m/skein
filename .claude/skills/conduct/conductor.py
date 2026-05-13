@@ -42,6 +42,15 @@ from runner import TestResult, run_tests
 from schema import SchemaError, parse_report
 
 
+# Plan-id derivations in this module are intentionally divergent:
+#   _state_path()                       digests rel(plan_path, repo_root)  -> state-file naming, repo-scoped
+#   _compute_cross_runtime_plan_id()    digests abs(plan_path)            -> cross-runtime handoff id (ci-parity gate)
+#
+# DO NOT use _state_path's digest for cross-runtime handoffs.
+# DO NOT use _compute_cross_runtime_plan_id for state-file naming.
+# See _compute_cross_runtime_plan_id's docstring for the worktree rationale.
+
+
 # Module-level flag: emit the unknown-schema_version warning exactly once per
 # Python process. Reset implicitly on a fresh process (e.g. a new --resume).
 _UNKNOWN_SCHEMA_VERSION_WARNED: bool = False
@@ -543,8 +552,11 @@ def _migrate_legacy_state_file(opts: ConductOptions) -> None:
             pass
 
 
-def _compute_plan_id(plan_path: Path) -> str:
+def _compute_cross_runtime_plan_id(plan_path: Path) -> str:
     """Derive a stable 12-char plan-id from the absolute plan path.
+
+    Renamed from ``_compute_plan_id`` to disambiguate from ``_state_path``'s
+    rel-path digest used for state-file naming.
 
     Matches the convention re-used by ``_state_path`` (which digests the
     repo-relative path); the spec calls for ``sha1(abs(plan_path))[:12]`` so
@@ -591,7 +603,7 @@ def _apply_v1_defaults(state: dict, opts: ConductOptions) -> bool:
         state["stall_count"] = 0
         mutated = True
     if "plan_id" not in state:
-        state["plan_id"] = _compute_plan_id(opts.plan_path)
+        state["plan_id"] = _compute_cross_runtime_plan_id(opts.plan_path)
         mutated = True
     if "schema_version" not in state:
         # Absent is treated as 1 per the forward-compat rule.
@@ -665,7 +677,7 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         "blocker": None,
         "stall_signatures": [],
         "stall_count": 0,
-        "plan_id": _compute_plan_id(opts.plan_path),
+        "plan_id": _compute_cross_runtime_plan_id(opts.plan_path),
         "schema_version": 1,
     }
     _persist_state(opts, state)
@@ -1056,7 +1068,13 @@ def _commit_phase(
         state.pop("resume_base_sha", None)
         return ConductResult(status="running", state=state, summary="")
 
-    commit_msg = f"conduct: phase {phase.label} — {phase.title}"
+    # Step 8.3 boundary commit. The Conducted-By trailer is appended to the
+    # message body (blank-line-separated) so downstream tooling can identify
+    # which conductor runtime (claude vs codex) produced the commit. We embed
+    # the trailer directly in the message text rather than using ``git
+    # commit --trailer`` because older git versions lack that flag.
+    commit_subject = f"conduct: phase {phase.label} — {phase.title}"
+    commit_msg = f"{commit_subject}\n\nConducted-By: claude"
     proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
 
     # Formatter-hook retry: if a pre-commit hook modified tracked files in

@@ -1832,3 +1832,62 @@ def test_stall_threshold_greater_than_max_iterations_legacy_dominates(repo):
     assert result.status == "blocked"
     assert result.state["blocker"] == "max_iterations exceeded (legacy)"
     assert result.state["iteration_count"] == 4
+
+
+def test_plan_id_helpers_are_distinguishable_by_name_and_doc():
+    """Round-4 delta: the rename + dual-derivation doc block must hold.
+
+    Asserts (a) the new name is exposed, (b) the old name has gone, (c) the
+    module-level warning block flagging the two derivations is present in the
+    source. The substrings are load-bearing — the round-4 doc-presence audit
+    greps for them verbatim.
+    """
+    import inspect
+
+    import conductor
+
+    assert hasattr(conductor, "_state_path")
+    assert hasattr(conductor, "_compute_cross_runtime_plan_id")
+    assert not hasattr(conductor, "_compute_plan_id"), (
+        "old name must not be reintroduced — it collided with _state_path's "
+        "rel-path digest semantically"
+    )
+
+    source = inspect.getsource(conductor)
+    assert "DO NOT use _state_path's digest for cross-runtime handoffs" in source
+    assert "DO NOT use _compute_cross_runtime_plan_id for state-file naming" in source
+
+
+def test_step_8_impl_commit_has_conducted_by_trailer(repo):
+    """Round-4 delta: every Step-8.3 boundary commit carries a
+    ``Conducted-By: claude`` trailer on its own line at the end of the body.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing()])
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+        )
+    )
+    assert result.status == "awaiting_user"
+
+    body = _git(["log", "-1", "--format=%B"], repo).stdout
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    assert lines[-1] == "Conducted-By: claude", (
+        f"expected Conducted-By trailer on its own line at end of body; got:\n{body!r}"
+    )
+    assert lines[0] == "conduct: phase 1 — Add a file"
