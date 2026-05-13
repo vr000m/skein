@@ -1614,51 +1614,6 @@ def test_legacy_max_iterations_default_3_progressing_also_blocks(repo):
     assert result.state["iteration_count"] == 4
 
 
-def test_legacy_split_mirror_commits_false_single_commit_per_boundary(repo):
-    """``legacy-split-mirror-commits-false-single-commit-per-boundary`` —
-    default ``split_mirror_commits=False`` keeps today's single-commit-per-
-    boundary behaviour: Steps 8c / 8d skipped.
-    """
-    head_before = _git(["rev-parse", "HEAD"], repo).stdout.strip()
-    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
-    spawner = StubSpawner(repo)
-    spawner.script(
-        "implementer",
-        0,
-        lambda req, r: (
-            _stage(r, "src/a.py", "x=1\n"),
-            _impl_report(0, ["src/a.py"]),
-        )[1],
-    )
-    spawner.script("test-writer", 0, lambda req, r: _test_report())
-    runner = StubTestRunner(queue=[_passing()])
-
-    result = conduct(
-        ConductOptions(
-            plan_path=plan,
-            repo_root=repo,
-            spawn=spawner,
-            test_runner=runner,
-            # split_mirror_commits default False
-        )
-    )
-    assert result.status == "awaiting_user"
-    # Exactly one new commit since the plan was scratched in.
-    new_commits = _git(
-        ["log", "--oneline", f"{head_before}..HEAD"], repo
-    ).stdout.splitlines()
-    assert len(new_commits) == 1, new_commits
-    assert "conduct: phase 1" in new_commits[0]
-    # No "mirror sync" boundary commit landed.
-    assert "mirror sync" not in new_commits[0]
-    # Completed-phase record exposes a single commit_sha and no mirror_*
-    # bookkeeping keys.
-    completed = result.state["completed_phases"][0]
-    assert completed["commit_sha"] is not None
-    assert "mirror_commit_sha" not in completed
-    assert "impl_commit_sha" not in completed
-
-
 # ---------------------------------------------------------------------------
 # Forward-compat loader: unknown schema_version
 # ---------------------------------------------------------------------------

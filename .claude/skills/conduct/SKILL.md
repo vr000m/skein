@@ -1,7 +1,7 @@
 ---
 name: conduct
 description: Walks a reviewed dev-plan phase by phase and delegates each phase's implementation, testing, and fix loop to clean-context subagents. Main Claude stays in a conductor role so context does not exhaust during multi-phase execution. Use when the user says "step through plan", "walk phases", "delegate phase implementation", "conduct plan", "run the plan", or invokes this skill directly with a dev-plan path.
-argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N] [--max-iterations-ceiling N] [--stall-threshold N] [--no-progress-detection] [--split-mirror-commits]"
+argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N] [--max-iterations-ceiling N] [--stall-threshold N] [--no-progress-detection]"
 ---
 
 # Conduct: Phased Delegation for Linear Implementation
@@ -56,7 +56,6 @@ conduct --abort-run <plan-path>
 | `--max-iterations-ceiling N` | Autonomous-runway hard cap. Default 8. Blocks with `max_iterations_ceiling exceeded` when exceeded. |
 | `--stall-threshold N` | Consecutive matching-signature count that blocks the fix loop with `stall_threshold exceeded`. Default 2. With N=2, signature 1 → stall_count=0; signature 2 (matching) → stall_count=1; signature 3 (matching) → stall_count=2 → block. |
 | `--no-progress-detection` | Disable stall detection (signatures are still computed for state-file inspection but never counted as stalls). Default off. |
-| `--split-mirror-commits` | When set, each phase boundary produces two commits (impl commit followed by mirror sync commit) instead of one. Default off; preserves today's single-commit-per-boundary behaviour for all existing users. New flag introduced in autonomous-mode bootstrap. |
 
 ## Preflight
 
@@ -92,7 +91,7 @@ Run the repo's pre-commit / lint in non-fix mode on the current tree, in this or
 
 This prevents subagent fix-loops from chasing issues they didn't introduce.
 
-**Custom `--lint-check` overrides MUST NOT invoke `just check-sync` or `just check-prompt-parity`.** Those checks are gated to the post-8d step of the boundary commit (Step 8 sub-step 8); invoking them at preflight would block the impl commit during a `--split-mirror-commits` run before the mirror commit lands.
+**Custom `--lint-check` overrides MUST NOT invoke `just check-sync` or `just check-prompt-parity`.** Those checks compare repo state against the global authority and are expected to drift mid-implementation (one runtime lands its side before the other); invoking them at preflight would block legitimate phase-boundary commits.
 
 ### 4. State file load
 
@@ -192,7 +191,7 @@ On zero exit, append `"validation passed"` to the phase warnings and continue to
 
 ### Step 6 — Fix loop (stall-aware dual cap, helper-owns-increment invariant)
 
-No classifier. On any failure (test failure OR pre-commit hook failure at the boundary commit in Step 8, OR Step 8c/8d/post-8d mirror-commit failure when `--split-mirror-commits` is on):
+No classifier. On any failure (test failure OR pre-commit hook failure at the boundary commit in Step 8):
 
 - **Single source of truth for the increment.** The conductor's `_check_iteration_bound(state, opts, signature)` helper is the only call site that mutates `state.iteration_count`. All three fix-loop entry points (test-failure path in `_run_phase`, boundary-commit hook-failure path in `_commit_phase`, hook-retry path in `_retry_after_hook_failure`) call the helper after observing the failure signature. **Pre-implementation audit (Phase 1)**: today's three increments all fire AFTER the failure is observable to the conductor (lines 678, 792, 992 in the pre-refactor code); the helper is invoked at that same position so iteration_count at the bound-check point is byte-identical to today's iteration_count at the equivalent return point. This is asserted by `helper-is-single-increment-source-three-sites`.
 
@@ -223,23 +222,17 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 
 Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
 
-### Step 8 — Phase-boundary commit (explicit 9-sub-step order)
+### Step 8 — Phase-boundary commit
 
-After tests pass (or were skipped with warning), execute the following sub-steps in order. The list is explicit because Step 8c and 8d are gated on `--split-mirror-commits` and must compose cleanly with the existing rogue-commit / no-op / hook-retry mechanics.
+After tests pass (or were skipped with warning):
 
-1. **Rogue-commit check.** Compare `git rev-parse HEAD` to the phase-start baseline: `state.resume_base_sha` if this run started from `--resume`, otherwise `state.base_sha` (for phase 1) or the last completed phase's `commit_sha` (walking back past any `commit_sha: null` entries — those are rogue-commit records, not real baselines). If HEAD advanced beyond the baseline _during this phase's subagent work_, a subagent committed despite the prompt directive. Do NOT stack another commit. Record `rogue_commit_sha` in the phase entry, set `commit_sha: null`, set `state.status = "awaiting_user"` with a warning, handback. (User commits made during a previous handback are absorbed into `resume_base_sha` at preflight, so they do not trip this check.)
-2. **No-op branch.** If `git diff --cached` is empty (the phase resolved to a diagnostic-only or accepted-behaviour outcome with no code change), skip the commit: record the phase entry with `commit_sha` = current `HEAD` (unchanged), add `no_op: true`, emit warning `no staged changes; skipping commit`, and proceed to Step 9. Do NOT use `--allow-empty`. The next phase's baseline falls through to this unchanged HEAD correctly. **Steps 8c and 8d are skipped on the no-op branch** (nothing to mirror).
+1. **Rogue-commit check.** Compare `git rev-parse HEAD` to the phase-start baseline: `state.resume_base_sha` if this run started from `--resume`, otherwise `state.base_sha` (for phase 1) or the last completed phase's `commit_sha` (walking back past any `commit_sha: null` entries — those are rogue-commit records, not real baselines). If HEAD advanced beyond the baseline _during this phase's subagent work_, a subagent committed despite the prompt directive. Do NOT stack another commit. Record `rogue_commit_sha` in the phase entry, set `commit_sha: null`, set `state.status = "awaiting_user"` with a warning, handback.
+2. **No-op branch.** If `git diff --cached` is empty (the phase resolved to a diagnostic-only or accepted-behaviour outcome with no code change), skip the commit: record the phase entry with `commit_sha` = current `HEAD` (unchanged), add `no_op: true`, emit warning `no staged changes; skipping commit`, and proceed to Step 9. Do NOT use `--allow-empty`.
 3. **Impl commit.** Run `git commit -m "conduct: phase <label> — <phase title>"`. Commit author = current git user (no impersonation).
-4. **Hook retry (existing one-shot formatter retry).** If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). If `git diff --name-only` is non-empty at this point, run `git add -u` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings and continue at sub-step 5. If the retry also fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration via `_check_iteration_bound`. Do NOT use `--no-verify`. The one-shot retry applies only to the formatter case — a hook that reports a genuine logic error (e.g. a test hook) will fail both attempts and correctly fall through to the fix loop.
-5. **Record impl `commit_sha`.** Capture the new HEAD as the impl commit SHA. When `--split-mirror-commits` is off, this is also the phase baseline for the next phase and Step 8 terminates here.
-6. **Step 8c — `scripts/sync-skills.sh`** (only when `--split-mirror-commits` is on and not on the no-op branch). Invoke as a subprocess, cwd=repo_root. On non-zero exit, route into Step 6 as a fix-loop iteration via `_check_iteration_bound` (the failure signature carries the sync script's stdout+stderr tail).
-7. **Step 8d — Mirror commit.** Discover the `.codex/` paths the sync touched via `git status --porcelain -- .codex/` (do NOT `git add -A`; that would sweep in unrelated untracked artefacts). `git add` those paths, then `git commit -m "conduct: phase <label> mirror sync"`. On commit failure, route into Step 6. (If the sync produced no diff, the mirror commit is a no-op and the impl commit becomes the baseline.)
-8. **Post-8d check.** Run `just check-sync && just check-prompt-parity`. On non-zero exit, route into Step 6.
-9. **Record mirror `commit_sha` as the next-phase baseline.** When the mirror chain ran successfully, the mirror commit overrides the impl commit as the baseline persisted in `state.completed_phases[*].commit_sha` (so a subsequent phase starts from a tree where mirrors are in sync). The impl commit is preserved in the same entry under `impl_commit_sha`, and the mirror commit under `mirror_commit_sha`, for inspection. **Both commit_shas are immutable once written.** If the user lands follow-up commits during handback (for example after `/deep-review`), the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check — it does NOT rewrite either previous-phase SHA.
+4. **Hook retry (one-shot formatter retry).** If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). If `git diff --name-only` is non-empty at this point, run `git add -u` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings. If the retry also fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration via `_check_iteration_bound`. Do NOT use `--no-verify`.
+5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback (for example after `/deep-review`), the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check — it does NOT rewrite the previous phase's `commit_sha`.
 
-**Three distinct mirror-commit failure modes**, each routed through `_check_iteration_bound`: (a) Step 8c sync subprocess failure, (b) Step 8d git commit failure, (c) post-8d `just check-sync` / `just check-prompt-parity` failure. After Step 6 fix-loop exhaustion any of them hands back.
-
-**Pre-commit hook exemption (Phase 3 only):** the impl commit in Phase 3 deliberately lands while the mirror is still lagging the impl side. `scripts/check-prompt-parity.sh` MUST NOT be invoked from any pre-commit hook chain or it would block the impl commit. Phase 3 verifies this in its pre-implementation step; the regression test `phase-3-impl-commit-lands-with-hooks-enabled-in-intermediate-state` asserts the commit lands cleanly with hooks on.
+**Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
 ### Step 9 — Handback
 

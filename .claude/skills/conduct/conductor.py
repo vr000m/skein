@@ -132,20 +132,22 @@ class ConductOptions:
     # Disable progress detection (legacy behaviour). When True, signatures are
     # still computed but never counted as stalls.
     no_progress_detection: bool = False
-    # Split the per-phase boundary commit into two commits (impl + mirror sync).
-    # Default False preserves today's single-commit-per-boundary behaviour.
-    split_mirror_commits: bool = False
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
 
 
 @dataclass
 class ConductResult:
-    status: str  # 'awaiting_user' | 'blocked' | 'schema_error' | 'complete' | 'preflight_fail'
+    status: str  # 'awaiting_user' | 'blocked' | 'schema_error' | 'complete' | 'preflight_fail' | 'awaiting_ci_parity'
     state: dict
     summary: str
     next_command: Optional[str] = None
     diagnostic: Optional[str] = None
+    # Phase 3 ci-parity gate handoff fields (reserved now; populated only when
+    # status == 'awaiting_ci_parity'). Defined here so the runtime orchestrator
+    # can read them directly off the result without round-tripping state.
+    next_action: Optional[str] = None  # e.g. 'dispatch_ci_parity'
+    request: Optional[dict] = None  # ci-parity request payload (see Phase 3 spec)
 
 
 def _validate_options(opts: ConductOptions) -> None:
@@ -603,6 +605,19 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
     sp = _state_path(opts)
     if sp.exists():
         state = json.loads(sp.read_text())
+        # Forward-compat hard-stop: a future schema may set
+        # ``incompatible_with_pre_vN: true`` to signal that the file MUST NOT be
+        # read by a loader older than vN. Honour it regardless of schema_version
+        # so older readers reject the file cleanly rather than misreading it.
+        incompat_marker = state.get("incompatible_with_pre_vN")
+        if incompat_marker is True or (
+            isinstance(incompat_marker, int) and incompat_marker > 0
+        ):
+            raise RuntimeError(
+                "state file requires a newer conduct loader "
+                f"(incompatible_with_pre_vN={incompat_marker!r}); "
+                "upgrade /conduct or remove the state file to start fresh"
+            )
         # Forward-compat: handle unknown schema_version BEFORE backfill so the
         # warning fires against the raw on-disk value. Known set right now is
         # {absent, 1, 2}; Phase 1 writes 1, Phase 3 will write 2.
@@ -1084,35 +1099,14 @@ def _commit_phase(
         # special marker the caller checks. But simpler: raise a sentinel.
         raise _CommitHookFailure(output=hook_output)
 
-    impl_head = _head_sha(opts.repo_root)
-
-    # Step 8c / 8d / post-8d: mirror commit chain, gated on the opt-in flag.
-    # On any non-zero exit we re-raise `_CommitHookFailure` so the same Step 6
-    # fix-loop machinery used for hook failures handles the recovery — the
-    # plan calls for each of the three failure modes (sync, commit, post-check)
-    # to route through Step 6.
-    mirror_head: Optional[str] = None
-    if opts.split_mirror_commits:
-        try:
-            mirror_head = _run_mirror_commit_chain(opts, phase)
-        except _MirrorCommitChainFailure as exc:
-            raise _CommitHookFailure(output=exc.output) from exc
-
-    # The recorded commit_sha — used as the next phase's baseline — is the
-    # mirror commit when split-mirror-commits is on (so a follow-up phase
-    # starts from a tree where mirrors are in sync), else the impl commit.
-    baseline_sha = mirror_head if mirror_head is not None else impl_head
     completed = {
         "index": phase.position,
         "label": phase.label,
         "title": phase.title,
-        "commit_sha": baseline_sha,
+        "commit_sha": _head_sha(opts.repo_root),
         "tests": "passed",
         "iterations": state["iteration_count"],
     }
-    if mirror_head is not None:
-        completed["impl_commit_sha"] = impl_head
-        completed["mirror_commit_sha"] = mirror_head
     state.setdefault("completed_phases", []).append(completed)
     # Clear resume_base_sha after the first successful commit of a resumed
     # run. SKILL.md Step 8: subsequent phases in the same process use the
@@ -1121,100 +1115,6 @@ def _commit_phase(
     # (HEAD has advanced past the resume baseline by phase 1's own commit).
     state.pop("resume_base_sha", None)
     return ConductResult(status="running", state=state, summary="")
-
-
-class _MirrorCommitChainFailure(Exception):
-    """Raised from `_run_mirror_commit_chain` on a Step 8c/8d/post-8d non-zero
-    exit so `_commit_phase` can re-route it through Step 6 via the existing
-    `_CommitHookFailure` channel."""
-
-    def __init__(self, output: str) -> None:
-        self.output = output
-
-
-def _run_mirror_commit_chain(opts: ConductOptions, phase: Phase) -> str:
-    """Step 8c → 8d → post-8d. Returns the mirror commit's HEAD SHA on success.
-
-    Sub-steps:
-
-    - 8c: ``scripts/sync-skills.sh`` as a subprocess, cwd=repo_root. Non-zero
-      → raise.
-    - 8d: ``git add`` only the ``.codex/`` paths the sync touched (discovered
-      via ``git status --porcelain`` filtered to ``.codex/``), then ``git
-      commit -m "conduct: phase <label> mirror sync"``. We do NOT ``git add
-      -A`` (would sweep in unrelated untracked artefacts).
-    - Post-8d: ``just check-sync && just check-prompt-parity``. Non-zero → raise.
-    """
-    sync_script = opts.repo_root / "scripts" / "sync-skills.sh"
-    sync_proc = subprocess.run(
-        ["bash", str(sync_script)],
-        cwd=str(opts.repo_root),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if sync_proc.returncode != 0:
-        raise _MirrorCommitChainFailure(
-            output="Step 8c sync-skills.sh failed:\n"
-            + (sync_proc.stdout or "")
-            + (sync_proc.stderr or "")
-        )
-
-    # 8d: discover the .codex/ paths the sync touched, add only those.
-    porcelain = _git(
-        ["status", "--porcelain", "--", ".codex/"], opts.repo_root, check=False
-    )
-    codex_paths: list[str] = []
-    for line in (porcelain.stdout or "").splitlines():
-        # Porcelain format: XY <path>; XY are status codes.
-        if len(line) < 4:
-            continue
-        path = line[3:].strip()
-        # Renames look like "old -> new"; record the new side.
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if path.startswith(".codex/"):
-            codex_paths.append(path)
-    if codex_paths:
-        add_proc = _git(["add", "--", *codex_paths], opts.repo_root, check=False)
-        if add_proc.returncode != 0:
-            raise _MirrorCommitChainFailure(
-                output="Step 8d git add failed:\n"
-                + (add_proc.stdout or "")
-                + (add_proc.stderr or "")
-            )
-
-    commit_msg = f"conduct: phase {phase.label} mirror sync"
-    commit_proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
-    if commit_proc.returncode != 0:
-        # Allow a no-op mirror commit (sync produced no diff): in that case
-        # the impl commit IS the mirror baseline and we treat this as success
-        # by returning the current HEAD unchanged.
-        head_after = _head_sha(opts.repo_root)
-        if not codex_paths:
-            return head_after
-        raise _MirrorCommitChainFailure(
-            output="Step 8d git commit failed:\n"
-            + (commit_proc.stdout or "")
-            + (commit_proc.stderr or "")
-        )
-
-    # Post-8d: just check-sync && just check-prompt-parity.
-    post_proc = subprocess.run(
-        ["bash", "-c", "just check-sync && just check-prompt-parity"],
-        cwd=str(opts.repo_root),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if post_proc.returncode != 0:
-        raise _MirrorCommitChainFailure(
-            output="Post-8d check-sync / check-prompt-parity failed:\n"
-            + (post_proc.stdout or "")
-            + (post_proc.stderr or "")
-        )
-
-    return _head_sha(opts.repo_root)
 
 
 class _CommitHookFailure(Exception):
