@@ -21,6 +21,7 @@ Helper modules for preflight and state handling:
 - `lock.py` — `fcntl.flock` advisory lock with atomic-`mkdir` fallback and 1-hour stale-break.
 - `schema.py` — last-fenced-block extraction + role-specific report validation (raises `SchemaError`). Stdlib only.
 - `runner.py` — test-command subprocess wrapper with portable wall-clock timeout via a dedicated subprocess session plus explicit process-group termination. Returns `TestResult(returncode, output, timed_out, duration_seconds)`.
+- `progress.py` — fix-loop progress signatures. It probes `git diff --cached --stat -w` once per process and falls back to sorted `--name-only` canonicalisation with a one-shot warning if local git rejects that flag combination.
 
 Deterministic tests under `tests/` (run via `uvx pytest .codex/skills/conduct/tests/ -v && bash .codex/skills/conduct/tests/test_skill_spawn_grep.sh`).
 
@@ -62,7 +63,10 @@ conduct --abort-run <plan-path>
 | `--abort-run` | Delete the state file for this plan once the state lock is free. If another `/conduct` run is active, exit non-destructively and tell the user to retry. No git ops, no stash. |
 | `--test-cmd CMD` | Override the phase's `Test command:` slot and any repo default. |
 | `--test-timeout SECS` | Wall-clock cap on the test-runner subprocess. Default 300. |
-| `--max-iterations N` | Fix-loop cap. Default 3. |
+| `--max-iterations N` | Legacy fix-loop cap. Default 3. Preserves pre-autonomous behaviour. |
+| `--max-iterations-ceiling N` | Progress-runway hard cap. Default 8. Blocks with `max_iterations_ceiling exceeded`. |
+| `--stall-threshold N` | Consecutive matching-signature count that blocks with `stall_threshold exceeded`. Default 2. |
+| `--no-progress-detection` | Disable stall blocking. Signatures remain inspectable in state. |
 
 ## Preflight
 
@@ -98,14 +102,16 @@ Preflight does **not** automatically execute repo-defined lint entrypoints. If t
 
 ### 4. State file load
 
-`<repo-root>/.conduct/state-<plan-id>.json`, where repo-root comes from `git rev-parse --show-toplevel` and `plan-id` is the plan basename plus a short hash of its repo-relative path.
+`<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where repo-root comes from `git rev-parse --show-toplevel` and `digest` is `sha1(repo-relative plan path)[:12]`. The matching lock is `<state-file>.lock`.
+
+Older shared names (`state-<plan-stem>-<digest>.json` and `state-<plan-stem>.json`) are bootstrap-only/read-only. Codex may copy static plan metadata from them when creating its own runtime-specific state, but it must not write them and must not treat their completed phases as Codex-completed mirror work.
 
 - If present and `--resume`: load only when both `state.plan_path` and `state.plan_content_hash` still match the current reviewed plan. Migrate/validate the stored state shape first. On match, restore any recorded paused stash, continue from `phase_index`, and refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
 - If present and the stored plan path/hash do not match the current reviewed plan: hard-stop and tell the user to `--abort-run` before starting over.
 - If present without `--resume`: warn, print state summary, suggest `--resume` or `--abort-run`, exit without entering the phase loop.
-- If absent: initialise with `plan_content_hash = compute_plan_hash(plan)`, `base_sha = git rev-parse HEAD`, `phase_index = 0`, `current_phase_title = ""`, `last_summary = ""`, `iteration_count = 0`, `status = "running"`.
+- If absent: initialise with `plan_content_hash = compute_plan_hash(plan)`, `base_sha = git rev-parse HEAD`, `phase_index = 0`, `current_phase_title = ""`, `last_summary = ""`, `iteration_count = 0`, `stall_signatures = []`, `stall_count = 0`, `autonomous = false`, `plan_id = sha1(abs(plan_path))[:12]`, `state_author = "codex"`, `schema_version = 2`, `status = "running"`.
 
-Acquire an advisory lock on `.conduct/state-<plan-id>.json.lock` before any write (see `lock.py` shipped with this skill).
+Acquire an advisory lock on the runtime-specific state lock before any write (see `lock.py` shipped with this skill).
 
 ### 5. Phase parsing
 
@@ -196,12 +202,15 @@ If the phase declares a `**Validation cmd:**` slot, run it via the same `runner.
 
 On zero exit, append `"validation passed"` to the phase warnings and continue to Step 7.
 
-### Step 6 — Fix loop (bounded at N = `--max-iterations`, default 3)
+### Step 6 — Fix loop (stall-aware dual cap)
 
 No classifier. On any failure (test failure OR pre-commit hook failure at the boundary commit in Step 8):
 
-- Increment `state.iteration_count`. Persist state immediately (crash recovery).
-- If `iteration_count > N`: set `state.status = "blocked"`, handback with message `Phase <label> stalled after <N> iterations; see .conduct/state-<plan-id>.json for diff and failure history.` Do not auto-advance.
+- Compute `progress.iteration_signature(failing_tests, staged_diff_stat)` before incrementing. Test failures use sorted pytest `FAILED <nodeid>` lines. Hook failures use sorted pre-commit hook ids such as `ruff` or `ruff-format`; parse failure falls back to `[]`.
+- `staged_diff_stat` comes from `progress.compute_staged_diff_stat(repo_root)`, using `git diff --cached --stat -w` when available and sorted `git diff --cached --name-only` otherwise. The probe decision is sticky for the Python process.
+- `_check_iteration_bound(state, opts, signature)` is the single source of truth for `state.iteration_count += 1`. The three fix-loop entry points call it after the failure is observable: `_run_phase` test failure, `_commit_phase` hook failure, and `_retry_after_hook_failure` test failure after hook retry.
+- Helper block priority: `stall_threshold exceeded`, then `max_iterations_ceiling exceeded`, then `max_iterations exceeded (legacy)`.
+- Persist state immediately after the helper returns (crash recovery; stall counters survive `--resume`).
 - Else capture `git diff --cached` into `{{PRIOR_DIFF}}`. Normally then run `git reset` (mixed, no `--hard`) to clear the staging area so the respawned implementer starts from a clean index with the prior diff visible only inside its prompt.
 - Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = a redacted failure summary (or pre-commit hook summary, if the failure came from the boundary commit).
 - Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration and keep the previously staged implementation diff in the index so the follow-up commit can still include the original implementation work plus the newly staged tests. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again).
@@ -250,7 +259,7 @@ No keyword heuristic watches for "proceed" — the user copies the printed comma
 
 ## State File
 
-Path: `<repo-root>/.conduct/state-<plan-id>.json`, where `plan-id` is the basename plus a short hash of the repo-relative plan path. `.conduct/` is git-ignored (Phase 5).
+Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where `digest` is `sha1(repo-relative plan path)[:12]`. `.conduct/` is git-ignored (Phase 5).
 
 Schema:
 
@@ -268,11 +277,33 @@ Schema:
   ],
   "last_summary": "...",
   "iteration_count": 0,
+  "stall_signatures": [],
+  "stall_count": 0,
+  "autonomous": false,
+  "plan_id": "<sha1(abs(plan_path))[:12]>",
+  "state_author": "codex",
   "status": "awaiting_user | running | paused | blocked | schema_error | complete",
   "blocker": null,
   "paused_stash_rev": "<stash commit sha recorded by --pause-phase, or null>"
 }
 ```
+
+Unknown fields are ignored by the current algorithm and preserved on write. Codex keeps `schema_version = 2` for Phase 1 writes.
+
+Loader compatibility:
+
+- Missing `schema_version` is treated as `1`.
+- Known versions `1` and `2` load normally and are rewritten as the current Codex schema on the next save.
+- Unknown integer versions `>=1` load the known subset, preserve unknown fields for round-trip, and emit one one-shot warning: `state file written by newer schema_version=<n>; reading known fields only`.
+- `incompatible_with_pre_vN: true` or any positive integer hard-fails with `state file requires a newer conduct loader (incompatible_with_pre_vN=<value>); upgrade /conduct or remove the state file to start fresh`. `false` and `0` pass.
+
+Progress fields:
+
+- `stall_signatures` stores the last two fix-loop signatures.
+- `stall_count` counts consecutive matching signatures for the current phase.
+- `autonomous` records whether autonomous mode was requested; Phase 1 records only, later phases add phase walking.
+- `plan_id` uses `sha1(abs(plan_path))[:12]` for future cross-runtime handoffs and is intentionally distinct from the state-file digest.
+- `state_author` is `"codex"` for Codex-owned runtime state.
 
 ### Locking
 

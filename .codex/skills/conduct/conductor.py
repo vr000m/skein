@@ -39,8 +39,20 @@ from typing import Any, Callable, Optional
 from .lock import LockError, StateLock, lock_is_held
 from .marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from .parser import Phase, files_overlap, parse_phases
+from .progress import compute_staged_diff_stat, iteration_signature
 from .runner import TestResult, run_tests
 from .schema import SchemaError, parse_report
+
+
+# Plan-id derivations in this module are intentionally different:
+#   _state_path()                    digests rel(plan_path, repo_root) -> Codex state filename
+#   _compute_cross_runtime_plan_id() digests abs(plan_path)           -> cross-runtime handoff id
+#
+# DO NOT use _state_path's digest for cross-runtime handoffs.
+# DO NOT use _compute_cross_runtime_plan_id for state-file naming.
+
+_UNKNOWN_SCHEMA_VERSION_WARNED = False
+_MAX_LEGACY_STATE_BYTES = 1 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +99,10 @@ class ConductOptions:
     test_cmd_override: Optional[str] = None
     test_timeout: float = 300.0
     max_iterations: int = 3
+    max_iterations_ceiling: int = 8
+    stall_threshold: int = 2
+    no_progress_detection: bool = False
+    autonomous: bool = False
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
 
@@ -98,6 +114,8 @@ class ConductResult:
     summary: str
     next_command: Optional[str] = None
     diagnostic: Optional[str] = None
+    next_action: Optional[str] = None
+    request: Optional[dict] = None
 
 
 DELEGATION_UNAVAILABLE_MESSAGE = (
@@ -111,6 +129,74 @@ class UnsafeConductPathError(RuntimeError):
 
 
 STATE_SCHEMA_VERSION = 2
+
+
+def _validate_options(opts: ConductOptions) -> None:
+    if not opts.no_progress_detection and opts.stall_threshold >= opts.max_iterations:
+        print(
+            f"conduct: stall_threshold={opts.stall_threshold} is "
+            f">= max_iterations={opts.max_iterations}; legacy cap will always fire first.",
+            file=sys.stderr,
+        )
+
+
+def _check_iteration_bound(
+    state: dict,
+    opts: ConductOptions,
+    signature: str,
+) -> Optional[ConductResult]:
+    """Single source of truth for iteration_count increments and stall bounds."""
+    state["iteration_count"] = state.get("iteration_count", 0) + 1
+
+    history = list(state.get("stall_signatures") or [])
+    previous = history[-1] if history else None
+    history.append(signature)
+    state["stall_signatures"] = history[-2:]
+    if previous is not None and signature == previous:
+        state["stall_count"] = state.get("stall_count", 0) + 1
+    else:
+        state["stall_count"] = 0
+
+    if not opts.no_progress_detection and state["stall_count"] >= opts.stall_threshold:
+        state["status"] = "blocked"
+        state["blocker"] = "stall_threshold exceeded"
+        return ConductResult(status="blocked", state=state, summary=state["blocker"])
+
+    if state["iteration_count"] > opts.max_iterations_ceiling:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations_ceiling exceeded"
+        return ConductResult(status="blocked", state=state, summary=state["blocker"])
+
+    if state["iteration_count"] > opts.max_iterations:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations exceeded (legacy)"
+        return ConductResult(status="blocked", state=state, summary=state["blocker"])
+
+    return None
+
+
+def _extract_failing_tests_from_output(output: str) -> list[str]:
+    found: set[str] = set()
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FAILED "):
+            nodeid = stripped[len("FAILED ") :].strip().split(" ", 1)[0]
+            if nodeid:
+                found.add(nodeid)
+    return sorted(found)
+
+
+def _extract_failing_hook_ids(output: str) -> list[str]:
+    found: set[str] = set()
+    for line in output.splitlines():
+        stripped = line.strip()
+        if "Failed" not in stripped or "." not in stripped:
+            continue
+        dot = stripped.find(".")
+        candidate = stripped[:dot].strip()
+        if candidate and " " not in candidate and "/" not in candidate and len(candidate) <= 64:
+            found.add(candidate)
+    return sorted(found)
 
 
 def delegation_unavailable_result(plan_path: str | Path) -> ConductResult:
@@ -258,7 +344,49 @@ def _state_path(opts: ConductOptions) -> Path:
     except ValueError:
         rel_plan = opts.plan_path.resolve().as_posix()
     digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
-    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+    return opts.repo_root / ".conduct" / f"state-codex-{opts.plan_path.stem}-{digest}.json"
+
+
+def _legacy_state_paths(opts: ConductOptions) -> list[Path]:
+    try:
+        rel_plan = opts.plan_path.resolve().relative_to(opts.repo_root.resolve()).as_posix()
+    except ValueError:
+        rel_plan = opts.plan_path.resolve().as_posix()
+    digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
+    return [
+        opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json",
+        opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}.json",
+    ]
+
+
+def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except (FileNotFoundError, OSError):
+        return None
+    try:
+        stat = os.fstat(fd)
+        if stat.st_size > _MAX_LEGACY_STATE_BYTES:
+            return None
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES)
+    finally:
+        os.close(fd)
+
+
+def _compute_cross_runtime_plan_id(plan_path: Path) -> str:
+    return hashlib.sha1(plan_path.resolve().as_posix().encode("utf-8")).hexdigest()[:12]
+
+
+def _maybe_warn_unknown_schema_version(version: int) -> None:
+    global _UNKNOWN_SCHEMA_VERSION_WARNED
+    if _UNKNOWN_SCHEMA_VERSION_WARNED:
+        return
+    _UNKNOWN_SCHEMA_VERSION_WARNED = True
+    print(
+        f"state file written by newer schema_version={version}; reading known fields only",
+        file=sys.stderr,
+    )
 
 
 def _ensure_safe_conduct_dir(repo_root: Path) -> Path:
@@ -307,7 +435,7 @@ def _conduct_path_result(status: str, summary: str, path: Path) -> ConductResult
 
 
 def _validate_state_shape(state: dict) -> dict:
-    if not isinstance(state.get("schema_version"), int):
+    if not isinstance(state.get("schema_version", 1), int):
         raise UnsafeConductPathError("invalid conduct state: schema_version must be an int")
     if not isinstance(state.get("completed_phases"), list):
         raise UnsafeConductPathError("invalid conduct state: completed_phases must be a list")
@@ -322,6 +450,7 @@ def _validate_state_shape(state: dict) -> dict:
 
 def _normalize_loaded_state(state: dict) -> dict:
     normalized = dict(state)
+    normalized.setdefault("schema_version", 1)
     normalized.setdefault("phase_index", len(normalized.get("completed_phases") or []))
     normalized.setdefault("current_phase_title", "")
     normalized.setdefault("completed_phases", [])
@@ -330,18 +459,29 @@ def _normalize_loaded_state(state: dict) -> dict:
     normalized.setdefault("status", "running")
     normalized.setdefault("blocker", None)
     normalized.setdefault("paused_stash_rev", None)
+    normalized.setdefault("stall_signatures", [])
+    normalized.setdefault("stall_count", 0)
+    normalized.setdefault("autonomous", False)
+    normalized.setdefault("state_author", "codex")
     normalized["schema_version"] = STATE_SCHEMA_VERSION
     return _validate_state_shape(normalized)
 
 
 def _migrate_loaded_state(state: dict) -> dict:
-    version = state.get("schema_version", 0)
+    incompat_marker = state.get("incompatible_with_pre_vN")
+    if incompat_marker is True or (
+        isinstance(incompat_marker, int) and incompat_marker > 0
+    ):
+        raise UnsafeConductPathError(
+            "state file requires a newer conduct loader "
+            f"(incompatible_with_pre_vN={incompat_marker!r}); "
+            "upgrade /conduct or remove the state file to start fresh"
+        )
+    version = state.get("schema_version", 1)
     if not isinstance(version, int):
         raise UnsafeConductPathError("invalid conduct state: schema_version must be an int")
-    if version > STATE_SCHEMA_VERSION:
-        raise UnsafeConductPathError(
-            f"unsupported conduct state schema_version: {version}"
-        )
+    if version >= 1 and version not in (1, STATE_SCHEMA_VERSION):
+        _maybe_warn_unknown_schema_version(version)
     migrated = dict(state)
     if version < 1:
         migrated["schema_version"] = 1
@@ -365,13 +505,43 @@ def _init_state(opts: ConductOptions, plan_hash: str) -> dict:
         "status": "running",
         "blocker": None,
         "paused_stash_rev": None,
+        "stall_signatures": [],
+        "stall_count": 0,
+        "autonomous": opts.autonomous,
+        "plan_id": _compute_cross_runtime_plan_id(opts.plan_path),
+        "state_author": "codex",
     }
+
+
+def _bootstrap_from_legacy_state(opts: ConductOptions, plan_hash: str) -> Optional[dict]:
+    for legacy_path in _legacy_state_paths(opts):
+        raw = _safe_read_legacy_state(legacy_path)
+        if raw is None:
+            continue
+        try:
+            legacy = _normalize_loaded_state(_migrate_loaded_state(json.loads(raw.decode("utf-8"))))
+        except (UnicodeDecodeError, ValueError, RuntimeError, UnsafeConductPathError):
+            continue
+        plan_path = legacy.get("plan_path")
+        if isinstance(plan_path, str) and Path(plan_path).resolve() != opts.plan_path.resolve():
+            continue
+        state = _init_state(opts, plan_hash)
+        state["base_sha"] = legacy.get("base_sha") or state["base_sha"]
+        state["last_summary"] = (
+            f"Bootstrapped Codex runtime state from legacy shared state {legacy_path.name}; "
+            "phase progress intentionally reset for Codex mirror ownership."
+        )
+        return state
+    return None
 
 
 def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, bool]:
     sp = _state_path(opts)
     if sp.exists():
         state = _normalize_loaded_state(_migrate_loaded_state(json.loads(sp.read_text())))
+        state.setdefault("plan_id", _compute_cross_runtime_plan_id(opts.plan_path))
+        state["state_author"] = "codex"
+        state["autonomous"] = opts.autonomous or bool(state.get("autonomous"))
         if opts.resume:
             # Preflight has already validated that the current plan hash
             # matches the marker, whether the marker was auto-refreshed here
@@ -380,6 +550,9 @@ def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, boo
             if state["plan_content_hash"] != plan_hash:
                 state["plan_content_hash"] = plan_hash
         return state, True
+    legacy = _bootstrap_from_legacy_state(opts, plan_hash)
+    if legacy is not None:
+        return legacy, False
     return _init_state(opts, plan_hash), False
 
 
@@ -703,7 +876,10 @@ def _run_phase(
     phase: Phase,
     initial_warnings: Optional[list[str]] = None,
 ) -> ConductResult:
-    state["iteration_count"] = 0
+    if state.get("current_phase_title") != phase.title:
+        state["iteration_count"] = 0
+        state["stall_signatures"] = []
+        state["stall_count"] = 0
     state["current_phase_title"] = phase.title
     # Keep on-disk phase_index aligned with the number of already-completed
     # phases so external readers see a live counter that matches SKILL.md's
@@ -821,21 +997,17 @@ def _run_phase(
                 return commit_outcome
             return _handback(opts, state, phase, "passed", iteration, strategy, strategy_reason, warnings)
 
-        # Step 6: fix loop.
-        state["iteration_count"] += 1
+        # Step 6: fix loop. Observe the failure signature before the helper
+        # owns the increment; this matches the legacy increment position.
+        failing_tests = _extract_failing_tests_from_output(result.output)
+        signature = iteration_signature(
+            failing_tests, compute_staged_diff_stat(opts.repo_root)
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=_diagnostic_tail(result.output),
-            )
+        if bound is not None:
+            bound.diagnostic = _diagnostic_tail(result.output)
+            return bound
 
         # Capture staged diff, reset index, then choose respawn role.
         prior_diff = _staged_diff(opts.repo_root)
@@ -942,24 +1114,19 @@ def _commit_phase(
                 )
     if proc.returncode != 0:
         # Pre-commit hook failure → route into fix loop.
-        state["iteration_count"] += 1
+        hook_output = proc.stdout + proc.stderr
+        signature = iteration_signature(
+            _extract_failing_hook_ids(hook_output),
+            compute_staged_diff_stat(opts.repo_root),
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled at boundary commit after "
-                f"{opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=_diagnostic_tail((proc.stdout or "") + (proc.stderr or "")),
-            )
+        if bound is not None:
+            bound.diagnostic = _diagnostic_tail(hook_output)
+            return bound
         # Signal the caller to re-enter the loop. We do this by returning a
         # special marker the caller checks. But simpler: raise a sentinel.
-        raise _CommitHookFailure(output=proc.stdout + proc.stderr)
+        raise _CommitHookFailure(output=hook_output)
 
     new_head = _head_sha(opts.repo_root)
     completed = {
@@ -1029,6 +1196,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
     Mirrors SKILL.md Step 9: every phase boundary returns control to the user.
     Tests drive multi-phase runs by re-invoking with ``resume=True``.
     """
+    _validate_options(opts)
     sp = _state_path(opts)
     try:
         _ensure_safe_conduct_dir(opts.repo_root)
@@ -1038,7 +1206,17 @@ def conduct(opts: ConductOptions) -> ConductResult:
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
         if sp.exists():
-            state = _normalize_loaded_state(_migrate_loaded_state(json.loads(sp.read_text())))
+            try:
+                state = _normalize_loaded_state(_migrate_loaded_state(json.loads(sp.read_text())))
+            except RuntimeError as exc:
+                return ConductResult(
+                    status="preflight_fail",
+                    state={},
+                    summary="state file requires newer loader",
+                    diagnostic=str(exc),
+                )
+            state.setdefault("plan_id", _compute_cross_runtime_plan_id(opts.plan_path))
+            state["state_author"] = "codex"
             state_exists = True
         else:
             state = {}
@@ -1072,7 +1250,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
         if state_exists and not _state_matches_plan(state, opts, plan_hash):
             return _state_mismatch_result(opts, state, plan_hash)
         if not state_exists:
-            state = _init_state(opts, plan_hash)
+            state = _bootstrap_from_legacy_state(opts, plan_hash) or _init_state(opts, plan_hash)
         elif opts.resume:
             state["resume_base_sha"] = _head_sha(opts.repo_root)
             state["status"] = "running"
@@ -1176,15 +1354,15 @@ def _retry_after_hook_failure(
         if test_cmd is not None:
             result = opts.test_runner(test_cmd, opts.test_timeout)
             if result.returncode != 0 or result.timed_out:
-                state["iteration_count"] += 1
+                signature = iteration_signature(
+                    _extract_failing_tests_from_output(result.output),
+                    compute_staged_diff_stat(opts.repo_root),
+                )
+                bound = _check_iteration_bound(state, opts, signature)
                 _persist_state(opts, state)
-                if state["iteration_count"] > opts.max_iterations:
-                    state["status"] = "blocked"
-                    state["blocker"] = (
-                        f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-                    )
-                    _persist_state(opts, state)
-                    return ConductResult(status="blocked", state=state, summary=state["blocker"])
+                if bound is not None:
+                    bound.diagnostic = _diagnostic_tail(result.output)
+                    return bound
                 prior_diff = _staged_diff(opts.repo_root)
                 if next_respawn_role != "test-writer":
                     _reset_index(opts.repo_root)
