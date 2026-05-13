@@ -150,6 +150,19 @@ class ConductOptions:
     no_progress_detection: bool = False
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
+    # Autonomous mode: when True, ``conduct()`` walks every unfinished phase in
+    # a single Python process under one lock acquisition, only handing back on
+    # a hard-stop (rogue commit, schema error, validation-cmd failure, stall,
+    # iteration ceiling, max_phases cap). Default False preserves the legacy
+    # one-phase-per-resume contract.
+    autonomous: bool = False
+    # Optional cap on total phases walked in autonomous mode. ``None`` is
+    # resolved at ``conduct()`` entry to ``len(parsed_phases) + 1`` (the +1
+    # leaves a single-iteration headroom; the cap fires before the (N+1)th
+    # phase would enter ``_run_phase``). Resolution happens inline at
+    # ``conduct()`` entry — NOT in ``__post_init__`` — because parsed phase
+    # count is not known until after preflight + plan parsing.
+    max_phases: Optional[int] = None
 
 
 @dataclass
@@ -893,6 +906,7 @@ def _run_phase(
     opts: ConductOptions,
     state: dict,
     phase: Phase,
+    autonomous: bool = False,
 ) -> ConductResult:
     # Phase-start reset is guarded on entering a NEW phase (different title
     # from the one persisted in state). Without this guard, --resume mid-phase
@@ -990,6 +1004,12 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
+            if autonomous:
+                # Autonomous mode: caller continues the phase loop without
+                # handback. ``_commit_phase`` already appended to
+                # ``state["completed_phases"]`` and persisted; return the
+                # running result unchanged.
+                return commit_outcome
             return _handback(
                 opts,
                 state,
@@ -1023,6 +1043,8 @@ def _run_phase(
                 warnings.append("validation passed")
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
+                return commit_outcome
+            if autonomous:
                 return commit_outcome
             return _handback(
                 opts,
@@ -1277,26 +1299,73 @@ def conduct(opts: ConductOptions) -> ConductResult:
                 "parallel spawn and real test runs."
             )
 
-        # phase_index in state is the count of completed phases.
-        idx = len(state.get("completed_phases", []))
-        if idx >= len(phases):
-            state["status"] = "complete"
-            _persist_state(opts, state)
-            return ConductResult(
-                status="complete", state=state, summary="All phases complete"
-            )
+        # Resolve max_phases inline at entry: parsed phase count is not known
+        # in ``ConductOptions.__post_init__``. ``None`` → ``len(phases) + 1``
+        # so a default-config run never trips the cap; explicit caps fire
+        # when ``len(state["completed_phases"]) >= cap`` (post-commit count).
+        max_phases_cap = (
+            opts.max_phases if opts.max_phases is not None else len(phases) + 1
+        )
 
-        phase = phases[idx]
-        try:
-            return _run_phase(opts, state, phase)
-        except _CommitHookFailure as hook_fail:
-            # Re-enter the loop with hook output as the failure context. Easiest
-            # way is recursion with the failure carried via state — but state
-            # already holds iteration_count; we pass the failure text through
-            # by routing back into _run_phase with prior_diff / test_failures
-            # set on the next request. To keep the implementation simple we
-            # adopt an explicit retry here.
-            return _retry_after_hook_failure(opts, state, phase, hook_fail.output)
+        # Explicit phase loop. In legacy (non-autonomous) mode the loop runs
+        # at most one full body iteration before ``_run_phase`` returns a
+        # handback (status != "running") and we exit. In autonomous mode the
+        # loop walks every unfinished phase under the single ``with lock:``
+        # acquisition above — SKILL.md Step 9a documents this single-lock
+        # property.
+        while True:
+            completed_count = len(state.get("completed_phases", []))
+            if completed_count >= max_phases_cap:
+                # Max-phases cap hit (hard-stop, autonomous-or-not). No phase
+                # context yet for this iteration, so return a blocked result
+                # directly rather than routing through ``_handback``.
+                state["status"] = "blocked"
+                state["blocker"] = f"max_phases ceiling hit ({max_phases_cap})"
+                _persist_state(opts, state)
+                return ConductResult(
+                    status="blocked",
+                    state=state,
+                    summary=state["blocker"],
+                )
+            if completed_count >= len(phases):
+                # All phases done; fall through to ci-parity gate (Phase 3,
+                # not yet implemented) — for now return a plain complete.
+                break
+            phase = phases[completed_count]
+            try:
+                result = _run_phase(opts, state, phase, autonomous=opts.autonomous)
+            except _CommitHookFailure as hook_fail:
+                result = _retry_after_hook_failure(
+                    opts, state, phase, hook_fail.output, autonomous=opts.autonomous
+                )
+            # Hard-stop or handback: return immediately.
+            if result.status != "running":
+                return result
+            # Phase commit succeeded. Legacy (non-autonomous) mode: ``_run_phase``
+            # already called ``_handback`` on the success path, so we never
+            # observe ``running`` here. Autonomous mode: persist progress
+            # (already done inside ``_commit_phase``) and continue the loop.
+            if not opts.autonomous:
+                # Defensive: a future refactor that changes ``_run_phase``'s
+                # legacy return value would otherwise silently keep walking
+                # phases under the single lock. Synthesise a handback so the
+                # contract holds even if the assumption above is violated.
+                return _handback(
+                    opts,
+                    state,
+                    phase,
+                    "passed",
+                    state.get("iteration_count", 0),
+                    "sequential",
+                    "legacy-loop-fallback",
+                    [],
+                )
+
+        state["status"] = "complete"
+        _persist_state(opts, state)
+        return ConductResult(
+            status="complete", state=state, summary="All phases complete"
+        )
 
 
 def _retry_after_hook_failure(
@@ -1304,6 +1373,7 @@ def _retry_after_hook_failure(
     state: dict,
     phase: Phase,
     hook_output: str,
+    autonomous: bool = False,
 ) -> ConductResult:
     """Respawn implementer with hook output as test_failures, then re-enter.
 
@@ -1377,6 +1447,8 @@ def _retry_after_hook_failure(
             iteration = state["iteration_count"]
             continue
         if commit_outcome.status != "running":
+            return commit_outcome
+        if autonomous:
             return commit_outcome
         return _handback(
             opts,

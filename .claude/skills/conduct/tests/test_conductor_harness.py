@@ -1968,3 +1968,65 @@ def test_step_8_impl_commit_has_conducted_by_trailer(repo):
         f"expected Conducted-By trailer on its own line at end of body; got:\n{body!r}"
     )
     assert lines[0] == "conduct: phase 1 — Add a file"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 regression: legacy mode acquires the lock once per --resume
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_no_flags_handback_per_phase(repo, lock_counter):
+    """Without ``--autonomous``, ``conduct()`` MUST acquire the lock exactly
+    once per invocation and hand back after each phase. For an N-phase plan
+    walked by N successive ``--resume`` calls, the total lock-acquisition
+    count is N — one per Python entry. The byte-for-byte handback summary
+    format (Phase / Spawn / Tests / Iterations) is preserved.
+    """
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+
+    def make_spawner():
+        s = StubSpawner(repo)
+        s.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "v=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        s.script("test-writer", 0, lambda req, r: _test_report())
+        return s
+
+    # First invocation — phase 1.
+    r1 = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert r1.status == "awaiting_user"
+    assert len(r1.state["completed_phases"]) == 1
+    # Byte-for-byte preserved handback shape.
+    assert r1.summary.startswith("Phase 1: First\n")
+    assert "  Spawn: " in r1.summary
+    assert "  Tests: passed\n" in r1.summary
+    assert "  Iterations: 0\n" in r1.summary
+    assert r1.next_command == f"Run: /conduct --resume {plan}"
+    assert lock_counter.count == 1
+
+    # Second invocation (resume) — phase 2. Lock counter advances to 2.
+    r2 = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+    assert r2.status == "awaiting_user"
+    assert len(r2.state["completed_phases"]) == 2
+    assert r2.summary.startswith("Phase 2: Second\n")
+    assert lock_counter.count == 2

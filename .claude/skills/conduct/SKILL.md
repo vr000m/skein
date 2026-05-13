@@ -56,6 +56,8 @@ conduct --abort-run <plan-path>
 | `--max-iterations-ceiling N` | Autonomous-runway hard cap. Default 8. Blocks with `max_iterations_ceiling exceeded` when exceeded. |
 | `--stall-threshold N` | Consecutive matching-signature count that blocks the fix loop with `stall_threshold exceeded`. Default 2. With N=2, signature 1 → stall_count=0; signature 2 (matching) → stall_count=1; signature 3 (matching) → stall_count=2 → block. |
 | `--no-progress-detection` | Disable stall detection (signatures are still computed for state-file inspection but never counted as stalls). Default off. |
+| `--autonomous` | Walk every unfinished phase in a single process under one state-lock acquisition. Hard-stops still hand back (Step 9b). Default off → one phase per `--resume`. |
+| `--max-phases N` | Cap on total phases walked in autonomous mode. Hard-stops with blocker `max_phases ceiling hit (N)` when the post-commit completed-phase count reaches `N`. Unset → effectively `len(parsed_phases) + 1` (no cap fires on a healthy run). |
 
 ## Preflight
 
@@ -234,15 +236,38 @@ After tests pass (or were skipped with warning):
 
 **Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
-### Step 9 — Handback
+### Step 9 — Phase transition
 
-At every phase boundary:
+Step 9 has two branches. Step 9a is the success transition (continue under autonomous mode, or hand back under legacy mode). Step 9b is the hard-stop handback that fires regardless of `--autonomous`.
+
+#### Step 9a — Phase success transition (autonomous-aware)
+
+After a phase's boundary commit completes:
+
+1. **Legacy mode (no `--autonomous`).** Print a structured phase summary and the literal `Run: /conduct --resume <plan-path>` next-command line; set `state.status = "awaiting_user"`, persist, release lock, exit the skill. One phase per `--resume` invocation.
+2. **Autonomous mode (`--autonomous`).** Persist progress (already done inside the boundary-commit helper), do NOT release the lock, do NOT print a handback summary, and continue the conductor's explicit phase loop. The single `with lock:` acquisition spans every phase: a clean autonomous run from phase 1 → N acquires the state lock exactly **once**.
+
+Single-lock-acquisition property. In autonomous mode the conductor walks every unfinished phase inside one `with lock:` block. The `LockAcquisitionCounter` test fixture asserts this: a successful 3-phase autonomous run shows `lock_acquisitions == 1`. Legacy mode acquires the lock once per `--resume`, so an N-phase legacy run shows `lock_acquisitions == N`. The CI-parity gate (Phase 3) introduces a result-file path that releases the lock and re-enters on resume, producing `lock_acquisitions == 2` for the production gate flow — but Phase 2 itself does not exercise that path.
+
+#### Step 9b — Hard-stop handback
+
+Hard-stops hand back regardless of `--autonomous`:
+
+- Rogue commit (subagent ran `git commit`).
+- Schema error (subagent JSON did not parse).
+- Validation-cmd failure (post-test validation command exited non-zero).
+- Stall-threshold hit (same `iteration_signature` N times).
+- Max-iterations-ceiling hit (autonomous-runway cap exceeded).
+- Max-phases cap hit (`--max-phases` ceiling reached).
+- (Phase 3) `awaiting_ci_parity` missing-result-after-3-resumes.
+
+On any hard-stop:
 
 1. Print a structured phase summary:
    - Phase label and title
    - Files changed
    - Spawn strategy (parallel | sequential)
-   - Test result (passed | skipped-with-warning)
+   - Test result (passed | skipped-with-warning | n/a)
    - Iterations used
    - Mid-phase reviewer findings if any
    - Any warnings (rogue commit, missing test command, skipped tests)
@@ -250,7 +275,7 @@ At every phase boundary:
    ```
    Run: /conduct --resume <plan-path>
    ```
-3. Set `state.status = "awaiting_user"`, persist, release lock, exit the skill.
+3. Set `state.status = "awaiting_user"` (or `"blocked"` / `"schema_error"` per the stop reason), persist, release lock, exit the skill.
 
 No keyword heuristic watches for "proceed" — the user copies the printed command when ready.
 
