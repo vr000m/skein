@@ -5,7 +5,7 @@
 **Priority**: Medium
 **Branch**: feature/conduct-autonomous-mode
 **Created**: 2026-05-12
-**Last revised**: 2026-05-13 (post-/review-plan round 2: ConductResult parity → Phase 1, plan-id reconciliation → Phase 1, Phase 4 reorder + scripted handoff gate, codex loader relax → Phase 1, pre-Phase-3 prompt-parity baseline, plus 11 testing-gap fixes)
+**Last revised**: 2026-05-13 (post-/review-plan round 2 + Codex nit: Phase 4 command split into read-only acceptance gate vs destructive promote; ConductResult parity → Phase 1, plan-id reconciliation → Phase 1, scripted handoff gate, codex loader relax → Phase 1, pre-Phase-3 prompt-parity baseline, plus 11 testing-gap fixes)
 
 ## Objective
 
@@ -275,14 +275,16 @@ The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr00
 
 **Impl files:** (none — verification phase)
 **Test files:** `tests/parity/check-mirror-handoff.sh` (new scripted handoff gate; see below)
-**Test command:** `bash tests/parity/check-mirror-handoff.sh && just check-prompt-parity && uvx pytest .claude/skills/conduct/tests/ -v && (cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q) && bash tests/parity/test-prompt-parity-extended.sh && scripts/promote-skills.sh && just check-sync`
+**Test command (read-only acceptance gate; run first and must be green before promoting):** `bash tests/parity/check-mirror-handoff.sh && just check-prompt-parity && uvx pytest .claude/skills/conduct/tests/ -v && (cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q) && bash tests/parity/test-prompt-parity-extended.sh`
+
+**Final acceptance + promote command (DESTRUCTIVE — `scripts/promote-skills.sh` uses `rsync --delete` against globals; only run after the read-only acceptance gate above is green and the pre-promote diff check below is clean):** `scripts/promote-skills.sh && just check-sync`
 
 **Handoff gate (must pass before any check/test below runs):** Block until both the claude-side and codex-side mirror commits have landed on the branch. The scripted gate `tests/parity/check-mirror-handoff.sh` parses `git log` and asserts that, for every phase `N ∈ {1, 2, 3}`, there exists at least one `conduct(phase N): ...` commit from each runtime (claude-driven and codex-driven), or an equivalent boundary commit from each runtime touching the corresponding `.claude/skills/conduct/` and `.codex/skills/conduct/` paths. The parity and sync checks below assume both runtimes have completed their phase work; running them earlier will spuriously fail on the lagging-mirror state — the scripted gate makes this concrete and CI-checkable rather than a manual paragraph.
 
 - Verify mirror handoff by running `bash tests/parity/check-mirror-handoff.sh` first (script exits non-zero with a clear diagnostic if either runtime's phase commits are missing).
 - Run `just check-prompt-parity`, the full Claude conduct test suite, the Codex conduct suite from a clean checkout, and `bash tests/parity/test-prompt-parity-extended.sh`. (Note: `just check-sync` is intentionally NOT first — it will report drift between repo and globals until `scripts/promote-skills.sh` runs.)
 - **Pre-promote diff check.** Before `scripts/promote-skills.sh`, diff repo `.claude/skills/conduct/` vs global `~/.claude/skills/conduct/` and repo `.codex/skills/conduct/` vs global `~/.codex/skills/conduct/`. If either global has hand-edits not in repo, surface and confirm intent before promoting (which uses `rsync --delete`).
-- Promote via `scripts/promote-skills.sh`.
+- Promote via `scripts/promote-skills.sh` — this is the **destructive** step (rsync --delete to `~/.claude/skills/conduct/` and `~/.codex/skills/conduct/`); it is intentionally not part of the read-only acceptance gate and must only run after that gate is green and the pre-promote diff check is clean.
 - Run `just check-sync` as the final post-promote verification.
 - **Codex test-equivalents manifest.** Add `tests/parity/codex-test-equivalents.txt` enumerating which Claude conduct tests must have Codex equivalents (one test name per line, grouped by area: progress-detector, autonomous-mode, ci-parity, schema-migration). `tests/parity/check-mirror-handoff.sh` asserts that the codex test count for the enumerated areas matches the claude test count (or that each named Claude test has a corresponding `_codex_equivalent` marker in the manifest).
 - Update `docs/dev_plans/README.md` task table.
