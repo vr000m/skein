@@ -1056,8 +1056,8 @@ def test_state_path_disambiguates_same_basename_plans(repo):
     sp_b = _state_file_for(plan_b, repo)
     assert sp_a != sp_b
     assert sp_a.parent == sp_b.parent
-    assert sp_a.name.startswith("state-shared-") and sp_a.suffix == ".json"
-    assert sp_b.name.startswith("state-shared-") and sp_b.suffix == ".json"
+    assert sp_a.name.startswith("state-claude-shared-") and sp_a.suffix == ".json"
+    assert sp_b.name.startswith("state-claude-shared-") and sp_b.suffix == ".json"
 
 
 def test_legacy_state_file_migrates_on_load(repo):
@@ -1097,7 +1097,9 @@ def test_legacy_state_file_migrates_on_load(repo):
 
     new_path = _state_file_for(plan, repo)
     assert new_path.exists()
-    assert not legacy.exists()
+    # Non-destructive bootstrap: legacy file preserved so the other runtime
+    # (e.g. codex) can still bootstrap from it.
+    assert legacy.exists()
 
 
 def test_legacy_state_file_not_migrated_when_plan_path_differs(repo):
@@ -1134,7 +1136,8 @@ def test_legacy_state_file_migrates_optimistically_when_plan_path_missing(repo):
     _migrate_legacy_state_file(
         ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
     )
-    assert not legacy.exists()
+    # Non-destructive: legacy preserved for the other runtime's bootstrap.
+    assert legacy.exists()
     assert _state_file_for(plan, repo).exists()
 
 
@@ -1194,6 +1197,80 @@ def test_legacy_state_migration_skipped_when_legacy_is_symlink(repo):
     assert legacy.is_symlink()
     assert victim.exists()
     assert not _state_file_for(plan, repo).exists()
+
+
+def test_state_path_includes_runtime_author(repo):
+    """Phase 1: state path MUST embed the runtime author prefix.
+
+    Codex-side mirror will use `state-codex-...`; the two runtimes are forbidden
+    from sharing the same state file.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    sp = _state_file_for(plan, repo)
+    assert sp.name.startswith("state-claude-"), sp.name
+    # The plan stem and digest are preserved after the runtime prefix.
+    assert plan.stem in sp.name
+
+
+def test_legacy_shared_state_does_not_skip_other_runtime(repo):
+    """Bootstrap from a legacy file MUST NOT delete/rename it.
+
+    Both runtimes need to be able to bootstrap from the same legacy snapshot.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    # Pre-runtime-partition legacy: state-<stem>-<digest>.json
+    from conductor import _pre_partition_state_path
+
+    legacy = _pre_partition_state_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    legacy_payload = {
+        "plan_path": str(plan),
+        "plan_content_hash": "a" * 40,
+        "base_sha": "b" * 40,
+        "phase_index": 0,
+        "completed_phases": [],
+        "last_summary": "",
+        "iteration_count": 0,
+        "status": "running",
+        "blocker": None,
+    }
+    legacy.write_text(json.dumps(legacy_payload))
+
+    from conductor import _migrate_legacy_state_file
+
+    _migrate_legacy_state_file(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    # Bootstrap populated the runtime-specific path...
+    sp = _state_file_for(plan, repo)
+    assert sp.exists()
+    bootstrapped = json.loads(sp.read_text())
+    assert bootstrapped["state_author"] == "claude"
+    # ...and left the legacy file untouched so codex can bootstrap from it too.
+    assert legacy.exists()
+
+
+def test_runtime_specific_locks_do_not_collide(repo):
+    """The lock filename is derived from the state path, so the runtime prefix
+    propagates to the lock. A hypothetical codex-side path MUST yield a
+    distinct lock filename from the claude-side path.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    claude_sp = _state_file_for(plan, repo)
+    claude_lock = claude_sp.with_suffix(claude_sp.suffix + ".lock")
+    # Simulate the codex-side path by substituting the prefix in the same
+    # directory; the codex mirror's `_state_path` produces this name.
+    codex_sp = claude_sp.parent / claude_sp.name.replace(
+        "state-claude-", "state-codex-", 1
+    )
+    codex_lock = codex_sp.with_suffix(codex_sp.suffix + ".lock")
+    assert claude_sp != codex_sp
+    assert claude_lock != codex_lock
+    assert "state-claude-" in claude_lock.name
+    assert "state-codex-" in codex_lock.name
 
 
 def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(

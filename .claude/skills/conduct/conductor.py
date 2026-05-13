@@ -50,6 +50,13 @@ from schema import SchemaError, parse_report
 # DO NOT use _compute_cross_runtime_plan_id for state-file naming.
 # See _compute_cross_runtime_plan_id's docstring for the worktree rationale.
 
+# Runtime authorship for state files and locks. Claude-side conductor writes
+# state-claude-<plan-stem>-<digest>.json; the Codex mirror writes
+# state-codex-<...>. The two runtimes MUST NOT share a state file or lock; the
+# author field on every state write is the diagnostics counterpart to this
+# filename prefix.
+_RUNTIME_AUTHOR = "claude"
+
 
 # Module-level flag: emit the unknown-schema_version warning exactly once per
 # Python process. Reset implicitly on a fresh process (e.g. a new --resume).
@@ -501,55 +508,96 @@ def _state_path(opts: ConductOptions) -> Path:
     except ValueError:
         rel_plan = opts.plan_path.resolve().as_posix()
     digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
-    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+    return (
+        opts.repo_root
+        / ".conduct"
+        / f"state-{_RUNTIME_AUTHOR}-{opts.plan_path.stem}-{digest}.json"
+    )
 
 
 def _legacy_state_path(opts: ConductOptions) -> Path:
+    """Pre-digest legacy path: `.conduct/state-<plan-stem>.json`."""
     return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}.json"
 
 
+def _pre_partition_state_path(opts: ConductOptions) -> Path:
+    """Pre-runtime-partition legacy path: `.conduct/state-<plan-stem>-<digest>.json`.
+
+    This was the active path before Phase 1 introduced runtime-author
+    partitioning. The other runtime may still need to bootstrap from it, so
+    callers MUST read non-destructively.
+    """
+    try:
+        rel_plan = (
+            opts.plan_path.resolve().relative_to(opts.repo_root.resolve()).as_posix()
+        )
+    except ValueError:
+        rel_plan = opts.plan_path.resolve().as_posix()
+    digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
+    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+
+
+def _bootstrap_from_legacy_state(opts: ConductOptions) -> Optional[dict]:
+    """Non-destructively load a legacy state file as bootstrap input.
+
+    Tries the pre-runtime-partition path first, then the pre-digest path.
+    Returns the parsed state dict if a legacy file exists, parses, has a
+    matching (or absent) `plan_path`, and a `state_author` matching this
+    runtime (or absent). Returns None otherwise.
+
+    The legacy file is NEVER renamed or deleted: the *other* runtime may
+    still bootstrap from the same file. Each runtime persists its own
+    runtime-specific state via `_persist_state` after bootstrap.
+    """
+    for legacy in (_pre_partition_state_path(opts), _legacy_state_path(opts)):
+        if not legacy.exists() or legacy.is_symlink():
+            continue
+        raw = _safe_read_legacy_state(legacy)
+        if raw is None:
+            continue
+        try:
+            parsed = json.loads(raw.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        recorded = parsed.get("plan_path")
+        if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
+            continue
+        author = parsed.get("state_author")
+        if author is not None and author != _RUNTIME_AUTHOR:
+            # The other runtime owns this legacy snapshot; do not consume.
+            continue
+        return parsed
+    return None
+
+
 def _migrate_legacy_state_file(opts: ConductOptions) -> None:
-    """Rename a pre-digest state file to the digest-suffixed path.
+    """Bootstrap from a legacy state file into the runtime-specific path.
 
-    Migration is path-driven (file rename), distinct from Codex's
-    `_migrate_loaded_state` which is content-driven (schema-version migration
-    on already-loaded JSON). If both helpers ever live in the same conductor,
-    path migration MUST run first so the schema migration sees the new path.
+    Non-destructive: legacy files are read only; never renamed or deleted.
+    The other runtime may still need to bootstrap from the same file. Each
+    runtime stamps `state_author` on its first runtime-specific write.
 
-    Only migrates when the legacy file's recorded `plan_path` matches the
-    current plan; missing `plan_path` is treated as ambiguous and migrated
-    optimistically (the file is still in `.conduct/state-<basename>.json`,
-    which by construction is unique per basename in this directory).
+    No-op if the runtime-specific state file already exists, no eligible
+    legacy file is found, or the legacy `plan_path` / `state_author` do not
+    match this runtime.
     """
     sp = _state_path(opts)
-    legacy = _legacy_state_path(opts)
-    if sp.exists() or not legacy.exists() or legacy.is_symlink():
+    if sp.exists():
         return
-
-    raw = _safe_read_legacy_state(legacy)
-    if raw is None:
+    parsed = _bootstrap_from_legacy_state(opts)
+    if parsed is None:
         return
-    try:
-        recorded = json.loads(raw.decode("utf-8", errors="strict")).get("plan_path")
-    except (UnicodeDecodeError, ValueError):
-        return
-    if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
-        return
-
+    parsed["state_author"] = _RUNTIME_AUTHOR
     try:
         _ensure_safe_conduct_dir(opts.repo_root)
         _ensure_safe_fs_path(sp, expect_dir=False)
-        legacy.rename(sp)
+        _safe_write_text(sp, json.dumps(parsed, indent=2))
     except (FileNotFoundError, FileExistsError, OSError, UnsafeConductPathError):
-        # Concurrent migrator or symlink races: bail. The next load will
+        # Concurrent bootstrap or symlink races: bail. The next load will
         # observe whichever file landed at sp.
         return
-    legacy_lock = legacy.with_suffix(legacy.suffix + ".lock")
-    if legacy_lock.exists():
-        try:
-            legacy_lock.unlink()
-        except OSError:
-            pass
 
 
 def _compute_cross_runtime_plan_id(plan_path: Path) -> str:
@@ -604,6 +652,9 @@ def _apply_v1_defaults(state: dict, opts: ConductOptions) -> bool:
         mutated = True
     if "plan_id" not in state:
         state["plan_id"] = _compute_cross_runtime_plan_id(opts.plan_path)
+        mutated = True
+    if "state_author" not in state:
+        state["state_author"] = _RUNTIME_AUTHOR
         mutated = True
     if "schema_version" not in state:
         # Absent is treated as 1 per the forward-compat rule.
@@ -678,6 +729,7 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         "stall_signatures": [],
         "stall_count": 0,
         "plan_id": _compute_cross_runtime_plan_id(opts.plan_path),
+        "state_author": _RUNTIME_AUTHOR,
         "schema_version": 1,
     }
     _persist_state(opts, state)
