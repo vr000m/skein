@@ -55,6 +55,20 @@ _ROLE_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
         "phase_label": str,
         "findings": list,
     },
+    # CI-parity worker (Phase 3 end-of-plan gate). The conductor compares
+    # ``plan_id`` and ``request_written_at_unix`` against the request stored
+    # in state to detect stale result files; mismatched values are handled at
+    # the preflight layer, not here. Optional fields (``duration_seconds``,
+    # ``last_2000_bytes_of_output``, ``summary``) are accepted but not
+    # enforced — the conductor cares structurally about ``status``.
+    "ci-parity": {
+        "role": str,
+        "schema_version": int,
+        "plan_id": str,
+        "request_written_at_unix": (int, float),
+        "status": str,
+        "command_run": str,
+    },
 }
 
 # Role-specific flag substructure. Enforced only when the role emits flags
@@ -95,7 +109,9 @@ def parse_report(text: str, expected_role: str) -> dict[str, Any]:
     try:
         obj = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise SchemaError(f"final ```json block did not parse: {exc.msg} at line {exc.lineno}") from exc
+        raise SchemaError(
+            f"final ```json block did not parse: {exc.msg} at line {exc.lineno}"
+        ) from exc
     if not isinstance(obj, dict):
         raise SchemaError(f"report must be a JSON object, got {type(obj).__name__}")
     validate_report(obj, expected_role)
@@ -125,6 +141,13 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
             want = _type_name(expected_type)
             raise SchemaError(
                 f"key {key!r} has wrong type: expected {want}, got {actual}"
+            )
+    # CI-parity has an enum constraint on `status`.
+    if expected_role == "ci-parity":
+        status_field = obj.get("status")
+        if status_field not in ("passed", "failed"):
+            raise SchemaError(
+                f"ci-parity status must be 'passed' or 'failed', got {status_field!r}"
             )
     flag_schema = _ROLE_FLAGS_REQUIRED.get(expected_role)
     if flag_schema is not None:
