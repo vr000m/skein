@@ -1881,6 +1881,19 @@ def test_step_8_impl_commit_has_conducted_by_trailer(repo):
     assert "phase: 1" in body
 
 
+def test_plan_id_helpers_are_distinguishable_by_name_and_doc(repo):
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    opts = ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+
+    state_path = _state_path(opts)
+    handoff_id = conductor._compute_cross_runtime_plan_id(plan)
+
+    assert _state_path.__name__ == "_state_path"
+    assert conductor._compute_cross_runtime_plan_id.__name__ == "_compute_cross_runtime_plan_id"
+    assert "state-codex-" in state_path.name
+    assert handoff_id not in state_path.name
+
+
 def test_stall_blocks_at_threshold(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
