@@ -1389,6 +1389,7 @@ def test_ci_parity_prompt_placeholder_rendering(repo):
     assert "{{CI_CMD}}" in template
     assert "{{REPO_ROOT}}" in template
     assert "{{PLAN_ID}}" in template
+    assert "{{REQUEST_WRITTEN_AT_UNIX}}" in template
 
     req = CIParitySpawnRequest(
         plan_path="/abs/plan.md",
@@ -1408,6 +1409,7 @@ def test_ci_parity_prompt_placeholder_rendering(repo):
         .replace("{{CI_CMD}}", req.ci_cmd)
         .replace("{{REPO_ROOT}}", req.repo_root)
         .replace("{{PLAN_ID}}", req.plan_id)
+        .replace("{{REQUEST_WRITTEN_AT_UNIX}}", str(req.request_written_at_unix))
     )
     assert "{{" not in rendered
     # Each value appears at least once in the rendered output.
