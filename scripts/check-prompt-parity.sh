@@ -133,6 +133,23 @@ is_expected_drift() {
 	return 1
 }
 
+prompt_files_match() {
+	local skill="$1"
+	local prompt_file="$2"
+	local claude_file="$3"
+	local codex_file="$4"
+	if [[ "$skill/$prompt_file" == "fan-out/agent-prompt.md" ]]; then
+		diff -q \
+			<(sed \
+				-e 's/spawned Claude agent/spawned Codex agent/g' \
+				-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
+				"$claude_file") \
+			"$codex_file" >/dev/null 2>&1
+		return
+	fi
+	diff -q "$claude_file" "$codex_file" >/dev/null 2>&1
+}
+
 declare -a prompt_drift_expected_observed=()
 declare -a prompt_drift_unknown_observed=()
 
@@ -160,6 +177,9 @@ for skill in "${managed_skills[@]}"; do
 	if [[ ${#prompt_files[@]} -gt 0 ]]; then
 		IFS=$'\n' read -r -d '' -a prompt_files < <(printf '%s\n' "${prompt_files[@]}" | sort -u && printf '\0')
 	fi
+	if [[ ${#prompt_files[@]} -eq 0 ]]; then
+		continue
+	fi
 	for pf in "${prompt_files[@]}"; do
 		claude_pf="$claude_skill_dir/$pf"
 		codex_pf="$codex_skill_dir/$pf"
@@ -172,7 +192,7 @@ for skill in "${managed_skills[@]}"; do
 			drifted=1
 			drift_reason="$skill/$pf present on .codex, missing on .claude"
 		elif [[ -f "$claude_pf" && -f "$codex_pf" ]]; then
-			if ! diff -q "$claude_pf" "$codex_pf" >/dev/null 2>&1; then
+			if ! prompt_files_match "$skill" "$pf" "$claude_pf" "$codex_pf"; then
 				drifted=1
 				drift_reason="$skill/$pf differs between .claude and .codex"
 			fi
