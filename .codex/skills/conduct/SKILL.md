@@ -295,7 +295,7 @@ Loader compatibility:
 - Missing `schema_version` is treated as `1`.
 - Known versions `1` and `2` load normally and are rewritten as the current Codex schema on the next save.
 - Unknown integer versions `>=1` load the known subset, preserve unknown fields for round-trip, and emit one one-shot warning: `state file written by newer schema_version=<n>; reading known fields only`.
-- `incompatible_with_pre_vN: true` or any positive integer hard-fails with `state file requires a newer conduct loader (incompatible_with_pre_vN=<value>); upgrade /conduct or remove the state file to start fresh`. `false` and `0` pass.
+- `incompatible_with_pre_vN: true` or any positive integer hard-fails with `state file requires a newer conduct loader (incompatible_with_pre_vN=<value>); upgrade the conduct skill or remove the state file to start fresh`. `false` and `0` pass.
 
 Progress fields:
 
