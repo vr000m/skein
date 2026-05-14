@@ -1,7 +1,7 @@
 ---
 name: conduct
 description: Walks a reviewed dev-plan phase by phase and delegates each phase's implementation, testing, and fix loop to clean-context subagents. Main Codex stays in a conductor role so context does not exhaust during multi-phase execution. Use when the user says "step through plan", "walk phases", "delegate phase implementation", "conduct plan", "run the plan", or invokes this skill directly with a dev-plan path.
-argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N] [--autonomous] [--max-phases N]"
+argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N] [--autonomous] [--max-phases N] [--run-ci-parity] [--ci-cmd CMD] [--skip-ci-parity]"
 ---
 
 # Conduct: Phased Delegation for Linear Implementation
@@ -13,6 +13,7 @@ Subagent prompt templates live alongside this file:
 - `implementer-prompt.md`
 - `test-writer-prompt.md`
 - `reviewer-prompt.md`
+- `ci-parity-prompt.md`
 
 Helper modules for preflight and state handling:
 
@@ -22,6 +23,7 @@ Helper modules for preflight and state handling:
 - `schema.py` — last-fenced-block extraction + role-specific report validation (raises `SchemaError`). Stdlib only.
 - `runner.py` — test-command subprocess wrapper with portable wall-clock timeout via a dedicated subprocess session plus explicit process-group termination. Returns `TestResult(returncode, output, timed_out, duration_seconds)`.
 - `progress.py` — fix-loop progress signatures. It probes `git diff --cached --stat -w` once per process and falls back to sorted `--name-only` canonicalisation with a one-shot warning if local git rejects that flag combination.
+- `ci_parity.py` — local CI entrypoint detection for the end-of-plan parity gate. Detection priority: `just ci`, `make ci`, `npm run ci`, `cargo test --all`; workflow files are intentionally not detected.
 
 Deterministic tests under `tests/` (run via `uvx pytest .codex/skills/conduct/tests/ -v && bash .codex/skills/conduct/tests/test_skill_spawn_grep.sh`).
 
@@ -70,6 +72,9 @@ conduct --autonomous <plan-path>
 | `--no-progress-detection` | Disable stall blocking. Signatures remain inspectable in state. |
 | `--autonomous` | Walk every unfinished phase in one conductor invocation under one state-lock acquisition. Hard-stops still hand back. Default off preserves one phase per `--resume`. |
 | `--max-phases N` | Cap total completed phases during the run. Blocks with `max_phases ceiling hit (N)` when the completed-phase count reaches `N`. Unset resolves to `len(parsed_phases) + 1`, so a healthy full run does not hit the cap. |
+| `--run-ci-parity` | Enable the end-of-plan CI-parity gate explicitly. Implied by `--autonomous`. |
+| `--ci-cmd CMD` | Override CI entrypoint detection for the parity gate. |
+| `--skip-ci-parity` | Short-circuit the parity gate. From `awaiting_ci_parity`, marks complete and preserves request/result files on disk. |
 
 ## Preflight
 
@@ -231,6 +236,8 @@ After tests pass (or were skipped with warning):
 3. If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). Only auto-restage when every modified tracked file is already in the original staged pathset for this phase; in that case, run `git add -u -- <staged-paths...>` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings and continue at step 4 as a normal success. If the hook modified tracked files outside the original staged pathset, hand back to the user instead of auto-staging unrelated edits. If the retry fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration. Do NOT use `--no-verify`.
 4. On success, record the new `HEAD` SHA in `state.completed_phases[*].commit_sha`.
 
+Pre-commit hook scope: `scripts/check-prompt-parity.sh` is invoked from `justfile` recipes only, not from `.pre-commit-config.yaml` or the hook chain. Phase 3 Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
+
 ### Step 9 — Phase Transition
 
 Step 9 has two branches: the ordinary success transition and hard-stop handback. The ordinary branch is mode-aware; hard-stops hand back regardless of `--autonomous`.
@@ -275,6 +282,49 @@ On any hard-stop:
 
 No keyword heuristic watches for "proceed" — the user copies the printed command when ready.
 
+## CI Parity Gate
+
+After the final phase boundary commit, the conductor can dispatch a one-shot CI-parity worker that runs the repo's local CI entrypoint against the working tree. The gate fires only when `conduct()` would otherwise return `status=complete`; it never runs after an intermediate phase. The persisted `ci_parity_dispatched` flag prevents re-dispatch after a result is consumed.
+
+### Activation
+
+- `--autonomous` implies the gate.
+- `--run-ci-parity` enables the gate on legacy one-phase-per-resume runs.
+- `--skip-ci-parity` marks the run complete with a skip summary. If state is already `awaiting_ci_parity`, it preserves the existing `ci_parity_request` and any result file on disk.
+
+### Detection Priority
+
+Detection is local-only:
+
+1. `just ci` from a `justfile` or `Justfile` with a `ci` recipe.
+2. `make ci` from a `Makefile` with a `ci:` target.
+3. `npm run ci` from a `package.json` with a `"ci"` script.
+4. `cargo test --all` when `Cargo.toml` exists at repo root.
+
+`--ci-cmd CMD` overrides detection. Workflow files under `.github/workflows/` are intentionally not detected because running them locally requires extra tooling and ambiguous environment setup. If no entrypoint is detected and no override is provided, conduct records a skipped CI-parity summary and returns `complete`, not `ci_failed`.
+
+### Main-Runtime Dispatch Protocol
+
+Conduct does not call worker tools from inside `conductor.py`. At end of plan, `_dispatch_ci_parity_if_eligible` sets `state["status"] = "awaiting_ci_parity"`, writes `ci_parity_request`, `ci_parity_request_written_at`, and `ci_parity_missing_resume_count`, persists state, then returns `ConductResult(status="awaiting_ci_parity", next_action="dispatch_ci_parity", request=<dict>)`.
+
+The main Codex runtime orchestrator renders `ci-parity-prompt.md`, dispatches the worker with `spawn_agent` / `wait_agent` / `close_agent`, captures the final fenced JSON block, and persists it to `<repo-root>/.conduct/ci-parity-result-<plan-id>.json` by calling `_write_ci_parity_result(path, payload_text)`. That adapter delegates to `_atomic_write_result_file`, which writes a temp file and `os.replace`s it. `_safe_write_text` is reserved for state files; it must not be used for CI-parity result persistence because a partial result write would be read as malformed JSON on resume.
+
+### Five-Sub-Case Resume Preflight
+
+When state is `awaiting_ci_parity`, resume checks the result file:
+
+1. Present, valid, `plan_id` matches, `request_written_at_unix` matches, and mtime is not older than `ci_parity_request_written_at`: consume via `_consume_ci_parity_result`; `passed` becomes `complete`, `failed` becomes `ci_failed`; move the file to `ci-parity-result-<plan-id>.consumed-<unix>.json`.
+2. Present but stale by mtime, mismatched `plan_id`, or mismatched `request_written_at_unix`: ignore it, reset `ci_parity_missing_resume_count`, and re-emit `awaiting_ci_parity` with the same request.
+3. Present but malformed or schema-invalid: set `schema_error` with blocker `ci-parity result file malformed at <path>` and preserve the file.
+4. Active file absent but a matching `.consumed-<unix>.json` has the same `request_written_at_unix`: recover by calling `_consume_ci_parity_result` on the consumed file and skip the move.
+5. Active file absent and no matching consumed file exists: increment `ci_parity_missing_resume_count`; after 3 consecutive absent observations, block with `ci-parity result file missing after 3 resume attempts; pass --skip-ci-parity to abandon gate`.
+
+The missing counter resets to 0 on any non-absent outcome: consume, stale-ignore, malformed, or consumed-file recovery. A non-`--resume` invocation against `awaiting_ci_parity` hard-fails with `state shows awaiting_ci_parity; use --resume to consume the ci-parity result or --skip-ci-parity to abandon the gate`.
+
+### Test/Production Parity
+
+Tests may inject `opts.ci_parity_spawn`, which returns the CI-parity worker JSON synchronously. Production uses the result-file handoff. Both paths parse `schema.parse_report(..., "ci-parity")` and call `_consume_ci_parity_result`, so the state mutation path is shared.
+
 ## Fallbacks
 
 - Missing `Impl files:` / `Test files:` → sequential spawn (Step 2).
@@ -282,7 +332,7 @@ No keyword heuristic watches for "proceed" — the user copies the printed comma
 - Missing every contract slot across every unfinished phase → continue, but emit the degraded-mode warning on the first handback (phase parsing + Step 9).
 - Missing Testing Notes entirely → same as above; phase completes on implementer-only success with the skip flag.
 - Delegated subagents unavailable → hard-stop with the explicit delegation-unavailable message above. Do not inline the phase in the main session.
-- Plan has zero unfinished phases → print `All phases complete` and exit.
+- Plan has zero unfinished phases → dispatch the CI-parity gate if `--run-ci-parity`, `--autonomous`, or `--skip-ci-parity` applies; otherwise print `All phases complete` and exit.
 
 ## State File
 
@@ -309,13 +359,18 @@ Schema:
   "autonomous": false,
   "plan_id": "<sha1(abs(plan_path))[:12]>",
   "state_author": "codex",
-  "status": "awaiting_user | running | paused | blocked | schema_error | complete",
+  "ci_parity_request": null,
+  "ci_parity_request_written_at": null,
+  "ci_parity_result": null,
+  "ci_parity_dispatched": false,
+  "ci_parity_missing_resume_count": 0,
+  "status": "awaiting_user | running | paused | blocked | schema_error | complete | awaiting_ci_parity | ci_failed",
   "blocker": null,
   "paused_stash_rev": "<stash commit sha recorded by --pause-phase, or null>"
 }
 ```
 
-Unknown fields are ignored by the current algorithm and preserved on write. Codex keeps `schema_version = 2` for Phase 1 writes.
+Unknown fields are ignored by the current algorithm and preserved on write. Codex writes `schema_version = 2`.
 
 Loader compatibility:
 
@@ -331,6 +386,15 @@ Progress fields:
 - `autonomous` records whether autonomous mode was requested. Once a state file records `true`, later resumes preserve that fact even if the immediate invocation omits `--autonomous`; the current invocation flag still controls whether the process continues past the next successful boundary.
 - `plan_id` uses `sha1(abs(plan_path))[:12]` for future cross-runtime handoffs and is intentionally distinct from the state-file digest.
 - `state_author` is `"codex"` for Codex-owned runtime state.
+- `ci_parity_request` stores `{plan_path, base_sha, head_sha, ci_entrypoint_kind, ci_cmd, repo_root, plan_id, request_written_at_unix}` for an in-flight gate.
+- `ci_parity_request_written_at` is the dispatch timestamp used for result-file stale checks.
+- `ci_parity_result` stores the parsed CI-parity worker report after consume.
+- `ci_parity_dispatched` suppresses duplicate gate dispatch after consume or skip.
+- `ci_parity_missing_resume_count` counts consecutive absent-result resume observations and resets on any non-absent outcome.
+
+Helpers cited by the state contract: `_check_iteration_bound`, `_dispatch_ci_parity_if_eligible`, `_consume_ci_parity_result`, `_write_ci_parity_result`, `_atomic_write_result_file`, and `_compute_cross_runtime_plan_id`.
+
+Forward-compat contract: future `schema_version` values must add only optional fields or fields with safe defaults for older readers. Required-semantics additions must set `incompatible_with_pre_vN: true`, which older loaders hard-fail. Runtime ownership is represented by the runtime-specific state filename plus `state_author`, not by `schema_version`.
 
 ### Locking
 

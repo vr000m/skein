@@ -1837,6 +1837,28 @@ def test_conduct_result_shape_includes_next_action_and_request():
     assert result.request is None
 
 
+def test_phase3_ci_parity_api_surface_is_declared():
+    option_fields = {field.name for field in fields(conductor.ConductOptions)}
+    assert {
+        "run_ci_parity",
+        "ci_cmd",
+        "skip_ci_parity",
+        "ci_parity_spawn",
+    } <= option_fields
+
+    request_fields = {field.name for field in fields(conductor.CIParitySpawnRequest)}
+    assert {
+        "plan_path",
+        "base_sha",
+        "head_sha",
+        "ci_entrypoint_kind",
+        "ci_cmd",
+        "repo_root",
+        "plan_id",
+        "request_written_at_unix",
+    } <= request_fields
+
+
 def test_stall_blocks_at_threshold(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()

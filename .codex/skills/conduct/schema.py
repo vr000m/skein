@@ -55,6 +55,14 @@ _ROLE_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
         "phase_label": str,
         "findings": list,
     },
+    "ci-parity": {
+        "role": str,
+        "schema_version": int,
+        "plan_id": str,
+        "request_written_at_unix": (int, float),
+        "status": str,
+        "command_run": str,
+    },
 }
 
 # Role-specific flag substructure. Enforced only when the role emits flags
@@ -95,7 +103,9 @@ def parse_report(text: str, expected_role: str) -> dict[str, Any]:
     try:
         obj = json.loads(body)
     except json.JSONDecodeError as exc:
-        raise SchemaError(f"final ```json block did not parse: {exc.msg} at line {exc.lineno}") from exc
+        raise SchemaError(
+            f"final ```json block did not parse: {exc.msg} at line {exc.lineno}"
+        ) from exc
     if not isinstance(obj, dict):
         raise SchemaError(f"report must be a JSON object, got {type(obj).__name__}")
     validate_report(obj, expected_role)
@@ -126,6 +136,10 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
             raise SchemaError(
                 f"key {key!r} has wrong type: expected {want}, got {actual}"
             )
+    if expected_role == "ci-parity" and obj.get("status") not in ("passed", "failed"):
+        raise SchemaError(
+            f"ci-parity status must be 'passed' or 'failed', got {obj.get('status')!r}"
+        )
     flag_schema = _ROLE_FLAGS_REQUIRED.get(expected_role)
     if flag_schema is not None:
         flags = obj["flags"]
