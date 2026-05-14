@@ -36,6 +36,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ci_parity import detect_ci_entrypoint
+from fileutil import (
+    atomic_write_result_file as _atomic_write_result_file,
+    ensure_under_directory,
+    validate_plan_id,
+)
 from lock import StateLock
 from marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from parser import Phase, files_overlap, parse_phases
@@ -839,59 +844,56 @@ def _persist_state(opts: ConductOptions, state: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _atomic_write_result_file(path: Path, text: str) -> None:
-    """Crash-safe write for the ci-parity result file.
-
-    ``_safe_write_text`` opens the destination with ``O_TRUNC`` and writes in
-    place — fine for state-file writes (regenerable on resume) but NOT safe
-    for the ci-parity result file, which preflight reads with ``json.loads``
-    where a partial write would surface as ``schema_error`` and preserve a
-    corrupt file. This helper writes to a tmp path with the same hardening
-    (``_safe_write_text`` flags), then ``os.replace`` (atomic on POSIX) onto
-    the target. On any exception between tmp-create and replace the tmp file
-    is unlinked so preflight observes ``absent`` rather than a stray tmp.
-    """
-    tmp_path = path.with_name(path.name + f".tmp-{os.getpid()}-{int(time.time())}")
-    try:
-        _safe_write_text(tmp_path, text)
-        os.replace(str(tmp_path), str(path))
-    except Exception:
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:
-            pass
-        raise
-
-
 def _write_ci_parity_result(path: Path, payload_text: str) -> None:
     """Conductor-owned adapter for ci-parity result persistence.
 
-    Validates that the target sits under a ``.conduct/`` directory (the only
-    place preflight knows to look), ensures the parent exists, and delegates
-    to ``_atomic_write_result_file``. Production orchestrators and tests both
-    flow through this adapter so the atomic-write contract is a single
-    invariant rather than a per-call-site convention.
+    Validates that ``path`` resolves underneath the repo's ``.conduct/``
+    directory (defence-in-depth against a ``plan_id`` containing ``..``
+    segments — see ``fileutil.ensure_under_directory``), ensures the parent
+    exists, and delegates to ``fileutil.atomic_write_result_file``.
+    Production orchestrators and tests both flow through this adapter so
+    the atomic-write contract is a single invariant rather than a
+    per-call-site convention.
     """
-    parts = {p.name for p in path.parents}
-    if ".conduct" not in parts:
-        raise UnsafeConductPathError(
-            f"ci-parity result path must live under .conduct/: {path}"
-        )
     parent = path.parent
     if not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
+    # Resolved-path containment supersedes the previous ``parents``-name
+    # check, which accepted ``.conduct/foo/../../escape.json``.
+    try:
+        ensure_under_directory(path, parent.parent)
+    except ValueError as e:
+        raise UnsafeConductPathError(str(e)) from e
+    # Sanity: the immediate parent must itself be a ``.conduct`` directory,
+    # because that is the only place preflight knows to look. The resolved
+    # check above guarantees we have not escaped via ``..``; this check
+    # guards against being passed a path inside a *different* ``.conduct``
+    # parent (e.g. someone constructs an absolute path manually).
+    if parent.name != ".conduct":
+        raise UnsafeConductPathError(
+            f"ci-parity result path must live directly under .conduct/: {path}"
+        )
     _ensure_safe_fs_path(parent, expect_dir=True)
     _ensure_safe_fs_path(path, expect_dir=False)
     _atomic_write_result_file(path, payload_text)
 
 
 def _ci_parity_result_path(opts: ConductOptions, plan_id: str) -> Path:
+    # ``plan_id`` flows from on-disk state, so validate the shape before
+    # interpolating it into a filesystem path. A malformed ``plan_id`` is
+    # an upstream-state bug; raising here surfaces it at the first read or
+    # write attempt rather than letting traversal silently succeed.
+    validate_plan_id(plan_id)
     return opts.repo_root / ".conduct" / f"ci-parity-result-{plan_id}.json"
 
 
 def _ci_parity_consumed_pattern(repo_root: Path, plan_id: str) -> list[Path]:
-    """Return matching ``.consumed-<unix>.json`` files for this plan_id."""
+    """Return matching ``.consumed-<unix>.json`` files for this plan_id.
+
+    ``plan_id`` is validated before being interpolated into the glob pattern
+    so a malformed value cannot expand into a traversal pattern.
+    """
+    validate_plan_id(plan_id)
     conduct_dir = repo_root / ".conduct"
     if not conduct_dir.exists() or not conduct_dir.is_dir():
         return []
@@ -1020,6 +1022,7 @@ def _dispatch_ci_parity_if_eligible(
         if detected is None:
             state["ci_parity_dispatched"] = True
             state["status"] = "complete"
+            state["blocker"] = None
             state["last_summary"] = (
                 "ci-parity: skipped (no CI entrypoint detected and no --ci-cmd override)"
             )

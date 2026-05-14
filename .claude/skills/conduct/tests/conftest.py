@@ -8,6 +8,12 @@ _SKILL_DIR = Path(__file__).resolve().parent.parent
 if str(_SKILL_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILL_DIR))
 
+# Tests directory itself is added so shared helpers in ``_scaffold.py`` can
+# be imported as ``from _scaffold import ...`` from any test module.
+_TESTS_DIR = Path(__file__).resolve().parent
+if str(_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TESTS_DIR))
+
 
 # ---------------------------------------------------------------------------
 # LockAcquisitionCounter — Phase 2 test fixture
@@ -74,3 +80,30 @@ def lock_counter(monkeypatch) -> LockAcquisitionCounter:
     a ``conduct()`` invocation should request this fixture.
     """
     return LockAcquisitionCounter.install(monkeypatch)
+
+
+# ---------------------------------------------------------------------------
+# Shared ``repo`` fixture used by all conduct test modules
+# ---------------------------------------------------------------------------
+#
+# Several test modules need a freshly-initialised git repo with a sensible
+# default identity. Defining it here lets every test file (autonomous mode,
+# ci-parity, conductor harness, etc.) request the fixture by name without
+# re-implementing the bootstrap. Pure-function helpers ride along in
+# ``_scaffold.py``.
+
+
+from _scaffold import _git as _scaffold_git  # noqa: E402
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> Path:
+    """Fresh git repo with a committed seed file and a non-signing identity."""
+    _scaffold_git(["init", "-q"], tmp_path)
+    _scaffold_git(["config", "user.email", "harness@test"], tmp_path)
+    _scaffold_git(["config", "user.name", "Harness"], tmp_path)
+    _scaffold_git(["config", "commit.gpgsign", "false"], tmp_path)
+    (tmp_path / "README.md").write_text("seed\n")
+    _scaffold_git(["add", "README.md"], tmp_path)
+    _scaffold_git(["commit", "-q", "-m", "seed"], tmp_path)
+    return tmp_path

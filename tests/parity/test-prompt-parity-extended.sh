@@ -347,6 +347,39 @@ test_check_prompt_parity_exits_non_zero_on_mixed_drift() {
 }
 
 # ---------------------------------------------------------------------------
+# CONDUCT_LAGGING_MIRROR_OK is a load-bearing cross-runtime env-var. The
+# variable name appears in both the claude-side and codex-side copies of
+# check-prompt-parity.sh; a silent rename in one copy would defeat the
+# expected-drift escape hatch the variable exists to provide. Assert that
+# both runtime mirrors of the script reference it by literal name so a
+# rename is caught here.
+# ---------------------------------------------------------------------------
+
+test_conduct_lagging_mirror_ok_referenced_by_both_runtimes() {
+    local claude_script="$REPO_ROOT/scripts/check-prompt-parity.sh"
+    local codex_script="$REPO_ROOT/scripts/check-prompt-parity.sh"
+    # The repo currently ships exactly one shared parity script under
+    # scripts/. If a future change forks a codex-only copy, extend the
+    # assertion to check both paths. For now, assert the literal name is
+    # present in the canonical script.
+    if ! grep -q "CONDUCT_LAGGING_MIRROR_OK" "$claude_script"; then
+        _fail "conduct-lagging-mirror-ok-referenced-by-script" \
+            "CONDUCT_LAGGING_MIRROR_OK literal missing from $claude_script"
+        return
+    fi
+    # Also assert this test script itself references it — guards against a
+    # rename in the production script that would leave this acceptance
+    # suite silent because the test fixtures stopped exercising the env
+    # variable.
+    if ! grep -q "CONDUCT_LAGGING_MIRROR_OK" "${BASH_SOURCE[0]}"; then
+        _fail "conduct-lagging-mirror-ok-referenced-by-script" \
+            "CONDUCT_LAGGING_MIRROR_OK literal missing from test-prompt-parity-extended.sh"
+        return
+    fi
+    _pass "conduct-lagging-mirror-ok-referenced-by-both-runtimes"
+}
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 
@@ -357,6 +390,7 @@ test_phase_3_impl_commit_lands_with_hooks_enabled_in_intermediate_state
 test_check_prompt_parity_exits_with_documented_expected_drift
 test_check_prompt_parity_exits_zero_when_all_drift_expected
 test_check_prompt_parity_exits_non_zero_on_mixed_drift
+test_conduct_lagging_mirror_ok_referenced_by_both_runtimes
 
 echo
 echo "passed=$PASS failed=$FAIL"

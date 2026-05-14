@@ -21,6 +21,9 @@ Helper modules for preflight and state handling:
 - `lock.py` — `fcntl.flock` advisory lock with atomic-`mkdir` fallback and 1-hour stale-break.
 - `schema.py` — last-fenced-block extraction + role-specific report validation (raises `SchemaError`). Stdlib only.
 - `runner.py` — test-command subprocess wrapper with portable wall-clock timeout via `subprocess.run(timeout=...)`. Returns `TestResult(returncode, output, timed_out, duration_seconds)`.
+- `progress.py` — fix-loop progress signatures. Probes `git diff --cached --stat -w` once per process and falls back to sorted `--name-only` canonicalisation with a one-shot warning if local git rejects that flag combination. Stdlib only.
+- `ci_parity.py` — local CI entrypoint detection for the end-of-plan parity gate. Detection priority: `just ci`, `make ci`, `npm run ci`, `cargo test --all`; workflow files are intentionally not detected (not locally executable). Stdlib only.
+- `fileutil.py` — filesystem primitives: `atomic_write_result_file` (crash-safe write via `tempfile.mkstemp` + `os.replace`, used by the ci-parity result-file path), `validate_plan_id` (canonical 12-char lowercase-hex shape check), `ensure_under_directory` (resolved-path containment guard). Stdlib only.
 
 Deterministic tests under `tests/` (run via `uvx pytest .claude/skills/conduct/tests/ -v && bash .claude/skills/conduct/tests/test_skill_spawn_grep.sh`).
 

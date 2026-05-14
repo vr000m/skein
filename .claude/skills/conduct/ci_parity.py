@@ -28,13 +28,15 @@ def _justfile_has_ci(path: Path) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        stripped = line.lstrip()
-        # Recipes look like ``ci:`` or ``ci recipe-args:`` at column zero in
-        # justfiles. Tolerate leading whitespace defensively.
-        if stripped.startswith("ci:") or stripped.startswith("ci "):
+        # Just recipes are headers at column zero. Lines with leading
+        # whitespace are recipe bodies or continuations — they cannot
+        # introduce a new recipe. Matching only column-zero ``ci:`` /
+        # ``ci <args>:`` avoids false positives from ``define``-style
+        # blocks or commented-out examples that happen to contain ``ci:``.
+        if line.startswith("ci:") or line.startswith("ci "):
             # The "ci " form must be followed eventually by a colon on the
             # same line for it to be a recipe header.
-            if stripped.startswith("ci:") or ":" in stripped.split(" ", 1)[-1]:
+            if line.startswith("ci:") or ":" in line.split(" ", 1)[-1]:
                 return True
     return False
 
@@ -45,8 +47,11 @@ def _makefile_has_ci(path: Path) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("ci:") or stripped.startswith("ci :"):
+        # Make targets sit at column zero; recipe bodies are tab-indented.
+        # Restricting to column zero prevents matching ``ci:`` inside a
+        # ``define``/``endef`` block, a here-doc, or any other indented
+        # context where the literal would not be a real CI target.
+        if line.startswith("ci:") or line.startswith("ci :"):
             return True
     return False
 
