@@ -1,12 +1,12 @@
 ---
 name: conduct
 description: Walks a reviewed dev-plan phase by phase and delegates each phase's implementation, testing, and fix loop to clean-context subagents. Main Codex stays in a conductor role so context does not exhaust during multi-phase execution. Use when the user says "step through plan", "walk phases", "delegate phase implementation", "conduct plan", "run the plan", or invokes this skill directly with a dev-plan path.
-argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N]"
+argument-hint: "[path/to/plan.md] [--resume] [--status] [--pause-phase] [--abort-run] [--test-cmd CMD] [--test-timeout SECS] [--max-iterations N] [--autonomous] [--max-phases N]"
 ---
 
 # Conduct: Phased Delegation for Linear Implementation
 
-Walk a reviewed dev-plan phase by phase. For each phase, spawn clean-context subagents (implementer + test-writer, and optionally a lightweight reviewer) to do the work. The conductor — main Codex running this skill — only reads structured JSON reports, routes failures through a bounded fix loop, commits at phase boundaries, and hands back to the user between phases.
+Walk a reviewed dev-plan phase by phase. For each phase, spawn clean-context subagents (implementer + test-writer, and optionally a lightweight reviewer) to do the work. The conductor — main Codex running this skill — only reads structured JSON reports, routes failures through a bounded fix loop, commits at phase boundaries, and either hands back to the user between phases or continues through the remaining phases when `--autonomous` is set.
 
 Subagent prompt templates live alongside this file:
 
@@ -51,6 +51,7 @@ conduct --resume <plan-path>
 conduct --status <plan-path>
 conduct --pause-phase <plan-path>
 conduct --abort-run <plan-path>
+conduct --autonomous <plan-path>
 ```
 
 ### CLI flags
@@ -67,6 +68,8 @@ conduct --abort-run <plan-path>
 | `--max-iterations-ceiling N` | Progress-runway hard cap. Default 8. Blocks with `max_iterations_ceiling exceeded`. |
 | `--stall-threshold N` | Consecutive matching-signature count that blocks with `stall_threshold exceeded`. Default 2. |
 | `--no-progress-detection` | Disable stall blocking. Signatures remain inspectable in state. |
+| `--autonomous` | Walk every unfinished phase in one conductor invocation under one state-lock acquisition. Hard-stops still hand back. Default off preserves one phase per `--resume`. |
+| `--max-phases N` | Cap total completed phases during the run. Blocks with `max_phases ceiling hit (N)` when the completed-phase count reaches `N`. Unset resolves to `len(parsed_phases) + 1`, so a healthy full run does not hit the cap. |
 
 ## Preflight
 
@@ -228,15 +231,39 @@ After tests pass (or were skipped with warning):
 3. If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). Only auto-restage when every modified tracked file is already in the original staged pathset for this phase; in that case, run `git add -u -- <staged-paths...>` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings and continue at step 4 as a normal success. If the hook modified tracked files outside the original staged pathset, hand back to the user instead of auto-staging unrelated edits. If the retry fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration. Do NOT use `--no-verify`.
 4. On success, record the new `HEAD` SHA in `state.completed_phases[*].commit_sha`.
 
-### Step 9 — Handback
+### Step 9 — Phase Transition
 
-At every phase boundary:
+Step 9 has two branches: the ordinary success transition and hard-stop handback. The ordinary branch is mode-aware; hard-stops hand back regardless of `--autonomous`.
+
+#### Step 9a — Successful Phase Boundary
+
+After a phase boundary commit completes:
+
+1. **Legacy mode (no `--autonomous`)**: print the structured phase summary and literal next-command line, set `state.status = "awaiting_user"`, persist state, release the lock, and exit. This preserves one phase per resume invocation.
+2. **Autonomous mode (`--autonomous`)**: persist the completed phase, keep the state lock held, skip the handback summary, and continue the explicit phase loop with the next unfinished phase. A clean autonomous run acquires the state lock once for the whole phase walk.
+
+The conductor checks `--max-phases` after each successful boundary by reading the post-commit `len(state.completed_phases)`. If the count reaches the cap, set `state.status = "blocked"` with blocker `max_phases ceiling hit (N)`, persist, release the lock, and hand back.
+
+#### Step 9b — Hard-Stop Handback
+
+Hard-stops include:
+
+- Rogue commit.
+- Worker schema error.
+- Worker-reported blocker.
+- Validation command failure.
+- Stall-threshold hit.
+- `max_iterations_ceiling` hit.
+- Legacy `max_iterations` hit.
+- `max_phases` cap hit.
+
+On any hard-stop:
 
 1. Print a structured phase summary:
    - Phase label and title
    - Files changed
    - Spawn strategy (parallel | sequential)
-   - Test result (passed | skipped-with-warning)
+   - Test result (passed | skipped-with-warning | n/a)
    - Iterations used
    - Mid-phase reviewer findings if any
    - Any warnings (rogue commit, missing test command, skipped tests)
@@ -244,7 +271,7 @@ At every phase boundary:
    ```
    Run: /conduct --resume <plan-path>
    ```
-3. Set `state.status = "awaiting_user"`, persist, release lock, exit the skill.
+3. Set `state.status = "awaiting_user"` or the terminal hard-stop status (`blocked` / `schema_error`), persist, release lock, exit the skill.
 
 No keyword heuristic watches for "proceed" — the user copies the printed command when ready.
 
@@ -301,7 +328,7 @@ Progress fields:
 
 - `stall_signatures` stores the last two fix-loop signatures.
 - `stall_count` counts consecutive matching signatures for the current phase.
-- `autonomous` records whether autonomous mode was requested; Phase 1 records only, later phases add phase walking.
+- `autonomous` records whether autonomous mode was requested. Once a state file records `true`, later resumes preserve that fact even if the immediate invocation omits `--autonomous`; the current invocation flag still controls whether the process continues past the next successful boundary.
 - `plan_id` uses `sha1(abs(plan_path))[:12]` for future cross-runtime handoffs and is intentionally distinct from the state-file digest.
 - `state_author` is `"codex"` for Codex-owned runtime state.
 

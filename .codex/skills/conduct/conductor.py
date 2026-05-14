@@ -103,6 +103,10 @@ class ConductOptions:
     stall_threshold: int = 2
     no_progress_detection: bool = False
     autonomous: bool = False
+    # Autonomous mode safety cap. None resolves at conduct() entry to
+    # len(parsed_phases) + 1 because the parsed phase count is unavailable when
+    # options are constructed.
+    max_phases: Optional[int] = None
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
 
@@ -875,6 +879,7 @@ def _run_phase(
     state: dict,
     phase: Phase,
     initial_warnings: Optional[list[str]] = None,
+    autonomous: bool = False,
 ) -> ConductResult:
     if state.get("current_phase_title") != phase.title:
         state["iteration_count"] = 0
@@ -984,6 +989,8 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
+            if autonomous:
+                return commit_outcome
             return _handback(opts, state, phase, "skipped", iteration, strategy, strategy_reason, warnings)
 
         # Step 5: run tests.
@@ -994,6 +1001,8 @@ def _run_phase(
                 return validation_result
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
+                return commit_outcome
+            if autonomous:
                 return commit_outcome
             return _handback(opts, state, phase, "passed", iteration, strategy, strategy_reason, warnings)
 
@@ -1081,6 +1090,7 @@ def _commit_phase(
         state.setdefault("completed_phases", []).append(completed)
         state["phase_index"] = len(state["completed_phases"])
         state.pop("resume_base_sha", None)
+        _persist_state(opts, state)
         return ConductResult(status="running", state=state, summary="")
 
     commit_msg = f"conduct: phase {phase.label} — {phase.title}"
@@ -1145,6 +1155,7 @@ def _commit_phase(
     # set across phases would make a clean phase 2 trip the rogue-commit check
     # (HEAD has advanced past the resume baseline by phase 1's own commit).
     state.pop("resume_base_sha", None)
+    _persist_state(opts, state)
     return ConductResult(status="running", state=state, summary="")
 
 
@@ -1191,10 +1202,11 @@ def _handback(
 
 
 def conduct(opts: ConductOptions) -> ConductResult:
-    """Run preflight + the next unfinished phase, then hand back.
+    """Run preflight, then walk phases according to the selected mode.
 
-    Mirrors SKILL.md Step 9: every phase boundary returns control to the user.
-    Tests drive multi-phase runs by re-invoking with ``resume=True``.
+    Legacy mode runs one phase and hands back. Autonomous mode keeps the same
+    lock acquisition and advances through every unfinished phase until complete
+    or until a hard-stop result is returned.
     """
     _validate_options(opts)
     sp = _state_path(opts)
@@ -1221,6 +1233,8 @@ def conduct(opts: ConductOptions) -> ConductResult:
         else:
             state = {}
             state_exists = False
+        if state_exists:
+            state["autonomous"] = opts.autonomous or bool(state.get("autonomous"))
         if state_exists and not opts.resume:
             if state.get("status") == "paused" and not opts.plan_path.exists():
                 return _resume_required_result(opts, state)
@@ -1258,40 +1272,67 @@ def conduct(opts: ConductOptions) -> ConductResult:
 
         plan_text = opts.plan_path.read_text()
         phases = [p for p in parse_phases(plan_text) if not p.is_complete]
-        # phase_index in state is the count of completed phases.
-        idx = len(state.get("completed_phases", []))
+        max_phases_cap = opts.max_phases if opts.max_phases is not None else len(phases) + 1
         handback_warnings: list[str] = []
-        if idx == 0 and phases and not any(p.has_any_slot() for p in phases):
+        if not state.get("completed_phases") and phases and not any(p.has_any_slot() for p in phases):
             handback_warnings.append(
                 "no phase declares Impl files: / Test files: / Test command: / "
                 "Validation cmd: slots — running in degraded mode. "
                 "Fill these per-phase in the plan (see /dev-plan) to enable "
                 "parallel spawn and real test runs."
             )
-        if idx >= len(phases):
-            state["status"] = "complete"
-            state["phase_index"] = len(phases)
-            state["last_summary"] = "All phases complete"
-            _persist_state(opts, state)
-            return ConductResult(status="complete", state=state, summary="All phases complete")
 
-        phase = phases[idx]
-        try:
-            return _run_phase(opts, state, phase, initial_warnings=handback_warnings)
-        except _CommitHookFailure as hook_fail:
-            # Re-enter the loop with hook output as the failure context. Easiest
-            # way is recursion with the failure carried via state — but state
-            # already holds iteration_count; we pass the failure text through
-            # by routing back into _run_phase with prior_diff / test_failures
-            # set on the next request. To keep the implementation simple we
-            # adopt an explicit retry here.
-            return _retry_after_hook_failure(
-                opts,
-                state,
-                phase,
-                hook_fail.output,
-                initial_warnings=handback_warnings,
-            )
+        while True:
+            # phase_index in state is the count of completed phases.
+            idx = len(state.get("completed_phases", []))
+            if idx >= max_phases_cap:
+                state["status"] = "blocked"
+                state["blocker"] = f"max_phases ceiling hit ({max_phases_cap})"
+                state["last_summary"] = state["blocker"]
+                _persist_state(opts, state)
+                return ConductResult(status="blocked", state=state, summary=state["blocker"])
+            if idx >= len(phases):
+                break
+
+            phase = phases[idx]
+            try:
+                result = _run_phase(
+                    opts,
+                    state,
+                    phase,
+                    initial_warnings=handback_warnings,
+                    autonomous=opts.autonomous,
+                )
+            except _CommitHookFailure as hook_fail:
+                # Re-enter the loop with hook output as the failure context.
+                result = _retry_after_hook_failure(
+                    opts,
+                    state,
+                    phase,
+                    hook_fail.output,
+                    initial_warnings=handback_warnings,
+                    autonomous=opts.autonomous,
+                )
+            if result.status != "running":
+                return result
+            if not opts.autonomous:
+                return _handback(
+                    opts,
+                    state,
+                    phase,
+                    "passed",
+                    state.get("iteration_count", 0),
+                    "sequential",
+                    "legacy-loop-fallback",
+                    [],
+                )
+            handback_warnings = []
+
+        state["status"] = "complete"
+        state["phase_index"] = len(phases)
+        state["last_summary"] = "All phases complete"
+        _persist_state(opts, state)
+        return ConductResult(status="complete", state=state, summary="All phases complete")
 
 
 def _retry_after_hook_failure(
@@ -1300,6 +1341,7 @@ def _retry_after_hook_failure(
     phase: Phase,
     hook_output: str,
     initial_warnings: Optional[list[str]] = None,
+    autonomous: bool = False,
 ) -> ConductResult:
     """Respawn implementer with hook output as test_failures, then re-enter.
 
@@ -1388,6 +1430,8 @@ def _retry_after_hook_failure(
             respawn_role = "implementer"
             continue
         if commit_outcome.status != "running":
+            return commit_outcome
+        if autonomous:
             return commit_outcome
         return _handback(
             opts, state, phase, "passed", iteration, "sequential", "post-hook-fix", warnings

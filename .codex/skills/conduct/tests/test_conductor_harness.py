@@ -2274,3 +2274,51 @@ def test_stall_threshold_greater_than_max_iterations_legacy_dominates(repo):
     assert result is not None
     assert state["iteration_count"] == 4
     assert state["blocker"] == "max_iterations exceeded (legacy)"
+
+
+def test_legacy_no_flags_handback_per_phase(repo, lock_counter):
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+
+    def make_spawner():
+        spawner = StubSpawner(repo)
+        spawner.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "v=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        spawner.script("test-writer", 0, lambda req, r: _test_report())
+        return spawner
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+    assert len(first.state["completed_phases"]) == 1
+    assert first.summary.startswith("Phase 1: First\n")
+    assert "  Spawn: " in first.summary
+    assert "  Tests: passed\n" in first.summary
+    assert "  Iterations: 0\n" in first.summary
+    assert first.next_command == f"Run: /conduct --resume {plan}"
+    assert lock_counter.count == 1
+
+    second = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+    assert second.status == "awaiting_user"
+    assert len(second.state["completed_phases"]) == 2
+    assert second.summary.startswith("Phase 2: Second\n")
+    assert lock_counter.count == 2
