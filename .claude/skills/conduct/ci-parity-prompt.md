@@ -2,11 +2,12 @@
 
 Filled by the conductor (or the main-runtime orchestrator dispatching the gate) before spawning the CI-parity worker. The filled prompt is passed as the full subagent input — the subagent has no prior conversation history.
 
-Placeholders: `{{PLAN_PATH}}`, `{{BASE_SHA}}`, `{{HEAD_SHA}}`, `{{CI_ENTRYPOINT_KIND}}`, `{{CI_CMD}}`, `{{REPO_ROOT}}`, `{{PLAN_ID}}`.
+Placeholders: `{{PLAN_PATH}}`, `{{BASE_SHA}}`, `{{HEAD_SHA}}`, `{{CI_ENTRYPOINT_KIND}}`, `{{CI_CMD}}`, `{{REPO_ROOT}}`, `{{PLAN_ID}}`, `{{REQUEST_WRITTEN_AT_UNIX}}`.
 
 - `{{CI_ENTRYPOINT_KIND}}` is one of `just`, `make`, `npm`, `cargo`, or `override` when the user passed `--ci-cmd`.
 - `{{CI_CMD}}` is the shell-ready command string (e.g. `just ci`, `make ci`, or a user override).
 - `{{PLAN_ID}}` is the 12-character `sha1(abs(plan_path))[:12]` digest — echoed back in the report so the conductor can detect stale result files.
+- `{{REQUEST_WRITTEN_AT_UNIX}}` is the numeric timestamp stored in the conductor request — echoed back in the report so the conductor can detect stale result files.
 
 ---
 
@@ -20,6 +21,7 @@ You are the CI-parity subagent for a development plan. You were spawned with no 
 The conductor walked every phase of the plan at {{PLAN_PATH}} to completion and is now gating the run on local CI parity. Run the repo's CI entrypoint exactly once against the current working tree and report the outcome as structured JSON.
 
 Plan id: {{PLAN_ID}}
+Request written at: {{REQUEST_WRITTEN_AT_UNIX}}
 Base SHA at plan start: {{BASE_SHA}}
 Head SHA after final phase commit: {{HEAD_SHA}}
 Repo root: {{REPO_ROOT}}
@@ -45,7 +47,7 @@ Output discipline: your reply must contain **exactly one** fenced ```json block,
   "role": "ci-parity",
   "schema_version": 1,
   "plan_id": "{{PLAN_ID}}",
-  "request_written_at_unix": 0,
+  "request_written_at_unix": {{REQUEST_WRITTEN_AT_UNIX}},
   "status": "passed",
   "duration_seconds": 0.0,
   "command_run": "{{CI_CMD}}",

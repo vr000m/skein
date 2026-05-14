@@ -7,7 +7,6 @@ import os
 import subprocess
 import textwrap
 import time
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -168,7 +167,7 @@ def _ci_parity_report(
         "plan_id": plan_id,
         "request_written_at_unix": written_at,
         "status": status,
-        "command_run": extra.pop("command_run", "true"),
+        "command_run": extra.pop("command_run", "echo ci"),
         "summary": extra.pop("summary", "ok"),
         **extra,
     }
@@ -180,11 +179,13 @@ def _scripted_ci_spawn(status: str = "passed", **extra: Any):
 
     def spawn(req: Any) -> str:
         captured.append(req)
+        report_extra = dict(extra)
+        report_extra.setdefault("command_run", req.ci_cmd)
         return _ci_parity_report(
             req.plan_id,
             req.request_written_at_unix,
             status,
-            **extra,
+            **report_extra,
         )
 
     spawn.captured = captured  # type: ignore[attr-defined]
@@ -431,7 +432,7 @@ def test_autonomous_ci_parity_result_file_path_reacquires_lock(
     assert lock_counter.count == 2
 
 
-def test_ci_parity_pass_fail_and_workflowless_skip(repo, tmp_path: Path) -> None:
+def test_ci_parity_pass_fail_and_no_entrypoint_blocks(repo, tmp_path: Path) -> None:
     plan = _scratch_plan(repo, _plan_with_phases(1))
     spawner = StubSpawner(repo)
     _wire_normal_phase(spawner, "1")
@@ -490,19 +491,18 @@ def test_ci_parity_pass_fail_and_workflowless_skip(repo, tmp_path: Path) -> None
     empty_plan = _scratch_plan(empty_repo, _plan_with_phases(1))
     empty_spawner = StubSpawner(empty_repo)
     _wire_normal_phase(empty_spawner, "1")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        skipped = conduct(
-            ConductOptions(
-                plan_path=empty_plan,
-                repo_root=empty_repo,
-                spawn=empty_spawner,
-                test_runner=StubTestRunner(queue=[_passing()]),
-                autonomous=True,
-            )
+    blocked = conduct(
+        ConductOptions(
+            plan_path=empty_plan,
+            repo_root=empty_repo,
+            spawn=empty_spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            autonomous=True,
         )
-    assert skipped.status == "complete"
-    assert any("no CI entrypoint detected" in str(w.message) for w in caught)
+    )
+    assert blocked.status == "blocked"
+    assert "ci-parity entrypoint not detected" in blocked.summary
+    assert "--ci-cmd" in (blocked.diagnostic or "")
 
 
 def test_skip_ci_parity_shortcuts_and_preserves_awaiting_artifacts(repo) -> None:
@@ -550,6 +550,31 @@ def test_ci_parity_result_file_present_valid_consumes_and_moves(repo) -> None:
     assert list(result_path.parent.glob(f"ci-parity-result-{plan_id}.consumed-*.json"))
 
 
+def test_ci_parity_invalid_plan_id_in_state_is_schema_error(repo) -> None:
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    _seed_awaiting_state(repo, plan, written_at)
+    state_path = _state_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    state = json.loads(state_path.read_text())
+    state["plan_id"] = "../escape"
+    state["ci_parity_request"]["plan_id"] = "../escape"
+    state_path.write_text(json.dumps(state))
+
+    result = _resume_ci(repo, plan)
+
+    assert result.status == "schema_error"
+    assert "plan_id must match" in (result.diagnostic or "")
+
+
+def test_write_ci_parity_result_rejects_nested_conduct_escape(repo) -> None:
+    escaped = repo / ".conduct" / "nested" / ".." / ".." / "escape.json"
+
+    with pytest.raises(conductor.UnsafeConductPathError):
+        _write_result(escaped, "{}")
+
+
 def test_ci_parity_stale_result_file_reemits_and_resets_missing_counter(repo) -> None:
     plan = _scratch_plan(repo, _plan_with_phases(1))
     written_at = time.time()
@@ -570,6 +595,48 @@ def test_ci_parity_stale_result_file_reemits_and_resets_missing_counter(repo) ->
     assert stale.request["request_written_at_unix"] == written_at
 
 
+def test_ci_parity_wrong_command_run_is_stale(repo) -> None:
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    plan_id = _seed_awaiting_state(repo, plan, written_at)
+    _write_result(
+        _result_path(repo, plan, plan_id),
+        _ci_parity_report(
+            plan_id,
+            written_at,
+            "passed",
+            command_run="wrong command",
+        ),
+    )
+
+    stale = _resume_ci(repo, plan)
+
+    assert stale.status == "awaiting_ci_parity"
+    assert stale.state["ci_parity_missing_resume_count"] == 0
+
+
+def test_ci_parity_injected_wrong_command_is_schema_error(repo) -> None:
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    spawner = StubSpawner(repo)
+    _wire_normal_phase(spawner, "1")
+    spawn = _scripted_ci_spawn("passed", command_run="wrong command")
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            autonomous=True,
+            ci_cmd="echo ci",
+            ci_parity_spawn=spawn,
+        )
+    )
+
+    assert result.status == "schema_error"
+    assert "command_run mismatch" in (result.diagnostic or "")
+
+
 def test_ci_parity_malformed_result_file_handback_preserves_file(repo) -> None:
     plan = _scratch_plan(repo, _plan_with_phases(1))
     written_at = time.time()
@@ -584,6 +651,27 @@ def test_ci_parity_malformed_result_file_handback_preserves_file(repo) -> None:
     assert "malformed" in ((result.summary or "") + (result.diagnostic or "")).lower()
     assert result_path.exists()
     assert result.state["ci_parity_missing_resume_count"] == 0
+
+
+def test_awaiting_ci_parity_resume_rechecks_review_marker(repo) -> None:
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    plan_id = _seed_awaiting_state(repo, plan, written_at)
+    _write_result(
+        _result_path(repo, plan, plan_id),
+        _ci_parity_report(plan_id, written_at, "passed"),
+    )
+    plan.write_text(plan.read_text().replace("# Scratch", "# Changed Scratch", 1))
+
+    result = _resume_ci(repo, plan)
+
+    assert result.status == "complete"
+    state_path = _state_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    assert json.loads(state_path.read_text())["plan_content_hash"] == compute_plan_hash(
+        plan
+    )
 
 
 def test_ci_parity_consumed_toctou_recovers_when_active_file_absent(repo) -> None:
@@ -844,6 +932,7 @@ def test_ci_parity_prompt_placeholder_rendering_if_prompt_exists() -> None:
         .replace("{{CI_CMD}}", req.ci_cmd)
         .replace("{{REPO_ROOT}}", req.repo_root)
         .replace("{{PLAN_ID}}", req.plan_id)
+        .replace("{{REQUEST_WRITTEN_AT_UNIX}}", str(req.request_written_at_unix))
     )
 
     assert "{{" not in rendered
@@ -855,5 +944,6 @@ def test_ci_parity_prompt_placeholder_rendering_if_prompt_exists() -> None:
         req.ci_cmd,
         req.repo_root,
         req.plan_id,
+        str(req.request_written_at_unix),
     ):
         assert value in rendered

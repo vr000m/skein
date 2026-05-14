@@ -98,7 +98,7 @@ done
 # `.claude/skills/<skill>/` and `.codex/skills/<skill>/`.
 #
 # Lagging-mirror override: ``CONDUCT_LAGGING_MIRROR_OK`` is a comma- or
-# whitespace-separated list of prompt-file basenames whose drift is
+# whitespace-separated list of ``<skill>/<prompt-file>`` paths whose drift is
 # known-in-flight (a mirror commit is expected to follow). When set:
 #   * If ALL detected drift is enumerated in the override → exit zero AND
 #     print ``expected lagging-mirror drift: <files> (CONDUCT_LAGGING_MIRROR_OK)``
@@ -118,7 +118,8 @@ if [[ -n "$PROMPT_EXPECTED_DRIFT" ]]; then
 fi
 
 is_expected_drift() {
-	local needle="$1"
+	local full_key="$1"
+	local basename="$2"
 	local item
 	# Guard against ``set -u`` aborting on empty-array expansion when no
 	# CONDUCT_LAGGING_MIRROR_OK override is set.
@@ -126,7 +127,11 @@ is_expected_drift() {
 		return 1
 	fi
 	for item in "${prompt_expected_drift_arr[@]}"; do
-		if [[ "$item" == "$needle" ]]; then
+		if [[ "$item" == "$full_key" ]]; then
+			return 0
+		fi
+		if [[ "$item" == "$basename" ]]; then
+			echo "warning: CONDUCT_LAGGING_MIRROR_OK basename entry '$item' is deprecated; use '$full_key'" >&2
 			return 0
 		fi
 	done
@@ -198,11 +203,12 @@ for skill in "${managed_skills[@]}"; do
 			fi
 		fi
 		if [[ $drifted -eq 1 ]]; then
-			if is_expected_drift "$pf"; then
-				prompt_drift_expected_observed+=("$pf")
+			full_key="$skill/$pf"
+			if is_expected_drift "$full_key" "$pf"; then
+				prompt_drift_expected_observed+=("$full_key")
 				echo "expected lagging-mirror drift: $drift_reason (CONDUCT_LAGGING_MIRROR_OK)" >&2
 			else
-				prompt_drift_unknown_observed+=("$pf")
+				prompt_drift_unknown_observed+=("$full_key")
 				echo "prompt parity drift: $drift_reason" >&2
 			fi
 		fi

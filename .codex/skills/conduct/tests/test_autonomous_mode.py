@@ -186,6 +186,7 @@ def test_autonomous_3_phase_success(repo, lock_counter):
             spawn=spawner,
             test_runner=runner,
             autonomous=True,
+            skip_ci_parity=True,
         )
     )
 
@@ -216,6 +217,7 @@ def test_autonomous_rogue_commit_handback_at_phase_2(repo, lock_counter):
             spawn=spawner,
             test_runner=runner,
             autonomous=True,
+            skip_ci_parity=True,
         )
     )
 
@@ -249,6 +251,7 @@ def test_autonomous_schema_error_handback_at_phase_1(repo, lock_counter):
             spawn=spawner,
             test_runner=runner,
             autonomous=True,
+            skip_ci_parity=True,
         )
     )
 
@@ -277,6 +280,7 @@ def test_autonomous_validation_cmd_failure_handback_at_phase_2(repo, lock_counte
             spawn=spawner,
             test_runner=runner,
             autonomous=True,
+            skip_ci_parity=True,
         )
     )
 
@@ -302,6 +306,7 @@ def test_max_phases_cap_4_phase_fixture_cap_2(repo, lock_counter):
             test_runner=runner,
             autonomous=True,
             max_phases=2,
+            skip_ci_parity=True,
         )
     )
 
@@ -327,6 +332,7 @@ def test_max_phases_cap_respects_post_commit_count(repo, lock_counter):
             test_runner=runner,
             autonomous=True,
             max_phases=2,
+            skip_ci_parity=True,
         )
     )
 

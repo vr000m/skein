@@ -244,7 +244,7 @@ test_phase_3_impl_commit_lands_with_hooks_enabled_in_intermediate_state() {
 # 5. check-prompt-parity-exits-with-documented-expected-drift-in-mid-handoff
 #
 # Fixture: claude has ci-parity-prompt.md, codex does not. With
-# CONDUCT_LAGGING_MIRROR_OK=ci-parity-prompt.md set, the script exits zero
+# CONDUCT_LAGGING_MIRROR_OK=conduct/ci-parity-prompt.md set, the script exits zero
 # AND stderr contains the "expected lagging-mirror drift" annotation.
 # ---------------------------------------------------------------------------
 
@@ -260,7 +260,7 @@ test_check_prompt_parity_exits_with_documented_expected_drift() {
 
     local out rc
     set +e
-    out="$(CONDUCT_LAGGING_MIRROR_OK="ci-parity-prompt.md" \
+    out="$(CONDUCT_LAGGING_MIRROR_OK="conduct/ci-parity-prompt.md" \
         run_script "$tmp" "conduct deep-review review-plan" 2>&1)"
     rc=$?
     set -e
@@ -295,7 +295,7 @@ test_check_prompt_parity_exits_zero_when_all_drift_expected() {
 
     local rc
     set +e
-    CONDUCT_LAGGING_MIRROR_OK="ci-parity-prompt.md" \
+    CONDUCT_LAGGING_MIRROR_OK="conduct/ci-parity-prompt.md" \
         run_script "$tmp" "conduct deep-review review-plan" >/dev/null 2>&1
     rc=$?
     set -e
@@ -310,7 +310,7 @@ test_check_prompt_parity_exits_zero_when_all_drift_expected() {
 # ---------------------------------------------------------------------------
 # 7. check-prompt-parity-exits-non-zero-on-mixed-expected-and-unknown-drift
 #
-# Two drifts: one expected (ci-parity-prompt.md, in env override) and one
+# Two drifts: one expected (conduct/ci-parity-prompt.md, in env override) and one
 # unexpected (a new ``rogue-prompt.md`` missing on codex). Expect non-zero
 # exit AND the unknown drift named in stderr.
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ test_check_prompt_parity_exits_non_zero_on_mixed_drift() {
 
     local out rc
     set +e
-    out="$(CONDUCT_LAGGING_MIRROR_OK="ci-parity-prompt.md" \
+    out="$(CONDUCT_LAGGING_MIRROR_OK="conduct/ci-parity-prompt.md" \
         run_script "$tmp" "conduct deep-review review-plan" 2>&1)"
     rc=$?
     set -e
