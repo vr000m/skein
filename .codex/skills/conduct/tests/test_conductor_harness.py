@@ -1859,6 +1859,28 @@ def test_phase3_ci_parity_api_surface_is_declared():
     } <= request_fields
 
 
+def test_step_8_impl_commit_has_conducted_by_trailer(repo):
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (_stage(r, "src/a.py", "x = 1\n"), _impl_report(0, ["src/a.py"]))[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing()])
+
+    result = conduct(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+    )
+
+    assert result.status == "awaiting_user"
+    body = _git(["show", "-s", "--format=%B", "HEAD"], repo).stdout
+    assert "Conducted-By: codex" in body
+    assert f"plan: {plan}" in body
+    assert "phase: 1" in body
+
+
 def test_stall_blocks_at_threshold(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()

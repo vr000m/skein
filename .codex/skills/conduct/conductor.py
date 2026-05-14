@@ -1543,8 +1543,12 @@ def _commit_phase(
         return ConductResult(status="running", state=state, summary="")
 
     commit_msg = f"conduct: phase {phase.label} — {phase.title}"
+    trailer = (
+        "Conducted-By: codex "
+        f"(skill: conduct, plan: {opts.plan_path}, phase: {phase.label})"
+    )
     staged_paths = _staged_paths(opts.repo_root)
-    proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
+    proc = _git(["commit", "-m", commit_msg, "-m", trailer], opts.repo_root, check=False)
     if proc.returncode != 0:
         modified_paths = _tracked_modified_paths(opts.repo_root)
         if modified_paths:
@@ -1553,7 +1557,11 @@ def _commit_phase(
                     "pre-commit hook modified files; re-staged and retrying"
                 )
                 _git(["add", "-u", "--", *staged_paths], opts.repo_root, check=False)
-                proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
+                proc = _git(
+                    ["commit", "-m", commit_msg, "-m", trailer],
+                    opts.repo_root,
+                    check=False,
+                )
             else:
                 state["status"] = "awaiting_user"
                 state["blocker"] = (
