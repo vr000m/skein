@@ -1,11 +1,11 @@
 # Task: Autonomous phased implementation mode in `/conduct`
 
-**Status**: Not Started
-**Assigned to**: Claude
+**Status**: Complete (PR #22 open; global promote deferred to post-merge)
+**Assigned to**: Claude + Codex (dual-mirror)
 **Priority**: Medium
 **Branch**: feature/conduct-autonomous-mode
 **Created**: 2026-05-12
-**Last revised**: 2026-05-13 (post-Codex review: runtime-partitioned conduct state/locks; Phase 4 single-owner post-mirror phase; `schema_version` kept as serialization contract with separate `state_author`; CI-parity write path wrapped in a single adapter; `tests/parity/` rebased as existing; prompt-parity current scope corrected; doc-presence/shared-script gates wired into acceptance)
+**Last revised**: 2026-05-14 (all four phases landed; acceptance gate green; PR #22 opened)
 
 ## Objective
 
@@ -384,7 +384,13 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-skip-workf
 
 ## Issues & Solutions
 
-*(to be filled during implementation)*
+- **Phase 1 codex mirror parked.** The bootstrap `sync-skills.sh` ran the wrong direction during Phase 1, leaving the codex mirror with pre-existing divergence that required hand-port. Resolution: the Claude side landed Phases 1-3 first (commits `60289c5`, `fdb40df`, `aef75d6`); the codex-driven `/conduct` against the same plan caught up afterwards (commits `ff59a54`, `8dba0e7`, `66b9b6f`). The mirror-handoff gate (`tests/parity/check-mirror-handoff.sh`) validated convergence before Phase 4 ran.
+- **Phase 3 fix-loop iteration: status-overwrite + set-u bug.** Iteration 0 of Phase 3 landed but 15 tests failed. Two distinct impl bugs surfaced via the test-writer's `needs_impl_clarification` diagnostic:
+  1. `_load_or_init_state()` unconditionally reset `state['status']='running'` on every `--resume`, which killed both the `awaiting_ci_parity` preflight branch and the legacy post-consume early-return. Fix: gate the reset on `status not in {'awaiting_ci_parity', 'complete', 'ci_failed'}`.
+  2. `scripts/check-prompt-parity.sh` referenced `${prompt_expected_drift_arr[@]}` under `set -u` even when `CONDUCT_LAGGING_MIRROR_OK` was unset and the array was empty. Fix: gate the loop on `[[ ${#prompt_expected_drift_arr[@]} -gt 0 ]]` before the expansion.
+  Both fixed in iteration 1, all 195 Claude tests then green in the Phase 3 boundary commit.
+- **SKILL.md prose tripped `test_skill_spawn_grep`.** The Phase 3 implementer wrote `` `/conduct --resume <plan>` `` in the new "CI Parity Gate" section; the spawn-grep regex requires `` `/conduct` `` with arguments **outside** the backticks. Reworded four lines to `` `/conduct` `` with args after the close-backtick. No semantic change.
+- **Promote step deferred.** Phase 4's `MANAGED_SKILLS="conduct" scripts/promote-skills.sh --yes && just check-sync` was intentionally not run during the conduct walk — it is destructive (rsync `--delete` to `~/.claude/` and `~/.codex/`, plus overwrite of global `CLAUDE.md` / `AGENTS.md`). Pre-promote diff was clean (additive only, or stale `__pycache__/*.pyc`; both `.md` files identical between repo and globals); the operator runs the promote manually after PR merge.
 
 ## Acceptance Criteria
 
@@ -412,5 +418,42 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-skip-workf
 
 ## Final Results
 
-*(to be filled on completion)*
-<!-- reviewed: 2026-05-13 @ 339950c8f8fbe4a7ee31542e2f83c6987cd98762 -->
+**Status:** All four phases complete. PR #22 open against `main`. Global promote deferred to post-merge.
+
+**Boundary commits (Claude-side):**
+- Phase 1 — `58df83b` `conduct(phase 1 delta): apply review-round-4 Claude-side findings` (delta over earlier bootstrap commit `60289c5`)
+- Phase 2 — `fdb40df` `conduct: phase 2 — autonomous flag, explicit phase loop, LockAcquisitionCounter`
+- Phase 3 — `aef75d6` `conduct: phase 3 — end-of-plan CI-parity gate + schema v2 + parity-script extension`
+- Phase 4 — `d65c68a` `docs(dev_plans): add conduct-autonomous-mode to in-review`
+
+**Boundary commits (Codex-side mirror):**
+- Phase 1 — `ff59a54` `conduct(phase 1): cover codex plan id helpers` (+ `2e1f201` boundary-trailer commit)
+- Phase 2 — `8dba0e7` `conduct(phase 2): add codex autonomous loop`
+- Phase 3 — `66b9b6f` `conduct(phase 3): add codex ci parity gate`
+
+**Shared parity artifacts:**
+- `448e7fa` `chore(conduct-parity manifest): phases 2 and 3` — non-boundary commit, updates `tests/parity/codex-test-equivalents.txt`.
+- `f370303` `test(conduct): add mirror handoff gate` — Phase 4 setup-task script.
+- `e7030d5` `fix(prompt-parity): handle empty and harness-native prompts` — late fix for the parity script's empty-array path.
+
+**Phase 4 read-only acceptance gate (all green at `d65c68a`):**
+
+| Step | Result |
+|------|--------|
+| `bash tests/parity/check-mirror-handoff.sh` | PASS — 3 phases × 2 runtimes + manifest |
+| `just check-prompt-parity` | PASS |
+| `uvx pytest .claude/skills/conduct/tests/ -v` | 195 passed |
+| `(cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q)` | 212 passed |
+| `uvx pytest tests/parity/test_skill_md_presence.py -v` | 10 passed |
+| `bash tests/parity/test-prompt-parity-extended.sh` | 7/7 passed |
+| `just reconciliation-tests` | 12 passed |
+| `just lint-scripts` | clean |
+
+**Pre-promote diff inspection (clean):**
+- `rsync -avn --delete .claude/skills/conduct/ ~/.claude/skills/conduct/` — additive only, no deletions.
+- `rsync -avn --delete .codex/skills/conduct/ ~/.codex/skills/conduct/` — deletions limited to stale `__pycache__/*.pyc` (py314 bytecode; not tracked).
+- `diff -u ~/.claude/CLAUDE.md .claude/CLAUDE.md` — identical (no hunks).
+- `diff -u ~/.codex/AGENTS.md .codex/AGENTS.md` — identical (no hunks).
+
+**Conducted-By provenance:** every boundary commit carries the `Conducted-By: <runtime>` trailer that `tests/parity/check-mirror-handoff.sh` consumes structurally.
+<!-- reviewed: 2026-05-14 @ 11f401add4aae183890ee8b08cd0a914cbb1a2ce -->
