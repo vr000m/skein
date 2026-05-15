@@ -91,6 +91,134 @@ for skill in "${managed_skills[@]}"; do
 	fi
 done
 
+# --- *-prompt.md parity per managed skill ------------------------------
+#
+# Phase 3 (autonomous-mode plan) extension: for every skill in
+# MANAGED_SKILLS, diff each *-prompt.md file between
+# `.claude/skills/<skill>/` and `.codex/skills/<skill>/`.
+#
+# Lagging-mirror override: ``CONDUCT_LAGGING_MIRROR_OK`` is a comma- or
+# whitespace-separated list of ``<skill>/<prompt-file>`` paths whose drift is
+# known-in-flight (a mirror commit is expected to follow). When set:
+#   * If ALL detected drift is enumerated in the override → exit zero AND
+#     print ``expected lagging-mirror drift: <files> (CONDUCT_LAGGING_MIRROR_OK)``
+#     to stderr for visibility.
+#   * If ANY drift is NOT in the override → exit non-zero AND print
+#     ``prompt parity drift: <file>`` for each unknown file (annotated
+#     expected drift is still echoed alongside).
+# Without the override, any drift exits non-zero with the generic message.
+
+PROMPT_EXPECTED_DRIFT="${CONDUCT_LAGGING_MIRROR_OK:-}"
+# Normalise commas to whitespace so users can write either separator.
+PROMPT_EXPECTED_DRIFT="${PROMPT_EXPECTED_DRIFT//,/ }"
+
+declare -a prompt_expected_drift_arr=()
+if [[ -n "$PROMPT_EXPECTED_DRIFT" ]]; then
+	read -r -a prompt_expected_drift_arr <<<"$PROMPT_EXPECTED_DRIFT"
+fi
+
+is_expected_drift() {
+	local full_key="$1"
+	local item
+	# Guard against ``set -u`` aborting on empty-array expansion when no
+	# CONDUCT_LAGGING_MIRROR_OK override is set.
+	if [[ ${#prompt_expected_drift_arr[@]} -eq 0 ]]; then
+		return 1
+	fi
+	for item in "${prompt_expected_drift_arr[@]}"; do
+		if [[ "$item" == "$full_key" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+prompt_files_match() {
+	local skill="$1"
+	local prompt_file="$2"
+	local claude_file="$3"
+	local codex_file="$4"
+	if [[ "$skill/$prompt_file" == "fan-out/agent-prompt.md" ]]; then
+		diff -q \
+			<(sed \
+				-e 's/spawned Claude agent/spawned Codex agent/g' \
+				-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
+				"$claude_file") \
+			"$codex_file" >/dev/null 2>&1
+		return
+	fi
+	diff -q "$claude_file" "$codex_file" >/dev/null 2>&1
+}
+
+declare -a prompt_drift_expected_observed=()
+declare -a prompt_drift_unknown_observed=()
+
+for skill in "${managed_skills[@]}"; do
+	if [[ ! "$skill" =~ ^[A-Za-z0-9_-]+$ ]]; then
+		# Already reported in the rubric loop; skip silently here.
+		continue
+	fi
+	claude_skill_dir="$ROOT_DIR/.claude/skills/$skill"
+	codex_skill_dir="$ROOT_DIR/.codex/skills/$skill"
+	# Build the union of prompt files on either side. ``shopt -s nullglob``
+	# would be cleaner but we keep the script POSIX-flexible.
+	prompt_files=()
+	if [[ -d "$claude_skill_dir" ]]; then
+		while IFS= read -r f; do
+			[[ -n "$f" ]] && prompt_files+=("$(basename "$f")")
+		done < <(find "$claude_skill_dir" -maxdepth 1 -type f -name '*-prompt.md' 2>/dev/null)
+	fi
+	if [[ -d "$codex_skill_dir" ]]; then
+		while IFS= read -r f; do
+			[[ -n "$f" ]] && prompt_files+=("$(basename "$f")")
+		done < <(find "$codex_skill_dir" -maxdepth 1 -type f -name '*-prompt.md' 2>/dev/null)
+	fi
+	# Dedupe.
+	if [[ ${#prompt_files[@]} -gt 0 ]]; then
+		IFS=$'\n' read -r -d '' -a prompt_files < <(printf '%s\n' "${prompt_files[@]}" | sort -u && printf '\0')
+	fi
+	if [[ ${#prompt_files[@]} -eq 0 ]]; then
+		continue
+	fi
+	for pf in "${prompt_files[@]}"; do
+		claude_pf="$claude_skill_dir/$pf"
+		codex_pf="$codex_skill_dir/$pf"
+		drifted=0
+		drift_reason=""
+		if [[ -f "$claude_pf" && ! -f "$codex_pf" ]]; then
+			drifted=1
+			drift_reason="$skill/$pf present on .claude, missing on .codex"
+		elif [[ ! -f "$claude_pf" && -f "$codex_pf" ]]; then
+			drifted=1
+			drift_reason="$skill/$pf present on .codex, missing on .claude"
+		elif [[ -f "$claude_pf" && -f "$codex_pf" ]]; then
+			if ! prompt_files_match "$skill" "$pf" "$claude_pf" "$codex_pf"; then
+				drifted=1
+				drift_reason="$skill/$pf differs between .claude and .codex"
+			fi
+		fi
+		if [[ $drifted -eq 1 ]]; then
+			full_key="$skill/$pf"
+			if is_expected_drift "$full_key"; then
+				prompt_drift_expected_observed+=("$full_key")
+				echo "expected lagging-mirror drift: $drift_reason (CONDUCT_LAGGING_MIRROR_OK)" >&2
+			else
+				prompt_drift_unknown_observed+=("$full_key")
+				echo "prompt parity drift: $drift_reason" >&2
+			fi
+		fi
+	done
+done
+
+if [[ ${#prompt_drift_unknown_observed[@]} -gt 0 ]]; then
+	PARITY_DIFF=1
+elif [[ ${#prompt_drift_expected_observed[@]} -gt 0 ]]; then
+	# All drift is expected → annotate on stderr (already emitted above) but
+	# do not flip PARITY_DIFF. Print a summary line for human consumers.
+	printf 'expected lagging-mirror drift: %s (CONDUCT_LAGGING_MIRROR_OK)\n' \
+		"$(printf '%s ' "${prompt_drift_expected_observed[@]}" | sed 's/ $//')" >&2
+fi
+
 # --- GENERIC FINDING SCHEMA AND MERGE block parity ---------------------
 #
 # The reconciliation contract block (delimited by HTML-comment markers

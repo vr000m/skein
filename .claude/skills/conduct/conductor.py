@@ -29,15 +29,99 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+from ci_parity import detect_ci_entrypoint
+from fileutil import (
+    atomic_write_result_file as _atomic_write_result_file,
+    ensure_under_directory,
+    read_result_file,
+    validate_plan_id,
+)
 from lock import StateLock
 from marker import compute_plan_hash, marker_is_stale, read_marker, write_marker
 from parser import Phase, files_overlap, parse_phases
+from progress import compute_staged_diff_stat, iteration_signature
 from runner import TestResult, run_tests
 from schema import SchemaError, parse_report
+
+
+# Plan-id derivations in this module are intentionally divergent:
+#   _state_path()                       digests rel(plan_path, repo_root)  -> state-file naming, repo-scoped
+#   _compute_cross_runtime_plan_id()    digests abs(plan_path)            -> cross-runtime handoff id (ci-parity gate)
+#
+# DO NOT use _state_path's digest for cross-runtime handoffs.
+# DO NOT use _compute_cross_runtime_plan_id for state-file naming.
+# See _compute_cross_runtime_plan_id's docstring for the worktree rationale.
+
+# Runtime authorship for state files and locks. Claude-side conductor writes
+# state-claude-<plan-stem>-<digest>.json; the Codex mirror writes
+# state-codex-<...>. The two runtimes MUST NOT share a state file or lock; the
+# author field on every state write is the diagnostics counterpart to this
+# filename prefix.
+_RUNTIME_AUTHOR = "claude"
+
+
+# Module-level flag: emit the unknown-schema_version warning exactly once per
+# Python process. Reset implicitly on a fresh process (e.g. a new --resume).
+_UNKNOWN_SCHEMA_VERSION_WARNED: bool = False
+
+
+# Tolerated-extras field set for the v2 "known subset" forward-compat contract.
+# Future versions add only optional fields or fields with documented safe
+# defaults; required-semantics fields require an ``incompatible_with_pre_vN:
+# true`` marker that older loaders hard-fail on.
+_V1_KNOWN_FIELDS = frozenset(
+    {
+        "plan_path",
+        "plan_content_hash",
+        "base_sha",
+        "resume_base_sha",
+        "phase_index",
+        "current_phase_title",
+        "completed_phases",
+        "last_summary",
+        "iteration_count",
+        "status",
+        "blocker",
+        "warnings_for_next_handback",
+        "_internal",
+        # Tolerated extras introduced in Phase 1 (still schema_version=1):
+        "stall_signatures",
+        "stall_count",
+        "plan_id",
+        "state_author",
+        "schema_version",
+        # Phase 3 (schema_version=2) additions:
+        "ci_parity_request",
+        "ci_parity_request_written_at",
+        "ci_parity_result",
+        "ci_parity_dispatched",
+        "ci_parity_missing_resume_count",
+    }
+)
+
+
+# Phase 3 fields whose presence on a state write triggers a v2 serialization.
+# When any of these are set, ``_persist_state`` stamps ``schema_version: 2``.
+_PHASE_3_STATE_FIELDS = frozenset(
+    {
+        "ci_parity_request",
+        "ci_parity_request_written_at",
+        "ci_parity_result",
+        "ci_parity_dispatched",
+        "ci_parity_missing_resume_count",
+    }
+)
+
+
+# Current state schema version this runtime knows how to write fully. Loader
+# tolerates older / newer files per the forward-compat contract.
+_STATE_SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -65,10 +149,33 @@ class SpawnRequest:
     diff: str = ""  # reviewer only
 
 
+@dataclass
+class CIParitySpawnRequest:
+    """Payload handed to the CI-parity worker dispatch seam.
+
+    Mirrors the placeholders in ``ci-parity-prompt.md`` so a scripted spawner
+    (test injection) can render the prompt and execute the command in-process,
+    while production dispatch goes through the main-runtime orchestrator (which
+    reads these fields off ``ConductResult.request`` and writes the worker's
+    final JSON to ``<repo-root>/.conduct/ci-parity-result-<plan-id>.json`` via
+    ``_write_ci_parity_result``).
+    """
+
+    plan_path: str
+    base_sha: str
+    head_sha: str
+    ci_entrypoint_kind: str  # 'just' | 'make' | 'npm' | 'cargo' | 'override'
+    ci_cmd: str
+    repo_root: str
+    plan_id: str
+    request_written_at_unix: float
+
+
 SpawnFn = Callable[[SpawnRequest], str]
 TestRunnerFn = Callable[[str, float], TestResult]
 LintCheckFn = Callable[[], Optional[str]]
 HandbackFn = Callable[[dict], None]
+CIParitySpawnFn = Callable[[CIParitySpawnRequest], str]
 
 
 @dataclass
@@ -84,17 +191,218 @@ class ConductOptions:
     test_cmd_override: Optional[str] = None
     test_timeout: float = 300.0
     max_iterations: int = 3
+    # Progress-aware autonomous-runway cap. Default 8 leaves headroom for a
+    # progressing phase while the legacy `max_iterations` (default 3) still
+    # dominates when smaller (see startup validator in `_validate_options`).
+    max_iterations_ceiling: int = 8
+    # Stall threshold: N matching signatures in a row block the fix-loop with
+    # blocker `stall_threshold exceeded`. Helper-call semantics: signature 1
+    # → stall_count 0; signature 2 (matching) → stall_count 1; signature 3
+    # (matching) → stall_count 2 → blocks at threshold 2.
+    stall_threshold: int = 2
+    # Disable progress detection (legacy behaviour). When True, signatures are
+    # still computed but never counted as stalls.
+    no_progress_detection: bool = False
     resume: bool = False
     on_handback: Optional[HandbackFn] = None
+    # Autonomous mode: when True, ``conduct()`` walks every unfinished phase in
+    # a single Python process under one lock acquisition, only handing back on
+    # a hard-stop (rogue commit, schema error, validation-cmd failure, stall,
+    # iteration ceiling, max_phases cap). Default False preserves the legacy
+    # one-phase-per-resume contract.
+    autonomous: bool = False
+    # Optional cap on total phases walked in autonomous mode. ``None`` is
+    # resolved at ``conduct()`` entry to ``len(parsed_phases) + 1`` (the +1
+    # leaves a single-iteration headroom; the cap fires before the (N+1)th
+    # phase would enter ``_run_phase``). Resolution happens inline at
+    # ``conduct()`` entry — NOT in ``__post_init__`` — because parsed phase
+    # count is not known until after preflight + plan parsing.
+    max_phases: Optional[int] = None
+    # Phase 3 ci-parity gate flags.
+    #   run_ci_parity: enable the gate explicitly. Implied by autonomous=True.
+    #   ci_cmd: override the detected CI entrypoint (e.g. "just ci", "make ci",
+    #     or any user-supplied shell command).
+    #   skip_ci_parity: short-circuit the gate to status="complete" with a skip
+    #     summary; preserves any in-flight request / result files on disk.
+    #   ci_parity_spawn: test-only synchronous dispatch seam. When set, the
+    #     gate runs the spawner inline and consumes the resulting JSON in the
+    #     same Python turn (no lock release). Production runs leave this None
+    #     and rely on the main-runtime orchestrator + result-file handoff.
+    run_ci_parity: bool = False
+    ci_cmd: Optional[str] = None
+    skip_ci_parity: bool = False
+    ci_parity_spawn: Optional[CIParitySpawnFn] = None
 
 
 @dataclass
 class ConductResult:
-    status: str  # 'awaiting_user' | 'blocked' | 'schema_error' | 'complete' | 'preflight_fail'
+    status: str  # 'awaiting_user' | 'blocked' | 'schema_error' | 'complete' | 'preflight_fail' | 'awaiting_ci_parity'
     state: dict
     summary: str
     next_command: Optional[str] = None
     diagnostic: Optional[str] = None
+    # Phase 3 ci-parity gate handoff fields (reserved now; populated only when
+    # status == 'awaiting_ci_parity'). Defined here so the runtime orchestrator
+    # can read them directly off the result without round-tripping state.
+    next_action: Optional[str] = None  # e.g. 'dispatch_ci_parity'
+    request: Optional[dict] = None  # ci-parity request payload (see Phase 3 spec)
+
+
+def _validate_options(opts: ConductOptions) -> None:
+    """Startup validator. Emits one warning per misconfiguration.
+
+    Currently only checks ``stall_threshold >= max_iterations`` while progress
+    detection is enabled — under that configuration the legacy cap will always
+    fire before the stall threshold can, so the stall configuration is
+    effectively dead (and probably a typo).
+    """
+    if not opts.no_progress_detection and opts.stall_threshold >= opts.max_iterations:
+        warnings.warn(
+            f"conduct: stall_threshold={opts.stall_threshold} is "
+            f">= max_iterations={opts.max_iterations}; legacy cap will "
+            "always fire first (stall detection effectively disabled).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+def _check_iteration_bound(
+    state: dict,
+    opts: ConductOptions,
+    signature: str,
+) -> Optional[ConductResult]:
+    """Single source of truth for ``iteration_count += 1`` and the dual-cap +
+    stall check across all three fix-loop call sites.
+
+    Semantics (helper-owns-increment invariant):
+
+    1. ``state["iteration_count"] += 1`` — only place in the module.
+    2. Push ``signature`` onto ``state["stall_signatures"]``, truncate to
+       length 2 (oldest first).
+    3. If the new entry equals the previous entry, ``state["stall_count"] +=
+       1``; else reset ``state["stall_count"] = 0``.
+    4. Return blocked ``ConductResult("stall_threshold exceeded", ...)`` if
+       ``state["stall_count"] >= opts.stall_threshold`` (unless progress
+       detection is disabled).
+    5. Return blocked ``ConductResult("max_iterations_ceiling exceeded", ...)``
+       if ``state["iteration_count"] > opts.max_iterations_ceiling``.
+    6. Return blocked ``ConductResult("max_iterations exceeded (legacy)",
+       ...)`` if ``state["iteration_count"] > opts.max_iterations``.
+    7. Otherwise return ``None``.
+
+    Call ORDER at each site MUST be: observe the failure (compute the
+    signature from ``failing_tests`` + ``compute_staged_diff_stat``), then
+    invoke this helper. This preserves byte-identical iteration_count
+    semantics with today's code, where the bump always fires AFTER the failure
+    is observable.
+    """
+    state["iteration_count"] = state.get("iteration_count", 0) + 1
+
+    history = list(state.get("stall_signatures") or [])
+    prev_sig = history[-1] if history else None
+    history.append(signature)
+    # Rolling window of length 2, oldest first.
+    if len(history) > 2:
+        history = history[-2:]
+    state["stall_signatures"] = history
+
+    if prev_sig is not None and signature == prev_sig:
+        state["stall_count"] = state.get("stall_count", 0) + 1
+    else:
+        state["stall_count"] = 0
+
+    # Stall threshold fires first (it represents "no progress", which is a
+    # stronger signal than "ran out of attempts"). Disabled when
+    # `no_progress_detection` is set.
+    if not opts.no_progress_detection and state["stall_count"] >= opts.stall_threshold:
+        state["status"] = "blocked"
+        state["blocker"] = "stall_threshold exceeded"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    if state["iteration_count"] > opts.max_iterations_ceiling:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations_ceiling exceeded"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    if state["iteration_count"] > opts.max_iterations:
+        state["status"] = "blocked"
+        state["blocker"] = "max_iterations exceeded (legacy)"
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=state["blocker"],
+        )
+
+    return None
+
+
+def _extract_failing_tests_from_output(output: str) -> list[str]:
+    """Best-effort pytest failing-test extractor for the stall signature.
+
+    Looks for lines emitted by pytest's failure summary (``FAILED <nodeid>``).
+    Returns the sorted, de-duplicated list of node ids found, or ``[]`` if no
+    such lines are present. The diff stat then carries the signal alone — a
+    stalled implementer typically produces both an unchanged failing set AND
+    an unchanged diff, so signature collision is preserved either way.
+    """
+    if not output:
+        return []
+    found: set[str] = set()
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("FAILED "):
+            # ``FAILED tests/x.py::test_y - AssertionError: ...``
+            rest = stripped[len("FAILED ") :].strip()
+            nodeid = rest.split(" ", 1)[0]
+            if nodeid:
+                found.add(nodeid)
+    return sorted(found)
+
+
+def _extract_failing_hook_ids(output: str) -> list[str]:
+    """Best-effort pre-commit failing-hook-id extractor for the stall signature.
+
+    pre-commit's per-hook summary lines look like ``ruff.....Failed`` or
+    ``ruff-format.....Failed``. Captures the hook id before the dotted leader
+    and returns sorted, de-duplicated ids. Returns ``[]`` if nothing parses —
+    the diff stat then carries the signal alone.
+    """
+    if not output:
+        return []
+    found: set[str] = set()
+    for line in output.splitlines():
+        # pre-commit hook lines have the form '<hook-id>....Failed' (variable
+        # dot count, with optional surrounding whitespace).
+        stripped = line.strip()
+        if "Failed" not in stripped or "." not in stripped:
+            continue
+        # Split on the first run of dots; the head is the hook id.
+        head = stripped
+        # Walk forward until we hit a '.'; everything to that point is the id.
+        dot = head.find(".")
+        if dot <= 0:
+            continue
+        candidate = head[:dot].strip()
+        # Filter obvious non-ids (paths, file names with spaces).
+        if not candidate or " " in candidate or "/" in candidate:
+            continue
+        # Skip anything that looks like a normal sentence (capitalised word
+        # followed by lowercase prose) — hook ids are short kebab-case tokens.
+        if len(candidate) > 64:
+            continue
+        # The tail must indicate failure.
+        if "Failed" not in stripped[dot:]:
+            continue
+        found.add(candidate)
+    return sorted(found)
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +561,31 @@ def _safe_write_text(path: Path, text: str) -> None:
         os.close(fd)
 
 
+def _safe_read_state_text(path: Path) -> str:
+    """Open the main state file refusing to follow symlinks, capped at
+    ``_MAX_LEGACY_STATE_BYTES``. Defence-in-depth against a symlink swapped in
+    between the pre-lock ``_ensure_safe_fs_path`` check and the read: even
+    though the state-lock window narrows the race, a TOCTOU swap inside it
+    would otherwise let an attacker redirect the read to an arbitrary file.
+    Raises ``RuntimeError`` on symlink/OS failure or size cap; the caller is
+    expected to surface the error rather than fall through to ``json.loads``
+    on bytes from an unrelated file."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise RuntimeError(f"refusing to read state file at {path}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if st.st_size > _MAX_LEGACY_STATE_BYTES:
+            raise RuntimeError(
+                f"state file at {path} exceeds {_MAX_LEGACY_STATE_BYTES}-byte cap"
+            )
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES).decode("utf-8")
+    finally:
+        os.close(fd)
+
+
 def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
     """Open the legacy state file refusing to follow symlinks, capped at
     `_MAX_LEGACY_STATE_BYTES`. Returns None if the file is missing, a symlink,
@@ -282,62 +615,185 @@ def _state_path(opts: ConductOptions) -> Path:
     except ValueError:
         rel_plan = opts.plan_path.resolve().as_posix()
     digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
-    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+    return (
+        opts.repo_root
+        / ".conduct"
+        / f"state-{_RUNTIME_AUTHOR}-{opts.plan_path.stem}-{digest}.json"
+    )
 
 
 def _legacy_state_path(opts: ConductOptions) -> Path:
+    """Pre-digest legacy path: `.conduct/state-<plan-stem>.json`."""
     return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}.json"
 
 
+def _pre_partition_state_path(opts: ConductOptions) -> Path:
+    """Pre-runtime-partition legacy path: `.conduct/state-<plan-stem>-<digest>.json`.
+
+    This was the active path before Phase 1 introduced runtime-author
+    partitioning. The other runtime may still need to bootstrap from it, so
+    callers MUST read non-destructively.
+    """
+    try:
+        rel_plan = (
+            opts.plan_path.resolve().relative_to(opts.repo_root.resolve()).as_posix()
+        )
+    except ValueError:
+        rel_plan = opts.plan_path.resolve().as_posix()
+    digest = hashlib.sha1(rel_plan.encode("utf-8")).hexdigest()[:12]
+    return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
+
+
+def _bootstrap_from_legacy_state(opts: ConductOptions) -> Optional[dict]:
+    """Non-destructively load a legacy state file as bootstrap input.
+
+    Tries the pre-runtime-partition path first, then the pre-digest path.
+    Returns the parsed state dict if a legacy file exists, parses, has a
+    matching (or absent) `plan_path`, and a `state_author` matching this
+    runtime (or absent). Returns None otherwise.
+
+    The legacy file is NEVER renamed or deleted: the *other* runtime may
+    still bootstrap from the same file. Each runtime persists its own
+    runtime-specific state via `_persist_state` after bootstrap.
+    """
+    for legacy in (_pre_partition_state_path(opts), _legacy_state_path(opts)):
+        if not legacy.exists() or legacy.is_symlink():
+            continue
+        raw = _safe_read_legacy_state(legacy)
+        if raw is None:
+            continue
+        try:
+            parsed = json.loads(raw.decode("utf-8", errors="strict"))
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        recorded = parsed.get("plan_path")
+        if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
+            continue
+        author = parsed.get("state_author")
+        if author is not None and author != _RUNTIME_AUTHOR:
+            # The other runtime owns this legacy snapshot; do not consume.
+            continue
+        return parsed
+    return None
+
+
 def _migrate_legacy_state_file(opts: ConductOptions) -> None:
-    """Rename a pre-digest state file to the digest-suffixed path.
+    """Bootstrap from a legacy state file into the runtime-specific path.
 
-    Migration is path-driven (file rename), distinct from Codex's
-    `_migrate_loaded_state` which is content-driven (schema-version migration
-    on already-loaded JSON). If both helpers ever live in the same conductor,
-    path migration MUST run first so the schema migration sees the new path.
+    Non-destructive: legacy files are read only; never renamed or deleted.
+    The other runtime may still need to bootstrap from the same file. Each
+    runtime stamps `state_author` on its first runtime-specific write.
 
-    Only migrates when the legacy file's recorded `plan_path` matches the
-    current plan; missing `plan_path` is treated as ambiguous and migrated
-    optimistically (the file is still in `.conduct/state-<basename>.json`,
-    which by construction is unique per basename in this directory).
+    No-op if the runtime-specific state file already exists, no eligible
+    legacy file is found, or the legacy `plan_path` / `state_author` do not
+    match this runtime.
     """
     sp = _state_path(opts)
-    legacy = _legacy_state_path(opts)
-    if sp.exists() or not legacy.exists() or legacy.is_symlink():
+    if sp.exists():
         return
-
-    raw = _safe_read_legacy_state(legacy)
-    if raw is None:
+    parsed = _bootstrap_from_legacy_state(opts)
+    if parsed is None:
         return
-    try:
-        recorded = json.loads(raw.decode("utf-8", errors="strict")).get("plan_path")
-    except (UnicodeDecodeError, ValueError):
-        return
-    if recorded and Path(recorded).resolve() != opts.plan_path.resolve():
-        return
-
+    parsed["state_author"] = _RUNTIME_AUTHOR
     try:
         _ensure_safe_conduct_dir(opts.repo_root)
         _ensure_safe_fs_path(sp, expect_dir=False)
-        legacy.rename(sp)
+        _safe_write_text(sp, json.dumps(parsed, indent=2))
     except (FileNotFoundError, FileExistsError, OSError, UnsafeConductPathError):
-        # Concurrent migrator or symlink races: bail. The next load will
+        # Concurrent bootstrap or symlink races: bail. The next load will
         # observe whichever file landed at sp.
         return
-    legacy_lock = legacy.with_suffix(legacy.suffix + ".lock")
-    if legacy_lock.exists():
-        try:
-            legacy_lock.unlink()
-        except OSError:
-            pass
+
+
+def _compute_cross_runtime_plan_id(plan_path: Path) -> str:
+    """Derive a stable 12-char plan-id from the absolute plan path.
+
+    Renamed from ``_compute_plan_id`` to disambiguate from ``_state_path``'s
+    rel-path digest used for state-file naming.
+
+    Matches the convention re-used by ``_state_path`` (which digests the
+    repo-relative path); the spec calls for ``sha1(abs(plan_path))[:12]`` so
+    callers — including a future autonomous main-Claude orchestrator — can
+    re-derive the id without re-loading state. Different formula from the
+    existing state-file digest is intentional: state-file naming is scoped to
+    a repo-root, while plan_id is scoped to the absolute filesystem path so
+    cross-worktree main-Claude flows agree on the id.
+    """
+    abs_path = plan_path.resolve().as_posix()
+    return hashlib.sha1(abs_path.encode("utf-8")).hexdigest()[:12]
+
+
+def _maybe_warn_unknown_schema_version(version: int) -> None:
+    """Emit the unknown-≥1 schema_version forward-compat warning at most once
+    per Python process. A fresh ``--resume`` invocation re-fires the warning
+    because module-level state resets at process start.
+    """
+    global _UNKNOWN_SCHEMA_VERSION_WARNED
+    if _UNKNOWN_SCHEMA_VERSION_WARNED:
+        return
+    _UNKNOWN_SCHEMA_VERSION_WARNED = True
+    warnings.warn(
+        f"state file written by newer schema_version={version}; "
+        "reading known fields only",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
+def _apply_v1_defaults(state: dict, opts: ConductOptions) -> bool:
+    """Populate v1 default values for fields the loader is responsible for.
+
+    Returns True iff the state dict was mutated (caller persists on True).
+    Centralises forward-compat defaults: even when reading an unknown
+    ``schema_version`` >=1, the loader still backfills known-field defaults
+    so the in-memory state object satisfies the documented v1 contract.
+    """
+    mutated = False
+    if "stall_signatures" not in state:
+        state["stall_signatures"] = []
+        mutated = True
+    if "stall_count" not in state:
+        state["stall_count"] = 0
+        mutated = True
+    if "plan_id" not in state:
+        state["plan_id"] = _compute_cross_runtime_plan_id(opts.plan_path)
+        mutated = True
+    if "state_author" not in state:
+        state["state_author"] = _RUNTIME_AUTHOR
+        mutated = True
+    if "schema_version" not in state:
+        # Absent is treated as 1 per the forward-compat rule.
+        state["schema_version"] = 1
+        mutated = True
+    return mutated
 
 
 def _load_or_init_state(opts: ConductOptions) -> dict:
     _migrate_legacy_state_file(opts)
     sp = _state_path(opts)
     if sp.exists():
-        state = json.loads(sp.read_text())
+        state = json.loads(_safe_read_state_text(sp))
+        # Forward-compat hard-stop: a future schema may set
+        # ``incompatible_with_pre_vN: true`` to signal that the file MUST NOT be
+        # read by a loader older than vN. Honour it regardless of schema_version
+        # so older readers reject the file cleanly rather than misreading it.
+        incompat_marker = state.get("incompatible_with_pre_vN")
+        if incompat_marker is True or (
+            isinstance(incompat_marker, int) and incompat_marker > 0
+        ):
+            raise RuntimeError(
+                "state file requires a newer conduct loader "
+                f"(incompatible_with_pre_vN={incompat_marker!r}); "
+                "upgrade /conduct or remove the state file to start fresh"
+            )
+        # Forward-compat: handle unknown schema_version BEFORE backfill so the
+        # warning fires against the raw on-disk value. Known set right now is
+        # {absent, 1, 2}; Phase 1 writes 1, Phase 3 will write 2.
+        sv = state.get("schema_version")
+        if sv is not None and isinstance(sv, int) and sv >= 1 and sv not in (1, 2):
+            _maybe_warn_unknown_schema_version(sv)
         # Backfill keys that older state files may be missing so the on-disk
         # schema converges to what SKILL.md documents. Persist immediately so
         # a crash before the next write does not leave backfill-in-memory only.
@@ -345,22 +801,24 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         if "plan_content_hash" not in state:
             state["plan_content_hash"] = compute_plan_hash(opts.plan_path)
             mutated = True
-        elif opts.resume:
-            # Preflight has already validated that the current plan hash
-            # matches the (possibly auto-refreshed) marker, so resync the
-            # stored hash to the current one. Without this, a marker auto-
-            # refresh on resume would leave state.plan_content_hash pointing
-            # at the pre-edit hash indefinitely.
-            current_hash = compute_plan_hash(opts.plan_path)
-            if state["plan_content_hash"] != current_hash:
-                state["plan_content_hash"] = current_hash
-                mutated = True
         if "last_summary" not in state:
             state["last_summary"] = ""
             mutated = True
+        if _apply_v1_defaults(state, opts):
+            mutated = True
         if opts.resume:
             state["resume_base_sha"] = _head_sha(opts.repo_root)
-            state["status"] = "running"
+            # Preserve terminal / awaiting statuses so the resume entry points
+            # (awaiting_ci_parity preflight, legacy post-consume early-return,
+            # ci_failed handback) can observe them. Only transition to
+            # "running" if the prior status was a mid-run / fresh-dispatch
+            # value.
+            if state.get("status") not in {
+                "awaiting_ci_parity",
+                "complete",
+                "ci_failed",
+            }:
+                state["status"] = "running"
             mutated = True
         if mutated:
             _persist_state(opts, state)
@@ -375,15 +833,556 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
         "iteration_count": 0,
         "status": "running",
         "blocker": None,
+        "stall_signatures": [],
+        "stall_count": 0,
+        "plan_id": _compute_cross_runtime_plan_id(opts.plan_path),
+        "state_author": _RUNTIME_AUTHOR,
+        "schema_version": 1,
     }
     _persist_state(opts, state)
     return state
 
 
 def _persist_state(opts: ConductOptions, state: dict) -> None:
+    # Phase 3: bump on-disk ``schema_version`` to 2 once any of the
+    # ci_parity_* fields are present in the in-memory state. Phases 1-2 keep
+    # writing 1; the loader treats unknown ≥1 with a one-shot warning so older
+    # readers still degrade gracefully.
+    if any(field in state for field in _PHASE_3_STATE_FIELDS):
+        state["schema_version"] = _STATE_SCHEMA_VERSION
     sp = _state_path(opts)
     _ensure_safe_conduct_dir(opts.repo_root)
     _safe_write_text(sp, json.dumps(state, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# CI-parity result file (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _write_ci_parity_result(path: Path, payload_text: str) -> None:
+    """Conductor-owned adapter for ci-parity result persistence.
+
+    Validates that ``path`` resolves underneath the repo's ``.conduct/``
+    directory (defence-in-depth against a ``plan_id`` containing ``..``
+    segments — see ``fileutil.ensure_under_directory``), ensures the parent
+    exists, and delegates to ``fileutil.atomic_write_result_file``.
+    Production orchestrators and tests both flow through this adapter so
+    the atomic-write contract is a single invariant rather than a
+    per-call-site convention.
+    """
+    parent = path.parent
+    if not parent.exists():
+        parent.mkdir(parents=True, exist_ok=True)
+    # Resolved-path containment supersedes the previous ``parents``-name
+    # check, which accepted ``.conduct/foo/../../escape.json``.
+    try:
+        ensure_under_directory(path, parent.parent)
+    except ValueError as e:
+        raise UnsafeConductPathError(str(e)) from e
+    # Sanity: the immediate parent must itself be a ``.conduct`` directory,
+    # because that is the only place preflight knows to look. The resolved
+    # check above guarantees we have not escaped via ``..``; this check
+    # guards against being passed a path inside a *different* ``.conduct``
+    # parent (e.g. someone constructs an absolute path manually).
+    if parent.name != ".conduct":
+        raise UnsafeConductPathError(
+            f"ci-parity result path must live directly under .conduct/: {path}"
+        )
+    _ensure_safe_fs_path(parent, expect_dir=True)
+    _ensure_safe_fs_path(path, expect_dir=False)
+    _atomic_write_result_file(path, payload_text)
+
+
+def _ci_parity_result_path(opts: ConductOptions, plan_id: str) -> Path:
+    # ``plan_id`` flows from on-disk state, so validate the shape before
+    # interpolating it into a filesystem path. A malformed ``plan_id`` is
+    # an upstream-state bug; raising here surfaces it at the first read or
+    # write attempt rather than letting traversal silently succeed.
+    validate_plan_id(plan_id)
+    return opts.repo_root / ".conduct" / f"ci-parity-result-{plan_id}.json"
+
+
+def _ci_parity_consumed_pattern(repo_root: Path, plan_id: str) -> list[Path]:
+    """Return matching ``.consumed-<unix>.json`` files for this plan_id.
+
+    ``plan_id`` is validated before being interpolated into the glob pattern
+    so a malformed value cannot expand into a traversal pattern.
+    """
+    validate_plan_id(plan_id)
+    conduct_dir = repo_root / ".conduct"
+    if not conduct_dir.exists() or not conduct_dir.is_dir():
+        return []
+    prefix = f"ci-parity-result-{plan_id}.consumed-"
+    return sorted(conduct_dir.glob(f"{prefix}*.json"))
+
+
+def _consume_ci_parity_result(
+    opts: ConductOptions,
+    state: dict,
+    ci_parity_report: dict,
+) -> ConductResult:
+    """Apply a parsed ci-parity report to state. Shared by test and prod paths.
+
+    Test-injection path: called synchronously after ``opts.ci_parity_spawn``
+    returns the worker JSON.
+    Production path: called by preflight after reading the result file.
+
+    Both paths produce byte-identical state mutations — this is the invariant
+    behind ``ci-parity-injection-and-result-file-paths-share-consume-code``.
+    """
+    state["ci_parity_result"] = ci_parity_report
+    state["ci_parity_dispatched"] = True
+    # Counter resets on any non-absent outcome including consume.
+    state["ci_parity_missing_resume_count"] = 0
+
+    status = ci_parity_report.get("status")
+    if status == "passed":
+        state["status"] = "complete"
+        state["blocker"] = None
+        summary_text = ci_parity_report.get("summary") or "ci-parity passed"
+        state["last_summary"] = f"ci-parity: {summary_text}"
+        _persist_state(opts, state)
+        return ConductResult(
+            status="complete",
+            state=state,
+            summary=f"All phases complete; ci-parity passed: {summary_text}",
+        )
+    # ``failed`` (or any other non-passed terminal status from the worker).
+    state["status"] = "ci_failed"
+    blocker = (
+        f"ci-parity failed: {ci_parity_report.get('summary') or 'see ci_parity_result'}"
+    )
+    state["blocker"] = blocker
+    summary_text = ci_parity_report.get("summary") or "ci-parity failed"
+    state["last_summary"] = f"ci-parity: {summary_text}"
+    _persist_state(opts, state)
+    next_cmd = f"Run: /conduct --resume {opts.plan_path}"
+    result = ConductResult(
+        status="ci_failed",
+        state=state,
+        summary=blocker,
+        next_command=next_cmd,
+        diagnostic=(ci_parity_report.get("last_2000_bytes_of_output") or "")[-2000:],
+    )
+    if opts.on_handback:
+        opts.on_handback(state)
+    return result
+
+
+def _ci_parity_request_validation_error(request: dict, report: dict) -> str | None:
+    plan_id = request.get("plan_id")
+    try:
+        validate_plan_id(plan_id)
+    except ValueError as exc:
+        return str(exc)
+    if report.get("plan_id") != plan_id:
+        return "plan_id mismatch"
+    request_written_at = request.get("request_written_at_unix")
+    report_written_at = report.get("request_written_at_unix")
+    if request_written_at is None or report_written_at is None:
+        return "request_written_at_unix missing"
+    try:
+        if float(report_written_at) != float(request_written_at):
+            return "request_written_at_unix mismatch"
+    except (TypeError, ValueError):
+        return "request_written_at_unix invalid"
+    requested_cmd = request.get("ci_cmd")
+    if requested_cmd is not None and report.get("command_run") != requested_cmd:
+        return "command_run mismatch"
+    return None
+
+
+def _state_path_matches_plan(state: dict, opts: ConductOptions) -> bool:
+    plan_path = state.get("plan_path")
+    if not isinstance(plan_path, str):
+        return False
+    return Path(plan_path).resolve() == opts.plan_path.resolve()
+
+
+def _completed_phase_prefix_error(state: dict, phases: list[Phase]) -> str | None:
+    completed = state.get("completed_phases") or []
+    if len(completed) > len(phases):
+        return (
+            f"completed phase count {len(completed)} exceeds parsed phase count "
+            f"{len(phases)}"
+        )
+    for idx, entry in enumerate(completed):
+        if not isinstance(entry, dict):
+            return f"completed phase entry {idx + 1} is not an object"
+        expected = phases[idx]
+        if entry.get("label") != expected.label or entry.get("title") != expected.title:
+            return (
+                "completed phase prefix no longer matches reviewed plan at "
+                f"position {idx + 1}: state has Phase {entry.get('label')}: "
+                f"{entry.get('title')}; plan has Phase {expected.label}: "
+                f"{expected.title}"
+            )
+    return None
+
+
+def _phase_prefix_mismatch_result(
+    opts: ConductOptions, state: dict, detail: str
+) -> ConductResult:
+    state["status"] = "blocked"
+    state["blocker"] = "completed phase prefix no longer matches reviewed plan"
+    _persist_state(opts, state)
+    return ConductResult(
+        status="blocked",
+        state=state,
+        summary=state["blocker"],
+        diagnostic=(
+            f"{detail}\n"
+            "A reviewed structural edit changed phases that were already marked "
+            "complete. Run /conduct --abort-run and restart, or restore the "
+            "completed phase prefix before resuming."
+        ),
+    )
+
+
+def _move_result_to_consumed(result_path: Path) -> None:
+    """Move ``ci-parity-result-<plan-id>.json`` to ``.consumed-<unix>.json``.
+
+    Best-effort: on any OS error we leave the active file in place. Preflight
+    on the next ``--resume`` will treat the file as present-and-valid again,
+    which is idempotent because the consume code resets state to ``complete``.
+    """
+    try:
+        consumed = result_path.with_name(
+            result_path.stem + f".consumed-{int(time.time())}.json"
+        )
+        os.replace(str(result_path), str(consumed))
+    except OSError:
+        pass
+
+
+def _dispatch_ci_parity_if_eligible(
+    opts: ConductOptions,
+    state: dict,
+    phases_len: int,
+) -> ConductResult:
+    """End-of-plan ci-parity gate. Returns a ConductResult describing outcome.
+
+    Called from both lifecycle points:
+      - autonomous phase loop exit (after the ``while True:`` breaks),
+      - legacy non-autonomous: top of ``conduct()`` when all phases are
+        complete AND the gate has not yet dispatched, before the "All phases
+        complete" early return.
+
+    Logic (see SKILL.md "CI Parity Gate" section):
+      * ``--skip-ci-parity`` → status ``complete`` with skip summary.
+      * Else (autonomous OR ``--run-ci-parity``): detect entrypoint OR use
+        ``opts.ci_cmd``. If a ``ci_parity_spawn`` is injected, run the gate
+        synchronously and consume the result inline (no lock release). Else
+        (production) write the request to state, set
+        ``status=awaiting_ci_parity``, and return a result the main runtime
+        orchestrator dispatches against.
+      * No entrypoint AND no override → blocked; user must pass ``--ci-cmd``
+        or ``--skip-ci-parity``.
+    """
+    retrying_ci_failed = state.get("status") == "ci_failed"
+    if opts.skip_ci_parity:
+        state["ci_parity_dispatched"] = True
+        state["status"] = "complete"
+        state["last_summary"] = "ci-parity: skipped (--skip-ci-parity)"
+        state["blocker"] = None
+        _persist_state(opts, state)
+        return ConductResult(
+            status="complete",
+            state=state,
+            summary="All phases complete; ci-parity skipped (--skip-ci-parity)",
+        )
+
+    if not (opts.autonomous or opts.run_ci_parity or retrying_ci_failed):
+        # Gate not requested. Plain complete (legacy default).
+        state["status"] = "complete"
+        _persist_state(opts, state)
+        return ConductResult(
+            status="complete", state=state, summary="All phases complete"
+        )
+
+    # Resolve entrypoint: explicit override beats detection.
+    if opts.ci_cmd:
+        kind = "override"
+        cmd = opts.ci_cmd
+    else:
+        detected = detect_ci_entrypoint(opts.repo_root)
+        if detected is None:
+            state["status"] = "blocked"
+            state["blocker"] = (
+                "ci-parity entrypoint not detected; pass --ci-cmd or --skip-ci-parity"
+            )
+            state["last_summary"] = state["blocker"]
+            _persist_state(opts, state)
+            return ConductResult(
+                status="blocked",
+                state=state,
+                summary=state["blocker"],
+                diagnostic=(
+                    "No CI entrypoint detected (just/make/npm/cargo). "
+                    "Pass --ci-cmd to run a command or --skip-ci-parity to abandon the gate."
+                ),
+            )
+        kind, cmd = detected
+
+    if retrying_ci_failed:
+        state.pop("ci_parity_request", None)
+        state["ci_parity_result"] = None
+        state["ci_parity_dispatched"] = False
+        state["ci_parity_missing_resume_count"] = 0
+        state["blocker"] = None
+
+    plan_id = state.get("plan_id") or _compute_cross_runtime_plan_id(opts.plan_path)
+
+    # In-flight request idempotency: if state already carries a request, reuse
+    # its ``request_written_at_unix`` rather than refreshing it. This is what
+    # makes ``--ci-cmd`` overrides on a re-resume non-mutating (the live
+    # request was already persisted at dispatch time).
+    existing_request = state.get("ci_parity_request")
+    if existing_request:
+        request = dict(existing_request)
+        written_at = state.get("ci_parity_request_written_at") or existing_request.get(
+            "request_written_at_unix"
+        )
+    else:
+        written_at = time.time()
+        head_sha = _head_sha(opts.repo_root)
+        request = {
+            "plan_path": str(opts.plan_path),
+            "base_sha": state.get("base_sha", ""),
+            "head_sha": head_sha,
+            "ci_entrypoint_kind": kind,
+            "ci_cmd": cmd,
+            "repo_root": str(opts.repo_root),
+            "plan_id": plan_id,
+            "request_written_at_unix": written_at,
+        }
+        state["ci_parity_request"] = request
+        state["ci_parity_request_written_at"] = written_at
+        state.setdefault("ci_parity_missing_resume_count", 0)
+
+    # Test-injection seam: synchronous spawner, consume inline. No lock release
+    # because we never leave this Python turn.
+    if opts.ci_parity_spawn is not None:
+        spawn_req = CIParitySpawnRequest(
+            plan_path=request["plan_path"],
+            base_sha=request["base_sha"],
+            head_sha=request["head_sha"],
+            ci_entrypoint_kind=request["ci_entrypoint_kind"],
+            ci_cmd=request["ci_cmd"],
+            repo_root=request["repo_root"],
+            plan_id=request["plan_id"],
+            request_written_at_unix=request["request_written_at_unix"],
+        )
+        text = opts.ci_parity_spawn(spawn_req)
+        try:
+            report = parse_report(text, "ci-parity")
+        except SchemaError as exc:
+            state["status"] = "schema_error"
+            state["blocker"] = f"ci-parity worker schema error: {exc}"
+            _persist_state(opts, state)
+            return ConductResult(
+                status="schema_error",
+                state=state,
+                summary=state["blocker"],
+                diagnostic=str(exc),
+            )
+        validation_error = _ci_parity_request_validation_error(request, report)
+        if validation_error is not None:
+            state["status"] = "schema_error"
+            state["blocker"] = (
+                f"ci-parity worker report did not match request: {validation_error}"
+            )
+            _persist_state(opts, state)
+            return ConductResult(
+                status="schema_error",
+                state=state,
+                summary=state["blocker"],
+                diagnostic=validation_error,
+            )
+        return _consume_ci_parity_result(opts, state, report)
+
+    # Production: main-runtime orchestrates the worker. Persist state and
+    # return ``awaiting_ci_parity`` so ``conduct()`` releases the lock by
+    # falling out of ``with lock:``.
+    state["status"] = "awaiting_ci_parity"
+    _ensure_safe_conduct_dir(opts.repo_root)
+    _persist_state(opts, state)
+    return ConductResult(
+        status="awaiting_ci_parity",
+        state=state,
+        summary="awaiting ci-parity result",
+        next_action="dispatch_ci_parity",
+        request=request,
+    )
+
+
+def _preflight_ci_parity_resume(
+    opts: ConductOptions,
+    state: dict,
+) -> Optional[ConductResult]:
+    """Handle ``awaiting_ci_parity`` state at re-invocation.
+
+    Returns a ConductResult when one of the five sub-cases fires; returns None
+    when the conductor should continue normal flow (only happens on consume +
+    successful state transition, which already returns a ConductResult — so
+    in practice this helper always returns a ConductResult when state is in
+    ``awaiting_ci_parity``).
+
+    Five sub-cases (see plan Phase 3):
+      1. Present + valid + matches state → consume, move file to .consumed.
+      2. Present but stale (mtime older OR plan_id mismatch OR
+         request_written_at_unix mismatch) → re-emit awaiting_ci_parity;
+         reset missing-counter.
+      3. Present but malformed (json/schema fail) → schema_error, preserve.
+      4. Absent active file BUT matching .consumed-<unix>.json with matching
+         request_written_at_unix → TOCTOU recovery: consume via the
+         consumed-file payload, skip the move.
+      5. Absent (no consumed match) → increment counter; ≥3 → handback.
+    """
+    request = state.get("ci_parity_request") or {}
+    plan_id = (
+        request.get("plan_id")
+        or state.get("plan_id")
+        or _compute_cross_runtime_plan_id(opts.plan_path)
+    )
+    # Non-resume invocation against awaiting_ci_parity state: hard-fail per
+    # the lock-release-contention contract.
+    if not opts.resume and not opts.skip_ci_parity:
+        return ConductResult(
+            status="blocked",
+            state=state,
+            summary=(
+                "state shows awaiting_ci_parity; use --resume to consume the "
+                "ci-parity result or --skip-ci-parity to abandon the gate"
+            ),
+            diagnostic=(
+                "state shows awaiting_ci_parity; use --resume to consume or "
+                "--skip-ci-parity to abandon"
+            ),
+        )
+
+    # ``--skip-ci-parity`` from awaiting state: short-circuit to complete and
+    # leave the request + any on-disk result file untouched (artifact preserve
+    # invariant — `ci-parity-skip-ci-parity-during-awaiting-preserves-artifacts`).
+    if opts.skip_ci_parity:
+        state["ci_parity_dispatched"] = True
+        state["status"] = "complete"
+        state["last_summary"] = (
+            "ci-parity: skipped from awaiting_ci_parity (--skip-ci-parity)"
+        )
+        state["blocker"] = None
+        _persist_state(opts, state)
+        return ConductResult(
+            status="complete",
+            state=state,
+            summary="ci-parity skipped from awaiting_ci_parity (--skip-ci-parity)",
+        )
+
+    result_path = _ci_parity_result_path(opts, plan_id)
+
+    try:
+        raw, _result_mtime = read_result_file(result_path)
+    except FileNotFoundError:
+        raw = None
+    except (OSError, UnicodeDecodeError) as exc:
+        state["ci_parity_missing_resume_count"] = 0
+        state["status"] = "schema_error"
+        state["blocker"] = f"ci-parity result file unreadable at {result_path}: {exc}"
+        _persist_state(opts, state)
+        return ConductResult(
+            status="schema_error",
+            state=state,
+            summary=state["blocker"],
+            diagnostic=str(exc),
+        )
+
+    if raw is not None:
+        # Sub-case 1, 2, or 3.
+        try:
+            report = parse_report(raw, "ci-parity")
+        except SchemaError as exc:
+            # Sub-case 3: malformed — preserve the file for inspection.
+            state["status"] = "schema_error"
+            state["blocker"] = (
+                f"ci-parity result file malformed at {result_path}: {exc}"
+            )
+            _persist_state(opts, state)
+            return ConductResult(
+                status="schema_error",
+                state=state,
+                summary=state["blocker"],
+                diagnostic=str(exc),
+            )
+        # Stale checks. Any non-absent outcome resets the missing counter.
+        # Staleness is decided by request-binding fields
+        # (``plan_id`` / ``request_written_at_unix`` / ``command_run`` echoed
+        # in the report) via ``_ci_parity_request_validation_error``. The
+        # filesystem mtime is intentionally NOT consulted: coarse-mtime
+        # filesystems (HFS+, some NFS) round to whole seconds and a worker
+        # that finishes within the same second as the request emission can
+        # produce an mtime that compares equal-or-less, flagging a valid
+        # result as stale. Field-equality is the only correct discriminator.
+        stale = _ci_parity_request_validation_error(request, report) is not None
+        if stale:
+            # Sub-case 2: ignore, re-emit awaiting_ci_parity.
+            state["ci_parity_missing_resume_count"] = 0
+            _persist_state(opts, state)
+            return ConductResult(
+                status="awaiting_ci_parity",
+                state=state,
+                summary="awaiting ci-parity result (stale file ignored)",
+                next_action="dispatch_ci_parity",
+                request=request,
+            )
+        # Sub-case 1: consume.
+        outcome = _consume_ci_parity_result(opts, state, report)
+        _move_result_to_consumed(result_path)
+        return outcome
+
+    # File absent. Check for sub-case 4 (TOCTOU recovery) before incrementing.
+    consumed_candidates = _ci_parity_consumed_pattern(opts.repo_root, plan_id)
+    for cand in consumed_candidates:
+        try:
+            raw, _mtime = read_result_file(cand)
+            report = parse_report(raw, "ci-parity")
+        except (OSError, UnicodeDecodeError, SchemaError):
+            continue
+        if _ci_parity_request_validation_error(request, report) is None:
+            # TOCTOU recovery: another process consumed the file already.
+            # Apply the canonical consume path, skip the move (already moved).
+            return _consume_ci_parity_result(opts, state, report)
+
+    # Sub-case 5: truly absent. Increment counter and re-emit (or handback).
+    state["ci_parity_missing_resume_count"] = (
+        state.get("ci_parity_missing_resume_count", 0) + 1
+    )
+    if state["ci_parity_missing_resume_count"] >= 3:
+        state["status"] = "blocked"
+        blocker = (
+            "ci-parity result file missing after 3 resume attempts; "
+            "pass --skip-ci-parity to abandon gate"
+        )
+        state["blocker"] = blocker
+        _persist_state(opts, state)
+        next_cmd = f"Run: /conduct --resume --skip-ci-parity {opts.plan_path}"
+        result = ConductResult(
+            status="blocked",
+            state=state,
+            summary=blocker,
+            next_command=next_cmd,
+        )
+        if opts.on_handback:
+            opts.on_handback(state)
+        return result
+    _persist_state(opts, state)
+    return ConductResult(
+        status="awaiting_ci_parity",
+        state=state,
+        summary="awaiting ci-parity result (file absent)",
+        next_action="dispatch_ci_parity",
+        request=request,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -433,8 +1432,10 @@ def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("lint:") or stripped.startswith("lint :"):
+            # Column-zero check only — matches the `_makefile_has_ci` convention
+            # so `lint:` tokens inside recipe bodies or define/endef blocks are
+            # not mistaken for a real target.
+            if line.startswith("lint:") or line.startswith("lint :"):
                 return ["make", "lint"]
 
     pkg = repo_root / "package.json"
@@ -510,8 +1511,8 @@ def _repo_default_test_cmd(repo_root: Path) -> Optional[str]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("test:") or stripped.startswith("test :"):
+            # Column-zero only; see `detect_lint_command` for the rationale.
+            if line.startswith("test:") or line.startswith("test :"):
                 return "make test"
     return None
 
@@ -537,8 +1538,16 @@ def _run_phase(
     opts: ConductOptions,
     state: dict,
     phase: Phase,
+    autonomous: bool = False,
 ) -> ConductResult:
-    state["iteration_count"] = 0
+    # Phase-start reset is guarded on entering a NEW phase (different title
+    # from the one persisted in state). Without this guard, --resume mid-phase
+    # would clobber the persisted iteration_count / stall_signatures and let
+    # the fix-loop bound re-start at zero.
+    if state.get("current_phase_title") != phase.title:
+        state["iteration_count"] = 0
+        state["stall_signatures"] = []
+        state["stall_count"] = 0
     state["current_phase_title"] = phase.title
     # Keep on-disk phase_index aligned with the number of already-completed
     # phases so external readers see a live counter that matches SKILL.md's
@@ -627,6 +1636,12 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
+            if autonomous:
+                # Autonomous mode: caller continues the phase loop without
+                # handback. ``_commit_phase`` already appended to
+                # ``state["completed_phases"]`` and persisted; return the
+                # running result unchanged.
+                return commit_outcome
             return _handback(
                 opts,
                 state,
@@ -661,6 +1676,8 @@ def _run_phase(
             commit_outcome = _commit_phase(opts, state, phase, base_sha, warnings)
             if commit_outcome.status != "running":
                 return commit_outcome
+            if autonomous:
+                return commit_outcome
             return _handback(
                 opts,
                 state,
@@ -672,21 +1689,18 @@ def _run_phase(
                 warnings,
             )
 
-        # Step 6: fix loop.
-        state["iteration_count"] += 1
+        # Step 6: fix loop. Signature is observed BEFORE the helper bumps the
+        # counter — same ordering as today's pre-refactor code, where the
+        # increment fired after the failure was visible to the conductor.
+        failing_tests = _extract_failing_tests_from_output(result.output)
+        signature = iteration_signature(
+            failing_tests, compute_staged_diff_stat(opts.repo_root)
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=result.output[-2000:],
-            )
+        if bound is not None:
+            bound.diagnostic = result.output[-2000:]
+            return bound
 
         # Capture staged diff, reset index, then choose respawn role.
         prior_diff = _staged_diff(opts.repo_root)
@@ -760,7 +1774,13 @@ def _commit_phase(
         state.pop("resume_base_sha", None)
         return ConductResult(status="running", state=state, summary="")
 
-    commit_msg = f"conduct: phase {phase.label} — {phase.title}"
+    # Step 8.3 boundary commit. The Conducted-By trailer is appended to the
+    # message body (blank-line-separated) so downstream tooling can identify
+    # which conductor runtime (claude vs codex) produced the commit. We embed
+    # the trailer directly in the message text rather than using ``git
+    # commit --trailer`` because older git versions lack that flag.
+    commit_subject = f"conduct: phase {phase.label} — {phase.title}"
+    commit_msg = f"{commit_subject}\n\nConducted-By: claude"
     proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
 
     # Formatter-hook retry: if a pre-commit hook modified tracked files in
@@ -786,32 +1806,28 @@ def _commit_phase(
             proc = _git(["commit", "-m", commit_msg], opts.repo_root, check=False)
 
     if proc.returncode != 0:
-        # Pre-commit hook failure → route into fix loop.
-        state["iteration_count"] += 1
+        # Pre-commit hook failure → route into fix loop. The hook output is
+        # the failure signal here; extract the failing hook ids (e.g. ruff,
+        # ruff-format) so a stuck formatter loop is recognised as a stall.
+        hook_output = proc.stdout + proc.stderr
+        failing_hook_ids = _extract_failing_hook_ids(hook_output)
+        signature = iteration_signature(
+            failing_hook_ids, compute_staged_diff_stat(opts.repo_root)
+        )
+        bound = _check_iteration_bound(state, opts, signature)
         _persist_state(opts, state)
-        if state["iteration_count"] > opts.max_iterations:
-            state["status"] = "blocked"
-            state["blocker"] = (
-                f"Phase {phase.label} stalled at boundary commit after "
-                f"{opts.max_iterations} iterations"
-            )
-            _persist_state(opts, state)
-            return ConductResult(
-                status="blocked",
-                state=state,
-                summary=state["blocker"],
-                diagnostic=(proc.stdout + proc.stderr)[-2000:],
-            )
+        if bound is not None:
+            bound.diagnostic = hook_output[-2000:]
+            return bound
         # Signal the caller to re-enter the loop. We do this by returning a
         # special marker the caller checks. But simpler: raise a sentinel.
-        raise _CommitHookFailure(output=proc.stdout + proc.stderr)
+        raise _CommitHookFailure(output=hook_output)
 
-    new_head = _head_sha(opts.repo_root)
     completed = {
         "index": phase.position,
         "label": phase.label,
         "title": phase.title,
-        "commit_sha": new_head,
+        "commit_sha": _head_sha(opts.repo_root),
         "tests": "passed",
         "iterations": state["iteration_count"],
     }
@@ -873,6 +1889,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
     Mirrors SKILL.md Step 9: every phase boundary returns control to the user.
     Tests drive multi-phase runs by re-invoking with ``resume=True``.
     """
+    _validate_options(opts)
     pre = run_preflight(opts)
     if pre is not None:
         return pre
@@ -891,9 +1908,50 @@ def conduct(opts: ConductOptions) -> ConductResult:
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
         state = _load_or_init_state(opts)
-
         plan_text = opts.plan_path.read_text()
-        phases = [p for p in parse_phases(plan_text) if not p.is_complete]
+        all_phases = parse_phases(plan_text)
+
+        if opts.resume:
+            if not _state_path_matches_plan(state, opts):
+                return ConductResult(
+                    status="blocked",
+                    state=state,
+                    summary="conduct state belongs to a different plan",
+                    diagnostic=(
+                        f"Stored plan_path: {state.get('plan_path')}\n"
+                        f"Current plan_path: {opts.plan_path}"
+                    ),
+                )
+            prefix_error = _completed_phase_prefix_error(state, all_phases)
+            if prefix_error is not None:
+                return _phase_prefix_mismatch_result(opts, state, prefix_error)
+            current_hash = compute_plan_hash(opts.plan_path)
+            if state.get("plan_content_hash") != current_hash:
+                state["plan_content_hash"] = current_hash
+                _persist_state(opts, state)
+
+        # Phase 3 awaiting_ci_parity preflight branch. Fires BEFORE phase
+        # parsing because the gate is plan-complete by construction.
+        if state.get("status") == "awaiting_ci_parity":
+            return _preflight_ci_parity_resume(opts, state)
+
+        phases = [p for p in all_phases if not p.is_complete]
+
+        # Legacy non-autonomous ci-parity dispatch: if all phases are already
+        # complete from a prior run AND the gate has not yet fired, dispatch
+        # it now (before the "All phases complete" early return below).
+        if (
+            len(state.get("completed_phases", [])) >= len(phases)
+            and len(phases) >= 0
+            and not state.get("ci_parity_dispatched")
+            and (
+                opts.autonomous
+                or opts.run_ci_parity
+                or opts.skip_ci_parity
+                or state.get("status") == "ci_failed"
+            )
+        ):
+            return _dispatch_ci_parity_if_eligible(opts, state, len(phases))
 
         # Plan-slot coverage warning (emitted at most once per run). If no
         # unfinished phase declares any of Impl files: / Test files: /
@@ -914,26 +1972,79 @@ def conduct(opts: ConductOptions) -> ConductResult:
                 "parallel spawn and real test runs."
             )
 
-        # phase_index in state is the count of completed phases.
-        idx = len(state.get("completed_phases", []))
-        if idx >= len(phases):
-            state["status"] = "complete"
-            _persist_state(opts, state)
-            return ConductResult(
-                status="complete", state=state, summary="All phases complete"
-            )
+        # Resolve max_phases inline at entry: parsed phase count is not known
+        # in ``ConductOptions.__post_init__``. ``None`` → ``len(phases) + 1``
+        # so a default-config run never trips the cap; explicit caps fire
+        # when ``len(state["completed_phases"]) >= cap`` (post-commit count).
+        max_phases_cap = (
+            opts.max_phases if opts.max_phases is not None else len(phases) + 1
+        )
 
-        phase = phases[idx]
-        try:
-            return _run_phase(opts, state, phase)
-        except _CommitHookFailure as hook_fail:
-            # Re-enter the loop with hook output as the failure context. Easiest
-            # way is recursion with the failure carried via state — but state
-            # already holds iteration_count; we pass the failure text through
-            # by routing back into _run_phase with prior_diff / test_failures
-            # set on the next request. To keep the implementation simple we
-            # adopt an explicit retry here.
-            return _retry_after_hook_failure(opts, state, phase, hook_fail.output)
+        # Explicit phase loop. In legacy (non-autonomous) mode the loop runs
+        # at most one full body iteration before ``_run_phase`` returns a
+        # handback (status != "running") and we exit. In autonomous mode the
+        # loop walks every unfinished phase under the single ``with lock:``
+        # acquisition above — SKILL.md Step 9a documents this single-lock
+        # property.
+        while True:
+            completed_count = len(state.get("completed_phases", []))
+            if completed_count >= max_phases_cap:
+                # Max-phases cap hit (hard-stop, autonomous-or-not). No phase
+                # context yet for this iteration, so return a blocked result
+                # directly rather than routing through ``_handback``.
+                state["status"] = "blocked"
+                state["blocker"] = f"max_phases ceiling hit ({max_phases_cap})"
+                _persist_state(opts, state)
+                return ConductResult(
+                    status="blocked",
+                    state=state,
+                    summary=state["blocker"],
+                )
+            if completed_count >= len(phases):
+                # All phases done; fall through to ci-parity gate.
+                break
+            phase = phases[completed_count]
+            try:
+                result = _run_phase(opts, state, phase, autonomous=opts.autonomous)
+            except _CommitHookFailure as hook_fail:
+                result = _retry_after_hook_failure(
+                    opts, state, phase, hook_fail.output, autonomous=opts.autonomous
+                )
+            # Hard-stop or handback: return immediately.
+            if result.status != "running":
+                return result
+            # Phase commit succeeded. Legacy (non-autonomous) mode: ``_run_phase``
+            # already called ``_handback`` on the success path, so we never
+            # observe ``running`` here. Autonomous mode: persist progress
+            # (already done inside ``_commit_phase``) and continue the loop.
+            if not opts.autonomous:
+                # Defensive: a future refactor that changes ``_run_phase``'s
+                # legacy return value would otherwise silently keep walking
+                # phases under the single lock. Synthesise a handback so the
+                # contract holds even if the assumption above is violated.
+                return _handback(
+                    opts,
+                    state,
+                    phase,
+                    "passed",
+                    state.get("iteration_count", 0),
+                    "sequential",
+                    "legacy-loop-fallback",
+                    [],
+                )
+
+        # End-of-plan ci-parity gate. The helper handles all four paths:
+        # skip, gate-not-requested → plain complete, test-injection consume,
+        # production await. Idempotency: ``ci_parity_dispatched`` guards a
+        # second invocation from re-dispatching (covered by
+        # ``ci-parity-legacy-post-consume-resume-no-redispatch``).
+        if state.get("ci_parity_dispatched") and state.get("status") == "complete":
+            return ConductResult(
+                status="complete",
+                state=state,
+                summary="All phases complete (ci-parity already consumed)",
+            )
+        return _dispatch_ci_parity_if_eligible(opts, state, len(phases))
 
 
 def _retry_after_hook_failure(
@@ -941,6 +2052,7 @@ def _retry_after_hook_failure(
     state: dict,
     phase: Phase,
     hook_output: str,
+    autonomous: bool = False,
 ) -> ConductResult:
     """Respawn implementer with hook output as test_failures, then re-enter.
 
@@ -987,17 +2099,15 @@ def _retry_after_hook_failure(
         if test_cmd is not None:
             result = opts.test_runner(test_cmd, opts.test_timeout)
             if result.returncode != 0 or result.timed_out:
-                state["iteration_count"] += 1
+                failing_tests = _extract_failing_tests_from_output(result.output)
+                signature = iteration_signature(
+                    failing_tests, compute_staged_diff_stat(opts.repo_root)
+                )
+                bound = _check_iteration_bound(state, opts, signature)
                 _persist_state(opts, state)
-                if state["iteration_count"] > opts.max_iterations:
-                    state["status"] = "blocked"
-                    state["blocker"] = (
-                        f"Phase {phase.label} stalled after {opts.max_iterations} iterations"
-                    )
-                    _persist_state(opts, state)
-                    return ConductResult(
-                        status="blocked", state=state, summary=state["blocker"]
-                    )
+                if bound is not None:
+                    bound.diagnostic = result.output[-2000:]
+                    return bound
                 prior_diff = _staged_diff(opts.repo_root)
                 _reset_index(opts.repo_root)
                 hook_output = result.output
@@ -1016,6 +2126,8 @@ def _retry_after_hook_failure(
             iteration = state["iteration_count"]
             continue
         if commit_outcome.status != "running":
+            return commit_outcome
+        if autonomous:
             return commit_outcome
         return _handback(
             opts,
@@ -1050,7 +2162,7 @@ def pause_phase(opts: ConductOptions) -> ConductResult:
         return ConductResult(status="awaiting_user", state={}, summary="no active run")
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
-        state = json.loads(sp.read_text())
+        state = json.loads(_safe_read_state_text(sp))
         label = state.get("current_phase_title", "?")
         msg = f"conduct-pause-phase-{label}"
         _git(["stash", "push", "-u", "-m", msg], opts.repo_root, check=False)

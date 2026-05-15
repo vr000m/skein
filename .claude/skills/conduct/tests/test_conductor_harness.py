@@ -409,33 +409,13 @@ def test_test_contract_mismatch_routes_iteration_1_to_test_writer(repo):
     assert iter1[0].role == "test-writer"
 
 
-def test_fix_loop_cap_blocks_after_three_iterations(repo):
-    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
-    spawner = StubSpawner(repo)
-
-    def attempt(req, r):
-        _stage(r, "src/a.py", f"v={req.iteration}\n")
-        return _impl_report(req.iteration, ["src/a.py"])
-
-    for i in range(4):
-        spawner.script("implementer", i, attempt)
-    spawner.script("test-writer", 0, lambda req, r: _test_report())
-    runner = StubTestRunner(queue=[_failing(), _failing(), _failing(), _failing()])
-
-    result = conduct(
-        ConductOptions(
-            plan_path=plan,
-            repo_root=repo,
-            spawn=spawner,
-            test_runner=runner,
-            max_iterations=3,
-        )
-    )
-    assert result.status == "blocked"
-    assert "stalled" in result.state["blocker"]
-    # 4 implementer spawns: iteration 0, 1, 2, 3 — the 4th increments past cap.
-    impl_iters = [c.iteration for c in spawner.calls if c.role == "implementer"]
-    assert impl_iters == [0, 1, 2, 3]
+# NOTE: the previous flat-cap test ``test_fix_loop_cap_blocks_after_three_iterations``
+# is replaced by the progress-aware bound suite at the bottom of this file
+# (``test_stall_blocks_at_threshold`` and the two
+# ``test_legacy_max_iterations_default_3_*`` cases). Under the new default
+# ``stall_threshold=2`` the stall detector fires first with blocker
+# ``stall_threshold exceeded``; the legacy cap is exercised explicitly under
+# ``no_progress_detection=True`` so its dominance is still asserted.
 
 
 def test_preflight_lint_failure_hard_stops_before_any_spawn(repo):
@@ -748,6 +728,11 @@ def test_repo_default_test_cmd_picks_make_test_target(tmp_path):
     assert _repo_default_test_cmd(tmp_path) == "make test"
 
 
+def test_repo_default_test_cmd_ignores_indented_make_test_target(tmp_path):
+    (tmp_path / "Makefile").write_text("build:\n\ttest:\n\t\tpytest -q\n")
+    assert _repo_default_test_cmd(tmp_path) is None
+
+
 def test_repo_default_test_cmd_probe_order_prefers_package_json(tmp_path):
     """All three present → npm wins per SKILL.md Step 5."""
     (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}\n')
@@ -864,6 +849,12 @@ def test_detect_lint_command_skips_pre_commit_when_binary_missing(
     (tmp_path / "Makefile").write_text("lint:\n\tflake8\n")
     monkeypatch.setattr("conductor.shutil.which", _which_stub({"make"}))
     assert detect_lint_command(tmp_path) == ["make", "lint"]
+
+
+def test_detect_lint_command_ignores_indented_make_lint_target(tmp_path, monkeypatch):
+    (tmp_path / "Makefile").write_text("build:\n\tlint:\n\t\tflake8\n")
+    monkeypatch.setattr("conductor.shutil.which", _which_stub({"make"}))
+    assert detect_lint_command(tmp_path) is None
 
 
 def test_detect_lint_command_falls_through_to_npm_run_lint(tmp_path, monkeypatch):
@@ -1076,8 +1067,8 @@ def test_state_path_disambiguates_same_basename_plans(repo):
     sp_b = _state_file_for(plan_b, repo)
     assert sp_a != sp_b
     assert sp_a.parent == sp_b.parent
-    assert sp_a.name.startswith("state-shared-") and sp_a.suffix == ".json"
-    assert sp_b.name.startswith("state-shared-") and sp_b.suffix == ".json"
+    assert sp_a.name.startswith("state-claude-shared-") and sp_a.suffix == ".json"
+    assert sp_b.name.startswith("state-claude-shared-") and sp_b.suffix == ".json"
 
 
 def test_legacy_state_file_migrates_on_load(repo):
@@ -1117,7 +1108,9 @@ def test_legacy_state_file_migrates_on_load(repo):
 
     new_path = _state_file_for(plan, repo)
     assert new_path.exists()
-    assert not legacy.exists()
+    # Non-destructive bootstrap: legacy file preserved so the other runtime
+    # (e.g. codex) can still bootstrap from it.
+    assert legacy.exists()
 
 
 def test_legacy_state_file_not_migrated_when_plan_path_differs(repo):
@@ -1154,7 +1147,8 @@ def test_legacy_state_file_migrates_optimistically_when_plan_path_missing(repo):
     _migrate_legacy_state_file(
         ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
     )
-    assert not legacy.exists()
+    # Non-destructive: legacy preserved for the other runtime's bootstrap.
+    assert legacy.exists()
     assert _state_file_for(plan, repo).exists()
 
 
@@ -1177,6 +1171,18 @@ def test_conduct_refuses_symlinked_state_path(repo):
     assert "unsafe conduct state path" in result.summary
     assert victim.read_text() == "keep me\n"
     assert spawner.calls == []
+
+
+def test_safe_read_state_text_refuses_symlink(tmp_path):
+    import conductor as _conductor
+
+    state_path = tmp_path / "state.json"
+    victim = tmp_path / "victim.json"
+    victim.write_text('{"status": "running"}\n')
+    state_path.symlink_to(victim)
+
+    with pytest.raises(RuntimeError):
+        _conductor._safe_read_state_text(state_path)
 
 
 def test_abort_run_refuses_symlinked_state_path(repo):
@@ -1214,6 +1220,80 @@ def test_legacy_state_migration_skipped_when_legacy_is_symlink(repo):
     assert legacy.is_symlink()
     assert victim.exists()
     assert not _state_file_for(plan, repo).exists()
+
+
+def test_state_path_includes_runtime_author(repo):
+    """Phase 1: state path MUST embed the runtime author prefix.
+
+    Codex-side mirror will use `state-codex-...`; the two runtimes are forbidden
+    from sharing the same state file.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    sp = _state_file_for(plan, repo)
+    assert sp.name.startswith("state-claude-"), sp.name
+    # The plan stem and digest are preserved after the runtime prefix.
+    assert plan.stem in sp.name
+
+
+def test_legacy_shared_state_does_not_skip_other_runtime(repo):
+    """Bootstrap from a legacy file MUST NOT delete/rename it.
+
+    Both runtimes need to be able to bootstrap from the same legacy snapshot.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    # Pre-runtime-partition legacy: state-<stem>-<digest>.json
+    from conductor import _pre_partition_state_path
+
+    legacy = _pre_partition_state_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    legacy_payload = {
+        "plan_path": str(plan),
+        "plan_content_hash": "a" * 40,
+        "base_sha": "b" * 40,
+        "phase_index": 0,
+        "completed_phases": [],
+        "last_summary": "",
+        "iteration_count": 0,
+        "status": "running",
+        "blocker": None,
+    }
+    legacy.write_text(json.dumps(legacy_payload))
+
+    from conductor import _migrate_legacy_state_file
+
+    _migrate_legacy_state_file(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
+    # Bootstrap populated the runtime-specific path...
+    sp = _state_file_for(plan, repo)
+    assert sp.exists()
+    bootstrapped = json.loads(sp.read_text())
+    assert bootstrapped["state_author"] == "claude"
+    # ...and left the legacy file untouched so codex can bootstrap from it too.
+    assert legacy.exists()
+
+
+def test_runtime_specific_locks_do_not_collide(repo):
+    """The lock filename is derived from the state path, so the runtime prefix
+    propagates to the lock. A hypothetical codex-side path MUST yield a
+    distinct lock filename from the claude-side path.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    claude_sp = _state_file_for(plan, repo)
+    claude_lock = claude_sp.with_suffix(claude_sp.suffix + ".lock")
+    # Simulate the codex-side path by substituting the prefix in the same
+    # directory; the codex mirror's `_state_path` produces this name.
+    codex_sp = claude_sp.parent / claude_sp.name.replace(
+        "state-claude-", "state-codex-", 1
+    )
+    codex_lock = codex_sp.with_suffix(codex_sp.suffix + ".lock")
+    assert claude_sp != codex_sp
+    assert claude_lock != codex_lock
+    assert "state-claude-" in claude_lock.name
+    assert "state-codex-" in codex_lock.name
 
 
 def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
@@ -1275,3 +1355,748 @@ def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
     # Stderr trail confirms preflight took the auto-refresh path, not the
     # hard-stop path.
     assert "auto-refreshed on resume" in capsys.readouterr().err
+
+
+def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+
+    plan.write_text(
+        plan.read_text().replace(
+            "### Phase 1: First",
+            "### Phase 0: Inserted\n\n- [ ] new task\n\n### Phase 1: First",
+            1,
+        )
+    )
+    write_marker(plan)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(),
+            resume=True,
+        )
+    )
+
+    assert result.status == "blocked"
+    assert "completed phase prefix" in result.summary
+    assert "position 1" in (result.diagnostic or "")
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: progress-aware iteration bound + forward-compat loader
+# ---------------------------------------------------------------------------
+
+import inspect  # noqa: E402
+import warnings as _warnings  # noqa: E402
+
+import conductor as _conductor_mod  # noqa: E402
+
+
+def _stalling_attempt(req, r):
+    """Each respawn re-stages the same content. Produces an identical staged
+    diff stat across iterations → identical signature → stall detector fires.
+    """
+    _stage(r, "src/a.py", "STALLED=1\n")
+    return _impl_report(req.iteration, ["src/a.py"])
+
+
+def _progressing_attempt(req, r):
+    """Each respawn stages a different number of lines, so the canonical
+    ``--stat`` summary (insertions/deletions counts) differs every iteration
+    and the signature never repeats — the stall detector therefore never
+    fires.
+    """
+    # Each iteration produces a strictly different line count, which is what
+    # ``git diff --cached --stat`` keys on.
+    body = "\n".join(f"line_{n}=1" for n in range(req.iteration + 1)) + "\n"
+    _stage(r, "src/a.py", body)
+    return _impl_report(req.iteration, ["src/a.py"])
+
+
+def test_stall_blocks_at_threshold(repo):
+    """``stall-blocks-at-threshold`` — 2 matching signatures after the first
+    block the fix-loop: ``iteration_count == 3`` AND ``stall_count == 2``
+    with blocker ``stall_threshold exceeded``.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _stalling_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 6)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            stall_threshold=2,
+            max_iterations=8,
+            max_iterations_ceiling=8,
+        )
+    )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "stall_threshold exceeded"
+    assert result.state["iteration_count"] == 3, result.state
+    assert result.state["stall_count"] == 2, result.state
+
+
+def test_progress_resets_counter(repo):
+    """``progress-resets-counter`` — stall → progress → stall: counter resets,
+    only 1 stall counted (not 2 → no block).
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+
+    # Iter 0 and 1 stage identical content (one stall match), iter 2 stages
+    # different content (resets), iter 3 finally passes the test runner.
+    spawner.script("implementer", 0, _stalling_attempt)
+    spawner.script("implementer", 1, _stalling_attempt)  # match → stall_count=1
+    spawner.script("implementer", 2, _progressing_attempt)  # diff → reset
+    spawner.script("implementer", 3, _progressing_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing(), _failing(), _failing(), _passing()])
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            stall_threshold=2,
+            max_iterations=8,
+            max_iterations_ceiling=8,
+        )
+    )
+    # Phase completed; the run did not block on stall threshold.
+    assert result.status == "awaiting_user", result
+    # stall_count was reset by the progressing iteration.
+    assert result.state["stall_count"] == 0
+
+
+def test_hard_ceiling_blocks_at_9(repo):
+    """``hard-ceiling-blocks-at-9`` — every iter has a NEW signature so the
+    stall detector never fires; ceiling fires when ``iteration_count == 9``
+    with reason ``max_iterations_ceiling exceeded``.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(12):
+        spawner.script("implementer", i, _progressing_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 12)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            stall_threshold=99,  # effectively off
+            max_iterations=99,  # legacy off
+            max_iterations_ceiling=8,
+        )
+    )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "max_iterations_ceiling exceeded"
+    assert result.state["iteration_count"] == 9
+
+
+def test_stall_survives_resume(repo):
+    """``stall-survives-resume`` — write state mid-stall (1 signature
+    persisted); ``--resume``; hit identical signature; block at threshold.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _stalling_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 6)
+
+    # Run once with stall_threshold=3 so the run blocks after match #3 not
+    # #2. We'll then resume with stall_threshold=2 and the persisted stall
+    # history will fire on the very next match.
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            stall_threshold=3,
+            max_iterations=8,
+            max_iterations_ceiling=8,
+        )
+    )
+    assert first.status == "blocked", first  # blocked on stall_threshold=3
+    # Persisted state shows the rolling window of length 2.
+    state_path = _state_file_for(plan, repo)
+    persisted = json.loads(state_path.read_text())
+    assert persisted["stall_signatures"], persisted
+    assert len(persisted["stall_signatures"]) == 2
+
+    # Re-arm state for the resume scenario: status back to running, but keep
+    # stall_signatures so the survives-resume invariant is tested directly.
+    persisted["status"] = "running"
+    persisted["blocker"] = None
+    # Carry exactly one signature forward — simulating "we resumed mid-stall
+    # before the second match".
+    persisted["stall_signatures"] = persisted["stall_signatures"][-1:]
+    persisted["stall_count"] = 0
+    persisted["iteration_count"] = 1
+    state_path.write_text(json.dumps(persisted))
+
+    spawner2 = StubSpawner(repo)
+    for i in range(6):
+        spawner2.script("implementer", i, _stalling_attempt)
+    spawner2.script("test-writer", 0, lambda req, r: _test_report())
+    runner2 = StubTestRunner(queue=[_failing()] * 6)
+
+    second = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner2,
+            test_runner=runner2,
+            stall_threshold=2,
+            max_iterations=8,
+            max_iterations_ceiling=8,
+            resume=True,
+        )
+    )
+    assert second.status == "blocked"
+    assert second.state["blocker"] == "stall_threshold exceeded"
+
+
+def test_pre_commit_hook_stall_fires_bound(repo):
+    """``pre-commit-hook-stall-fires-bound`` — hook-retry path; identical
+    hook output across iterations; ``failing_tests`` extracted (e.g.
+    ``ruff``); signature matches across iterations; stall fires via helper;
+    ``iteration_count`` advances exactly once per iteration.
+    """
+    hooks_dir = repo / ".git" / "hooks"
+    hook = hooks_dir / "pre-commit"
+    # Hook always fails with a real pre-commit-style ruff output.
+    hook.write_text(
+        textwrap.dedent(
+            """\
+            #!/bin/sh
+            echo "ruff....................Failed" >&2
+            echo "src/a.py:1:1: F401 'os' imported but unused" >&2
+            exit 1
+            """
+        )
+    )
+    hook.chmod(0o755)
+
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _stalling_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    # Tests pass; only the hook fails.
+    runner = StubTestRunner(queue=[_passing()] * 6)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            stall_threshold=2,
+            max_iterations=8,
+            max_iterations_ceiling=8,
+        )
+    )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "stall_threshold exceeded"
+    # Hook id was extracted from the pre-commit summary line.
+    from conductor import _extract_failing_hook_ids
+
+    parsed = _extract_failing_hook_ids("ruff....................Failed\n")
+    assert parsed == ["ruff"], parsed
+    # iteration_count advanced once per iteration (never twice in the same
+    # round). With stall_threshold=2 we expect exactly 3 hook-failing
+    # iterations before the block.
+    assert result.state["iteration_count"] == 3
+
+
+def test_helper_is_single_increment_source_three_sites():
+    """``helper-is-single-increment-source-three-sites`` — structural
+    invariant: ``_check_iteration_bound`` is the only ``iteration_count +=
+    1`` site in the module, and is invoked from each of three call sites
+    (``_run_phase`` test-failure, ``_commit_phase`` hook-failure,
+    ``_retry_after_hook_failure``). Verifies (a) the helper bumps the
+    counter by exactly +1 per invocation; (b) the source code at each call
+    site contains a ``_check_iteration_bound`` invocation; (c) no other
+    code in conductor.py performs ``iteration_count += 1`` outside the
+    helper.
+    """
+    # (a) helper bumps by exactly +1 — direct call.
+    from conductor import ConductOptions, _check_iteration_bound
+
+    opts = ConductOptions(
+        plan_path=Path("/tmp/x.md"),
+        repo_root=Path("/tmp"),
+        spawn=lambda r: "",
+        stall_threshold=2,
+        max_iterations=99,
+        max_iterations_ceiling=99,
+    )
+    state = {"iteration_count": 0, "stall_signatures": [], "stall_count": 0}
+    res = _check_iteration_bound(state, opts, "sig-A")
+    assert res is None
+    assert state["iteration_count"] == 1
+    res = _check_iteration_bound(state, opts, "sig-B")
+    assert res is None
+    assert state["iteration_count"] == 2
+
+    # (b) the source contains a call to the helper from each of the three
+    # named functions (look up by symbol, not line number).
+    src = inspect.getsource(_conductor_mod)
+    for fn_name in ("_run_phase", "_commit_phase", "_retry_after_hook_failure"):
+        fn = getattr(_conductor_mod, fn_name)
+        fn_src = inspect.getsource(fn)
+        assert "_check_iteration_bound(" in fn_src, (
+            f"{fn_name} does not invoke _check_iteration_bound"
+        )
+
+    # (c) no other ``iteration_count += 1`` outside the helper. Skip lines
+    # that are inside docstrings / comments by requiring the substring
+    # ``state["iteration_count"]`` (the executable shape) rather than the
+    # textual ``iteration_count += 1`` which appears in prose docstrings.
+    increment_sites = [
+        line
+        for line in src.splitlines()
+        if 'state["iteration_count"]' in line
+        and "+= 1" in line
+        # Exclude docstring/comment occurrences.
+        and "`" not in line
+        and not line.lstrip().startswith("#")
+    ]
+    # Exactly one in the module — inside _check_iteration_bound. The helper's
+    # own line uses ``state["iteration_count"] = state.get(... , 0) + 1`` so
+    # it does not match this grep; that confirms NO ``+= 1`` survives at any
+    # of the three call sites.
+    assert increment_sites == [], (
+        f"unexpected `iteration_count += 1` outside helper: {increment_sites}"
+    )
+
+
+def test_legacy_max_iterations_default_3_stalled(repo):
+    """``legacy-max-iterations-default-3-stalled`` — flat-3 legacy cap on a
+    stalled phase. With ``no_progress_detection=True`` the legacy cap is the
+    only bound that fires; with the default it fires at iter 4 (stall would
+    have fired earlier, so this case explicitly disables progress detection
+    to surface the legacy semantics).
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _stalling_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 6)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            no_progress_detection=True,
+            # max_iterations default 3 preserved
+        )
+    )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "max_iterations exceeded (legacy)"
+    assert result.state["iteration_count"] == 4
+
+
+def test_legacy_max_iterations_default_3_progressing_also_blocks(repo):
+    """``legacy-max-iterations-default-3-progressing-also-blocks`` —
+    progressing signatures every iter; with progress detection OFF the legacy
+    cap still blocks at iter 4 with blocker ``max_iterations exceeded
+    (legacy)``.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _progressing_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 6)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            no_progress_detection=True,
+        )
+    )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "max_iterations exceeded (legacy)"
+    assert result.state["iteration_count"] == 4
+
+
+# ---------------------------------------------------------------------------
+# Forward-compat loader: unknown schema_version
+# ---------------------------------------------------------------------------
+
+
+def _reset_unknown_schema_warned_flag() -> None:
+    """Reset module-level one-shot ``_UNKNOWN_SCHEMA_VERSION_WARNED`` so the
+    suppressed-on-second-load and refires-after-resume tests don't interact.
+    """
+    if hasattr(_conductor_mod, "_UNKNOWN_SCHEMA_VERSION_WARNED"):
+        _conductor_mod._UNKNOWN_SCHEMA_VERSION_WARNED = False
+
+
+def _write_unknown_schema_state(plan: Path, repo: Path, version: int = 99) -> Path:
+    """Write a minimally-valid state file at the expected location with an
+    unknown ``schema_version``. Returns the state path for inspection.
+    """
+    state_dir = repo / ".conduct"
+    state_dir.mkdir(exist_ok=True)
+    state_path = _state_file_for(plan, repo)
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": version,
+                "plan_path": str(plan),
+                "plan_content_hash": "a" * 40,
+                "base_sha": "b" * 40,
+                "phase_index": 0,
+                "completed_phases": [],
+                "last_summary": "",
+                "iteration_count": 0,
+                "status": "running",
+                "blocker": None,
+                # A "future" field the v1 loader doesn't know about — it must
+                # be tolerated, not rejected.
+                "future_only_field": {"foo": "bar"},
+            }
+        )
+    )
+    return state_path
+
+
+def test_unknown_schema_version_99_resumes_with_warning(repo):
+    """``unknown-schema-version-99-resumes-with-warning`` — write state file
+    with ``schema_version: 99``; load it via a normal conduct invocation;
+    read succeeds AND warning emitted once.
+    """
+    _reset_unknown_schema_warned_flag()
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    _write_unknown_schema_state(plan, repo, version=99)
+
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing()])
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        result = conduct(
+            ConductOptions(
+                plan_path=plan,
+                repo_root=repo,
+                spawn=spawner,
+                test_runner=runner,
+                resume=True,
+            )
+        )
+
+    assert result.status == "awaiting_user", result
+    matched = [w for w in caught if "schema_version=99" in str(w.message)]
+    assert len(matched) == 1, [str(w.message) for w in caught]
+
+
+def test_unknown_schema_version_warning_suppressed_on_second_load_same_process(repo):
+    """``unknown-schema-version-warning-suppressed-on-second-load-same-process``
+    — two consecutive loads in the same Python process emit the warning
+    exactly once.
+    """
+    _reset_unknown_schema_warned_flag()
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    _write_unknown_schema_state(plan, repo, version=99)
+
+    from conductor import _load_or_init_state
+
+    opts = ConductOptions(
+        plan_path=plan,
+        repo_root=repo,
+        spawn=lambda r: "",
+        resume=True,
+    )
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        _load_or_init_state(opts)
+        _load_or_init_state(opts)
+
+    matched = [w for w in caught if "schema_version=99" in str(w.message)]
+    assert len(matched) == 1, [str(w.message) for w in caught]
+
+
+def test_unknown_schema_version_warning_refires_after_resume(repo):
+    """``unknown-schema-version-warning-refires-after-resume`` — simulate a
+    fresh Python process by resetting the module-level one-shot flag
+    directly (a true fresh process re-imports the module so the flag starts
+    False). Load again; warning re-fires.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    _write_unknown_schema_state(plan, repo, version=99)
+
+    from conductor import _load_or_init_state
+
+    opts = ConductOptions(
+        plan_path=plan,
+        repo_root=repo,
+        spawn=lambda r: "",
+        resume=True,
+    )
+
+    # First load → expected to warn.
+    _reset_unknown_schema_warned_flag()
+    with _warnings.catch_warnings(record=True) as first_caught:
+        _warnings.simplefilter("always")
+        _load_or_init_state(opts)
+    assert any("schema_version=99" in str(w.message) for w in first_caught)
+
+    # Simulate "fresh --resume invocation" by resetting the flag (a real new
+    # Python process starts with module globals reinitialised).
+    _reset_unknown_schema_warned_flag()
+    with _warnings.catch_warnings(record=True) as second_caught:
+        _warnings.simplefilter("always")
+        _load_or_init_state(opts)
+    assert any("schema_version=99" in str(w.message) for w in second_caught), (
+        "warning did not re-fire after simulated fresh process"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Startup validator: stall_threshold vs max_iterations misconfiguration
+# ---------------------------------------------------------------------------
+
+
+def test_stall_threshold_greater_than_max_iterations_warns(repo):
+    """``stall-threshold-greater-than-max-iterations-warns`` — startup
+    validator emits a warning when stall_threshold >= max_iterations AND
+    progress detection is on (the misconfiguration where the legacy cap
+    will always win).
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing()])
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        conduct(
+            ConductOptions(
+                plan_path=plan,
+                repo_root=repo,
+                spawn=spawner,
+                test_runner=runner,
+                stall_threshold=5,
+                max_iterations=3,
+                no_progress_detection=False,
+            )
+        )
+    matched = [
+        w
+        for w in caught
+        if "stall_threshold" in str(w.message) and "max_iterations" in str(w.message)
+    ]
+    assert matched, [str(w.message) for w in caught]
+
+
+def test_stall_threshold_greater_than_max_iterations_legacy_dominates(repo):
+    """``stall-threshold-greater-than-max-iterations-legacy-dominates`` —
+    same misconfiguration with progress detection ON; on a stalled phase
+    the legacy cap actually fires at iter 4 with blocker ``max_iterations
+    exceeded (legacy)``.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    for i in range(6):
+        spawner.script("implementer", i, _stalling_attempt)
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_failing()] * 6)
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("ignore")
+        result = conduct(
+            ConductOptions(
+                plan_path=plan,
+                repo_root=repo,
+                spawn=spawner,
+                test_runner=runner,
+                stall_threshold=5,
+                max_iterations=3,
+                max_iterations_ceiling=8,
+                no_progress_detection=False,
+            )
+        )
+    assert result.status == "blocked"
+    assert result.state["blocker"] == "max_iterations exceeded (legacy)"
+    assert result.state["iteration_count"] == 4
+
+
+def test_plan_id_helpers_are_distinguishable_by_name_and_doc():
+    """Round-4 delta: the rename + dual-derivation doc block must hold.
+
+    Asserts (a) the new name is exposed, (b) the old name has gone, (c) the
+    module-level warning block flagging the two derivations is present in the
+    source. The substrings are load-bearing — the round-4 doc-presence audit
+    greps for them verbatim.
+    """
+    import inspect
+
+    import conductor
+
+    assert hasattr(conductor, "_state_path")
+    assert hasattr(conductor, "_compute_cross_runtime_plan_id")
+    assert not hasattr(conductor, "_compute_plan_id"), (
+        "old name must not be reintroduced — it collided with _state_path's "
+        "rel-path digest semantically"
+    )
+
+    source = inspect.getsource(conductor)
+    assert "DO NOT use _state_path's digest for cross-runtime handoffs" in source
+    assert "DO NOT use _compute_cross_runtime_plan_id for state-file naming" in source
+
+
+def test_step_8_impl_commit_has_conducted_by_trailer(repo):
+    """Round-4 delta: every Step-8.3 boundary commit carries a
+    ``Conducted-By: claude`` trailer on its own line at the end of the body.
+    """
+    plan = _scratch_plan(repo, PLAN_ONE_PHASE)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+    runner = StubTestRunner(queue=[_passing()])
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+        )
+    )
+    assert result.status == "awaiting_user"
+
+    body = _git(["log", "-1", "--format=%B"], repo).stdout
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    assert lines[-1] == "Conducted-By: claude", (
+        f"expected Conducted-By trailer on its own line at end of body; got:\n{body!r}"
+    )
+    assert lines[0] == "conduct: phase 1 — Add a file"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 regression: legacy mode acquires the lock once per --resume
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_no_flags_handback_per_phase(repo, lock_counter):
+    """Without ``--autonomous``, ``conduct()`` MUST acquire the lock exactly
+    once per invocation and hand back after each phase. For an N-phase plan
+    walked by N successive ``--resume`` calls, the total lock-acquisition
+    count is N — one per Python entry. The byte-for-byte handback summary
+    format (Phase / Spawn / Tests / Iterations) is preserved.
+    """
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+
+    def make_spawner():
+        s = StubSpawner(repo)
+        s.script(
+            "implementer",
+            0,
+            lambda req, r: (
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "v=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
+            )[1],
+        )
+        s.script("test-writer", 0, lambda req, r: _test_report())
+        return s
+
+    # First invocation — phase 1.
+    r1 = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert r1.status == "awaiting_user"
+    assert len(r1.state["completed_phases"]) == 1
+    # Byte-for-byte preserved handback shape.
+    assert r1.summary.startswith("Phase 1: First\n")
+    assert "  Spawn: " in r1.summary
+    assert "  Tests: passed\n" in r1.summary
+    assert "  Iterations: 0\n" in r1.summary
+    assert r1.next_command == f"Run: /conduct --resume {plan}"
+    assert lock_counter.count == 1
+
+    # Second invocation (resume) — phase 2. Lock counter advances to 2.
+    r2 = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+    assert r2.status == "awaiting_user"
+    assert len(r2.state["completed_phases"]) == 2
+    assert r2.summary.startswith("Phase 2: Second\n")
+    assert lock_counter.count == 2
