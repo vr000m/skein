@@ -119,7 +119,6 @@ fi
 
 is_expected_drift() {
 	local full_key="$1"
-	local basename="$2"
 	local item
 	# Guard against ``set -u`` aborting on empty-array expansion when no
 	# CONDUCT_LAGGING_MIRROR_OK override is set.
@@ -128,10 +127,6 @@ is_expected_drift() {
 	fi
 	for item in "${prompt_expected_drift_arr[@]}"; do
 		if [[ "$item" == "$full_key" ]]; then
-			return 0
-		fi
-		if [[ "$item" == "$basename" ]]; then
-			echo "warning: CONDUCT_LAGGING_MIRROR_OK basename entry '$item' is deprecated; use '$full_key'" >&2
 			return 0
 		fi
 	done
@@ -204,7 +199,7 @@ for skill in "${managed_skills[@]}"; do
 		fi
 		if [[ $drifted -eq 1 ]]; then
 			full_key="$skill/$pf"
-			if is_expected_drift "$full_key" "$pf"; then
+			if is_expected_drift "$full_key"; then
 				prompt_drift_expected_observed+=("$full_key")
 				echo "expected lagging-mirror drift: $drift_reason (CONDUCT_LAGGING_MIRROR_OK)" >&2
 			else

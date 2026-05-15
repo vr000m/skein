@@ -29,7 +29,8 @@ def _repo_root() -> Path:
     raise RuntimeError(f"could not locate repo root from {here}")
 
 
-# Mirrors the default list at scripts/check-prompt-parity.sh:46.
+# Intentionally asserts the repo-default managed skill set documented in
+# scripts/check-prompt-parity.sh, not caller-scoped MANAGED_SKILLS overrides.
 MANAGED_SKILLS = [
     "conduct",
     "content-draft",

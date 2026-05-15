@@ -42,6 +42,7 @@ from .fileutil import (
     InvalidPlanIdError,
     atomic_write_result_file,
     ensure_direct_child,
+    read_result_file,
     validate_plan_id,
 )
 from .lock import LockError, StateLock, lock_is_held
@@ -624,13 +625,6 @@ def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, boo
             state["plan_id"] = _compute_cross_runtime_plan_id(opts.plan_path)
         state["state_author"] = "codex"
         state["autonomous"] = opts.autonomous or bool(state.get("autonomous"))
-        if opts.resume:
-            # Preflight has already validated that the current plan hash
-            # matches the marker, whether the marker was auto-refreshed here
-            # or manually refreshed between conduct sessions. Resync the
-            # stored hash so the resume gate tracks the reviewed plan.
-            if state["plan_content_hash"] != plan_hash:
-                state["plan_content_hash"] = plan_hash
         return state, True
     legacy = _bootstrap_from_legacy_state(opts, plan_hash)
     if legacy is not None:
@@ -645,6 +639,53 @@ def _state_matches_plan(state: dict, opts: ConductOptions, plan_hash: str) -> bo
     if Path(plan_path).resolve() != opts.plan_path.resolve():
         return False
     return state.get("plan_content_hash") == plan_hash
+
+
+def _state_path_matches_plan(state: dict, opts: ConductOptions) -> bool:
+    plan_path = state.get("plan_path")
+    if not isinstance(plan_path, str):
+        return False
+    return Path(plan_path).resolve() == opts.plan_path.resolve()
+
+
+def _completed_phase_prefix_error(state: dict, phases: list[Phase]) -> str | None:
+    completed = state.get("completed_phases") or []
+    if len(completed) > len(phases):
+        return (
+            f"completed phase count {len(completed)} exceeds parsed phase count "
+            f"{len(phases)}"
+        )
+    for idx, entry in enumerate(completed):
+        if not isinstance(entry, dict):
+            return f"completed phase entry {idx + 1} is not an object"
+        expected = phases[idx]
+        if entry.get("label") != expected.label or entry.get("title") != expected.title:
+            return (
+                "completed phase prefix no longer matches reviewed plan at "
+                f"position {idx + 1}: state has Phase {entry.get('label')}: "
+                f"{entry.get('title')}; plan has Phase {expected.label}: "
+                f"{expected.title}"
+            )
+    return None
+
+
+def _phase_prefix_mismatch_result(
+    opts: ConductOptions, state: dict, detail: str
+) -> ConductResult:
+    state["status"] = "blocked"
+    state["blocker"] = "completed phase prefix no longer matches reviewed plan"
+    _persist_state(opts, state)
+    return ConductResult(
+        status="blocked",
+        state=state,
+        summary=state["blocker"],
+        diagnostic=(
+            f"{detail}\n"
+            "A reviewed structural edit changed phases that were already marked "
+            "complete. Run /conduct --abort-run and restart, or restore the "
+            "completed phase prefix before resuming."
+        ),
+    )
 
 
 def _resume_required_result(opts: ConductOptions, state: dict) -> ConductResult:
@@ -808,6 +849,7 @@ def _dispatch_ci_parity_if_eligible(
     phases_len: int,
 ) -> ConductResult:
     del phases_len
+    retrying_ci_failed = state.get("status") == "ci_failed"
     if opts.skip_ci_parity:
         state["ci_parity_dispatched"] = True
         state["status"] = "complete"
@@ -820,7 +862,7 @@ def _dispatch_ci_parity_if_eligible(
             summary="All phases complete; ci-parity skipped (--skip-ci-parity)",
         )
 
-    if not (opts.autonomous or opts.run_ci_parity):
+    if not (opts.autonomous or opts.run_ci_parity or retrying_ci_failed):
         state["status"] = "complete"
         state["phase_index"] = len(state.get("completed_phases") or [])
         state["last_summary"] = "All phases complete"
@@ -851,6 +893,13 @@ def _dispatch_ci_parity_if_eligible(
                 ),
             )
         kind, cmd = detected
+
+    if retrying_ci_failed:
+        state.pop("ci_parity_request", None)
+        state["ci_parity_result"] = None
+        state["ci_parity_dispatched"] = False
+        state["ci_parity_missing_resume_count"] = 0
+        state["blocker"] = None
 
     plan_id = state.get("plan_id") or _compute_cross_runtime_plan_id(opts.plan_path)
     state["plan_id"] = plan_id
@@ -979,9 +1028,24 @@ def _preflight_ci_parity_resume(
         )
 
     result_path = _ci_parity_result_path(opts, plan_id)
-    if result_path.exists() and not result_path.is_symlink():
+    try:
+        raw, result_mtime = read_result_file(result_path)
+    except FileNotFoundError:
+        raw = None
+        result_mtime = 0.0
+    except (OSError, UnicodeDecodeError) as exc:
+        state["ci_parity_missing_resume_count"] = 0
+        state["status"] = "schema_error"
+        state["blocker"] = f"ci-parity result file unreadable at {result_path}: {exc}"
+        _persist_state(opts, state)
+        return ConductResult(
+            status="schema_error",
+            state=state,
+            summary=state["blocker"],
+            diagnostic=str(exc),
+        )
+    if raw is not None:
         try:
-            raw = result_path.read_text()
             report = parse_report(raw, "ci-parity")
         except (OSError, SchemaError) as exc:
             state["ci_parity_missing_resume_count"] = 0
@@ -1000,9 +1064,9 @@ def _preflight_ci_parity_resume(
         stale = _ci_parity_request_validation_error(request, report) is not None
         if request_written_at is not None:
             try:
-                if result_path.stat().st_mtime < float(request_written_at):
+                if result_mtime < float(request_written_at):
                     stale = True
-            except OSError:
+            except (TypeError, ValueError):
                 stale = True
         if stale:
             state["ci_parity_missing_resume_count"] = 0
@@ -1021,9 +1085,9 @@ def _preflight_ci_parity_resume(
 
     for consumed_path in _ci_parity_consumed_pattern(opts.repo_root, plan_id):
         try:
-            raw = consumed_path.read_text()
+            raw, _mtime = read_result_file(consumed_path)
             report = parse_report(raw, "ci-parity")
-        except (OSError, SchemaError):
+        except (OSError, UnicodeDecodeError, SchemaError):
             continue
         if _ci_parity_request_validation_error(request, report) is None:
             return _consume_ci_parity_result(opts, state, report)
@@ -1734,25 +1798,20 @@ def conduct(opts: ConductOptions) -> ConductResult:
                 if pre is not None:
                     return pre
                 plan_hash = compute_plan_hash(opts.plan_path)
-                if opts.resume and state.get("plan_content_hash") != plan_hash:
-                    state["plan_content_hash"] = plan_hash
-                    _persist_state(opts, state)
-                if not _state_matches_plan(state, opts, plan_hash):
+                plan_text = opts.plan_path.read_text()
+                all_phases = parse_phases(plan_text)
+                if not _state_path_matches_plan(state, opts):
+                    return _state_mismatch_result(opts, state, plan_hash)
+                if opts.resume:
+                    prefix_error = _completed_phase_prefix_error(state, all_phases)
+                    if prefix_error is not None:
+                        return _phase_prefix_mismatch_result(opts, state, prefix_error)
+                    if state.get("plan_content_hash") != plan_hash:
+                        state["plan_content_hash"] = plan_hash
+                        _persist_state(opts, state)
+                elif not _state_matches_plan(state, opts, plan_hash):
                     return _state_mismatch_result(opts, state, plan_hash)
             return _preflight_ci_parity_resume(opts, state)
-        if state_exists and state.get("status") == "ci_failed":
-            return ConductResult(
-                status="ci_failed",
-                state=state,
-                summary=state.get("blocker") or "ci-parity failed",
-                next_command=f"Run: /conduct --resume {opts.plan_path}",
-                diagnostic=(
-                    (state.get("ci_parity_result") or {}).get(
-                        "last_2000_bytes_of_output"
-                    )
-                    or ""
-                )[-2000:],
-            )
         if state_exists and not opts.resume:
             if state.get("status") == "paused" and not opts.plan_path.exists():
                 return _resume_required_result(opts, state)
@@ -1772,15 +1831,19 @@ def conduct(opts: ConductOptions) -> ConductResult:
             return pre
 
         plan_hash = compute_plan_hash(opts.plan_path)
-        if state_exists and opts.resume:
-            # Preflight has already validated that the current plan hash
-            # matches the marker, whether the marker was auto-refreshed here
-            # or manually refreshed between conduct sessions. Resync the
-            # stored hash so the resume gate tracks the reviewed plan.
-            if state["plan_content_hash"] != plan_hash:
-                state["plan_content_hash"] = plan_hash
-        if state_exists and not _state_matches_plan(state, opts, plan_hash):
-            return _state_mismatch_result(opts, state, plan_hash)
+        plan_text = opts.plan_path.read_text()
+        all_phases = parse_phases(plan_text)
+        if state_exists:
+            if not _state_path_matches_plan(state, opts):
+                return _state_mismatch_result(opts, state, plan_hash)
+            if opts.resume:
+                prefix_error = _completed_phase_prefix_error(state, all_phases)
+                if prefix_error is not None:
+                    return _phase_prefix_mismatch_result(opts, state, prefix_error)
+                if state.get("plan_content_hash") != plan_hash:
+                    state["plan_content_hash"] = plan_hash
+            elif not _state_matches_plan(state, opts, plan_hash):
+                return _state_mismatch_result(opts, state, plan_hash)
         if not state_exists:
             state = _bootstrap_from_legacy_state(opts, plan_hash) or _init_state(
                 opts, plan_hash
@@ -1791,8 +1854,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
                 state["status"] = "running"
             _persist_state(opts, state)
 
-        plan_text = opts.plan_path.read_text()
-        phases = [p for p in parse_phases(plan_text) if not p.is_complete]
+        phases = [p for p in all_phases if not p.is_complete]
         max_phases_cap = (
             opts.max_phases if opts.max_phases is not None else len(phases) + 1
         )

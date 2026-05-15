@@ -69,8 +69,8 @@ def _failing(msg: str = "validation failed") -> _TestResult:
 def test_autonomous_3_phase_success(repo, lock_counter):
     """3 phases walk under one lock acquisition in a single invocation.
 
-    Phase 2 lands the autonomous loop without the CI-parity gate; the
-    post-loop fall-through returns ``status="complete"``.
+    This isolates the phase loop by opting out of the now-implied CI-parity
+    gate; the post-loop fall-through returns ``status="complete"``.
     """
     plan = _scratch_plan(repo, _plan_with_phases(3))
     spawner = StubSpawner(repo)
@@ -85,6 +85,7 @@ def test_autonomous_3_phase_success(repo, lock_counter):
             spawn=spawner,
             test_runner=runner,
             autonomous=True,
+            skip_ci_parity=True,
         )
     )
 

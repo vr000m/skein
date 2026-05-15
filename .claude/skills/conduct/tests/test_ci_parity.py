@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import time
-import warnings
 from pathlib import Path
 
 import conductor as conductor_mod
@@ -58,7 +57,7 @@ def _ci_parity_report(plan_id: str, written_at: float, status: str, **extra) -> 
         "plan_id": plan_id,
         "request_written_at_unix": written_at,
         "status": status,
-        "command_run": extra.pop("command_run", "true"),
+        "command_run": extra.pop("command_run", "echo ci"),
         "summary": extra.pop("summary", "ok"),
         **extra,
     }
@@ -71,8 +70,10 @@ def _scripted_spawner(status: str = "passed", **extra):
 
     def spawn(req: CIParitySpawnRequest) -> str:
         captured.append(req)
+        report_extra = dict(extra)
+        report_extra.setdefault("command_run", req.ci_cmd)
         return _ci_parity_report(
-            req.plan_id, req.request_written_at_unix, status, **extra
+            req.plan_id, req.request_written_at_unix, status, **report_extra
         )
 
     spawn.captured = captured  # type: ignore[attr-defined]
@@ -129,6 +130,13 @@ def test_detect_cargo_only_returns_cargo_test_all(tmp_path: Path) -> None:
     _seed_cargo(tmp_path)
     detected = detect_ci_entrypoint(tmp_path)
     assert detected == ("cargo", "cargo test --all"), detected
+
+
+def test_detect_ignores_indented_targets(tmp_path: Path) -> None:
+    (tmp_path / "justfile").write_text("default:\n    ci:\n        echo nested\n")
+    (tmp_path / "Makefile").write_text("outer:\n\tci:\n\t\techo nested\n")
+
+    assert detect_ci_entrypoint(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
@@ -281,28 +289,61 @@ def test_ci_parity_fail_sets_ci_failed_and_handback(repo, lock_counter):
     assert result.state["ci_parity_result"]["status"] == "failed"
 
 
-def test_ci_parity_skip_workflow_less(repo, lock_counter):
-    """No entrypoint + no override → warning + status complete (not ci_failed)."""
+def test_ci_parity_failed_state_can_resume_and_rerun_gate(repo, lock_counter):
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    spawner = StubSpawner(repo)
+    _wire_normal_phase(spawner, "1")
+    failed_spawn = _scripted_spawner("failed", summary="3 tests failed")
+
+    failed = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            autonomous=True,
+            ci_cmd="echo ci",
+            ci_parity_spawn=failed_spawn,
+        )
+    )
+    assert failed.status == "ci_failed"
+
+    passed = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(),
+            resume=True,
+            ci_cmd="echo ci",
+            ci_parity_spawn=_scripted_spawner("passed", summary="green"),
+        )
+    )
+
+    assert passed.status == "complete"
+    assert passed.state["ci_parity_result"]["status"] == "passed"
+
+
+def test_ci_parity_no_entrypoint_blocks(repo, lock_counter):
+    """No entrypoint + no override → blocker with explicit escape hatches."""
     plan = _scratch_plan(repo, _plan_with_phases(1))
     spawner = StubSpawner(repo)
     _wire_normal_phase(spawner, "1")
     runner = StubTestRunner(queue=[_passing()])
 
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        result = conduct(
-            ConductOptions(
-                plan_path=plan,
-                repo_root=repo,
-                spawn=spawner,
-                test_runner=runner,
-                autonomous=True,
-            )
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            autonomous=True,
         )
+    )
 
-    assert result.status == "complete"
-    msgs = [str(w.message) for w in caught]
-    assert any("no CI entrypoint detected" in m for m in msgs), msgs
+    assert result.status == "blocked"
+    assert "ci-parity entrypoint not detected" in result.summary
+    assert "--ci-cmd" in (result.diagnostic or "")
 
 
 def test_ci_parity_skip_ci_parity_flag_shortcuts_gate(repo, lock_counter):
@@ -345,15 +386,15 @@ def test_ci_parity_skip_ci_parity_during_awaiting_preserves_artifacts(repo):
     state_seed = {
         "plan_path": str(plan),
         "schema_version": 2,
-        "completed_phases": [{"label": "1", "title": "x", "commit_sha": "abc"}],
+        "completed_phases": [{"label": "1", "title": "Phase 1", "commit_sha": "abc"}],
         "iteration_count": 0,
         "status": "awaiting_ci_parity",
         "ci_parity_request": {
             "plan_path": str(plan),
             "base_sha": "",
             "head_sha": "",
-            "ci_entrypoint_kind": "make",
-            "ci_cmd": "make ci",
+            "ci_entrypoint_kind": "override",
+            "ci_cmd": "echo ci",
             "repo_root": str(repo),
             "plan_id": plan_id,
             "request_written_at_unix": written_at,
@@ -670,15 +711,15 @@ def _seed_awaiting_state(repo: Path, plan: Path, written_at: float, **overrides)
     state = {
         "plan_path": str(plan),
         "schema_version": 2,
-        "completed_phases": [{"label": "1", "title": "x", "commit_sha": "abc"}],
+        "completed_phases": [{"label": "1", "title": "Phase 1", "commit_sha": "abc"}],
         "iteration_count": 0,
         "status": "awaiting_ci_parity",
         "ci_parity_request": {
             "plan_path": str(plan),
             "base_sha": "",
             "head_sha": "",
-            "ci_entrypoint_kind": "make",
-            "ci_cmd": "make ci",
+            "ci_entrypoint_kind": "override",
+            "ci_cmd": "echo ci",
             "repo_root": str(repo),
             "plan_id": plan_id,
             "request_written_at_unix": written_at,
@@ -907,6 +948,61 @@ def test_ci_parity_stale_by_request_written_at_mismatch(repo):
     assert r.status == "awaiting_ci_parity"
 
 
+def test_ci_parity_wrong_command_run_is_stale(repo):
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    plan_id = _seed_awaiting_state(repo, plan, written_at)
+    result_path = _ci_parity_result_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""),
+        plan_id,
+    )
+    _write_ci_parity_result(
+        result_path,
+        _ci_parity_report(
+            plan_id,
+            written_at,
+            "passed",
+            command_run="wrong command",
+        ),
+    )
+
+    r = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=StubSpawner(repo),
+            test_runner=StubTestRunner(),
+            ci_cmd="echo ci",
+            resume=True,
+        )
+    )
+
+    assert r.status == "awaiting_ci_parity"
+    assert r.state["ci_parity_missing_resume_count"] == 0
+
+
+def test_ci_parity_injected_wrong_command_is_schema_error(repo):
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    spawner = StubSpawner(repo)
+    _wire_normal_phase(spawner, "1")
+    spawn = _scripted_spawner("passed", command_run="wrong command")
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            autonomous=True,
+            ci_cmd="echo ci",
+            ci_parity_spawn=spawn,
+        )
+    )
+
+    assert result.status == "schema_error"
+    assert "command_run mismatch" in (result.diagnostic or "")
+
+
 def test_ci_parity_malformed_result_file_handback(repo):
     plan = _scratch_plan(repo, _plan_with_phases(1))
     written_at = time.time()
@@ -930,6 +1026,32 @@ def test_ci_parity_malformed_result_file_handback(repo):
     )
     assert r.status == "schema_error"
     assert result_path.exists()  # malformed file is preserved for inspection
+
+
+def test_ci_parity_result_file_symlink_is_schema_error(repo):
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    plan_id = _seed_awaiting_state(repo, plan, written_at)
+    result_path = _ci_parity_result_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""),
+        plan_id,
+    )
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.symlink_to(repo / "README.md")
+
+    r = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=StubSpawner(repo),
+            test_runner=StubTestRunner(),
+            ci_cmd="echo ci",
+            resume=True,
+        )
+    )
+
+    assert r.status == "schema_error"
+    assert "unreadable" in r.summary
 
 
 def test_ci_parity_missing_result_file_at_resume_counter_increments(repo):

@@ -293,6 +293,15 @@ def test_detect_ci_entrypoint_priority_and_empty(tmp_path: Path) -> None:
     assert detect_ci_entrypoint(tmp_path) is None
 
 
+def test_detect_ci_entrypoint_ignores_indented_targets(tmp_path: Path) -> None:
+    from conduct.ci_parity import detect_ci_entrypoint
+
+    (tmp_path / "justfile").write_text("default:\n    ci:\n        echo nested\n")
+    (tmp_path / "Makefile").write_text("outer:\n\tci:\n\t\techo nested\n")
+
+    assert detect_ci_entrypoint(tmp_path) is None
+
+
 def test_ci_cmd_override_bypasses_entrypoint_detection(repo, lock_counter) -> None:
     _seed_makefile(repo)
     plan = _scratch_plan(repo, _plan_with_phases(1))
@@ -479,6 +488,20 @@ def test_ci_parity_pass_fail_and_no_entrypoint_blocks(repo, tmp_path: Path) -> N
     assert failed_result.status == "ci_failed"
     assert failed_result.state["ci_parity_result"]["status"] == "failed"
 
+    recovered = conduct(
+        ConductOptions(
+            plan_path=failed_plan,
+            repo_root=failed_repo,
+            spawn=failed_spawner,
+            test_runner=StubTestRunner(),
+            resume=True,
+            ci_cmd="echo ci",
+            ci_parity_spawn=_scripted_ci_spawn("passed", summary="green"),
+        )
+    )
+    assert recovered.status == "complete"
+    assert recovered.state["ci_parity_result"]["status"] == "passed"
+
     empty_repo = tmp_path / "empty-ci-repo"
     empty_repo.mkdir()
     _git(["init", "-q"], empty_repo)
@@ -650,6 +673,21 @@ def test_ci_parity_malformed_result_file_handback_preserves_file(repo) -> None:
     assert result.status == "schema_error"
     assert "malformed" in ((result.summary or "") + (result.diagnostic or "")).lower()
     assert result_path.exists()
+    assert result.state["ci_parity_missing_resume_count"] == 0
+
+
+def test_ci_parity_result_file_symlink_is_schema_error(repo) -> None:
+    plan = _scratch_plan(repo, _plan_with_phases(1))
+    written_at = time.time()
+    plan_id = _seed_awaiting_state(repo, plan, written_at)
+    result_path = _result_path(repo, plan, plan_id)
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.symlink_to(repo / "README.md")
+
+    result = _resume_ci(repo, plan)
+
+    assert result.status == "schema_error"
+    assert "unreadable" in result.summary
     assert result.state["ci_parity_missing_resume_count"] == 0
 
 

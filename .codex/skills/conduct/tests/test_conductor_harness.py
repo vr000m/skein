@@ -49,7 +49,9 @@ from conduct.conductor import (
 )
 from conduct.lock import StateLock
 from conduct.marker import compute_plan_hash, marker_is_stale, write_marker
-from conduct.runner import TestResult as _TestResult  # rename — pytest tries to collect any class named Test*
+from conduct.runner import (
+    TestResult as _TestResult,
+)  # rename — pytest tries to collect any class named Test*
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +88,9 @@ def _scratch_plan(repo: Path, body: str) -> Path:
 
 
 def _state_file(repo: Path, plan: Path) -> Path:
-    return _state_path(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+    return _state_path(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
 
 
 def _legacy_shared_state_file(repo: Path, plan: Path) -> Path:
@@ -232,11 +236,15 @@ class StubSpawner:
     """
 
     repo: Path
-    scripts: dict[tuple[str, int], Callable[[SpawnRequest, Path], str]] = field(default_factory=dict)
+    scripts: dict[tuple[str, int], Callable[[SpawnRequest, Path], str]] = field(
+        default_factory=dict
+    )
     calls: list[SpawnRequest] = field(default_factory=list)
     rendered_prompts: list[str] = field(default_factory=list)
 
-    def script(self, role: str, iteration: int, fn: Callable[[SpawnRequest, Path], str]) -> None:
+    def script(
+        self, role: str, iteration: int, fn: Callable[[SpawnRequest, Path], str]
+    ) -> None:
         self.scripts[(role, iteration)] = fn
 
     def __call__(self, req: SpawnRequest) -> str:
@@ -287,11 +295,15 @@ class StubTestRunner:
 
 
 def _passing() -> _TestResult:
-    return _TestResult(returncode=0, output="ok\n", timed_out=False, duration_seconds=0.01)
+    return _TestResult(
+        returncode=0, output="ok\n", timed_out=False, duration_seconds=0.01
+    )
 
 
 def _failing(msg: str = "AssertionError: 1 != 2") -> _TestResult:
-    return _TestResult(returncode=1, output=msg + "\n", timed_out=False, duration_seconds=0.01)
+    return _TestResult(
+        returncode=1, output=msg + "\n", timed_out=False, duration_seconds=0.01
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +317,10 @@ def test_happy_path_single_phase_commits_and_hands_back(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x = 1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
@@ -338,19 +353,31 @@ def test_multi_phase_via_resume_advances_one_phase_at_a_time(repo):
         "implementer",
         0,
         lambda req, r: (
-            _stage(r, "src/a.py", "x=1\n") if req.phase_label == "1" else _stage(r, "src/b.py", "y=2\n"),
-            _impl_report(0, [f"src/{ 'a' if req.phase_label=='1' else 'b' }.py"]),
+            _stage(r, "src/a.py", "x=1\n")
+            if req.phase_label == "1"
+            else _stage(r, "src/b.py", "y=2\n"),
+            _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
         )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing(), _passing()])
 
-    first = conduct(ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner))
+    first = conduct(
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
+    )
     assert first.status == "awaiting_user"
     assert len(first.state["completed_phases"]) == 1
 
     second = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner, resume=True)
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            resume=True,
+        )
     )
     assert second.status == "awaiting_user"
     assert len(second.state["completed_phases"]) == 2
@@ -374,13 +401,17 @@ def test_existing_state_requires_explicit_resume(repo):
     first_spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     first_spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     first = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=first_spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=first_spawner, test_runner=runner
+        )
     )
     assert first.status == "awaiting_user"
 
@@ -422,7 +453,9 @@ def test_assertion_failure_respawns_implementer_and_passes_on_iteration_1(repo):
     runner = StubTestRunner(queue=[_failing(), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.state["iteration_count"] == 1
@@ -451,7 +484,9 @@ def test_failure_summaries_are_redacted_before_respawn(repo):
     runner = StubTestRunner(queue=[_failing("AssertionError token=abc123"), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
 
@@ -474,7 +509,9 @@ def test_blocked_implementer_report_stops_before_tests_or_commit(repo):
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "blocked"
     assert "missing API contract" in result.summary
@@ -489,7 +526,9 @@ def test_test_writer_clarification_blocks_before_commit(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
 
     def clarifying_test_writer(req, r):
@@ -501,7 +540,10 @@ def test_test_writer_clarification_blocks_before_commit(repo):
             "test_files_added": ["tests/test_a.py"],
             "test_commands": ["true"],
             "coverage_summary": "need clarification",
-            "flags": {"blocked": False, "needs_impl_clarification": "error path still unspecified"},
+            "flags": {
+                "blocked": False,
+                "needs_impl_clarification": "error path still unspecified",
+            },
         }
         return f"```json\n{json.dumps(payload)}\n```"
 
@@ -509,7 +551,9 @@ def test_test_writer_clarification_blocks_before_commit(repo):
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "blocked"
     assert "error path still unspecified" in result.summary
@@ -524,7 +568,9 @@ def test_test_contract_mismatch_routes_iteration_1_to_test_writer(repo):
 
     def impl_first(req, r):
         _stage(r, "src/a.py", "x=1\n")
-        return _impl_report(0, ["src/a.py"], test_contract_mismatch=True, explanation="tests wrong")
+        return _impl_report(
+            0, ["src/a.py"], test_contract_mismatch=True, explanation="tests wrong"
+        )
 
     def test_writer_second(req, r):
         # Conductor flipped to test-writer because of the mismatch flag.
@@ -547,7 +593,9 @@ def test_test_contract_mismatch_routes_iteration_1_to_test_writer(repo):
     runner = StubTestRunner(queue=[_failing(), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     # Iteration-1 spawn was the test-writer, not the implementer.
@@ -562,7 +610,9 @@ def test_test_writer_retry_preserves_prior_implementation_changes(repo):
 
     def impl_first(req, r):
         _stage(r, "src/a.py", "impl=1\n")
-        return _impl_report(0, ["src/a.py"], test_contract_mismatch=True, explanation="tests wrong")
+        return _impl_report(
+            0, ["src/a.py"], test_contract_mismatch=True, explanation="tests wrong"
+        )
 
     def test_writer_second(req, r):
         assert "impl=1" in req.prior_diff
@@ -585,7 +635,9 @@ def test_test_writer_retry_preserves_prior_implementation_changes(repo):
     runner = StubTestRunner(queue=[_failing(), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     show = _git(["show", "--stat", "--name-only", "--format=%B", "HEAD"], repo).stdout
@@ -652,13 +704,17 @@ def test_missing_test_command_warns_and_completes_phase(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner()  # never called
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert "no test command" in result.summary
@@ -673,13 +729,17 @@ def test_validation_runs_even_when_no_test_command_is_declared(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert "no test command" in result.summary
@@ -693,13 +753,17 @@ def test_validation_failure_without_test_command_hands_back_before_commit(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_failing("validation failed")])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.summary == "Phase 1 validation failed"
@@ -713,13 +777,17 @@ def test_validation_failure_diagnostic_is_redacted(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_failing("Authorization: Bearer supersecret-token")])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert "[REDACTED]" in (result.diagnostic or "")
@@ -766,7 +834,9 @@ def test_precommit_hook_failure_routes_to_fix_loop(repo):
     runner = StubTestRunner(queue=[_passing(), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.state["iteration_count"] == 1
@@ -804,7 +874,11 @@ def test_boundary_commit_failure_diagnostic_is_redacted(repo):
 
     result = conduct(
         ConductOptions(
-            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner, max_iterations=3
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            max_iterations=3,
         )
     )
     assert result.status == "blocked"
@@ -839,18 +913,25 @@ def test_precommit_hook_restage_retry_succeeds_without_respawn(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.state["iteration_count"] == 0
     assert "pre-commit hook modified files; re-staged and retrying" in result.summary
-    assert len([c for c in spawner.calls if c.role == "implementer" and c.iteration > 0]) == 0
+    assert (
+        len([c for c in spawner.calls if c.role == "implementer" and c.iteration > 0])
+        == 0
+    )
     assert "# hook formatted" in (repo / "src" / "a.py").read_text()
 
 
@@ -885,13 +966,17 @@ def test_precommit_hook_does_not_stage_unrelated_tracked_edits(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert "outside the staged set" in result.summary
@@ -912,7 +997,9 @@ def test_pause_phase_stashes_and_marks_state(repo):
     # Make a dirty file so stash actually has something to push.
     (repo / "scratch.txt").write_text("wip\n")
 
-    result = pause_phase(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+    result = pause_phase(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
     assert result.status == "paused"
     state = json.loads(state_file.read_text())
     assert state["status"] == "paused"
@@ -945,7 +1032,9 @@ def test_resume_restores_paused_stash_before_continuing(repo):
         )
     )
     (repo / "scratch.txt").write_text("paused work\n")
-    paused = pause_phase(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+    paused = pause_phase(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
     assert paused.status == "paused"
 
     spawner = StubSpawner(repo)
@@ -960,7 +1049,13 @@ def test_resume_restores_paused_stash_before_continuing(repo):
     runner = StubTestRunner(queue=[_passing()])
 
     resumed = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner, resume=True)
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            resume=True,
+        )
     )
     assert resumed.status == "awaiting_user"
     assert (repo / "scratch.txt").read_text() == "paused work\n"
@@ -975,7 +1070,9 @@ def test_abort_run_deletes_state_without_touching_tree(repo):
     state_file.write_text("{}")
     (repo / "scratch.txt").write_text("wip\n")
 
-    result = abort_run(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+    result = abort_run(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
     assert result.status == "aborted"
     assert not state_file.exists()
     # User's working tree files are preserved — abort only drops state, never
@@ -1003,7 +1100,9 @@ def test_abort_run_refuses_when_state_lock_held(repo):
     lock = StateLock(state_file.with_suffix(state_file.suffix + ".lock"))
     lock.acquire()
     try:
-        result = abort_run(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+        result = abort_run(
+            ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+        )
         assert result.status == "blocked"
         assert state_file.exists()
     finally:
@@ -1030,7 +1129,9 @@ def test_abort_run_does_not_delete_other_plan_state_with_same_basename(repo):
         )
     )
 
-    result = abort_run(ConductOptions(plan_path=plan_b, repo_root=repo, spawn=lambda r: ""))
+    result = abort_run(
+        ConductOptions(plan_path=plan_b, repo_root=repo, spawn=lambda r: "")
+    )
     assert result.status == "aborted"
     assert state_a.exists()
 
@@ -1044,7 +1145,9 @@ def test_abort_run_refuses_symlinked_state_path(repo):
     victim.write_text("keep me\n")
     state_file.symlink_to(victim)
 
-    result = abort_run(ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: ""))
+    result = abort_run(
+        ConductOptions(plan_path=plan, repo_root=repo, spawn=lambda r: "")
+    )
     assert result.status == "blocked"
     assert victim.read_text() == "keep me\n"
     assert state_file.is_symlink()
@@ -1061,7 +1164,9 @@ def test_conduct_refuses_symlinked_state_path(repo):
 
     spawner = StubSpawner(repo)
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner())
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner()
+        )
     )
     assert result.status == "preflight_fail"
     assert "unsafe conduct state path" in result.summary
@@ -1086,7 +1191,9 @@ def test_rogue_commit_detection_does_not_stack_a_second_commit(repo):
 
     sha_before = _git(["rev-parse", "HEAD"], repo).stdout.strip()
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.state["completed_phases"][0]["rogue_commit_sha"] is not None
@@ -1103,17 +1210,25 @@ def test_schema_error_does_not_respawn_and_marks_state_schema_error(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), "no json fence here, just prose")[1],
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            "no json fence here, just prose",
+        )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner()
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "schema_error"
     # Only one implementer spawn — no respawn after schema error.
-    assert len([c for c in spawner.calls if c.role == "implementer" and c.iteration > 0]) == 0
+    assert (
+        len([c for c in spawner.calls if c.role == "implementer" and c.iteration > 0])
+        == 0
+    )
 
 
 def test_context_isolation_no_sentinel_leaks_into_rendered_prompts(repo):
@@ -1131,7 +1246,10 @@ def test_context_isolation_no_sentinel_leaks_into_rendered_prompts(repo):
         spawner.script(
             "implementer",
             0,
-            lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+            lambda req, r: (
+                _stage(r, "src/a.py", "x=1\n"),
+                _impl_report(0, ["src/a.py"]),
+            )[1],
         )
         spawner.script("test-writer", 0, lambda req, r: _test_report())
         runner = StubTestRunner(queue=[_passing()])
@@ -1161,22 +1279,30 @@ def test_resume_across_simulated_restart_picks_up_at_next_phase(repo):
             "implementer",
             0,
             lambda req, r: (
-                _stage(r, f"src/{ 'a' if req.phase_label=='1' else 'b' }.py", "v=1\n"),
-                _impl_report(0, [f"src/{ 'a' if req.phase_label=='1' else 'b' }.py"]),
+                _stage(r, f"src/{'a' if req.phase_label == '1' else 'b'}.py", "v=1\n"),
+                _impl_report(0, [f"src/{'a' if req.phase_label == '1' else 'b'}.py"]),
             )[1],
         )
         s.script("test-writer", 0, lambda req, r: _test_report())
         return s
 
     runner1 = StubTestRunner(queue=[_passing()])
-    r1 = conduct(ConductOptions(plan_path=plan, repo_root=repo, spawn=make_spawner(), test_runner=runner1))
+    r1 = conduct(
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=make_spawner(), test_runner=runner1
+        )
+    )
     assert r1.status == "awaiting_user"
 
     # Simulated restart: brand-new options, brand-new spawner, --resume on.
     runner2 = StubTestRunner(queue=[_passing()])
     r2 = conduct(
         ConductOptions(
-            plan_path=plan, repo_root=repo, spawn=make_spawner(), test_runner=runner2, resume=True
+            plan_path=plan,
+            repo_root=repo,
+            spawn=make_spawner(),
+            test_runner=runner2,
+            resume=True,
         )
     )
     assert r2.status == "awaiting_user"
@@ -1212,7 +1338,9 @@ def test_resume_rejects_state_from_different_plan_path(repo):
 
     spawner = StubSpawner(repo)
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner())
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner()
+        )
     )
     assert result.status == "preflight_fail"
     assert "state does not match current reviewed plan" in result.summary
@@ -1306,7 +1434,9 @@ def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
     pre_state = json.loads(_state_file(repo, plan).read_text())
     pre_hash = pre_state["plan_content_hash"]
 
-    plan.write_text(plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second amended"))
+    plan.write_text(
+        plan.read_text().replace("### Phase 2: Second", "### Phase 2: Second amended")
+    )
     new_plan_hash = compute_plan_hash(plan)
     assert new_plan_hash != pre_hash
     assert marker_is_stale(plan) is True
@@ -1330,6 +1460,53 @@ def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
     assert [p["label"] for p in result.state["completed_phases"]] == ["1", "2"]
     assert second_spawner.calls
     assert "auto-refreshed on resume" in capsys.readouterr().err
+
+
+def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+
+    plan.write_text(
+        plan.read_text().replace(
+            "### Phase 1: First",
+            "### Phase 0: Inserted\n\n- [ ] new task\n\n### Phase 1: First",
+            1,
+        )
+    )
+    write_marker(plan)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(),
+            resume=True,
+        )
+    )
+
+    assert result.status == "blocked"
+    assert "completed phase prefix" in result.summary
+    assert "position 1" in (result.diagnostic or "")
 
 
 # ---------------------------------------------------------------------------
@@ -1417,14 +1594,20 @@ def test_resume_base_sha_is_cleared_after_phase_commits(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/b.py", "y=2\n"), _impl_report(0, ["src/b.py"]))[1],
+        lambda req, r: (_stage(r, "src/b.py", "y=2\n"), _impl_report(0, ["src/b.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
         ConductOptions(
-            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner, resume=True
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            resume=True,
         )
     )
     assert result.status == "awaiting_user", result.summary
@@ -1452,7 +1635,9 @@ def test_hook_retry_respects_blocked_respawn_report(repo):
     def blocked_retry(req, r):
         assert "hook says no" in req.test_failures
         _stage(r, "src/a.py", "x=2\n")
-        return _impl_report(1, ["src/a.py"], blocked=True, explanation="manual migration required")
+        return _impl_report(
+            1, ["src/a.py"], blocked=True, explanation="manual migration required"
+        )
 
     spawner.script("implementer", 0, initial_impl)
     spawner.script("implementer", 1, blocked_retry)
@@ -1460,7 +1645,9 @@ def test_hook_retry_respects_blocked_respawn_report(repo):
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "blocked"
     assert "manual migration required" in result.summary
@@ -1488,12 +1675,15 @@ def test_detect_lint_command_prefers_pre_commit(tmp_path, monkeypatch):
     (tmp_path / "Makefile").write_text("lint:\n\tpython -m flake8\n")
     (tmp_path / "package.json").write_text('{"scripts": {"lint": "eslint ."}}\n')
     monkeypatch.setattr(
-        "conduct.conductor.shutil.which", _which_stub({"pre-commit", "make", "npm", "ruff"})
+        "conduct.conductor.shutil.which",
+        _which_stub({"pre-commit", "make", "npm", "ruff"}),
     )
     assert detect_lint_command(tmp_path) == ["pre-commit", "run", "--all-files"]
 
 
-def test_detect_lint_command_skips_pre_commit_when_binary_missing(tmp_path, monkeypatch):
+def test_detect_lint_command_skips_pre_commit_when_binary_missing(
+    tmp_path, monkeypatch
+):
     (tmp_path / ".pre-commit-config.yaml").write_text("repos: []\n")
     (tmp_path / "Makefile").write_text("lint:\n\tflake8\n")
     monkeypatch.setattr("conduct.conductor.shutil.which", _which_stub({"make"}))
@@ -1506,13 +1696,17 @@ def test_detect_lint_command_falls_through_to_npm_run_lint(tmp_path, monkeypatch
     assert detect_lint_command(tmp_path) == ["npm", "run", "lint"]
 
 
-def test_detect_lint_command_falls_through_to_ruff_for_python_repo(tmp_path, monkeypatch):
+def test_detect_lint_command_falls_through_to_ruff_for_python_repo(
+    tmp_path, monkeypatch
+):
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
     monkeypatch.setattr("conduct.conductor.shutil.which", _which_stub({"ruff"}))
     assert detect_lint_command(tmp_path) == ["ruff", "check", "."]
 
 
-def test_detect_lint_command_falls_through_to_ruff_for_nested_python_repo(tmp_path, monkeypatch):
+def test_detect_lint_command_falls_through_to_ruff_for_nested_python_repo(
+    tmp_path, monkeypatch
+):
     nested = tmp_path / ".codex" / "skills" / "conduct"
     nested.mkdir(parents=True)
     (nested / "conductor.py").write_text("print('x')\n")
@@ -1530,7 +1724,9 @@ def test_default_lint_check_returns_none_when_no_tool_available(tmp_path, monkey
     assert default_lint_check(tmp_path) is None
 
 
-def test_default_lint_check_runs_detected_command_and_reports_failure(tmp_path, monkeypatch):
+def test_default_lint_check_runs_detected_command_and_reports_failure(
+    tmp_path, monkeypatch
+):
     """Use a Makefile + real ``make`` (the test harness already depends on
     Unix make presence for git, so this is portable). The lint target exits 1
     with an identifiable diagnostic that we expect surfaced in the result.
@@ -1570,13 +1766,17 @@ def test_run_preflight_does_not_invoke_default_lint_check_implicitly(repo, monke
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert spawner.calls
@@ -1595,13 +1795,17 @@ def test_phase_with_no_slot_falls_back_to_repo_default(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert runner.calls and runner.calls[0][0] == "uvx pytest"
@@ -1614,13 +1818,17 @@ def test_plan_with_no_slots_warns_about_degraded_mode(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert "running in degraded mode" in result.summary
@@ -1633,13 +1841,17 @@ def test_validation_failure_hands_back_without_commit(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing(), _failing("validation drift detected")])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert result.summary == "Phase 1 validation failed"
@@ -1654,13 +1866,17 @@ def test_validation_pass_adds_warning_before_commit(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing(), _passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
     assert [call[0] for call in runner.calls] == ["true", "python scripts/validate.py"]
@@ -1673,13 +1889,18 @@ def test_state_file_includes_documented_contract_keys(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x = 1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
     assert result.status == "awaiting_user"
 
@@ -1737,13 +1958,21 @@ def test_resume_migrates_legacy_state_file_without_schema_version(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/b.py", "y=2\n"), _impl_report(0, ["src/b.py"]))[1],
+        lambda req, r: (_stage(r, "src/b.py", "y=2\n"), _impl_report(0, ["src/b.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner, resume=True)
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=runner,
+            resume=True,
+        )
     )
     assert result.status == "awaiting_user"
     migrated = json.loads(state_path.read_text())
@@ -1865,13 +2094,18 @@ def test_step_8_impl_commit_has_conducted_by_trailer(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x = 1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     runner = StubTestRunner(queue=[_passing()])
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner)
+        ConductOptions(
+            plan_path=plan, repo_root=repo, spawn=spawner, test_runner=runner
+        )
     )
 
     assert result.status == "awaiting_user"
@@ -1889,7 +2123,10 @@ def test_plan_id_helpers_are_distinguishable_by_name_and_doc(repo):
     handoff_id = conductor._compute_cross_runtime_plan_id(plan)
 
     assert _state_path.__name__ == "_state_path"
-    assert conductor._compute_cross_runtime_plan_id.__name__ == "_compute_cross_runtime_plan_id"
+    assert (
+        conductor._compute_cross_runtime_plan_id.__name__
+        == "_compute_cross_runtime_plan_id"
+    )
     assert "state-codex-" in state_path.name
     assert handoff_id not in state_path.name
 
@@ -1897,7 +2134,9 @@ def test_plan_id_helpers_are_distinguishable_by_name_and_doc(repo):
 def test_stall_blocks_at_threshold(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
-    opts = _phase1_opts(repo, plan, max_iterations=10, max_iterations_ceiling=10, stall_threshold=2)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=10, max_iterations_ceiling=10, stall_threshold=2
+    )
 
     assert _check_iteration_bound(state, opts, "same") is None
     assert _check_iteration_bound(state, opts, "same") is None
@@ -1913,7 +2152,9 @@ def test_stall_blocks_at_threshold(repo):
 def test_progress_resets_counter(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
-    opts = _phase1_opts(repo, plan, max_iterations=10, max_iterations_ceiling=10, stall_threshold=2)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=10, max_iterations_ceiling=10, stall_threshold=2
+    )
 
     assert _check_iteration_bound(state, opts, "same") is None
     assert _check_iteration_bound(state, opts, "same") is None
@@ -1929,7 +2170,9 @@ def test_progress_resets_counter(repo):
 def test_hard_ceiling_blocks_at_9(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
-    opts = _phase1_opts(repo, plan, max_iterations=99, max_iterations_ceiling=8, stall_threshold=99)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=99, max_iterations_ceiling=8, stall_threshold=99
+    )
 
     for i in range(8):
         assert _check_iteration_bound(state, opts, f"sig-{i}") is None
@@ -1985,17 +2228,23 @@ def test_legacy_max_iterations_default_3_progressing_also_blocks(repo):
 def test_stall_signatures_truncate_to_length_2_across_many_iterations(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
-    opts = _phase1_opts(repo, plan, max_iterations=99, max_iterations_ceiling=99, stall_threshold=99)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=99, max_iterations_ceiling=99, stall_threshold=99
+    )
 
     for i in range(6):
         assert _check_iteration_bound(state, opts, f"sig-{i}") is None
         assert len(state["stall_signatures"]) <= 2
-        assert state["stall_signatures"] == [f"sig-{j}" for j in range(max(0, i - 1), i + 1)]
+        assert state["stall_signatures"] == [
+            f"sig-{j}" for j in range(max(0, i - 1), i + 1)
+        ]
 
 
 def test_helper_is_single_increment_source_three_sites(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
-    opts = _phase1_opts(repo, plan, max_iterations=99, max_iterations_ceiling=99, stall_threshold=99)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=99, max_iterations_ceiling=99, stall_threshold=99
+    )
 
     for call_site in [
         "_run_phase test-failure branch",
@@ -2016,7 +2265,9 @@ def test_precommit_hook_stall_fires_bound(repo, monkeypatch: pytest.MonkeyPatch)
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     hooks_dir = repo / ".git" / "hooks"
     hook = hooks_dir / "pre-commit"
-    hook.write_text("#!/bin/sh\necho 'ruff................................................................Failed' >&2\nexit 1\n")
+    hook.write_text(
+        "#!/bin/sh\necho 'ruff................................................................Failed' >&2\nexit 1\n"
+    )
     hook.chmod(0o755)
 
     progress = __import__("conduct.progress", fromlist=["iteration_signature"])
@@ -2029,18 +2280,24 @@ def test_precommit_hook_stall_fires_bound(repo, monkeypatch: pytest.MonkeyPatch)
         return seen_signatures[-1]
 
     monkeypatch.setattr(progress, "iteration_signature", record_signature)
-    monkeypatch.setattr(conductor, "iteration_signature", record_signature, raising=False)
+    monkeypatch.setattr(
+        conductor, "iteration_signature", record_signature, raising=False
+    )
 
     spawner = StubSpawner(repo)
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script(
         "implementer",
         1,
-        lambda req, r: (_stage(r, "src/a.py", "x=2\n"), _impl_report(1, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=2\n"), _impl_report(1, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
     result = conduct(
@@ -2061,7 +2318,9 @@ def test_precommit_hook_stall_fires_bound(repo, monkeypatch: pytest.MonkeyPatch)
     assert len(seen_signatures) == 2
 
 
-def test_precommit_hook_garbled_output_uses_empty_failing_tests(repo, monkeypatch: pytest.MonkeyPatch):
+def test_precommit_hook_garbled_output_uses_empty_failing_tests(
+    repo, monkeypatch: pytest.MonkeyPatch
+):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     hook = repo / ".git" / "hooks" / "pre-commit"
     hook.write_text("#!/bin/sh\necho '@@@ not hook id output @@@' >&2\nexit 1\n")
@@ -2077,13 +2336,17 @@ def test_precommit_hook_garbled_output_uses_empty_failing_tests(repo, monkeypatc
         return "diff-only"
 
     monkeypatch.setattr(progress, "iteration_signature", assert_empty_tests)
-    monkeypatch.setattr(conductor, "iteration_signature", assert_empty_tests, raising=False)
+    monkeypatch.setattr(
+        conductor, "iteration_signature", assert_empty_tests, raising=False
+    )
 
     spawner = StubSpawner(repo)
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (_stage(r, "src/a.py", "x=1\n"), _impl_report(0, ["src/a.py"]))[
+            1
+        ],
     )
     spawner.script("implementer", 1, lambda req, r: _impl_report(1, ["src/a.py"]))
     spawner.script("test-writer", 0, lambda req, r: _test_report())
@@ -2138,7 +2401,9 @@ def test_false_or_zero_incompatible_marker_passes(marker):
     assert migrated["schema_version"] == conductor.STATE_SCHEMA_VERSION
 
 
-def test_unknown_schema_version_99_loader_warns_once(capsys: pytest.CaptureFixture[str]):
+def test_unknown_schema_version_99_loader_warns_once(
+    capsys: pytest.CaptureFixture[str],
+):
     state = _bound_state() | {"schema_version": 99}
     monkeypatch_msg = "_UNKNOWN_SCHEMA_VERSION_WARNED"
     setattr(conductor, monkeypatch_msg, False)
@@ -2146,9 +2411,12 @@ def test_unknown_schema_version_99_loader_warns_once(capsys: pytest.CaptureFixtu
     loaded = conductor._normalize_loaded_state(conductor._migrate_loaded_state(state))
 
     assert loaded["schema_version"] == conductor.STATE_SCHEMA_VERSION
-    assert capsys.readouterr().err.count(
-        "state file written by newer schema_version=99; reading known fields only"
-    ) == 1
+    assert (
+        capsys.readouterr().err.count(
+            "state file written by newer schema_version=99; reading known fields only"
+        )
+        == 1
+    )
 
 
 def test_unknown_schema_version_warning_suppressed_on_second_load_same_process(
@@ -2160,9 +2428,12 @@ def test_unknown_schema_version_warning_suppressed_on_second_load_same_process(
     conductor._normalize_loaded_state(conductor._migrate_loaded_state(dict(state)))
     conductor._normalize_loaded_state(conductor._migrate_loaded_state(dict(state)))
 
-    assert capsys.readouterr().err.count(
-        "state file written by newer schema_version=99; reading known fields only"
-    ) == 1
+    assert (
+        capsys.readouterr().err.count(
+            "state file written by newer schema_version=99; reading known fields only"
+        )
+        == 1
+    )
 
 
 def test_unknown_schema_version_warning_refires_after_resume(tmp_path: Path):
@@ -2181,10 +2452,16 @@ def test_unknown_schema_version_warning_refires_after_resume(tmp_path: Path):
         """
     )
 
-    first = subprocess.run(["python", "-c", script], capture_output=True, text=True, check=True)
-    second = subprocess.run(["python", "-c", script], capture_output=True, text=True, check=True)
+    first = subprocess.run(
+        ["python", "-c", script], capture_output=True, text=True, check=True
+    )
+    second = subprocess.run(
+        ["python", "-c", script], capture_output=True, text=True, check=True
+    )
 
-    expected = "state file written by newer schema_version=99; reading known fields only"
+    expected = (
+        "state file written by newer schema_version=99; reading known fields only"
+    )
     assert expected in first.stderr
     assert expected in second.stderr
 
@@ -2227,7 +2504,9 @@ def test_cross_runtime_schema_divergence_phases_1_2_both_load_each_other(repo):
 
     for state_author, schema_version in [("claude", 1), ("codex", 2)]:
         loaded = conductor._normalize_loaded_state(
-            conductor._migrate_loaded_state(base | {"state_author": state_author, "schema_version": schema_version})
+            conductor._migrate_loaded_state(
+                base | {"state_author": state_author, "schema_version": schema_version}
+            )
         )
         assert loaded["state_author"] == state_author
         assert loaded["stall_signatures"] == ["a"]
@@ -2241,7 +2520,9 @@ def test_state_path_includes_runtime_author(repo):
 
     assert state_path.name.startswith("state-codex-")
     assert state_path.suffix == ".json"
-    assert state_path.with_suffix(state_path.suffix + ".lock").name.startswith("state-codex-")
+    assert state_path.with_suffix(state_path.suffix + ".lock").name.startswith(
+        "state-codex-"
+    )
 
 
 def test_legacy_shared_state_does_not_skip_other_runtime(repo):
@@ -2275,12 +2556,20 @@ def test_legacy_shared_state_does_not_skip_other_runtime(repo):
     spawner.script(
         "implementer",
         0,
-        lambda req, r: (_stage(r, "src/a.py", "x = 1\n"), _impl_report(0, ["src/a.py"]))[1],
+        lambda req, r: (
+            _stage(r, "src/a.py", "x = 1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
     )
     spawner.script("test-writer", 0, lambda req, r: _test_report())
 
     result = conduct(
-        ConductOptions(plan_path=plan, repo_root=repo, spawn=spawner, test_runner=StubTestRunner(queue=[_passing()]))
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
     )
 
     assert result.status == "awaiting_user"
@@ -2292,7 +2581,9 @@ def test_legacy_shared_state_does_not_skip_other_runtime(repo):
 def test_runtime_specific_locks_do_not_collide(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     codex_state = _state_file(repo, plan)
-    claude_state = repo / ".conduct" / codex_state.name.replace("state-codex-", "state-claude-", 1)
+    claude_state = (
+        repo / ".conduct" / codex_state.name.replace("state-codex-", "state-claude-", 1)
+    )
 
     assert codex_state != claude_state
     with StateLock(codex_state.with_suffix(codex_state.suffix + ".lock")):
@@ -2322,7 +2613,9 @@ def test_stall_threshold_greater_than_max_iterations_warns(
 def test_stall_threshold_greater_than_max_iterations_legacy_dominates(repo):
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
     state = _bound_state()
-    opts = _phase1_opts(repo, plan, max_iterations=3, max_iterations_ceiling=8, stall_threshold=5)
+    opts = _phase1_opts(
+        repo, plan, max_iterations=3, max_iterations_ceiling=8, stall_threshold=5
+    )
 
     for _ in range(3):
         assert _check_iteration_bound(state, opts, "same") is None

@@ -12,10 +12,9 @@ def _justfile_has_ci(path: Path) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("ci:"):
+        if line.startswith("ci:"):
             return True
-        if stripped.startswith("ci ") and ":" in stripped.split(" ", 1)[-1]:
+        if line.startswith("ci ") and ":" in line.split(" ", 1)[-1]:
             return True
     return False
 
@@ -26,8 +25,7 @@ def _makefile_has_ci(path: Path) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        stripped = line.lstrip()
-        if stripped.startswith("ci:") or stripped.startswith("ci :"):
+        if line.startswith("ci:") or line.startswith("ci :"):
             return True
     return False
 

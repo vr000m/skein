@@ -114,7 +114,7 @@ Preflight does **not** automatically execute repo-defined lint entrypoints. If t
 
 Older shared names (`state-<plan-stem>-<digest>.json` and `state-<plan-stem>.json`) are bootstrap-only/read-only. Codex may copy static plan metadata from them when creating its own runtime-specific state, but it must not write them and must not treat their completed phases as Codex-completed mirror work.
 
-- If present and `--resume`: load only when `state.plan_path` still matches the current reviewed plan. Migrate/validate the stored state shape first, run the review-marker preflight, and if the marker is auto-refreshed on resume, resync `state.plan_content_hash` before comparing state to the plan. On match, restore any recorded paused stash, continue from `phase_index`, and refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
+- If present and `--resume`: load only when `state.plan_path` still matches the current reviewed plan. Migrate/validate the stored state shape first, run the review-marker preflight, parse the phase list, and verify every stored `completed_phases[*].label/title` still matches the parsed phase prefix. Only after that prefix check may a refreshed marker resync `state.plan_content_hash`. On match, restore any recorded paused stash, continue from `phase_index`, and refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
 - If present and the stored plan path/hash do not match the current reviewed plan after resume preflight resync: hard-stop and tell the user to `--abort-run` before starting over.
 - If present without `--resume`: warn, print state summary, suggest `--resume` or `--abort-run`, exit without entering the phase loop.
 - If absent: initialise with `plan_content_hash = compute_plan_hash(plan)`, `base_sha = git rev-parse HEAD`, `phase_index = 0`, `current_phase_title = ""`, `last_summary = ""`, `iteration_count = 0`, `stall_signatures = []`, `stall_count = 0`, `autonomous = false`, `plan_id = sha1(abs(plan_path))[:12]`, `state_author = "codex"`, `schema_version = 2`, `status = "running"`.
@@ -284,7 +284,7 @@ No keyword heuristic watches for "proceed" — the user copies the printed comma
 
 ## CI Parity Gate
 
-After the final phase boundary commit, the conductor can dispatch a one-shot CI-parity worker that runs the repo's local CI entrypoint against the working tree. The gate fires only when `conduct()` would otherwise return `status=complete`; it never runs after an intermediate phase. The persisted `ci_parity_dispatched` flag prevents re-dispatch after a result is consumed.
+After the final phase boundary commit, the conductor can dispatch a one-shot CI-parity gate that runs the repo's local CI entrypoint against the working tree. The gate fires only when `conduct()` would otherwise return `status=complete`; it never runs after an intermediate phase. The persisted `ci_parity_dispatched` flag prevents re-dispatch after a result is consumed.
 
 ### Activation
 
@@ -305,17 +305,17 @@ Detection is local-only:
 
 ### Main-Runtime Dispatch Protocol
 
-Conduct does not call worker tools from inside `conductor.py`. At end of plan, `_dispatch_ci_parity_if_eligible` sets `state["status"] = "awaiting_ci_parity"`, writes `ci_parity_request`, `ci_parity_request_written_at`, and `ci_parity_missing_resume_count`, persists state, then returns `ConductResult(status="awaiting_ci_parity", next_action="dispatch_ci_parity", request=<dict>)`.
+Conduct does not call runtime tools from inside `conductor.py`. At end of plan, `_dispatch_ci_parity_if_eligible` sets `state["status"] = "awaiting_ci_parity"`, writes `ci_parity_request`, `ci_parity_request_written_at`, and `ci_parity_missing_resume_count`, persists state, then returns `ConductResult(status="awaiting_ci_parity", next_action="dispatch_ci_parity", request=<dict>)`.
 
-The main Codex runtime orchestrator renders `ci-parity-prompt.md`, dispatches the worker with `spawn_agent` / `wait_agent` / `close_agent`, captures the final fenced JSON block, and persists it to `<repo-root>/.conduct/ci-parity-result-<plan-id>.json` by calling `_write_ci_parity_result(path, payload_text)`. That adapter validates the target as a direct child of `.conduct/`, then delegates to `_atomic_write_result_file`, which uses `mkstemp`, `fsync`, and `os.replace`. `_safe_write_text` is reserved for state files; it must not be used for CI-parity result persistence because a partial result write would be read as malformed JSON on resume.
+The main Codex runtime orchestrator executes `request["ci_cmd"]` directly from `request["repo_root"]`, captures the numeric exit code, duration, and combined output, derives `status` from the exit code (`0` → `passed`, non-zero/timeout/error → `failed`), then writes the JSON result to `<repo-root>/.conduct/ci-parity-result-<plan-id>.json` by calling `_write_ci_parity_result(path, payload_text)`. An LLM worker may summarize already-captured output, but it must not be the authority for pass/fail. The write adapter validates the target as a direct child of `.conduct/`, then delegates to `_atomic_write_result_file`, which uses `mkstemp`, `fsync`, and `os.replace`. `_safe_write_text` is reserved for state files; it must not be used for CI-parity result persistence because a partial result write would be read as malformed JSON on resume.
 
 ### Five-Sub-Case Resume Preflight
 
 When state is `awaiting_ci_parity`, resume checks the result file:
 
-1. Present, valid, `plan_id` matches, `request_written_at_unix` matches, `command_run` matches the requested `ci_cmd`, and mtime is not older than `ci_parity_request_written_at`: consume via `_consume_ci_parity_result`; `passed` becomes `complete`, `failed` becomes `ci_failed`; move the file to `ci-parity-result-<plan-id>.consumed-<unix>.json`.
+1. Present, regular non-symlink file, valid, `plan_id` matches, `request_written_at_unix` matches, `command_run` matches the requested `ci_cmd`, and mtime from the same opened file descriptor is not older than `ci_parity_request_written_at`: consume via `_consume_ci_parity_result`; `passed` becomes `complete`, `failed` becomes `ci_failed`; move the file to `ci-parity-result-<plan-id>.consumed-<unix>.json`.
 2. Present but stale by mtime, mismatched `plan_id`, mismatched `request_written_at_unix`, or mismatched `command_run`: ignore it, reset `ci_parity_missing_resume_count`, and re-emit `awaiting_ci_parity` with the same request.
-3. Present but malformed or schema-invalid: set `schema_error` with blocker `ci-parity result file malformed at <path>` and preserve the file.
+3. Present but unreadable, symlink/non-regular, over the size cap, malformed, or schema-invalid: set `schema_error` with blocker `ci-parity result file malformed/unreadable at <path>` and preserve the file.
 4. Active file absent but a matching `.consumed-<unix>.json` has the same `plan_id`, `request_written_at_unix`, and `command_run`: recover by calling `_consume_ci_parity_result` on the consumed file and skip the move.
 5. Active file absent and no matching consumed file exists: increment `ci_parity_missing_resume_count`; after 3 consecutive absent observations, block with `ci-parity result file missing after 3 resume attempts; pass --skip-ci-parity to abandon gate`.
 
@@ -323,7 +323,7 @@ The missing counter resets to 0 on any non-absent outcome: consume, stale-ignore
 
 ### Test/Production Parity
 
-Tests may inject `opts.ci_parity_spawn`, which returns the CI-parity worker JSON synchronously. Production uses the result-file handoff. Both paths parse `schema.parse_report(..., "ci-parity")`, validate the worker report against the conductor request, and call `_consume_ci_parity_result`, so the state mutation path is shared.
+Tests may inject `opts.ci_parity_spawn`, which returns CI-parity JSON synchronously. Production uses the result-file handoff from direct main-runtime command execution. Both paths parse `schema.parse_report(..., "ci-parity")`, validate the report against the conductor request, and call `_consume_ci_parity_result`, so the state mutation path is shared.
 
 ## Fallbacks
 
@@ -388,7 +388,7 @@ Progress fields:
 - `state_author` is `"codex"` for Codex-owned runtime state.
 - `ci_parity_request` stores `{plan_path, base_sha, head_sha, ci_entrypoint_kind, ci_cmd, repo_root, plan_id, request_written_at_unix}` for an in-flight gate.
 - `ci_parity_request_written_at` is the dispatch timestamp used for result-file stale checks.
-- `ci_parity_result` stores the parsed CI-parity worker report after consume.
+- `ci_parity_result` stores the parsed CI-parity report after consume.
 - `ci_parity_dispatched` suppresses duplicate gate dispatch after consume or skip.
 - `ci_parity_missing_resume_count` counts consecutive absent-result resume observations and resets on any non-absent outcome.
 

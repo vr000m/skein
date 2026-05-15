@@ -1334,6 +1334,53 @@ def test_resume_after_above_marker_edit_refreshes_marker_and_resyncs_state_hash(
     assert "auto-refreshed on resume" in capsys.readouterr().err
 
 
+def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
+    plan = _scratch_plan(repo, PLAN_TWO_PHASES)
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, "src/a.py", "x=1\n"),
+            _impl_report(0, ["src/a.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+
+    first = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+        )
+    )
+    assert first.status == "awaiting_user"
+
+    plan.write_text(
+        plan.read_text().replace(
+            "### Phase 1: First",
+            "### Phase 0: Inserted\n\n- [ ] new task\n\n### Phase 1: First",
+            1,
+        )
+    )
+    write_marker(plan)
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(),
+            resume=True,
+        )
+    )
+
+    assert result.status == "blocked"
+    assert "completed phase prefix" in result.summary
+    assert "position 1" in (result.diagnostic or "")
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: progress-aware iteration bound + forward-compat loader
 # ---------------------------------------------------------------------------

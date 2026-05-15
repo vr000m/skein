@@ -105,7 +105,7 @@ This prevents subagent fix-loops from chasing issues they didn't introduce.
 
 `<repo-root>/.conduct/state-<plan-id>.json`, where repo-root comes from `git rev-parse --show-toplevel` and `plan-id` is the plan basename plus a short SHA-1 digest of its repo-relative path (e.g., `state-foo-3a1f9b8c4d2e.json`). The digest disambiguates plans that share a basename across different directories. A pre-digest state file (`state-<basename>.json`) is automatically migrated to the digest-suffixed name on the next load when its recorded `plan_path` matches the active plan.
 
-- If present and `--resume`: load and continue from `phase_index`. Refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
+- If present and `--resume`: load and continue only after `state.plan_path` matches the current plan and every stored `completed_phases[*].label/title` still matches the parsed phase prefix. This prefix check runs before any refreshed marker resyncs `state.plan_content_hash`, so a reviewed structural edit cannot silently skip or repeat completed work. Refresh `state.resume_base_sha = git rev-parse HEAD` so the rogue-commit check (Step 8) treats any user commits made during handback as the new phase baseline rather than as subagent commits.
 - If present without `--resume`: warn, print state summary, suggest `--resume` or `--abort-run`, exit.
 - If absent: initialise with `base_sha = git rev-parse HEAD`, `phase_index = 0`, `iteration_count = 0`, `status = "running"`.
 
@@ -242,7 +242,7 @@ After tests pass (or were skipped with warning):
 
 **Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
-**Pre-commit hook scope.** `scripts/check-prompt-parity.sh` is verified to be invoked only from `justfile` recipes, never from `.pre-commit-config.yaml` or any other hook chain. The Phase 3 impl commit therefore lands cleanly with hooks enabled, even though `.codex/skills/conduct/ci-parity-prompt.md` is intentionally absent until the codex-side mirror commit lands. Contributors invoking `just check-prompt-parity` during the lagging-mirror window can pass `CONDUCT_LAGGING_MIRROR_OK="ci-parity-prompt.md"` to get a green exit with a stderr annotation.
+**Pre-commit hook scope.** `scripts/check-prompt-parity.sh` is verified to be invoked only from `justfile` recipes, never from `.pre-commit-config.yaml` or any other hook chain. The Phase 3 impl commit therefore lands cleanly with hooks enabled, even though `.codex/skills/conduct/ci-parity-prompt.md` is intentionally absent until the codex-side mirror commit lands. Contributors invoking `just check-prompt-parity` during the lagging-mirror window can pass `CONDUCT_LAGGING_MIRROR_OK="conduct/ci-parity-prompt.md"` to get a green exit with a stderr annotation.
 
 ### Step 9 — Phase transition
 
@@ -289,7 +289,7 @@ No keyword heuristic watches for "proceed" — the user copies the printed comma
 
 ## CI Parity Gate
 
-After the final phase boundary commit, the conductor can dispatch a one-shot CI-parity worker that runs the repo's local CI entrypoint against the working tree. This catches drift between "tests pass per phase" and "what the CI matrix actually runs". The gate is **single-exit**: it fires only when `conduct()` would otherwise return `status=complete`, never on an intermediate `--resume`. Re-firing is suppressed by the persisted `ci_parity_dispatched` flag.
+After the final phase boundary commit, the conductor can dispatch a one-shot CI-parity gate that runs the repo's local CI entrypoint against the working tree. This catches drift between "tests pass per phase" and "what the CI matrix actually runs". The gate is **single-exit**: it fires only when `conduct()` would otherwise return `status=complete`, never on an intermediate `--resume`. Re-firing is suppressed by the persisted `ci_parity_dispatched` flag.
 
 ### Activation
 
@@ -306,15 +306,15 @@ The gate resolves the CI command in this order. Workflows under `.github/workflo
 3. `npm run ci` — `package.json` with a `"ci"` script entry.
 4. `cargo test --all` — `Cargo.toml` at repo root.
 
-`--ci-cmd CMD` overrides detection unconditionally. When detection returns nothing AND no `--ci-cmd` override is set, the gate logs a one-shot warning and finishes with `status=complete` (workflow-less skip — never `ci_failed`).
+`--ci-cmd CMD` overrides detection unconditionally. When detection returns nothing AND no `--ci-cmd` override is set, the gate blocks with `ci-parity entrypoint not detected; pass --ci-cmd or --skip-ci-parity`.
 
 ### Main-runtime dispatch protocol
 
-In production the conductor does NOT call the runtime worker tool directly (it has no access to `Agent` from inside the Python helper). Dispatch is main-runtime-orchestrated through a single result-persistence adapter, in this sequence:
+In production the conductor does NOT call runtime tools directly from inside the Python helper. Dispatch is main-runtime-orchestrated through a single result-persistence adapter, in this sequence:
 
 1. The conductor computes `plan_id = sha1(abs(plan_path))[:12]` via `_compute_cross_runtime_plan_id`, sets `state["ci_parity_request"]` (with `plan_id` and a `request_written_at_unix` timestamp), `state["ci_parity_request_written_at"]`, initialises `state["ci_parity_missing_resume_count"] = 0`, sets `state["status"] = "awaiting_ci_parity"`, persists state, releases the lock by exiting `with lock:`, and returns `ConductResult(status="awaiting_ci_parity", next_action="dispatch_ci_parity", request=<dict>)`.
-2. The main runtime orchestrator dispatches the ci-parity worker with the harness-native mechanism (Claude: `Agent` tool; Codex: `spawn_agent` / `wait_agent`), feeds it the rendered `ci-parity-prompt.md`, captures the final fenced `json` block.
-3. The orchestrator MUST persist the worker JSON to `<repo-root>/.conduct/ci-parity-result-<plan-id>.json` via the conductor-owned `_write_ci_parity_result(path, payload_text)` adapter. The adapter writes to a tmp path then `os.replace` (atomic on POSIX). **Do NOT cite `_safe_write_text` here** — that helper uses `O_TRUNC` and is reserved for state-file writes, where a crash mid-write is acceptable. A partial write of the ci-parity result file would surface as `schema_error` and preserve a corrupt file.
+2. The main runtime orchestrator executes `request["ci_cmd"]` directly from `request["repo_root"]`, captures the numeric exit code, duration, and combined output, and derives `status` from the exit code (`0` → `passed`, non-zero/timeout/error → `failed`). An LLM worker may summarize already-captured output, but it must not be the authority for pass/fail.
+3. The orchestrator MUST persist the JSON report to `<repo-root>/.conduct/ci-parity-result-<plan-id>.json` via the conductor-owned `_write_ci_parity_result(path, payload_text)` adapter. The adapter writes to a tmp path then `os.replace` (atomic on POSIX). **Do NOT cite `_safe_write_text` here** — that helper uses `O_TRUNC` and is reserved for state-file writes, where a crash mid-write is acceptable. A partial write of the ci-parity result file would surface as `schema_error` and preserve a corrupt file.
 4. The orchestrator re-invokes `/conduct` with `--resume <plan>`. Preflight observes `awaiting_ci_parity` and runs the five-sub-case branch below.
 
 Conduct itself ensures `.conduct/` exists on the dispatch path (idempotent `mkdir -p`-style) — orchestrators do not have to.
@@ -323,10 +323,10 @@ Conduct itself ensures `.conduct/` exists on the dispatch path (idempotent `mkdi
 
 When state status is `awaiting_ci_parity`, preflight computes `result_path = <repo-root>/.conduct/ci-parity-result-<plan-id>.json` and branches:
 
-1. **Present + valid + matches state** (parses, schema OK, `plan_id` matches, `request_written_at_unix` echoed back matches `state["ci_parity_request"]["request_written_at_unix"]`, mtime ≥ `state["ci_parity_request_written_at"]`) → call `_consume_ci_parity_result(state, opts, report)`. On `passed`: `status=complete`, append summary. On `failed`: `status=ci_failed`, persist `ci_parity_result`, set blocker, handback. Move the file to `ci-parity-result-<plan-id>.consumed-<unix>.json` for post-mortem.
-2. **Present but stale** (any of: `plan_id` disagrees, file mtime older than `ci_parity_request_written_at`, `request_written_at_unix` field mismatches state) → ignore the file, re-emit `awaiting_ci_parity` with the same request (idempotent re-dispatch).
-3. **Present but malformed** (JSON parse fail OR schema validation fail) → `status=schema_error`, blocker `ci-parity result file malformed at <path>`, file preserved for inspection.
-4. **Absent active file BUT matching `.consumed-<unix>.json` exists** whose `request_written_at_unix` equals state's value → TOCTOU recovery: another `--resume` consumed the file already. Run `_consume_ci_parity_result` against the consumed file's payload (canonical state mutation); skip the move (the file is already at the consumed name).
+1. **Present + regular non-symlink + valid + matches state** (parses, schema OK, `plan_id` matches, `request_written_at_unix` echoed back matches `state["ci_parity_request"]["request_written_at_unix"]`, `command_run` matches the stored `ci_cmd`, mtime from the same opened file descriptor ≥ `state["ci_parity_request_written_at"]`) → call `_consume_ci_parity_result(state, opts, report)`. On `passed`: `status=complete`, append summary. On `failed`: `status=ci_failed`, persist `ci_parity_result`, set blocker, handback. Move the file to `ci-parity-result-<plan-id>.consumed-<unix>.json` for post-mortem.
+2. **Present but stale** (any of: `plan_id` disagrees, file mtime older than `ci_parity_request_written_at`, `request_written_at_unix` field mismatches state, `command_run` mismatches state) → ignore the file, re-emit `awaiting_ci_parity` with the same request (idempotent re-dispatch).
+3. **Present but unreadable, symlink/non-regular, over the size cap, malformed, or schema-invalid** → `status=schema_error`, blocker `ci-parity result file malformed/unreadable at <path>`, file preserved for inspection.
+4. **Absent active file BUT matching `.consumed-<unix>.json` exists** whose `plan_id`, `request_written_at_unix`, and `command_run` match state's request → TOCTOU recovery: another `--resume` consumed the file already. Run `_consume_ci_parity_result` against the consumed file's payload (canonical state mutation); skip the move (the file is already at the consumed name).
 5. **Absent** (no consumed match) → `state["ci_parity_missing_resume_count"] += 1`. At ≥3 → handback with blocker `ci-parity result file missing after 3 resume attempts; pass --skip-ci-parity to abandon gate`. Else re-emit `awaiting_ci_parity` with the same request.
 
 **Missing-counter reset rule.** The `ci_parity_missing_resume_count` resets to 0 on *any* non-absent preflight outcome — present-and-consumed (sub-case 1), TOCTOU recovery (sub-case 4), present-but-stale (sub-case 2), or present-but-malformed (sub-case 3). "Consecutive" therefore means "consecutive absent observations, uninterrupted by any other outcome"; a stale-then-absent sequence does not progress toward the 3-strike handback.
@@ -401,7 +401,7 @@ Schema:
 
 - **`ci_parity_request`** — dict with `{plan_path, base_sha, head_sha, ci_entrypoint_kind, ci_cmd, repo_root, plan_id, request_written_at_unix}`. Written on dispatch; read back by preflight to validate the result file (`plan_id` + `request_written_at_unix` echo).
 - **`ci_parity_request_written_at`** — float unix timestamp captured at dispatch. The mtime of the result file MUST be ≥ this value, otherwise the file is classified stale (sub-case 2).
-- **`ci_parity_result`** — parsed CI-parity worker JSON after consume. Persisted on both `passed` (status → `complete`) and `failed` (status → `ci_failed`) outcomes.
+- **`ci_parity_result`** — parsed CI-parity JSON after consume. Persisted on both `passed` (status → `complete`) and `failed` (status → `ci_failed`) outcomes.
 - **`ci_parity_dispatched`** — bool flag preventing the gate from re-dispatching across `--resume` invocations after a successful consume. The single-dispatch invariant lives here.
 - **`ci_parity_missing_resume_count`** — int counter for the five-sub-case absent path. Resets to 0 on ANY non-absent outcome (consume, TOCTOU recovery, stale-ignore, malformed). Hits handback at 3.
 

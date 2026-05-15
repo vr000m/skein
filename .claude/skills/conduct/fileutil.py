@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tempfile
 from pathlib import Path
 
 
 _PLAN_ID_RE = re.compile(r"^[a-f0-9]{12}$")
+MAX_RESULT_FILE_BYTES = 1024 * 1024
 
 
 class InvalidPlanIdError(ValueError):
@@ -98,6 +100,31 @@ def atomic_write_result_file(path: Path, text: str) -> None:
         except OSError:
             pass
         raise
+
+
+def read_result_file(
+    path: Path, max_bytes: int = MAX_RESULT_FILE_BYTES
+) -> tuple[str, float]:
+    """Read a ci-parity result file through a non-following fd.
+
+    Returns ``(text, mtime)`` from the same opened file descriptor, avoiding
+    the separate ``is_symlink`` / ``read_text`` / ``stat`` race. The size cap
+    prevents a repo-local process from forcing unbounded memory use on resume.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise OSError(f"not a regular file: {path}")
+        if info.st_size > max_bytes:
+            raise OSError(f"ci-parity result file exceeds {max_bytes} bytes: {path}")
+        data = os.read(fd, max_bytes + 1)
+        if len(data) > max_bytes:
+            raise OSError(f"ci-parity result file exceeds {max_bytes} bytes: {path}")
+        return data.decode("utf-8"), info.st_mtime
+    finally:
+        os.close(fd)
 
 
 def ensure_under_directory(path: Path, root: Path) -> None:
