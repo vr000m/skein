@@ -475,6 +475,24 @@ def _safe_write_text(path: Path, text: str) -> None:
         os.close(fd)
 
 
+def _safe_read_state_text(path: Path) -> str:
+    """Read the main state file without following symlinks, capped at 1 MiB."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise RuntimeError(f"refusing to read state file at {path}: {exc}") from exc
+    try:
+        stat = os.fstat(fd)
+        if stat.st_size > _MAX_LEGACY_STATE_BYTES:
+            raise RuntimeError(
+                f"state file at {path} exceeds {_MAX_LEGACY_STATE_BYTES}-byte cap"
+            )
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES).decode("utf-8")
+    finally:
+        os.close(fd)
+
+
 def _conduct_path_result(status: str, summary: str, path: Path) -> ConductResult:
     return ConductResult(
         status=status,
@@ -619,7 +637,7 @@ def _load_or_init_state(opts: ConductOptions, plan_hash: str) -> tuple[dict, boo
     sp = _state_path(opts)
     if sp.exists():
         state = _normalize_loaded_state(
-            _migrate_loaded_state(json.loads(sp.read_text()))
+            _migrate_loaded_state(json.loads(_safe_read_state_text(sp)))
         )
         if not state.get("plan_id"):
             state["plan_id"] = _compute_cross_runtime_plan_id(opts.plan_path)
@@ -995,10 +1013,6 @@ def _preflight_ci_parity_resume(
             summary=state["blocker"],
             diagnostic=str(exc),
         )
-    request_written_at = request.get("request_written_at_unix") or state.get(
-        "ci_parity_request_written_at"
-    )
-
     if not opts.resume and not opts.skip_ci_parity:
         return ConductResult(
             status="blocked",
@@ -1029,10 +1043,9 @@ def _preflight_ci_parity_resume(
 
     result_path = _ci_parity_result_path(opts, plan_id)
     try:
-        raw, result_mtime = read_result_file(result_path)
+        raw, _result_mtime = read_result_file(result_path)
     except FileNotFoundError:
         raw = None
-        result_mtime = 0.0
     except (OSError, UnicodeDecodeError) as exc:
         state["ci_parity_missing_resume_count"] = 0
         state["status"] = "schema_error"
@@ -1061,13 +1074,9 @@ def _preflight_ci_parity_resume(
                 diagnostic=str(exc),
             )
 
+        # Staleness is decided only by request-binding fields echoed in the
+        # report. Filesystem mtimes are too coarse on HFS+ and some NFS mounts.
         stale = _ci_parity_request_validation_error(request, report) is not None
-        if request_written_at is not None:
-            try:
-                if result_mtime < float(request_written_at):
-                    stale = True
-            except (TypeError, ValueError):
-                stale = True
         if stale:
             state["ci_parity_missing_resume_count"] = 0
             _persist_state(opts, state)
@@ -1246,8 +1255,7 @@ def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("lint:") or stripped.startswith("lint :"):
+            if line.startswith("lint:") or line.startswith("lint :"):
                 return ["make", "lint"]
 
     pkg = repo_root / "package.json"
@@ -1325,8 +1333,7 @@ def _repo_default_test_cmd(repo_root: Path) -> Optional[str]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("test:") or stripped.startswith("test :"):
+            if line.startswith("test:") or line.startswith("test :"):
                 return "make test"
     return None
 
@@ -1774,7 +1781,7 @@ def conduct(opts: ConductOptions) -> ConductResult:
         if sp.exists():
             try:
                 state = _normalize_loaded_state(
-                    _migrate_loaded_state(json.loads(sp.read_text()))
+                    _migrate_loaded_state(json.loads(_safe_read_state_text(sp)))
                 )
             except RuntimeError as exc:
                 return ConductResult(
@@ -2058,7 +2065,7 @@ def pause_phase(opts: ConductOptions) -> ConductResult:
         return ConductResult(status="awaiting_user", state={}, summary="no active run")
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
-        state = json.loads(sp.read_text())
+        state = json.loads(_safe_read_state_text(sp))
         label = state.get("current_phase_title", "?")
         msg = f"conduct-pause-phase-{label}"
         before_stash_rev = _latest_stash_rev(opts.repo_root)

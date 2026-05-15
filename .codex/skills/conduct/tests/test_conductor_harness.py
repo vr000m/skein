@@ -1174,6 +1174,16 @@ def test_conduct_refuses_symlinked_state_path(repo):
     assert spawner.calls == []
 
 
+def test_safe_read_state_text_refuses_symlink(tmp_path):
+    state_path = tmp_path / "state.json"
+    victim = tmp_path / "victim.json"
+    victim.write_text('{"status": "running"}\n')
+    state_path.symlink_to(victim)
+
+    with pytest.raises(RuntimeError):
+        conductor._safe_read_state_text(state_path)
+
+
 def test_rogue_commit_detection_does_not_stack_a_second_commit(repo):
     """Subagent commits during its own work; conductor must detect and refuse."""
     plan = _scratch_plan(repo, PLAN_ONE_PHASE)
@@ -1540,6 +1550,11 @@ def test_repo_default_test_cmd_picks_make_test_target(tmp_path):
     assert _repo_default_test_cmd(tmp_path) == "make test"
 
 
+def test_repo_default_test_cmd_ignores_indented_make_test_target(tmp_path):
+    (tmp_path / "Makefile").write_text("build:\n\ttest:\n\t\tpytest -q\n")
+    assert _repo_default_test_cmd(tmp_path) is None
+
+
 def test_repo_default_test_cmd_probe_order_prefers_package_json(tmp_path):
     """All three present → npm wins per SKILL.md Step 5."""
     (tmp_path / "package.json").write_text('{"scripts": {"test": "jest"}}\n')
@@ -1688,6 +1703,12 @@ def test_detect_lint_command_skips_pre_commit_when_binary_missing(
     (tmp_path / "Makefile").write_text("lint:\n\tflake8\n")
     monkeypatch.setattr("conduct.conductor.shutil.which", _which_stub({"make"}))
     assert detect_lint_command(tmp_path) == ["make", "lint"]
+
+
+def test_detect_lint_command_ignores_indented_make_lint_target(tmp_path, monkeypatch):
+    (tmp_path / "Makefile").write_text("build:\n\tlint:\n\t\tflake8\n")
+    monkeypatch.setattr("conduct.conductor.shutil.which", _which_stub({"make"}))
+    assert detect_lint_command(tmp_path) is None
 
 
 def test_detect_lint_command_falls_through_to_npm_run_lint(tmp_path, monkeypatch):
