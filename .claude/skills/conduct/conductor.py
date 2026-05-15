@@ -561,6 +561,31 @@ def _safe_write_text(path: Path, text: str) -> None:
         os.close(fd)
 
 
+def _safe_read_state_text(path: Path) -> str:
+    """Open the main state file refusing to follow symlinks, capped at
+    ``_MAX_LEGACY_STATE_BYTES``. Defence-in-depth against a symlink swapped in
+    between the pre-lock ``_ensure_safe_fs_path`` check and the read: even
+    though the state-lock window narrows the race, a TOCTOU swap inside it
+    would otherwise let an attacker redirect the read to an arbitrary file.
+    Raises ``RuntimeError`` on symlink/OS failure or size cap; the caller is
+    expected to surface the error rather than fall through to ``json.loads``
+    on bytes from an unrelated file."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise RuntimeError(f"refusing to read state file at {path}: {exc}") from exc
+    try:
+        st = os.fstat(fd)
+        if st.st_size > _MAX_LEGACY_STATE_BYTES:
+            raise RuntimeError(
+                f"state file at {path} exceeds {_MAX_LEGACY_STATE_BYTES}-byte cap"
+            )
+        return os.read(fd, _MAX_LEGACY_STATE_BYTES).decode("utf-8")
+    finally:
+        os.close(fd)
+
+
 def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
     """Open the legacy state file refusing to follow symlinks, capped at
     `_MAX_LEGACY_STATE_BYTES`. Returns None if the file is missing, a symlink,
@@ -749,7 +774,7 @@ def _load_or_init_state(opts: ConductOptions) -> dict:
     _migrate_legacy_state_file(opts)
     sp = _state_path(opts)
     if sp.exists():
-        state = json.loads(sp.read_text())
+        state = json.loads(_safe_read_state_text(sp))
         # Forward-compat hard-stop: a future schema may set
         # ``incompatible_with_pre_vN: true`` to signal that the file MUST NOT be
         # read by a loader older than vN. Honour it regardless of schema_version
@@ -1221,10 +1246,6 @@ def _preflight_ci_parity_resume(
         or state.get("plan_id")
         or _compute_cross_runtime_plan_id(opts.plan_path)
     )
-    request_written_at = request.get("request_written_at_unix") or state.get(
-        "ci_parity_request_written_at"
-    )
-
     # Non-resume invocation against awaiting_ci_parity state: hard-fail per
     # the lock-release-contention contract.
     if not opts.resume and not opts.skip_ci_parity:
@@ -1261,10 +1282,9 @@ def _preflight_ci_parity_resume(
     result_path = _ci_parity_result_path(opts, plan_id)
 
     try:
-        raw, result_mtime = read_result_file(result_path)
+        raw, _result_mtime = read_result_file(result_path)
     except FileNotFoundError:
         raw = None
-        result_mtime = 0.0
     except (OSError, UnicodeDecodeError) as exc:
         state["ci_parity_missing_resume_count"] = 0
         state["status"] = "schema_error"
@@ -1295,13 +1315,15 @@ def _preflight_ci_parity_resume(
                 diagnostic=str(exc),
             )
         # Stale checks. Any non-absent outcome resets the missing counter.
+        # Staleness is decided by request-binding fields
+        # (``plan_id`` / ``request_written_at_unix`` / ``command_run`` echoed
+        # in the report) via ``_ci_parity_request_validation_error``. The
+        # filesystem mtime is intentionally NOT consulted: coarse-mtime
+        # filesystems (HFS+, some NFS) round to whole seconds and a worker
+        # that finishes within the same second as the request emission can
+        # produce an mtime that compares equal-or-less, flagging a valid
+        # result as stale. Field-equality is the only correct discriminator.
         stale = _ci_parity_request_validation_error(request, report) is not None
-        if request_written_at is not None and result_mtime:
-            try:
-                if result_mtime < float(request_written_at):
-                    stale = True
-            except (TypeError, ValueError):
-                stale = True
         if stale:
             # Sub-case 2: ignore, re-emit awaiting_ci_parity.
             state["ci_parity_missing_resume_count"] = 0
@@ -1410,8 +1432,10 @@ def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("lint:") or stripped.startswith("lint :"):
+            # Column-zero check only — matches the `_makefile_has_ci` convention
+            # so `lint:` tokens inside recipe bodies or define/endef blocks are
+            # not mistaken for a real target.
+            if line.startswith("lint:") or line.startswith("lint :"):
                 return ["make", "lint"]
 
     pkg = repo_root / "package.json"
@@ -1487,8 +1511,8 @@ def _repo_default_test_cmd(repo_root: Path) -> Optional[str]:
         except OSError:
             text = ""
         for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("test:") or stripped.startswith("test :"):
+            # Column-zero only; see `detect_lint_command` for the rationale.
+            if line.startswith("test:") or line.startswith("test :"):
                 return "make test"
     return None
 
@@ -2138,7 +2162,7 @@ def pause_phase(opts: ConductOptions) -> ConductResult:
         return ConductResult(status="awaiting_user", state={}, summary="no active run")
     lock = StateLock(str(sp.with_suffix(sp.suffix + ".lock")))
     with lock:
-        state = json.loads(sp.read_text())
+        state = json.loads(_safe_read_state_text(sp))
         label = state.get("current_phase_title", "?")
         msg = f"conduct-pause-phase-{label}"
         _git(["stash", "push", "-u", "-m", msg], opts.repo_root, check=False)
