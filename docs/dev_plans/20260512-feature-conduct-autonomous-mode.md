@@ -5,7 +5,7 @@
 **Priority**: Medium
 **Branch**: feature/conduct-autonomous-mode
 **Created**: 2026-05-12
-**Last revised**: 2026-05-14 (all four phases landed; acceptance gate green; PR #22 opened)
+**Last revised**: 2026-05-15 (all four phases landed; acceptance gate green; PR #22 hardening pass complete)
 
 ## Objective
 
@@ -391,6 +391,12 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-no-entrypo
 - **SKILL.md prose tripped `test_skill_spawn_grep`.** The Phase 3 implementer wrote `` `/conduct --resume <plan>` `` in the new "CI Parity Gate" section; the spawn-grep regex requires `` `/conduct` `` with arguments **outside** the backticks. Reworded four lines to `` `/conduct` `` with args after the close-backtick. No semantic change.
 - **Promote step deferred.** Phase 4's `MANAGED_SKILLS="conduct" scripts/promote-skills.sh --yes && just check-sync` was intentionally not run during the conduct walk — it is destructive (rsync `--delete` to `~/.claude/` and `~/.codex/`, plus overwrite of global `CLAUDE.md` / `AGENTS.md`). Pre-promote diff was clean (additive only, or stale `__pycache__/*.pyc`; both `.md` files identical between repo and globals); the operator runs the promote manually after PR merge.
 - **Post-review hardening delta after Claude commit `14157bb`.** Claude review found four follow-ups after the first Codex hardening pass. Resolution: Codex mirrored the durable fixes in a boundary commit: Makefile `lint:` / `test:` probes now require column-zero targets; CI parity preflight no longer treats result-file mtime as a staleness signal and relies on request-bound `plan_id` / `request_written_at_unix` / `command_run`; Codex main-state reads now use `_safe_read_state_text` (`O_NOFOLLOW` + size cap) in both normal load and `--pause-phase`; and focused Codex regression tests cover the column-zero probes and symlink-refusing state reader.
+- **Second hardening round (PR #22 review).** A `/review` pass on the post-`7f05a56` tree surfaced two real findings and two suggestions on the Claude side. Resolution landed across four commits:
+  - `6fe882a` — Codex-side deep-review follow-ups (completed-phase-prefix check on resume, explicit `ci_failed` retry path in `_dispatch_ci_parity_if_eligible`, switch to `read_result_file` returning mtime alongside content to close the stat/read TOCTOU).
+  - `14157bb` — Claude-side mirror of the four fixes: drop `lstrip()` in `detect_lint_command` and `detect_test_command` so Makefile `lint:` / `test:` probes require column-zero targets; drop the result-file mtime staleness branch in `_preflight_ci_parity_resume`; add `_safe_read_state_text` (`O_NOFOLLOW` + size cap) and use it in `_load_or_init_state` and `cmd_pause_phase`.
+  - `5d30cb4` — Codex mirror of `14157bb` with three new regression tests (column-zero `lint:` / `test:` ignore-indented variants + symlink-refusal unit test for `_safe_read_state_text`).
+  - `e217895` — Claude-side mirror of those three regression tests, closing the test-parity gap.
+  Final tallies: Claude **204 passed**, Codex **223 passed**, `check-prompt-parity.sh` PASS, `check-mirror-handoff.sh` PASS, `/security-review` clean on the four follow-up commits.
 
 ## Acceptance Criteria
 
@@ -437,14 +443,20 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-no-entrypo
 - `e7030d5` `fix(prompt-parity): handle empty and harness-native prompts` — late fix for the parity script's empty-array path.
 - `7f05a56` `fix(conduct): harden Claude CI-parity review findings` — Claude-side-only review-fix commit; Codex mirror hardening is intentionally separate and covered by the post-review Codex follow-up.
 
+**PR #22 second-round hardening commits (post-deep-review and post-/review):**
+- `6fe882a` `fix(conduct): address deep review follow-ups` (Codex) — prefix-check on resume, explicit `ci_failed` retry path, `read_result_file` adoption.
+- `14157bb` `fix(conduct): claude-side review follow-ups (Makefile column-zero, mtime, state TOCTOU)` — Claude-side mirror.
+- `5d30cb4` `conduct: codex follow-up hardening` — Codex mirror of `14157bb` + three regression tests.
+- `e217895` `test(conduct): mirror codex regression tests for column-zero + state symlink fixes` — Claude-side test-parity closure.
+
 **Phase 4 read-only acceptance gate (green at `d65c68a`):**
 
 | Step | Result |
 |------|--------|
 | `bash tests/parity/check-mirror-handoff.sh` | PASS — 3 phases × 2 runtimes + manifest |
 | `just check-prompt-parity` | PASS |
-| `uvx pytest .claude/skills/conduct/tests/ -v` | 195 passed |
-| `(cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q)` | 212 passed |
+| `uvx pytest .claude/skills/conduct/tests/ -v` | 195 passed (pre-hardening snapshot; current count 204 — see post-hardening row below) |
+| `(cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q)` | 212 passed (pre-hardening snapshot; current count 223 — see post-hardening row below) |
 | `uvx pytest tests/parity/test_skill_md_presence.py -v` | 10 passed |
 | `bash tests/parity/test-prompt-parity-extended.sh` | 7/7 passed |
 | `just reconciliation-tests` | 12 passed |
@@ -467,6 +479,18 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-no-entrypo
 | `just reconciliation-tests` | 44 passed, 2 trivial-skip |
 | `git diff --check` | clean |
 
+**Post-/review second-round hardening validation (2026-05-15, head `e217895`):**
+
+| Step | Result |
+|------|--------|
+| `uvx pytest .claude/skills/conduct/tests/ -q` | 204 passed |
+| `(cd .codex/skills/conduct && uv run --with pytest python -m pytest tests/ -q)` | 223 passed |
+| `bash scripts/check-prompt-parity.sh` | PASS |
+| `bash tests/parity/check-mirror-handoff.sh` | PASS (3 phases × 2 runtimes + manifest) |
+| `uv run --with ruff ruff format .claude/skills/conduct/conductor.py` | clean |
+| `uv run --with ruff ruff check .claude/skills/conduct/conductor.py` | PASS |
+| `/security-review` on commits `6fe882a..e217895` | no qualifying HIGH/MEDIUM findings |
+
 **Pre-promote diff inspection (clean):**
 - `rsync -avn --delete .claude/skills/conduct/ ~/.claude/skills/conduct/` — additive only, no deletions.
 - `rsync -avn --delete .codex/skills/conduct/ ~/.codex/skills/conduct/` — deletions limited to stale `__pycache__/*.pyc` (py314 bytecode; not tracked).
@@ -474,4 +498,4 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-no-entrypo
 - `diff -u ~/.codex/AGENTS.md .codex/AGENTS.md` — identical (no hunks).
 
 **Conducted-By provenance:** every boundary commit carries the `Conducted-By: <runtime>` trailer that `tests/parity/check-mirror-handoff.sh` consumes structurally.
-<!-- reviewed: 2026-05-15 @ 2a3bd6252519c05a746121e77073445c147b933e -->
+<!-- reviewed: 2026-05-15 @ 071db1040ae8cbfb71d3a44834a31873d548bbce -->
