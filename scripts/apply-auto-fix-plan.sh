@@ -111,6 +111,12 @@ if [[ "$schema_version" != "2" ]]; then
 fi
 
 af_manifest_init "$SKILL"
+# Ensure the manifest is always flushed, even on an unexpected early exit
+# under `set -euo pipefail`. Without this, a mid-batch hard failure would
+# leave applier commits stranded with no manifest entry. The trap is
+# idempotent with the explicit af_manifest_write call at the end of the
+# normal path.
+trap af_manifest_write EXIT
 
 # Resolve a scope-supplied path against ROOT_DIR with a containment guard.
 # Rejects absolute paths and any `..` segment to prevent semi-trusted lens

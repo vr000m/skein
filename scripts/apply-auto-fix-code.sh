@@ -112,6 +112,11 @@ if [[ "$schema_version" != "2" ]]; then
 fi
 
 af_manifest_init "$SKILL"
+# Ensure the manifest is always flushed, even if `set -euo pipefail` aborts
+# us mid-batch (awk exit code, mktemp failure, git add failure). Without
+# this trap, applied commits would land but the manifest record of them
+# would never reach disk, leaving the orchestrator with no audit trail.
+trap af_manifest_write EXIT
 
 # Truncate captured test output to last 2000 bytes.
 truncate_tail() {
@@ -194,17 +199,26 @@ while IFS= read -r finding; do
 			af_manifest_record "$kind" "$file" "$line" "rejected_revar" "" ""
 			continue
 		fi
-		# Count references in non-test files. Anything matching test_/_test/
-		# or under a tests/ directory is excluded from the "evidence of use"
-		# check (the lens already considered non-test reads). If non-test
-		# files reference the variable anywhere outside this declaration
-		# line, abort the apply.
+		# Count references in non-test files. Anything under a tests/ tree at
+		# any depth, or with a test_/_test stem, is excluded. Use the
+		# `:(exclude)…` pathspec form rather than `:!…` glob: the latter
+		# relies on `*` not crossing `/`, which means a top-level
+		# tests/test_a.py only excludes by accident of intra-segment
+		# matching. The explicit form below is depth-agnostic.
 		refs="$(git -C "$ROOT_DIR" grep -nIw -- "$var_name" \
-			':!*test_*' ':!*_test*' ':!tests/' ':!*/tests/*' \
+			':(exclude)tests/' \
+			':(exclude)**/tests/' \
+			':(exclude)**/test_*' \
+			':(exclude)**/*_test*' \
+			':(exclude)test_*' \
+			':(exclude)*_test*' \
 			2>/dev/null || true)"
-		# Drop the declaration line itself from the count.
+		# Drop the declaration line itself from the count. Match a literal
+		# `<file>:<line>:` prefix rather than splitting on `:` — file paths
+		# may legitimately contain a colon, which would defeat split-based
+		# field comparison and inflate the ref count.
 		ref_count="$(printf '%s\n' "$refs" |
-			awk -v f="$file" -v l="$line" 'NF { split($0, a, ":"); if (a[1] == f && a[2] == l) next; print }' |
+			awk -v prefix="$file:$line:" 'NF { if (index($0, prefix) == 1) next; print }' |
 			grep -c '^' || true)"
 		if [[ "$ref_count" -gt 0 ]]; then
 			af_manifest_record "$kind" "$file" "$line" "rejected_revar" "" ""
