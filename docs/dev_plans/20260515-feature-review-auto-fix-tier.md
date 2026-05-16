@@ -1,12 +1,12 @@
 # Task: Trivial-tier auto-fix for /deep-review and /review-plan
 
-**Status**: Complete
+**Status**: In Progress - Codex follow-up pending
 **Assigned to**: tbd
 **Priority**: Medium
 **Branch**: feature/review-auto-fix-tier
 **Created**: 2026-05-15
-**Last revised**: 2026-05-16 (post-/conduct: phases 1–4 landed; post-/deep-review: applied 27 unique findings across 6 fix commits — see Issues & Solutions § Post-implementation /deep-review)
-**Completed**: 2026-05-16
+**Last revised**: 2026-05-16 (Claude conduct phases 1-4 landed; Phase 5 contract refined after second `/review-plan` pass — preconditions, linearisation, kind-gate fixtures, marker-refresh check, strict-line-anchor contract decision)
+**Completed**: Pending Codex follow-up
 
 ## Objective
 
@@ -21,6 +21,8 @@ The recommendation that came out of that review (see horizon note for self-heali
 The user added an extra constraint for `/review-plan`: plan auto-fixes are limited to **code clarifications or trivial design** — never Requirements, Acceptance Criteria, Files-to-Modify, phase boundaries, schema decisions, or cross-runtime contracts. Those remain advisory, surfaced with `accept / reject / discuss` choices regardless of lens confidence.
 
 Both skills currently produce JSON-Lines findings (`{lens, severity, category, file, line, summary, evidence, suggestion}`) consumed by `scripts/reconcile-findings.sh` with `ENVELOPE_SCHEMA_VERSION=1`; the renderer at `scripts/render-reconciled-report.sh` enforces `EXPECTED_SCHEMA_VERSION=1` in lockstep. Adding `auto_fix` to the finding shape forces a schema bump (v1 → v2) handled by both scripts. The bump is in lockstep per the existing GENERIC FINDING SCHEMA block precedent — the project's policy is "explicit version on shape change," not "additive within version."
+
+Current implementation state: Claude completed the original phases 1-4 and its post-implementation review. Codex has reviewed the resulting branch but has not completed its own conduct pass. The Codex review found implementation defects that affect the shared scripts and byte-identical Claude/Codex skill mirrors, so Claude's landed implementation is not final until Phase 5 below is fixed and verified. Do not treat the Claude conduct state or `Conducted-By: claude` phase commits as Codex completion.
 
 ## Requirements
 
@@ -72,11 +74,11 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 **Test files:** `tests/reconciliation/test-renderer.sh, tests/reconciliation/test-reconciler-unit.sh, tests/reconciliation/run-fixtures.sh, tests/reconciliation/fixtures/auto-fix-v2-*.jsonl, tests/reconciliation/fixtures/auto-fix-v2-malformed-*.jsonl, tests/parity/test-allowlist-byte-identity.sh`
 **Test command:** `just reconciliation-tests && bash scripts/check-prompt-parity.sh && bash tests/parity/test-allowlist-byte-identity.sh`
 
-- Bump `ENVELOPE_SCHEMA_VERSION` in `scripts/reconcile-findings.sh:77` from `1` to `2`; bump `EXPECTED_SCHEMA_VERSION` in `scripts/render-reconciled-report.sh:43` from `1` to `2` in the same commit (lockstep rule per existing GENERIC block doc).
+- Bump `ENVELOPE_SCHEMA_VERSION` in `scripts/reconcile-findings.sh` from `1` to `2`; bump `EXPECTED_SCHEMA_VERSION` in `scripts/render-reconciled-report.sh:43` from `1` to `2` in the same commit (lockstep rule per existing GENERIC block doc).
 - Extend the finding JSONL shape with an optional `auto_fix: {kind: str, before: str, after: str, scope: str}` field. v2 reconciler passes it through unchanged when well-formed; rejects input when present-but-malformed (missing key, non-string value).
 - Add `--skill deep-review|review-plan` to `scripts/reconcile-findings.sh`; validation of `auto_fix.scope` and allowlist compatibility keys off this explicit context.
 - v2 reconciler reading v1-style JSONL findings MUST upgrade them in-flight (treat `auto_fix` as absent → finding surfaced, not applied). Fixture `auto-fix-v2-reads-v1-jsonl.jsonl`.
-- v1 renderer reading a v2 envelope MUST exit non-zero with `schema mismatch: got 2, expected 1`. Fixture `auto-fix-v1-rejects-v2.jsonl`.
+- Current v2 renderer reading a stale v1 envelope MUST exit non-zero with `schema mismatch: got 1, expected 2`. Add a separate historical-v1-renderer fixture only if preserving old renderer binaries becomes an explicit support target.
 - v2 reconciler reading v2 JSONL with malformed `auto_fix` MUST exit non-zero with `auto_fix block malformed: <reason>`. Fixtures: `auto-fix-v2-malformed-missing-scope.jsonl`, `auto-fix-v2-malformed-nonstring-before.jsonl`.
 - Create `scripts/auto-fix-allowlist.json` as the single source of truth for allowlist enums. Shape: `{"deep-review": [...kinds...], "review-plan": [...kinds...]}`. Used by both the pre-render audit and appliers; cited verbatim in both `.claude` and `.codex` SKILL.md docs so `check-prompt-parity.sh` can assert byte-identity.
 - Update both skills' GENERIC FINDING SCHEMA AND MERGE blocks (the byte-identical block enforced by `check-prompt-parity.sh:237-274`) to document the new field, the per-skill `scope` typing, and the malformed-rejection rule. Mirror to both `.claude` and `.codex` copies; verify with `bash scripts/check-prompt-parity.sh`.
@@ -126,11 +128,67 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `tests/parity/test-prompt-parity-extended.sh`: assert a Codex-only auto-fix wiring drift fails the parity gate, so Codex cannot silently lag Claude.
 - Do not run `scripts/promote-skills.sh --yes` as a feature-branch validation step. Add the post-merge rollout instruction to Final Results instead: after merge and final approval, run `MANAGED_SKILLS="deep-review review-plan" scripts/promote-skills.sh --yes && just check-sync` from a clean main checkout.
 
+### Phase 5: Codex review follow-up hardening
+
+**Impl files:** `scripts/plan-scope-detect.sh, scripts/audit-auto-fix-eligibility.sh, scripts/apply-auto-fix-plan.sh, scripts/apply-auto-fix-code.sh, .claude/skills/deep-review/SKILL.md, .codex/skills/deep-review/SKILL.md, .claude/skills/review-plan/SKILL.md, .codex/skills/review-plan/SKILL.md, docs/dev_plans/20260515-feature-review-auto-fix-tier.md`
+**Test files:** `tests/auto-fix/test-review-plan-scope-forbid.sh, tests/auto-fix/test-review-plan-allowlist.sh, tests/auto-fix/test-review-plan-binding.sh, tests/auto-fix/test-deep-review-allowlist.sh, tests/auto-fix/test-deep-review-kind-gates.sh, tests/auto-fix/test-deep-review-clean-index-guard.sh, tests/auto-fix/test-deep-review-failed-fix-preserves-head.sh, tests/auto-fix/test-plan-scope-detect-mode-isolation.sh, tests/auto-fix/test-marker-refresh-post-phase5.sh, tests/parity/test-auto-fix-orchestration-contract.sh, tests/reconciliation/test-renderer-v1-rejects-v2.sh, tests/reconciliation/test-renderer.sh, tests/reconciliation/fixtures/*, tests/auto-fix/fixtures/docstring_typo-{accept,reject-code-edit}.jsonl, tests/auto-fix/fixtures/import_sort-{accept,reject-symbol-change}.jsonl, tests/auto-fix/fixtures/unused_import-{accept,reject-still-referenced}.jsonl, tests/auto-fix/fixtures/plan-scope-evasion-parent-heading.md, tests/reconciliation/fixtures/render-reconciled-report-v1.sh`
+**Test command:** `bash tests/auto-fix/test-review-plan-scope-forbid.sh && bash tests/auto-fix/test-review-plan-allowlist.sh && bash tests/auto-fix/test-review-plan-binding.sh && bash tests/auto-fix/test-deep-review-allowlist.sh && bash tests/auto-fix/test-deep-review-kind-gates.sh && bash tests/auto-fix/test-deep-review-clean-index-guard.sh && bash tests/auto-fix/test-deep-review-failed-fix-preserves-head.sh && bash tests/auto-fix/test-plan-scope-detect-mode-isolation.sh && bash tests/auto-fix/test-marker-refresh-post-phase5.sh && bash tests/parity/test-auto-fix-orchestration-contract.sh && bash tests/reconciliation/test-renderer-v1-rejects-v2.sh && bash scripts/check-prompt-parity.sh && just reconciliation-tests`
+**Validation cmd:** `just lint-scripts && git diff --check`
+
+**Preconditions (must hold before Codex `/conduct` starts Phase 5):**
+
+- **P1. Fresh accepted marker.** Phase 5 changes the immutable contract above the marker, so the existing marker is stale. Codex `/review-plan` against this updated plan must complete and the user must accept (or waive) findings; the accepted-marker write lands as a commit on `feature/review-auto-fix-tier` before any Phase 5 implementation commit. The marker hash MUST equal `git hash-object --stdin` of the contract section above the new marker line (this invariant is enforced by `test-marker-refresh-post-phase5.sh` in item 8).
+- **P2. Fresh Codex conduct state file.** The existing `.conduct/state-20260515-feature-review-auto-fix-tier-398d56c7132a.json` is Claude-owned (`state_author: "claude"`) and Phase 5 conduct MUST NOT mutate or count it. Codex `/conduct` for Phase 5 starts a fresh state file with `state_author: "codex"`; the Claude state file is preserved untouched as historical record. Conduct preflight MUST select the Codex-authored state file when `Conducted-By: codex` is the active runtime.
+
+**Work items (linearised; each numbered item lands as one commit unless the item explicitly bundles paired edits):**
+
+1. **Hierarchy-aware scope-forbid.** Extend `scripts/plan-scope-detect.sh` with a new `--stack <plan-file> <line>` mode whose output schema is: enclosing column-zero headings, outermost-first, one heading per line, terminating newline, no trailing blank line; empty stdout (exit 0) for `unknown`. The existing two-argument deepest-heading mode is preserved byte-for-byte. Auditor (`scripts/audit-auto-fix-eligibility.sh`) and applier (`scripts/apply-auto-fix-plan.sh`) switch to stack mode and reject if ANY heading in the stack matches the forbid list — in the same commit as the script change so no caller ever references an unsupported mode. Add `tests/auto-fix/test-plan-scope-detect-mode-isolation.sh` asserting two-arg-mode output is byte-identical pre/post change against a fixture set. Add fixture `tests/auto-fix/fixtures/plan-scope-evasion-parent-heading.md` (a `## Requirements` containing `### Detail` with the target line inside `### Detail`); the new regression in `test-review-plan-scope-forbid.sh` runs both `audit-auto-fix-eligibility.sh --skill review-plan --plan <fixture>` (asserts `rejected_scope`) and `apply-auto-fix-plan.sh --plan <fixture> <envelope>` (asserts no commit, manifest `status: rejected_scope`).
+
+2. **Strict line-anchored `--plan` binding (v2 contract change — atomic commit).** Add `--plan <reviewed-plan>` to `scripts/apply-auto-fix-plan.sh`. The applier MUST enforce, in this single commit, all three invariants:
+   - **Triple path equality.** `finding.file`, `auto_fix.scope` path, and the reviewed `--plan` path must all resolve to the same in-repo file; mismatch → `status: rejected_path`, no commit.
+   - **Strict cited-line byte-match.** `auto_fix.before` is matched only at the exact `auto_fix.scope` line in the file. The v1 "find unique match anywhere in file" fallback is removed; a `before` that appears elsewhere in the file but NOT at the cited line → `status: rejected_drift`. See Architecture Decisions: "Strict line-anchored apply for review-plan."
+   - **Paired SKILL.md updates.** `.claude/skills/review-plan/SKILL.md` and `.codex/skills/review-plan/SKILL.md` invocations are updated to pass `--plan` in the same commit so orchestration never references a flag the script does not accept.
+   The script change, both SKILL.md edits, AND `tests/auto-fix/test-review-plan-binding.sh` (item 3) land together to avoid any intermediate broken state.
+
+3. **Binding regression test** (bundled into item 2's commit). `tests/auto-fix/test-review-plan-binding.sh` covers four distinct cases, each asserting no commit is created and the manifest records the named non-apply status:
+   - `finding.file != auto_fix.scope.path` → `rejected_path`.
+   - `auto_fix.scope.path != --plan` → `rejected_path`.
+   - **Duplicate-before / non-cited-unique-match:** the plan contains `auto_fix.before` text both at cited line N and at non-cited line N+10; with v1 unique-match-anywhere this would have edited N+10. v2 strict line-anchor → `rejected_drift` (no edit at any line). This case specifically proves the removal of the v1 find-anywhere-in-file behaviour.
+   - **Cited-line drift:** `auto_fix.before` text moved within the file (e.g., a preceding insertion shifted lines) so the cited line no longer byte-matches; the same text still exists at a different unique line. v2 → `rejected_drift`. Distinct from existing Phase 2 drift coverage where `before` does not match anywhere.
+
+4. **Audit-before-render orchestration contract (atomic across four SKILL.md mirrors).** Insert an explicit audit step between reconciliation and rendering in `.claude/skills/deep-review/SKILL.md`, `.codex/skills/deep-review/SKILL.md`, `.claude/skills/review-plan/SKILL.md`, and `.codex/skills/review-plan/SKILL.md`. The exact invocation strings (the parity test asserts on these):
+   - deep-review SKILL.md: `scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>`
+   - review-plan SKILL.md: `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>`
+   Without `--auto-fix=trivial` the audit still runs as a dry-run preview so `[AUTO-FIXABLE]` only appears from computed `auto_fix_status: "would_apply"`. Wrap the new audit-invocation lines inside the byte-identical region already enforced by `scripts/check-prompt-parity.sh` so drift fails the parity gate, not a separate substring grep. Add `tests/parity/test-auto-fix-orchestration-contract.sh` asserting for each of the four SKILL.md mirrors: (a) the expected invocation string is present (regex anchored on the script name AND the `--skill` arg AND, for review-plan, the `--plan` arg), and (b) the audit step appears textually before the render step. Land the four SKILL.md edits + the parity test in a single commit so `check-prompt-parity.sh` and the new orchestration test are both green at the phase boundary.
+
+5. **Code applier clean-index guard.** Harden `scripts/apply-auto-fix-code.sh` to reject when the working tree or index is dirty before any edit (mirror the plan applier's clean-tree guard). Add `tests/auto-fix/test-deep-review-clean-index-guard.sh` with three explicit states; each case asserts non-zero exit before edits, no `auto-fix(deep-review)` commit, and pre-existing index/tree state preserved exactly:
+   - **Unstaged tracked change** on the auto-fix target file.
+   - **Unrelated staged file** in the index (different file from the auto-fix target).
+   - **Mixed dirty:** staged change on file A + unstaged change on file B + untracked file C; applier exits non-zero; staged change on A remains staged with its original content, unstaged change on B remains unstaged, untracked file C remains untracked.
+
+6. **Kind-specific gate tightening with named adversarial fixtures.** Tighten `docstring_typo`, `import_sort`, and `unused_import` gates in `scripts/apply-auto-fix-code.sh`. Add `tests/auto-fix/test-deep-review-kind-gates.sh` driving the gates against named fixtures (each named in the Test files list above):
+   - `docstring_typo-accept.jsonl` (edit inside `"""..."""` or comment) and `docstring_typo-reject-code-edit.jsonl` (`auto_fix.scope` resolves to code outside any docstring/comment → `rejected_kind_scope`).
+   - `import_sort-accept.jsonl` (pure reorder) and `import_sort-reject-symbol-change.jsonl` (`before`/`after` symbol sets differ — i.e., a symbol is added or removed → `rejected_semantic_change`).
+   - `unused_import-accept.jsonl` and `unused_import-reject-still-referenced.jsonl` (applier's re-verification `git grep` finds a non-comment reference outside the import line → `rejected_revar`).
+   `unused_var` contract is **decided**: the applier blocks deletion if `git grep -c <var>` (scanning ALL tracked files including `tests/`) returns non-zero. `unused_var-reject-test-file-read.jsonl` exercises a variable read only from `tests/` and asserts `status: rejected_revar`. The fixture name and the plan claim both stay; the regression is to make the applier's grep scan match this contract.
+
+7. **Stale v1-renderer compatibility fixture.** Snapshot `scripts/render-reconciled-report.sh` at the pre-Phase-1 v1 commit into `tests/reconciliation/fixtures/render-reconciled-report-v1.sh` (read-only fixture). Add `tests/reconciliation/test-renderer-v1-rejects-v2.sh` asserting the v1 renderer exits non-zero with the message `schema mismatch: got 2, expected 1` when fed any v2 envelope from `tests/reconciliation/fixtures/auto-fix-v2-*.jsonl`. AC #12 wording is unchanged; the new fixture closes the gap between the AC claim and the implemented test.
+
+8. **Marker-refresh-after-Phase-5 automated check.** Add `tests/auto-fix/test-marker-refresh-post-phase5.sh` that locates the last column-zero marker line in `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` matching `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$`, recomputes `git hash-object --stdin` over everything above that marker line, and asserts the recomputed hash equals the hash embedded in the marker. The test is invoked in the Phase 5 Test command above so phase completion cannot be marked done with a stale marker. The same test also satisfies P1's invariant when re-run after the post-impl review pass in item 10.
+
+9. **Stale factual claim refresh.** Fix the `ENVELOPE_SCHEMA_VERSION` line anchor and any other line-anchored claims in this plan that drifted during Phases 1-4. Doc-only commit; safe to interleave with items 1, 10, or 11.
+
+10. **Post-impl review gates (defines Phase 5 completion).** After items 1-9 land:
+    - (a) Run Codex `/review-plan` against this plan again; reconcile any new findings; write a fresh accepted marker.
+    - (b) Run Claude `/review-plan` as the final cross-runtime gate (required because Phase 5 touches both `.claude/skills/...` and `.codex/skills/...`).
+    - (c) If either review returns Critical / Important findings, fix them on this same branch and repeat (a) and (b) until both reviews are clean.
+    **Phase 5 is complete ONLY when all of these hold simultaneously:** both post-impl reviews return zero Critical / Important findings (or applied fixes re-pass both reviews), `test-marker-refresh-post-phase5.sh` is green against the latest accepted marker, and every gate in the Phase 5 Test command + Validation cmd is green.
+
 ## Technical Specifications
 
 ### Files to Modify
 
-- `scripts/reconcile-findings.sh:77` — bump `ENVELOPE_SCHEMA_VERSION` 1→2; add `--skill deep-review|review-plan`; pass-through well-formed `auto_fix` on findings; reject malformed `auto_fix` (missing key, non-string value, malformed per-skill scope).
+- `scripts/reconcile-findings.sh` — bump `ENVELOPE_SCHEMA_VERSION` 1→2; add `--skill deep-review|review-plan`; pass-through well-formed `auto_fix` on findings; reject malformed `auto_fix` (missing key, non-string value, malformed per-skill scope).
 - `scripts/render-reconciled-report.sh:43` — bump `EXPECTED_SCHEMA_VERSION` 1→2; display `[AUTO-FIXABLE]` only for findings already annotated with `auto_fix_status: "would_apply"`. Keep rendering pure envelope-to-markdown.
 - `scripts/audit-auto-fix-eligibility.sh` — pre-render and pre-apply eligibility audit. Computes `auto_fix_status` from the allowlist, drift checks, and review-plan scope-forbid checks before the renderer or appliers run.
 - `.claude/skills/deep-review/SKILL.md` — document `--auto-fix=trivial` flag, the `auto_fix` block in the GENERIC FINDING SCHEMA section, the per-skill `scope` typing, the allowlist (cite `auto-fix-allowlist.json` deep-review array verbatim), and the rejection rules. Mirror block is byte-identical with `.codex/`.
@@ -140,6 +198,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `.codex/skills/deep-review/SKILL.md`, `.codex/skills/deep-review/rubric.md`, `.codex/skills/review-plan/SKILL.md`, `.codex/skills/review-plan/rubric.md` — byte-identical mirrors, edited in the same phase commit as their `.claude` counterparts.
 - `.claude/skills/conduct/marker.py`, `.codex/skills/conduct/marker.py` — no repo-root helper dependency. Keep the promoted runtime hash implementation self-contained; add tests proving review-plan marker writes still match both harnesses.
 - `scripts/check-prompt-parity.sh` — extend in Phase 1 to cover allowlist JSON ↔ SKILL.md byte-identity and Codex-specific auto-fix wiring surfaces.
+- Phase 5 hardening files listed above — update shared scripts and both `.claude` / `.codex` skill mirrors together because the defects affect the shared implementation, not only Codex documentation.
 - `.gitignore` — add `.review-plan/`.
 
 ### New Files to Create
@@ -173,6 +232,8 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - **Allowlist as SoT JSON, cited verbatim in SKILL.md.** Reduces drift surface from 6 files (4 SKILL.md + 1 applier + 1 parity check) to 1 (the JSON). `check-prompt-parity.sh` asserts byte-identity between JSON arrays and SKILL.md prose.
 - **Malformed `auto_fix` blocks fail loudly.** Same principle as schema_version mismatch — a malformed structural marker is a lens-emission bug and surfacing it loudly is more useful than silently demoting findings to advisory.
 - **Tests-must-pass is explicit, single-shot, and no retry.** The code applier does not guess a repo test command. The caller must pass `--test-cmd` or `AUTO_FIX_TEST_CMD`; retry would mask real regressions and complicate the rollback path.
+- **Strict line-anchored apply for review-plan (v2 contract, Phase 5).** `scripts/apply-auto-fix-plan.sh` matches `auto_fix.before` only at the exact `auto_fix.scope` line. The v1 "find unique `before` match anywhere in the file" fallback is removed in Phase 5. Rationale: under v1, a typo in `scope` line could silently land an edit at a different line; making `scope` authoritative forces the lens to emit accurate line anchors and turns drift into a clean `rejected_drift` failure. Paired with triple path equality (`finding.file == auto_fix.scope.path == --plan`), the applier cannot edit a different file or a different line than the one under review. The `Phase 5: Codex review follow-up hardening` item 3 binding test enforces both invariants.
+- **`unused_var` deletion blocks on any tracked reference, including tests (Phase 5 decision).** `scripts/apply-auto-fix-code.sh`'s re-verification scans ALL tracked files via `git grep -c <var>`; non-zero count → `status: rejected_revar`, no commit. Test-only reads do NOT permit deletion. Rationale: test files document behaviour; deleting a variable that tests read is a behaviour change masquerading as cleanup, exactly the failure mode v1 refuses to take. `unused_var-reject-test-file-read.jsonl` is the regression.
 
 ### Dependencies
 
@@ -188,8 +249,9 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 | Manifest file | `scripts/apply-auto-fix-{code,plan}.sh` via `scripts/lib/auto-fix-common.sh` (Phases 2 & 3) | user (manual rollback) | JSON shape `[{kind, file, line, commit_sha, before_sha, status}]` written to `.deep-review/auto-fix-<unix>.json` or `.review-plan/auto-fix-<unix>.json`. `git revert <first_sha>..<last_sha>` undoes the batch. |
 | Test command | caller / skill orchestration (Phase 2 SKILL.md wiring) | `scripts/apply-auto-fix-code.sh` (Phase 2) | Explicit `--test-cmd` or `AUTO_FIX_TEST_CMD`; missing command fails before edits. Invoked exactly once per applied code fix. |
 | `Auto-Fixed-By:` trailer | `scripts/lib/auto-fix-common.sh` (Phases 2 & 3) | `tests/parity/check-mirror-handoff.sh` (Phase 2 test asserts ignore) | Commit trailer; distinct key from `Conducted-By:`. Handoff gate matches only case-sensitive `Conducted-By:` per existing line 51. |
-| Plan scope detection | `scripts/plan-scope-detect.sh` (Phase 3) | `scripts/apply-auto-fix-plan.sh` (Phase 3) | Input `<plan-file> <line>`, output `<deepest-enclosing-heading>`. Caller drops fix if heading matches the forbid list. Skips fenced code blocks. |
-| Marker hash | per-harness `conduct/marker.py` algorithm and review-plan marker writer (Phase 3) | `scripts/apply-auto-fix-plan.sh` acceptance path; `/conduct` preflight | Hash is `git hash-object --stdin` over content above the real marker. Missing marker → Step 6 writes fresh marker per template; corrupt plan → exits `marker_failed`, applier rolls back batch edits. No real marker is written before user acceptance/waiver. |
+| Plan scope detection | `scripts/plan-scope-detect.sh` (Phase 3; stack mode added in Phase 5) | `scripts/audit-auto-fix-eligibility.sh`, `scripts/apply-auto-fix-plan.sh` | Existing two-argument input `<plan-file> <line>` returns `<deepest-enclosing-heading>` for backward compatibility (byte-identical pre/post Phase 5, asserted by `test-plan-scope-detect-mode-isolation.sh`). Phase 5 adds `--stack <plan-file> <line>` whose output schema is: enclosing column-zero headings, outermost-first, one heading per line, terminating newline, no trailing blank; empty stdout (exit 0) for `unknown`. Auditor and applier use stack mode and reject if any heading in the stack matches the forbid list. Both modes skip fenced code blocks. |
+| Review-plan applier binding | `scripts/apply-auto-fix-plan.sh --plan <reviewed-plan>` (Phase 5) | `.claude/skills/review-plan/SKILL.md`, `.codex/skills/review-plan/SKILL.md` | Applier requires triple path equality: `finding.file`, `auto_fix.scope` path, and the `--plan` argument must all resolve to the same in-repo file; mismatch → `status: rejected_path`. `auto_fix.before` is byte-matched only at the exact `auto_fix.scope` line; v1 unique-match-anywhere is removed (any drift → `status: rejected_drift`). SKILL.md invocations and the script signature land in one commit; binding regression in `tests/auto-fix/test-review-plan-binding.sh`. |
+| Marker hash | per-harness `conduct/marker.py` algorithm and review-plan marker writer (Phase 3) | `scripts/apply-auto-fix-plan.sh` acceptance path; `/conduct` preflight; `tests/auto-fix/test-marker-refresh-post-phase5.sh` (Phase 5) | Hash is `git hash-object --stdin` over content above the real marker. Missing marker → Step 6 writes fresh marker per template; corrupt plan → exits `marker_failed`, applier rolls back batch edits. No real marker is written before user acceptance/waiver. Phase 5 adds a post-impl regression that recomputes the hash from this plan's contract section and asserts it equals the embedded marker hash, preventing Phase 5 completion against a stale marker. |
 
 ## Testing Notes
 
@@ -254,7 +316,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 9. Without `--auto-fix=trivial`, both skills behave identically to today (no edits applied) but the rendered report shows `[AUTO-FIXABLE]` annotations next to every finding with precomputed `auto_fix_status: "would_apply"` (allowlist + scope-forbid gates run in dry-run; `rejected_kind` and `rejected_scope` findings are NOT annotated).
 10. `bash scripts/check-prompt-parity.sh` is green at the end of every phase: the new `auto_fix` schema block is byte-identical across `.claude/skills/deep-review/SKILL.md`, `.codex/skills/deep-review/SKILL.md`, `.claude/skills/review-plan/SKILL.md`, `.codex/skills/review-plan/SKILL.md`; both pairs of `rubric.md` are byte-identical; `scripts/auto-fix-allowlist.json` arrays are cited verbatim in both `.claude` and `.codex` SKILL.md files; Codex-specific auto-fix wiring cannot drift from Claude-equivalent behavior.
 11. `bash tests/parity/test-handoff-ignores-auto-fix.sh` is green: commits with `Auto-Fixed-By:` trailers (alone, with `Conducted-By:`, or lowercase) interact correctly with `check-mirror-handoff.sh` (ignored / matched / ignored respectively).
-12. `bash tests/reconciliation/test-renderer.sh` is green against v2 envelopes; stale v1 renderers reject v2 envelopes with a clear error; v1-style JSONL findings still parse (upgrade in-flight); v2 JSONL findings with malformed `auto_fix` are rejected with clear error.
+12. `bash tests/reconciliation/test-renderer.sh` is green against v2 envelopes; `bash tests/reconciliation/test-renderer-v1-rejects-v2.sh` is green (proves the snapshotted v1 renderer at `tests/reconciliation/fixtures/render-reconciled-report-v1.sh` exits non-zero with `schema mismatch: got 2, expected 1` for every v2 fixture); v1-style JSONL findings still parse (upgrade in-flight); v2 JSONL findings with malformed `auto_fix` are rejected with clear error.
 13. Code reviewed and approved.
 14. Tests passing.
 
@@ -262,15 +324,16 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 - SKILL.md, rubric.md, `auto-fix-allowlist.json`, this plan's Final Results, and any relevant CHANGELOG entry are reviewed for accuracy and consistency.
 
-<!-- reviewed: 2026-05-16 @ 47df9ae3f25e0da1229f45faac6fef45bd92a541 -->
+<!-- reviewed: 2026-05-16 @ ea9b946f854a6dc75b5c84eaf5524d284a18b1f7 -->
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
 
-- [x] Phase 1: Shared schema + reconciler + parity + pre-render audit
-- [x] Phase 2: /deep-review auto-fix applier + handoff regression test
-- [x] Phase 3: /review-plan auto-fix applier with scope-forbid + .gitignore
-- [x] Phase 4: Final repo-local parity and post-merge promotion instructions
+- [x] Phase 1: Shared schema + reconciler + parity + pre-render audit (Claude-conducted)
+- [x] Phase 2: /deep-review auto-fix applier + handoff regression test (Claude-conducted)
+- [x] Phase 3: /review-plan auto-fix applier with scope-forbid + .gitignore (Claude-conducted)
+- [x] Phase 4: Final repo-local parity and post-merge promotion instructions (Claude-conducted)
+- [ ] Phase 5: Codex review follow-up hardening
 
 ## Findings
 
@@ -293,6 +356,44 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - **Critical** — `/review-plan` auto-fix no longer writes a real `/conduct` marker before `yes` / `waive`; failed `/deep-review` fixes restore touched blobs without `git revert HEAD`; the test command is explicit (`--test-cmd` / `AUTO_FIX_TEST_CMD`); `[AUTO-FIXABLE]` eligibility moved out of the pure renderer into `scripts/audit-auto-fix-eligibility.sh`; promoted conduct no longer depends on repo-root `scripts/lib/marker-hash.sh`.
 - **Important** — Phase 1 now introduces allowlist/SKILL parity checks for both `.claude` and `.codex`; `scripts/reconcile-findings.sh` gets explicit `--skill deep-review|review-plan`; review-plan scope is span-aware and v1 applies only single-line spans; Phase 3 includes Codex and Claude conduct marker/preflight validation; feature-branch validation no longer runs destructive `promote-skills --yes`; schema compatibility now distinguishes JSONL findings/envelopes from `.deep-review/latest-*.json` run state.
 - **Minor/factual** — refreshed stale parity/line-anchor claims (`check-prompt-parity.sh:60-91`, Codex marker lines), kept `jq` optional unless setup docs change, and expanded Codex review-plan documentation work beyond Step 6 so the overview/discussion/constraints surfaces cannot contradict auto-fix behavior.
+
+### Codex post-Claude review (2026-05-16)
+
+Codex reviewed Claude's completed branch state and found that Codex has not completed the plan yet. The original Phase 1-4 commits are Claude-owned (`Conducted-By: claude`) and the only conduct state for this plan is `state_author: "claude"`. The plan therefore now includes Phase 5 for Codex follow-up rather than treating Claude completion as Codex completion.
+
+Issues that must be fixed before final completion:
+
+- **Critical** — `/review-plan` scope-forbid is not hierarchy-aware; targets under forbidden parents can be allowed when the nearest child heading is not itself forbidden. This affects the shared plan applier/auditor and therefore Claude's implementation too.
+- **Important** — `/review-plan` auto-fix path and line binding is too loose: the applier writes the file named in `auto_fix.scope`, while the auditor may validate a different `--plan`, and the applier searches globally for `before` instead of applying at the cited line. This affects Claude and Codex because the applier script is shared.
+- **Important** — both Claude and Codex SKILL.md workflows need an explicit audit step between reconciliation and rendering; otherwise `[AUTO-FIXABLE]` can depend on an unstated manual step.
+- **Important** — `/deep-review` code applier lacks the plan applier's clean-index guard and can sweep unrelated staged files into an auto-fix commit. This affects Claude and Codex because `scripts/apply-auto-fix-code.sh` is shared.
+- **Important** — `/deep-review` kind-specific gates and adversarial tests are incomplete for `docstring_typo`, `import_sort`, `unused_import`, and the claimed `unused_var` test-file-read scenario.
+- **Minor/factual** — update stale plan claims around renderer compatibility fixtures and line anchors, or add the missing fixtures/tests.
+
+### Codex Phase 5 review-plan pass (2026-05-16)
+
+`/review-plan` from Codex's perspective found that Phase 5 targets the right defects but needed stronger sequencing and test contracts. Applied to the plan:
+
+- **Critical** — Codex `/review-plan` and marker refresh must happen before Codex `/conduct` can start Phase 5, because Phase 5 changed the immutable contract above the marker. Phase 5 also touches both harness mirrors, so Claude `/review-plan` remains a required final gate before completion.
+- **Important** — Phase 5 now defines the concrete `scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>` API, `plan-scope-detect.sh --stack`, targeted path/line binding tests, audit-before-render SKILL.md contract tests, and a clean-index guard regression for the code applier.
+- **Minor/factual** — stale `ENVELOPE_SCHEMA_VERSION` line anchors and the missing `auto-fix-v1-rejects-v2.jsonl` claim were corrected to match the current implementation/testing contract.
+
+### Claude Phase 5 second review-plan pass (2026-05-16)
+
+`/review-plan` re-run on the updated Phase 5 contract returned 6 Critical, 9 Important, 6 Minor findings. All applied:
+
+- **Critical (architecture)** — `--plan` binding is now explicitly documented as a v2 contract change (Architecture Decision: "Strict line-anchored apply for review-plan") rather than disguised as hardening. Lens emission must produce accurate `auto_fix.scope` line; applier removes the v1 unique-match-anywhere-in-file fallback; drift becomes `rejected_drift`.
+- **Critical (sequencing)** — Phase 5 now has an explicit Preconditions subsection (P1 fresh accepted marker, P2 fresh Codex conduct state file) separated from work items, with `feature/review-auto-fix-tier` commit order spelled out: accepted-marker commit lands before any Phase 5 impl commit.
+- **Critical (sequencing)** — orchestration audit step + four SKILL.md edits + parity test land in one atomic commit; audit invocation lines wrapped inside the byte-identical region already enforced by `check-prompt-parity.sh` so drift fails the parity gate, not the substring gate.
+- **Critical (spec/testing)** — kind-specific gates each get named accept/reject fixtures (`docstring_typo-{accept,reject-code-edit}.jsonl`, `import_sort-{accept,reject-symbol-change}.jsonl`, `unused_import-{accept,reject-still-referenced}.jsonl`) enumerated in the Phase 5 Test files list. New `test-deep-review-kind-gates.sh` drives them.
+- **Critical (spec/testing)** — `unused_var` test-file-read contract is now decided (Architecture Decision): the applier blocks deletion if `git grep -c <var>` finds any reference, tests included. `unused_var-reject-test-file-read.jsonl` is the asserting regression.
+- **Critical (spec/testing)** — v1-renderer compatibility now backed by a snapshotted fixture at `tests/reconciliation/fixtures/render-reconciled-report-v1.sh` and a dedicated test `test-renderer-v1-rejects-v2.sh`; AC #12 wording references the new test.
+- **Important** — `plan-scope-detect.sh --stack` output schema specified in Integration Seams and in Phase 5 item 1 (outermost-first, one heading per line, trailing newline, no trailing blank, empty stdout on `unknown`). `test-plan-scope-detect-mode-isolation.sh` proves two-arg mode is byte-identical pre/post change.
+- **Important** — Phase 5 work items are numbered 1-10 with explicit atomic-commit groupings; same-file conflicts between items 2/4 (apply-auto-fix-plan + SKILL.md mirrors) are resolved by bundling into a single commit per item rather than splitting Phase 5 into 5a/5b.
+- **Important** — `tests/parity/test-auto-fix-orchestration-contract.sh` requirement now enumerates the exact expected invocation strings (`--skill deep-review` for deep-review; `--skill review-plan --plan <reviewed-plan>` for review-plan) and asserts the audit appears textually before the render step.
+- **Important** — new Integration Seams row "Review-plan applier binding" documents the triple path equality and strict-line byte-match invariants; cited-line drift case is explicitly distinguished from existing Phase 2 `before`-not-found-anywhere drift in `test-review-plan-binding.sh`.
+- **Important** — new `test-marker-refresh-post-phase5.sh` recomputes the contract hash and asserts the embedded marker matches; phase completion cannot be marked done against a stale marker.
+- **Minor** — `test-deep-review-clean-index-guard.sh` "mixed dirty state" now spells out the composition (staged A + unstaged B + untracked C with per-path preservation assertions). New fixture name `plan-scope-evasion-parent-heading.md` added to Phase 5 Test files list. Phase 5 item 10 defines the post-impl review ownership and Phase 5 completion criteria explicitly.
 
 ## Final Results
 
@@ -318,3 +419,4 @@ copies match the repo at HEAD.
 - Phase 2 (1a99c83): `scripts/apply-auto-fix-code.sh`, `scripts/lib/auto-fix-common.sh`, deep-review SKILL.md + rubric.md wiring, handoff regression test.
 - Phase 3 (1b49fe8): `scripts/apply-auto-fix-plan.sh`, `scripts/plan-scope-detect.sh`, review-plan SKILL.md + rubric.md wiring, `.review-plan/` gitignored.
 - Phase 4: Verified `scripts/check-prompt-parity.sh` already covers the full required surface (rubric.md, `*-prompt.md`, GENERIC FINDING SCHEMA AND MERGE block across all four SKILL.md mirrors, `scripts/auto-fix-allowlist.json` ↔ SKILL.md byte-identity citations, and `scripts/reconcile-findings.sh` existence/executable bit). No additional parity extension required; the Phase 1 extension stands.
+- Phase 5: Pending Codex follow-up hardening from the post-Claude review. Do not run post-merge promotion until this phase is complete and reviewed.
