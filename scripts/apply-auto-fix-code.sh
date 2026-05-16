@@ -125,15 +125,19 @@ truncate_tail() {
 	fi
 }
 
+# Resolve a finding-supplied path against ROOT_DIR with a containment guard.
+# Rejects absolute paths and any `..` segment to prevent semi-trusted lens
+# output from directing writes outside the repo. Symlink-following is handled
+# separately (af_save_blob / af_apply_replacement guard against `-L`).
 resolve_path() {
 	local p="$1"
-	if [[ "$p" = /* ]]; then
-		printf '%s\n' "$p"
-	elif [[ -e "$p" ]]; then
-		printf '%s\n' "$p"
-	else
-		printf '%s\n' "$ROOT_DIR/$p"
+	if [[ -z "$p" || "$p" = /* ]]; then
+		return 1
 	fi
+	if [[ "$p" =~ (^|/)\.\.(/|$) ]]; then
+		return 1
+	fi
+	printf '%s\n' "$ROOT_DIR/$p"
 }
 
 # Iterate findings carrying auto_fix_status: would_apply.
@@ -153,7 +157,10 @@ while IFS= read -r finding; do
 	file="$(printf '%s' "$finding" | jq -r '.file // ""')"
 	line="$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')"
 
-	abs_path="$(resolve_path "$file")"
+	if ! abs_path="$(resolve_path "$file")"; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_path" "" ""
+		continue
+	fi
 
 	# Re-check allowlist (defence in depth — the auditor may have used a
 	# different allowlist version).

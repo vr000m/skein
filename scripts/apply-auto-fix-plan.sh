@@ -112,15 +112,18 @@ fi
 
 af_manifest_init "$SKILL"
 
+# Resolve a scope-supplied path against ROOT_DIR with a containment guard.
+# Rejects absolute paths and any `..` segment to prevent semi-trusted lens
+# output from directing writes outside the repo.
 resolve_path() {
 	local p="$1"
-	if [[ "$p" = /* ]]; then
-		printf '%s\n' "$p"
-	elif [[ -e "$p" ]]; then
-		printf '%s\n' "$p"
-	else
-		printf '%s\n' "$ROOT_DIR/$p"
+	if [[ -z "$p" || "$p" = /* ]]; then
+		return 1
 	fi
+	if [[ "$p" =~ (^|/)\.\.(/|$) ]]; then
+		return 1
+	fi
+	printf '%s\n' "$ROOT_DIR/$p"
 }
 
 # Parse `auto_fix.scope` of the form `<path>:<start>[-<end>]`. Echo
@@ -226,7 +229,10 @@ while IFS= read -r finding; do
 		continue
 	fi
 
-	abs_path="$(resolve_path "$scope_path")"
+	if ! abs_path="$(resolve_path "$scope_path")"; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_path" "" ""
+		continue
+	fi
 	if [[ ! -f "$abs_path" ]]; then
 		af_manifest_record "$kind" "$file" "$line" "drift" "" ""
 		continue

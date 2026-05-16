@@ -101,3 +101,14 @@ run_applier() {
 	LAST_RC=$?
 	set -e
 }
+
+# run_plan_applier <repo> <args...>
+# Captures combined output in LAST_OUT, exit code in LAST_RC.
+run_plan_applier() {
+	local repo="$1"
+	shift
+	set +e
+	LAST_OUT="$(cd "$repo" && bash "$PLAN_APPLIER" "$@" 2>&1)"
+	LAST_RC=$?
+	set -e
+}
