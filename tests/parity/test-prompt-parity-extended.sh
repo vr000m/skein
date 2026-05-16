@@ -58,6 +58,10 @@ make_fake_root() {
 exit 0
 EOF
     chmod +x "$root/scripts/reconcile-findings.sh"
+    # ``check-prompt-parity.sh`` (Phase 1+) reads scripts/auto-fix-allowlist.json
+    # to validate SKILL.md citations. Seed the real allowlist into the fake root
+    # so sandbox tests reflect the production schema.
+    cp "$REPO_ROOT/scripts/auto-fix-allowlist.json" "$root/scripts/auto-fix-allowlist.json"
 }
 
 # Seed a skill directory pair with matching rubric, prompts, and SKILL.md.
@@ -66,16 +70,24 @@ seed_skill_pair() {
     local skill="$2"
     local prompt_basename="${3:-implementer-prompt.md}"
     mkdir -p "$root/.claude/skills/$skill" "$root/.codex/skills/$skill"
-    # SKILL.md must contain the GENERIC block for deep-review/review-plan.
+    # SKILL.md must contain the GENERIC block for deep-review/review-plan
+    # plus the verbatim allowlist citations consumed by check-prompt-parity.
     if [[ "$skill" == "deep-review" || "$skill" == "review-plan" ]]; then
+        local allowlist_text deep_review_allowlist review_plan_allowlist
+        allowlist_text="$(tr -d '\n' <"$root/scripts/auto-fix-allowlist.json")"
+        deep_review_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"deep-review":(\[[^]]*\]).*/\1/')"
+        review_plan_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"review-plan":(\[[^]]*\]).*/\1/')"
         for side in .claude .codex; do
-            cat >"$root/$side/skills/$skill/SKILL.md" <<'EOF'
+            cat >"$root/$side/skills/$skill/SKILL.md" <<EOF
 stub
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
 canonical-block-line-1
 canonical-block-line-2
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
+
+deep-review allowlist: ${deep_review_allowlist}
+review-plan allowlist: ${review_plan_allowlist}
 
 trailing
 EOF
@@ -383,6 +395,178 @@ test_conduct_lagging_mirror_ok_referenced_by_both_runtimes() {
 # Run
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Phase 4: Codex-only / Claude-only auto-fix wiring drift is caught.
+#
+# Plan invariant: "assert a Codex-only auto-fix wiring drift fails the
+# parity gate, so Codex cannot silently lag Claude." Symmetry: a
+# Claude-only drift must fail too.
+#
+# Scope clarification: scripts/check-prompt-parity.sh enforces
+# byte-identity on rubric.md and *-prompt.md, but SKILL.md is checked
+# only for (a) the GENERIC FINDING SCHEMA AND MERGE block being
+# byte-identical across all four mirrors and (b) the auto-fix
+# allowlist arrays being cited verbatim. The "auto-fix wiring" surface
+# named by the plan is precisely those two regions inside SKILL.md, so
+# the Phase 4 tests target each region directly rather than
+# whole-file byte-equality (which the script does not enforce on
+# SKILL.md).
+#
+# Strategy: operate on the real repo tree, mutate one region in one
+# mirror at a time, run the real script, then restore from
+# `git show HEAD:`. Refuse to run if any target is already dirty so a
+# stale working tree cannot lose user edits.
+# ---------------------------------------------------------------------------
+
+_phase4_refuse_if_dirty() {
+    local rel="$1"
+    if ! git -C "$REPO_ROOT" diff --quiet -- "$rel" 2>/dev/null \
+        || ! git -C "$REPO_ROOT" diff --cached --quiet -- "$rel" 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+_phase4_restore_from_head() {
+    local rel="$1"
+    git -C "$REPO_ROOT" show "HEAD:$rel" >"$REPO_ROOT/$rel"
+}
+
+_phase4_run_real_parity() {
+    # Run the real script in the real repo (no MANAGED_SKILLS override).
+    # Capture combined output for diagnostics on failure.
+    local out
+    set +e
+    out="$(bash "$REAL_SCRIPT" 2>&1)"
+    local rc=$?
+    set -e
+    PHASE4_LAST_OUT="$out"
+    return $rc
+}
+
+# Inject a sentinel line into the file so it no longer byte-matches its
+# mirror. Append-only: the GENERIC block + allowlist literals are
+# untouched, so the failure mode under test is the prompt-md /
+# SKILL.md byte-equality check rather than allowlist-citation removal.
+_phase4_mutate_drift() {
+    local path="$1"
+    printf '\n<!-- phase4-drift-sentinel %s -->\n' "$(date +%s)" >>"$path"
+}
+
+# Tamper the deep-review allowlist citation in `$1` (a SKILL.md path).
+# Returns 0 on successful tamper, 2 if the canonical literal was not
+# found (so the test can fail loudly rather than silently pass).
+_phase4_tamper_allowlist() {
+    python3 - "$1" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+canonical = '["docstring_typo","unused_import","unused_var","mechanical_replace","import_sort"]'
+if canonical not in text:
+    sys.stderr.write(f"canonical allowlist literal not found in {p}\n")
+    sys.exit(2)
+p.write_text(text.replace(canonical, '["TAMPERED"]', 1), encoding="utf-8")
+PY
+}
+
+# Tamper one line inside the GENERIC FINDING SCHEMA AND MERGE block of
+# `$1`. Returns 0 on success, 2 if the block was not found.
+_phase4_tamper_generic_block() {
+    python3 - "$1" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+text = p.read_text(encoding="utf-8")
+begin = "<!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->"
+end = "<!-- END GENERIC FINDING SCHEMA AND MERGE -->"
+i = text.find(begin)
+j = text.find(end)
+if i < 0 or j < 0 or j <= i:
+    sys.stderr.write(f"GENERIC block not found in {p}\n")
+    sys.exit(2)
+# Inject a sentinel line just after the BEGIN marker.
+inject_at = text.find("\n", i) + 1
+tampered = text[:inject_at] + "<!-- phase4-generic-tamper -->\n" + text[inject_at:]
+p.write_text(tampered, encoding="utf-8")
+PY
+}
+
+# Generic mutate-and-restore helper. Args: <test_name> <rel-path>
+# <tamper-fn-name>. Asserts:
+#   * baseline parity green
+#   * after tampering: parity non-zero
+#   * after restore: parity green again
+# Always restores via `git show HEAD:` so a failure mid-test cannot
+# leave the working tree dirty.
+_phase4_mutate_and_assert_caught() {
+    local test_name="$1"
+    local rel="$2"
+    local tamper_fn="$3"
+    local path="$REPO_ROOT/$rel"
+    if [[ ! -f "$path" ]]; then
+        _fail "$test_name" "missing $rel"
+        return
+    fi
+    if ! _phase4_refuse_if_dirty "$rel"; then
+        _fail "$test_name" "$rel has uncommitted changes — refusing to mutate"
+        return
+    fi
+    if ! _phase4_run_real_parity; then
+        _fail "$test_name" "baseline parity is already red; out=$PHASE4_LAST_OUT"
+        return
+    fi
+    if ! "$tamper_fn" "$path"; then
+        _phase4_restore_from_head "$rel"
+        _fail "$test_name" "tamper helper $tamper_fn failed against $rel"
+        return
+    fi
+    if _phase4_run_real_parity; then
+        _phase4_restore_from_head "$rel"
+        _fail "$test_name" "drift in $rel was NOT caught by check-prompt-parity.sh"
+        return
+    fi
+    _phase4_restore_from_head "$rel"
+    if ! _phase4_run_real_parity; then
+        _fail "$test_name" "parity still red after restoring $rel from HEAD; out=$PHASE4_LAST_OUT"
+        return
+    fi
+    _pass "$test_name"
+}
+
+test_phase4_codex_only_allowlist_citation_drift_fails_parity() {
+    _phase4_mutate_and_assert_caught \
+        "phase4-codex-only-auto-fix-wiring-drift-fails-parity" \
+        ".codex/skills/deep-review/SKILL.md" \
+        _phase4_tamper_allowlist
+}
+
+test_phase4_claude_only_allowlist_citation_drift_fails_parity() {
+    _phase4_mutate_and_assert_caught \
+        "phase4-claude-only-auto-fix-wiring-drift-fails-parity" \
+        ".claude/skills/deep-review/SKILL.md" \
+        _phase4_tamper_allowlist
+}
+
+test_phase4_codex_only_generic_block_drift_fails_parity() {
+    _phase4_mutate_and_assert_caught \
+        "phase4-codex-only-generic-finding-block-drift-fails-parity" \
+        ".codex/skills/deep-review/SKILL.md" \
+        _phase4_tamper_generic_block
+}
+
+test_phase4_claude_only_generic_block_drift_fails_parity() {
+    _phase4_mutate_and_assert_caught \
+        "phase4-claude-only-generic-finding-block-drift-fails-parity" \
+        ".claude/skills/deep-review/SKILL.md" \
+        _phase4_tamper_generic_block
+}
+
+test_phase4_review_plan_codex_only_allowlist_drift_fails_parity() {
+    _phase4_mutate_and_assert_caught \
+        "phase4-review-plan-codex-only-auto-fix-wiring-drift-fails-parity" \
+        ".codex/skills/review-plan/SKILL.md" \
+        _phase4_tamper_allowlist
+}
+
 test_mirror_commit_required_after_impl
 test_prompt_divergence_detected
 test_ci_parity_prompt_included
@@ -391,6 +575,11 @@ test_check_prompt_parity_exits_with_documented_expected_drift
 test_check_prompt_parity_exits_zero_when_all_drift_expected
 test_check_prompt_parity_exits_non_zero_on_mixed_drift
 test_conduct_lagging_mirror_ok_referenced_by_both_runtimes
+test_phase4_codex_only_allowlist_citation_drift_fails_parity
+test_phase4_claude_only_allowlist_citation_drift_fails_parity
+test_phase4_codex_only_generic_block_drift_fails_parity
+test_phase4_claude_only_generic_block_drift_fails_parity
+test_phase4_review_plan_codex_only_allowlist_drift_fails_parity
 
 echo
 echo "passed=$PASS failed=$FAIL"

@@ -32,8 +32,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # Allowlist + library live next to this script regardless of cwd.
-# shellcheck source=lib/auto-fix-common.sh
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
+# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
 AF_ALLOWLIST_PATH="$SCRIPT_ROOT/scripts/auto-fix-allowlist.json"
 # Manifest + working tree live under the caller's repository, not the
 # scripts repo. This matters when the applier is invoked from a sibling
@@ -43,6 +44,7 @@ if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 else
 	ROOT_DIR="$(pwd)"
 fi
+# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
 AF_COMMON_ROOT="$ROOT_DIR"
 
 SKILL="deep-review"

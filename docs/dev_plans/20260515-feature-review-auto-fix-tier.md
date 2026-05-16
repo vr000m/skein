@@ -267,10 +267,10 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 ## Progress
 
-- [ ] Phase 1: Shared schema + reconciler + parity + pre-render audit
-- [ ] Phase 2: /deep-review auto-fix applier + handoff regression test
-- [ ] Phase 3: /review-plan auto-fix applier with scope-forbid + .gitignore
-- [ ] Phase 4: Final repo-local parity and post-merge promotion instructions
+- [x] Phase 1: Shared schema + reconciler + parity + pre-render audit
+- [x] Phase 2: /deep-review auto-fix applier + handoff regression test
+- [x] Phase 3: /review-plan auto-fix applier with scope-forbid + .gitignore
+- [x] Phase 4: Final repo-local parity and post-merge promotion instructions
 
 ## Findings
 
@@ -296,4 +296,25 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 ## Final Results
 
-(fill on completion)
+### Post-merge promotion
+
+After this PR is merged into `main` and final approval is given, run the
+following from a clean `main` checkout to promote the updated `deep-review`
+and `review-plan` skills into the user-global skill tree:
+
+```
+MANAGED_SKILLS="deep-review review-plan" scripts/promote-skills.sh --yes && just check-sync
+```
+
+`scripts/promote-skills.sh` is intentionally NOT run as part of any
+feature-branch validation step — it mutates the user-global
+`~/.claude/skills/` / `~/.codex/skills/` trees and must only run after
+merge with explicit approval. `just check-sync` confirms the promoted
+copies match the repo at HEAD.
+
+### Phase completion
+
+- Phase 1 (775fe1a): v2 schema, allowlist JSON, audit script, reconciler + renderer wiring.
+- Phase 2 (1a99c83): `scripts/apply-auto-fix-code.sh`, `scripts/lib/auto-fix-common.sh`, deep-review SKILL.md + rubric.md wiring, handoff regression test.
+- Phase 3 (1b49fe8): `scripts/apply-auto-fix-plan.sh`, `scripts/plan-scope-detect.sh`, review-plan SKILL.md + rubric.md wiring, `.review-plan/` gitignored.
+- Phase 4: Verified `scripts/check-prompt-parity.sh` already covers the full required surface (rubric.md, `*-prompt.md`, GENERIC FINDING SCHEMA AND MERGE block across all four SKILL.md mirrors, `scripts/auto-fix-allowlist.json` ↔ SKILL.md byte-identity citations, and `scripts/reconcile-findings.sh` existence/executable bit). No additional parity extension required; the Phase 1 extension stands.

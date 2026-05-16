@@ -36,8 +36,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# shellcheck source=lib/auto-fix-common.sh
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
+# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
 AF_ALLOWLIST_PATH="$SCRIPT_ROOT/scripts/auto-fix-allowlist.json"
 
 if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
@@ -45,6 +46,7 @@ if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 else
 	ROOT_DIR="$(pwd)"
 fi
+# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
 AF_COMMON_ROOT="$ROOT_DIR"
 
 SKILL="review-plan"
@@ -159,7 +161,7 @@ heading_is_forbidden() {
 
 # Roll back every commit + restore every blob recorded during this batch.
 # Called when marker_failed is hit mid-batch.
-APPLIED_COMMITS=()    # newest-last; reset HEAD by `git reset --hard <parent_of_first>`
+APPLIED_COMMITS=()     # newest-last; reset HEAD by `git reset --hard <parent_of_first>`
 APPLIED_BLOBS_PATHS=() # parallel arrays: index i is one applied fix
 APPLIED_BLOBS_SHAS=()
 
