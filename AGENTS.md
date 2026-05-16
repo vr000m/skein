@@ -21,12 +21,25 @@ Requires: `brew install just shellcheck shfmt`
 ```
 .claude/skills/     Claude Code skills (SKILL.md per skill)
 .codex/skills/      Codex CLI skills (mirrored structure)
-scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity/render
-tests/              Reconciliation test harnesses (fixtures, determinism, renderer)
+scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity/render/auto-fix
+scripts/lib/        Shared bash helpers sourced by appliers (auto-fix-common.sh)
+tests/              Reconciliation, parity, and auto-fix test harnesses
 docs/dev_plans/     Development plans
 justfile            Task runner config
 .env.example        Template for local env overrides
+.deep-review/       Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
+.review-plan/       Gitignored auto-fix manifests for /review-plan (per-run)
 ```
+
+### Auto-fix tier (opt-in)
+
+`/deep-review` and `/review-plan` accept `--auto-fix=trivial` to apply a hard-coded allowlist of mechanical fixes from lens-emitted `auto_fix` blocks. The default tier is advisory-only.
+
+- Single source of truth for allowed kinds: `scripts/auto-fix-allowlist.json`. Cited byte-identical in all four `SKILL.md` mirrors; enforced by `scripts/check-prompt-parity.sh` and `tests/parity/test-allowlist-byte-identity.sh`.
+- Pipeline: lens emits v2 envelope → `scripts/reconcile-findings.sh --skill <s>` merges → `scripts/audit-auto-fix-eligibility.sh` annotates `auto_fix_status` → `scripts/render-reconciled-report.sh` renders → `scripts/apply-auto-fix-code.sh` (deep-review) or `scripts/apply-auto-fix-plan.sh` (review-plan) commits.
+- Code applier requires `--test-cmd` (or `AUTO_FIX_TEST_CMD`); runs the command exactly once per fix, restores from a saved blob on failure without touching `HEAD`.
+- Plan applier writes prose edits with `Auto-Fixed-By: review-plan` trailer; the real `<!-- reviewed: … -->` marker is only refreshed at the normal `/review-plan` acceptance step. `marker_pending` in the manifest does not satisfy `/conduct` preflight.
+- Manifests land in `.deep-review/auto-fix-<unix>.json` and `.review-plan/auto-fix-<unix>.json` (gitignored).
 
 ## Authority Model
 
