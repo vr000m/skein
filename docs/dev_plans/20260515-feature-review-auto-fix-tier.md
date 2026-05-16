@@ -333,7 +333,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - [x] Phase 2: /deep-review auto-fix applier + handoff regression test (Claude-conducted)
 - [x] Phase 3: /review-plan auto-fix applier with scope-forbid + .gitignore (Claude-conducted)
 - [x] Phase 4: Final repo-local parity and post-merge promotion instructions (Claude-conducted)
-- [ ] Phase 5: Codex review follow-up hardening
+- [x] Phase 5: Codex review follow-up hardening (Codex-conducted)
 
 ## Findings
 
