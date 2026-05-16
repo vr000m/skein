@@ -1,12 +1,12 @@
 # Task: Trivial-tier auto-fix for /deep-review and /review-plan
 
-**Status**: Not Started
+**Status**: Complete
 **Assigned to**: tbd
 **Priority**: Medium
 **Branch**: feature/review-auto-fix-tier
 **Created**: 2026-05-15
-**Last revised**: 2026-05-15 (post-/review-plan: applied all 20 unique findings; see Issues & Solutions § Pre-implementation review)
-**Completed**: —
+**Last revised**: 2026-05-16 (post-/conduct: phases 1–4 landed; post-/deep-review: applied 27 unique findings across 6 fix commits — see Issues & Solutions § Post-implementation /deep-review)
+**Completed**: 2026-05-16
 
 ## Objective
 
@@ -195,51 +195,51 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 ### Test Approach
 
-- [ ] Unit tests for `scripts/apply-auto-fix-code.sh` allowlist enforcement (each `kind` accept/reject case)
-- [ ] Adversarial fixtures for `/deep-review` smuggling: semantic-flip `mechanical_replace`, multi-line `mechanical_replace`, test-file-read `unused_var`
-- [ ] Unit test for `/deep-review` test-gate rollback
-- [ ] Unit test proving failed `/deep-review` auto-fix restores touched files and preserves `HEAD`
-- [ ] Unit test requiring explicit `/deep-review` test command before edits
-- [ ] Counter-wrapper test asserting test-gate runs the command exactly once
-- [ ] Trailer-collision tests: single trailer, both trailers, lowercase variant
-- [ ] Unit tests for `scripts/apply-auto-fix-plan.sh` allowlist enforcement
-- [ ] Adversarial fixtures for scope-forbid evasion: indented heading, horizontal rule, fenced pseudo-heading, two-digit phase
-- [ ] Marker-refresh edge cases: missing marker, corrupt plan, lens-emitted no-op
-- [ ] Codex conduct preflight regression after accepted review-plan auto-fix marker refresh
-- [ ] Schema v1↔v2 compat: v2 reads v1, v1 rejects v2, v2 rejects malformed `auto_fix`
-- [ ] Parity test for `auto_fix` schema block byte-identity across all four SKILL.md mirrors
-- [ ] Parity test for `auto-fix-allowlist.json` ↔ SKILL.md byte-identity
-- [ ] Manual smoke (`/deep-review`): synthetic `unused_import` finding → commit lands + manifest correct
-- [ ] Manual smoke (`/review-plan`): `symbol_rename` in prose vs in `## Requirements` → only prose one applies; marker refreshes
+- [x] Unit tests for `scripts/apply-auto-fix-code.sh` allowlist enforcement (each `kind` accept/reject case)
+- [x] Adversarial fixtures for `/deep-review` smuggling: semantic-flip `mechanical_replace`, multi-line `mechanical_replace`, test-file-read `unused_var`
+- [x] Unit test for `/deep-review` test-gate rollback
+- [x] Unit test proving failed `/deep-review` auto-fix restores touched files and preserves `HEAD`
+- [x] Unit test requiring explicit `/deep-review` test command before edits
+- [x] Counter-wrapper test asserting test-gate runs the command exactly once
+- [x] Trailer-collision tests: single trailer, both trailers, lowercase variant
+- [x] Unit tests for `scripts/apply-auto-fix-plan.sh` allowlist enforcement
+- [x] Adversarial fixtures for scope-forbid evasion: indented heading, horizontal rule, fenced pseudo-heading, two-digit phase
+- [x] Marker-refresh edge cases: missing marker, corrupt plan, lens-emitted no-op
+- [x] Codex conduct preflight regression after accepted review-plan auto-fix marker refresh
+- [x] Schema v1↔v2 compat: v2 reads v1, v1 rejects v2, v2 rejects malformed `auto_fix`
+- [x] Parity test for `auto_fix` schema block byte-identity across all four SKILL.md mirrors
+- [x] Parity test for `auto-fix-allowlist.json` ↔ SKILL.md byte-identity
+- [x] Manual smoke (`/deep-review`): synthetic `unused_import` finding → commit lands + manifest correct
+- [x] Manual smoke (`/review-plan`): `symbol_rename` in prose vs in `## Requirements` → only prose one applies; marker refreshes
 
 ### Test Results
 
-- [ ] All existing reconciliation tests pass after schema bump
-- [ ] New auto-fix tests pass
-- [ ] All parity tests green at every phase boundary (not just end-of-Phase-4)
-- [ ] Manual smoke verified on both skills
+- [x] All existing reconciliation tests pass after schema bump
+- [x] New auto-fix tests pass
+- [x] All parity tests green at every phase boundary (not just end-of-Phase-4)
+- [x] Manual smoke verified on both skills
 
 ### Edge Cases Tested
 
-- [ ] Lens emits `auto_fix` with `kind` outside allowlist → dropped to surfaced, manifest records `rejected_kind`
-- [ ] Lens emits `auto_fix` whose `before` does NOT match the file at the cited line → drift; dropped, manifest records `drift`
-- [ ] Test-gate failure during `/deep-review` apply → touched files restored from saved blobs, `HEAD` unchanged, manifest records `test_failed`, finding re-surfaced as advisory
-- [ ] Test-gate invoked exactly once per fix (no retry)
-- [ ] Adversarial: `mechanical_replace` with semantic-flipping single-line `before`/`after` (e.g., `if x:` → `if not x:`) → applier applies, test-gate catches (or doesn't — fixture documents the tradeoff)
-- [ ] Adversarial: multi-line `mechanical_replace` `before` → rejected pre-apply (`status: rejected_multiline`)
-- [ ] Adversarial: `unused_var` claimed unused, but test file reads it → applier's re-verification catches (`status: rejected_revar`)
-- [ ] `/review-plan` `prose_clarify` whose scope lands in `### Phase 2: foo` → dropped, manifest records `rejected_scope`
-- [ ] `/review-plan` scope-forbid evasion: indented heading, horizontal rule, fenced pseudo-heading, two-digit phase → all correctly resolved (forbidden heading still matched; fenced ignored)
-- [ ] `marker_refresh` on plan with no marker → writes fresh marker at template position
-- [ ] `marker_refresh` on corrupt plan → exits `marker_failed`, rolls back batch
-- [ ] `marker_refresh` lens emission + `prose_typo` lens emission in same batch → only end-of-batch refresh runs
-- [ ] v1-style JSONL findings passed to v2 reconciler → upgrade in-flight, no `auto_fix` applied
-- [ ] v2 envelope passed to v1 renderer → reject with clear error
-- [ ] v2 envelope with malformed `auto_fix` (missing `scope`, non-string `before`) → reconciler exits non-zero with clear error
-- [ ] Multiple fixes in a single batch, last one fails the test-gate → only the failing one rolls back; preceding successes are kept
-- [ ] Plan with a malformed heading (e.g., `##Heading` no space) → scope detector returns "unknown", applier drops the fix conservatively
-- [ ] Commit with both `Auto-Fixed-By:` and `Conducted-By:` trailers → handoff gate matches as `Conducted-By:`
-- [ ] Commit with lowercase `auto-fixed-by:` trailer → ignored by handoff gate (case-sensitive)
+- [x] Lens emits `auto_fix` with `kind` outside allowlist → dropped to surfaced, manifest records `rejected_kind`
+- [x] Lens emits `auto_fix` whose `before` does NOT match the file at the cited line → drift; dropped, manifest records `drift`
+- [x] Test-gate failure during `/deep-review` apply → touched files restored from saved blobs, `HEAD` unchanged, manifest records `test_failed`, finding re-surfaced as advisory
+- [x] Test-gate invoked exactly once per fix (no retry)
+- [x] Adversarial: `mechanical_replace` with semantic-flipping single-line `before`/`after` (e.g., `if x:` → `if not x:`) → applier applies, test-gate catches (or doesn't — fixture documents the tradeoff)
+- [x] Adversarial: multi-line `mechanical_replace` `before` → rejected pre-apply (`status: rejected_multiline`)
+- [x] Adversarial: `unused_var` claimed unused, but test file reads it → applier's re-verification catches (`status: rejected_revar`)
+- [x] `/review-plan` `prose_clarify` whose scope lands in `### Phase 2: foo` → dropped, manifest records `rejected_scope`
+- [x] `/review-plan` scope-forbid evasion: indented heading, horizontal rule, fenced pseudo-heading, two-digit phase → all correctly resolved (forbidden heading still matched; fenced ignored)
+- [x] `marker_refresh` on plan with no marker → writes fresh marker at template position
+- [x] `marker_refresh` on corrupt plan → exits `marker_failed`, rolls back batch
+- [x] `marker_refresh` lens emission + `prose_typo` lens emission in same batch → only end-of-batch refresh runs
+- [x] v1-style JSONL findings passed to v2 reconciler → upgrade in-flight, no `auto_fix` applied
+- [x] v2 envelope passed to v1 renderer → reject with clear error
+- [x] v2 envelope with malformed `auto_fix` (missing `scope`, non-string `before`) → reconciler exits non-zero with clear error
+- [x] Multiple fixes in a single batch, last one fails the test-gate → only the failing one rolls back; preceding successes are kept
+- [x] Plan with a malformed heading (e.g., `##Heading` no space) → scope detector returns "unknown", applier drops the fix conservatively
+- [x] Commit with both `Auto-Fixed-By:` and `Conducted-By:` trailers → handoff gate matches as `Conducted-By:`
+- [x] Commit with lowercase `auto-fixed-by:` trailer → ignored by handoff gate (case-sensitive)
 
 ## Acceptance Criteria
 
