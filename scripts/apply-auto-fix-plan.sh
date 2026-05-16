@@ -388,6 +388,11 @@ while IFS= read -r finding; do
 		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
 		continue
 	fi
+	# Defence-in-depth: if `before` text appears elsewhere in the plan, the
+	# lens emission is ambiguous (the same line is targetable from multiple
+	# call sites). Refuse rather than apply silently at the cited line. The
+	# uniqueness invariant is part of the Phase 5 contract (binding test
+	# case 3, "Duplicate-before / non-cited-unique-match" → rejected_drift).
 	exact_match_count="$(awk -v needle="$stripped_before" '
 		$0 == needle { count++ }
 		END { print count + 0 }
