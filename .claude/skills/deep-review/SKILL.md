@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: Thorough multi-lens code review using parallel subagents with clean context. Spawns independent reviewers for logic, security, spec compliance, architecture, and documentation — catching issues that single-pass reviews miss. Use when the user says "deep review", "thorough review", "audit code", or "/deep-review". Complements built-in /review and /security-review.
-argument-hint: "[path/to/review-target|PR] [--full] [--continue]"
+argument-hint: "[path/to/review-target|PR] [--full] [--continue] [--auto-fix=trivial]"
 ---
 
 # Deep Review: Multi-Lens Code Audit
@@ -439,6 +439,41 @@ Forbidden inside Step 3.5:
   - `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 Supported categories are `Logic`, `Security`, `Spec`, `Architecture`, and `Documentation`.
+
+### 4.5. Apply Trivial Auto-Fixes (opt-in)
+
+Run this step **only when** the caller passed `--auto-fix=trivial`. Without the flag the workflow skips straight to Step 5 with `[AUTO-FIXABLE]` annotations from the pre-render audit (dry-run preview).
+
+`--auto-fix=trivial` is an opt-in tier that applies a hard-coded allowlist of mechanical, semantics-preserving fixes. The trigger is the structural `auto_fix` block emitted by a lens; LLM self-classification of "uncontroversial" is explicitly NOT a trigger. The allowlist is defined in `scripts/auto-fix-allowlist.json` and cited verbatim in the GENERIC FINDING SCHEMA AND MERGE block above.
+
+Preconditions:
+
+- The reconciled v2 envelope from Step 3.5 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill deep-review` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `drift`, `unsupported`, ...).
+- The caller supplied an explicit test command via `--test-cmd <cmd>` or `AUTO_FIX_TEST_CMD=<cmd>`. Missing command → applier exits non-zero before any edit. This is a hard contract — `/deep-review` auto-fix does NOT guess a repo test command.
+
+Invocation:
+
+```
+scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+```
+
+Per-fix gating (the applier re-verifies even what the auditor already checked):
+
+1. `kind` must be in the `deep-review` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
+2. For `mechanical_replace`, multi-line `before` is rejected pre-apply → `status: rejected_multiline`.
+3. For `unused_var`, the applier re-runs `git grep -w <var>` excluding `tests/` and `test_*` / `*_test*` paths; any non-test reference → `status: rejected_revar`.
+4. The cited file:line must byte-match `auto_fix.before` (multi-line allowed for `import_sort`); mismatch → `status: drift`.
+5. Pre-apply, save a `git hash-object -w` blob of every touched path. Rollback handle.
+6. Rewrite line N `before` → `after` in place; stage the file.
+7. Run the supplied test command **exactly once** per applied fix. No retry. Flake is the caller's problem.
+8. On test pass: commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: deep-review`.
+9. On test fail: restore the touched paths from the saved blob, unstage them, leave `HEAD` unchanged, append `status: test_failed` with the test output truncated to the last 2000 bytes. The finding is re-surfaced as advisory in Step 5.
+
+Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+
+The applier handles `dead_branch` the same way it handles any other unknown kind — it is **intentionally NOT** in the v1 allowlist. The reasoning is in the dev-plan Architecture Decisions section; do not lobby it back in without a static-analysis gate.
+
+After the applier returns, proceed to Step 5. Findings that landed as commits should not be re-surfaced; only `rejected_*`, `drift`, `unsupported`, and `test_failed` entries appear in the report (as advisory).
 
 ### 5. Present Findings
 

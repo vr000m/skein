@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"style","file":"a.py","line":2,"summary":"docstring typo","evidence":"recieve","suggestion":"fix","auto_fix":{"kind":"docstring_typo","before":"    \"\"\"recieve a value\"\"\"\n","after":"    \"\"\"receive a value\"\"\"\n","scope":"file"},"auto_fix_status":"would_apply"}]}

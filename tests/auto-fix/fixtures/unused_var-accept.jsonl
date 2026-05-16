@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"unused","file":"src_pkg/a.py","line":1,"summary":"unused var","evidence":"never read","suggestion":"remove","auto_fix":{"kind":"unused_var","before":"my_var = 1\n","after":"","scope":"file"},"auto_fix_status":"would_apply"}]}

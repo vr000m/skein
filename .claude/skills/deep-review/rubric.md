@@ -42,6 +42,12 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - No two findings share an identical `(file, line, category)` signature in the same severity tier — a duplicate signature means the merge step did not run or its output was lost
 - Reconciliation step receives only lens return strings (JSON-Lines via `scripts/reconcile-findings.sh`); no parent conversation context is passed to it
 
+## Auto-Fix Lens Emission
+
+- Lens emitted an `auto_fix` block whenever a finding matches the allowlist shape — `kind ∈ {docstring_typo, unused_import, unused_var, mechanical_replace, import_sort}` with single-line `before`/`after` and `scope ∈ {file, function, block}`
+- Absent `auto_fix` on a clearly mechanical finding is a lens-quality issue, not a safety feature — the audit step (`scripts/audit-auto-fix-eligibility.sh`) and applier (`scripts/apply-auto-fix-code.sh`) are the gate, not lens self-restraint
+- `auto_fix.before` is byte-precise to the file:line under review; the lens did not paraphrase, normalise whitespace, or strip a trailing newline
+
 ## Continuation Safety
 
 - If `--continue` was used and stored `head_commit == HEAD`, only `errored`/`timed_out` lenses were re-run; completed lens findings were reused
