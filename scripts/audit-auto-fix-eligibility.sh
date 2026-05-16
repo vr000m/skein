@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALLOWLIST_PATH="$ROOT_DIR/scripts/auto-fix-allowlist.json"
+PLAN_SCOPE_DETECT="$ROOT_DIR/scripts/plan-scope-detect.sh"
 
 usage() {
 	echo "usage: scripts/audit-auto-fix-eligibility.sh --skill deep-review|review-plan [--plan path] [envelope.json|-]" >&2
@@ -115,35 +116,27 @@ scope_parts() {
 	fi
 }
 
+# Resolve the enclosing heading at <line> via the shared resolver, then test
+# it against the same forbidden-heading list the applier uses. Keeping the
+# auditor and applier on one resolver avoids a class of bug where
+# `would_apply` from the auditor disagrees with `rejected_scope` at apply.
 review_plan_scope_forbidden() {
 	local path="$1"
 	local line="$2"
-	awk -v target="$line" '
-		NR > target { exit }
-		/^```/ { fenced = !fenced }
-		!fenced && /^#{1,6}[[:space:]]+/ {
-			hashes = $0
-			sub(/[[:space:]].*/, "", hashes)
-			level = length(hashes)
-			text = $0
-			sub(/^#{1,6}[[:space:]]+/, "", text)
-			sub(/[[:space:]]+#+[[:space:]]*$/, "", text)
-			heading[level] = text
-			for (i = level + 1; i <= 6; i++) delete heading[i]
-		}
-		END {
-			for (i = 1; i <= 6; i++) {
-				h = heading[i]
-				if (h == "Requirements" || h == "Acceptance Criteria" ||
-				    h == "Files to Modify" || h == "New Files to Create" ||
-				    h == "Architecture Decisions" || h == "Integration Seams" ||
-				    h ~ /^Phase [0-9]+:/) {
-					exit 0
-				}
-			}
-			exit 1
-		}
-	' "$path"
+	local heading
+	heading="$("$PLAN_SCOPE_DETECT" "$path" "$line" 2>/dev/null || echo "unknown")"
+	# Phase headings: any digit count.
+	if [[ "$heading" =~ ^###[[:space:]]+Phase[[:space:]]+[0-9]+: ]]; then
+		return 0
+	fi
+	case "$heading" in
+	"## Requirements" | "## Acceptance Criteria" | \
+		"### Files to Modify" | "### New Files to Create" | \
+		"### Architecture Decisions" | "### Integration Seams")
+		return 0
+		;;
+	esac
+	return 1
 }
 
 status_tsv="$(mktemp)"

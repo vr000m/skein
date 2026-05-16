@@ -38,15 +38,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
-# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
-AF_ALLOWLIST_PATH="$SCRIPT_ROOT/scripts/auto-fix-allowlist.json"
+# The lib owns AF_ALLOWLIST_PATH; the caller owns AF_COMMON_ROOT.
 
 if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
 	ROOT_DIR="$WORKTREE_ROOT"
 else
 	ROOT_DIR="$(pwd)"
 fi
-# shellcheck disable=SC2034  # consumed by sourced auto-fix-common.sh
+# shellcheck disable=SC2034  # required by lib's af_manifest_init
 AF_COMMON_ROOT="$ROOT_DIR"
 
 SKILL="review-plan"

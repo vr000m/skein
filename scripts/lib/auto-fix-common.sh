@@ -32,10 +32,18 @@
 
 set -euo pipefail
 
-if [[ -z "${AF_COMMON_ROOT:-}" ]]; then
-	AF_COMMON_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-fi
-AF_ALLOWLIST_PATH="$AF_COMMON_ROOT/scripts/auto-fix-allowlist.json"
+# AF_ALLOWLIST_PATH — derived from this file's location. The allowlist lives
+# next to the lib regardless of where the applier is invoked from. Callers do
+# NOT override this; the lib owns the allowlist source-of-truth.
+AF_LIB_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+AF_ALLOWLIST_PATH="$AF_LIB_ROOT/scripts/auto-fix-allowlist.json"
+readonly AF_LIB_ROOT AF_ALLOWLIST_PATH
+
+# AF_COMMON_ROOT — caller-supplied. Where manifest dirs (.deep-review,
+# .review-plan) live, i.e. the operator's repo root. Callers MUST set this
+# before invoking af_manifest_init; the assertion in af_manifest_init catches
+# omissions loudly rather than letting a future caller silently write
+# manifests into the lib's own directory tree.
 
 af_have_jq() {
 	if ! command -v jq >/dev/null 2>&1; then
@@ -171,6 +179,10 @@ AF_MANIFEST_ENTRIES=()
 
 af_manifest_init() {
 	local skill="$1"
+	if [[ -z "${AF_COMMON_ROOT:-}" ]]; then
+		echo "auto-fix: AF_COMMON_ROOT must be set before af_manifest_init (this is the operator's repo root)" >&2
+		return 2
+	fi
 	local dir
 	dir="$(af_manifest_dir "$skill")"
 	# Refuse to follow a pre-existing symlink at the manifest dir path.
