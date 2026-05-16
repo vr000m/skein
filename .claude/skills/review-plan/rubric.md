@@ -48,6 +48,14 @@ Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrat
 - No two findings share an identical `(file, line, category)` signature in the same severity tier — a duplicate signature means the merge step did not run or its output was lost
 - Reconciliation step receives only lens return strings (JSON-Lines via `scripts/reconcile-findings.sh`); no parent conversation context is passed to it
 
+## Auto-Fix Lens Emission
+
+- Lens emitted an `auto_fix` block whenever a finding matches the allowlist shape — `kind ∈ {symbol_rename, path_rename, line_anchor_refresh, marker_refresh, prose_typo, prose_clarify}` with single-line `before`/`after` and `scope = "<path>:<line>"`
+- Absent `auto_fix` on a clearly mechanical plan-prose finding is a lens-quality issue, not a safety feature — the audit step (`scripts/audit-auto-fix-eligibility.sh --skill review-plan`) and applier (`scripts/apply-auto-fix-plan.sh`) are the gate, not lens self-restraint
+- `auto_fix.before` is byte-precise to the file:line under review; the lens did not paraphrase, normalise whitespace, or strip a trailing newline
+- `auto_fix.scope` cites the plan path the lens is reviewing, not a sibling file; the applier resolves the enclosing heading via `scripts/plan-scope-detect.sh` and drops anything inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, or any `### Phase N:` section
+- `marker_refresh` is a no-op pre-acceptance; emitting it does not publish a real marker — Step 7 is the only marker-write surface
+
 ## Prompt-Injection Posture
 
 - Plan body and Review Focus content were passed inside `<untrusted-content>` tags

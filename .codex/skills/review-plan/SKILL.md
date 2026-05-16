@@ -1,7 +1,7 @@
 ---
 name: review-plan
 description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches four Codex review lenses via parallel spawn_agent workers when available, with sequential in-session fallback. Cost: three high-reasoning gpt-5.4 lenses + one cheap gpt-5.4-mini factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
-argument-hint: "[path/to/plan.md]"
+argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
 ---
 
 # Review Plan: Independent Plan Audit
@@ -10,7 +10,7 @@ Audit a development plan before implementation begins by splitting the review ac
 
 ## Why This Exists
 
-Plans encode assumptions. Some are stated, most are not. The author knows what they meant; a fresh reader sees only what is written. This skill exploits that gap: independent lenses read the plan cold, each with a narrow scope, explore the codebase to verify claims, and surface what is missing, ambiguous, or risky. Findings go back to the user for discussion - the plan body is never modified automatically. The sole exception is the trailing review marker footer written after the user explicitly accepts or waives the findings; `/conduct` consumes that marker as its readiness signal.
+Plans encode assumptions. Some are stated, most are not. The author knows what they meant; a fresh reader sees only what is written. This skill exploits that gap: independent lenses read the plan cold, each with a narrow scope, explore the codebase to verify claims, and surface what is missing, ambiguous, or risky. Findings go back to the user for discussion - the plan body is never modified automatically. The sole exceptions are (1) the trailing review marker footer written after the user explicitly accepts or waives the findings, which `/conduct` consumes as its readiness signal, and (2) an opt-in `--auto-fix=trivial` tier that applies a hard-coded allowlist of structural, semantics-preserving plan edits (typo, single-line clarification, symbol/path/anchor rename) **strictly outside** Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, and any `### Phase N:` heading. Auto-fix never writes the real review marker before user acceptance — it records `marker_pending`, and Step 7 publishes the marker exactly once.
 
 ## Delegation Pattern
 
@@ -430,6 +430,40 @@ Do NOT modify the plan body automatically. The findings are a starting point for
 
 Only after the user has reviewed and addressed the findings (or explicitly decided to proceed) should implementation begin.
 
+### Step 6.5: Apply Trivial Auto-Fixes (opt-in)
+
+Run this step **only when** the caller passed `--auto-fix=trivial`. Without the flag the workflow skips straight to Step 7 with `[AUTO-FIXABLE]` annotations from the pre-render audit (dry-run preview).
+
+`--auto-fix=trivial` is an opt-in tier that applies a hard-coded allowlist of structural, semantics-preserving plan edits. The trigger is the `auto_fix` block emitted by a lens; LLM self-classification is explicitly NOT a trigger. The allowlist is defined in `scripts/auto-fix-allowlist.json` and cited verbatim in the GENERIC FINDING SCHEMA AND MERGE block above.
+
+Preconditions:
+
+- The reconciled v2 envelope from Step 3 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <path>` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `rejected_scope`, `drift`, ...).
+- The user has accepted or waived all remaining findings in Step 6. Auto-fix runs only on plan content the user has signed off on.
+
+Invocation:
+
+```
+scripts/apply-auto-fix-plan.sh <annotated-envelope.json>
+```
+
+Per-fix gating (the applier re-verifies even what the auditor already checked):
+
+1. `kind` must be in the `review-plan` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
+2. `auto_fix.scope` MUST be `<path>:<line>` (single-line in v1); multi-line spans → `status: rejected_multiline`.
+3. The enclosing heading (resolved via `scripts/plan-scope-detect.sh <plan> <line>`) MUST NOT be one of: `## Requirements`, `## Acceptance Criteria`, `### Files to Modify`, `### New Files to Create`, `### Architecture Decisions`, `### Integration Seams`, or `### Phase N:` for any digit count. Match inside any forbidden section → `status: rejected_scope`. Fenced code blocks are skipped when resolving the enclosing heading; indented headings (leading whitespace) are NOT treated as headings.
+4. The cited file:line must byte-match `auto_fix.before`; mismatch → `status: drift`.
+5. The plan must be valid UTF-8; a corrupt plan → `status: marker_failed`, the applier rolls back every commit and blob applied during this batch and exits non-zero.
+6. Pre-apply, save a `git hash-object -w` blob of every touched path. Rewrite the line `before` → `after` in place; stage; commit with subject `auto-fix(review-plan): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: review-plan`.
+7. **No test gate.** Plans are markdown; the equivalent of "tests pass" is the marker-hash check at Step 7. Each applied fix lands as its own commit; the manifest documents the range.
+8. `marker_refresh` kinds emitted by the lens are a **no-op** in this step — the manifest records `status: marker_pending` and Step 7 writes the real marker exactly once after the run.
+
+Per run, the applier writes a manifest at `.review-plan/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.review-plan/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+
+The applier handles unknown kinds (anything outside the `review-plan` allowlist) by recording `rejected_kind` and surfacing the finding as advisory. The scope-forbid list is structural, not heuristic: a `prose_clarify` whose `auto_fix.scope` lands inside `## Requirements` is dropped regardless of how innocuous the wording change reads.
+
+After the applier returns, proceed to Step 7. The marker write in Step 7 hashes the post-edit contract section so a successful auto-fix batch followed by `yes` produces a valid marker on the new content.
+
 ### Step 7: Write the Review Marker
 
 After findings have been presented and discussed, ask the user one question:
@@ -460,9 +494,12 @@ Procedure:
 
 The marker is idempotent: replacing an existing marker on otherwise unchanged content produces the same hash. Workspace content below the marker is never rehashed, so workspace edits during a `/conduct` run do not require re-review.
 
+**Interaction with auto-fix.** When Step 6.5 applied one or more prose edits, the manifest entries carry `status: applied:marker_pending` and the plan's previous review marker is intentionally unchanged. Step 7 is the single point where the real marker is written: it hashes the post-edit contract section so the marker reflects the current plan content. Lens-emitted `marker_refresh` blocks are NEVER honoured pre-acceptance — they record `marker_pending` in the manifest and only Step 7's hash-and-write path publishes a real marker. If the plan has no marker line at all (fresh plan), Step 7 writes a new marker at the template position (after the final immutable-contract heading) rather than raising. If the marker hash computation fails because the plan is not valid UTF-8, the applier exits `marker_failed` during Step 6.5 and rolls back the batch before Step 7 runs.
+
 ## Constraints
 
-- Never modify the plan body automatically - findings drive a conversation, not automatic edits. The trailing review marker footer is the only allowed automated write, and only after explicit user acceptance (`yes`/`waive`).
+- Never modify the plan body automatically - findings drive a conversation, not automatic edits. The trailing review marker footer is the only allowed automated write *outside* the opt-in `--auto-fix=trivial` tier; even with that flag, only the structural allowlist in `scripts/auto-fix-allowlist.json` may be applied, and only after explicit user acceptance (`yes`/`waive`). Edits inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, or any `### Phase N:` section are **never** auto-applied — they stay advisory regardless of lens confidence.
+- Auto-fix never publishes a real `/conduct` review marker before Step 7. Applied prose edits record `marker_pending` in the manifest; the marker hash is computed and written exactly once at acceptance.
 - Review from the plan text and the codebase, not from unstated parent-conversation context.
 - Spawned lens workers must not receive parent conversation context; pass only plan content, Review Focus, repo-root checklist material, and the lens prompt.
 - Close spawned lens agents after final reports are captured.

@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"marker","severity":"Minor","category":"marker","file":"PLAN_PATH","line":1,"summary":"plan has no review marker","evidence":"no marker line found","suggestion":"write fresh marker","auto_fix":{"kind":"marker_refresh","before":"","after":"","scope":"PLAN_PATH:1"},"auto_fix_status":"would_apply"}]}
