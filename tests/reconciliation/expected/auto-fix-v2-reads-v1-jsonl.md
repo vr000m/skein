@@ -11,12 +11,12 @@
     {
       "severity": "Important",
       "category": "correctness",
-      "file": "src/foo.py",
-      "line": 42,
+      "file": "src/legacy.py",
+      "line": 12,
       "lenses": ["logic"],
-      "summary": "off-by-one",
-      "evidence": "loop runs N+1 times",
-      "suggestion": "use range(N)"
+      "summary": "legacy JSONL still parses",
+      "evidence": "finding has no auto_fix block",
+      "suggestion": "surface as advisory"
     }
   ],
   "related": []

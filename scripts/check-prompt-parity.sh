@@ -277,6 +277,40 @@ for path in "${GENERIC_TARGETS[@]}"; do
 	fi
 done
 
+# --- auto-fix allowlist citations -------------------------------------
+#
+# scripts/auto-fix-allowlist.json is the single source of truth for
+# trivial auto-fix kinds. The compact JSON arrays must be cited verbatim
+# inside every SKILL.md mirror that shares the GENERIC finding contract.
+
+allowlist_json="$ROOT_DIR/scripts/auto-fix-allowlist.json"
+if [[ ! -f "$allowlist_json" ]]; then
+	echo "drift: scripts/auto-fix-allowlist.json missing"
+	PARITY_DIFF=1
+else
+	allowlist_text="$(tr -d '\n' <"$allowlist_json")"
+	deep_review_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"deep-review":(\[[^]]*\]).*/\1/')"
+	review_plan_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"review-plan":(\[[^]]*\]).*/\1/')"
+	if [[ "$deep_review_allowlist" == "$allowlist_text" || "$review_plan_allowlist" == "$allowlist_text" ]]; then
+		echo "drift: scripts/auto-fix-allowlist.json does not match expected compact shape"
+		PARITY_DIFF=1
+	else
+		for path in "${GENERIC_TARGETS[@]}"; do
+			if [[ ! -f "$path" ]]; then
+				continue
+			fi
+			if ! grep -Fq "$deep_review_allowlist" "$path"; then
+				echo "drift: deep-review auto-fix allowlist not cited verbatim in $path"
+				PARITY_DIFF=1
+			fi
+			if ! grep -Fq "$review_plan_allowlist" "$path"; then
+				echo "drift: review-plan auto-fix allowlist not cited verbatim in $path"
+				PARITY_DIFF=1
+			fi
+		done
+	fi
+fi
+
 # --- scripts/reconcile-findings.sh existence + executable bit ----------
 #
 # The GENERIC FINDING SCHEMA AND MERGE block in every SKILL.md cites

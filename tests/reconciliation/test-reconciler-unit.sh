@@ -7,7 +7,7 @@
 #   Stdin:  JSON-Lines findings
 #           {lens, severity, category, file, line, summary, evidence, suggestion}
 #   Stdout: canonical JSON
-#           {schema_version: 1,
+#           {schema_version: 2,
 #            summary: {raw, merged, unique, related, dropped},
 #            findings: [...], related: [...]}
 #
@@ -52,35 +52,65 @@ fail_count=0
 #   Pipes <input> through the reconciler and diffs stdout against
 #   <expected_stdout>. Records PASS/FAIL.
 run_case() {
-    local name="$1"
-    local input="$2"
-    local expected="$3"
+	local name="$1"
+	local input="$2"
+	local expected="$3"
 
-    local case_dir
-    case_dir="$(mktemp -d "$TMPDIR_ROOT/case.XXXXXX")"
-    local actual_file="$case_dir/actual.json"
-    local expected_file="$case_dir/expected.json"
-    local diff_file="$case_dir/diff.txt"
+	local case_dir
+	case_dir="$(mktemp -d "$TMPDIR_ROOT/case.XXXXXX")"
+	local actual_file="$case_dir/actual.json"
+	local expected_file="$case_dir/expected.json"
+	local diff_file="$case_dir/diff.txt"
 
-    printf '%s' "$expected" > "$expected_file"
+	printf '%s' "$expected" >"$expected_file"
 
-    if ! printf '%s' "$input" | bash "$SCRIPT" > "$actual_file" 2>"$case_dir/stderr"; then
-        echo "FAIL: $name (script exited non-zero)"
-        echo "  stderr: $(cat "$case_dir/stderr")"
-        fail_count=$((fail_count + 1))
-        return
-    fi
+	if ! printf '%s' "$input" | bash "$SCRIPT" --skill deep-review >"$actual_file" 2>"$case_dir/stderr"; then
+		echo "FAIL: $name (script exited non-zero)"
+		echo "  stderr: $(cat "$case_dir/stderr")"
+		fail_count=$((fail_count + 1))
+		return
+	fi
 
-    if diff -u "$expected_file" "$actual_file" > "$diff_file"; then
-        echo "PASS: $name"
-        pass_count=$((pass_count + 1))
-    else
-        echo "FAIL: $name"
-        echo "--- expected"
-        echo "+++ actual"
-        sed 's/^/    /' "$diff_file"
-        fail_count=$((fail_count + 1))
-    fi
+	if diff -u "$expected_file" "$actual_file" >"$diff_file"; then
+		echo "PASS: $name"
+		pass_count=$((pass_count + 1))
+	else
+		echo "FAIL: $name"
+		echo "--- expected"
+		echo "+++ actual"
+		sed 's/^/    /' "$diff_file"
+		fail_count=$((fail_count + 1))
+	fi
+}
+
+# run_failure_case <case_name> <input> <expected_stderr_substring>
+#   Pipes <input> through the reconciler and expects non-zero exit with a
+#   clear structural error.
+run_failure_case() {
+	local name="$1"
+	local input="$2"
+	local expected_stderr="$3"
+
+	local case_dir
+	case_dir="$(mktemp -d "$TMPDIR_ROOT/case.XXXXXX")"
+	local actual_file="$case_dir/actual.json"
+	local stderr_file="$case_dir/stderr"
+
+	if printf '%s' "$input" | bash "$SCRIPT" --skill deep-review >"$actual_file" 2>"$stderr_file"; then
+		echo "FAIL: $name (script exited zero; expected structural rejection)"
+		fail_count=$((fail_count + 1))
+		return
+	fi
+
+	if grep -Fq "$expected_stderr" "$stderr_file"; then
+		echo "PASS: $name"
+		pass_count=$((pass_count + 1))
+	else
+		echo "FAIL: $name (stderr missing expected text)"
+		echo "  expected substring: $expected_stderr"
+		echo "  stderr: $(cat "$stderr_file")"
+		fail_count=$((fail_count + 1))
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -88,10 +118,10 @@ run_case() {
 # ---------------------------------------------------------------------------
 
 if [[ ! -f "$SCRIPT" ]]; then
-    echo "FAIL: preflight (scripts/reconcile-findings.sh not found at $SCRIPT)"
-    echo ""
-    echo "Summary: 0 passed, 1 failed"
-    exit 1
+	echo "FAIL: preflight (scripts/reconcile-findings.sh not found at $SCRIPT)"
+	echo ""
+	echo "Summary: 0 passed, 1 failed"
+	exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -106,7 +136,7 @@ CASE1_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE1_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 1,
     "merged": 0,
@@ -149,7 +179,7 @@ CASE2_INPUT='{"lens":"security","severity":"Critical","category":"injection","fi
 
 read -r -d '' CASE2_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 2,
     "merged": 1,
@@ -191,7 +221,7 @@ CASE3_INPUT='{"lens":"logic","severity":"Important","category":"correctness","fi
 
 read -r -d '' CASE3_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 2,
     "merged": 0,
@@ -245,7 +275,7 @@ CASE4_INPUT=''
 
 read -r -d '' CASE4_EXPECTED <<'JSON' || true
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": {
     "raw": 0,
     "merged": 0,
@@ -262,6 +292,64 @@ CASE4_EXPECTED="${CASE4_EXPECTED}"$'\n'
 run_case "empty-input" "$CASE4_INPUT" "$CASE4_EXPECTED"
 
 # ---------------------------------------------------------------------------
+# Case 5: v2 finding with well-formed auto_fix passes the structural block
+# through unchanged.
+#
+# Acceptance: the reconciler validates the required string fields and emits
+# the block in the reconciled finding. Eligibility is computed by the later
+# audit step, so no auto_fix_status appears here.
+# ---------------------------------------------------------------------------
+
+CASE5_INPUT='{"lens":"logic","severity":"Minor","category":"style","file":"src/foo.py","line":7,"summary":"typo","evidence":"docstring says recieve","suggestion":"fix spelling","auto_fix":{"kind":"docstring_typo","before":"recieve","after":"receive","scope":"file"}}
+'
+
+read -r -d '' CASE5_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 1,
+    "merged": 0,
+    "unique": 1,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Minor",
+      "category": "style",
+      "file": "src/foo.py",
+      "line": 7,
+      "lenses": ["logic"],
+      "summary": "typo",
+      "evidence": "docstring says recieve",
+      "suggestion": "fix spelling",
+      "auto_fix": {"kind": "docstring_typo", "before": "recieve", "after": "receive", "scope": "file"}
+    }
+  ],
+  "related": []
+}
+JSON
+CASE5_EXPECTED="${CASE5_EXPECTED}"$'\n'
+
+run_case "well-formed-auto-fix-pass-through" "$CASE5_INPUT" "$CASE5_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 6: malformed present auto_fix blocks reject loudly.
+#
+# Acceptance: present-but-malformed blocks are lens-emission bugs, not
+# advisory findings. Missing required keys and non-string values both exit
+# non-zero with the standard structural error prefix.
+# ---------------------------------------------------------------------------
+
+CASE6_MISSING_SCOPE='{"lens":"logic","severity":"Minor","category":"style","file":"src/foo.py","line":7,"summary":"typo","evidence":"docstring says recieve","suggestion":"fix spelling","auto_fix":{"kind":"docstring_typo","before":"recieve","after":"receive"}}
+'
+run_failure_case "malformed-auto-fix-missing-scope" "$CASE6_MISSING_SCOPE" "auto_fix block malformed"
+
+CASE6_NONSTRING_BEFORE='{"lens":"logic","severity":"Minor","category":"style","file":"src/foo.py","line":7,"summary":"typo","evidence":"docstring says recieve","suggestion":"fix spelling","auto_fix":{"kind":"docstring_typo","before":123,"after":"receive","scope":"file"}}
+'
+run_failure_case "malformed-auto-fix-nonstring-before" "$CASE6_NONSTRING_BEFORE" "auto_fix block malformed"
+
+# ---------------------------------------------------------------------------
 # Final tally
 # ---------------------------------------------------------------------------
 
@@ -269,6 +357,6 @@ echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 
 if [[ $fail_count -ne 0 ]]; then
-    exit 1
+	exit 1
 fi
 exit 0

@@ -40,7 +40,7 @@ input="$(cat)"
 # Schema version this renderer understands. MUST match the
 # `schema_version` field emitted by scripts/reconcile-findings.sh. Bump
 # in lockstep when the envelope shape changes.
-EXPECTED_SCHEMA_VERSION=1
+EXPECTED_SCHEMA_VERSION=2
 
 # Extract the schema_version with a portable awk match (avoids requiring
 # jq for the assertion itself). Missing field is treated as absent and
@@ -75,14 +75,14 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 	')
 
 	# Findings as a TSV stream, one row per finding. Columns:
-	#   severity  category  file  line  lenses(comma-joined)  summary  evidence  suggestion
+	#   severity  category  file  line  lenses(comma-joined)  summary  evidence  suggestion  auto_fix_status
 	# Tabs/newlines inside string fields escaped to keep awk field-splitting safe.
 	findings_tsv="$(printf '%s' "$input" | jq -r '
 		.findings[]? | [
 			.severity, .category, .file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			(.lenses | join(",")),
-			.summary, .evidence, .suggestion
+			.summary, .evidence, .suggestion, (.auto_fix_status // "")
 		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("\t")
 	')"
 
@@ -209,8 +209,9 @@ else
 					file = jstr(o, "file"); line = jnum(o, "line")
 					if (line == "") line = "-1"
 					summary = jstr(o, "summary"); evidence = jstr(o, "evidence"); suggestion = jstr(o, "suggestion")
+					auto_fix_status = jstr(o, "auto_fix_status")
 					lenses = jarr_strings(o, "lenses")
-					printf "FINDING\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", esc(sev), esc(cat), esc(file), line, esc(lenses), esc(summary), esc(evidence), esc(suggestion)
+					printf "FINDING\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", esc(sev), esc(cat), esc(file), line, esc(lenses), esc(summary), esc(evidence), esc(suggestion), esc(auto_fix_status)
 				}
 			}
 
@@ -363,7 +364,7 @@ emit_section() {
 		return 0
 	fi
 	printf '\n### %s\n' "$sev"
-	while IFS=$'\t' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion; do
+	while IFS=$'\t' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion r_auto_fix_status; do
 		# Decode \t / \n that the parser escaped so multi-line evidence
 		# round-trips into rendered output.
 		decode() { printf '%s' "$1" | sed -e 's/\\t/	/g' -e 's/\\n/\
@@ -379,7 +380,11 @@ emit_section() {
 			}
 			print out
 		}')"
-		printf -- '- **%s**: %s at %s:%s\n' "$r_cat" "$d_summary" "$r_file" "$r_line"
+		auto_fix_label=""
+		if [[ "$r_auto_fix_status" == "would_apply" ]]; then
+			auto_fix_label=" [AUTO-FIXABLE]"
+		fi
+		printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
 		printf -- '  - Lenses: [%s]\n' "$d_lenses"
 		printf -- '  - Evidence: %s\n' "$d_evidence"
 		printf -- '  - Suggestion: %s\n' "$d_suggestion"

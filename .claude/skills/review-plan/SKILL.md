@@ -325,10 +325,10 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | scripts/reconcile-findings.sh
+   cat findings.jsonl | scripts/reconcile-findings.sh --skill review-plan
    ```
 
-   The script emits canonical reconciled JSON on stdout: `{schema_version: 1, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+   The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Render the JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
 4. **Hand off to Step 4 and Step 5.** The reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
 
@@ -340,24 +340,31 @@ Forbidden inside Step 3:
 The merge contract is:
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
-- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation. Findings MAY additionally carry an optional `auto_fix: {kind, before, after, scope}` block proposing a structural, semantics-preserving edit.
 - **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
 - **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
 - **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
-- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, and `suggestion` text is preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
+- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, `suggestion`, and optional `auto_fix` block are preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
 - **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
 - **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
 - **Summary semantics**: `merged` counts signatures corroborated by ≥2 distinct lenses; `unique` counts signatures reported by exactly one lens (single-source). Invariant: `merged + unique == len(findings)`. `related` counts cross-category cross-references at the same `(file, line)`; cross-file related pairs are NOT representable in this schema (the renderer asserts this invariant).
-- **Empty input**: reconciliation still emits the structured report with `schema_version: 1, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
-- **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
+- **Empty input**: reconciliation still emits the structured report with `schema_version: 2, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Schema versioning**: every envelope carries `"schema_version": 2` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape. v2 added the optional `auto_fix` block; v1 envelopes/JSONL findings without it are upgraded in-flight (treated as advisory, never applied).
+- **jq fallback boundary**: v1-style JSONL findings without `auto_fix` keep the existing awk fallback. Findings with `auto_fix` require jq for structural validation and fail clearly if jq is unavailable.
+- **Auto-fix proposal block (optional, v2+)**: `auto_fix` carries `{kind: string, before: string, after: string, scope: string}`. `kind` MUST be drawn from the per-skill allowlist in `scripts/auto-fix-allowlist.json`. `scope` typing is per skill — `/deep-review` uses `scope ∈ {"file", "function", "block"}` (informational), and `/review-plan` uses `scope = "<path>:<start-line>[-<end-line>]"` (single-line spans only in v1). The lens *proposes*; the audit step (`scripts/audit-auto-fix-eligibility.sh`) and applier scripts *gate* via the allowlist and (for `/review-plan`) the scope-forbid list. Unknown `kind` → dropped to surfaced.
+- **Malformed `auto_fix` → reject envelope**: present-but-malformed blocks (missing `kind`/`before`/`after`/`scope`, non-string values, malformed per-skill scope) are lens-emission bugs. The reconciler exits non-zero with `auto_fix block malformed: <reason>` rather than silently demoting the finding.
+- **Allowlist source of truth**: `scripts/auto-fix-allowlist.json` is the single source for trivial-tier kinds. Cited verbatim here so `scripts/check-prompt-parity.sh` can assert byte-identity across `.claude` and `.codex` mirrors:
+  - `/deep-review`: `["docstring_typo","unused_import","unused_var","mechanical_replace","import_sort"]`
+  - `/review-plan`: `["symbol_rename","path_rename","line_anchor_refresh","marker_refresh","prose_typo","prose_clarify"]`
+- **`[AUTO-FIXABLE]` annotation rule**: the renderer is pure envelope-to-markdown. `[AUTO-FIXABLE]` is shown only for findings whose `auto_fix_status` has been precomputed as `"would_apply"` by `scripts/audit-auto-fix-eligibility.sh`. Findings carrying an `auto_fix` block that fail allowlist (`rejected_kind`) or scope-forbid (`rejected_scope`) are NOT annotated.
 - **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
   ```
-  cat findings.jsonl | scripts/reconcile-findings.sh
+  cat findings.jsonl | scripts/reconcile-findings.sh --skill <deep-review|review-plan>
   ```
 
-  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it. `--skill` is required whenever any finding carries an `auto_fix` block so the per-skill scope typing can be validated.
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
 
 ### Step 4: Self-Check Against Rubric

@@ -1,0 +1,1 @@
+{"lens":"logic","severity":"Important","category":"correctness","file":"src/legacy.py","line":12,"summary":"legacy JSONL still parses","evidence":"finding has no auto_fix block","suggestion":"surface as advisory"}
