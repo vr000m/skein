@@ -323,8 +323,8 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 ### Manual Acceptance (not automatable)
 
 - SKILL.md, rubric.md, `auto-fix-allowlist.json`, this plan's Final Results, and any relevant CHANGELOG entry are reviewed for accuracy and consistency.
+<!-- reviewed: 2026-05-17 @ 823d6da51caf9e7473ad6baa31e2f2d912335afe -->
 
-<!-- reviewed: 2026-05-16 @ ea9b946f854a6dc75b5c84eaf5524d284a18b1f7 -->
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
