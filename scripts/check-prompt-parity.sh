@@ -288,12 +288,24 @@ if [[ ! -f "$allowlist_json" ]]; then
 	echo "drift: scripts/auto-fix-allowlist.json missing"
 	PARITY_DIFF=1
 else
-	allowlist_text="$(tr -d '\n' <"$allowlist_json")"
-	deep_review_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"deep-review":(\[[^]]*\]).*/\1/')"
-	review_plan_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"review-plan":(\[[^]]*\]).*/\1/')"
-	if [[ "$deep_review_allowlist" == "$allowlist_text" || "$review_plan_allowlist" == "$allowlist_text" ]]; then
-		echo "drift: scripts/auto-fix-allowlist.json does not match expected compact shape"
+	# Use jq for structural extraction (compact, sorted-key-stable). The
+	# previous sed approach silently truncated if any kind string ever
+	# contained a `]` and created a second parser for the same JSON file
+	# (the tests/parity/test-allowlist-byte-identity.sh check uses Python's
+	# json.load — having jq here keeps both parsers semantic).
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "warn: jq not available — skipping allowlist byte-identity citation check"
+		deep_review_allowlist=""
+		review_plan_allowlist=""
+	else
+		deep_review_allowlist="$(jq -c '."deep-review"' "$allowlist_json")"
+		review_plan_allowlist="$(jq -c '."review-plan"' "$allowlist_json")"
+	fi
+	if [[ -n "$deep_review_allowlist" && ("$deep_review_allowlist" == "null" || "$review_plan_allowlist" == "null") ]]; then
+		echo "drift: scripts/auto-fix-allowlist.json missing deep-review or review-plan key"
 		PARITY_DIFF=1
+	elif [[ -z "$deep_review_allowlist" ]]; then
+		: # jq unavailable; citation check skipped above
 	else
 		for path in "${GENERIC_TARGETS[@]}"; do
 			if [[ ! -f "$path" ]]; then

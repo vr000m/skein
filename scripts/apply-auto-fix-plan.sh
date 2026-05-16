@@ -110,12 +110,16 @@ if [[ "$schema_version" != "2" ]]; then
 fi
 
 af_manifest_init "$SKILL"
-# Ensure the manifest is always flushed, even on an unexpected early exit
-# under `set -euo pipefail`. Without this, a mid-batch hard failure would
-# leave applier commits stranded with no manifest entry. The trap is
-# idempotent with the explicit af_manifest_write call at the end of the
-# normal path.
-trap af_manifest_write EXIT
+# Advisory lock: serialise concurrent applier runs in the same repo. See
+# apply-auto-fix-code.sh for rationale.
+AF_LOCKDIR="$ROOT_DIR/.git/auto-fix-plan.lock"
+if ! mkdir "$AF_LOCKDIR" 2>/dev/null; then
+	echo "apply-auto-fix-plan: another applier appears to be running (lock at $AF_LOCKDIR); refusing to start" >&2
+	exit 8
+fi
+# Ensure the manifest is always flushed and the lock is always released,
+# even on an unexpected early exit under `set -euo pipefail`.
+trap 'af_manifest_write; rmdir "$AF_LOCKDIR" 2>/dev/null || true' EXIT
 
 # Resolve a scope-supplied path against ROOT_DIR with a containment guard.
 # Rejects absolute paths and any `..` segment to prevent semi-trusted lens
@@ -267,6 +271,16 @@ while IFS= read -r finding; do
 		echo "apply-auto-fix-plan: marker_failed on $abs_path; batch rolled back; manifest at $(af_manifest_path)" >&2
 		exit 1
 	fi
+	# A UTF-8 BOM (EF BB BF) is a valid byte sequence but throws off
+	# line-anchored matchers and downstream marker-hash semantics. iconv
+	# accepts it; we don't. Refuse to apply rather than commit through it.
+	if [[ "$(head -c 3 "$abs_path" 2>/dev/null | od -An -tx1 | tr -d ' ')" == "efbbbf" ]]; then
+		af_manifest_record "$kind" "$file" "$line" "marker_failed" "" ""
+		rollback_batch
+		af_manifest_write
+		echo "apply-auto-fix-plan: UTF-8 BOM detected on $abs_path; batch rolled back; manifest at $(af_manifest_path)" >&2
+		exit 1
+	fi
 
 	# Scope-forbid check via plan-scope-detect at the cited scope line.
 	heading="$("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" "$abs_path" "$scope_start" 2>/dev/null || echo "unknown")"
@@ -286,9 +300,13 @@ while IFS= read -r finding; do
 		af_manifest_record "$kind" "$file" "$line" "rejected_multiline" "" ""
 		continue
 	fi
+	# Buffer the match in awk; only emit when END verifies count==1. The
+	# previous form printed every match before END enforced the count, so
+	# downstream code had to defend against multi-line `match_line` values
+	# (which happened to fail the =~ ^[0-9]+$ check by accident).
 	match_line="$(awk -v needle="$stripped_before" '
-		$0 == needle { print NR; count++ }
-		END { exit (count == 1 ? 0 : 1) }
+		$0 == needle { buf = NR; count++ }
+		END { if (count == 1) print buf; else exit 1 }
 	' "$abs_path" 2>/dev/null || true)"
 	if [[ -z "$match_line" || ! "$match_line" =~ ^[0-9]+$ ]]; then
 		af_manifest_record "$kind" "$file" "$line" "drift" "" ""

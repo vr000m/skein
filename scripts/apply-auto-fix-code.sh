@@ -110,13 +110,29 @@ if [[ "$schema_version" != "2" ]]; then
 fi
 
 af_manifest_init "$SKILL"
-# Ensure the manifest is always flushed, even if `set -euo pipefail` aborts
-# us mid-batch (awk exit code, mktemp failure, git add failure). Without
-# this trap, applied commits would land but the manifest record of them
-# would never reach disk, leaving the orchestrator with no audit trail.
-trap af_manifest_write EXIT
+# Acquire an advisory lock via atomic mkdir so concurrent applier runs in
+# the same repo serialise. Without this, two invocations can interleave at
+# the index/HEAD level, producing a commit whose tree no longer matches
+# what the test command saw. The lock dir is removed on EXIT alongside the
+# manifest flush.
+AF_LOCKDIR="$ROOT_DIR/.git/auto-fix-code.lock"
+if ! mkdir "$AF_LOCKDIR" 2>/dev/null; then
+	echo "apply-auto-fix-code: another applier appears to be running (lock at $AF_LOCKDIR); refusing to start" >&2
+	exit 8
+fi
+# Ensure the manifest is always flushed and the lock is always released,
+# even if `set -euo pipefail` aborts us mid-batch (awk exit code, mktemp
+# failure, git add failure).
+trap 'af_manifest_write; rmdir "$AF_LOCKDIR" 2>/dev/null || true' EXIT
 
 # Truncate captured test output to last 2000 bytes.
+#
+# Note: the captured tail lands in the manifest JSON as the `evidence`
+# field on test_failed entries. Operators should treat the manifest as
+# potentially containing whatever the test command printed — including
+# environment-derived tokens if the suite logs them. .deep-review/ is
+# gitignored so the manifest never enters the commit, but the file
+# persists on disk until manually cleared.
 truncate_tail() {
 	local raw="$1"
 	local size
@@ -256,24 +272,28 @@ while IFS= read -r finding; do
 	tmp_apply="$(mktemp)"
 	# When `after` is empty, delete the matched line(s) entirely. When it
 	# is non-empty, emit the replacement once in place of the match block.
+	# Capture awk's exit code explicitly: under `set -e` an `exit 5` from
+	# the inner program (target line past EOF — race between drift check
+	# and apply) would otherwise abort the whole batch before we could
+	# restore from the saved blob.
+	apply_rc=0
 	if [[ -z "$stripped_after" && -z "$after" ]]; then
-		# `after` literally empty (both with and without trailing newline).
 		awk -v start="$line" -v n="$nlines" '
 			BEGIN { printed = 0 }
 			NR >= start && NR < start + n { printed = 1; next }
 			{ print }
 			END { if (!printed) exit 5 }
-		' "$abs_path" >"$tmp_apply"
+		' "$abs_path" >"$tmp_apply" || apply_rc=$?
 	else
-		awk -v start="$line" -v n="$nlines" -v repl="$stripped_after" '
-			BEGIN { printed = 0 }
+		AF_REPL="$stripped_after" awk -v start="$line" -v n="$nlines" '
+			BEGIN { printed = 0; repl = ENVIRON["AF_REPL"] }
 			NR == start { print repl; printed = 1; next }
 			NR > start && NR < start + n { next }
 			{ print }
 			END { if (!printed) exit 5 }
-		' "$abs_path" >"$tmp_apply"
+		' "$abs_path" >"$tmp_apply" || apply_rc=$?
 	fi
-	if [[ ! -s "$tmp_apply" && "${stripped_after:-}" != "" ]]; then
+	if [[ "$apply_rc" -ne 0 ]] || [[ ! -s "$tmp_apply" && "${stripped_after:-}" != "" ]]; then
 		rm -f "$tmp_apply"
 		af_restore_blob "$abs_path" "$before_sha"
 		af_manifest_record "$kind" "$file" "$line" "drift" "" "$before_sha"

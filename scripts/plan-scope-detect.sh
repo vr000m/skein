@@ -46,17 +46,28 @@ if [[ "$TARGET" -lt 1 ]]; then
 fi
 
 awk -v target="$TARGET" '
-	BEGIN { in_fence = 0; heading = "unknown" }
+	BEGIN { in_fence = 0; fence_char = ""; heading = "unknown" }
 	{
-		# Track fenced code blocks. A column-zero ``` or ~~~ toggles state.
-		# We deliberately match the fence only at column zero — indented
-		# fences inside lists are rare in plans, and treating them as
-		# fences would mask headings the user actually wrote.
-		if ($0 ~ /^(```|~~~)/) {
-			# A heading inside a fence does not count. The current
-			# enclosing heading is whatever was last set above the
-			# fence — unchanged on toggle.
-			in_fence = (in_fence == 0) ? 1 : 0
+		# Track fenced code blocks. Per CommonMark a fence is opened by
+		# 3+ backticks OR 3+ tildes at column zero, and closed only by a
+		# fence using the SAME character. We track the opening char so a
+		# plan that opens with ``` and contains a literal ~~~ in prose
+		# does not falsely close the fence (which would expose inner
+		# content to heading parsing).
+		if (in_fence == 0 && $0 ~ /^(```|~~~)/) {
+			in_fence = 1
+			fence_char = substr($0, 1, 1)
+			if (NR == target) { print heading; exit }
+			next
+		}
+		if (in_fence == 1 && substr($0, 1, 1) == fence_char && $0 ~ /^(```|~~~)/) {
+			in_fence = 0
+			fence_char = ""
+			if (NR == target) { print heading; exit }
+			next
+		}
+		if (in_fence == 1) {
+			# Inside a fence; never read headings, just advance.
 			if (NR == target) { print heading; exit }
 			next
 		}

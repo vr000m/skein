@@ -105,14 +105,21 @@ line_matches_before() {
 
 scope_parts() {
 	local scope="$1"
-	local range
-	SCOPE_PATH="${scope%:*}"
-	range="${scope##*:}"
-	SCOPE_START="${range%-*}"
-	if [[ "$range" == *-* ]]; then
-		SCOPE_END="${range#*-}"
-	else
-		SCOPE_END="$SCOPE_START"
+	SCOPE_PATH=""
+	SCOPE_START=""
+	SCOPE_END=""
+	# Anchored regex form, mirroring parse_plan_scope in apply-auto-fix-plan.sh
+	# so the auditor and applier classify malformed scopes identically. The
+	# previous ${scope%:*} / ${scope##*:} pair misclassified a missing-line
+	# scope ('a:b.md') as path='a' / range='b.md' rather than as malformed.
+	if [[ "$scope" =~ ^(.+):([0-9]+)-([0-9]+)$ ]]; then
+		SCOPE_PATH="${BASH_REMATCH[1]}"
+		SCOPE_START="${BASH_REMATCH[2]}"
+		SCOPE_END="${BASH_REMATCH[3]}"
+	elif [[ "$scope" =~ ^(.+):([0-9]+)$ ]]; then
+		SCOPE_PATH="${BASH_REMATCH[1]}"
+		SCOPE_START="${BASH_REMATCH[2]}"
+		SCOPE_END="${BASH_REMATCH[2]}"
 	fi
 }
 
@@ -187,6 +194,12 @@ while IFS= read -r finding; do
 					path="$(resolve_path "${PLAN_PATH:-$SCOPE_PATH}")"
 					if [[ ! -f "$path" ]]; then
 						status="drift"
+					elif ! iconv -f utf-8 -t utf-8 <"$path" >/dev/null 2>&1; then
+						# Catch malformed-UTF-8 plans pre-apply so the
+						# applier doesn't reach marker_failed and trigger
+						# a batch rollback for an issue the auditor could
+						# have surfaced.
+						status="unsupported"
 					elif review_plan_scope_forbidden "$path" "$SCOPE_START"; then
 						status="rejected_scope"
 					elif line_matches_before "$path" "$SCOPE_START" "$before"; then
