@@ -365,8 +365,15 @@ Procedure:
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
-3. **Render the JSON into the report template.** Use the report template in the [Output](#output) section: the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
-4. **Emit the rendered report.** Hand off to suppression and triage. The reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
+3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
+
+   ```
+   scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
+   ```
+
+   The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
+4. **Render the annotated JSON into the report template.** Use the report template in the [Output](#output) section: the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+5. **Emit the rendered report.** Hand off to suppression and triage. The annotated reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
 
 Forbidden inside Step 3.5:
 - LLM calls of any kind. The merge rule is structural.
@@ -394,13 +401,17 @@ Per-fix gating (the applier re-verifies even what the auditor already checked):
 
 1. `kind` must be in the `deep-review` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
 2. For `mechanical_replace`, multi-line `before` is rejected pre-apply → `status: rejected_multiline`.
-3. For `unused_var`, the applier re-runs `git grep -w <var>` excluding `tests/` and `test_*` / `*_test*` paths; any non-test reference → `status: rejected_revar`.
-4. The cited file:line must byte-match `auto_fix.before` (multi-line allowed for `import_sort`); mismatch → `status: drift`.
-5. Pre-apply, save a `git hash-object -w` blob of every touched path. Rollback handle.
-6. Rewrite line N `before` → `after` in place; stage the file.
-7. Run the supplied test command **exactly once** per applied fix. No retry. Flake is the caller's problem.
-8. On test pass: commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: deep-review`.
-9. On test fail: restore the touched paths from the saved blob, unstage them, leave `HEAD` unchanged, append `status: test_failed` with the test output truncated to the last 2000 bytes. The finding is re-surfaced as advisory in the output.
+3. The applier refuses to start unless the working tree, index, and untracked-file set are clean, so an auto-fix commit cannot sweep unrelated work into the tested change.
+4. For `docstring_typo`, the replacement must stay inside a comment or triple-quoted string; code edits → `status: rejected_kind_scope`.
+5. For `import_sort`, the imported/bound symbol set before and after must match exactly; added or removed symbols → `status: rejected_semantic_change`.
+6. For `unused_import`, the applier re-runs `git grep -w <symbol>` and rejects any non-comment reference outside the import line → `status: rejected_revar`.
+7. For `unused_var`, the applier re-runs `git grep -w <var>` across all tracked files, tests included, and rejects any reference outside the declaration line → `status: rejected_revar`.
+8. The cited file:line must byte-match `auto_fix.before` (multi-line allowed for `import_sort`); mismatch → `status: drift`.
+9. Pre-apply, save a `git hash-object -w` blob of every touched path. Rollback handle.
+10. Rewrite line N `before` → `after` in place; stage the file.
+11. Run the supplied test command **exactly once** per applied fix. No retry. Flake is the caller's problem.
+12. On test pass: commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: deep-review`.
+13. On test fail: restore the touched paths from the saved blob, unstage them, leave `HEAD` unchanged, append `status: test_failed` with the test output truncated to the last 2000 bytes. The finding is re-surfaced as advisory in the output.
 
 Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
 

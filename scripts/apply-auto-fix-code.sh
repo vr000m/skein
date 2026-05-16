@@ -159,6 +159,139 @@ resolve_path() {
 	printf '%s\n' "$ROOT_DIR/$p"
 }
 
+range_in_comment_or_docstring() {
+	local path="$1"
+	local start="$2"
+	local nlines="$3"
+	awk -v start="$start" -v n="$nlines" '
+		function count_pat(s, pat,  c) {
+			c = 0
+			while (match(s, pat)) {
+				c++
+				s = substr(s, RSTART + RLENGTH)
+			}
+			return c
+		}
+		{
+			line_ok = in_doc || ($0 ~ /^[[:space:]]*(#|\/\/)/)
+			triple_count = count_pat($0, "\"\"\"") + count_pat($0, "\047\047\047")
+			if (triple_count > 0) {
+				line_ok = 1
+			}
+			if (NR >= start && NR < start + n && !line_ok) {
+				bad = 1
+			}
+			if (triple_count % 2 == 1) {
+				in_doc = !in_doc
+			}
+		}
+		END { exit bad ? 1 : 0 }
+	' "$path"
+}
+
+import_symbols() {
+	awk '
+		function trim(s) {
+			sub(/^[[:space:]]+/, "", s)
+			sub(/[[:space:]]+$/, "", s)
+			return s
+		}
+		function emit_binding(item,  n, parts, alias_parts, token) {
+			item = trim(item)
+			if (item == "" || item == "*") return
+			if (item ~ /[[:space:]]+as[[:space:]]+/) {
+				n = split(item, alias_parts, /[[:space:]]+as[[:space:]]+/)
+				token = trim(alias_parts[n])
+			} else {
+				split(item, parts, /[[:space:]]+/)
+				token = parts[1]
+				sub(/\..*$/, "", token)
+			}
+			if (token ~ /^[A-Za-z_][A-Za-z0-9_]*$/) print token
+		}
+		{
+			line = $0
+			sub(/[[:space:]]+#.*/, "", line)
+			line = trim(line)
+			if (line ~ /^import[[:space:]]+/) {
+				sub(/^import[[:space:]]+/, "", line)
+				count = split(line, items, /,/)
+				for (i = 1; i <= count; i++) emit_binding(items[i])
+			} else if (line ~ /^from[[:space:]].*[[:space:]]import[[:space:]]+/) {
+				sub(/^from[[:space:]].*[[:space:]]import[[:space:]]+/, "", line)
+				count = split(line, items, /,/)
+				for (i = 1; i <= count; i++) emit_binding(items[i])
+			}
+		}
+	' | sort -u
+}
+
+same_import_symbol_set() {
+	local before="$1"
+	local after="$2"
+	local before_symbols after_symbols
+	before_symbols="$(printf '%s\n' "$before" | import_symbols)"
+	after_symbols="$(printf '%s\n' "$after" | import_symbols)"
+	[[ "$before_symbols" == "$after_symbols" ]]
+}
+
+unused_import_has_reference() {
+	local before="$1"
+	local file="$2"
+	local line="$3"
+	local symbols symbol refs ref_count
+	symbols="$(printf '%s\n' "$before" | import_symbols)"
+	[[ -n "$symbols" ]] || return 0
+	while IFS= read -r symbol; do
+		[[ -n "$symbol" ]] || continue
+		refs="$(git -C "$ROOT_DIR" grep -nIw -- "$symbol" 2>/dev/null || true)"
+		ref_count="$(printf '%s\n' "$refs" |
+			awk -v prefix="$file:$line:" '
+				NF {
+					if (index($0, prefix) == 1) next
+					content = $0
+					sub(/^[^:]*:[0-9]+:/, "", content)
+					if (content ~ /^[[:space:]]*(#|\/\/)/) next
+					print
+				}
+			' |
+			grep -c '^' || true)"
+		if [[ "$ref_count" -gt 0 ]]; then
+			return 0
+		fi
+	done <<<"$symbols"
+	return 1
+}
+
+envelope_repo_rel=""
+if [[ "$ENVELOPE_PATH" != "-" && -e "$ENVELOPE_PATH" ]]; then
+	envelope_abs="$(cd "$(dirname "$ENVELOPE_PATH")" && pwd -P)/$(basename "$ENVELOPE_PATH")"
+	root_abs="$(cd "$ROOT_DIR" && pwd -P)"
+	if [[ "$envelope_abs" == "$root_abs/"* ]]; then
+		envelope_repo_rel="${envelope_abs#"$root_abs/"}"
+	fi
+fi
+
+dirty_status="$(
+	git -C "$ROOT_DIR" status --porcelain |
+		while IFS= read -r status_line; do
+			path_part="${status_line:3}"
+			if [[ -n "$envelope_repo_rel" && "$status_line" == "?? "* && "$path_part" == "$envelope_repo_rel" ]]; then
+				continue
+			fi
+			printf '%s\n' "$status_line"
+		done
+)"
+
+# Refuse to start if the caller has any tracked or unrelated untracked work in
+# flight. Auto-fix commits must contain exactly the tested fix, and
+# rollback/test failure paths assume a clean starting index. The envelope file
+# itself may be an untracked scratch artifact in the reviewed repo.
+if [[ -n "$dirty_status" ]]; then
+	echo "apply-auto-fix-code: worktree has uncommitted changes; commit or stash before running" >&2
+	exit 7
+fi
+
 # Iterate findings carrying auto_fix_status: would_apply.
 findings_json="$(printf '%s' "$envelope" | jq -c '.findings[]? | select(.auto_fix_status == "would_apply" and (has("auto_fix")))')"
 
@@ -213,20 +346,9 @@ while IFS= read -r finding; do
 			af_manifest_record "$kind" "$file" "$line" "rejected_revar" "" ""
 			continue
 		fi
-		# Count references in non-test files. Anything under a tests/ tree at
-		# any depth, or with a test_/_test stem, is excluded. Use the
-		# `:(exclude)…` pathspec form rather than `:!…` glob: the latter
-		# relies on `*` not crossing `/`, which means a top-level
-		# tests/test_a.py only excludes by accident of intra-segment
-		# matching. The explicit form below is depth-agnostic.
-		refs="$(git -C "$ROOT_DIR" grep -nIw -- "$var_name" \
-			':(exclude)tests/' \
-			':(exclude)**/tests/' \
-			':(exclude)**/test_*' \
-			':(exclude)**/*_test*' \
-			':(exclude)test_*' \
-			':(exclude)*_test*' \
-			2>/dev/null || true)"
+		# Count references in all tracked files, tests included. Test-only
+		# reads still document behaviour and block deletion.
+		refs="$(git -C "$ROOT_DIR" grep -nIw -- "$var_name" 2>/dev/null || true)"
 		# Drop the declaration line itself from the count. Match a literal
 		# `<file>:<line>:` prefix rather than splitting on `:` — file paths
 		# may legitimately contain a colon, which would defeat split-based
@@ -264,11 +386,28 @@ while IFS= read -r finding; do
 		af_manifest_record "$kind" "$file" "$line" "drift" "" ""
 		continue
 	fi
+	stripped_after="${after%$'\n'}"
+
+	if [[ "$kind" == "docstring_typo" ]]; then
+		if ! range_in_comment_or_docstring "$abs_path" "$line" "$nlines"; then
+			af_manifest_record "$kind" "$file" "$line" "rejected_kind_scope" "" ""
+			continue
+		fi
+	elif [[ "$kind" == "import_sort" ]]; then
+		if ! same_import_symbol_set "$stripped_before" "$stripped_after"; then
+			af_manifest_record "$kind" "$file" "$line" "rejected_semantic_change" "" ""
+			continue
+		fi
+	elif [[ "$kind" == "unused_import" ]]; then
+		if unused_import_has_reference "$stripped_before" "$file" "$line"; then
+			af_manifest_record "$kind" "$file" "$line" "rejected_revar" "" ""
+			continue
+		fi
+	fi
 
 	# Save the pre-apply blob (rollback handle).
 	before_sha="$(af_save_blob "$abs_path")"
 
-	stripped_after="${after%$'\n'}"
 	tmp_apply="$(mktemp)"
 	# When `after` is empty, delete the matched line(s) entirely. When it
 	# is non-empty, emit the replacement once in place of the match block.

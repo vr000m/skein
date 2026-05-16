@@ -19,6 +19,7 @@ source "$SCRIPT_DIR/lib.sh"
 
 require_plan_applier
 require_plan_scope_detect
+require_auditor
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -38,7 +39,7 @@ git -C "$case1" add "$plan_rel"
 git -C "$case1" commit -q -m "add plan"
 before="$(head_sha "$case1")"
 
-run_plan_applier "$case1" "$findings"
+run_plan_applier "$case1" --plan "$plan_rel" "$findings"
 
 after="$(head_sha "$case1")"
 if [[ "$after" != "$before" ]]; then
@@ -149,7 +150,7 @@ e2e_rejected_scope() {
 EOF
 	local before
 	before="$(head_sha "$d")"
-	run_plan_applier "$d" "$d/findings.json"
+	run_plan_applier "$d" --plan plan.md "$d/findings.json"
 	local after
 	after="$(head_sha "$d")"
 	if [[ "$after" != "$before" ]]; then
@@ -170,5 +171,55 @@ EOF
 e2e_rejected_scope indented plan-scope-evasion-indented.md 13
 e2e_rejected_scope hrule plan-scope-evasion-horizontal-rule.md 14
 e2e_rejected_scope two-digit plan-scope-evasion-two-digit-phase.md 14
+
+# --- Phase 5: forbidden parent heading must reject nested child scope ----
+# The target line is under `### Detail`, but the enclosing stack also
+# includes `## Requirements`. Both auditor and applier must reject based on
+# any forbidden heading in the stack, not only the deepest heading.
+parent_rejected_scope() {
+	local d="$scratch/parent"
+	mkdir -p "$d"
+	make_repo "$d" >/dev/null
+	cp "$FIXTURES_DIR/plan-scope-evasion-parent-heading.md" "$d/plan.md"
+	git -C "$d" add plan.md
+	git -C "$d" commit -q -m "add plan"
+	local line
+	line="$(awk '/Auto-fix MUST NOT edit under child detail/ { print NR; exit }' "$d/plan.md")"
+	local target_json
+	target_json="$(awk -v n="$line" 'NR==n { print }' "$d/plan.md" |
+		python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().rstrip("\n")))')"
+	cat >"$d/findings.json" <<EOF
+{"schema_version":2,"findings":[{"lens":"prose","severity":"Minor","category":"typo","file":"plan.md","line":$line,"summary":"typo","evidence":"","suggestion":"","auto_fix":{"kind":"prose_typo","before":$target_json,"after":$target_json,"scope":"plan.md:$line"},"auto_fix_status":"would_apply"}]}
+EOF
+
+	if bash "$AUDITOR" --skill review-plan --plan "$d/plan.md" "$d/findings.json" >"$d/audited.json" 2>"$d/audit.stderr" &&
+		jq -e '.findings[0].auto_fix_status == "rejected_scope"' "$d/audited.json" >/dev/null; then
+		pass "parent-heading auditor: status=rejected_scope"
+	else
+		fail "parent-heading auditor: did not reject nested forbidden parent"
+		sed 's/^/  /' "$d/audit.stderr" 2>/dev/null || true
+		[[ -f "$d/audited.json" ]] && sed 's/^/  /' "$d/audited.json"
+	fi
+
+	local before
+	before="$(head_sha "$d")"
+	run_plan_applier "$d" --plan plan.md "$d/findings.json"
+	local after
+	after="$(head_sha "$d")"
+	if [[ "$after" == "$before" ]]; then
+		pass "parent-heading applier: HEAD preserved"
+	else
+		fail "parent-heading applier: HEAD advanced"
+	fi
+	local manifest
+	manifest="$(find "$d/.review-plan" -name 'auto-fix-*.json' -print -quit 2>/dev/null || true)"
+	if [[ -n "${manifest:-}" ]] && grep -q "rejected_scope" "$manifest"; then
+		pass "parent-heading applier: manifest status=rejected_scope"
+	else
+		fail "parent-heading applier: manifest missing status=rejected_scope"
+		[[ -n "${manifest:-}" ]] && sed 's/^/  /' "$manifest"
+	fi
+}
+parent_rejected_scope
 
 summary_and_exit

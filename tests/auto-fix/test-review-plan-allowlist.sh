@@ -36,7 +36,7 @@ git -C "$case1" add "$plan_rel"
 git -C "$case1" commit -q -m "add plan"
 before_head="$(head_sha "$case1")"
 
-run_plan_applier "$case1" "$findings"
+run_plan_applier "$case1" --plan "$plan_rel" "$findings"
 
 if [[ $LAST_RC -ne 0 ]]; then
 	fail "prose_typo-accept: applier exited $LAST_RC"
@@ -97,7 +97,7 @@ git -C "$case2" add "$plan_rel"
 git -C "$case2" commit -q -m "add plan"
 before2="$(head_sha "$case2")"
 
-run_plan_applier "$case2" "$findings2"
+run_plan_applier "$case2" --plan "$plan_rel" "$findings2"
 
 after2="$(head_sha "$case2")"
 if [[ "$after2" != "$before2" ]]; then
@@ -131,7 +131,7 @@ instantiate_plan_fixture \
 git -C "$case3" add "$plan_rel"
 git -C "$case3" commit -q -m "add plan"
 
-run_plan_applier "$case3" "$findings3"
+run_plan_applier "$case3" --plan "$plan_rel" "$findings3"
 
 if grep -Fq "_compute_cross_runtime_plan_id" "$plan_abs3"; then
 	pass "symbol_rename-accept: rename propagated through plan prose"

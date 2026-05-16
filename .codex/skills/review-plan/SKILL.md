@@ -344,8 +344,15 @@ Procedure:
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
-3. **Render the JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
-4. **Hand off to Step 4 and Step 5.** The reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
+3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
+
+   ```
+   scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
+   ```
+
+   The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist, path binding, drift, and scope-forbid gates the applier will use.
+4. **Render the annotated JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+5. **Hand off to Step 4 and Step 5.** The annotated reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
 
 Forbidden inside Step 3:
 - LLM calls of any kind. The merge rule is structural.
@@ -438,25 +445,26 @@ Run this step **only when** the caller passed `--auto-fix=trivial`. Without the 
 
 Preconditions:
 
-- The reconciled v2 envelope from Step 3 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <path>` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `rejected_scope`, `drift`, ...).
+- The reconciled v2 envelope from Step 3 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `rejected_scope`, `drift`, ...).
 - The user has accepted or waived all remaining findings in Step 6. Auto-fix runs only on plan content the user has signed off on.
 
 Invocation:
 
 ```
-scripts/apply-auto-fix-plan.sh <annotated-envelope.json>
+scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):
 
 1. `kind` must be in the `review-plan` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
 2. `auto_fix.scope` MUST be `<path>:<line>` (single-line in v1); multi-line spans → `status: rejected_multiline`.
-3. The enclosing heading (resolved via `scripts/plan-scope-detect.sh <plan> <line>`) MUST NOT be one of: `## Requirements`, `## Acceptance Criteria`, `### Files to Modify`, `### New Files to Create`, `### Architecture Decisions`, `### Integration Seams`, or `### Phase N:` for any digit count. Match inside any forbidden section → `status: rejected_scope`. Fenced code blocks are skipped when resolving the enclosing heading; indented headings (leading whitespace) are NOT treated as headings.
-4. The cited file:line must byte-match `auto_fix.before`; mismatch → `status: drift`.
-5. The plan must be valid UTF-8; a corrupt plan → `status: marker_failed`, the applier rolls back every commit and blob applied during this batch and exits non-zero.
-6. Pre-apply, save a `git hash-object -w` blob of every touched path. Rewrite the line `before` → `after` in place; stage; commit with subject `auto-fix(review-plan): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: review-plan`.
-7. **No test gate.** Plans are markdown; the equivalent of "tests pass" is the marker-hash check at Step 7. Each applied fix lands as its own commit; the manifest documents the range.
-8. `marker_refresh` kinds emitted by the lens are a **no-op** in this step — the manifest records `status: marker_pending` and Step 7 writes the real marker exactly once after the run.
+3. `finding.file`, the path in `auto_fix.scope`, and `--plan <reviewed-plan>` must resolve to the same in-repo file; mismatch → `status: rejected_path`.
+4. The enclosing heading stack (resolved via `scripts/plan-scope-detect.sh --stack <plan> <line>`) MUST NOT contain any of: `## Requirements`, `## Acceptance Criteria`, `### Files to Modify`, `### New Files to Create`, `### Architecture Decisions`, `### Integration Seams`, or `### Phase N:` for any digit count. Match inside any forbidden ancestor section → `status: rejected_scope`. Fenced code blocks are skipped when resolving the heading stack; indented headings (leading whitespace) are NOT treated as headings.
+5. The exact `auto_fix.scope` line must byte-match `auto_fix.before`; mismatch → `status: rejected_drift`. The applier does not search for a unique match elsewhere in the file.
+6. The plan must be valid UTF-8; a corrupt plan → `status: marker_failed`, the applier rolls back every commit and blob applied during this batch and exits non-zero.
+7. Pre-apply, save a `git hash-object -w` blob of every touched path. Rewrite the cited line `before` → `after` in place; stage; commit with subject `auto-fix(review-plan): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: review-plan`.
+8. **No test gate.** Plans are markdown; the equivalent of "tests pass" is the marker-hash check at Step 7. Each applied fix lands as its own commit; the manifest documents the range.
+9. `marker_refresh` kinds emitted by the lens are a **no-op** in this step — the manifest records `status: marker_pending` and Step 7 writes the real marker exactly once after the run.
 
 Per run, the applier writes a manifest at `.review-plan/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.review-plan/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
 

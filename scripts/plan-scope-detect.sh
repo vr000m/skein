@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# plan-scope-detect.sh — resolve a `<plan-file> <line>` pair to the deepest
-# enclosing column-zero markdown heading.
+# plan-scope-detect.sh — resolve a `<plan-file> <line>` pair to enclosing
+# column-zero markdown headings.
 #
 # Usage:
 #   scripts/plan-scope-detect.sh <plan-file> <line>
+#   scripts/plan-scope-detect.sh --stack <plan-file> <line>
 #
-# Prints a single line to stdout: the heading text that encloses the target
-# line, exactly as it appears in the plan (e.g. `## Requirements`,
-# `### Phase 2: Foo`). Fenced code blocks (``` or ~~~) are tracked so that
-# headings *inside* a code fence are not treated as real headings.
+# Default mode prints a single line to stdout: the deepest heading text that
+# encloses the target line, exactly as it appears in the plan (e.g.
+# `## Requirements`, `### Phase 2: Foo`). Stack mode prints every enclosing
+# heading, outermost-first, one heading per line. For lines before the first
+# heading, default mode prints `unknown`; stack mode prints nothing. Fenced
+# code blocks (``` or ~~~) are tracked so that headings *inside* a code fence
+# are not treated as real headings.
 #
 # Special cases:
 #   - If the target line is itself a heading, that heading is returned.
@@ -24,8 +28,14 @@
 
 set -euo pipefail
 
+MODE="deepest"
+if [[ "${1:-}" == "--stack" ]]; then
+	MODE="stack"
+	shift
+fi
+
 if [[ $# -ne 2 ]]; then
-	echo "usage: plan-scope-detect.sh <plan-file> <line>" >&2
+	echo "usage: plan-scope-detect.sh [--stack] <plan-file> <line>" >&2
 	exit 2
 fi
 
@@ -45,8 +55,36 @@ if [[ "$TARGET" -lt 1 ]]; then
 	exit 2
 fi
 
-awk -v target="$TARGET" '
-	BEGIN { in_fence = 0; fence_char = ""; heading = "unknown" }
+awk -v target="$TARGET" -v mode="$MODE" '
+	BEGIN { in_fence = 0; fence_char = ""; heading = "unknown"; stack_depth = 0 }
+	function emit(  i) {
+		if (mode == "stack") {
+			for (i = 1; i <= stack_depth; i++) {
+				print stack[i]
+			}
+		} else {
+			print heading
+		}
+	}
+	function update_stack(raw,  level, text, i) {
+		text = raw
+		sub(/[ \t]+$/, "", text)
+		match(text, /^#{1,6}/)
+		level = RLENGTH
+		for (i in stack) {
+			if (i >= level) {
+				delete stack[i]
+			}
+		}
+		stack[level] = text
+		stack_depth = 0
+		for (i = 1; i <= 6; i++) {
+			if (i in stack) {
+				stack_depth = i
+			}
+		}
+		heading = text
+	}
 	{
 		# Track fenced code blocks. Per CommonMark a fence is opened by
 		# 3+ backticks OR 3+ tildes at column zero, and closed only by a
@@ -57,18 +95,18 @@ awk -v target="$TARGET" '
 		if (in_fence == 0 && $0 ~ /^(```|~~~)/) {
 			in_fence = 1
 			fence_char = substr($0, 1, 1)
-			if (NR == target) { print heading; exit }
+			if (NR == target) { emit(); exit }
 			next
 		}
 		if (in_fence == 1 && substr($0, 1, 1) == fence_char && $0 ~ /^(```|~~~)/) {
 			in_fence = 0
 			fence_char = ""
-			if (NR == target) { print heading; exit }
+			if (NR == target) { emit(); exit }
 			next
 		}
 		if (in_fence == 1) {
 			# Inside a fence; never read headings, just advance.
-			if (NR == target) { print heading; exit }
+			if (NR == target) { emit(); exit }
 			next
 		}
 		# Column-zero ATX heading? Markdown requires at least one `#`
@@ -77,18 +115,15 @@ awk -v target="$TARGET" '
 		# scope-forbid list is matched by the caller against the full
 		# heading text.
 		if (in_fence == 0 && $0 ~ /^#{1,6}[ \t]/) {
-			heading = $0
-			# Strip trailing whitespace so the caller can compare
-			# against canonical forms like `## Requirements`.
-			sub(/[ \t]+$/, "", heading)
+			update_stack($0)
 		}
-		if (NR == target) { print heading; exit }
+		if (NR == target) { emit(); exit }
 	}
 	END {
 		# If we ran past EOF without hitting the target, still emit the
 		# last seen heading so callers get a deterministic answer when
 		# the cited line is past the plan length (e.g. drift). The
 		# applier treats this as a drift signal upstream.
-		if (NR < target) { print heading }
+		if (NR < target) { emit() }
 	}
 ' "$PLAN"

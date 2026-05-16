@@ -2,7 +2,7 @@
 # apply-auto-fix-plan.sh — `/review-plan` trivial-tier auto-fix applier.
 #
 # Usage:
-#   scripts/apply-auto-fix-plan.sh <annotated-envelope.json>
+#   scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
 #
 # Reads a reconciled v2 finding envelope annotated with `auto_fix_status`
 # (typically produced by `scripts/audit-auto-fix-eligibility.sh --skill
@@ -10,13 +10,16 @@
 # kind is in the `review-plan` allowlist, the applier:
 #
 #   1. Re-verifies eligibility (kind in allowlist; scope-forbid heading
-#      check via `scripts/plan-scope-detect.sh`). Mismatch → drops to
-#      surfaced with a specific reject status.
+#      check via `scripts/plan-scope-detect.sh --stack`) and triple path
+#      equality (`finding.file` == `auto_fix.scope` path == `--plan`).
+#      Mismatch → drops to surfaced with a specific reject status.
 #   2. For `marker_refresh`: NO-OP. The real review marker is only written
 #      at the normal `/review-plan` acceptance step (`yes` / `waive`).
 #      Lens-emitted marker_refresh blocks in the batch produce
 #      `status: marker_pending` and never publish a marker.
-#   3. Asserts the file:line still byte-matches `auto_fix.before` (drift).
+#   3. Asserts the exact `auto_fix.scope` line still byte-matches
+#      `auto_fix.before` (`status: rejected_drift` on mismatch). No
+#      find-anywhere fallback is allowed.
 #   4. Saves a `git hash-object -w` blob of every touched path (rollback).
 #   5. Rewrites the line `before` → `after` in place.
 #   6. Stages the file and commits with subject
@@ -64,14 +67,23 @@ FORBIDDEN_HEADINGS=(
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/apply-auto-fix-plan.sh <annotated-envelope.json>
+usage: scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
 EOF
 }
 
 ENVELOPE_PATH=""
+REVIEWED_PLAN=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+	--plan)
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		REVIEWED_PLAN="$1"
+		;;
 	--help | -h)
 		usage
 		exit 0
@@ -92,6 +104,10 @@ done
 
 if [[ -z "$ENVELOPE_PATH" ]]; then
 	usage
+	exit 2
+fi
+if [[ -z "$REVIEWED_PLAN" ]]; then
+	echo "apply-auto-fix-plan: --plan <reviewed-plan> is required" >&2
 	exit 2
 fi
 
@@ -135,6 +151,30 @@ resolve_path() {
 	printf '%s\n' "$ROOT_DIR/$p"
 }
 
+resolve_plan_arg() {
+	local p="$1"
+	if [[ -z "$p" ]]; then
+		return 1
+	fi
+	if [[ "$p" = /* ]]; then
+		printf '%s\n' "$p"
+	else
+		printf '%s\n' "$ROOT_DIR/$p"
+	fi
+}
+
+canonical_existing_path() {
+	local p="$1"
+	if [[ ! -e "$p" ]]; then
+		return 1
+	fi
+	local dir base
+	dir="$(dirname "$p")"
+	base="$(basename "$p")"
+	dir="$(cd "$dir" && pwd -P)"
+	printf '%s/%s\n' "$dir" "$base"
+}
+
 # Parse `auto_fix.scope` of the form `<path>:<start>[-<end>]`. Echo
 # `<path>\t<start>\t<end>` or empty on failure. v1 only supports single-line
 # spans; this function returns end == start when no range is present.
@@ -169,6 +209,28 @@ heading_is_forbidden() {
 		fi
 	done
 	return 1
+}
+
+stack_is_forbidden() {
+	local path="$1"
+	local line="$2"
+	local heading
+	while IFS= read -r heading; do
+		[[ -n "$heading" ]] || continue
+		if heading_is_forbidden "$heading"; then
+			return 0
+		fi
+	done < <("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" --stack "$path" "$line" 2>/dev/null || true)
+	return 1
+}
+
+reviewed_plan_path="$(resolve_plan_arg "$REVIEWED_PLAN")" || {
+	echo "apply-auto-fix-plan: invalid --plan path: $REVIEWED_PLAN" >&2
+	exit 2
+}
+reviewed_plan_canon="$(canonical_existing_path "$reviewed_plan_path")" || {
+	echo "apply-auto-fix-plan: reviewed plan not found: $REVIEWED_PLAN" >&2
+	exit 2
 }
 
 # Roll back every commit + restore every blob recorded during this batch.
@@ -253,8 +315,28 @@ while IFS= read -r finding; do
 		af_manifest_record "$kind" "$file" "$line" "rejected_path" "" ""
 		continue
 	fi
+	if ! finding_abs_path="$(resolve_path "$file")"; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_path" "" ""
+		continue
+	fi
 	if [[ ! -f "$abs_path" ]]; then
-		af_manifest_record "$kind" "$file" "$line" "drift" "" ""
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
+		continue
+	fi
+	if [[ ! -f "$finding_abs_path" ]]; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
+		continue
+	fi
+	scope_canon="$(canonical_existing_path "$abs_path")" || {
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
+		continue
+	}
+	finding_canon="$(canonical_existing_path "$finding_abs_path")" || {
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
+		continue
+	}
+	if [[ "$scope_canon" != "$finding_canon" || "$finding_canon" != "$reviewed_plan_canon" ]]; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_path" "" ""
 		continue
 	fi
 
@@ -282,45 +364,39 @@ while IFS= read -r finding; do
 		exit 1
 	fi
 
-	# Scope-forbid check via plan-scope-detect at the cited scope line.
-	heading="$("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" "$abs_path" "$scope_start" 2>/dev/null || echo "unknown")"
-	if heading_is_forbidden "$heading"; then
+	# Scope-forbid check via plan-scope-detect stack mode at the cited scope
+	# line. Any forbidden ancestor rejects the fix.
+	if stack_is_forbidden "$abs_path" "$scope_start"; then
 		af_manifest_record "$kind" "$file" "$line" "rejected_scope" "" ""
 		continue
 	fi
 
-	# Drift / locate check. The cited `<path>:<line>` is informational —
-	# the source of truth is the `before` block. We search the file for an
-	# exact-line match against the stripped `before`; if it appears exactly
-	# once we use that line as the apply target. Zero matches or multiple
-	# matches → drift (ambiguous or stale block, refuse to apply).
+	# Drift check. The scope line is authoritative: the before block must
+	# byte-match exactly at auto_fix.scope's line. There is no unique-match
+	# anywhere fallback.
 	stripped_before="${before%$'\n'}"
 	if [[ "$stripped_before" == *$'\n'* ]]; then
 		# Multi-line before — reject; v1 plan auto-fix is single-line.
 		af_manifest_record "$kind" "$file" "$line" "rejected_multiline" "" ""
 		continue
 	fi
-	# Buffer the match in awk; only emit when END verifies count==1. The
-	# previous form printed every match before END enforced the count, so
-	# downstream code had to defend against multi-line `match_line` values
-	# (which happened to fail the =~ ^[0-9]+$ check by accident).
-	match_line="$(awk -v needle="$stripped_before" '
-		$0 == needle { buf = NR; count++ }
-		END { if (count == 1) print buf; else exit 1 }
+	actual_line="$(awk -v target="$scope_start" '
+		NR == target { print; found = 1; exit }
+		END { if (!found) exit 1 }
 	' "$abs_path" 2>/dev/null || true)"
-	if [[ -z "$match_line" || ! "$match_line" =~ ^[0-9]+$ ]]; then
-		af_manifest_record "$kind" "$file" "$line" "drift" "" ""
+	if [[ "$actual_line" != "$stripped_before" ]]; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
 		continue
 	fi
-	# Re-run scope-forbid at the located line: an attacker (or a buggy lens)
-	# could cite an innocuous scope line while the matching content lives
-	# inside a forbidden section. Refuse to apply in that case too.
-	located_heading="$("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" "$abs_path" "$match_line" 2>/dev/null || echo "unknown")"
-	if heading_is_forbidden "$located_heading"; then
-		af_manifest_record "$kind" "$file" "$line" "rejected_scope" "" ""
+	exact_match_count="$(awk -v needle="$stripped_before" '
+		$0 == needle { count++ }
+		END { print count + 0 }
+	' "$abs_path")"
+	if [[ "$exact_match_count" -ne 1 ]]; then
+		af_manifest_record "$kind" "$file" "$line" "rejected_drift" "" ""
 		continue
 	fi
-	apply_line="$match_line"
+	apply_line="$scope_start"
 
 	# Save pre-apply blob (rollback handle).
 	before_sha="$(af_save_blob "$abs_path")"

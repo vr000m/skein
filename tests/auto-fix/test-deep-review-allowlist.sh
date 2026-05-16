@@ -153,15 +153,13 @@ adversarial_unused_var_test_read() {
 	mkdir -p "$d"
 	make_repo "$d" >/dev/null
 	# Fixture refers to src_pkg/a.py with var `my_var`. The lens claimed
-	# `my_var` had zero non-test reads, but src_pkg/b.py (a non-test file)
-	# in fact references it — the applier's re-verification must catch
-	# this and record `rejected_revar`.
+	# `my_var` had zero reads, but tests/test_a.py references it. Phase 5
+	# decided test reads are still blocking reads, so the applier's
+	# re-verification must catch this and record `rejected_revar`.
 	mkdir -p "$d/src_pkg" "$d/tests"
 	printf 'my_var = 1\n' >"$d/src_pkg/a.py"
-	printf 'from src_pkg.a import my_var\nprint(my_var)\n' >"$d/src_pkg/b.py"
-	# A test-file read should be excluded from the re-verify count.
 	printf 'from src_pkg.a import my_var\nassert my_var == 1\n' >"$d/tests/test_a.py"
-	git -C "$d" add src_pkg tests/test_a.py
+	git -C "$d" add src_pkg/a.py tests/test_a.py
 	git -C "$d" commit -q -m "add src_pkg and tests"
 	local before
 	before="$(head_sha "$d")"

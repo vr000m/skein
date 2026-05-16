@@ -123,26 +123,28 @@ scope_parts() {
 	fi
 }
 
-# Resolve the enclosing heading at <line> via the shared resolver, then test
-# it against the same forbidden-heading list the applier uses. Keeping the
-# auditor and applier on one resolver avoids a class of bug where
+# Resolve the enclosing heading stack at <line> via the shared resolver, then
+# test every ancestor against the same forbidden-heading list the applier uses.
+# Keeping the auditor and applier on one resolver avoids a class of bug where
 # `would_apply` from the auditor disagrees with `rejected_scope` at apply.
 review_plan_scope_forbidden() {
 	local path="$1"
 	local line="$2"
 	local heading
-	heading="$("$PLAN_SCOPE_DETECT" "$path" "$line" 2>/dev/null || echo "unknown")"
-	# Phase headings: any digit count.
-	if [[ "$heading" =~ ^###[[:space:]]+Phase[[:space:]]+[0-9]+: ]]; then
-		return 0
-	fi
-	case "$heading" in
-	"## Requirements" | "## Acceptance Criteria" | \
-		"### Files to Modify" | "### New Files to Create" | \
-		"### Architecture Decisions" | "### Integration Seams")
-		return 0
-		;;
-	esac
+	while IFS= read -r heading; do
+		[[ -n "$heading" ]] || continue
+		# Phase headings: any digit count.
+		if [[ "$heading" =~ ^###[[:space:]]+Phase[[:space:]]+[0-9]+: ]]; then
+			return 0
+		fi
+		case "$heading" in
+		"## Requirements" | "## Acceptance Criteria" | \
+			"### Files to Modify" | "### New Files to Create" | \
+			"### Architecture Decisions" | "### Integration Seams")
+			return 0
+			;;
+		esac
+	done < <("$PLAN_SCOPE_DETECT" --stack "$path" "$line" 2>/dev/null || true)
 	return 1
 }
 

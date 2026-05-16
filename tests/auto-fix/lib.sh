@@ -8,6 +8,7 @@ REPO_ROOT="$(cd "$TESTS_AUTO_FIX_DIR/../.." && pwd)"
 APPLIER="$REPO_ROOT/scripts/apply-auto-fix-code.sh"
 PLAN_APPLIER="$REPO_ROOT/scripts/apply-auto-fix-plan.sh"
 PLAN_SCOPE_DETECT="$REPO_ROOT/scripts/plan-scope-detect.sh"
+AUDITOR="$REPO_ROOT/scripts/audit-auto-fix-eligibility.sh"
 FIXTURES_DIR="$TESTS_AUTO_FIX_DIR/fixtures"
 
 pass_count=0
@@ -49,6 +50,13 @@ require_plan_applier() {
 require_plan_scope_detect() {
 	if [[ ! -f "$PLAN_SCOPE_DETECT" ]]; then
 		fail "preflight: plan-scope-detect missing at $PLAN_SCOPE_DETECT"
+		summary_and_exit
+	fi
+}
+
+require_auditor() {
+	if [[ ! -f "$AUDITOR" ]]; then
+		fail "preflight: auditor missing at $AUDITOR"
 		summary_and_exit
 	fi
 }
