@@ -58,14 +58,40 @@ af_allowlist_contains() {
 		"$AF_ALLOWLIST_PATH" >/dev/null
 }
 
+# Refuse to touch a path that is (or whose parent is) a symlink. Lens-supplied
+# paths must resolve to real in-tree files; symlinks would let an attacker
+# direct git hash-object reads or restore writes through to out-of-tree
+# targets. resolve_path already rejects absolute/`..` paths textually; this is
+# the runtime-state guard for the symlink case.
+af_assert_no_symlink() {
+	local path="$1"
+	if [[ -L "$path" ]]; then
+		echo "auto-fix: refusing to operate on symlink: $path" >&2
+		return 6
+	fi
+	# A symlinked parent dir is equally dangerous — git hash-object dereferences.
+	local parent
+	parent="$(dirname "$path")"
+	while [[ "$parent" != "/" && "$parent" != "." ]]; do
+		if [[ -L "$parent" ]]; then
+			echo "auto-fix: refusing to operate under symlinked parent: $parent" >&2
+			return 6
+		fi
+		parent="$(dirname "$parent")"
+	done
+	return 0
+}
+
 af_save_blob() {
 	local path="$1"
+	af_assert_no_symlink "$path" || return $?
 	git hash-object -w "$path"
 }
 
 af_restore_blob() {
 	local path="$1"
 	local sha="$2"
+	af_assert_no_symlink "$path" || return $?
 	# Restore working-tree content from the saved blob, then unstage so the
 	# index matches HEAD again (the touched path may have been `git add`-ed
 	# during the apply attempt).
@@ -84,6 +110,7 @@ af_apply_replacement() {
 	if [[ ! -f "$path" ]]; then
 		return 3
 	fi
+	af_assert_no_symlink "$path" || return $?
 	# Strip a single trailing newline from `before` and `after` so a v1
 	# producer that ends every literal with "\n" matches a file line that
 	# does not include the newline.
@@ -98,11 +125,14 @@ af_apply_replacement() {
 	if [[ "$actual" != "$before" ]]; then
 		return 2
 	fi
-	# Rewrite the file with the line replaced. Use awk so we preserve every
-	# other byte exactly (including a missing trailing newline).
+	# Rewrite the file with the line replaced. Pass `after` via the environment
+	# rather than `awk -v` to avoid awk's backslash-escape interpretation of
+	# attacker-controlled strings (a literal `\n` in `after` would otherwise
+	# become a real newline and break the single-line invariant).
 	local tmp
 	tmp="$(mktemp)"
-	awk -v target="$line" -v repl="$after" '
+	AF_REPL="$after" awk -v target="$line" '
+		BEGIN { repl = ENVIRON["AF_REPL"] }
 		NR == target { print repl; next }
 		{ print }
 	' "$path" >"$tmp"
@@ -143,6 +173,13 @@ af_manifest_init() {
 	local skill="$1"
 	local dir
 	dir="$(af_manifest_dir "$skill")"
+	# Refuse to follow a pre-existing symlink at the manifest dir path.
+	# Without this, an attacker who plants .deep-review/ or .review-plan/
+	# as a symlink to e.g. ~/.ssh redirects every manifest write through it.
+	if [[ -L "$dir" ]]; then
+		echo "auto-fix: refusing to write manifest under symlinked dir: $dir" >&2
+		return 6
+	fi
 	mkdir -p "$dir"
 	AF_MANIFEST_PATH="$dir/auto-fix-$(date +%s).json"
 	AF_MANIFEST_ENTRIES=()

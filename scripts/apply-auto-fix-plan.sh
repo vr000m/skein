@@ -164,27 +164,38 @@ heading_is_forbidden() {
 
 # Roll back every commit + restore every blob recorded during this batch.
 # Called when marker_failed is hit mid-batch.
-APPLIED_COMMITS=()     # newest-last; reset HEAD by `git reset --hard <parent_of_first>`
+APPLIED_COMMITS=()     # newest-last; unwound via `git revert` in reverse order
 APPLIED_BLOBS_PATHS=() # parallel arrays: index i is one applied fix
 APPLIED_BLOBS_SHAS=()
 
 rollback_batch() {
-	# Restore blobs in reverse order so the first applied file ends up
-	# pointing at its original blob even if multiple fixes touched it.
-	local i
-	if [[ "${#APPLIED_COMMITS[@]}" -gt 0 ]]; then
-		# git reset --hard to the parent of the first applied commit.
-		local first="${APPLIED_COMMITS[0]}"
-		local parent
-		parent="$(git -C "$ROOT_DIR" rev-parse "$first^" 2>/dev/null || true)"
-		if [[ -n "$parent" ]]; then
-			git -C "$ROOT_DIR" reset --hard "$parent" >/dev/null 2>&1 || true
-		fi
-	fi
+	# Unwind each applier commit with `git revert --no-edit` in newest-first
+	# order. Using revert (not `git reset --hard`) preserves any unrelated
+	# commits that landed on this ref between the first applier commit and
+	# now, AND preserves any uncommitted operator work in the worktree —
+	# `reset --hard` would silently discard both.
+	local i sha
+	for ((i = ${#APPLIED_COMMITS[@]} - 1; i >= 0; i--)); do
+		sha="${APPLIED_COMMITS[$i]}"
+		git -C "$ROOT_DIR" revert --no-edit "$sha" >/dev/null 2>&1 || true
+	done
+	# Restore saved blobs in reverse order so a path touched twice still ends
+	# up at the original pre-batch content. The revert above takes the
+	# committed state back; this restores any unstaged residue (defence in
+	# depth — revert+stage clean should already match).
 	for ((i = ${#APPLIED_BLOBS_PATHS[@]} - 1; i >= 0; i--)); do
 		af_restore_blob "${APPLIED_BLOBS_PATHS[$i]}" "${APPLIED_BLOBS_SHAS[$i]}"
 	done
 }
+
+# Refuse to start the batch if the worktree has uncommitted changes — the
+# rollback path relies on `git revert` which composes cleanly only on a
+# clean tree. A dirty tree at start signals concurrent operator work that
+# we don't want to interleave with applier commits.
+if ! git -C "$ROOT_DIR" diff --quiet || ! git -C "$ROOT_DIR" diff --cached --quiet; then
+	echo "apply-auto-fix-plan: worktree has uncommitted changes; commit or stash before running" >&2
+	exit 7
+fi
 
 findings_json="$(printf '%s' "$envelope" | jq -c '.findings[]? | select(.auto_fix_status == "would_apply" and (has("auto_fix")))')"
 
