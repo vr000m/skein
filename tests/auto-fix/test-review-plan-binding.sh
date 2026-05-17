@@ -198,4 +198,19 @@ else
 	fail "symlink-plan applier: out-of-repo target changed"
 fi
 
+# No-read invariant: the applier must reject pre-open, not after reading
+# and deciding not to write. Replace the symlink target with a missing
+# file; if the applier tried to read it, the error message would be the
+# kernel's ENOENT ("No such file or directory") rather than the symlink-
+# rejection wording. Re-run and assert the rejection wording, not ENOENT.
+rm -f "$outside"
+write_envelope "$d5/findings.json" "plan.md" "plan.md:$line" "$line" "Target binding text." "Edited binding text."
+run_plan_applier "$d5" --plan plan.md "$d5/findings.json"
+if [[ "$LAST_RC" -ne 0 ]] && [[ "$LAST_OUT" != *"No such file or directory"* ]]; then
+	pass "symlink-plan applier: pre-read rejection (no kernel ENOENT)"
+else
+	fail "symlink-plan applier: applier appears to have attempted a read"
+	printf '%s\n' "$LAST_OUT" | sed 's/^/  /'
+fi
+
 summary_and_exit

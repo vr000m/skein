@@ -187,6 +187,9 @@ printf 'from os import path\n' >"$d5/a.py"
 git -C "$d5" add a.py
 git -C "$d5" commit -q -m "add import"
 before="$(head_sha "$d5")"
+# Audit-before-render preview must match what the applier does — assert
+# the auditor previews `would_apply` before the applier confirms it.
+assert_auditor_status "unused_import-accept" "$d5" "$FIXTURES_DIR/unused_import-accept.jsonl" "would_apply"
 run_applier "$d5" --test-cmd "true" "$FIXTURES_DIR/unused_import-accept.jsonl"
 assert_applied "unused_import-accept" "$d5" "$before"
 if [[ ! -s "$d5/a.py" ]]; then

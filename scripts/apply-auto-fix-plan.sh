@@ -53,17 +53,12 @@ AF_COMMON_ROOT="$ROOT_DIR"
 
 SKILL="review-plan"
 
-# Scope-forbid list per the dev plan. Matched against `plan-scope-detect.sh`
-# output. `### Phase N:` is matched as a regex (any digit count) below; all
-# other entries are exact (column-zero, normalised) string matches.
-FORBIDDEN_HEADINGS=(
-	"## Requirements"
-	"## Acceptance Criteria"
-	"### Files to Modify"
-	"### New Files to Create"
-	"### Architecture Decisions"
-	"### Integration Seams"
-)
+# Scope-forbid list, scope parser, symlink guard, canonical-path helper,
+# heading-forbidden + stack-forbidden checks all live in
+# scripts/lib/auto-fix-common.sh as AF_FORBIDDEN_HEADINGS,
+# af_parse_plan_scope, af_assert_no_symlink, af_canonical_existing_path,
+# af_heading_is_forbidden, af_stack_is_forbidden. Shared with the auditor so
+# `would_apply` and `rejected_scope` cannot disagree.
 
 usage() {
 	cat >&2 <<'EOF'
@@ -163,84 +158,38 @@ resolve_plan_arg() {
 	fi
 }
 
+# canonical_existing_path wraps af_canonical_existing_path (lib) so existing
+# call sites at this script's scope keep working; ROOT_DIR is passed
+# explicitly because AF_COMMON_ROOT and ROOT_DIR are equal here but the lib
+# helper takes root as a parameter to support the auditor's AUDIT_ROOT case.
 canonical_existing_path() {
-	local p="$1"
-	if [[ ! -e "$p" ]]; then
-		return 1
-	fi
-	af_assert_no_symlink "$p" >/dev/null || return 1
-	local dir base
-	dir="$(dirname "$p")"
-	base="$(basename "$p")"
-	dir="$(cd "$dir" && pwd -P)"
-	local canon root_canon
-	canon="$dir/$base"
-	root_canon="$(cd "$ROOT_DIR" && pwd -P)"
-	case "$canon" in
-	"$root_canon" | "$root_canon"/*) printf '%s\n' "$canon" ;;
-	*) return 1 ;;
-	esac
+	af_canonical_existing_path "$1" "$ROOT_DIR"
 }
 
 # Parse `auto_fix.scope` of the form `<path>:<start>[-<end>]`. Echo
 # `<path>\t<start>\t<end>` or empty on failure. v1 only supports single-line
-# spans; this function returns end == start when no range is present.
+# spans; this function returns end == start when no range is present. Wraps
+# af_parse_plan_scope (lib) so the auditor and applier share one parser.
 parse_plan_scope() {
-	local scope="$1"
-	local path start end
-	if [[ "$scope" =~ ^(.+):([0-9]+)-([0-9]+)$ ]]; then
-		path="${BASH_REMATCH[1]}"
-		start="${BASH_REMATCH[2]}"
-		end="${BASH_REMATCH[3]}"
-	elif [[ "$scope" =~ ^(.+):([0-9]+)$ ]]; then
-		path="${BASH_REMATCH[1]}"
-		start="${BASH_REMATCH[2]}"
-		end="${BASH_REMATCH[2]}"
-	else
+	if ! af_parse_plan_scope "$1"; then
 		return 1
 	fi
-	printf '%s\t%s\t%s\n' "$path" "$start" "$end"
+	printf '%s\t%s\t%s\n' "$AF_SCOPE_PATH" "$AF_SCOPE_START" "$AF_SCOPE_END"
 }
 
-# Return 0 if the heading text is in the scope-forbid set, 1 otherwise.
-heading_is_forbidden() {
-	local heading="$1"
-	# Phase N — match any digit count.
-	if [[ "$heading" =~ ^###[[:space:]]+Phase[[:space:]]+[0-9]+: ]]; then
-		return 0
-	fi
-	local h
-	for h in "${FORBIDDEN_HEADINGS[@]}"; do
-		if [[ "$heading" == "$h" ]]; then
-			return 0
-		fi
-	done
-	return 1
-}
-
+# heading_is_forbidden + stack_is_forbidden are provided by
+# scripts/lib/auto-fix-common.sh as af_heading_is_forbidden /
+# af_stack_is_forbidden. Local wrapper for stack_is_forbidden preserves the
+# existing call site idiom and propagates the lib's exit-2 (detector
+# failure) as a hard exit, matching the previous loud-fail behaviour.
 stack_is_forbidden() {
-	local path="$1"
-	local line="$2"
-	local heading
-	local stack_out
-	local stack_rc
-	# Don't swallow the detector's exit code: a malformed line (exit 2)
-	# would otherwise produce an empty loop, causing `stack_is_forbidden`
-	# to return "not forbidden" and silently allow an auto-fix that
-	# `parse_plan_scope` failed to reject. Fail loudly instead.
-	stack_out="$("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" --stack "$path" "$line" 2>&1)"
-	stack_rc=$?
-	if [[ "$stack_rc" -ne 0 ]]; then
-		echo "apply-auto-fix-plan: plan-scope-detect --stack failed (rc=$stack_rc) for $path:$line: $stack_out" >&2
+	local rc
+	af_stack_is_forbidden "$SCRIPT_ROOT/scripts/plan-scope-detect.sh" "$1" "$2"
+	rc=$?
+	if [[ "$rc" -eq 2 ]]; then
 		exit 2
 	fi
-	while IFS= read -r heading; do
-		[[ -n "$heading" ]] || continue
-		if heading_is_forbidden "$heading"; then
-			return 0
-		fi
-	done <<<"$stack_out"
-	return 1
+	return "$rc"
 }
 
 reviewed_plan_path="$(resolve_plan_arg "$REVIEWED_PLAN")" || {

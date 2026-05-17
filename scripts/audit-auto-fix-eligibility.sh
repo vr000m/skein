@@ -9,7 +9,31 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALLOWLIST_PATH="$ROOT_DIR/scripts/auto-fix-allowlist.json"
 PLAN_SCOPE_DETECT="$ROOT_DIR/scripts/plan-scope-detect.sh"
-AUDIT_ROOT="$ROOT_DIR"
+# AUDIT_ROOT is the repo whose paths the envelope's findings reference, not
+# the repo where this script lives. When --plan is supplied below, AUDIT_ROOT
+# is re-pointed at the plan's git toplevel. When --plan is absent (deep-review
+# case), default to the caller's git toplevel (falling back to cwd), so
+# `git -C "$AUDIT_ROOT" grep` for symbol references scans the right tree.
+# The previous default (ROOT_DIR = script's repo) silently scanned the
+# auto-fix dev repo for symbols like Python's `path`, producing false
+# `rejected_revar` outcomes when run from a different repo.
+if AUDIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+	:
+else
+	AUDIT_ROOT="$(pwd)"
+fi
+
+# Source the shared lib for path/symlink/import/heading helpers. The lib's
+# `af_assert_no_symlink`, `af_canonical_existing_path`, `af_parse_plan_scope`,
+# `af_heading_is_forbidden`, `af_stack_is_forbidden`, `af_canonical_import_records`,
+# and `af_same_import_symbol_set` are the single source of truth shared with
+# the appliers. The auditor passes AUDIT_ROOT explicitly to
+# af_canonical_existing_path because AUDIT_ROOT may be re-pointed to the
+# plan's git toplevel when --plan is supplied.
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
+# The auditor does not write manifests or restore blobs, but
+# af_assert_no_symlink and friends need no caller-supplied root state.
 
 usage() {
 	echo "usage: scripts/audit-auto-fix-eligibility.sh --skill deep-review|review-plan [--plan path] [envelope.json|-]" >&2
@@ -111,47 +135,13 @@ resolve_repo_path() {
 	printf '%s\n' "$AUDIT_ROOT/$path"
 }
 
-assert_no_symlink() {
-	local path="$1"
-	if [[ -L "$path" ]]; then
-		return 1
-	fi
-	local root_canon parent parent_canon
-	root_canon="$(cd "$AUDIT_ROOT" && pwd -P)"
-	parent="$(dirname "$path")"
-	while [[ "$parent" != "/" && "$parent" != "." ]]; do
-		parent_canon="$(cd "$parent" 2>/dev/null && pwd -P)" || return 1
-		case "$parent_canon" in
-		"$root_canon" | "$root_canon"/*)
-			if [[ -L "$parent" ]]; then
-				return 1
-			fi
-			;;
-		esac
-		if [[ "$parent_canon" == "$root_canon" ]]; then
-			break
-		fi
-		parent="$(dirname "$parent")"
-	done
-	return 0
-}
-
+# `assert_no_symlink` and `canonical_existing_path` are provided by
+# scripts/lib/auto-fix-common.sh as af_assert_no_symlink and
+# af_canonical_existing_path. Local wrappers below preserve the auditor's
+# call sites; canonical_existing_path passes AUDIT_ROOT explicitly because
+# it may differ from AF_COMMON_ROOT after --plan is parsed.
 canonical_existing_path() {
-	local path="$1"
-	if [[ ! -e "$path" ]]; then
-		return 1
-	fi
-	assert_no_symlink "$path" || return 1
-	local dir base canon root_canon
-	dir="$(dirname "$path")"
-	base="$(basename "$path")"
-	dir="$(cd "$dir" && pwd -P)"
-	canon="$dir/$base"
-	root_canon="$(cd "$AUDIT_ROOT" && pwd -P)"
-	case "$canon" in
-	"$root_canon" | "$root_canon"/*) printf '%s\n' "$canon" ;;
-	*) return 1 ;;
-	esac
+	af_canonical_existing_path "$1" "$AUDIT_ROOT"
 }
 
 line_matches_before() {
@@ -247,80 +237,10 @@ import_symbols() {
 	' | sort -u
 }
 
-canonical_import_records() {
-	awk '
-		function trim(s) {
-			sub(/^[[:space:]]+/, "", s)
-			sub(/[[:space:]]+$/, "", s)
-			return s
-		}
-		function strip_comment(s) {
-			sub(/[[:space:]]+#.*/, "", s)
-			return trim(s)
-		}
-		function emit_import_item(item,  n, alias_parts, module, alias) {
-			item = trim(item)
-			if (item == "") return
-			if (item ~ /[[:space:]]+as[[:space:]]+/) {
-				n = split(item, alias_parts, /[[:space:]]+as[[:space:]]+/)
-				module = trim(alias_parts[1])
-				alias = trim(alias_parts[n])
-			} else {
-				module = item
-				alias = ""
-			}
-			if (module !~ /^[_A-Za-z][_A-Za-z0-9.]*$/) { invalid = 1; return }
-			if (alias != "" && alias !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
-			print "import\t" module "\t" alias
-			seen = 1
-		}
-		function emit_from_item(module, item,  n, alias_parts, name, alias) {
-			item = trim(item)
-			if (item == "" || item == "*") { invalid = 1; return }
-			if (item ~ /[[:space:]]+as[[:space:]]+/) {
-				n = split(item, alias_parts, /[[:space:]]+as[[:space:]]+/)
-				name = trim(alias_parts[1])
-				alias = trim(alias_parts[n])
-			} else {
-				name = item
-				alias = ""
-			}
-			if (module !~ /^\.?[_A-Za-z][_A-Za-z0-9.]*$/ && module !~ /^\.+[_A-Za-z][_A-Za-z0-9.]*$/) { invalid = 1; return }
-			if (name !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
-			if (alias != "" && alias !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
-			print "from\t" module "\t" name "\t" alias
-			seen = 1
-		}
-		{
-			line = strip_comment($0)
-			if (line == "") next
-			if (line ~ /^import[[:space:]]+/) {
-				sub(/^import[[:space:]]+/, "", line)
-				count = split(line, items, /,/)
-				for (i = 1; i <= count; i++) emit_import_item(items[i])
-			} else if (line ~ /^from[[:space:]]+[^[:space:]]+[[:space:]]+import[[:space:]]+/) {
-				module = line
-				sub(/^from[[:space:]]+/, "", module)
-				sub(/[[:space:]]+import[[:space:]].*$/, "", module)
-				sub(/^from[[:space:]]+[^[:space:]]+[[:space:]]+import[[:space:]]+/, "", line)
-				count = split(line, items, /,/)
-				for (i = 1; i <= count; i++) emit_from_item(module, items[i])
-			} else {
-				invalid = 1
-			}
-		}
-		END { if (invalid || !seen) exit 1 }
-	' | sort -u
-}
-
-same_import_symbol_set() {
-	local before="$1"
-	local after="$2"
-	local before_records after_records
-	before_records="$(printf '%s\n' "$before" | canonical_import_records)" || return 1
-	after_records="$(printf '%s\n' "$after" | canonical_import_records)" || return 1
-	[[ "$before_records" == "$after_records" ]]
-}
+# canonical_import_records and same_import_symbol_set live in
+# scripts/lib/auto-fix-common.sh as af_canonical_import_records and
+# af_same_import_symbol_set. Auditor and code applier share the same
+# normalisation so the kind-gate previews match what the applier does.
 
 unused_import_has_reference() {
 	local before="$1"
@@ -371,55 +291,26 @@ unused_var_has_reference() {
 	[[ "$ref_count" -gt 0 ]]
 }
 
+# scope_parts wraps af_parse_plan_scope so existing call sites keep using
+# SCOPE_PATH / SCOPE_START / SCOPE_END. Single source of truth for the
+# malformed-scope regex now lives in scripts/lib/auto-fix-common.sh.
 scope_parts() {
-	local scope="$1"
 	SCOPE_PATH=""
 	SCOPE_START=""
 	SCOPE_END=""
-	# Anchored regex form, mirroring parse_plan_scope in apply-auto-fix-plan.sh
-	# so the auditor and applier classify malformed scopes identically. The
-	# previous ${scope%:*} / ${scope##*:} pair misclassified a missing-line
-	# scope ('a:b.md') as path='a' / range='b.md' rather than as malformed.
-	if [[ "$scope" =~ ^(.+):([0-9]+)-([0-9]+)$ ]]; then
-		SCOPE_PATH="${BASH_REMATCH[1]}"
-		SCOPE_START="${BASH_REMATCH[2]}"
-		SCOPE_END="${BASH_REMATCH[3]}"
-	elif [[ "$scope" =~ ^(.+):([0-9]+)$ ]]; then
-		SCOPE_PATH="${BASH_REMATCH[1]}"
-		SCOPE_START="${BASH_REMATCH[2]}"
-		SCOPE_END="${BASH_REMATCH[2]}"
+	if af_parse_plan_scope "$1"; then
+		SCOPE_PATH="$AF_SCOPE_PATH"
+		SCOPE_START="$AF_SCOPE_START"
+		SCOPE_END="$AF_SCOPE_END"
 	fi
 }
 
-# Resolve the enclosing heading stack at <line> via the shared resolver, then
-# test every ancestor against the same forbidden-heading list the applier uses.
-# Keeping the auditor and applier on one resolver avoids a class of bug where
-# `would_apply` from the auditor disagrees with `rejected_scope` at apply.
+# Resolve the enclosing heading stack at <line> via the shared lib helper.
+# Keeping the auditor and applier on one resolver + one forbid list (in
+# scripts/lib/auto-fix-common.sh) avoids the bug class where `would_apply`
+# from the auditor disagrees with `rejected_scope` at apply.
 review_plan_scope_forbidden() {
-	local path="$1"
-	local line="$2"
-	local heading
-	local stack_out stack_rc
-	stack_out="$("$PLAN_SCOPE_DETECT" --stack "$path" "$line" 2>&1)"
-	stack_rc=$?
-	if [[ "$stack_rc" -ne 0 ]]; then
-		return 2
-	fi
-	while IFS= read -r heading; do
-		[[ -n "$heading" ]] || continue
-		# Phase headings: any digit count.
-		if [[ "$heading" =~ ^###[[:space:]]+Phase[[:space:]]+[0-9]+: ]]; then
-			return 0
-		fi
-		case "$heading" in
-		"## Requirements" | "## Acceptance Criteria" | \
-			"### Files to Modify" | "### New Files to Create" | \
-			"### Architecture Decisions" | "### Integration Seams")
-			return 0
-			;;
-		esac
-	done <<<"$stack_out"
-	return 1
+	af_stack_is_forbidden "$PLAN_SCOPE_DETECT" "$1" "$2"
 }
 
 status_tsv="$(mktemp)"
@@ -481,7 +372,7 @@ while IFS= read -r finding; do
 						fi
 						;;
 					import_sort)
-						if same_import_symbol_set "$stripped_before" "${after%$'\n'}"; then
+						if af_same_import_symbol_set "$stripped_before" "${after%$'\n'}"; then
 							status="would_apply"
 						else
 							status="rejected_semantic_change"

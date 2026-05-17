@@ -154,6 +154,18 @@ e2e_rejected_scope() {
 	cat >"$d/findings.json" <<EOF
 {"schema_version":2,"findings":[{"lens":"prose","severity":"Minor","category":"typo","file":"plan.md","line":$line,"summary":"typo","evidence":"","suggestion":"","auto_fix":{"kind":"prose_typo","before":$target_json,"after":$target_json,"scope":"plan.md:$line"},"auto_fix_status":"would_apply"}]}
 EOF
+	# Auditor-direct assertion: the audit-before-render preview must mark
+	# this scope as rejected_scope (matches what the applier will do).
+	# Without this, the e2e check below only proves the applier rejects,
+	# leaving the auditor's preview unchecked for evasion-style fixtures.
+	if bash "$AUDITOR" --skill review-plan --plan "$d/plan.md" "$d/findings.json" >"$d/audited.json" 2>"$d/audit.stderr" &&
+		jq -e '.findings[0].auto_fix_status == "rejected_scope"' "$d/audited.json" >/dev/null; then
+		pass "e2e $label: auditor status=rejected_scope"
+	else
+		fail "e2e $label: auditor did not reject"
+		sed 's/^/  /' "$d/audit.stderr" 2>/dev/null || true
+		[[ -f "$d/audited.json" ]] && sed 's/^/  /' "$d/audited.json"
+	fi
 	local before
 	before="$(head_sha "$d")"
 	run_plan_applier "$d" --plan plan.md "$d/findings.json"
