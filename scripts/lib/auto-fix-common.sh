@@ -210,7 +210,10 @@ af_manifest_init() {
 		return 6
 	fi
 	mkdir -p "$dir"
-	AF_MANIFEST_PATH="$dir/auto-fix-$(date +%s).json"
+	# Suffix with PID to avoid collisions on second-level granularity even
+	# in the (currently impossible) case where two appliers of the same kind
+	# bypass the advisory mkdir lock and start within the same second.
+	AF_MANIFEST_PATH="$dir/auto-fix-$(date +%s)-$$.json"
 	AF_MANIFEST_ENTRIES=()
 }
 

@@ -213,10 +213,15 @@ rollback_batch() {
 	# commits that landed on this ref between the first applier commit and
 	# now, AND preserves any uncommitted operator work in the worktree —
 	# `reset --hard` would silently discard both.
-	local i sha
+	local i sha revert_rc rollback_partial=0
 	for ((i = ${#APPLIED_COMMITS[@]} - 1; i >= 0; i--)); do
 		sha="${APPLIED_COMMITS[$i]}"
-		git -C "$ROOT_DIR" revert --no-edit "$sha" >/dev/null 2>&1 || true
+		revert_rc=0
+		git -C "$ROOT_DIR" revert --no-edit "$sha" >/dev/null 2>&1 || revert_rc=$?
+		if [[ "$revert_rc" -ne 0 ]]; then
+			echo "apply-auto-fix-plan: rollback warning — git revert $sha failed (rc=$revert_rc); blob restore below will attempt to recover, but the working tree may be partial" >&2
+			rollback_partial=1
+		fi
 	done
 	# Restore saved blobs in reverse order so a path touched twice still ends
 	# up at the original pre-batch content. The revert above takes the
@@ -225,6 +230,11 @@ rollback_batch() {
 	for ((i = ${#APPLIED_BLOBS_PATHS[@]} - 1; i >= 0; i--)); do
 		af_restore_blob "${APPLIED_BLOBS_PATHS[$i]}" "${APPLIED_BLOBS_SHAS[$i]}"
 	done
+	if [[ "$rollback_partial" -eq 1 ]]; then
+		echo "apply-auto-fix-plan: rollback completed with WARNINGS — review working tree manually before continuing" >&2
+		return 1
+	fi
+	return 0
 }
 
 # Refuse to start the batch if the worktree has tracked uncommitted
@@ -396,6 +406,11 @@ while IFS= read -r finding; do
 
 	git -C "$ROOT_DIR" add -- "$abs_path"
 
+	# Strip newlines from envelope-derived fields so a crafted lens cannot
+	# inject a multi-paragraph commit message via embedded \n in kind/file/line.
+	kind="${kind//$'\n'/}"
+	file="${file//$'\n'/}"
+	line="${line//$'\n'/}"
 	subject="auto-fix($SKILL): $kind at $file:$line"
 	trailer="Auto-Fixed-By: $SKILL"
 	commit_sha="$(af_commit_one "$subject" "$trailer")"

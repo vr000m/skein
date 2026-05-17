@@ -442,6 +442,10 @@ while IFS= read -r finding; do
 	git -C "$ROOT_DIR" add -- "$abs_path"
 
 	# Run the test command exactly once. No retry.
+	# Security boundary: TEST_CMD is always operator-supplied via --test-cmd
+	# or the AUTO_FIX_TEST_CMD env var. NEVER derive TEST_CMD from envelope
+	# data, lens output, or any attacker-controlled source — the `bash -c`
+	# below executes it verbatim.
 	test_output_file="$(mktemp)"
 	test_rc=0
 	(
@@ -460,6 +464,11 @@ while IFS= read -r finding; do
 	rm -f "$test_output_file"
 
 	# Commit the fix with the canonical subject and trailer.
+	# Strip newlines from envelope-derived fields so a crafted lens cannot
+	# inject a multi-paragraph commit message via embedded \n in kind/file/line.
+	kind="${kind//$'\n'/}"
+	file="${file//$'\n'/}"
+	line="${line//$'\n'/}"
 	subject="auto-fix($SKILL): $kind at $file:$line"
 	trailer="Auto-Fixed-By: $SKILL"
 	commit_sha="$(af_commit_one "$subject" "$trailer")"
