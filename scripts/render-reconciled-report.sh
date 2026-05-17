@@ -74,16 +74,23 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 		.summary | [.raw, .merged, .unique, .related, .dropped] | @tsv
 	')
 
-	# Findings as a TSV stream, one row per finding. Columns:
+	# Findings as a separator-stream, one row per finding. Columns:
 	#   severity  category  file  line  lenses(comma-joined)  summary  evidence  suggestion  auto_fix_status
-	# Tabs/newlines inside string fields escaped to keep awk field-splitting safe.
+	# Field separator is ASCII Unit Separator (US, U+001F, octal 037). We
+	# deliberately avoid \t here because bash `read -r` with `IFS=$'\t'`
+	# treats consecutive tabs as a single separator (tab is a whitespace
+	# IFS char) and collapses adjacent empty fields — that silently bleeds
+	# the next non-empty field into an empty slot. \x1f is non-whitespace,
+	# so consecutive separators preserve empty fields one-for-one.
+	# Tabs/newlines inside string fields are still escaped so multi-line
+	# evidence round-trips through the renderer.
 	findings_tsv="$(printf '%s' "$input" | jq -r '
 		.findings[]? | [
 			.severity, .category, .file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			(.lenses | join(",")),
 			.summary, .evidence, .suggestion, (.auto_fix_status // "")
-		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("\t")
+		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("")
 	')"
 
 	# Related cross-references. Columns: file  line  cat_a  cat_b
@@ -92,7 +99,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			.file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			.categories[0], .categories[1]
-		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("\t")
+		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("")
 	')"
 else
 	# Fallback: minimal awk JSON walker. Sufficient for the well-formed
@@ -211,7 +218,12 @@ else
 					summary = jstr(o, "summary"); evidence = jstr(o, "evidence"); suggestion = jstr(o, "suggestion")
 					auto_fix_status = jstr(o, "auto_fix_status")
 					lenses = jarr_strings(o, "lenses")
-					printf "FINDING\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", esc(sev), esc(cat), esc(file), line, esc(lenses), esc(summary), esc(evidence), esc(suggestion), esc(auto_fix_status)
+					# Field separator is octal 037 (US, non-whitespace) — see
+				# the jq emit comment above for the empty-field rationale.
+				# Tag prefix stays as a tab so the downstream tag-filter
+				# awk (awk -F tab, $1 == FINDING) still splits tag from
+				# data row.
+				printf "FINDING\t%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", esc(sev), esc(cat), esc(file), line, esc(lenses), esc(summary), esc(evidence), esc(suggestion), esc(auto_fix_status)
 				}
 			}
 
@@ -261,7 +273,7 @@ else
 					if (line == "") line = "-1"
 					cats = jarr_strings(o, "categories")
 					split(cats, ca, ",")
-					printf "RELATED\t%s\t%s\t%s\t%s\n", esc(file), line, esc(ca[1]), esc(ca[2])
+					printf "RELATED\t%s\037%s\037%s\037%s\n", esc(file), line, esc(ca[1]), esc(ca[2])
 				}
 			}
 		}
@@ -359,12 +371,16 @@ printf '%s\n' "$related_tsv" >"$related_file"
 emit_section() {
 	local sev="$1"
 	local rows
-	rows="$(awk -F '\t' -v sev="$sev" '$1 == sev' "$findings_file")"
+	rows="$(awk -F $'\037' -v sev="$sev" '$1 == sev' "$findings_file")"
 	if [[ -z "$rows" ]]; then
 		return 0
 	fi
 	printf '\n### %s\n' "$sev"
-	while IFS=$'\t' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion r_auto_fix_status; do
+	# IFS=$'\x1f' (ASCII Unit Separator) — non-whitespace, so adjacent
+	# empties don't collapse the way IFS=$'\t' did (that pre-existing bug
+	# silently bled the next non-empty field into empty evidence/suggestion
+	# slots and suppressed [AUTO-FIXABLE] for would_apply findings).
+	while IFS=$'\x1f' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion r_auto_fix_status; do
 		# Decode \t / \n that the parser escaped so multi-line evidence
 		# round-trips into rendered output.
 		decode() { printf '%s' "$1" | sed -e 's/\\t/	/g' -e 's/\\n/\
@@ -392,13 +408,13 @@ emit_section() {
 		# (file, line) where one of the two categories is r_cat. The other
 		# category's severity is looked up against the findings table.
 		if [[ -s "$related_file" ]]; then
-			awk -F '\t' \
+			awk -F $'\037' \
 				-v rfile="$r_file" -v rline="$r_line" -v rcat="$r_cat" \
 				-v ffile="$findings_file" '
 				BEGIN {
 					while ((getline ln < ffile) > 0) {
 						if (ln == "") continue
-						split(ln, f, "\t")
+						split(ln, f, "\037")
 						sev_of[f[2] SUBSEP f[3] SUBSEP f[4]] = f[1]
 					}
 					close(ffile)
@@ -423,7 +439,7 @@ emit_section "Minor"
 
 # Any non-canonical severities -> render under their own header(s),
 # alphabetically. Surfaces parser bugs or future severity tiers loudly.
-other_sevs="$(printf '%s\n' "$findings_tsv" | awk -F '\t' '
+other_sevs="$(printf '%s\n' "$findings_tsv" | awk -F $'\037' '
 	$1 != "Critical" && $1 != "Important" && $1 != "Minor" && $1 != "" { print $1 }
 ' | sort -u)"
 if [[ -n "$other_sevs" ]]; then
