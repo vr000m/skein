@@ -449,7 +449,7 @@ Per-fix gating (the applier re-verifies even what the auditor already checked):
 8. **No test gate.** Plans are markdown; the equivalent of "tests pass" is the marker-hash check at Step 7. Each applied fix lands as its own commit; the manifest documents the range.
 9. `marker_refresh` kinds emitted by the lens are a **no-op** in this step — the manifest records `status: marker_pending` and Step 7 writes the real marker exactly once after the run.
 
-Per run, the applier writes a manifest at `.review-plan/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.review-plan/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+Per run, the applier writes a manifest at `.review-plan/auto-fix-<unix>-<pid>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.review-plan/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
 
 The applier handles unknown kinds (anything outside the `review-plan` allowlist) by recording `rejected_kind` and surfacing the finding as advisory. The scope-forbid list is structural, not heuristic: a `prose_clarify` whose `auto_fix.scope` lands inside `## Requirements` is dropped regardless of how innocuous the wording change reads.
 

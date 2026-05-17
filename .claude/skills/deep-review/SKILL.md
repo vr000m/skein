@@ -480,7 +480,7 @@ Per-fix gating (the applier re-verifies even what the auditor already checked):
 12. On test pass: commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: deep-review`.
 13. On test fail: restore the touched paths from the saved blob, unstage them, leave `HEAD` unchanged, append `status: test_failed` with the test output truncated to the last 2000 bytes. The finding is re-surfaced as advisory in Step 5.
 
-Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>-<pid>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
 
 The applier handles `dead_branch` the same way it handles any other unknown kind — it is **intentionally NOT** in the v1 allowlist. The reasoning is in the dev-plan Architecture Decisions section; do not lobby it back in without a static-analysis gate.
 
