@@ -95,12 +95,19 @@ assert_manifest_status "$(latest_manifest "$case2" ".deep-review")" "rejected_pa
 case3="$scratch/plan-abs"
 mkdir -p "$case3"
 make_repo "$case3" >/dev/null
+# Real plan inside the repo — required by apply-auto-fix-plan.sh --plan.
+# The malicious finding cites $sentinel3 (absolute, outside the repo); the
+# applier must reject because finding.file != canonical(--plan).
+plan_rel3="plan.md"
+printf '# heading\n\nthe wrong word\n' >"$case3/$plan_rel3"
+git -C "$case3" add "$plan_rel3"
+git -C "$case3" commit -q -m "add plan"
 sentinel3="$scratch/sentinel-plan-abs.md"
 printf '# heading\n\nthe wrong word\n' >"$sentinel3"
 cat >"$case3/findings.json" <<JSON
 {"schema_version":2,"findings":[{"lens":"review-plan","severity":"Minor","category":"prose","file":"$sentinel3","line":3,"summary":"typo","auto_fix":{"kind":"prose_typo","before":"the wrong word","after":"the right word","scope":"$sentinel3:3"},"auto_fix_status":"would_apply"}]}
 JSON
-run_plan_applier "$case3" "$case3/findings.json"
+run_plan_applier "$case3" --plan "$plan_rel3" "$case3/findings.json"
 assert_no_apply_commit "$case3" "plan-abs"
 [[ "$(grep -c 'wrong' "$sentinel3")" -eq 1 ]] && pass "plan-abs: out-of-repo plan untouched" || fail "plan-abs: out-of-repo plan was modified!"
 assert_manifest_status "$(latest_manifest "$case3" ".review-plan")" "rejected_path" "plan-abs"
@@ -109,13 +116,17 @@ assert_manifest_status "$(latest_manifest "$case3" ".review-plan")" "rejected_pa
 case4="$scratch/plan-traversal"
 mkdir -p "$case4"
 make_repo "$case4" >/dev/null
+plan_rel4="plan.md"
+printf '# heading\n\nthe wrong word\n' >"$case4/$plan_rel4"
+git -C "$case4" add "$plan_rel4"
+git -C "$case4" commit -q -m "add plan"
 sentinel4="$scratch/sentinel-plan-traversal.md"
 printf '# heading\n\nthe wrong word\n' >"$sentinel4"
 rel_plan="../$(basename "$sentinel4")"
 cat >"$case4/findings.json" <<JSON
 {"schema_version":2,"findings":[{"lens":"review-plan","severity":"Minor","category":"prose","file":"$rel_plan","line":3,"summary":"typo","auto_fix":{"kind":"prose_typo","before":"the wrong word","after":"the right word","scope":"$rel_plan:3"},"auto_fix_status":"would_apply"}]}
 JSON
-run_plan_applier "$case4" "$case4/findings.json"
+run_plan_applier "$case4" --plan "$plan_rel4" "$case4/findings.json"
 assert_no_apply_commit "$case4" "plan-traversal"
 [[ "$(grep -c 'wrong' "$sentinel4")" -eq 1 ]] && pass "plan-traversal: out-of-repo plan untouched" || fail "plan-traversal: out-of-repo plan was modified!"
 assert_manifest_status "$(latest_manifest "$case4" ".review-plan")" "rejected_path" "plan-traversal"

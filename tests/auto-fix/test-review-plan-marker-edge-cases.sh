@@ -36,7 +36,7 @@ awk -v repl="$plan_rel" '{ gsub(/PLAN_PATH/, repl); print }' \
 git -C "$case1" add "$plan_rel"
 git -C "$case1" commit -q -m "add plan"
 
-run_plan_applier "$case1" "$findings"
+run_plan_applier "$case1" --plan "$plan_rel" "$findings"
 
 manifest="$(find "$case1/.review-plan" -name 'auto-fix-*.json' -print -quit 2>/dev/null || true)"
 if [[ -z "${manifest:-}" ]]; then
@@ -80,7 +80,7 @@ awk -v repl="$plan_rel" '{ gsub(/PLAN_PATH/, repl); print }' \
 plan_before_apply="$(cat "$plan_abs2")"
 before2="$(head_sha "$case2")"
 
-run_plan_applier "$case2" "$findings2"
+run_plan_applier "$case2" --plan "$plan_rel" "$findings2"
 
 # Two acceptable observable outcomes:
 #   (a) applier detected corruption pre-apply and refused (rc != 0,

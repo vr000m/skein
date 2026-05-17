@@ -124,7 +124,7 @@ instantiate_plan_fixture \
 git -C "$case1" add "$plan_rel"
 git -C "$case1" commit -q -m "add plan"
 
-run_plan_applier "$case1" "$findings"
+run_plan_applier "$case1" --plan "$plan_rel" "$findings"
 
 manifest="$(find "$case1/.review-plan" -name 'auto-fix-*.json' -print -quit 2>/dev/null || true)"
 if [[ -n "${manifest:-}" ]] && grep -q "marker_pending" "$manifest"; then
