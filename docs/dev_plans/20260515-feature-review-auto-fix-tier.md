@@ -1,12 +1,12 @@
 # Task: Trivial-tier auto-fix for /deep-review and /review-plan
 
-**Status**: Implemented - final review pending
+**Status**: Complete (merged 2026-05-17 as `f2d80ce`; promoted to global)
 **Assigned to**: tbd
 **Priority**: Medium
 **Branch**: feature/review-auto-fix-tier
 **Created**: 2026-05-15
 **Last revised**: 2026-05-16 (Claude conduct phases 1-4 landed; Phase 5 contract refined after second `/review-plan` pass — preconditions, linearisation, kind-gate fixtures, marker-refresh check, strict-line-anchor contract decision)
-**Completed**: 2026-05-17 (Codex Phase 5 follow-up implemented; final review/docs/security gates still required before merge)
+**Completed**: 2026-05-17 (merged in PR #23 as `f2d80ce`; `/review`, `/security-review`, `/update-docs` gates green; post-merge promotion to global skills tree completed via `scripts/promote-skills.sh --yes && just check-sync`)
 
 ## Objective
 
@@ -126,7 +126,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 - Verify the Phase 1 parity extension still covers the new `auto_fix` schema fragment, allowlist JSON citations, rubric parity, `*-prompt.md` parity, and the four SKILL.md generic blocks across both `.claude` and `.codex`.
 - `tests/parity/test-prompt-parity-extended.sh`: assert a Codex-only auto-fix wiring drift fails the parity gate, so Codex cannot silently lag Claude.
-- Do not run `scripts/promote-skills.sh --yes` as a feature-branch validation step. Add the post-merge rollout instruction to Final Results instead: after merge and final approval, run `MANAGED_SKILLS="deep-review review-plan" scripts/promote-skills.sh --yes && just check-sync` from a clean main checkout.
+- Do not run `scripts/promote-skills.sh --yes` as a feature-branch validation step. Add the post-merge rollout instruction to Final Results instead: after merge and final approval, run `scripts/promote-skills.sh --yes && just check-sync` from a clean main checkout. (Initial draft of this item scoped the promotion to `MANAGED_SKILLS="deep-review review-plan"`, but Phase 3's `conduct` test additions and Phase 5 mirror work require the unscoped invocation — see Post-merge promotion in Final Results.)
 
 ### Phase 5: Codex review follow-up hardening
 
@@ -442,12 +442,23 @@ Marker refreshed at end of this fix batch. Test gate (Phase 5 Test command + ren
 ### Post-merge promotion
 
 After this PR is merged into `main` and final approval is given, run the
-following from a clean `main` checkout to promote the updated `deep-review`
-and `review-plan` skills into the user-global skill tree:
+following from a clean `main` checkout to promote the updated skills into
+the user-global skill tree:
 
 ```
-MANAGED_SKILLS="deep-review review-plan" scripts/promote-skills.sh --yes && just check-sync
+scripts/promote-skills.sh --yes && just check-sync
 ```
+
+Do **not** scope this with `MANAGED_SKILLS="deep-review review-plan"`.
+Phase 3 added `marker_pending` regression cases to
+`.claude/skills/conduct/tests/test_marker.py` and `test_preflight.py`
+(plus the `.codex` mirrors), and Phase 5 mirror-handoff work touched
+several other managed skill trees. Promoting only `deep-review` and
+`review-plan` leaves `conduct` (and any other touched skill) drifted
+from global authority, and `just check-sync` will fail with
+`drift: .claude/skills/conduct differs from global authority`. Verified
+post-merge on 2026-05-17: the unscoped invocation leaves
+`check-sync passed`.
 
 `scripts/promote-skills.sh` is intentionally NOT run as part of any
 feature-branch validation step — it mutates the user-global

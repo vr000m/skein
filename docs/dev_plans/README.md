@@ -4,7 +4,6 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
-| 2026-05-15 | feature | review-auto-fix-tier | In Review | feature/review-auto-fix-tier | `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` |
 | 2026-05-12 | feature | conduct-autonomous-mode | In Review | feature/conduct-autonomous-mode | `docs/dev_plans/20260512-feature-conduct-autonomous-mode.md` |
 | 2026-05-08 | fix | conduct-state-path-digest | In Review | feature/conduct-state-path-digest | `docs/dev_plans/20260422-feature-conduct-skill.md` |
 | 2026-05-01 | feature | plan-progress-section | In Review | feature/plan-progress-section | N/A (small refactor) |
@@ -16,6 +15,7 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
+| 2026-05-15 | feature | review-auto-fix-tier | Complete | feature/review-auto-fix-tier | `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` |
 | 2026-05-08 | feature | cross-lens-finding-reconciliation | Complete | feature/cross-lens-reconciliation | `docs/dev_plans/20260508-feature-cross-lens-finding-reconciliation.md` |
 | 2026-05-04 | feature | skill-improvements-from-usage-report | Complete | feature/skill-improvements-from-usage-report | `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md` |
 | 2026-03-15 | feature | review-plan-skill | Complete | feat/review-plan-skill | N/A (small feature) |
