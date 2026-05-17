@@ -400,11 +400,14 @@ while IFS= read -r finding; do
 	trailer="Auto-Fixed-By: $SKILL"
 	commit_sha="$(af_commit_one "$subject" "$trailer")"
 	APPLIED_COMMITS+=("$commit_sha")
-	# Record `status: "applied"` AND a separate `marker_pending: true` flag:
-	# the prose edit lands as a commit but the real `<!-- reviewed: ... -->`
-	# marker is intentionally not refreshed here — Step 7 of /review-plan
-	# publishes the marker exactly once after the user accepts or waives
-	# remaining findings.
+	# Record `status: "applied"` with `evidence: "marker_pending"` to flag the
+	# deferred marker refresh: the prose edit lands as a commit but the real
+	# `<!-- reviewed: ... -->` marker is intentionally not refreshed here —
+	# Step 7 of /review-plan publishes the marker exactly once after the user
+	# accepts or waives remaining findings. The manifest schema carries this
+	# signal in the evidence string, not as a separate boolean field; tests
+	# (test-review-plan-marker-refresh.sh, test-review-plan-conduct-preflight.sh)
+	# match on the literal "marker_pending" token.
 	af_manifest_record "$kind" "$file" "$line" "applied" "$commit_sha" "$before_sha" "marker_pending"
 done <<<"$findings_json"
 
