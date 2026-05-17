@@ -15,6 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_plan_applier
+require_auditor
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -51,6 +52,18 @@ assert_rejected() {
 	fi
 }
 
+assert_auditor_status() {
+	local label="$1" repo="$2" plan="$3" findings="$4" expected_status="$5"
+	if bash "$AUDITOR" --skill review-plan --plan "$plan" "$findings" >"$repo/audited.json" 2>"$repo/audit.stderr" &&
+		jq -e --arg status "$expected_status" '.findings[0].auto_fix_status == $status' "$repo/audited.json" >/dev/null; then
+		pass "$label auditor: status=$expected_status"
+	else
+		fail "$label auditor: expected status=$expected_status"
+		sed 's/^/  /' "$repo/audit.stderr" 2>/dev/null || true
+		[[ -f "$repo/audited.json" ]] && sed 's/^/  /' "$repo/audited.json"
+	fi
+}
+
 write_plan() {
 	local path="$1"
 	cat >"$path" <<'EOF'
@@ -84,6 +97,7 @@ git -C "$d1" add plan.md other.md
 git -C "$d1" commit -q -m "add plans"
 line=5
 write_envelope "$d1/findings.json" "other.md" "plan.md:$line" "$line" "Target binding text." "Edited binding text."
+assert_auditor_status "file-scope-mismatch" "$d1" "$d1/plan.md" "$d1/findings.json" "rejected_path"
 before="$(head_sha "$d1")"
 run_plan_applier "$d1" --plan plan.md "$d1/findings.json"
 assert_rejected "file-scope-mismatch" "$d1" "$before" "rejected_path"
@@ -97,6 +111,7 @@ cp "$d2/plan.md" "$d2/other.md"
 git -C "$d2" add plan.md other.md
 git -C "$d2" commit -q -m "add plans"
 write_envelope "$d2/findings.json" "plan.md" "other.md:$line" "$line" "Target binding text." "Edited binding text."
+assert_auditor_status "scope-plan-mismatch" "$d2" "$d2/plan.md" "$d2/findings.json" "rejected_path"
 before="$(head_sha "$d2")"
 run_plan_applier "$d2" --plan plan.md "$d2/findings.json"
 assert_rejected "scope-plan-mismatch" "$d2" "$before" "rejected_path"
@@ -150,6 +165,37 @@ if grep -Fq "Unique moved text." "$d4/plan.md" && ! grep -Fq "Edited moved text.
 	pass "cited-line-drift: non-cited unique match preserved"
 else
 	fail "cited-line-drift: non-cited line was edited"
+fi
+
+# Case 5: reviewed plan is a symlink to an out-of-repo file. The auditor
+# rejects it as a path violation and the applier hard-stops before reading or
+# editing the target.
+d5="$scratch/symlink-plan"
+mkdir -p "$d5"
+make_repo "$d5" >/dev/null
+outside="$scratch/outside-plan.md"
+write_plan "$outside"
+ln -s "$outside" "$d5/plan.md"
+git -C "$d5" add plan.md
+git -C "$d5" commit -q -m "add symlink plan"
+write_envelope "$d5/findings.json" "plan.md" "plan.md:$line" "$line" "Target binding text." "Edited binding text."
+assert_auditor_status "symlink-plan" "$d5" "$d5/plan.md" "$d5/findings.json" "rejected_path"
+before="$(head_sha "$d5")"
+run_plan_applier "$d5" --plan plan.md "$d5/findings.json"
+if [[ "$LAST_RC" -ne 0 ]]; then
+	pass "symlink-plan applier: rejected symlink plan"
+else
+	fail "symlink-plan applier: exited 0"
+fi
+if [[ "$(head_sha "$d5")" == "$before" ]]; then
+	pass "symlink-plan applier: HEAD preserved"
+else
+	fail "symlink-plan applier: HEAD advanced"
+fi
+if grep -Fq "Target binding text." "$outside" && ! grep -Fq "Edited binding text." "$outside"; then
+	pass "symlink-plan applier: out-of-repo target untouched"
+else
+	fail "symlink-plan applier: out-of-repo target changed"
 fi
 
 summary_and_exit

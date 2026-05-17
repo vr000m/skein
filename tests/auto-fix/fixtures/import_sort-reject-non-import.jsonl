@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"style","file":"a.py","line":1,"summary":"import_sort on non-import code","evidence":"non-import line","suggestion":"reject","auto_fix":{"kind":"import_sort","before":"print('x')\n","after":"print('x')\n","scope":"file"},"auto_fix_status":"would_apply"}]}

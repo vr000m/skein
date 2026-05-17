@@ -11,8 +11,9 @@
 # `## Requirements`, `### Phase 2: Foo`). Stack mode prints every enclosing
 # heading, outermost-first, one heading per line. For lines before the first
 # heading, default mode prints `unknown`; stack mode prints nothing. Fenced
-# code blocks (``` or ~~~) are tracked so that headings *inside* a code fence
-# are not treated as real headings.
+# code blocks (``` or ~~~, indented by up to three spaces per CommonMark) are
+# tracked so that headings *inside* a code fence are not treated as real
+# headings.
 #
 # Special cases:
 #   - If the target line is itself a heading, that heading is returned.
@@ -94,19 +95,20 @@ awk -v target="$TARGET" -v mode="$MODE" '
 		heading = text
 	}
 	{
-		# Track fenced code blocks. Per CommonMark a fence is opened by
-		# 3+ backticks OR 3+ tildes at column zero, and closed only by a
-		# fence using the SAME character. We track the opening char so a
-		# plan that opens with ``` and contains a literal ~~~ in prose
-		# does not falsely close the fence (which would expose inner
-		# content to heading parsing).
-		if (in_fence == 0 && $0 ~ /^(```|~~~)/) {
+		# Track fenced code blocks. Per CommonMark a fence may be indented
+		# by up to three spaces and is opened by 3+ backticks OR 3+ tildes,
+		# then closed only by a fence using the SAME character. We track the
+		# opening char so a plan that opens with ``` and contains a literal
+		# ~~~ in prose does not falsely close the fence.
+		fence_line = $0
+		sub(/^ {0,3}/, "", fence_line)
+		if (in_fence == 0 && fence_line ~ /^(```|~~~)/) {
 			in_fence = 1
-			fence_char = substr($0, 1, 1)
+			fence_char = substr(fence_line, 1, 1)
 			if (NR == target) { emit(); exit }
 			next
 		}
-		if (in_fence == 1 && substr($0, 1, 1) == fence_char && $0 ~ /^(```|~~~)/) {
+		if (in_fence == 1 && substr(fence_line, 1, 1) == fence_char && fence_line ~ /^(```|~~~)/) {
 			in_fence = 0
 			fence_char = ""
 			if (NR == target) { emit(); exit }

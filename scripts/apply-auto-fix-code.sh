@@ -226,12 +226,78 @@ import_symbols() {
 	' | sort -u
 }
 
+canonical_import_records() {
+	awk '
+		function trim(s) {
+			sub(/^[[:space:]]+/, "", s)
+			sub(/[[:space:]]+$/, "", s)
+			return s
+		}
+		function strip_comment(s) {
+			sub(/[[:space:]]+#.*/, "", s)
+			return trim(s)
+		}
+		function emit_import_item(item,  n, alias_parts, module, alias) {
+			item = trim(item)
+			if (item == "") return
+			if (item ~ /[[:space:]]+as[[:space:]]+/) {
+				n = split(item, alias_parts, /[[:space:]]+as[[:space:]]+/)
+				module = trim(alias_parts[1])
+				alias = trim(alias_parts[n])
+			} else {
+				module = item
+				alias = ""
+			}
+			if (module !~ /^[_A-Za-z][_A-Za-z0-9.]*$/) { invalid = 1; return }
+			if (alias != "" && alias !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
+			print "import\t" module "\t" alias
+			seen = 1
+		}
+		function emit_from_item(module, item,  n, alias_parts, name, alias) {
+			item = trim(item)
+			if (item == "" || item == "*") { invalid = 1; return }
+			if (item ~ /[[:space:]]+as[[:space:]]+/) {
+				n = split(item, alias_parts, /[[:space:]]+as[[:space:]]+/)
+				name = trim(alias_parts[1])
+				alias = trim(alias_parts[n])
+			} else {
+				name = item
+				alias = ""
+			}
+			if (module !~ /^\.?[_A-Za-z][_A-Za-z0-9.]*$/ && module !~ /^\.+[_A-Za-z][_A-Za-z0-9.]*$/) { invalid = 1; return }
+			if (name !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
+			if (alias != "" && alias !~ /^[_A-Za-z][_A-Za-z0-9]*$/) { invalid = 1; return }
+			print "from\t" module "\t" name "\t" alias
+			seen = 1
+		}
+		{
+			line = strip_comment($0)
+			if (line == "") next
+			if (line ~ /^import[[:space:]]+/) {
+				sub(/^import[[:space:]]+/, "", line)
+				count = split(line, items, /,/)
+				for (i = 1; i <= count; i++) emit_import_item(items[i])
+			} else if (line ~ /^from[[:space:]]+[^[:space:]]+[[:space:]]+import[[:space:]]+/) {
+				module = line
+				sub(/^from[[:space:]]+/, "", module)
+				sub(/[[:space:]]+import[[:space:]].*$/, "", module)
+				sub(/^from[[:space:]]+[^[:space:]]+[[:space:]]+import[[:space:]]+/, "", line)
+				count = split(line, items, /,/)
+				for (i = 1; i <= count; i++) emit_from_item(module, items[i])
+			} else {
+				invalid = 1
+			}
+		}
+		END { if (invalid || !seen) exit 1 }
+	' | sort -u
+}
+
 same_import_symbol_set() {
 	local before="$1"
 	local after="$2"
 	local before_symbols after_symbols
-	before_symbols="$(printf '%s\n' "$before" | import_symbols)"
-	after_symbols="$(printf '%s\n' "$after" | import_symbols)"
+	before_symbols="$(printf '%s\n' "$before" | canonical_import_records)" || return 1
+	after_symbols="$(printf '%s\n' "$after" | canonical_import_records)" || return 1
 	[[ "$before_symbols" == "$after_symbols" ]]
 }
 

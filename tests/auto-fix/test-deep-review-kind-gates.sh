@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib.sh"
 
 require_applier
+require_auditor
 
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
@@ -65,6 +66,22 @@ assert_rejected() {
 	fi
 }
 
+assert_auditor_status() {
+	local label="$1" repo="$2" fixture="$3" expected_status="$4"
+	local safe_label audited stderr
+	safe_label="${label//[^A-Za-z0-9_.-]/_}"
+	audited="$scratch/audited-$safe_label.json"
+	stderr="$scratch/audit-$safe_label.stderr"
+	if (cd "$repo" && bash "$AUDITOR" --skill deep-review "$fixture") >"$audited" 2>"$stderr" &&
+		jq -e --arg status "$expected_status" '.findings[0].auto_fix_status == $status' "$audited" >/dev/null; then
+		pass "$label auditor: status=$expected_status"
+	else
+		fail "$label auditor: expected status=$expected_status"
+		sed 's/^/  /' "$stderr" 2>/dev/null || true
+		[[ -f "$audited" ]] && sed 's/^/  /' "$audited"
+	fi
+}
+
 # docstring_typo accept: edit is inside a docstring.
 d1="$scratch/docstring-accept"
 mkdir -p "$d1"
@@ -77,6 +94,7 @@ PY
 git -C "$d1" add a.py
 git -C "$d1" commit -q -m "add docstring"
 before="$(head_sha "$d1")"
+assert_auditor_status "docstring_typo-accept" "$d1" "$FIXTURES_DIR/docstring_typo-accept.jsonl" "would_apply"
 run_applier "$d1" --test-cmd "true" "$FIXTURES_DIR/docstring_typo-accept.jsonl"
 assert_applied "docstring_typo-accept" "$d1" "$before"
 if grep -Fq '"""receive a value"""' "$d1/a.py"; then
@@ -93,6 +111,7 @@ printf 'x = 1\n' >"$d2/a.py"
 git -C "$d2" add a.py
 git -C "$d2" commit -q -m "add code"
 before="$(head_sha "$d2")"
+assert_auditor_status "docstring_typo-reject-code-edit" "$d2" "$FIXTURES_DIR/docstring_typo-reject-code-edit.jsonl" "rejected_kind_scope"
 run_applier "$d2" --test-cmd "true" "$FIXTURES_DIR/docstring_typo-reject-code-edit.jsonl"
 assert_rejected "docstring_typo-reject-code-edit" "$d2" "$before" "rejected_kind_scope"
 if [[ "$(cat "$d2/a.py")" == "x = 1" ]]; then
@@ -109,6 +128,7 @@ printf 'import sys\nimport os\n' >"$d3/a.py"
 git -C "$d3" add a.py
 git -C "$d3" commit -q -m "add imports"
 before="$(head_sha "$d3")"
+assert_auditor_status "import_sort-accept" "$d3" "$FIXTURES_DIR/import_sort-accept.jsonl" "would_apply"
 run_applier "$d3" --test-cmd "true" "$FIXTURES_DIR/import_sort-accept.jsonl"
 assert_applied "import_sort-accept" "$d3" "$before"
 if [[ "$(cat "$d3/a.py")" == $'import os\nimport sys' ]]; then
@@ -125,6 +145,7 @@ printf 'import sys\nimport os\n' >"$d4/a.py"
 git -C "$d4" add a.py
 git -C "$d4" commit -q -m "add imports"
 before="$(head_sha "$d4")"
+assert_auditor_status "import_sort-reject-symbol-change" "$d4" "$FIXTURES_DIR/import_sort-reject-symbol-change.jsonl" "rejected_semantic_change"
 run_applier "$d4" --test-cmd "true" "$FIXTURES_DIR/import_sort-reject-symbol-change.jsonl"
 assert_rejected "import_sort-reject-symbol-change" "$d4" "$before" "rejected_semantic_change"
 if ! grep -Fq "import socket" "$d4/a.py"; then
@@ -132,6 +153,31 @@ if ! grep -Fq "import socket" "$d4/a.py"; then
 else
 	fail "import_sort-reject-symbol-change: new import was added"
 fi
+
+# import_sort reject: non-import lines are not eligible for import_sort.
+d4b="$scratch/import-sort-non-import"
+mkdir -p "$d4b"
+make_repo "$d4b" >/dev/null
+printf "print('x')\n" >"$d4b/a.py"
+git -C "$d4b" add a.py
+git -C "$d4b" commit -q -m "add non-import"
+before="$(head_sha "$d4b")"
+assert_auditor_status "import_sort-reject-non-import" "$d4b" "$FIXTURES_DIR/import_sort-reject-non-import.jsonl" "rejected_semantic_change"
+run_applier "$d4b" --test-cmd "true" "$FIXTURES_DIR/import_sort-reject-non-import.jsonl"
+assert_rejected "import_sort-reject-non-import" "$d4b" "$before" "rejected_semantic_change"
+
+# import_sort reject: preserving the alias while changing the imported module
+# changes semantics and must not pass the binding-name check.
+d4c="$scratch/import-sort-alias-swap"
+mkdir -p "$d4c"
+make_repo "$d4c" >/dev/null
+printf "import old.module as thing\n" >"$d4c/a.py"
+git -C "$d4c" add a.py
+git -C "$d4c" commit -q -m "add aliased import"
+before="$(head_sha "$d4c")"
+assert_auditor_status "import_sort-reject-alias-module-swap" "$d4c" "$FIXTURES_DIR/import_sort-reject-alias-module-swap.jsonl" "rejected_semantic_change"
+run_applier "$d4c" --test-cmd "true" "$FIXTURES_DIR/import_sort-reject-alias-module-swap.jsonl"
+assert_rejected "import_sort-reject-alias-module-swap" "$d4c" "$before" "rejected_semantic_change"
 
 # unused_import accept: delete a single unreferenced import line.
 d5="$scratch/unused-import-accept"
@@ -157,6 +203,7 @@ printf 'from os import path\nprint(path)\n' >"$d6/a.py"
 git -C "$d6" add a.py
 git -C "$d6" commit -q -m "add referenced import"
 before="$(head_sha "$d6")"
+assert_auditor_status "unused_import-reject-still-referenced" "$d6" "$FIXTURES_DIR/unused_import-reject-still-referenced.jsonl" "rejected_revar"
 run_applier "$d6" --test-cmd "true" "$FIXTURES_DIR/unused_import-reject-still-referenced.jsonl"
 assert_rejected "unused_import-reject-still-referenced" "$d6" "$before" "rejected_revar"
 if grep -Fq "from os import path" "$d6/a.py"; then
@@ -174,6 +221,7 @@ printf 'from src_pkg.a import my_var\nassert my_var == 1\n' >"$d7/tests/test_a.p
 git -C "$d7" add src_pkg/a.py tests/test_a.py
 git -C "$d7" commit -q -m "add var and test read"
 before="$(head_sha "$d7")"
+assert_auditor_status "unused_var-reject-test-file-read" "$d7" "$FIXTURES_DIR/unused_var-reject-test-file-read.jsonl" "rejected_revar"
 run_applier "$d7" --test-cmd "true" "$FIXTURES_DIR/unused_var-reject-test-file-read.jsonl"
 assert_rejected "unused_var-reject-test-file-read" "$d7" "$before" "rejected_revar"
 if grep -Fq "my_var = 1" "$d7/src_pkg/a.py"; then

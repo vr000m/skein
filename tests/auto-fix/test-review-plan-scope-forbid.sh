@@ -120,6 +120,12 @@ scope_detect_resolves_to hrule plan-scope-evasion-horizontal-rule.md 14 "## Requ
 scope_detect_NOT_resolves_to fenced plan-scope-evasion-fenced.md 13 "## Requirements"
 scope_detect_resolves_to fenced-impl plan-scope-evasion-fenced.md 13 "## Implementation Checklist"
 
+# --- Evasion 3b: indented fenced pseudo-heading keeps forbidden parent ----
+# CommonMark permits fences indented by up to three spaces. The column-zero
+# pseudo-heading inside the fence must not clear the forbidden Requirements
+# parent.
+scope_detect_resolves_to indented-fence-parent plan-scope-evasion-indented-fence-parent.md 8 "## Requirements"
+
 # --- Evasion 4: two-digit phase number matches ### Phase \d+: -------------
 # Line 14 in plan-scope-evasion-two-digit-phase.md sits under
 # "### Phase 10: Tenth". The detector must match the regex regardless of
@@ -170,6 +176,7 @@ EOF
 
 e2e_rejected_scope indented plan-scope-evasion-indented.md 13
 e2e_rejected_scope hrule plan-scope-evasion-horizontal-rule.md 14
+e2e_rejected_scope indented-fence-parent plan-scope-evasion-indented-fence-parent.md 8
 e2e_rejected_scope two-digit plan-scope-evasion-two-digit-phase.md 14
 
 # --- Phase 5: forbidden parent heading must reject nested child scope ----

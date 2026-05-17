@@ -269,7 +269,7 @@ if [[ -x "$AUDIT" || -f "$AUDIT" ]]; then
 	# the temp dir and is referenced by absolute path in the envelope.
 	src_dir="$audit_case_dir/src"
 	mkdir -p "$src_dir"
-	printf 'recieve\n' >"$src_dir/foo.py"
+	printf '# recieve\n' >"$src_dir/foo.py"
 
 	cat >"$audit_case_dir/envelope.json" <<JSON
 {
@@ -285,7 +285,7 @@ if [[ -x "$AUDIT" || -f "$AUDIT" ]]; then
       "summary": "would apply typo",
       "evidence": "matches before line 1",
       "suggestion": "fix it",
-      "auto_fix": {"kind": "docstring_typo", "before": "recieve", "after": "receive", "scope": "file"}
+      "auto_fix": {"kind": "docstring_typo", "before": "# recieve", "after": "# receive", "scope": "file"}
     },
     {
       "severity": "Minor",
@@ -296,7 +296,7 @@ if [[ -x "$AUDIT" || -f "$AUDIT" ]]; then
       "summary": "kind outside allowlist",
       "evidence": "refactor_method not in allowlist",
       "suggestion": "surface it",
-      "auto_fix": {"kind": "refactor_method", "before": "recieve", "after": "receive", "scope": "file"}
+      "auto_fix": {"kind": "refactor_method", "before": "# recieve", "after": "# receive", "scope": "file"}
     }
   ],
   "related": []

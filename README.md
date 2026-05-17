@@ -22,7 +22,7 @@ Reusable skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 1. Install tools:
 
 ```bash
-brew install just shellcheck shfmt
+brew install just jq shellcheck shfmt
 ```
 
 2. Create local env file:

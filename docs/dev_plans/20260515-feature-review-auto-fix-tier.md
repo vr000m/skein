@@ -1,12 +1,12 @@
 # Task: Trivial-tier auto-fix for /deep-review and /review-plan
 
-**Status**: In Progress - Codex follow-up pending
+**Status**: Implemented - final review pending
 **Assigned to**: tbd
 **Priority**: Medium
 **Branch**: feature/review-auto-fix-tier
 **Created**: 2026-05-15
 **Last revised**: 2026-05-16 (Claude conduct phases 1-4 landed; Phase 5 contract refined after second `/review-plan` pass — preconditions, linearisation, kind-gate fixtures, marker-refresh check, strict-line-anchor contract decision)
-**Completed**: Pending Codex follow-up
+**Completed**: 2026-05-17 (Codex Phase 5 follow-up implemented; final review/docs/security gates still required before merge)
 
 ## Objective
 
@@ -83,7 +83,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - Create `scripts/auto-fix-allowlist.json` as the single source of truth for allowlist enums. Shape: `{"deep-review": [...kinds...], "review-plan": [...kinds...]}`. Used by both the pre-render audit and appliers; cited verbatim in both `.claude` and `.codex` SKILL.md docs so `check-prompt-parity.sh` can assert byte-identity.
 - Update both skills' GENERIC FINDING SCHEMA AND MERGE blocks (the byte-identical block enforced by `check-prompt-parity.sh:237-274`) to document the new field, the per-skill `scope` typing, and the malformed-rejection rule. Mirror to both `.claude` and `.codex` copies; verify with `bash scripts/check-prompt-parity.sh`.
 - Extend `scripts/check-prompt-parity.sh` in this phase to verify the allowlist arrays are cited verbatim in all four SKILL.md mirrors. This keeps Codex and Claude in sync at the first phase boundary where the contract exists.
-- Create `scripts/audit-auto-fix-eligibility.sh`: takes `--skill deep-review|review-plan`, a v2 reconciled envelope, and optional `--plan <path>` for review-plan scope checks; emits the same envelope with `auto_fix_status` set to `would_apply`, `rejected_kind`, `rejected_scope`, `drift`, or another explicit non-apply status. `scripts/render-reconciled-report.sh` remains a pure envelope renderer and only displays `[AUTO-FIXABLE]` for `auto_fix_status: "would_apply"`.
+- Create `scripts/audit-auto-fix-eligibility.sh`: takes `--skill deep-review|review-plan`, a v2 reconciled envelope, and optional `--plan <path>` for review-plan scope checks; emits the same envelope with `auto_fix_status` set to `would_apply`, `rejected_kind`, `rejected_scope`, `drift`, or another explicit non-apply status. This v2 structural audit requires `jq`, matching the applier dependency. `scripts/render-reconciled-report.sh` remains a pure envelope renderer and only displays `[AUTO-FIXABLE]` for `auto_fix_status: "would_apply"`.
 
 ### Phase 2: `/deep-review` auto-fix applier + handoff regression test
 
@@ -92,7 +92,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 **Test command:** `bash tests/auto-fix/test-deep-review-allowlist.sh && bash tests/auto-fix/test-deep-review-test-gate.sh && bash tests/auto-fix/test-deep-review-test-gate-single-invocation.sh && bash tests/auto-fix/test-deep-review-test-command-required.sh && bash tests/auto-fix/test-deep-review-failed-fix-preserves-head.sh && bash tests/parity/test-handoff-ignores-auto-fix.sh`
 **Validation cmd:** `cd /tmp && bash -c 'mkdir -p auto-fix-smoke && cd auto-fix-smoke && git init -q && git commit --allow-empty -m init -q && echo "from os import path" > a.py && git add a.py && git commit -q -m a && printf "{\"schema_version\":2,\"findings\":[{\"lens\":\"logic\",\"severity\":\"Minor\",\"category\":\"unused\",\"file\":\"a.py\",\"line\":1,\"summary\":\"unused import\",\"auto_fix\":{\"kind\":\"unused_import\",\"before\":\"from os import path\\n\",\"after\":\"\",\"scope\":\"file\"},\"auto_fix_status\":\"would_apply\"}]}" > findings.json && bash $REPO/scripts/apply-auto-fix-code.sh --test-cmd true findings.json'`
 
-- Create `scripts/lib/auto-fix-common.sh`: shared bash helpers (manifest writer, drift-check `before`-vs-file byte-match, allowlist loader from `auto-fix-allowlist.json`, blob-based restore helpers, commit + trailer composition). Sourced by both appliers (Phase 2 and Phase 3 entry scripts). Preserve the repo's jq-optional pattern where practical; any jq-only helper must fail with a clear setup error and the dependency docs must be updated in the same phase.
+- Create `scripts/lib/auto-fix-common.sh`: shared bash helpers (manifest writer, drift-check `before`-vs-file byte-match, allowlist loader from `auto-fix-allowlist.json`, blob-based restore helpers, commit + trailer composition). Sourced by both appliers (Phase 2 and Phase 3 entry scripts). The v2 auto-fix helpers require `jq` and fail with a clear setup error when it is unavailable.
 - Create `scripts/apply-auto-fix-code.sh`: the `/deep-review` entry point. Takes `--test-cmd <cmd>` (or `AUTO_FIX_TEST_CMD`) plus `<findings-envelope.json>`. Reads `schema_version` (must be 2). Iterates findings carrying `auto_fix_status: "would_apply"`. For each: load allowlist key `deep-review`; reject unknown `kind` (`status: rejected_kind`); assert `before` matches `file:line` byte-for-byte (drift → `status: drift`); for `unused_var`, re-verify via `git grep -c "<var>"` excluding test files (mismatch → `status: rejected_revar`); for `mechanical_replace`, reject if `before` contains `\n` (multi-line → `status: rejected_multiline`); save pre-apply blobs for every touched path; rewrite `before` → `after`; stage the file; run the test command exactly once (no retry); on pass → commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and `--trailer "Auto-Fixed-By: deep-review"`; on fail → restore the touched paths from saved blobs, unstage those paths, leave `HEAD` unchanged, and append `status: test_failed`.
 - Adversarial fixtures (Phase 2): `mechanical_replace-reject-semantic-flip.jsonl` (`if x:` → `if not x:`; documents the smuggling tradeoff: applier byte-matches but doesn't semantic-check, so this fixture asserts the applier *applies* and the test-gate catches), `mechanical_replace-reject-multiline.jsonl` (multi-line `before` → rejected pre-apply), `unused_var-reject-test-file-read.jsonl` (test file reads the var → applier's re-verification catches before apply), `docstring_typo-{accept,reject-outside-docstring}.jsonl`, `unused_import-{accept,reject-still-referenced}.jsonl`, `import_sort-{accept,reject-semantic-change}.jsonl`.
 - `tests/auto-fix/test-deep-review-test-gate-single-invocation.sh`: wraps the test command in a counter-incrementing shim; assert counter == 1 per applied fix. Closes Review Focus "single-shot, no retry" item.
@@ -204,9 +204,9 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 ### New Files to Create
 
 - `scripts/auto-fix-allowlist.json` — single source of truth for per-skill allowlist enums. Shape: `{"deep-review": ["docstring_typo", "unused_import", "unused_var", "mechanical_replace", "import_sort"], "review-plan": ["symbol_rename", "path_rename", "line_anchor_refresh", "marker_refresh", "prose_typo", "prose_clarify"]}`.
-- `scripts/audit-auto-fix-eligibility.sh` — dry-run eligibility audit. Bash + awk; jq optional unless dependency docs are updated.
-- `scripts/apply-auto-fix-code.sh` — `/deep-review` applier entry point. Bash + awk; jq optional unless dependency docs are updated.
-- `scripts/apply-auto-fix-plan.sh` — `/review-plan` applier entry point. Bash + awk; jq optional unless dependency docs are updated.
+- `scripts/audit-auto-fix-eligibility.sh` — dry-run eligibility audit. Bash + awk + jq.
+- `scripts/apply-auto-fix-code.sh` — `/deep-review` applier entry point. Bash + awk + jq.
+- `scripts/apply-auto-fix-plan.sh` — `/review-plan` applier entry point. Bash + awk + jq.
 - `scripts/lib/auto-fix-common.sh` — shared bash helpers (manifest writer, drift-check, allowlist loader, commit + trailer composition).
 - `scripts/plan-scope-detect.sh` — bash + awk; resolves `file:line` → enclosing heading hierarchy. Skips fenced code blocks.
 - `tests/auto-fix/` — new test directory:
@@ -224,7 +224,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - **One commit per successful fix, no squash.** Each successful `auto-fix(...)` commit is independently revertable. The manifest documents the range; `git revert <a>..<b>` is the supported rollback for already-committed successful fixes. Failed pre-commit fixes restore touched paths from saved blobs and never run `git revert HEAD`, so user commits are not at risk.
 - **Two appliers + shared lib, not one dispatching script.** `apply-auto-fix-code.sh` and `apply-auto-fix-plan.sh` are separate entry points sharing `scripts/lib/auto-fix-common.sh` for manifest + drift-check + allowlist loading. The two skills' gating logic is disjoint (test-gate vs scope-forbid + marker-refresh); a single dispatcher would obscure that invariant. Matches the existing `reconcile-findings.sh` / `render-reconciled-report.sh` separation pattern.
 - **Promoted runtime stays self-contained.** Do not make `.claude/skills/conduct/marker.py` or `.codex/skills/conduct/marker.py` call repo-root `scripts/` helpers, because `promote-skills` copies skill directories to global locations without the repo scripts tree. Hash parity is enforced by tests and documented algorithm, not by a global skill depending on a local checkout.
-- **Applier is bash, not Python.** Both review skills are markdown-only today; adding a Python dependency would change their footprint. The applier is git + awk with jq kept optional unless dependency docs are updated. (Note: `marker.py` continues to exist in `conduct/` because the conductor uses it; the applier must match its hash semantics without importing or shelling into the conduct runtime.)
+- **Applier is bash, not Python.** Both review skills are markdown-only today; adding a Python dependency would change their footprint. The applier is git + awk + jq; jq is required for v2 structural JSON validation and manifest emission. (Note: `marker.py` continues to exist in `conduct/` because the conductor uses it; the applier must match its hash semantics without importing or shelling into the conduct runtime.)
 - **Trailer is `Auto-Fixed-By: <skill>`, not `Auto-Fixed-By: <runtime>`.** Distinct from `Conducted-By: <runtime>` so the handoff gate (`tests/parity/check-mirror-handoff.sh`) does not have to be taught about a new trailer key — it matches `Conducted-By:` explicitly (case-sensitive) and ignores anything else.
 - **`/review-plan` test-gate is the marker invariant at acceptance, not premature `/conduct` readiness.** Plans are markdown; the analogue of "tests pass" is "after the user accepts or waives remaining findings, the contract section's hash is valid and `/conduct` preflight accepts it." Auto-applied prose edits before acceptance record `marker_pending` and do not publish a real marker.
 - **Scope-forbid is structural, not heuristic.** Heading-hierarchy parse via `plan-scope-detect.sh` (skips fenced code blocks). A `prose_clarify` inside `## Requirements` is dropped regardless of how innocuous the wording change reads.
@@ -237,7 +237,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 ### Dependencies
 
-- No new dependencies. Existing required tools stay bash, git, and awk. `jq` may be used when present for safer JSON parsing, but any jq-only path must either include an awk fallback or update README/setup requirements in the same phase.
+- Required tools are bash, git, awk, and jq. jq is required for v2 structural JSON parsing, allowlist loading, manifest writing, and auditor/applier parity; README.md and AGENTS.md list it in setup requirements.
 
 ### Integration Seams
 
@@ -323,7 +323,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 ### Manual Acceptance (not automatable)
 
 - SKILL.md, rubric.md, `auto-fix-allowlist.json`, this plan's Final Results, and any relevant CHANGELOG entry are reviewed for accuracy and consistency.
-<!-- reviewed: 2026-05-17 @ f422f2da141ccf28064c6ae6f625601b55fa7e82 -->
+<!-- reviewed: 2026-05-17 @ f5f84525b84fe10ff3a1c8fb3ddb364391232df6 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -432,4 +432,4 @@ copies match the repo at HEAD.
 - Phase 2 (1a99c83): `scripts/apply-auto-fix-code.sh`, `scripts/lib/auto-fix-common.sh`, deep-review SKILL.md + rubric.md wiring, handoff regression test.
 - Phase 3 (1b49fe8): `scripts/apply-auto-fix-plan.sh`, `scripts/plan-scope-detect.sh`, review-plan SKILL.md + rubric.md wiring, `.review-plan/` gitignored.
 - Phase 4: Verified `scripts/check-prompt-parity.sh` already covers the full required surface (rubric.md, `*-prompt.md`, GENERIC FINDING SCHEMA AND MERGE block across all four SKILL.md mirrors, `scripts/auto-fix-allowlist.json` ↔ SKILL.md byte-identity citations, and `scripts/reconcile-findings.sh` existence/executable bit). No additional parity extension required; the Phase 1 extension stands.
-- Phase 5: Pending Codex follow-up hardening from the post-Claude review. Do not run post-merge promotion until this phase is complete and reviewed.
+- Phase 5: Codex follow-up hardening implemented after Claude commits `defbfaa` and `09651bb`: indented fenced-code scope detection, auditor/applier parity, symlink pre-read rejection, `import_sort` semantic validation, jq dependency docs, and manifest wording cleanup. Do not run post-merge promotion until `/deep-review`, `/update-docs`, and the remaining pre-merge checks pass.

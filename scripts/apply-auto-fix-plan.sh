@@ -168,11 +168,18 @@ canonical_existing_path() {
 	if [[ ! -e "$p" ]]; then
 		return 1
 	fi
+	af_assert_no_symlink "$p" >/dev/null || return 1
 	local dir base
 	dir="$(dirname "$p")"
 	base="$(basename "$p")"
 	dir="$(cd "$dir" && pwd -P)"
-	printf '%s/%s\n' "$dir" "$base"
+	local canon root_canon
+	canon="$dir/$base"
+	root_canon="$(cd "$ROOT_DIR" && pwd -P)"
+	case "$canon" in
+	"$root_canon" | "$root_canon"/*) printf '%s\n' "$canon" ;;
+	*) return 1 ;;
+	esac
 }
 
 # Parse `auto_fix.scope` of the form `<path>:<start>[-<end>]`. Echo

@@ -14,7 +14,7 @@ just reconciliation-tests  # Reconciliation parity + fixture + renderer + determ
 just lint-scripts       # shellcheck + shfmt on scripts/
 ```
 
-Requires: `brew install just shellcheck shfmt`
+Requires: `brew install just jq shellcheck shfmt`
 
 ## Architecture
 
