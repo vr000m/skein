@@ -70,6 +70,20 @@ bash "$PLAN_SCOPE_DETECT" --stack "$scratch/fenced.md" 13 >"$scratch/fenced-stac
 printf '# Task: Fenced Pseudo-Heading Evasion\n## Implementation Checklist\n' >"$scratch/fenced-stack.expected"
 assert_output "stack mode ignores fenced pseudo-heading" "$scratch/fenced-stack.expected" "$scratch/fenced-stack.actual"
 
+# Non-contiguous heading levels: a document jumping from # H1 directly to
+# ### H3 (skipping ## H2) must NOT emit a blank line for the unset H2 slot.
+# The documented schema is "one heading per line, no trailing blank line";
+# awk's auto-vivify-on-read would have silently violated it.
+cat >"$scratch/noncontig.md" <<'EOF'
+# Top
+### Skipped H2
+
+target line under H3
+EOF
+bash "$PLAN_SCOPE_DETECT" --stack "$scratch/noncontig.md" 4 >"$scratch/noncontig.actual"
+printf '# Top\n### Skipped H2\n' >"$scratch/noncontig.expected"
+assert_output "stack mode skips unpopulated heading levels (no blank line)" "$scratch/noncontig.expected" "$scratch/noncontig.actual"
+
 # Unknown before first heading: empty stdout, exit 0.
 cat >"$scratch/unknown.md" <<'EOF'
 intro before headings

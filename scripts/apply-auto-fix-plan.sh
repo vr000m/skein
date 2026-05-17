@@ -215,12 +215,24 @@ stack_is_forbidden() {
 	local path="$1"
 	local line="$2"
 	local heading
+	local stack_out
+	local stack_rc
+	# Don't swallow the detector's exit code: a malformed line (exit 2)
+	# would otherwise produce an empty loop, causing `stack_is_forbidden`
+	# to return "not forbidden" and silently allow an auto-fix that
+	# `parse_plan_scope` failed to reject. Fail loudly instead.
+	stack_out="$("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" --stack "$path" "$line" 2>&1)"
+	stack_rc=$?
+	if [[ "$stack_rc" -ne 0 ]]; then
+		echo "apply-auto-fix-plan: plan-scope-detect --stack failed (rc=$stack_rc) for $path:$line: $stack_out" >&2
+		exit 2
+	fi
 	while IFS= read -r heading; do
 		[[ -n "$heading" ]] || continue
 		if heading_is_forbidden "$heading"; then
 			return 0
 		fi
-	done < <("$SCRIPT_ROOT/scripts/plan-scope-detect.sh" --stack "$path" "$line" 2>/dev/null || true)
+	done <<<"$stack_out"
 	return 1
 }
 
@@ -259,10 +271,18 @@ rollback_batch() {
 	done
 }
 
-# Refuse to start the batch if the worktree has uncommitted changes — the
-# rollback path relies on `git revert` which composes cleanly only on a
-# clean tree. A dirty tree at start signals concurrent operator work that
-# we don't want to interleave with applier commits.
+# Refuse to start the batch if the worktree has tracked uncommitted
+# changes — the rollback path relies on `git revert` which composes
+# cleanly only on a clean tracked tree, and concurrent operator edits to
+# the plan would interleave with applier commits in surprising ways.
+#
+# Asymmetry with apply-auto-fix-code.sh is intentional: the code applier
+# rejects untracked files too because it runs `--test-cmd` which can be
+# influenced by untracked sources, fixtures, or config. The plan applier
+# never executes user code — it only edits markdown — so untracked
+# clutter in the reviewed repo is irrelevant to applier correctness and
+# is left to the caller's discretion (auditor scratch output, scratch
+# envelopes, etc. are common adjacent untracked artifacts).
 if ! git -C "$ROOT_DIR" diff --quiet || ! git -C "$ROOT_DIR" diff --cached --quiet; then
 	echo "apply-auto-fix-plan: worktree has uncommitted changes; commit or stash before running" >&2
 	exit 7

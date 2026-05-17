@@ -73,16 +73,6 @@ instantiate_plan_fixture() {
 		"$FIXTURES_DIR/$jsonl_fix" >"$jsonl_dest"
 }
 
-# run_plan_applier <repo> <args...>
-run_plan_applier() {
-	local repo="$1"
-	shift
-	set +e
-	LAST_OUT="$(cd "$repo" && bash "$PLAN_APPLIER" "$@" 2>&1)"
-	LAST_RC=$?
-	set -e
-}
-
 make_repo() {
 	local dir="$1"
 	(

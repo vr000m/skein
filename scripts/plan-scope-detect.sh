@@ -59,8 +59,16 @@ awk -v target="$TARGET" -v mode="$MODE" '
 	BEGIN { in_fence = 0; fence_char = ""; heading = "unknown"; stack_depth = 0 }
 	function emit(  i) {
 		if (mode == "stack") {
+			# Skip unpopulated heading levels (e.g., a document
+			# jumping from # H1 to ### H3 without ## H2 leaves
+			# stack[2] unset). Awk auto-vivifies on bare read access
+			# so an unguarded `print stack[i]` would emit a blank
+			# line and violate the documented schema ("one heading
+			# per line, no trailing blank line").
 			for (i = 1; i <= stack_depth; i++) {
-				print stack[i]
+				if (i in stack) {
+					print stack[i]
+				}
 			}
 		} else {
 			print heading
