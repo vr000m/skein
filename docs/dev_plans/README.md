@@ -4,6 +4,7 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
+| 2026-05-15 | feature | review-auto-fix-tier | In Review | feature/review-auto-fix-tier | `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` |
 | 2026-05-12 | feature | conduct-autonomous-mode | In Review | feature/conduct-autonomous-mode | `docs/dev_plans/20260512-feature-conduct-autonomous-mode.md` |
 | 2026-05-08 | fix | conduct-state-path-digest | In Review | feature/conduct-state-path-digest | `docs/dev_plans/20260422-feature-conduct-skill.md` |
 | 2026-05-01 | feature | plan-progress-section | In Review | feature/plan-progress-section | N/A (small refactor) |
