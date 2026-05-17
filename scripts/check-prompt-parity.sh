@@ -277,6 +277,52 @@ for path in "${GENERIC_TARGETS[@]}"; do
 	fi
 done
 
+# --- auto-fix allowlist citations -------------------------------------
+#
+# scripts/auto-fix-allowlist.json is the single source of truth for
+# trivial auto-fix kinds. The compact JSON arrays must be cited verbatim
+# inside every SKILL.md mirror that shares the GENERIC finding contract.
+
+allowlist_json="$ROOT_DIR/scripts/auto-fix-allowlist.json"
+if [[ ! -f "$allowlist_json" ]]; then
+	echo "drift: scripts/auto-fix-allowlist.json missing"
+	PARITY_DIFF=1
+else
+	# Use jq for structural extraction (compact, sorted-key-stable). The
+	# previous sed approach silently truncated if any kind string ever
+	# contained a `]` and created a second parser for the same JSON file
+	# (the tests/parity/test-allowlist-byte-identity.sh check uses Python's
+	# json.load — having jq here keeps both parsers semantic).
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "warn: jq not available — skipping allowlist byte-identity citation check"
+		deep_review_allowlist=""
+		review_plan_allowlist=""
+	else
+		deep_review_allowlist="$(jq -c '."deep-review"' "$allowlist_json")"
+		review_plan_allowlist="$(jq -c '."review-plan"' "$allowlist_json")"
+	fi
+	if [[ -n "$deep_review_allowlist" && ("$deep_review_allowlist" == "null" || "$review_plan_allowlist" == "null") ]]; then
+		echo "drift: scripts/auto-fix-allowlist.json missing deep-review or review-plan key"
+		PARITY_DIFF=1
+	elif [[ -z "$deep_review_allowlist" ]]; then
+		: # jq unavailable; citation check skipped above
+	else
+		for path in "${GENERIC_TARGETS[@]}"; do
+			if [[ ! -f "$path" ]]; then
+				continue
+			fi
+			if ! grep -Fq "$deep_review_allowlist" "$path"; then
+				echo "drift: deep-review auto-fix allowlist not cited verbatim in $path"
+				PARITY_DIFF=1
+			fi
+			if ! grep -Fq "$review_plan_allowlist" "$path"; then
+				echo "drift: review-plan auto-fix allowlist not cited verbatim in $path"
+				PARITY_DIFF=1
+			fi
+		done
+	fi
+fi
+
 # --- scripts/reconcile-findings.sh existence + executable bit ----------
 #
 # The GENERIC FINDING SCHEMA AND MERGE block in every SKILL.md cites

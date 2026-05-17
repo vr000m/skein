@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"dead","file":"a.py","line":1,"summary":"dead_branch intentionally excluded from v1","evidence":"unreachable","suggestion":"remove","auto_fix":{"kind":"dead_branch","before":"if False:\n","after":"","scope":"file"},"auto_fix_status":"would_apply"}]}

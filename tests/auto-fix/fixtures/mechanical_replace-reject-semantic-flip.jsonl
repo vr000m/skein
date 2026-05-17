@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"refactor","file":"a.py","line":1,"summary":"flip condition","evidence":"x is always falsy","suggestion":"flip","auto_fix":{"kind":"mechanical_replace","before":"if x:\n","after":"if not x:\n","scope":"block"},"auto_fix_status":"would_apply"}]}

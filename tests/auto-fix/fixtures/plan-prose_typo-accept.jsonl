@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"prose","severity":"Minor","category":"typo","file":"PLAN_PATH","line":11,"summary":"typo: teh","evidence":"Some teh prose","suggestion":"fix typo","auto_fix":{"kind":"prose_typo","before":"Some teh prose with a typo to fix.","after":"Some the prose with a typo to fix.","scope":"PLAN_PATH:11"},"auto_fix_status":"would_apply"}]}

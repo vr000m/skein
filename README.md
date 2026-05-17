@@ -10,8 +10,8 @@ Reusable skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 | fan-out | Yes | Yes | Parallel agent orchestration via worktrees |
 | content-draft | Yes | Yes | Draft content following style guidelines |
 | content-review | Yes | Yes | Review content against style guidelines |
-| deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents; reconciles findings by structural signature |
-| review-plan | Yes | Yes | Audit a dev plan via four parallel fresh-context lenses (architecture, sequencing, spec-and-testing, codebase-claims) before implementation; reconciles findings by structural signature |
+| deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies a hard-coded allowlist of mechanical fixes (requires `--test-cmd`) |
+| review-plan | Yes | Yes | Audit a dev plan via four parallel fresh-context lenses (architecture, sequencing, spec-and-testing, codebase-claims) before implementation; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies allowlisted prose edits outside the immutable contract sections |
 | rfc-finder | Yes | Yes | Find and link to IETF RFCs and related drafts |
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
@@ -22,7 +22,7 @@ Reusable skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 1. Install tools:
 
 ```bash
-brew install just shellcheck shfmt
+brew install just jq shellcheck shfmt
 ```
 
 2. Create local env file:

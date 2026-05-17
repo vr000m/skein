@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"refactor","file":"a.py","line":1,"summary":"refactor","evidence":"none","suggestion":"none","auto_fix":{"kind":"refactor_method","before":"x = 1\n","after":"x = 2\n","scope":"block"},"auto_fix_status":"would_apply"}]}

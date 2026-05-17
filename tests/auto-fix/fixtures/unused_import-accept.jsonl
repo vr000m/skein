@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"unused","file":"a.py","line":1,"summary":"unused import","evidence":"never referenced","suggestion":"remove import","auto_fix":{"kind":"unused_import","before":"from os import path\n","after":"","scope":"file"},"auto_fix_status":"would_apply"}]}

@@ -1,7 +1,7 @@
 ---
 name: review-plan
 description: Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches four parallel fresh-context lens agents (architecture, sequencing, spec-and-testing, codebase-claims) that audit the plan against the actual codebase. Cost: three high-reasoning Opus lenses + one cheap Haiku factual lens per run. Use after a dev-plan is created, when the user says "review plan", "audit plan", "check plan", or "/review-plan", and proactively after the dev-plan skill produces a new plan file.
-argument-hint: "[path/to/plan.md]"
+argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
 ---
 
 # Review Plan: Independent Plan Audit
@@ -10,7 +10,7 @@ Dispatch four parallel fresh-context lens agents to audit a development plan bef
 
 ## Why This Exists
 
-Plans encode assumptions. Some are stated, most aren't. The author knows what they meant; a fresh reader sees only what's written. This skill exploits that gap: four independent lens agents read the plan cold, each with a narrow scope, explore the codebase to verify claims, and surface what's missing, ambiguous, or risky. Findings are merged by severity and returned to the user for discussion — the plan *body* is never modified automatically. The sole exception is a trailing **review marker footer** appended after the user explicitly accepts or waives findings, consumed by `/conduct` as a readiness signal.
+Plans encode assumptions. Some are stated, most aren't. The author knows what they meant; a fresh reader sees only what's written. This skill exploits that gap: four independent lens agents read the plan cold, each with a narrow scope, explore the codebase to verify claims, and surface what's missing, ambiguous, or risky. Findings are merged by severity and returned to the user for discussion — the plan *body* is never modified automatically. The sole exceptions are (1) a trailing **review marker footer** appended after the user explicitly accepts or waives findings, consumed by `/conduct` as a readiness signal, and (2) an opt-in `--auto-fix=trivial` tier that applies a hard-coded allowlist of structural, semantics-preserving plan edits (typo, single-line clarification, symbol/path/anchor rename) **strictly outside** Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, and any `### Phase N:` heading. Auto-fix never writes the real review marker before user acceptance — it records `marker_pending`, and Step 7 publishes the marker exactly once.
 
 ## Delegation Pattern
 
@@ -325,12 +325,19 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | scripts/reconcile-findings.sh
+   cat findings.jsonl | scripts/reconcile-findings.sh --skill review-plan
    ```
 
-   The script emits canonical reconciled JSON on stdout: `{schema_version: 1, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
-3. **Render the JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
-4. **Hand off to Step 4 and Step 5.** The reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
+   The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
+
+   ```
+   scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
+   ```
+
+   The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist, path binding, drift, and scope-forbid gates the applier will use.
+4. **Render the annotated JSON into the report template.** Use the report template in [Step 5](#step-5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped — this replaces the prior one-sentence `[Lens] / [Category]` collapse rule and uniformly handles ≥1 source lens); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+5. **Hand off to Step 4 and Step 5.** The annotated reconciled JSON is the ground truth for both the rubric self-check and the rendered output — do not re-merge findings downstream.
 
 Forbidden inside Step 3:
 - LLM calls of any kind. The merge rule is structural.
@@ -340,24 +347,31 @@ Forbidden inside Step 3:
 The merge contract is:
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
-- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation. Findings MAY additionally carry an optional `auto_fix: {kind, before, after, scope}` block proposing a structural, semantics-preserving edit.
 - **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
 - **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
 - **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
-- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, and `suggestion` text is preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
+- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, `suggestion`, and optional `auto_fix` block are preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
 - **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
 - **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
 - **Summary semantics**: `merged` counts signatures corroborated by ≥2 distinct lenses; `unique` counts signatures reported by exactly one lens (single-source). Invariant: `merged + unique == len(findings)`. `related` counts cross-category cross-references at the same `(file, line)`; cross-file related pairs are NOT representable in this schema (the renderer asserts this invariant).
-- **Empty input**: reconciliation still emits the structured report with `schema_version: 1, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
-- **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
+- **Empty input**: reconciliation still emits the structured report with `schema_version: 2, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Schema versioning**: every envelope carries `"schema_version": 2` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape. v2 added the optional `auto_fix` block; v1 envelopes/JSONL findings without it are upgraded in-flight (treated as advisory, never applied).
+- **jq fallback boundary**: v1-style JSONL findings without `auto_fix` keep the existing awk fallback. Findings with `auto_fix` require jq for structural validation and fail clearly if jq is unavailable.
+- **Auto-fix proposal block (optional, v2+)**: `auto_fix` carries `{kind: string, before: string, after: string, scope: string}`. `kind` MUST be drawn from the per-skill allowlist in `scripts/auto-fix-allowlist.json`. `scope` typing is per skill — `/deep-review` uses `scope ∈ {"file", "function", "block"}` (informational), and `/review-plan` uses `scope = "<path>:<start-line>[-<end-line>]"` (single-line spans only in v1). The lens *proposes*; the audit step (`scripts/audit-auto-fix-eligibility.sh`) and applier scripts *gate* via the allowlist and (for `/review-plan`) the scope-forbid list. Unknown `kind` → dropped to surfaced.
+- **Malformed `auto_fix` → reject envelope**: present-but-malformed blocks (missing `kind`/`before`/`after`/`scope`, non-string values, malformed per-skill scope) are lens-emission bugs. The reconciler exits non-zero with `auto_fix block malformed: <reason>` rather than silently demoting the finding.
+- **Allowlist source of truth**: `scripts/auto-fix-allowlist.json` is the single source for trivial-tier kinds. Cited verbatim here so `scripts/check-prompt-parity.sh` can assert byte-identity across `.claude` and `.codex` mirrors:
+  - `/deep-review`: `["docstring_typo","unused_import","unused_var","mechanical_replace","import_sort"]`
+  - `/review-plan`: `["symbol_rename","path_rename","line_anchor_refresh","marker_refresh","prose_typo","prose_clarify"]`
+- **`[AUTO-FIXABLE]` annotation rule**: the renderer is pure envelope-to-markdown. `[AUTO-FIXABLE]` is shown only for findings whose `auto_fix_status` has been precomputed as `"would_apply"` by `scripts/audit-auto-fix-eligibility.sh`. Findings carrying an `auto_fix` block that fail allowlist (`rejected_kind`) or scope-forbid (`rejected_scope`) are NOT annotated.
 - **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
   ```
-  cat findings.jsonl | scripts/reconcile-findings.sh
+  cat findings.jsonl | scripts/reconcile-findings.sh --skill <deep-review|review-plan>
   ```
 
-  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it. `--skill` is required whenever any finding carries an `auto_fix` block so the per-skill scope typing can be validated.
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
 
 ### Step 4: Self-Check Against Rubric
@@ -406,6 +420,41 @@ Do NOT modify the plan *body* automatically. The findings are a starting point f
 
 Only after the user has reviewed and addressed the findings (or explicitly decided to proceed) should implementation begin.
 
+### Step 6.5: Apply Trivial Auto-Fixes (opt-in)
+
+Run this step **only when** the caller passed `--auto-fix=trivial`. Without the flag the workflow skips straight to Step 7 with `[AUTO-FIXABLE]` annotations from the pre-render audit (dry-run preview).
+
+`--auto-fix=trivial` is an opt-in tier that applies a hard-coded allowlist of structural, semantics-preserving plan edits. The trigger is the `auto_fix` block emitted by a lens; LLM self-classification is explicitly NOT a trigger. The allowlist is defined in `scripts/auto-fix-allowlist.json` and cited verbatim in the GENERIC FINDING SCHEMA AND MERGE block above.
+
+Preconditions:
+
+- The reconciled v2 envelope from Step 3 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `rejected_scope`, `drift`, ...).
+- The user has accepted or waived all remaining findings in Step 6. Auto-fix runs only on plan content the user has signed off on.
+
+Invocation:
+
+```
+scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
+```
+
+Per-fix gating (the applier re-verifies even what the auditor already checked):
+
+1. `kind` must be in the `review-plan` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
+2. `auto_fix.scope` MUST be `<path>:<line>` (single-line in v1); multi-line spans → `status: rejected_multiline`.
+3. `finding.file`, the path in `auto_fix.scope`, and `--plan <reviewed-plan>` must resolve to the same in-repo file; mismatch → `status: rejected_path`.
+4. The enclosing heading stack (resolved via `scripts/plan-scope-detect.sh --stack <plan> <line>`) MUST NOT contain any of: `## Requirements`, `## Acceptance Criteria`, `### Files to Modify`, `### New Files to Create`, `### Architecture Decisions`, `### Integration Seams`, or `### Phase N:` for any digit count. Match inside any forbidden ancestor section → `status: rejected_scope`. Fenced code blocks are skipped when resolving the heading stack; indented headings (leading whitespace) are NOT treated as headings.
+5. The exact `auto_fix.scope` line must byte-match `auto_fix.before`; mismatch → `status: rejected_drift`. The applier does not search for a unique match elsewhere in the file.
+6. The plan must be valid UTF-8; a corrupt plan → `status: marker_failed`, the applier rolls back every commit and blob applied during this batch and exits non-zero.
+7. Pre-apply, save a `git hash-object -w` blob of every touched path. Rewrite the cited line `before` → `after` in place; stage; commit with subject `auto-fix(review-plan): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: review-plan`.
+8. **No test gate.** Plans are markdown; the equivalent of "tests pass" is the marker-hash check at Step 7. Each applied fix lands as its own commit; the manifest documents the range.
+9. `marker_refresh` kinds emitted by the lens are a **no-op** in this step — the manifest records `status: marker_pending` and Step 7 writes the real marker exactly once after the run.
+
+Per run, the applier writes a manifest at `.review-plan/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.review-plan/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+
+The applier handles unknown kinds (anything outside the `review-plan` allowlist) by recording `rejected_kind` and surfacing the finding as advisory. The scope-forbid list is structural, not heuristic: a `prose_clarify` whose `auto_fix.scope` lands inside `## Requirements` is dropped regardless of how innocuous the wording change reads.
+
+After the applier returns, proceed to Step 7. The marker write in Step 7 hashes the post-edit contract section so a successful auto-fix batch followed by `yes` produces a valid marker on the new content.
+
 ### Step 7: Write the Review Marker
 
 After findings have been presented and discussed, ask the user one question:
@@ -438,9 +487,12 @@ Procedure:
 
 The marker is idempotent: replacing an existing marker on otherwise unchanged content produces the same hash. Workspace content below the marker is never rehashed, so workspace edits during a `/conduct` run do not require re-review.
 
+**Interaction with auto-fix.** When Step 6.5 applied one or more prose edits, manifest entries carry `status: applied` plus a separate `marker_pending: true` flag, and the plan's previous review marker is intentionally unchanged. Step 7 is the single point where the real marker is written: it hashes the post-edit contract section so the marker reflects the current plan content. Lens-emitted `marker_refresh` blocks are NEVER honoured pre-acceptance — they record `marker_pending` in the manifest and only Step 7's hash-and-write path publishes a real marker. If the plan has no marker line at all (fresh plan), Step 7 writes a new marker at the template position (after the final immutable-contract heading) rather than raising. If the marker hash computation fails because the plan is not valid UTF-8, the applier exits `marker_failed` during Step 6.5 and rolls back the batch before Step 7 runs.
+
 ## Constraints
 
-- Do not modify the plan *body* automatically — findings drive a conversation, not edits. The trailing review marker footer is the only permitted automated write, and only after explicit user acceptance (`yes`/`waive`).
+- Do not modify the plan *body* automatically — findings drive a conversation, not edits. The trailing review marker footer is the only permitted automated write *outside* the opt-in `--auto-fix=trivial` tier; even with that flag, only the structural allowlist in `scripts/auto-fix-allowlist.json` may be applied, and only after explicit user acceptance (`yes`/`waive`). Edits inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, or any `### Phase N:` section are **never** auto-applied — they stay advisory regardless of lens confidence.
+- Auto-fix never publishes a real `/conduct` review marker before Step 7. Applied prose edits record `marker_pending` in the manifest; the marker hash is computed and written exactly once at acceptance.
 - The four lens agents must not receive parent conversation context — fresh eyes are the entire value, and four parallel lenses multiply the cost of any context leak. Pass only the plan content, Review Focus, repo-root checklist material, and the lens prompt.
 - Use the model assignments above (`opus` for the three judgment lenses, `haiku` for `codebase-claims`) — see the Cost section for rationale.
 - This skill blocks — the user waits for all four lens agents to return before findings are presented.

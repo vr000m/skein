@@ -88,7 +88,7 @@ def test_strip_ignores_marker_shaped_text_inside_fence():
         # Plan
 
         ```
-        <!-- reviewed: 2026-04-22 @ {'c' * 40} -->
+        <!-- reviewed: 2026-04-22 @ {"c" * 40} -->
         ```
         """
     )
@@ -204,7 +204,7 @@ def test_read_marker_ignores_body_examples(tmp_path: Path):
             f"""\
             # Plan
 
-            Example in prose: `<!-- reviewed: 2020-01-01 @ {'d' * 40} -->`.
+            Example in prose: `<!-- reviewed: 2020-01-01 @ {"d" * 40} -->`.
             """
         )
     )
@@ -224,3 +224,62 @@ def test_compute_plan_hash_matches_git_hash_object(tmp_path: Path):
         ["git", "hash-object", str(plan_path)], text=True
     ).strip()
     assert compute_plan_hash(plan_path) == expected
+
+
+# ---------------------------------------------------------------------------
+# /review-plan auto-fix tier integration (Phase 3)
+#
+# An auto-fix run records `marker_pending` in its own manifest and applies
+# prose edits, but never writes a real review marker. From the perspective of
+# the conduct marker authority, the plan still has NO marker until the normal
+# /review-plan Step 6 acceptance write runs. These tests pin that invariant
+# so the auto-fix applier cannot silently bless an unmarked plan.
+# ---------------------------------------------------------------------------
+
+
+def test_marker_pending_plan_still_reads_as_unmarked(tmp_path: Path):
+    """A plan that the auto-fix applier has edited (prose typo fix) but
+    on which it has only recorded `marker_pending` in its manifest must
+    still report `read_marker(...) is None` to the conduct runtime.
+
+    `marker_pending` is a manifest status, NOT a plan-file state. The plan
+    file itself carries no real marker line, so conduct preflight must
+    refuse to run.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# Plan\n\nSome the prose with a typo to fix.\n")
+    # No write_marker call — applier never writes the real marker.
+    assert read_marker(plan_path) is None
+    assert marker_is_stale(plan_path) is None  # sentinel: no marker
+
+
+@requires_git
+def test_acceptance_write_marker_unblocks_preflight(tmp_path: Path):
+    """After the normal /review-plan acceptance step runs `write_marker`
+    on the post-edit plan, the marker hash matches `git hash-object` of
+    the stripped contract and `marker_is_stale` returns False — i.e. the
+    /conduct preflight authority would accept the plan.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# Plan\n\nSome the prose with a typo to fix.\n")
+    sha = write_marker(plan_path)
+    assert read_marker(plan_path) is not None
+    assert read_marker(plan_path)[1] == sha
+    assert marker_is_stale(plan_path) is False
+
+
+@requires_git
+def test_marker_pending_then_workspace_progress_still_valid(tmp_path: Path):
+    """After acceptance, the workspace below the marker may carry the
+    auto-fix manifest summary or progress ticks. Those edits must not
+    invalidate the marker (mirrors the workspace-below-marker invariant
+    used by /conduct's marker-refresh tests).
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_text("# Plan\n\nSome the prose with a typo to fix.\n")
+    write_marker(plan_path)
+    plan_path.write_text(
+        plan_path.read_text()
+        + "\n## Progress\n\n- [x] auto-fix: prose_typo at plan.md:3\n"
+    )
+    assert marker_is_stale(plan_path) is False

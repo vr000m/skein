@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: Thorough multi-lens code review using parallel subagents with clean context. Spawns independent reviewers for logic, security, spec compliance, architecture, and documentation — catching issues that single-pass reviews miss. Use when the user says "deep review", "thorough review", "audit code", or "/deep-review". Complements built-in /review and /security-review.
-argument-hint: "[path/to/review-target|PR] [--full] [--continue]"
+argument-hint: "[path/to/review-target|PR] [--full] [--continue] [--auto-fix=trivial]"
 ---
 
 # Deep Review: Multi-Lens Code Audit
@@ -380,24 +380,31 @@ After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before
 ### 3. Deduplicate Findings
 
 <!-- BEGIN GENERIC FINDING SCHEMA AND MERGE -->
-- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation.
+- **Finding schema (per-lens emit)**: every finding has the fields `{lens, severity, category, file, line, summary, evidence, suggestion}` and is emitted as one JSON object per line (JSON-Lines). The `lens` field is mandatory — it carries provenance into reconciliation. Findings MAY additionally carry an optional `auto_fix: {kind, before, after, scope}` block proposing a structural, semantics-preserving edit.
 - **Severity values**: `severity ∈ {Critical, Important, Minor}` — no other values.
 - **Reconciliation signature**: structural matching uses `(file, line, category)` only. There is no free-text `summary` component in the signature, because lenses run in fresh context with no shared vocabulary and would never byte-match summaries for the same defect.
 - **Merge rule**: findings sharing a `(file, line, category)` signature merge into one. The merged finding's `Lenses:` field is the sorted-unique union of source lenses; its severity is the highest of the group (Critical > Important > Minor). Findings that share `(file, line)` but differ in `category` do NOT merge — they emit a "Related findings" cross-reference instead, listed under both findings.
-- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, and `suggestion` text is preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
+- **Mixed-severity text preservation**: on merge, the highest-severity contributing lens's `summary`, `evidence`, `suggestion`, and optional `auto_fix` block are preserved verbatim (ties broken by alphabetical lens name). Lower-severity contributing lenses are cited only via the `Lenses:` field; their text is not concatenated.
 - **Provenance (`Lenses:` field)**: the reconciliation step injects a `Lenses:` field on every finding, always populated, sorted alphabetically and deduplicated. Single-source findings show `Lenses: [<one>]`; merged findings show every source lens.
 - **Canonical sort order**: severity (Critical → Important → Minor) → category → file → line → sorted lenses. Identical input under shuffled lens-arrival order MUST produce byte-identical output.
 - **Summary semantics**: `merged` counts signatures corroborated by ≥2 distinct lenses; `unique` counts signatures reported by exactly one lens (single-source). Invariant: `merged + unique == len(findings)`. `related` counts cross-category cross-references at the same `(file, line)`; cross-file related pairs are NOT representable in this schema (the renderer asserts this invariant).
-- **Empty input**: reconciliation still emits the structured report with `schema_version: 1, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
-- **Schema versioning**: every envelope carries `"schema_version": 1` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape.
+- **Empty input**: reconciliation still emits the structured report with `schema_version: 2, summary: {raw: 0, merged: 0, unique: 0, related: 0, dropped: 0}`, an empty `findings` array, and an empty `related` array. The report's top-line `Reconciliation:` summary still renders with all zeros.
+- **Schema versioning**: every envelope carries `"schema_version": 2` at the root. The renderer asserts this matches its expected version and exits non-zero on mismatch (or when the field is absent). Bump in lockstep on both producer (`scripts/reconcile-findings.sh`) and consumer (`scripts/render-reconciled-report.sh`) when changing the envelope shape. v2 added the optional `auto_fix` block; v1 envelopes/JSONL findings without it are upgraded in-flight (treated as advisory, never applied).
+- **jq fallback boundary**: v1-style JSONL findings without `auto_fix` keep the existing awk fallback. Findings with `auto_fix` require jq for structural validation and fail clearly if jq is unavailable.
+- **Auto-fix proposal block (optional, v2+)**: `auto_fix` carries `{kind: string, before: string, after: string, scope: string}`. `kind` MUST be drawn from the per-skill allowlist in `scripts/auto-fix-allowlist.json`. `scope` typing is per skill — `/deep-review` uses `scope ∈ {"file", "function", "block"}` (informational), and `/review-plan` uses `scope = "<path>:<start-line>[-<end-line>]"` (single-line spans only in v1). The lens *proposes*; the audit step (`scripts/audit-auto-fix-eligibility.sh`) and applier scripts *gate* via the allowlist and (for `/review-plan`) the scope-forbid list. Unknown `kind` → dropped to surfaced.
+- **Malformed `auto_fix` → reject envelope**: present-but-malformed blocks (missing `kind`/`before`/`after`/`scope`, non-string values, malformed per-skill scope) are lens-emission bugs. The reconciler exits non-zero with `auto_fix block malformed: <reason>` rather than silently demoting the finding.
+- **Allowlist source of truth**: `scripts/auto-fix-allowlist.json` is the single source for trivial-tier kinds. Cited verbatim here so `scripts/check-prompt-parity.sh` can assert byte-identity across `.claude` and `.codex` mirrors:
+  - `/deep-review`: `["docstring_typo","unused_import","unused_var","mechanical_replace","import_sort"]`
+  - `/review-plan`: `["symbol_rename","path_rename","line_anchor_refresh","marker_refresh","prose_typo","prose_clarify"]`
+- **`[AUTO-FIXABLE]` annotation rule**: the renderer is pure envelope-to-markdown. `[AUTO-FIXABLE]` is shown only for findings whose `auto_fix_status` has been precomputed as `"would_apply"` by `scripts/audit-auto-fix-eligibility.sh`. Findings carrying an `auto_fix` block that fail allowlist (`rejected_kind`) or scope-forbid (`rejected_scope`) are NOT annotated.
 - **Errored or timed-out lenses**: surfaced as `errored` / `timed_out` adjacent to the reconciled findings, not silently omitted and not fed into reconciliation.
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
   ```
-  cat findings.jsonl | scripts/reconcile-findings.sh
+  cat findings.jsonl | scripts/reconcile-findings.sh --skill <deep-review|review-plan>
   ```
 
-  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it.
+  All merge logic lives in `scripts/reconcile-findings.sh`; the SKILL.md prose does not duplicate it. `--skill` is required whenever any finding carries an `auto_fix` block so the per-skill scope typing can be validated.
 <!-- END GENERIC FINDING SCHEMA AND MERGE -->
 
 ### 3.5. Reconcile Findings
@@ -410,12 +417,19 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | scripts/reconcile-findings.sh
+   cat findings.jsonl | scripts/reconcile-findings.sh --skill deep-review
    ```
 
-   The script emits canonical reconciled JSON on stdout: `{schema_version: 1, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
-3. **Render the JSON into the report template.** Use the report template in [Step 5](#5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
-4. **Emit the rendered report.** Hand off to Step 4 (Apply Suppression) and Step 5 (Present Findings). The reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
+   The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
+
+   ```
+   scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
+   ```
+
+   The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
+4. **Render the annotated JSON into the report template.** Use the report template in [Step 5](#5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
+5. **Emit the rendered report.** Hand off to Step 4 (Apply Suppression) and Step 5 (Present Findings). The annotated reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
 
 Forbidden inside Step 3.5:
 - LLM calls of any kind. The merge rule is structural.
@@ -432,6 +446,45 @@ Forbidden inside Step 3.5:
   - `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 Supported categories are `Logic`, `Security`, `Spec`, `Architecture`, and `Documentation`.
+
+### 4.5. Apply Trivial Auto-Fixes (opt-in)
+
+Run this step **only when** the caller passed `--auto-fix=trivial`. Without the flag the workflow skips straight to Step 5 with `[AUTO-FIXABLE]` annotations from the pre-render audit (dry-run preview).
+
+`--auto-fix=trivial` is an opt-in tier that applies a hard-coded allowlist of mechanical, semantics-preserving fixes. The trigger is the structural `auto_fix` block emitted by a lens; LLM self-classification of "uncontroversial" is explicitly NOT a trigger. The allowlist is defined in `scripts/auto-fix-allowlist.json` and cited verbatim in the GENERIC FINDING SCHEMA AND MERGE block above.
+
+Preconditions:
+
+- The reconciled v2 envelope from Step 3.5 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill deep-review` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `drift`, `unsupported`, ...).
+- The caller supplied an explicit test command via `--test-cmd <cmd>` or `AUTO_FIX_TEST_CMD=<cmd>`. Missing command → applier exits non-zero before any edit. This is a hard contract — `/deep-review` auto-fix does NOT guess a repo test command.
+
+Invocation:
+
+```
+scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+```
+
+Per-fix gating (the applier re-verifies even what the auditor already checked):
+
+1. `kind` must be in the `deep-review` array of `scripts/auto-fix-allowlist.json`; unknown kind → `status: rejected_kind`.
+2. For `mechanical_replace`, multi-line `before` is rejected pre-apply → `status: rejected_multiline`.
+3. The applier refuses to start unless the working tree, index, and untracked-file set are clean, so an auto-fix commit cannot sweep unrelated work into the tested change.
+4. For `docstring_typo`, the replacement must stay inside a comment or triple-quoted string; code edits → `status: rejected_kind_scope`.
+5. For `import_sort`, the imported/bound symbol set before and after must match exactly; added or removed symbols → `status: rejected_semantic_change`.
+6. For `unused_import`, the applier re-runs `git grep -w <symbol>` and rejects any non-comment reference outside the import line → `status: rejected_revar`.
+7. For `unused_var`, the applier re-runs `git grep -w <var>` across all tracked files, tests included, and rejects any reference outside the declaration line → `status: rejected_revar`.
+8. The cited file:line must byte-match `auto_fix.before` (multi-line allowed for `import_sort`); mismatch → `status: drift`.
+9. Pre-apply, save a `git hash-object -w` blob of every touched path. Rollback handle.
+10. Rewrite line N `before` → `after` in place; stage the file.
+11. Run the supplied test command **exactly once** per applied fix. No retry. Flake is the caller's problem.
+12. On test pass: commit with subject `auto-fix(deep-review): <kind> at <file>:<line>` and trailer `Auto-Fixed-By: deep-review`.
+13. On test fail: restore the touched paths from the saved blob, unstage them, leave `HEAD` unchanged, append `status: test_failed` with the test output truncated to the last 2000 bytes. The finding is re-surfaced as advisory in Step 5.
+
+Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
+
+The applier handles `dead_branch` the same way it handles any other unknown kind — it is **intentionally NOT** in the v1 allowlist. The reasoning is in the dev-plan Architecture Decisions section; do not lobby it back in without a static-analysis gate.
+
+After the applier returns, proceed to Step 5. Findings that landed as commits should not be re-surfaced; only `rejected_*`, `drift`, `unsupported`, and `test_failed` entries appear in the report (as advisory).
 
 ### 5. Present Findings
 

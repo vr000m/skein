@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"style","file":"a.py","line":1,"summary":"import_sort with semantic change","evidence":"adds import","suggestion":"reject","auto_fix":{"kind":"import_sort","before":"import sys\nimport os\n","after":"import os\nimport socket\nimport sys\n","scope":"file"},"auto_fix_status":"would_apply"}]}

@@ -32,5 +32,5 @@ reconciliation-tests:
     bash tests/reconciliation/test-reconciler-unit.sh
 
 lint-scripts:
-    shellcheck scripts/*.sh
-    shfmt -d scripts/*.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh

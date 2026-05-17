@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"style","file":"a.py","line":1,"summary":"claim docstring typo on a code line","evidence":"x = 1","suggestion":"none","auto_fix":{"kind":"docstring_typo","before":"x = 1\n","after":"x = 2\n","scope":"file"},"auto_fix_status":"would_apply"}]}

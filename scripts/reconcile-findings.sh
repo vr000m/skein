@@ -4,13 +4,16 @@
 # Single source of truth for cross-lens finding reconciliation used by
 # the `deep-review` and `review-plan` skills.
 #
+# Usage: scripts/reconcile-findings.sh [--skill deep-review|review-plan]
+#
 # Stdin:  JSON-Lines findings, one object per line, each with the fields
 #         {lens, severity, category, file, line, summary, evidence, suggestion}.
+#         Findings may also carry optional auto_fix {kind,before,after,scope}.
 #         Blank lines and lines that are not valid JSON objects are ignored.
 #
 # Stdout: Canonical JSON of the form:
 #   {
-#     "schema_version": 1,
+#     "schema_version": 2,
 #     "summary": {"raw": N, "merged": M, "unique": U, "related": R, "dropped": D},
 #     "findings": [ ... reconciled findings, sorted ... ],
 #     "related":  [ ... cross-references ... ]
@@ -45,13 +48,41 @@
 #   severity (Critical, Important, Minor) -> category -> file -> line
 #   -> sorted lenses (joined with comma).
 #
-# Empty input -> emits {"schema_version":1,"summary":{"raw":0,...},"findings":[],"related":[]}.
+# Empty input -> emits {"schema_version":2,"summary":{"raw":0,...},"findings":[],"related":[]}.
 #
 # Dependencies: bash + awk + sort. `jq`, when present, is used for safer
 # JSON parsing; otherwise a careful awk fallback is used. No new install
 # requirements are introduced.
 
 set -euo pipefail
+
+SKILL=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--skill)
+		shift
+		if [[ $# -eq 0 ]]; then
+			echo "reconcile-findings: --skill requires deep-review or review-plan" >&2
+			exit 2
+		fi
+		SKILL="$1"
+		;;
+	--help | -h)
+		echo "usage: scripts/reconcile-findings.sh [--skill deep-review|review-plan]" >&2
+		exit 0
+		;;
+	*)
+		echo "reconcile-findings: unknown argument: $1" >&2
+		exit 2
+		;;
+	esac
+	shift
+done
+
+if [[ -n "$SKILL" && "$SKILL" != "deep-review" && "$SKILL" != "review-plan" ]]; then
+	echo "reconcile-findings: --skill must be deep-review or review-plan" >&2
+	exit 2
+fi
 
 HAVE_JQ=0
 if command -v jq >/dev/null 2>&1; then
@@ -74,7 +105,7 @@ sev_rank() {
 # Schema version for the JSON envelope. Bump when the envelope shape
 # changes in a way that breaks downstream consumers (renderer, SKILL.md
 # prose). Renderer asserts this matches its expected version.
-ENVELOPE_SCHEMA_VERSION=1
+ENVELOPE_SCHEMA_VERSION=2
 
 # Emit a canonical empty report.
 emit_empty() {
@@ -100,9 +131,58 @@ if [[ -z "${input// /}" ]]; then
 	exit 0
 fi
 
+has_auto_fix=0
+if printf '%s\n' "$input" | grep -q '"auto_fix"[[:space:]]*:'; then
+	has_auto_fix=1
+fi
+if [[ "$has_auto_fix" -eq 1 && -z "$SKILL" ]]; then
+	echo "auto_fix block malformed: --skill deep-review|review-plan is required when auto_fix is present" >&2
+	exit 2
+fi
+if [[ "$has_auto_fix" -eq 1 && "$HAVE_JQ" -ne 1 ]]; then
+	echo "auto_fix block malformed: jq is required to validate auto_fix blocks" >&2
+	exit 2
+fi
+
+validate_auto_fix_blocks() {
+	[[ "$has_auto_fix" -eq 1 ]] || return 0
+	local err
+	err="$(printf '%s\n' "$input" | jq -rR --arg skill "$SKILL" '
+		def scope_ok($skill; $scope):
+			if $skill == "deep-review" then
+				($scope == "file" or $scope == "function" or $scope == "block")
+			elif $skill == "review-plan" then
+				($scope | test("^[^:]+:[0-9]+(-[0-9]+)?$"))
+			else
+				false
+			end;
+		. as $line |
+		(try (fromjson | select(type == "object")) catch empty) as $obj |
+		if ($obj | has("auto_fix") | not) then empty
+		elif ($obj.auto_fix | type) != "object" then "auto_fix block malformed: auto_fix must be an object"
+		elif ($obj.auto_fix | has("kind") | not) then "auto_fix block malformed: missing kind"
+		elif ($obj.auto_fix | has("before") | not) then "auto_fix block malformed: missing before"
+		elif ($obj.auto_fix | has("after") | not) then "auto_fix block malformed: missing after"
+		elif ($obj.auto_fix | has("scope") | not) then "auto_fix block malformed: missing scope"
+		elif ($obj.auto_fix.kind | type) != "string" then "auto_fix block malformed: kind must be a string"
+		elif ($obj.auto_fix.before | type) != "string" then "auto_fix block malformed: before must be a string"
+		elif ($obj.auto_fix.after | type) != "string" then "auto_fix block malformed: after must be a string"
+		elif ($obj.auto_fix.scope | type) != "string" then "auto_fix block malformed: scope must be a string"
+		elif (scope_ok($skill; $obj.auto_fix.scope) | not) then "auto_fix block malformed: invalid \($skill) scope"
+		else empty
+		end
+	' | head -n1)"
+	if [[ -n "$err" ]]; then
+		echo "$err" >&2
+		exit 2
+	fi
+}
+
+validate_auto_fix_blocks
+
 # Parse stdin into a TSV stream we can group/sort with awk + sort.
 # Columns (tab-separated):
-#   sev_rank  severity  category  file  line  lens  summary  evidence  suggestion
+#   sev_rank  severity  category  file  line  lens  summary  evidence  suggestion  auto_kind  auto_before  auto_after  auto_scope
 # Tabs / newlines inside string fields are escaped as \t / \n so awk's
 # field splitting stays correct.
 
@@ -126,7 +206,11 @@ parse_tsv() {
 				(.lens // "" | tostring),
 				(.summary // "" | tostring),
 				(.evidence // "" | tostring),
-				(.suggestion // "" | tostring)
+				(.suggestion // "" | tostring),
+				(if has("auto_fix") then (.auto_fix.kind // "" | tostring) else "" end),
+				(if has("auto_fix") then (.auto_fix.before // "" | tostring) else "" end),
+				(if has("auto_fix") then (.auto_fix.after // "" | tostring) else "" end),
+				(if has("auto_fix") then (.auto_fix.scope // "" | tostring) else "" end)
 			]
 			| map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n"))
 			| join("\t")
@@ -223,7 +307,7 @@ parse_tsv() {
 				else if (severity == "Important") rank = 1
 				else if (severity == "Minor") rank = 2
 				else rank = 3
-				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", rank, esc(severity), esc(category), esc(file), line, esc(lens), esc(summary), esc(evidence), esc(suggestion)
+				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t\t\t\n", rank, esc(severity), esc(category), esc(file), line, esc(lens), esc(summary), esc(evidence), esc(suggestion)
 			}
 		'
 	fi
@@ -263,7 +347,7 @@ sorted="$(printf '%s\n' "$tsv" | sort -t $'\t' -k3,3 -k4,4 -k5,5n -k1,1n -k6,6)"
 # Build merged groups in a temp file: one merged record per signature.
 # Merged record fields:
 #   sev_rank severity category file line lenses(comma-joined sorted)
-#   summary evidence suggestion
+#   summary evidence suggestion auto_kind auto_before auto_after auto_scope
 merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 	function flush(    i, j, n, tmp, sorted_lens, joined, prev) {
 		if (count == 0) return
@@ -286,7 +370,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 			joined = joined sorted_lens[i]
 			prev = sorted_lens[i]
 		}
-		printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", best_rank, best_sev, cur_cat, cur_file, cur_line, joined, best_summary, best_evidence, best_suggestion
+		printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", best_rank, best_sev, cur_cat, cur_file, cur_line, joined, best_summary, best_evidence, best_suggestion, best_auto_kind, best_auto_before, best_auto_after, best_auto_scope
 		count = 0
 		for (i in lens_arr) delete lens_arr[i]
 		for (i in sorted_lens) delete sorted_lens[i]
@@ -300,6 +384,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 			cur_cat = $3; cur_file = $4; cur_line = $5
 			best_rank = $1; best_sev = $2
 			best_summary = $7; best_evidence = $8; best_suggestion = $9
+			best_auto_kind = $10; best_auto_before = $11; best_auto_after = $12; best_auto_scope = $13
 			best_lens = $6
 		} else {
 			# Highest severity wins (lowest rank). Tie-break on lens name
@@ -309,6 +394,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 			if ($1 < best_rank || ($1 == best_rank && $6 < best_lens)) {
 				best_rank = $1; best_sev = $2
 				best_summary = $7; best_evidence = $8; best_suggestion = $9
+				best_auto_kind = $10; best_auto_before = $11; best_auto_after = $12; best_auto_scope = $13
 				best_lens = $6
 			}
 		}
@@ -454,6 +540,7 @@ emit_findings_pretty() {
 			lenses_json = lenses_json "]"
 			sev = jesc($2); cat = jesc($3); file = jesc($4); line = $5
 			summary = jesc($7); evidence = jesc($8); suggestion = jesc($9)
+			auto_kind = jesc($10); auto_before = jesc($11); auto_after = jesc($12); auto_scope = jesc($13)
 			line_field = (line ~ /^-?[0-9]+$/) ? line : ("\"" jesc(line) "\"")
 			printf "    {\n"
 			printf "      \"severity\": \"%s\",\n", sev
@@ -463,7 +550,13 @@ emit_findings_pretty() {
 			printf "      \"lenses\": %s,\n", lenses_json
 			printf "      \"summary\": \"%s\",\n", summary
 			printf "      \"evidence\": \"%s\",\n", evidence
-			printf "      \"suggestion\": \"%s\"\n", suggestion
+			printf "      \"suggestion\": \"%s\"", suggestion
+			if (auto_kind != "" || auto_before != "" || auto_after != "" || auto_scope != "") {
+				printf ",\n"
+				printf "      \"auto_fix\": {\"kind\": \"%s\", \"before\": \"%s\", \"after\": \"%s\", \"scope\": \"%s\"}\n", auto_kind, auto_before, auto_after, auto_scope
+			} else {
+				printf "\n"
+			}
 			printf "    }"
 		}
 		END { printf "\n  ]" }

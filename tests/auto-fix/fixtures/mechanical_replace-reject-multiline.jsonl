@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"refactor","file":"a.py","line":1,"summary":"multi-line replace","evidence":"two-line","suggestion":"reject","auto_fix":{"kind":"mechanical_replace","before":"a = 1\nb = 2\n","after":"a = 2\nb = 3\n","scope":"block"},"auto_fix_status":"would_apply"}]}

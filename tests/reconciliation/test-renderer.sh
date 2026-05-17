@@ -155,6 +155,184 @@ if [[ -f "$clean_rendered" && -f "$dropped_rendered" ]]; then
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# Schema + auto-fix rendering invariants
+# ---------------------------------------------------------------------------
+
+schema_case_dir="$(mktemp -d "$TMPDIR_ROOT/schema.XXXXXX")"
+stale_v1_envelope='{"schema_version":1,"summary":{"raw":0,"merged":0,"unique":0,"related":0,"dropped":0},"findings":[],"related":[]}'
+if printf '%s\n' "$stale_v1_envelope" | bash "$RENDERER" >"$schema_case_dir/stdout" 2>"$schema_case_dir/stderr"; then
+	echo "FAIL: stale-v1-schema-rejected (renderer exited zero)"
+	fail_count=$((fail_count + 1))
+elif grep -Eq "schema(_version)? mismatch.*got 1, expected 2" "$schema_case_dir/stderr"; then
+	echo "PASS: stale-v1-schema-rejected"
+	pass_count=$((pass_count + 1))
+else
+	echo "FAIL: stale-v1-schema-rejected (stderr missing expected mismatch)"
+	echo "  stderr: $(cat "$schema_case_dir/stderr")"
+	fail_count=$((fail_count + 1))
+fi
+
+auto_fix_case_dir="$(mktemp -d "$TMPDIR_ROOT/auto-fix.XXXXXX")"
+cat >"$auto_fix_case_dir/envelope.json" <<'JSON'
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 3,
+    "merged": 0,
+    "unique": 3,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Minor",
+      "category": "apply",
+      "file": "src/a.py",
+      "line": 1,
+      "lenses": ["logic"],
+      "summary": "would apply",
+      "evidence": "audit precomputed would_apply",
+      "suggestion": "apply it",
+      "auto_fix_status": "would_apply"
+    },
+    {
+      "severity": "Minor",
+      "category": "reject",
+      "file": "src/b.py",
+      "line": 2,
+      "lenses": ["logic"],
+      "summary": "rejected kind",
+      "evidence": "audit rejected kind",
+      "suggestion": "surface it",
+      "auto_fix_status": "rejected_kind"
+    },
+    {
+      "severity": "Minor",
+      "category": "proposal",
+      "file": "src/c.py",
+      "line": 3,
+      "lenses": ["logic"],
+      "summary": "has proposal only",
+      "evidence": "auto_fix block alone is not enough",
+      "suggestion": "surface it",
+      "auto_fix": {
+        "kind": "docstring_typo",
+        "before": "recieve",
+        "after": "receive",
+        "scope": "file"
+      }
+    }
+  ],
+  "related": []
+}
+JSON
+
+if ! bash "$RENDERER" <"$auto_fix_case_dir/envelope.json" >"$auto_fix_case_dir/rendered.md" 2>"$auto_fix_case_dir/stderr"; then
+	echo "FAIL: auto-fixable-status-only-rendering (renderer exited non-zero)"
+	echo "  stderr: $(cat "$auto_fix_case_dir/stderr")"
+	fail_count=$((fail_count + 1))
+else
+	auto_fix_count="$(grep -c '\[AUTO-FIXABLE\]' "$auto_fix_case_dir/rendered.md" || true)"
+	apply_line="$(grep -F -- '- **apply**' "$auto_fix_case_dir/rendered.md" || true)"
+	reject_line="$(grep -F -- '- **reject**' "$auto_fix_case_dir/rendered.md" || true)"
+	proposal_line="$(grep -F -- '- **proposal**' "$auto_fix_case_dir/rendered.md" || true)"
+	if [[ "$auto_fix_count" == "1" ]] &&
+		[[ "$apply_line" == *"[AUTO-FIXABLE]"* ]] &&
+		[[ "$reject_line" != *"[AUTO-FIXABLE]"* ]] &&
+		[[ "$proposal_line" != *"[AUTO-FIXABLE]"* ]]; then
+		echo "PASS: auto-fixable-status-only-rendering"
+		pass_count=$((pass_count + 1))
+	else
+		echo "FAIL: auto-fixable-status-only-rendering"
+		echo "  expected exactly one [AUTO-FIXABLE] marker on the would_apply finding"
+		sed 's/^/    /' "$auto_fix_case_dir/rendered.md"
+		fail_count=$((fail_count + 1))
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# End-to-end audit + render: a reconciled envelope passed through the
+# pre-render audit MUST emit `auto_fix_status` for each finding carrying
+# an `auto_fix` block, and the renderer MUST surface `[AUTO-FIXABLE]`
+# only for `would_apply`. Eligibility statuses for `rejected_kind` and
+# `would_apply` cases are computed by `scripts/audit-auto-fix-eligibility.sh`
+# from the JSON allowlist and a drift-check against the cited file:line.
+# ---------------------------------------------------------------------------
+
+AUDIT="$REPO_ROOT/scripts/audit-auto-fix-eligibility.sh"
+if [[ -x "$AUDIT" || -f "$AUDIT" ]]; then
+	audit_case_dir="$(mktemp -d "$TMPDIR_ROOT/audit.XXXXXX")"
+	# Source file the auto_fix.before is asserted to match byte-for-byte
+	# on line 1. The audit script resolves relative paths against $REPO_ROOT
+	# when the cited file does not exist in cwd, so this sample lives under
+	# the temp dir and is referenced by absolute path in the envelope.
+	src_dir="$audit_case_dir/src"
+	mkdir -p "$src_dir"
+	printf '# recieve\n' >"$src_dir/foo.py"
+
+	cat >"$audit_case_dir/envelope.json" <<JSON
+{
+  "schema_version": 2,
+  "summary": {"raw": 2, "merged": 0, "unique": 2, "related": 0, "dropped": 0},
+  "findings": [
+    {
+      "severity": "Minor",
+      "category": "style",
+      "file": "$src_dir/foo.py",
+      "line": 1,
+      "lenses": ["docs"],
+      "summary": "would apply typo",
+      "evidence": "matches before line 1",
+      "suggestion": "fix it",
+      "auto_fix": {"kind": "docstring_typo", "before": "# recieve", "after": "# receive", "scope": "file"}
+    },
+    {
+      "severity": "Minor",
+      "category": "naming",
+      "file": "$src_dir/foo.py",
+      "line": 1,
+      "lenses": ["logic"],
+      "summary": "kind outside allowlist",
+      "evidence": "refactor_method not in allowlist",
+      "suggestion": "surface it",
+      "auto_fix": {"kind": "refactor_method", "before": "# recieve", "after": "# receive", "scope": "file"}
+    }
+  ],
+  "related": []
+}
+JSON
+
+	if ! bash "$AUDIT" --skill deep-review "$audit_case_dir/envelope.json" \
+		>"$audit_case_dir/audited.json" 2>"$audit_case_dir/audit.stderr"; then
+		echo "FAIL: audit-then-render-end-to-end (audit exited non-zero)"
+		echo "  stderr: $(cat "$audit_case_dir/audit.stderr")"
+		fail_count=$((fail_count + 1))
+	elif ! bash "$RENDERER" <"$audit_case_dir/audited.json" \
+		>"$audit_case_dir/rendered.md" 2>"$audit_case_dir/render.stderr"; then
+		echo "FAIL: audit-then-render-end-to-end (renderer exited non-zero)"
+		echo "  stderr: $(cat "$audit_case_dir/render.stderr")"
+		fail_count=$((fail_count + 1))
+	else
+		marker_count="$(grep -c '\[AUTO-FIXABLE\]' "$audit_case_dir/rendered.md" || true)"
+		apply_line="$(grep -F -- '- **style**' "$audit_case_dir/rendered.md" || true)"
+		reject_line="$(grep -F -- '- **naming**' "$audit_case_dir/rendered.md" || true)"
+		if [[ "$marker_count" == "1" ]] &&
+			[[ "$apply_line" == *"[AUTO-FIXABLE]"* ]] &&
+			[[ "$reject_line" != *"[AUTO-FIXABLE]"* ]]; then
+			echo "PASS: audit-then-render-end-to-end (would_apply marked; rejected_kind not marked)"
+			pass_count=$((pass_count + 1))
+		else
+			echo "FAIL: audit-then-render-end-to-end (annotation mismatch)"
+			echo "  audited envelope:"
+			sed 's/^/    /' "$audit_case_dir/audited.json"
+			echo "  rendered:"
+			sed 's/^/    /' "$audit_case_dir/rendered.md"
+			fail_count=$((fail_count + 1))
+		fi
+	fi
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 

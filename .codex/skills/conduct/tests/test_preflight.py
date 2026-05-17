@@ -110,10 +110,8 @@ def test_preflight_marker_in_body_does_not_falsely_validate(tmp_path):
     Without a real trailing marker, preflight must report 'no marker' rather
     than picking up the in-body example.
     """
-    body = (
-        PHASE_BODY
-        + textwrap.dedent(
-            """
+    body = PHASE_BODY + textwrap.dedent(
+        """
 
             ## Notes
 
@@ -125,7 +123,6 @@ def test_preflight_marker_in_body_does_not_falsely_validate(tmp_path):
             <!-- reviewed: 2025-12-02 @ fedcba9876543210fedcba9876543210fedcba98 -->
             ```
             """
-        )
     )
     plan = _scratch_plan(tmp_path, body)
     assert read_marker(plan) is None
@@ -136,10 +133,8 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
     """Same scenario, but with a real trailing marker. The conductor must hash
     against the body (in-body examples included) and accept.
     """
-    body = (
-        PHASE_BODY
-        + textwrap.dedent(
-            """
+    body = PHASE_BODY + textwrap.dedent(
+        """
 
             ## Notes
 
@@ -147,7 +142,6 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
 
                 <!-- reviewed: 2025-12-01 @ 0123456789abcdef0123456789abcdef01234567 -->
             """
-        )
     )
     plan = _scratch_plan(tmp_path, body)
     write_marker(plan)
@@ -309,3 +303,67 @@ def test_run_preflight_resume_without_marker_still_hard_stops(tmp_path):
     assert result.status == "preflight_fail"
     assert result.summary == "no review marker"
     assert read_marker(plan) is None  # still unmarked
+
+
+# ---------------------------------------------------------------------------
+# /review-plan auto-fix tier — `marker_pending` preflight regression (Phase 3)
+#
+# After a `/review-plan --auto-fix=trivial` run, the applier records
+# `marker_pending` in its own manifest at .review-plan/auto-fix-<unix>.json
+# and applies prose edits, but does NOT write a real `<!-- reviewed: ... -->`
+# marker to the plan file. /conduct preflight MUST reject such a plan as
+# unmarked — the auto-fix tier never grants /conduct eligibility on its own.
+# Only the normal /review-plan Step 6 marker write (after user yes/waive)
+# unblocks preflight.
+# ---------------------------------------------------------------------------
+
+
+def test_run_preflight_rejects_plan_with_marker_pending_manifest(tmp_path):
+    """Simulate a post-auto-fix workspace: the plan has prose edits applied
+    and a `.review-plan/auto-fix-<unix>.json` manifest with
+    `status: marker_pending`, but no real marker line. Preflight MUST
+    reject as unmarked — the auto-fix tier never grants /conduct
+    eligibility on its own.
+    """
+    repo = _git_init(tmp_path)
+    plan = repo / "20260516-scratch.md"
+    plan.write_text(textwrap.dedent(PHASE_BODY))
+    # Simulate the applier's manifest write WITHOUT a real marker.
+    rp_dir = repo / ".review-plan"
+    rp_dir.mkdir()
+    (rp_dir / "auto-fix-1715000000.json").write_text(
+        '[{"kind":"prose_typo","file":"20260516-scratch.md","line":3,'
+        '"commit_sha":"deadbeef","before_sha":"cafebabe",'
+        '"status":"marker_pending"}]\n'
+    )
+
+    result = run_preflight(_opts(plan, resume=False, repo=repo))
+
+    assert result is not None
+    assert result.status == "preflight_fail"
+    assert result.summary == "no review marker"
+
+
+def test_run_preflight_accepts_plan_after_acceptance_marker_write(tmp_path):
+    """Round-trip: the auto-fix prose edits land, the manifest records
+    marker_pending, the user accepts and /review-plan Step 6 calls
+    write_marker, then preflight accepts the plan.
+    """
+    repo = _git_init(tmp_path)
+    plan = repo / "20260516-scratch.md"
+    plan.write_text(textwrap.dedent(PHASE_BODY))
+    rp_dir = repo / ".review-plan"
+    rp_dir.mkdir()
+    (rp_dir / "auto-fix-1715000000.json").write_text(
+        '[{"kind":"prose_typo","file":"20260516-scratch.md","line":3,'
+        '"commit_sha":"deadbeef","before_sha":"cafebabe",'
+        '"status":"marker_pending"}]\n'
+    )
+    # Acceptance step.
+    sha = write_marker(plan)
+
+    result = run_preflight(_opts(plan, resume=False, repo=repo))
+
+    assert result is None  # preflight passes
+    assert read_marker(plan) == (read_marker(plan)[0], sha)
+    assert marker_is_stale(plan) is False

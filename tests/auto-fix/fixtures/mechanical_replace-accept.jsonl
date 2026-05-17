@@ -1,0 +1,1 @@
+{"schema_version":2,"findings":[{"lens":"logic","severity":"Minor","category":"style","file":"a.py","line":1,"summary":"replace literal","evidence":"x","suggestion":"y","auto_fix":{"kind":"mechanical_replace","before":"foo = 1\n","after":"foo = 2\n","scope":"file"},"auto_fix_status":"would_apply"}]}

@@ -1,0 +1,1 @@
+{"lens":"logic","severity":"Minor","category":"style","file":"src/foo.py","line":7,"summary":"typo","evidence":"docstring says recieve","suggestion":"fix spelling","auto_fix":{"kind":"docstring_typo","before":123,"after":"receive","scope":"file"}}
