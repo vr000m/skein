@@ -1,6 +1,6 @@
 ---
 name: review-plan
-description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches four Codex review lenses via parallel spawn_agent workers when available, with sequential in-session fallback. Cost: three high-reasoning gpt-5.4 lenses + one cheap gpt-5.4-mini factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
+description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches four Codex review lenses via parallel spawn_agent workers when available, with sequential in-session fallback. Cost: three high-reasoning judgment lenses plus one lower-effort factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
 argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
 ---
 
@@ -25,20 +25,20 @@ Close every spawned lens agent after its final report is captured. Keep an agent
 
 If `spawn_agent` is unavailable in the current Codex environment, do not fail the review. Run the same four lens prompts sequentially in-session, using the same finding schema and merge logic. Because this fallback reuses the parent session, describe it as **best-effort context isolation** and continue to rely only on the plan text and verified repo facts.
 
-The four lenses and their default Codex model mapping:
+The four lenses and their Codex routing hints:
 
-| Lens | Default model | Scope |
-|------|---------------|-------|
-| `architecture` | `gpt-5.4` | Patterns, coupling, integration seams |
-| `sequencing` | `gpt-5.4` | Task order, hidden dependencies, missing migrations/config |
-| `spec-and-testing` | `gpt-5.4` | Review Focus, RFC/spec references, test coverage gaps |
-| `codebase-claims` | `gpt-5.4-mini` | Verify every file/API/dependency the plan references actually exists |
+| Lens | Routing hint | Scope |
+|------|--------------|-------|
+| `architecture` | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Patterns, coupling, integration seams |
+| `sequencing` | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Task order, hidden dependencies, missing migrations/config |
+| `spec-and-testing` | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Review Focus, RFC/spec references, test coverage gaps |
+| `codebase-claims` | Inherit the harness-selected model; request `reasoning_effort=low` when supported | Verify every file/API/dependency the plan references actually exists |
 
-If a requested model override is unavailable, use the closest supported Codex model in the same reasoning/cost tier.
+Do not set a concrete `model` override unless the user explicitly asks for one or the current Codex runtime requires it. Let the harness select the current default model for each subagent, and express this skill's intent through reasoning-effort hints instead of version-pinned model names.
 
 ## Cost
 
-A `/review-plan` run costs three high-reasoning `gpt-5.4` lenses (`architecture`, `sequencing`, `spec-and-testing`) plus one cheap `gpt-5.4-mini` factual lens (`codebase-claims`). This is deliberately above deep-review's tier for architecture: deep-review's architecture lens runs at the balanced tier, but plan-level architecture review must hold the entire plan structure in working memory and reason about phase sequencing and unstated assumptions, which is harder than diff-level architecture review. The cost is real, but the rework averted by catching plan-level mistakes before implementation justifies it. `codebase-claims` stays at the cheaper tier because verifying paths, APIs, and dependencies is factual lookup rather than extended reasoning.
+A `/review-plan` run costs three high-reasoning judgment lenses (`architecture`, `sequencing`, `spec-and-testing`) plus one lower-effort factual lens (`codebase-claims`). This is deliberately above deep-review's tier for architecture: deep-review's architecture lens runs at the balanced tier, but plan-level architecture review must hold the entire plan structure in working memory and reason about phase sequencing and unstated assumptions, which is harder than diff-level architecture review. The cost is real, but the rework averted by catching plan-level mistakes before implementation justifies it. `codebase-claims` stays at the lower-effort tier because verifying paths, APIs, and dependencies is factual lookup rather than extended reasoning.
 
 ## When to Run
 
@@ -74,8 +74,8 @@ Also load repo-root checklist material if present, especially `AGENTS.md` review
 
 After input resolution is complete, print a single-line run summary before running lenses. Make the dispatch path observable:
 
-- Spawned path: say `Using parallel clean-context lens workers via spawn_agent` and list the model mapping (`architecture=gpt-5.4`, `sequencing=gpt-5.4`, `spec-and-testing=gpt-5.4`, `codebase-claims=gpt-5.4-mini`).
-- Fallback path: say `Using sequential in-session lenses; context isolation is best-effort because spawn_agent is unavailable` and list the same model mapping.
+- Spawned path: say `Using parallel clean-context lens workers via spawn_agent` and list the routing hints (`architecture=high`, `sequencing=high`, `spec-and-testing=high`, `codebase-claims=low`; model inherited from harness default).
+- Fallback path: say `Using sequential in-session lenses; context isolation is best-effort because spawn_agent is unavailable` and list the same routing hints.
 
 Do not ask for an additional confirmation after the run summary; proceed immediately unless the user interrupts.
 
@@ -87,7 +87,7 @@ When `spawn_agent` is unavailable, run the same lens prompts sequentially in the
 
 The lens prompt bodies below are the **byte-identical generic blocks** shared with `.claude/skills/review-plan/SKILL.md`. The HTML-comment markers around each block are stable so reviewers can compare them directly across `.claude/` and `.codex/`. Only the dispatch idiom (Agent vs spawn_agent) legitimately diverges between the two harnesses.
 
-#### Architecture Lens (model: `gpt-5.4`)
+#### Architecture Lens (reasoning: high)
 
 <!-- BEGIN GENERIC LENS PROMPT: architecture -->
 ```
@@ -147,7 +147,7 @@ If the plan is architecturally sound, say so. Do not manufacture findings. A cle
 ```
 <!-- END GENERIC LENS PROMPT: architecture -->
 
-#### Sequencing Lens (model: `gpt-5.4`)
+#### Sequencing Lens (reasoning: high)
 
 <!-- BEGIN GENERIC LENS PROMPT: sequencing -->
 ```
@@ -206,7 +206,7 @@ If the plan sequencing is sound, say so. Do not manufacture findings. A clean le
 ```
 <!-- END GENERIC LENS PROMPT: sequencing -->
 
-#### Spec-and-Testing Lens (model: `gpt-5.4`)
+#### Spec-and-Testing Lens (reasoning: high)
 
 <!-- BEGIN GENERIC LENS PROMPT: spec-and-testing -->
 ```
@@ -267,7 +267,7 @@ If the plan satisfies its referenced specs and has proportional test coverage, s
 ```
 <!-- END GENERIC LENS PROMPT: spec-and-testing -->
 
-#### Codebase-Claims Lens (model: `gpt-5.4-mini`)
+#### Codebase-Claims Lens (reasoning: low)
 
 <!-- BEGIN GENERIC LENS PROMPT: codebase-claims -->
 ```
@@ -511,6 +511,6 @@ The marker is idempotent: replacing an existing marker on otherwise unchanged co
 - Review from the plan text and the codebase, not from unstated parent-conversation context.
 - Spawned lens workers must not receive parent conversation context; pass only plan content, Review Focus, repo-root checklist material, and the lens prompt.
 - Close spawned lens agents after final reports are captured.
-- Use the model assignments above (`gpt-5.4` for the three judgment lenses, `gpt-5.4-mini` for `codebase-claims`) or the closest supported Codex model in the same reasoning/cost tier.
+- Use the routing hints above: inherit the harness-selected model, request high reasoning for the three judgment lenses, and request low reasoning for `codebase-claims` when the runtime supports reasoning-effort hints.
 - This skill blocks - the user waits for all four lenses to return before findings are presented.
 - If the plan references external systems (APIs, services, databases), note that the review can only verify what is in the codebase, not external availability.

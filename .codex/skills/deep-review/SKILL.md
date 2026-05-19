@@ -83,18 +83,19 @@ If the chosen plan includes `## Review Focus`, use it to:
 If there is no plan or no `Review Focus` section, run the non-spec lenses only and skip spec
 compliance unless the user explicitly supplies spec/RFC references in the prompt.
 
-## Lens Model Map
+## Lens Routing Map
 
-Use Codex-native model names and keep the mapping tiered by analysis depth. If a requested model is
-unavailable, use the closest supported Codex model in the same reasoning tier.
+Let the Codex harness select the concrete model unless the user explicitly asks for a model override
+or the current runtime requires one. Keep this skill's routing tiered by analysis depth through
+reasoning-effort hints instead of version-pinned model names.
 
-| Lens | Default model | Why |
-|------|---------------|-----|
-| Logic | `gpt-5.4` | Deep reasoning for edge cases, state transitions, and failure paths |
-| Security | `gpt-5.4` | High-impact findings deserve the strongest analysis available |
-| Spec compliance | `gpt-5.4` | Cross-referencing standards requires careful reading |
-| Architecture | `gpt-5.4-mini` | Pattern and compatibility analysis with lighter reasoning cost |
-| Documentation | `gpt-5.4-mini` | Mostly mechanical drift detection across docs and plans |
+| Lens | Routing hint | Why |
+|------|--------------|-----|
+| Logic | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Deep reasoning for edge cases, state transitions, and failure paths |
+| Security | Inherit the harness-selected model; request `reasoning_effort=high` when supported | High-impact findings deserve strong analysis |
+| Spec compliance | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Cross-referencing standards requires careful reading |
+| Architecture | Inherit the harness-selected model; request `reasoning_effort=medium` when supported | Pattern and compatibility analysis with balanced reasoning cost |
+| Documentation | Inherit the harness-selected model; request `reasoning_effort=low` when supported | Mostly mechanical drift detection across docs and plans |
 
 ## Lens Prompts
 
@@ -225,7 +226,7 @@ If the documentation is up to date, say so concisely.
 2. Read repo-root `AGENTS.md` from the merge base if it exists there and load the `## Review
    Checklist` section if present.
 3. After input resolution is complete, print a single-line run summary before spawning lenses.
-   Include the lens list, model mapping, and any skipped lenses. Do not ask for an additional
+   Include the lens list, routing hints, and any skipped lenses. Do not ask for an additional
    confirmation after this summary; proceed immediately unless the user interrupts.
 4. Print the resolved-range pre-dispatch banner before spawning any lens agents. The banner is the scope-confirmation gate.
 5. If subagent delegation is available, spawn all enabled lens subagents with clean context. Use
@@ -295,11 +296,11 @@ Suggested schema:
   "review_focus_source": "docs/dev_plans/20260317-feature-deep-review.md",
   "review_focus_hash": "sha256:...",
   "lenses": {
-    "logic": { "status": "completed", "model": "gpt-5.4", "findings": [] },
-    "security": { "status": "timed_out", "model": "gpt-5.4", "findings": [] },
+    "logic": { "status": "completed", "model": "harness-default", "reasoning_effort": "high", "findings": [] },
+    "security": { "status": "timed_out", "model": "harness-default", "reasoning_effort": "high", "findings": [] },
     "spec": { "status": "skipped", "reason": "no specs in Review Focus" },
-    "architecture": { "status": "completed", "model": "gpt-5.4-mini", "findings": [] },
-    "documentation": { "status": "completed", "model": "gpt-5.4-mini", "findings": [] }
+    "architecture": { "status": "completed", "model": "harness-default", "reasoning_effort": "medium", "findings": [] },
+    "documentation": { "status": "completed", "model": "harness-default", "reasoning_effort": "low", "findings": [] }
   }
 }
 ```
@@ -455,12 +456,12 @@ not to.
 
 ## Run Summary
 
-Show this before spawning lenses, with the actual models that will run. This summary is
+Show this before spawning lenses, with the routing hints that will run. This summary is
 informational after setup, not a second confirmation prompt:
 
 ```text
 Deep review will run 4 lenses:
-  Logic (gpt-5.4), Security (gpt-5.4), Architecture (gpt-5.4-mini), Documentation (gpt-5.4-mini)
+  Logic (high), Security (high), Architecture (medium), Documentation (low); model inherited from harness default
   Spec compliance: skipped (no specs in Review Focus)
 ```
 
