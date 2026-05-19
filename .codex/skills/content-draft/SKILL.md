@@ -43,7 +43,7 @@ The actual drafting and authenticity pass involve reading reference files and it
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with a Codex model such as `gpt-5.4-mini` to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and a low reasoning-effort hint when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
 
 ````
 You are drafting written content (a TIL or blog post) from a session summary provided below.

@@ -42,7 +42,7 @@ Before delegating, read the code file(s) identified in Step 1 from the workspace
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with a Codex model such as `gpt-5.4` to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and a high reasoning-effort hint when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
 
 ````
 You are performing a spec compliance check — mapping normative requirements from a specification against code to produce a structured compliance report.
