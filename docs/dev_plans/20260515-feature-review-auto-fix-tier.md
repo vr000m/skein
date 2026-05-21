@@ -1,6 +1,7 @@
 # Task: Trivial-tier auto-fix for /deep-review and /review-plan
 
-**Status**: Complete (merged 2026-05-17 as `f2d80ce`; promoted to global)
+**Status**: Complete (PR [#23](https://github.com/vr000m/skills.md/pull/23) merged 2026-05-17 as `f2d80ce`; promoted to global)
+**Follows:** [20260317-feature-deep-review](20260317-feature-deep-review.md)
 **Assigned to**: tbd
 **Priority**: Medium
 **Branch**: feature/review-auto-fix-tier

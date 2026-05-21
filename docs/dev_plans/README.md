@@ -7,9 +7,7 @@ parser can pick up the slug.
 
 ## In Progress / Partially Shipped
 
-| Date | Type | Name | Status | Branch | Plan |
-|------|------|------|--------|--------|------|
-| 2026-04-14 | chore | managed-agents-alignment | In Progress | feature/managed-agents-alignment | [plan](20260414-chore-managed-agents-alignment.md) |
+_None._
 
 ## Planned
 
@@ -54,4 +52,6 @@ Smaller features and fixes that didn't warrant a standalone plan markdown:
 
 ## Paused / Abandoned
 
-_None._
+| Date | Type | Name | Status | Branch | Plan |
+|------|------|------|--------|--------|------|
+| 2026-04-14 | chore | managed-agents-alignment | Paused (initial PR [#10](https://github.com/vr000m/skills.md/pull/10) merged; broader work paused) | feature/managed-agents-alignment | [plan](20260414-chore-managed-agents-alignment.md) |
