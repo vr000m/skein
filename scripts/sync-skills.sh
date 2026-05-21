@@ -56,9 +56,9 @@ sync_skill() {
 	fi
 	mkdir -p "$target_dir"
 	if [[ "$skill" == "content-review" ]]; then
-		rsync -a --delete --exclude='references/' "$source_dir/" "$target_dir/"
+		rsync -a --delete --exclude='references/' --exclude='__pycache__' "$source_dir/" "$target_dir/"
 	else
-		rsync -a --delete "$source_dir/" "$target_dir/"
+		rsync -a --delete --exclude='__pycache__' "$source_dir/" "$target_dir/"
 	fi
 }
 

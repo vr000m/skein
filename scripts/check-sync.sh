@@ -26,7 +26,7 @@ for skill in "${managed_skills[@]}"; do
 	elif [[ ! -d "$ROOT_DIR/.codex/skills/$skill" ]]; then
 		echo "drift: .codex/skills/$skill missing from repo but exists globally"
 		CODEX_DIFF=1
-	elif ! diff -ru --exclude='content-guidelines.md' "$GLOBAL_CODEX_SKILLS_DIR/$skill" "$ROOT_DIR/.codex/skills/$skill" >/dev/null; then
+	elif ! diff -ru --exclude='content-guidelines.md' --exclude='__pycache__' "$GLOBAL_CODEX_SKILLS_DIR/$skill" "$ROOT_DIR/.codex/skills/$skill" >/dev/null; then
 		echo "drift: .codex/skills/$skill differs from global authority"
 		CODEX_DIFF=1
 	fi
@@ -36,7 +36,7 @@ for skill in "${managed_skills[@]}"; do
 	elif [[ ! -d "$ROOT_DIR/.claude/skills/$skill" ]]; then
 		echo "drift: .claude/skills/$skill missing from repo but exists globally"
 		CLAUDE_DIFF=1
-	elif ! diff -ru --exclude='content-guidelines.md' "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" >/dev/null; then
+	elif ! diff -ru --exclude='content-guidelines.md' --exclude='__pycache__' "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" >/dev/null; then
 		echo "drift: .claude/skills/$skill differs from global authority"
 		CLAUDE_DIFF=1
 	fi
@@ -53,7 +53,7 @@ if [[ -n "${CLAUDE_ONLY_SKILLS// /}" ]]; then
 		elif [[ ! -d "$ROOT_DIR/.claude/skills/$skill" ]]; then
 			echo "drift: .claude/skills/$skill missing from repo but exists globally"
 			CLAUDE_DIFF=1
-		elif ! diff -ru "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" >/dev/null; then
+		elif ! diff -ru --exclude='__pycache__' "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" >/dev/null; then
 			echo "drift: .claude/skills/$skill differs from global authority"
 			CLAUDE_DIFF=1
 		fi
