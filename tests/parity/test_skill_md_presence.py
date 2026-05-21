@@ -38,6 +38,7 @@ MANAGED_SKILLS = [
     "deep-review",
     "dev-plan",
     "fan-out",
+    "plan-view",
     "review-plan",
     "rfc-finder",
     "spec-compliance",

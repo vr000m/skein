@@ -43,7 +43,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 	fi
 fi
 
-MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out review-plan rfc-finder spec-compliance update-docs}"
+MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out plan-view review-plan rfc-finder spec-compliance update-docs}"
 
 PARITY_DIFF=0
 

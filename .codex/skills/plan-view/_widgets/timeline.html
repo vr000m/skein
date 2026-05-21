@@ -1,0 +1,94 @@
+<!--
+  timeline.html — vertical event timeline with coloured dots.
+  Unifies the architecture history timeline and the dev-plan findings/conduct
+  timeline. Assumes base.css is loaded.
+
+  Input shape:
+    {
+      "title": "Conduct + verification timeline",   // optional <h3>
+      "events": [
+        {
+          "date": "2026-05-06",        // free-form label (date, "Phase 2", "Phase 1 · Completed …")
+          "label": "Plan drafted on branch feat/bot-harness-decoupling",
+          "kind": "commit",            // see kind table below
+          "short_sha": "96191b0",      // optional
+          "href": "../foo.html",       // optional — wraps label in <a>
+          "plan_link": {               // optional — appended pill link
+            "text": "20260506-feature-bot-harness-decoupling",
+            "href": "../plans/…html"
+          }
+        }
+      ]
+    }
+
+  `kind` values and their dot colour:
+    commit     → green   (default for ordinary code progress)
+    finding    → amber   (review finding raised)
+    fixed      → green   (review finding fixed)
+    phase      → blue    (phase boundary)
+    review     → purple  (deep-review / multi-lens checkpoint)
+    live       → teal    (live-production verification)
+    race       → amber   (race-condition bug fix)
+    harness    → red     (harness / cross-cutting milestone)
+    neutral    → grey    (catch-all)
+
+  Placeholders:
+    {{TITLE}}            — optional, omit the <h3> element if empty
+    {{EVENTS_HTML}}      — concatenated <div class="event …"> blocks
+
+  Per-event template:
+    <div class="event {{KIND}}">
+      <span class="when">{{DATE}}</span>
+      <span class="what">{{LABEL}}{{SHA_SPAN}}{{PLAN_LINK_SPAN}}</span>
+    </div>
+
+  Per-event SHA span (optional):
+    <span class="sha">{{SHORT_SHA}}</span>
+
+  Per-event plan-link span (optional):
+    <a href="{{HREF}}" class="plan-link">{{TEXT}}</a>
+-->
+<section class="timeline-wrapper">
+  <style>
+    .timeline { position: relative; padding-left: 32px; margin: 16px 0; }
+    .timeline::before {
+      content: ""; position: absolute; left: 11px; top: 4px; bottom: 4px;
+      width: 2px; background: var(--border);
+    }
+    .timeline .event { position: relative; margin-bottom: 20px; font-size: 13px; }
+    .timeline .event::before {
+      content: ""; position: absolute; left: -27px; top: 6px;
+      width: 12px; height: 12px; border-radius: 50%; background: var(--green);
+      border: 2px solid var(--bg);
+    }
+    .timeline .event.commit::before  { background: var(--green); }
+    .timeline .event.finding::before { background: var(--amber); }
+    .timeline .event.fixed::before   { background: var(--green); }
+    .timeline .event.phase::before   { background: var(--blue); }
+    .timeline .event.review::before  { background: var(--purple); }
+    .timeline .event.live::before    { background: var(--teal); }
+    .timeline .event.race::before    { background: var(--amber); }
+    .timeline .event.harness::before { background: var(--red); }
+    .timeline .event.neutral::before { background: var(--grey); }
+    .timeline .event .when {
+      font-size: 11px; color: var(--fg-muted); display: block; margin-bottom: 2px;
+    }
+    .timeline .event .what { color: var(--fg); }
+    .timeline .event .what strong { color: var(--fg); }
+    .timeline .event .sha {
+      font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent);
+      background: var(--bg-card); padding: 1px 5px; border-radius: 3px;
+      margin-left: 4px;
+    }
+    .timeline .event .plan-link {
+      display: inline-block; margin-left: 8px; font-size: 11px;
+      padding: 1px 7px; background: var(--bg-card); border-radius: 3px;
+      font-family: ui-monospace, monospace;
+    }
+  </style>
+
+  <h3>{{TITLE}}</h3>
+  <div class="timeline">
+    {{EVENTS_HTML}}
+  </div>
+</section>

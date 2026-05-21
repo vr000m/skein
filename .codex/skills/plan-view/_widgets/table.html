@@ -1,0 +1,148 @@
+<!--
+  table.html — searchable table with optional prefix/value chip filter.
+  Assumes base.css is loaded.
+
+  Input shape:
+    {
+      "id": "routes",                  // unique per page; used to scope IDs
+      "search": true,                  // include search input
+      "search_placeholder": "Search routes...",
+      "filter": {                      // optional chip-filter strip
+        "column": "method",            // matches a `columns[].key`
+        "mode": "exact",               // "exact" | "prefix"
+        "values": ["GET", "POST", "SSE"]
+      },
+      "columns": [
+        { "key": "method", "label": "Method", "width": "60px",
+          "cell_class": "method" },                // optional class wrapping cell content
+        { "key": "route",  "label": "Route" },
+        { "key": "purpose","label": "Purpose" }
+      ],
+      "rows": [
+        { "method": "GET", "route": "/", "purpose": "Dashboard …" },
+        ...
+      ]
+    }
+
+  Filter modes:
+    exact   → row matches when cell.text === chip.value (e.g. HTTP method)
+    prefix  → row matches when cell.text.startsWith(chip.value) (e.g. env var
+              prefixes like "LLM_", "KODA_")
+
+  Placeholders:
+    {{TABLE_ID}}, {{SEARCH_PLACEHOLDER}}, {{SEARCH_BAR_HTML}},
+    {{FILTER_CHIPS_HTML}}, {{HEAD_HTML}}, {{ROWS_HTML}}, {{FILTER_COLUMN_INDEX}},
+    {{FILTER_MODE}}
+
+  The script at the bottom is scoped by `{{TABLE_ID}}` so multiple tables can
+  coexist on the same page.
+-->
+<section class="searchable-table" data-table-id="{{TABLE_ID}}">
+  <style>
+    .searchable-table .search-bar {
+      display: flex; gap: 10px; margin: 16px 0; align-items: center; flex-wrap: wrap;
+    }
+    .searchable-table .search-bar input {
+      flex: 1; min-width: 200px; padding: 8px 12px; background: var(--bg-elev);
+      border: 1px solid var(--border); border-radius: 6px; color: var(--fg);
+      font-family: inherit; font-size: 13px;
+    }
+    .searchable-table .search-bar input:focus { outline: none; border-color: var(--accent); }
+    .searchable-table .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+    .searchable-table .filter-chips button {
+      background: var(--bg-elev); border: 1px solid var(--border);
+      color: var(--fg-dim); padding: 5px 12px; border-radius: 999px;
+      cursor: pointer; font-family: inherit; font-size: 12px; transition: all 0.1s;
+    }
+    .searchable-table .filter-chips button:hover { color: var(--fg); border-color: var(--border-hi); }
+    .searchable-table .filter-chips button.active {
+      background: var(--accent); color: white; border-color: var(--accent);
+    }
+    .searchable-table table.data {
+      width: 100%; border-collapse: collapse; font-size: 12.5px;
+      background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden;
+    }
+    .searchable-table table.data th,
+    .searchable-table table.data td {
+      text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border);
+    }
+    .searchable-table table.data th {
+      color: var(--fg-dim); font-weight: 600; font-size: 11.5px;
+      background: var(--bg-deep); text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .searchable-table table.data tr:last-child td { border-bottom: none; }
+    .searchable-table table.data tr.hidden { display: none; }
+    .searchable-table table.data code { background: var(--bg-card); }
+  </style>
+
+  <div class="search-bar">
+    {{SEARCH_BAR_HTML}}
+    <!-- search input template:
+         <input type="search" class="st-search" placeholder="{{SEARCH_PLACEHOLDER}}"> -->
+
+    {{FILTER_CHIPS_HTML}}
+    <!-- chips template:
+         <div class="filter-chips">
+           <button class="active" data-value="all">all</button>
+           <button data-value="GET">GET</button>
+           …
+         </div>
+    -->
+  </div>
+
+  <table class="data">
+    <thead>{{HEAD_HTML}}</thead>
+    <tbody>{{ROWS_HTML}}</tbody>
+  </table>
+
+  <script>
+  (function() {
+    var root = document.querySelector('.searchable-table[data-table-id="{{TABLE_ID}}"]');
+    if (!root) return;
+    var search = root.querySelector('.st-search');
+    var chips  = root.querySelector('.filter-chips');
+    var rows   = root.querySelectorAll('tbody tr');
+    var filterColIndex = {{FILTER_COLUMN_INDEX}};   // -1 if no filter
+    var filterMode = "{{FILTER_MODE}}";             // "exact" | "prefix" | "none"
+    var q = '';
+    var f = 'all';
+
+    function apply() {
+      rows.forEach(function(row) {
+        var text = row.textContent.toLowerCase();
+        var queryMatch = !q || text.indexOf(q) !== -1;
+        var filterMatch = true;
+        if (filterColIndex >= 0 && f !== 'all') {
+          var cellText = (row.children[filterColIndex] || {}).textContent || '';
+          cellText = cellText.trim();
+          if (filterMode === 'prefix') {
+            filterMatch = cellText.indexOf(f) === 0;
+          } else {
+            filterMatch = cellText === f;
+          }
+        }
+        row.classList.toggle('hidden', !(queryMatch && filterMatch));
+      });
+    }
+
+    if (search) {
+      search.addEventListener('input', function(e) {
+        q = e.target.value.toLowerCase();
+        apply();
+      });
+    }
+    if (chips) {
+      chips.querySelectorAll('button').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          chips.querySelectorAll('button').forEach(function(b) {
+            b.classList.toggle('active', b === btn);
+          });
+          f = btn.dataset.value;
+          apply();
+        });
+      });
+    }
+  })();
+  </script>
+</section>
