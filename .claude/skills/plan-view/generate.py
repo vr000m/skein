@@ -490,7 +490,12 @@ def _git(args: list[str], cwd: Path) -> str:
 
 def collect_git_data(plan: Plan, repo_root: Path) -> None:
     """Populate plan.commits, plan.created (if empty), plan.last_touched."""
-    rel = plan.path.relative_to(repo_root) if plan.path.is_absolute() else plan.path
+    try:
+        rel = plan.path.relative_to(repo_root) if plan.path.is_absolute() else plan.path
+    except ValueError:
+        # Plan lives outside the discovered repo root (unusual layouts, symlinks).
+        # Skip git enrichment rather than crash; the rest of the render still works.
+        return
     raw = _git(
         ["log", "--follow", "--format=%H%x1f%aI%x1f%s", "--", str(rel)],
         cwd=repo_root,
@@ -526,6 +531,11 @@ def find_repo_root(start: Path) -> Path:
 
 def link_edges(plans: dict[str, Plan]) -> None:
     """Populate edges_in on each target plan, and set fixed_by where applicable."""
+    # Reset derived state so the function is idempotent if called more than once
+    # (e.g. tests, future watch mode). Without this, edges_in accumulates dupes.
+    for p in plans.values():
+        p.edges_in.clear()
+        p.fixed_by = None
     for src_slug, src in plans.items():
         for edge in src.edges_out:
             target = plans.get(edge.target_slug)
@@ -572,6 +582,16 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _BOLD_RE = re.compile(r"\*\*([^*\n]+)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_SAFE_URL_RE = re.compile(r"^(?:https?://|mailto:|/|\.{0,2}/|[^:]*$)", re.I)
+
+
+def _safe_href(url: str) -> str:
+    # Block javascript:, data:, vbscript:, etc. Allow http(s), mailto, and
+    # path-relative URLs. Returns "#" for anything else so the link still
+    # renders as inert text rather than a working sink.
+    return url if _SAFE_URL_RE.match(url) else "#"
+
+
 _FENCE_RE = re.compile(r"^```(\w*)\s*$")
 
 
@@ -581,7 +601,9 @@ def _inline_md(text: str) -> str:
     text = _BOLD_RE.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
     text = _ITALIC_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
     text = _LINK_RE.sub(
-        lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>',
+        lambda m: (
+            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">{m.group(1)}</a>'
+        ),
         text,
     )
     return text
