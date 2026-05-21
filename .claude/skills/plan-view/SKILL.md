@@ -1,6 +1,6 @@
 ---
 name: plan-view
-description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Use when the user says "plan view", "render dev plans", "render plan dashboard", "/plan-view", or asks for a visual index of dev_plans/.
+description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Also produces opinionated LLM-rendered "rich" single-plan views via `--rich` (with parallel section-fanout for large plans). Use when the user says "plan view", "render dev plans", "render plan dashboard", "render rich plan view", "/plan-view", or asks for a visual index of dev_plans/.
 argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich] [--rich-assemble]
 ---
 
@@ -98,7 +98,10 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
          "slug": "...",
          "strategy": "sections",
          "title": "...",
-         "aggregate_status": "pending|partial|cached",
+         "aggregate_status": "cached|partial|pending",
+         //   cached  — all fragments fresh AND assembled .rich.html embeds matching sha
+         //   partial — some fragments still pending; harness renders them, then runs --rich-assemble
+         //   pending — all fragments fresh, but assembled .rich.html missing/stale; harness runs --rich-assemble only
          "source_path": "...",
          "source_md_sha": "...",
          "output_path": "<out>/plan-<slug>.rich.html",
@@ -124,7 +127,7 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
 
 2. **Agent harness consumes the manifest.**
    - For each `strategy: "single"` pending entry: spawn one subagent with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
-   - For each `strategy: "sections"` entry with `aggregate_status != "cached"`: spawn one subagent per `pending` section **in parallel** (no cap). Each subagent reads its section markdown (`section.markdown_excerpt` is just a preview — the subagent reads `source_path` and slices the section, OR the harness passes the section markdown directly). Each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->` so the next `--rich` run skips it.
+   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap) — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
 3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
 

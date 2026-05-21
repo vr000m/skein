@@ -603,7 +603,8 @@ def _inline_md(text: str) -> str:
     text = _ITALIC_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
     text = _LINK_RE.sub(
         lambda m: (
-            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">{m.group(1)}</a>'
+            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">'
+            f"{html.escape(m.group(1), quote=False)}</a>"
         ),
         text,
     )
@@ -1213,11 +1214,17 @@ def build_rich_manifest(
                 }
             )
 
-        aggregate_status = (
-            "cached"
-            if (all_cached and existing == plan.sha256)
-            else ("partial" if all_cached else "pending")
-        )
+        # State machine for sections-strategy plans:
+        #   cached  — all fragments fresh AND assembled .rich.html embeds matching sha
+        #   partial — some fragments still pending; the harness must render them
+        #   pending — all fragments fresh, but assembled .rich.html is missing/stale;
+        #             the harness must run `--rich-assemble` to stitch them
+        if all_cached and existing == plan.sha256:
+            aggregate_status = "cached"
+        elif not all_cached:
+            aggregate_status = "partial"
+        else:
+            aggregate_status = "pending"
         entries.append(
             {
                 "slug": slug,
@@ -1320,9 +1327,7 @@ def assemble_rich_sections(
 
         title = html.escape(plan.title or slug)
         sha_short = plan.sha256[:12]
-        rel_source = (
-            plan.path.relative_to(plans_dir.parent.parent) if False else plan.path.name
-        )
+        rel_source = plan.path.name
         bucket_chip = _chip(plan.bucket, plan.chip_colour)
         page = f"""<!doctype html>
 <html lang="en">
