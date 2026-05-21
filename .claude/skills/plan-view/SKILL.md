@@ -1,7 +1,7 @@
 ---
 name: plan-view
 description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Use when the user says "plan view", "render dev plans", "render plan dashboard", "/plan-view", or asks for a visual index of dev_plans/.
-argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore]
+argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich]
 ---
 
 # Plan View — HTML Dashboard for Dev-Plan Corpora
@@ -28,6 +28,7 @@ Options:
 | `--force` | off | Overwrite outputs even if the drift guard detects a hand-edit. |
 | `--stale-days N` | `30` | An `In Progress` plan whose last git-touch is > N days becomes a red **Stranded** chip. |
 | `--gitignore` | off | Write a `.gitignore` containing `*` in the output dir (opt-in). |
+| `--rich` | off | Emit `_rich_manifest.json` listing plans whose LLM-rendered single-plan view needs regeneration. See `--rich workflow` below. |
 
 The skill expects:
 - A directory of `.md` files (one per plan).
@@ -57,11 +58,51 @@ The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdo
 
 On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
 
+## `--rich` workflow
+
+The deterministic dashboard and per-plan pages cover corpus-level questions ("what's shipped, what's stranded, who references whom"). `--rich` adds an opinionated single-plan view for each plan that distils its content into tabs, SVG diagrams (state machines, today-vs-proposed comparisons), searchable tables, and findings timelines — the things markdown can't render. Inspired by the same Anthropic blog post on HTML in Claude Code, applied to a single dense document.
+
+Rich rendering is **not** done by `generate.py`. The Python generator is deterministic; rich rendering is interpretive and uses an LLM. The split:
+
+1. **Generator emits a manifest.** `--rich` writes `_rich_manifest.json` to the output dir. Each entry: `{slug, title, status, source_path, source_md_sha, output_path, widget_catalogue, bucket, existing_rich_sha}`. `status` is `cached` if the existing `plan-<slug>.rich.html` embeds a matching `plan-view-rich-source-sha256`, else `pending`.
+2. **Agent harness consumes the manifest.** For each `pending` entry, the harness (Claude Code / Codex) spawns a subagent with:
+   - The plan markdown at `source_path` (read it).
+   - The widget catalogue at `widget_catalogue` (= `_widgets/README.md`, which documents every available widget + its input shape).
+   - An output contract: produce a single self-contained HTML file at `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">` so the next `--rich` run skips it.
+3. **Caching.** Rich pages regenerate **only when the plan's own markdown sha changes** — NOT when corpus state shifts. Single-plan rich pages don't depend on `edges_in` / `fixed_by` (those live in the deterministic per-plan page). This keeps LLM cost proportional to actual plan edits, not regeneration cadence.
+
+The widget toolkit in `_widgets/` is the constraint surface. Widgets:
+- `base.css` — shared variables, chip/card/section primitives, tab scaffold.
+- `tabs.html` — CSS-only tab container (radio + `:checked` + `~`).
+- `state-machine.svg.html` — finite-state machine with kind-coloured states and curved transitions.
+- `compare.svg.html` — today-vs-proposed side-by-side comparison.
+- `timeline.html` — unified history / findings timeline.
+- `table.html` — searchable + chip-filterable table.
+
+Subagents pick widgets when the source has matching content (an ASCII state machine → `state-machine.svg.html`; a "Today vs Proposed" section → `compare.svg.html`) and fall back to rendered markdown for sections that don't map. Two runs against the same source produce visually-similar output, not byte-identical — drift guard accepts this and gates on source-sha only.
+
+### Suggested subagent prompt shape
+
+```
+Source: {plan markdown}
+Widget catalogue: {contents of _widgets/README.md plus each widget file}
+Output: single self-contained HTML at {output_path}.
+Constraints:
+  - Use widgets where the source has matching content; render markdown for the rest.
+  - Embed <meta name="plan-view-rich-source-sha256" content="{source_md_sha}">.
+  - Inline all CSS (single-file constraint). Inter font CDN link is fine.
+  - One tab per top-level H2 in the source, plus a final "Source" tab with the rendered markdown.
+Return: {"output_path": "...", "widgets_used": ["state-machine", "compare", ...], "fallback_sections": ["Risks", ...]}.
+```
+
+Cost note: rich rendering costs one LLM call per plan that changed. If the dev-plan corpus is kept in sync with the work (per project convention), this is roughly "one call per shipped plan", amortised across long stretches of cached regens.
+
 ## Reading order for maintainers
 
 - `parser.md` — regex catalogue and status lexicon. Edit when plan conventions evolve.
 - `generate.py` — single-file generator. Functions are ordered: arg parsing → plan parsing → git collection → drift guard → HTML rendering → main.
-- `template.html` / `plan-template.html` — HTML scaffolds with `{{PLACEHOLDER}}` substitution points. CSS is inline (single-file constraint).
+- `template.html` / `plan-template.html` — HTML scaffolds for deterministic dashboard + per-plan pages. CSS is inline (single-file constraint).
+- `_widgets/` — widget toolkit consumed by the `--rich` workflow. Each file has an HTML comment at the top documenting its input shape; `_widgets/README.md` is the catalogue.
 
 ## Design notes
 
@@ -83,4 +124,4 @@ On regeneration, if a generated file's embedded sha doesn't match the new render
 - **`/dev-plan`** — creates plans. `/plan-view` consumes them.
 - **`/review-plan`** — audits a single plan. `/plan-view` shows where that plan sits in the corpus.
 - **`/update-docs`** — keeps READMEs/CHANGELOGs in sync with code. Future versions could read `plan-view-source-sha256` meta tags to flag stale views.
-- **`/playground`** — different contract (interactive single-file with controls). Do not compose.
+- **`/playground`** — different contract (interactive single-file with controls). Do not compose: `--rich` deliberately uses its own constrained widget toolkit rather than routing through `playground`, because `--rich` needs deterministic-up-to-LLM-variance output gated on source-sha, while `playground` is exploratory and user-prompted.

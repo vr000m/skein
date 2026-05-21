@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import re
 import subprocess
 import sys
@@ -1051,6 +1052,61 @@ def write_with_drift_guard(
 
 
 # ---------------------------------------------------------------------------
+# Rich manifest
+# ---------------------------------------------------------------------------
+
+
+_RICH_SHA_RE = re.compile(
+    r'<meta name="plan-view-rich-source-sha256" content="([0-9a-f]+)"'
+)
+
+
+def _existing_rich_sha(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _RICH_SHA_RE.search(text)
+    return m.group(1) if m else None
+
+
+def build_rich_manifest(
+    plans: dict[str, Plan],
+    plans_dir: Path,
+    out_dir: Path,
+    skill_dir: Path,
+) -> list[dict]:
+    """Manifest of plans needing rich-mode (LLM-rendered) regeneration.
+
+    Rich pages are gated on the plan's own markdown sha (NOT the render_sha that
+    folds in corpus state) — the LLM input is the single plan markdown, so
+    corpus changes around it shouldn't trigger expensive re-renders.
+    """
+    entries: list[dict] = []
+    widgets_dir = skill_dir / "_widgets"
+    for slug, plan in sorted(plans.items()):
+        output_path = out_dir / f"plan-{slug}.rich.html"
+        existing = _existing_rich_sha(output_path)
+        status = "cached" if existing == plan.sha256 else "pending"
+        entries.append(
+            {
+                "slug": slug,
+                "title": plan.title,
+                "status": status,
+                "source_path": str(plan.path),
+                "source_md_sha": plan.sha256,
+                "output_path": str(output_path),
+                "widget_catalogue": str(widgets_dir / "README.md"),
+                "bucket": plan.bucket,
+                "existing_rich_sha": existing,
+            }
+        )
+    return entries
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1081,6 +1137,16 @@ def main(argv: list[str] | None = None) -> int:
         "--gitignore",
         action="store_true",
         help="Write a .gitignore with '*' in the output dir.",
+    )
+    ap.add_argument(
+        "--rich",
+        action="store_true",
+        help=(
+            "Emit _rich_manifest.json listing plans whose rich HTML (LLM-rendered "
+            "single-plan view) needs regeneration. The agent harness consumes the "
+            "manifest and produces plan-<slug>.rich.html per entry using the widget "
+            "toolkit in _widgets/. See SKILL.md '--rich workflow'."
+        ),
     )
     args = ap.parse_args(argv)
 
@@ -1186,6 +1252,39 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\n{len(plans)} plans · wrote {written} file(s) · refused {refused}")
     print(f"open: file://{out_dir}/index.html")
+
+    if args.rich:
+        rich_entries = build_rich_manifest(plans, plans_dir, out_dir, skill_dir)
+        manifest_path = out_dir / "_rich_manifest.json"
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "generated_at": datetime.now(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "git_head": git_head_sha,
+                    "widget_catalogue": str(skill_dir / "_widgets"),
+                    "entries": rich_entries,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        pending = sum(1 for e in rich_entries if e["status"] == "pending")
+        cached = sum(1 for e in rich_entries if e["status"] == "cached")
+        print(
+            f"\nrich manifest: {manifest_path}"
+            f"\n  {pending} plan(s) need rich regen · {cached} cached"
+        )
+        if pending:
+            print(
+                "  next: agent harness reads _rich_manifest.json and per pending entry "
+                "spawns a subagent with the widget catalogue + plan markdown, writing "
+                "the result to entry.output_path. See SKILL.md '--rich workflow'."
+            )
+
     return 0 if refused == 0 else 1
 
 
