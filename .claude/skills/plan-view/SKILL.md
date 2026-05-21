@@ -1,7 +1,7 @@
 ---
 name: plan-view
 description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Use when the user says "plan view", "render dev plans", "render plan dashboard", "/plan-view", or asks for a visual index of dev_plans/.
-argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich]
+argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich] [--rich-assemble]
 ---
 
 # Plan View — HTML Dashboard for Dev-Plan Corpora
@@ -28,7 +28,8 @@ Options:
 | `--force` | off | Overwrite outputs even if the drift guard detects a hand-edit. |
 | `--stale-days N` | `30` | An `In Progress` plan whose last git-touch is > N days becomes a red **Stranded** chip. |
 | `--gitignore` | off | Write a `.gitignore` containing `*` in the output dir (opt-in). |
-| `--rich` | off | Emit `_rich_manifest.json` listing plans whose LLM-rendered single-plan view needs regeneration. See `--rich workflow` below. |
+| `--rich` | off | Emit `_rich_manifest.json` listing plans whose LLM-rendered rich view needs regeneration. Large plans get `strategy: "sections"` with one entry per H2 — agent spawns N subagents in parallel. See `--rich workflow` below. |
+| `--rich-assemble` | off | After fragments exist, stitch them into final `plan-<slug>.rich.html` for `strategy: "sections"` plans using `tabs.html`. |
 
 The skill expects:
 - A directory of `.md` files (one per plan).
@@ -62,14 +63,75 @@ On regeneration, if a generated file's embedded sha doesn't match the new render
 
 The deterministic dashboard and per-plan pages cover corpus-level questions ("what's shipped, what's stranded, who references whom"). `--rich` adds an opinionated single-plan view for each plan that distils its content into tabs, SVG diagrams (state machines, today-vs-proposed comparisons), searchable tables, and findings timelines — the things markdown can't render. Inspired by the same Anthropic blog post on HTML in Claude Code, applied to a single dense document.
 
-Rich rendering is **not** done by `generate.py`. The Python generator is deterministic; rich rendering is interpretive and uses an LLM. The split:
+Rich rendering is **not** done by `generate.py`. The Python generator is deterministic; rich rendering is interpretive and uses an LLM. There are two strategies per plan, chosen at manifest emit time based on plan size:
 
-1. **Generator emits a manifest.** `--rich` writes `_rich_manifest.json` to the output dir. Each entry: `{slug, title, status, source_path, source_md_sha, output_path, widget_catalogue, bucket, existing_rich_sha}`. `status` is `cached` if the existing `plan-<slug>.rich.html` embeds a matching `plan-view-rich-source-sha256`, else `pending`.
-2. **Agent harness consumes the manifest.** For each `pending` entry, the harness (Claude Code / Codex) spawns a subagent with:
-   - The plan markdown at `source_path` (read it).
-   - The widget catalogue at `widget_catalogue` (= `_widgets/README.md`, which documents every available widget + its input shape).
-   - An output contract: produce a single self-contained HTML file at `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">` so the next `--rich` run skips it.
-3. **Caching.** Rich pages regenerate **only when the plan's own markdown sha changes** — NOT when corpus state shifts. Single-plan rich pages don't depend on `edges_in` / `fixed_by` (those live in the deterministic per-plan page). This keeps LLM cost proportional to actual plan edits, not regeneration cadence.
+- **`strategy: "single"`** — small plans (< 25 KB markdown AND ≤ 10 H2s). One subagent renders the whole plan to `plan-<slug>.rich.html`.
+- **`strategy: "sections"`** — larger plans (> 25 KB OR > 10 H2s). The generator splits the markdown on `## H2` boundaries; one subagent renders each section in parallel to a fragment file under `_fragments/`; the agent then runs `--rich-assemble` to stitch fragments into final HTML.
+
+**There is no cap on how many subagents render a plan.** For a 100 KB plan with 12 H2s, the harness spawns 12 subagents in parallel, each operating in its own context window.
+
+### Flow
+
+1. **Generator emits a manifest** (`python3 generate.py <plans-dir> --rich`).
+   `_rich_manifest.json` schema:
+   ```jsonc
+   {
+     "schema_version": 2,
+     "generated_at": "...",
+     "git_head": "...",
+     "widget_catalogue": "<skill_dir>/_widgets",
+     "fragments_dir": "<out>/_fragments",
+     "entries": [
+       {
+         "slug": "...",
+         "strategy": "single",
+         "title": "...",
+         "status": "pending|cached",
+         "source_path": "...",
+         "source_md_sha": "...",
+         "output_path": "<out>/plan-<slug>.rich.html",
+         "widget_catalogue": "<skill_dir>/_widgets/README.md",
+         "bucket": "...",
+         "existing_rich_sha": null
+       },
+       {
+         "slug": "...",
+         "strategy": "sections",
+         "title": "...",
+         "aggregate_status": "pending|partial|cached",
+         "source_path": "...",
+         "source_md_sha": "...",
+         "output_path": "<out>/plan-<slug>.rich.html",
+         "fragments_dir": "<out>/_fragments",
+         "widget_catalogue": "<skill_dir>/_widgets/README.md",
+         "bucket": "...",
+         "existing_rich_sha": null,
+         "sections": [
+           {
+             "section_id": "context",
+             "title": "Context",
+             "section_md_sha": "...",
+             "markdown_excerpt": "first 200 chars...",
+             "fragment_path": "<out>/_fragments/<slug>__context.html",
+             "status": "pending|cached",
+             "existing_section_sha": null
+           }
+         ]
+       }
+     ]
+   }
+   ```
+
+2. **Agent harness consumes the manifest.**
+   - For each `strategy: "single"` pending entry: spawn one subagent with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
+   - For each `strategy: "sections"` entry with `aggregate_status != "cached"`: spawn one subagent per `pending` section **in parallel** (no cap). Each subagent reads its section markdown (`section.markdown_excerpt` is just a preview — the subagent reads `source_path` and slices the section, OR the harness passes the section markdown directly). Each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->` so the next `--rich` run skips it.
+
+3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
+
+4. **Caching.**
+   - Single-strategy pages regenerate only when the plan's own markdown sha changes.
+   - Sections-strategy fragments regenerate only when **their own section's** sha changes. Editing one phase of a 100 KB plan = one fragment re-render, not 12.
+   - Neither depends on corpus state (`edges_in` / `fixed_by`) — those affect the deterministic per-plan page, not the rich view.
 
 The widget toolkit in `_widgets/` is the constraint surface. Widgets:
 - `base.css` — shared variables, chip/card/section primitives, tab scaffold.
@@ -81,21 +143,39 @@ The widget toolkit in `_widgets/` is the constraint surface. Widgets:
 
 Subagents pick widgets when the source has matching content (an ASCII state machine → `state-machine.svg.html`; a "Today vs Proposed" section → `compare.svg.html`) and fall back to rendered markdown for sections that don't map. Two runs against the same source produce visually-similar output, not byte-identical — drift guard accepts this and gates on source-sha only.
 
-### Suggested subagent prompt shape
+### Suggested subagent prompt shapes
 
+**Single-strategy (whole plan):**
 ```
-Source: {plan markdown}
-Widget catalogue: {contents of _widgets/README.md plus each widget file}
+Source: {plan markdown at source_path}
+Widget catalogue: {_widgets/README.md plus each widget file}
 Output: single self-contained HTML at {output_path}.
 Constraints:
-  - Use widgets where the source has matching content; render markdown for the rest.
+  - Use widgets where source has matching content; render markdown for the rest.
   - Embed <meta name="plan-view-rich-source-sha256" content="{source_md_sha}">.
-  - Inline all CSS (single-file constraint). Inter font CDN link is fine.
-  - One tab per top-level H2 in the source, plus a final "Source" tab with the rendered markdown.
-Return: {"output_path": "...", "widgets_used": ["state-machine", "compare", ...], "fallback_sections": ["Risks", ...]}.
+  - Inline all CSS (Inter font CDN link is fine).
+  - One tab per H2 in source, plus a final "Source" tab with rendered markdown.
+  - tabs.html uses :has() selectors — emit the rules exactly as documented.
+Return: {"output_path": "...", "widgets_used": [...], "fallback_sections": [...]}.
 ```
 
-Cost note: rich rendering costs one LLM call per plan that changed. If the dev-plan corpus is kept in sync with the work (per project convention), this is roughly "one call per shipped plan", amortised across long stretches of cached regens.
+**Sections-strategy (one subagent per section, spawned in parallel):**
+```
+Section: {section_title} (id: {section_id})
+Source: {plan markdown at source_path, sliced to this H2's body}
+Widget catalogue: {_widgets/README.md plus each widget file}
+Output: HTML FRAGMENT (not a full page — no <html>/<head>/<body>) at {fragment_path}.
+Constraints:
+  - Start the fragment with: <!-- plan-view-rich-section-sha256: {section_md_sha} -->
+  - Use widgets if this section's content matches one (ASCII state machine →
+    state-machine.svg.html; today-vs-proposed → compare.svg.html; tabular content →
+    table.html; commit/finding timeline → timeline.html). Otherwise render markdown.
+  - No <style> blocks — the assembler inlines base.css globally.
+  - Self-contained: don't reference other sections; don't include the page header/footer.
+Return: {"fragment_path": "...", "widgets_used": [...]}.
+```
+
+Cost note: rich rendering costs one LLM call per plan (single) or per section (sections) that changed. If the dev-plan corpus is kept in sync with the work, this is roughly "one call per shipped plan or edited section", amortised across long stretches of cached regens.
 
 ## Reading order for maintainers
 

@@ -2,6 +2,12 @@
   tabs.html — pure-CSS tabbed container (no JS).
   Drop this fragment into a page that has already loaded `base.css`.
 
+  WARNING for consumers: this leading documentation comment must be stripped
+  before substituting placeholders, otherwise a substituted fragment's own
+  HTML comment will close this comment early and expose the substituted
+  markup as live HTML (HTML comments do not nest). The Python assembler in
+  generate.py::assemble_rich_sections strips ALL leading comments before use.
+
   Input shape:
     {
       "id": "uniq",               // unique-per-page id; becomes the radio name

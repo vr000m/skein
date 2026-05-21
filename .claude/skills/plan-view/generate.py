@@ -1059,6 +1059,14 @@ def write_with_drift_guard(
 _RICH_SHA_RE = re.compile(
     r'<meta name="plan-view-rich-source-sha256" content="([0-9a-f]+)"'
 )
+_RICH_SECTION_SHA_RE = re.compile(
+    r"<!--\s*plan-view-rich-section-sha256:\s*([0-9a-f]+)\s*-->"
+)
+_H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
+
+# Plans larger than this OR with more H2s than this get section-fanout.
+SECTIONS_CHAR_THRESHOLD = 25_000
+SECTIONS_H2_THRESHOLD = 10
 
 
 def _existing_rich_sha(path: Path) -> str | None:
@@ -1072,6 +1080,71 @@ def _existing_rich_sha(path: Path) -> str | None:
     return m.group(1) if m else None
 
 
+def _existing_section_sha(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = _RICH_SECTION_SHA_RE.search(text)
+    return m.group(1) if m else None
+
+
+def _slugify(text: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return s or "section"
+
+
+def split_into_sections(plan: Plan) -> list[dict]:
+    """Split a plan's markdown on `## H2` boundaries.
+
+    Returns ordered list of `{section_id, title, markdown, section_sha}`.
+    Content before the first H2 becomes `section_id="preamble"`. Duplicate
+    slugs get `-2`, `-3` suffixes for stable, unique ids.
+    """
+    matches = list(_H2_RE.finditer(plan.raw))
+    sections: list[dict] = []
+    seen: dict[str, int] = {}
+
+    def _push(section_id: str, title: str, body: str) -> None:
+        base = section_id
+        n = seen.get(base, 0) + 1
+        seen[base] = n
+        if n > 1:
+            section_id = f"{base}-{n}"
+        sections.append(
+            {
+                "section_id": section_id,
+                "title": title,
+                "markdown": body,
+                "section_sha": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            }
+        )
+
+    if not matches:
+        _push("body", "Body", plan.raw)
+        return sections
+
+    preamble = plan.raw[: matches[0].start()].strip("\n")
+    if preamble:
+        _push("preamble", "(preamble)", preamble + "\n")
+
+    for i, m in enumerate(matches):
+        title = m.group(1).strip()
+        start = m.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(plan.raw)
+        body = plan.raw[start:end]
+        _push(_slugify(title), title, body)
+
+    return sections
+
+
+def _needs_sections(plan: Plan) -> bool:
+    h2_count = len(_H2_RE.findall(plan.raw))
+    return len(plan.raw) > SECTIONS_CHAR_THRESHOLD or h2_count > SECTIONS_H2_THRESHOLD
+
+
 def build_rich_manifest(
     plans: dict[str, Plan],
     plans_dir: Path,
@@ -1080,30 +1153,218 @@ def build_rich_manifest(
 ) -> list[dict]:
     """Manifest of plans needing rich-mode (LLM-rendered) regeneration.
 
-    Rich pages are gated on the plan's own markdown sha (NOT the render_sha that
-    folds in corpus state) — the LLM input is the single plan markdown, so
-    corpus changes around it shouldn't trigger expensive re-renders.
+    Two strategies per plan:
+    - **single**: one subagent renders the whole plan (small plans).
+    - **sections**: dice on H2 boundaries; one subagent per section in
+      parallel; assembly stitches fragments via `tabs.html`. Used when
+      `_needs_sections(plan)` is true.
+
+    Rich pages are gated on the plan's own markdown sha (NOT the render_sha
+    that folds in corpus state) — the LLM input is single plan markdown, so
+    corpus changes around it shouldn't trigger expensive re-renders. Section
+    fragments are gated on per-section sha, so editing one section only
+    re-renders that section.
     """
     entries: list[dict] = []
     widgets_dir = skill_dir / "_widgets"
+    fragments_dir = out_dir / "_fragments"
+
     for slug, plan in sorted(plans.items()):
         output_path = out_dir / f"plan-{slug}.rich.html"
         existing = _existing_rich_sha(output_path)
-        status = "cached" if existing == plan.sha256 else "pending"
+
+        if not _needs_sections(plan):
+            status = "cached" if existing == plan.sha256 else "pending"
+            entries.append(
+                {
+                    "slug": slug,
+                    "strategy": "single",
+                    "title": plan.title,
+                    "status": status,
+                    "source_path": str(plan.path),
+                    "source_md_sha": plan.sha256,
+                    "output_path": str(output_path),
+                    "widget_catalogue": str(widgets_dir / "README.md"),
+                    "bucket": plan.bucket,
+                    "existing_rich_sha": existing,
+                }
+            )
+            continue
+
+        # sections strategy
+        sections = split_into_sections(plan)
+        section_entries: list[dict] = []
+        all_cached = True
+        for sec in sections:
+            frag_path = fragments_dir / f"{slug}__{sec['section_id']}.html"
+            existing_sec = _existing_section_sha(frag_path)
+            sec_status = "cached" if existing_sec == sec["section_sha"] else "pending"
+            if sec_status == "pending":
+                all_cached = False
+            section_entries.append(
+                {
+                    "section_id": sec["section_id"],
+                    "title": sec["title"],
+                    "section_md_sha": sec["section_sha"],
+                    "markdown_excerpt": sec["markdown"][:200],
+                    "fragment_path": str(frag_path),
+                    "status": sec_status,
+                    "existing_section_sha": existing_sec,
+                }
+            )
+
+        aggregate_status = (
+            "cached"
+            if (all_cached and existing == plan.sha256)
+            else ("partial" if all_cached else "pending")
+        )
         entries.append(
             {
                 "slug": slug,
+                "strategy": "sections",
                 "title": plan.title,
-                "status": status,
+                "aggregate_status": aggregate_status,
                 "source_path": str(plan.path),
                 "source_md_sha": plan.sha256,
                 "output_path": str(output_path),
+                "fragments_dir": str(fragments_dir),
                 "widget_catalogue": str(widgets_dir / "README.md"),
                 "bucket": plan.bucket,
                 "existing_rich_sha": existing,
+                "sections": section_entries,
             }
         )
     return entries
+
+
+def assemble_rich_sections(
+    plans: dict[str, Plan],
+    plans_dir: Path,
+    out_dir: Path,
+    skill_dir: Path,
+) -> tuple[int, int, list[str]]:
+    """Stitch section fragments into final rich HTML for strategy=sections plans.
+
+    Returns (assembled, skipped_missing, missing_descriptions).
+    """
+    tabs_template = (skill_dir / "_widgets" / "tabs.html").read_text(encoding="utf-8")
+    # Strip ALL leading documentation comments — their body would otherwise be
+    # exposed when a fragment's own sha-comment `-->` closes the outer comment
+    # early (HTML comments don't nest).
+    while True:
+        stripped = re.sub(
+            r"\A\s*<!--.*?-->\s*", "", tabs_template, count=1, flags=re.DOTALL
+        )
+        if stripped == tabs_template:
+            break
+        tabs_template = stripped
+    base_css = (skill_dir / "_widgets" / "base.css").read_text(encoding="utf-8")
+    fragments_dir = out_dir / "_fragments"
+
+    assembled = 0
+    skipped = 0
+    missing: list[str] = []
+
+    for slug, plan in sorted(plans.items()):
+        if not _needs_sections(plan):
+            continue
+        sections = split_into_sections(plan)
+        # Verify all fragments present + sha-current
+        frag_contents: list[tuple[dict, str]] = []
+        any_missing = False
+        for sec in sections:
+            frag_path = fragments_dir / f"{slug}__{sec['section_id']}.html"
+            existing_sec = _existing_section_sha(frag_path)
+            if existing_sec != sec["section_sha"]:
+                any_missing = True
+                missing.append(
+                    f"{slug}: {sec['section_id']} "
+                    f"(have={existing_sec[:8] if existing_sec else 'none'}, "
+                    f"need={sec['section_sha'][:8]})"
+                )
+                continue
+            frag_contents.append((sec, frag_path.read_text(encoding="utf-8")))
+
+        if any_missing:
+            skipped += 1
+            continue
+
+        # Build tabs scaffold
+        tabs_id = f"plan-{slug}"
+        tab_bar_html = []
+        tab_panels_html = []
+        rules = []
+        for i, (sec, frag) in enumerate(frag_contents):
+            checked = " checked" if i == 0 else ""
+            sid = sec["section_id"]
+            tab_bar_html.append(
+                f'<input type="radio" name="tabs-{tabs_id}" '
+                f'id="tab-{tabs_id}-{sid}" class="tab-radio"{checked}>\n'
+                f'<label for="tab-{tabs_id}-{sid}" class="tab-label">'
+                f"{html.escape(sec['title'])}</label>"
+            )
+            tab_panels_html.append(
+                f'<div class="tab-panel" data-slot="{sid}">\n{frag}\n</div>'
+            )
+            rules.append(
+                f'.tabs[data-tabs-id="{tabs_id}"]:has(#tab-{tabs_id}-{sid}:checked) '
+                f'.tab-panel[data-slot="{sid}"] {{ display: block; }}'
+            )
+
+        tabs_html = (
+            tabs_template.replace("{{TABS_ID}}", tabs_id)
+            .replace("{{TAB_BAR_HTML}}", "\n".join(tab_bar_html))
+            .replace("{{TAB_PANELS_HTML}}", "\n".join(tab_panels_html))
+            .replace("{{PANEL_VISIBILITY_RULES}}", "\n    ".join(rules))
+        )
+
+        title = html.escape(plan.title or slug)
+        sha_short = plan.sha256[:12]
+        rel_source = (
+            plan.path.relative_to(plans_dir.parent.parent) if False else plan.path.name
+        )
+        bucket_chip = _chip(plan.bucket, plan.chip_colour)
+        page = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="plan-view-rich-source-sha256" content="{plan.sha256}">
+<meta name="plan-view-rich-strategy" content="sections">
+<meta name="plan-view-rich-section-count" content="{len(frag_contents)}">
+<title>{title} — rich view</title>
+<link rel="preconnect" href="https://rsms.me/">
+<link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+<style>
+{base_css}
+body {{ max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; }}
+header.plan-hero {{ padding: 24px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }}
+header.plan-hero h1 {{ margin: 8px 0 12px; }}
+header.plan-hero .meta {{ color: var(--muted); font-size: 14px; }}
+.tab-bar {{ display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }}
+footer.plan-foot {{ margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }}
+</style>
+</head>
+<body>
+<header class="plan-hero">
+  <div class="meta">plan-view · rich · {html.escape(slug)}</div>
+  <h1>{title}</h1>
+  <div class="meta">{bucket_chip} · Source sha <code>{sha_short}</code> · {len(frag_contents)} sections (assembled from fragments)</div>
+</header>
+
+{tabs_html}
+
+<footer class="plan-foot">
+  Rich view · assembled from {len(frag_contents)} section fragments · source sha <code>{sha_short}</code>.
+  Source of truth: <code>{html.escape(rel_source)}</code>.
+</footer>
+</body>
+</html>
+"""
+        (out_dir / f"plan-{slug}.rich.html").write_text(page, encoding="utf-8")
+        assembled += 1
+
+    return assembled, skipped, missing
 
 
 # ---------------------------------------------------------------------------
@@ -1143,9 +1404,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "Emit _rich_manifest.json listing plans whose rich HTML (LLM-rendered "
-            "single-plan view) needs regeneration. The agent harness consumes the "
-            "manifest and produces plan-<slug>.rich.html per entry using the widget "
-            "toolkit in _widgets/. See SKILL.md '--rich workflow'."
+            "single-plan view) needs regeneration. Large plans get strategy=sections "
+            "with one entry per H2 — agent spawns N subagents in parallel. See "
+            "SKILL.md '--rich workflow'."
+        ),
+    )
+    ap.add_argument(
+        "--rich-assemble",
+        action="store_true",
+        dest="rich_assemble",
+        help=(
+            "Stitch section fragments into final plan-<slug>.rich.html for "
+            "strategy=sections plans. Run after the agent harness has produced "
+            "all fragments listed in the manifest."
         ),
     )
     args = ap.parse_args(argv)
@@ -1255,16 +1526,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.rich:
         rich_entries = build_rich_manifest(plans, plans_dir, out_dir, skill_dir)
+        (out_dir / "_fragments").mkdir(exist_ok=True)
         manifest_path = out_dir / "_rich_manifest.json"
         manifest_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "generated_at": datetime.now(timezone.utc)
                     .isoformat()
                     .replace("+00:00", "Z"),
                     "git_head": git_head_sha,
                     "widget_catalogue": str(skill_dir / "_widgets"),
+                    "fragments_dir": str(out_dir / "_fragments"),
                     "entries": rich_entries,
                 },
                 indent=2,
@@ -1272,18 +1545,52 @@ def main(argv: list[str] | None = None) -> int:
             + "\n",
             encoding="utf-8",
         )
-        pending = sum(1 for e in rich_entries if e["status"] == "pending")
-        cached = sum(1 for e in rich_entries if e["status"] == "cached")
+
+        single_entries = [e for e in rich_entries if e["strategy"] == "single"]
+        section_entries = [e for e in rich_entries if e["strategy"] == "sections"]
+        single_pending = sum(1 for e in single_entries if e["status"] == "pending")
+        single_cached = sum(1 for e in single_entries if e["status"] == "cached")
+        section_pending_frags = sum(
+            sum(1 for s in e["sections"] if s["status"] == "pending")
+            for e in section_entries
+        )
+        section_total_frags = sum(len(e["sections"]) for e in section_entries)
+        section_plans_pending = sum(
+            1 for e in section_entries if e["aggregate_status"] != "cached"
+        )
+
         print(
             f"\nrich manifest: {manifest_path}"
-            f"\n  {pending} plan(s) need rich regen · {cached} cached"
+            f"\n  single-strategy: {single_pending} pending · {single_cached} cached "
+            f"({len(single_entries)} plans)"
+            f"\n  sections-strategy: {section_pending_frags}/{section_total_frags} "
+            f"fragment(s) pending across {section_plans_pending}/{len(section_entries)} "
+            f"plan(s)"
         )
-        if pending:
+        if single_pending or section_pending_frags:
             print(
-                "  next: agent harness reads _rich_manifest.json and per pending entry "
-                "spawns a subagent with the widget catalogue + plan markdown, writing "
-                "the result to entry.output_path. See SKILL.md '--rich workflow'."
+                "  next: agent harness reads _rich_manifest.json. For each strategy=single "
+                "pending entry, spawn one subagent → writes to entry.output_path. For each "
+                "strategy=sections entry with pending sections, spawn one subagent per "
+                "pending section in parallel → each writes its fragment to "
+                "section.fragment_path. Then run `--rich-assemble` to stitch fragments "
+                "into final plan-<slug>.rich.html. See SKILL.md '--rich workflow'."
             )
+
+    if args.rich_assemble:
+        assembled, skipped, missing = assemble_rich_sections(
+            plans, plans_dir, out_dir, skill_dir
+        )
+        print(
+            f"\nrich-assemble: stitched {assembled} plan(s); skipped {skipped} "
+            f"(missing/stale fragments)"
+        )
+        if missing:
+            print("  missing or stale fragments:")
+            for m in missing[:20]:
+                print(f"    {m}")
+            if len(missing) > 20:
+                print(f"    … and {len(missing) - 20} more")
 
     return 0 if refused == 0 else 1
 
