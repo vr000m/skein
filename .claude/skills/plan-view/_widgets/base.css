@@ -1,0 +1,148 @@
+/* base.css — shared variables, typography, layout, and chip/tab scaffolding.
+ * Loaded once per page. Widget files assume these variables and primitive
+ * classes exist; they should NOT redeclare them.
+ *
+ * Conventions:
+ *   --bg, --bg-elev, --bg-card, --bg-deep   surfaces (deepest → flattest)
+ *   --fg, --fg-dim, --fg-muted              text (strong → faint)
+ *   --border, --border-hi                   hairlines
+ *   --accent + named hues                   semantic colour
+ *
+ * Light + dark are colour-scheme driven; consumers do not need a theme toggle.
+ */
+
+:root {
+  --bg: #0f1115; --bg-elev: #161a22; --bg-card: #1c2230; --bg-deep: #0a0c11;
+  --fg: #e6e9ef; --fg-dim: #9aa3b2; --fg-muted: #6b7280;
+  --border: #2a313d; --border-hi: #3a4250;
+  --accent: #7c9eff;
+  --green: #4ade80; --amber: #fbbf24; --blue: #60a5fa;
+  --red: #f87171; --grey: #9ca3af; --purple: #c084fc;
+  --teal: #5eead4; --pink: #f472b6;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fafafa; --bg-elev: #ffffff; --bg-card: #ffffff; --bg-deep: #f3f4f6;
+    --fg: #111827; --fg-dim: #4b5563; --fg-muted: #9ca3af;
+    --border: #e5e7eb; --border-hi: #d1d5db;
+    --accent: #2563eb;
+    --green: #16a34a; --amber: #d97706; --blue: #2563eb;
+    --red: #dc2626; --grey: #6b7280; --purple: #9333ea;
+    --teal: #0d9488; --pink: #db2777;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.6;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.9em;
+  background: var(--bg-card); padding: 1px 5px; border-radius: 3px;
+}
+
+/* ────────────── Layout primitives ────────────── */
+
+main.page { max-width: 1200px; margin: 0 auto; padding: 32px 40px; }
+
+.banner {
+  background: linear-gradient(135deg, rgba(124,158,255,0.10), rgba(94,234,212,0.06));
+  border-bottom: 1px solid var(--border); padding: 32px 40px;
+}
+.banner .crumb { font-size: 12px; color: var(--fg-dim); margin-bottom: 8px; }
+.banner h1 { margin: 0 0 8px; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.banner .tagline { color: var(--fg-dim); font-size: 14px; max-width: 800px; }
+
+.card {
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px;
+}
+.card.deep { background: var(--bg-deep); }
+
+.section { margin: 24px 0; }
+.section h2 {
+  font-size: 18px; font-weight: 600; margin: 0 0 16px;
+  padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
+.section h3 { font-size: 15px; font-weight: 600; margin: 24px 0 12px; }
+.section h4 {
+  font-size: 13px; font-weight: 600; margin: 18px 0 8px;
+  color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+/* ────────────── Chips / pills ────────────── */
+
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  border: 1px solid transparent;
+}
+.chip.green { background: rgba(74,222,128,0.12); color: var(--green); border-color: rgba(74,222,128,0.30); }
+.chip.amber { background: rgba(251,191,36,0.12); color: var(--amber); border-color: rgba(251,191,36,0.30); }
+.chip.blue  { background: rgba(96,165,250,0.12); color: var(--blue);  border-color: rgba(96,165,250,0.30); }
+.chip.red   { background: rgba(248,113,113,0.12); color: var(--red);   border-color: rgba(248,113,113,0.30); }
+.chip.purple{ background: rgba(192,132,252,0.12); color: var(--purple);border-color: rgba(192,132,252,0.30); }
+.chip.teal  { background: rgba(94,234,212,0.12); color: var(--teal);  border-color: rgba(94,234,212,0.30); }
+.chip.pink  { background: rgba(244,114,182,0.12); color: var(--pink);  border-color: rgba(244,114,182,0.30); }
+.chip.grey  { background: rgba(156,163,175,0.10); color: var(--grey);  border-color: rgba(156,163,175,0.25); }
+
+/* ────────────── Sticky-nav scaffold ────────────── */
+
+nav.sticky-nav {
+  background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  padding: 0 32px; position: sticky; top: 0; z-index: 10;
+  display: flex; gap: 4px; overflow-x: auto;
+  backdrop-filter: blur(10px);
+}
+
+/* ────────────── Tab scaffold (radio + :checked, no JS) ──────────────
+ *
+ * Markup contract (see tabs.html):
+ *   <div class="tabs">
+ *     <input type="radio" name="tabs-{id}" id="tab-{id}-{slot}" class="tab-radio" [checked]>
+ *     <label for="tab-{id}-{slot}" class="tab-label">Label</label>
+ *     ...repeat radio + label for each tab...
+ *     <div class="tab-panel" data-slot="{slot}">…content…</div>
+ *     ...repeat panel...
+ *   </div>
+ *
+ * Panels are hidden by default; the sibling `:checked` radio drives the
+ * matching panel visible via attribute selector + general-sibling combinator.
+ */
+
+.tabs { display: block; }
+.tabs .tab-radio { position: absolute; opacity: 0; pointer-events: none; }
+.tabs .tab-label {
+  display: inline-block; padding: 12px 16px; font-size: 13.5px; font-weight: 500;
+  color: var(--fg-dim); cursor: pointer; border-bottom: 2px solid transparent;
+  transition: color 0.1s, border-color 0.1s; white-space: nowrap;
+}
+.tabs .tab-label:hover { color: var(--fg); }
+.tabs .tab-bar {
+  display: flex; gap: 4px; overflow-x: auto;
+  border-bottom: 1px solid var(--border); margin-bottom: 16px;
+}
+.tabs .tab-panel { display: none; }
+
+/* Each radio activates its sibling label and matching panel. The pattern
+ * relies on consumers giving radio id="tab-{id}-{slot}" and panel
+ * data-slot="{slot}". See tabs.html for the full template. */
+.tabs .tab-radio:checked + .tab-label {
+  color: var(--accent); border-bottom-color: var(--accent);
+}
+
+/* Progress / meta */
+.progress-bar {
+  flex: 1; max-width: 320px; height: 8px; background: var(--bg-card);
+  border-radius: 4px; overflow: hidden; border: 1px solid var(--border);
+}
+.progress-bar .fill { height: 100%; background: var(--green); transition: width 0.3s; }
+
+footer.page-footer {
+  text-align: center; padding: 32px 40px; color: var(--fg-muted);
+  font-size: 11px; border-top: 1px solid var(--border); margin-top: 48px;
+}

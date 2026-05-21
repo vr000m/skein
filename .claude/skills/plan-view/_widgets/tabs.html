@@ -1,0 +1,54 @@
+<!--
+  tabs.html — pure-CSS tabbed container (no JS).
+  Drop this fragment into a page that has already loaded `base.css`.
+
+  Input shape:
+    {
+      "id": "uniq",               // unique-per-page id; becomes the radio name
+      "tabs": [
+        {
+          "slot": "overview",     // panel data-slot key, must be unique within widget
+          "label": "Overview",    // visible tab label
+          "count": null,          // optional pill count, omit or null to hide
+          "checked": true,        // exactly one tab should be checked
+          "content_html": "…"     // raw HTML rendered inside the panel
+        }
+      ]
+    }
+
+  Placeholders:
+    {{TABS_ID}}            — value of `id`
+    {{TAB_BAR_HTML}}       — concatenated radio + label markup per tab
+    {{TAB_PANELS_HTML}}    — concatenated <div class="tab-panel"> markup per tab
+
+  The tab-bar item template (one per tab):
+    <input type="radio" name="tabs-{{TABS_ID}}" id="tab-{{TABS_ID}}-{{SLOT}}"
+           class="tab-radio"{{CHECKED}}>
+    <label for="tab-{{TABS_ID}}-{{SLOT}}" class="tab-label">
+      {{LABEL}}<span class="chip grey" style="margin-left:6px;">{{COUNT}}</span>
+    </label>
+
+  The panel template (one per tab; the `:checked + label ~ panel` selector
+  drives visibility — see the inline <style> below):
+    <div class="tab-panel" data-slot="{{SLOT}}">{{CONTENT_HTML}}</div>
+-->
+<div class="tabs" data-tabs-id="{{TABS_ID}}">
+  <style>
+    /* Scoped tab visibility via :has() — works regardless of the radio's
+       depth in the DOM (radios may live inside a .tab-bar wrapper while
+       panels live outside it; sibling `~` selectors don't work across
+       that boundary, but `:has()` does). Requires :has() support
+       (Chrome/Safari/Firefox 2023+). */
+    .tabs[data-tabs-id="{{TABS_ID}}"] .tab-panel { display: none; }
+    {{PANEL_VISIBILITY_RULES}}
+    /* Each rule is generated as:
+       .tabs[data-tabs-id="{{TABS_ID}}"]:has(#tab-{{TABS_ID}}-{{SLOT}}:checked) .tab-panel[data-slot="{{SLOT}}"] { display: block; }
+    */
+  </style>
+
+  <div class="tab-bar">
+    {{TAB_BAR_HTML}}
+  </div>
+
+  {{TAB_PANELS_HTML}}
+</div>

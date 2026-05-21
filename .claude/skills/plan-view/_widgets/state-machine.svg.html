@@ -1,0 +1,117 @@
+<!--
+  state-machine.svg.html — generic FSM diagram.
+  Assumes base.css is loaded for surrounding card styling.
+
+  Input shape:
+    {
+      "title": "Job state machine",      // optional, omit by stripping the <h3>
+      "states": [
+        { "id": "pending",  "label": "pending",  "x": 210, "y": 190,
+          "kind": "start",     "sublabel": "file in pending/" },
+        { "id": "claimed",  "label": "claimed",  "x": 440, "y": 190,
+          "kind": "normal",    "sublabel": "worker owns it" },
+        { "id": "done",     "label": "done",     "x": 715, "y": 100,
+          "kind": "terminal",  "sublabel": "outputs ingested" },
+        { "id": "failed",   "label": "failed",   "x": 715, "y": 280,
+          "kind": "error",     "sublabel": "attempts++ · last_error" }
+      ],
+      "transitions": [
+        { "from": "pending", "to": "claimed",
+          "label": "claim()", "style": "solid", "curve": "auto" },
+        { "from": "claimed", "to": "done",
+          "label": "success", "style": "solid", "curve": "above", "kind": "ok" },
+        { "from": "claimed", "to": "failed",
+          "label": "fatal",   "style": "solid", "curve": "below", "kind": "err" },
+        { "from": "claimed", "to": "pending",
+          "label": "sweeper · stale claim", "style": "dashed", "curve": "above",
+          "kind": "warn" },
+        { "from": "failed", "to": "pending",
+          "label": "retry · after backoff", "style": "dashed", "curve": "below" }
+      ],
+      "legend": [
+        { "color": "var(--blue)",  "text": "entry state" },
+        { "color": "var(--amber)", "text": "worker-owned" },
+        { "color": "var(--green)", "text": "terminal success" },
+        { "color": "var(--red)",   "text": "terminal failure (retryable)" }
+      ]
+    }
+
+  `kind` controls the colour of each state's fill+stroke:
+    start    → blue   (entry / queue)
+    normal   → amber  (mid-flight / owned)
+    terminal → green  (success)
+    error    → red    (failure)
+
+  `curve` controls how a transition is routed:
+    auto   → straight line (used for adjacent states)
+    above  → curves up above the row
+    below  → curves down below the row
+
+  Placeholders:
+    {{TITLE}}, {{STATES_SVG}}, {{TRANSITIONS_SVG}}, {{LEGEND_HTML}}, {{VIEWBOX}}
+
+  The renderer is expected to substitute fully-formed SVG fragments for
+  states + transitions. Geometry (coordinates, curve control points) is
+  authored by the renderer using the input `x`/`y` and `curve` fields.
+-->
+<section class="card fsm">
+  <h3 style="margin-top:0;">{{TITLE}}</h3>
+  <svg viewBox="{{VIEWBOX}}" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto;display:block;">
+    <defs>
+      <marker id="fsm-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#9aa3b2"/>
+      </marker>
+      <marker id="fsm-arrow-amber" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/>
+      </marker>
+      <marker id="fsm-arrow-red" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#f87171"/>
+      </marker>
+      <marker id="fsm-arrow-green" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="8" markerHeight="8" orient="auto">
+        <path d="M0,0 L10,5 L0,10 z" fill="#4ade80"/>
+      </marker>
+    </defs>
+
+    <!-- transitions first so state boxes paint over arrow endpoints -->
+    {{TRANSITIONS_SVG}}
+
+    <!-- States.
+         Per-state fragment template (140x80 rounded box, label + sublabel):
+
+           <g>
+             <rect x="{{X-70}}" y="{{Y-40}}" width="140" height="80" rx="12"
+                   fill="rgba(R,G,B,0.14)" stroke="{{KIND_COLOUR}}" stroke-width="2"/>
+             <text x="{{X}}" y="{{Y-4}}" text-anchor="middle"
+                   fill="{{KIND_COLOUR}}" font-size="15" font-weight="700"
+                   font-family="ui-monospace,monospace">{{LABEL}}</text>
+             <text x="{{X}}" y="{{Y+18}}" text-anchor="middle"
+                   fill="#9aa3b2" font-size="10.5">{{SUBLABEL}}</text>
+           </g>
+
+         Per-transition (solid example):
+           <line x1=".." y1=".." x2=".." y2=".." stroke="..." stroke-width="2"
+                 marker-end="url(#fsm-arrow)"/>
+           <text ...>{{LABEL}}</text>
+
+         Per-transition (curved + dashed example):
+           <path d="M x1 y1 C cx1 cy1, cx2 cy2, x2 y2"
+                 stroke="..." stroke-width="2" fill="none"
+                 stroke-dasharray="6,4" marker-end="url(#fsm-arrow-amber)"/>
+    -->
+    {{STATES_SVG}}
+  </svg>
+
+  <div class="fsm-key" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:16px;font-size:11.5px;color:var(--fg-dim);">
+    {{LEGEND_HTML}}
+    <!-- Legend item template:
+         <div class="item" style="display:flex;align-items:center;gap:6px;">
+           <span style="width:12px;height:12px;border-radius:3px;background:{{COLOR}};"></span>
+           {{TEXT}}
+         </div>
+    -->
+  </div>
+</section>
