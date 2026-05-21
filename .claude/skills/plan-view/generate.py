@@ -222,6 +222,24 @@ class Plan:
     fixed_by: str | None = (
         None  # slug of the structural-fix-of plan if one exists and is shipped
     )
+    render_sha: str = ""  # set by compute_render_shas after link_edges + apply_stranded
+
+    def compute_render_sha(self) -> str:
+        # Covers everything that affects this plan's rendered HTML:
+        # own markdown, backfilled edges_in (corpus state), fixed_by pointer,
+        # and the (possibly stranded-recoloured) status bucket.
+        parts = [
+            self.sha256,
+            "|edges_in=" + ",".join(f"{k}:{s}" for k, s in sorted(self.edges_in)),
+            f"|fixed_by={self.fixed_by or ''}",
+            f"|bucket={self.bucket}",
+        ]
+        return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+
+
+def compute_render_shas(plans: dict[str, "Plan"]) -> None:
+    for p in plans.values():
+        p.render_sha = p.compute_render_sha()
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +801,9 @@ def render_dashboard(
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     corpus_sha = hashlib.sha256(
-        "".join(sorted(p.sha256 for p in plans.values())).encode("utf-8")
+        "".join(sorted(p.render_sha or p.sha256 for p in plans.values())).encode(
+            "utf-8"
+        )
     ).hexdigest()
     plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
     readme_note = (
@@ -922,8 +942,8 @@ def render_plan_page(
     source_path_short = str(plan.path).replace(str(Path.home()), "~")
 
     substitutions = {
-        "{{SOURCE_SHA}}": plan.sha256,
-        "{{SOURCE_SHA_SHORT}}": plan.sha256[:12],
+        "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
+        "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
         "{{GIT_HEAD}}": git_head_sha,
         "{{GENERATED_AT}}": now_iso,
@@ -1095,9 +1115,11 @@ def main(argv: list[str] | None = None) -> int:
 
     # Stranded detection
     apply_stranded(plans.values(), args.stale_days)
+    # Note: link_edges runs immediately below; compute_render_shas must come after.
 
     # Edge linking
     link_edges(plans)
+    compute_render_shas(plans)
 
     # Render
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1114,7 +1136,7 @@ def main(argv: list[str] | None = None) -> int:
         readme_used,
     )
     corpus_sha = hashlib.sha256(
-        "".join(sorted(p.sha256 for p in plans.values())).encode("utf-8")
+        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
     ).hexdigest()
     wrote, msg = write_with_drift_guard(
         out_dir / "index.html",
@@ -1131,7 +1153,7 @@ def main(argv: list[str] | None = None) -> int:
         wrote, msg = write_with_drift_guard(
             out_dir / f"plan-{plan.slug}.html",
             page_html,
-            plan.sha256,
+            plan.render_sha,
             args.force,
         )
         if wrote:

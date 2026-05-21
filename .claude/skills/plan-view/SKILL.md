@@ -53,7 +53,9 @@ Each generated HTML file embeds drift-guard meta tags:
 <meta name="plan-view-generated-at" content="...">
 ```
 
-On regeneration, if a generated file's embedded sha256 doesn't match what the generator would produce now AND the source markdown's sha hasn't changed since the last run, the skill refuses to overwrite — that's evidence someone hand-edited the HTML. Pass `--force` to overwrite anyway.
+The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with corpus-derived state that affects its rendered HTML: backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, and the (possibly stranded-recoloured) status bucket. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha, and A regenerates without a spurious "hand-edit suspected" refusal.
+
+On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
 
 ## Reading order for maintainers
 
