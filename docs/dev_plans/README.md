@@ -1,29 +1,57 @@
 # Development Plans
 
-## Current Tasks
+Status grouping below is **authoritative** for `/plan-view`. Headings match the four
+canonical buckets the skill recognises (`In Progress / Partially Shipped`, `Planned`,
+`Shipped`, `Paused / Abandoned`); the Plan column uses markdown link syntax so the
+parser can pick up the slug.
+
+## In Progress / Partially Shipped
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
-| 2026-05-12 | feature | conduct-autonomous-mode | In Review | feature/conduct-autonomous-mode | `docs/dev_plans/20260512-feature-conduct-autonomous-mode.md` |
-| 2026-05-08 | fix | conduct-state-path-digest | In Review | feature/conduct-state-path-digest | `docs/dev_plans/20260422-feature-conduct-skill.md` |
-| 2026-05-01 | feature | plan-progress-section | In Review | feature/plan-progress-section | N/A (small refactor) |
-| 2026-05-01 | fix | conduct-em-dash-headings | Merged | feature/conduct-em-dash-headings | N/A (small fix) |
-| 2026-04-22 | feature | deep-review-incremental-continuation | In Review | feature/deep-review-incremental-continuation | N/A (small refactor) |
-| 2026-03-17 | feature | deep-review | In Progress | feature/deep-review | `docs/dev_plans/20260317-feature-deep-review.md` |
+| 2026-04-14 | chore | managed-agents-alignment | In Progress | feature/managed-agents-alignment | [plan](20260414-chore-managed-agents-alignment.md) |
 
-## Completed Tasks
+## Planned
 
-| Date | Type | Name | Status | Branch | Plan |
-|------|------|------|--------|--------|------|
-| 2026-05-21 | feature | plan-view-skill | Complete | feat/plan-view-skill | `docs/dev_plans/20260521-feature-plan-view-skill.md` |
-| 2026-05-15 | feature | review-auto-fix-tier | Complete | feature/review-auto-fix-tier | `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` |
-| 2026-05-08 | feature | cross-lens-finding-reconciliation | Complete | feature/cross-lens-reconciliation | `docs/dev_plans/20260508-feature-cross-lens-finding-reconciliation.md` |
-| 2026-05-04 | feature | skill-improvements-from-usage-report | Complete | feature/skill-improvements-from-usage-report | `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md` |
-| 2026-03-15 | feature | review-plan-skill | Complete | feat/review-plan-skill | N/A (small feature) |
-| 2026-03-13 | feature | spec-compliance-check | Complete | feat/rfc-finder-skill | `docs/dev_plans/20260313-feature-spec-compliance-check.md` |
-| 2026-03-13 | feature | rfc-finder | Complete | feat/rfc-finder-skill | `docs/dev_plans/20260313-feature-rfc-finder.md` |
-| 2026-03-07 | chore | content-guidelines-standardize | Complete | codex/content-guidelines-standardize | `docs/dev_plans/20260307-chore-content-guidelines-standardize.md` |
-| 2026-03-05 | feat | add-update-docs-skill | Complete | feat/add-update-docs-skill | N/A (small feature) |
-| 2026-02-18 | chore | integration-seams-review-fixes | Complete | chore/integration-seams-review-fixes | N/A (small chore) |
-| 2026-02-16 | chore | skills-sync-workflow | Complete | chore/skills-sync-workflow | `docs/dev_plans/20260216-chore-skills-sync-workflow.md` |
-| 2026-02-17 | chore | sync-global-claude-md | Complete | chore/sync-global-claude-md | `docs/dev_plans/20260217-chore-sync-global-claude-md.md` |
+_None._
+
+## Shipped
+
+| Date | Type | Name | PR | Branch | Plan |
+|------|------|------|----|--------|------|
+| 2026-05-21 | feature | plan-view-skill | [#28](https://github.com/vr000m/skills.md/pull/28) | feat/plan-view-skill | [plan](20260521-feature-plan-view-skill.md) |
+| 2026-05-15 | feature | review-auto-fix-tier | [#23](https://github.com/vr000m/skills.md/pull/23) | feature/review-auto-fix-tier | [plan](20260515-feature-review-auto-fix-tier.md) |
+| 2026-05-12 | feature | conduct-autonomous-mode | [#22](https://github.com/vr000m/skills.md/pull/22) | feature/conduct-autonomous-mode | [plan](20260512-feature-conduct-autonomous-mode.md) |
+| 2026-05-08 | feature | cross-lens-finding-reconciliation | [#21](https://github.com/vr000m/skills.md/pull/21) | feature/cross-lens-reconciliation | [plan](20260508-feature-cross-lens-finding-reconciliation.md) |
+| 2026-05-04 | feature | skill-improvements-from-usage-report | [#16](https://github.com/vr000m/skills.md/pull/16) | feature/skill-improvements-from-usage-report | [plan](20260504-feature-skill-improvements-from-usage-report.md) |
+| 2026-05-02 | feature | subagent-upgrade-plan-skills | [#15](https://github.com/vr000m/skills.md/pull/15) | feature/subagent-upgrade-plan-skills | [plan](20260502-feature-subagent-upgrade-plan-skills.md) |
+| 2026-04-22 | feature | conduct-skill | [#11](https://github.com/vr000m/skills.md/pull/11), [#13](https://github.com/vr000m/skills.md/pull/13), [#19](https://github.com/vr000m/skills.md/pull/19), [#20](https://github.com/vr000m/skills.md/pull/20) | feature/conduct-skill | [plan](20260422-feature-conduct-skill.md) |
+| 2026-03-17 | feature | deep-review | [#8](https://github.com/vr000m/skills.md/pull/8) | feature/deep-review | [plan](20260317-feature-deep-review.md) |
+| 2026-03-13 | feature | spec-compliance-check | [#6](https://github.com/vr000m/skills.md/pull/6) | feat/rfc-finder-skill | [plan](20260313-feature-spec-compliance-check.md) |
+| 2026-03-13 | feature | rfc-finder | [#6](https://github.com/vr000m/skills.md/pull/6) | feat/rfc-finder-skill | [plan](20260313-feature-rfc-finder.md) |
+| 2026-03-07 | chore | content-guidelines-standardize | [#5](https://github.com/vr000m/skills.md/pull/5) | codex/content-guidelines-standardize | [plan](20260307-chore-content-guidelines-standardize.md) |
+| 2026-02-17 | chore | sync-global-claude-md | [#2](https://github.com/vr000m/skills.md/pull/2) | chore/sync-global-claude-md | [plan](20260217-chore-sync-global-claude-md.md) |
+| 2026-02-16 | chore | skills-sync-workflow | [#1](https://github.com/vr000m/skills.md/pull/1) | chore/skills-sync-workflow | [plan](20260216-chore-skills-sync-workflow.md) |
+
+### Shipped without a dedicated dev-plan file
+
+Smaller features and fixes that didn't warrant a standalone plan markdown:
+
+| Date | Type | Name | PR |
+|------|------|------|----|
+| 2026-05-19 | chore | codex-skill-model-routing | [#25](https://github.com/vr000m/skills.md/pull/25), [#26](https://github.com/vr000m/skills.md/pull/26) |
+| 2026-05-08 | fix | conduct-marker-auto-refresh | [#20](https://github.com/vr000m/skills.md/pull/20) |
+| 2026-05-08 | fix | conduct-state-path-digest | [#19](https://github.com/vr000m/skills.md/pull/19) |
+| 2026-05-07 | feature | phase6-fixture-captures | [#18](https://github.com/vr000m/skills.md/pull/18) |
+| 2026-05-07 | feature | codex-mirror-skill-improvements | [#17](https://github.com/vr000m/skills.md/pull/17) |
+| 2026-05-02 | feature | deep-review-incremental-continuation | [#14](https://github.com/vr000m/skills.md/pull/14) |
+| 2026-05-01 | fix | conduct-em-dash-headings | [#13](https://github.com/vr000m/skills.md/pull/13) |
+| 2026-05-01 | feature | plan-progress-section | [#12](https://github.com/vr000m/skills.md/pull/12) |
+| 2026-04-07 | feature | subagent-delegation | [#9](https://github.com/vr000m/skills.md/pull/9) |
+| 2026-03-15 | feature | review-plan-skill | [#7](https://github.com/vr000m/skills.md/pull/7) |
+| 2026-03-05 | feat | add-update-docs-skill | [#4](https://github.com/vr000m/skills.md/pull/4) |
+| 2026-02-18 | chore | integration-seams-review-fixes | [#3](https://github.com/vr000m/skills.md/pull/3) |
+
+## Paused / Abandoned
+
+_None._
