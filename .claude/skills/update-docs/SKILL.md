@@ -89,16 +89,16 @@ Check:
 - [ ] **Missing items** — did the implementation add work not in the plan? (new files, phases, or decisions)
 - [ ] **Stale references** — do file paths, method names, or config keys in the plan match the code?
 - [ ] **Stale descriptions** — do technical-spec tables, authority decisions, and prose summaries still accurately describe what each file does in the current diff? Re-read each row/statement against the actual code, not just the path.
-- [ ] **Stale "PR open" claims** — grep the plan body for `PR #\d+ open|PR #\d+ pending|PR #\d+ in review|reviews pending`. For each match, probe `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it so the plan's PR-status text and `**Status:**` header can be refreshed.
+- [ ] **Stale "PR open" claims** — grep the plan body for lines containing `PR #\d+` together with `open`, `pending`, `in review`, or `reviews pending`. Extract the unique PR numbers from those lines, then probe each once with `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it so the plan's PR-status text and primary `**Status**:` / `**Status:**` header can be refreshed.
 
 ### Dev Plans Index (`docs/dev_plans/README.md` if present)
 
 Read the index **unconditionally** — it is not tied to any one branch, so the primary-plan gate above must not exclude it. Skip only if the file does not exist.
 
 Check:
-- [ ] **Status mismatch** — for every row in the In Progress / Planned / Shipped tables, open the linked plan file and confirm the row's status text matches the plan's `**Status:**` header. Flag rows where the plan has moved to Shipped but the index still has it under In Progress or Planned (and vice versa).
-- [ ] **Lifecycle placement** — a row whose linked plan's header status starts with "Shipped" or "Complete" must live under the Shipped table, not In Progress / Planned. Flag misplaced rows.
-- [ ] **Stale PR refs** — for any row or status cell containing `PR #N open` / `PR #N pending` / `PR #N in review`, probe `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it.
+- [ ] **Status mismatch** — for every row in lifecycle tables or sections (for example Current Tasks / Completed Tasks, In Progress / Planned / Shipped), open the linked plan file and compare the row's status text to the plan's first primary status header (`**Status**:` or `**Status:**` near the top of the file). Flag rows where the index status no longer matches the plan header.
+- [ ] **Lifecycle placement** — infer lifecycle placement from the index's existing section headings. A row whose linked plan's primary status starts with "Shipped" or "Complete" should live in the completed/shipped section; active statuses such as "In Progress", "In Review", or "Not Started" should live in the active/planned section. If the index structure is unfamiliar, flag the mismatch instead of inventing new sections.
+- [ ] **Stale PR refs** — for any row or status cell containing `PR #N` together with `open`, `pending`, `in review`, or `reviews pending`, collect unique PR numbers and probe each once with `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it.
 - [ ] **Broken links** — if a row points to a plan file that no longer exists or has been renamed, flag it.
 
 #### Sibling-plan audit (extend the audit pass — do NOT add a parallel grep)
@@ -272,13 +272,13 @@ If `--apply` was passed, or the user confirms, apply the updates. **Always show 
 
 1. Edit each document using the Edit tool (prefer surgical edits over full rewrites)
 2. For dev plans: check boxes, update status, add missing items; refresh stale "PR #N open/pending" text where the PR has merged
-2a. For the dev-plans index (`docs/dev_plans/README.md`): move rows between In Progress / Planned / Shipped tables to match each linked plan's `**Status:**` header; refresh stale PR refs
-3. For changelog: insert the new version section following existing format exactly
-4. For README: add missing sections/entries where appropriate
-5. For CLAUDE.md: update commands, layout, or versioning sections
-6. For AGENTS.md: update commands, layout, or tool/API sections
-7. For PR description: use `gh pr edit --body` to update
-8. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
+3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's existing lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header; refresh stale PR refs
+4. For changelog: insert the new version section following existing format exactly
+5. For README: add missing sections/entries where appropriate
+6. For CLAUDE.md: update commands, layout, or versioning sections
+7. For AGENTS.md: update commands, layout, or tool/API sections
+8. For PR description: use `gh pr edit --body` to update
+9. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
 
 After applying, show a summary:
 ```
