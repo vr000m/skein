@@ -29,6 +29,8 @@ justfile            Task runner config
 .env.example        Template for local env overrides
 .deep-review/       Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
 .review-plan/       Gitignored auto-fix manifests for /review-plan (per-run)
+docs/_plan_view/    Gitignored generated HTML output from /plan-view (default out dir; sibling of docs/dev_plans/)
+_rich_manifest.json /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
 ```
 
 ### Auto-fix tier (opt-in)
