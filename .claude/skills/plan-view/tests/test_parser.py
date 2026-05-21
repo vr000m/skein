@@ -8,6 +8,31 @@ from pathlib import Path
 import generate as G
 
 
+def test_field_parser_handles_colon_outside_bold(tmp_path: Path) -> None:
+    # The documented form `**Field**: value` (colon AFTER the bold) must not
+    # leak the colon into the captured value.
+    body = (
+        "# Title\n\n**Status**: Shipped\n**Branch**: feat/plan-view-skill\n"
+        "**Created**: 2026-05-21\n"
+    )
+    p = tmp_path / "20260521-feature-x.md"
+    p.write_text(body, encoding="utf-8")
+    plan = G.parse_plan(p)
+    assert plan.status_raw == "Shipped"
+    assert plan.branch == "feat/plan-view-skill"
+    assert plan.created == "2026-05-21"
+
+
+def test_field_parser_handles_colon_inside_bold(tmp_path: Path) -> None:
+    # The older form `**Field:** value` (colon INSIDE the bold) still works.
+    body = "# Title\n\n**Status:** Shipped\n**Branch:** feat/x\n"
+    p = tmp_path / "20260521-feature-y.md"
+    p.write_text(body, encoding="utf-8")
+    plan = G.parse_plan(p)
+    assert plan.status_raw == "Shipped"
+    assert plan.branch == "feat/x"
+
+
 def _write(tmp_path: Path, name: str, body: str) -> Path:
     p = tmp_path / name
     p.write_text(body, encoding="utf-8")
