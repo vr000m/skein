@@ -112,7 +112,7 @@ If `total > 0`, surface as a `done/total` chip on the card.
 
 ## Component grouping heuristic
 
-Applied to the filename slug (filename minus the date prefix and `.md`). First match wins; manual override via `<plans-dir>/.plan-view.yml` if present.
+Applied to the filename slug (filename minus the date prefix and `.md`). First match wins. Patterns live in `COMPONENT_PATTERNS` in `generate.py`; per-repo override via a `.plan-view.yml` config is deferred to v2 and not yet read.
 
 | Component | Slug patterns |
 |---|---|

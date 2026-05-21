@@ -199,13 +199,14 @@ Cost note: rich rendering costs one LLM call per plan (single) or per section (s
 - **No subagent calls inside the generator.** Pure regex + git CLI + string templating. ~51 plans render in well under a second.
 - **Stdlib only.** No `jinja2`, no `markdown` lib. `markdown` → HTML conversion is minimal (headings, lists, code blocks, links) and lives in `generate.py::render_markdown`. If a plan uses exotic markdown, the rendered output falls back to a `<pre>` block.
 - **README grouping wins.** When the plans dir has a README with the koda-style status tables, those are authoritative — per-plan status parsing fills in only what the README omits.
+- **Deterministic output is escaped; `--rich` output is not.** The dashboard and per-plan pages route all plan-derived content through `html.escape`. The `--rich` path is different: section fragments are LLM subagent output and are inlined verbatim by `--rich-assemble` (they intentionally carry SVG and inline `<script>`). Untrusted plan markdown could steer a rendering subagent into emitting active content, so open `*.rich.html` only for plan corpora you trust.
 
 ## What's deferred to v2
 
 - SVG cross-reference graph (v1 uses typed-edge pills).
 - Timeline lane widget (v1 sorts cards by last-touched within component).
 - Tabbed per-plan pages (v1 uses single scroll with sticky nav).
-- `.plan-view.yml` config for component overrides (v1 is heuristic-only; config file is read silently if present, undocumented).
+- `.plan-view.yml` config for component overrides (v1 is heuristic-only; no config file is read — `COMPONENT_PATTERNS` in `generate.py` is the only source of groupings).
 - Review-round inference beyond checkbox counting.
 
 ## Composing with other skills
