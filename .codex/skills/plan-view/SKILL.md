@@ -1,6 +1,6 @@
 ---
 name: plan-view
-description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Use when the user says "plan view", "render dev plans", "render plan dashboard", "/plan-view", or asks for a visual index of dev_plans/.
+description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Also produces opinionated LLM-rendered "rich" single-plan views via `--rich` (with parallel section-fanout for large plans). Use when the user says "plan view", "render dev plans", "render plan dashboard", "render rich plan view", "/plan-view", or asks for a visual index of dev_plans/.
 argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich] [--rich-assemble]
 ---
 
@@ -68,7 +68,7 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
 - **`strategy: "single"`** — small plans (< 25 KB markdown AND ≤ 10 H2s). One subagent renders the whole plan to `plan-<slug>.rich.html`.
 - **`strategy: "sections"`** — larger plans (> 25 KB OR > 10 H2s). The generator splits the markdown on `## H2` boundaries; one subagent renders each section in parallel to a fragment file under `_fragments/`; Codex then runs `--rich-assemble` to stitch fragments into final HTML.
 
-**There is no cap on how many subagents render a plan.** For a 100 KB plan with 12 H2s, the harness spawns 12 subagents in parallel, each operating in its own context window.
+**There is no cap on how many subagents render a plan.** For a 100 KB plan with 12 H2s, Codex dispatches 12 `spawn_agent` workers in parallel, each operating in its own context window.
 
 ### Flow
 
@@ -98,7 +98,10 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
          "slug": "...",
          "strategy": "sections",
          "title": "...",
-         "aggregate_status": "pending|partial|cached",
+         "aggregate_status": "cached|partial|pending",
+         // cached  — all fragments fresh AND assembled .rich.html embeds matching sha
+         // partial — some fragments still pending; Codex renders them, then runs --rich-assemble
+         // pending — all fragments fresh, but assembled .rich.html missing/stale; Codex runs --rich-assemble only
          "source_path": "...",
          "source_md_sha": "...",
          "output_path": "<out>/plan-<slug>.rich.html",
@@ -123,8 +126,8 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
    ```
 
 2. **Codex consumes the manifest.**
-   - For each `strategy: "single"` pending entry: spawn one subagent with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
-   - For each `strategy: "sections"` entry with `aggregate_status != "cached"`: spawn one subagent per `pending` section **in parallel** (no cap). Each subagent reads its section markdown (`section.markdown_excerpt` is just a preview — the subagent reads `source_path` and slices the section, OR Codex passes the section markdown directly). Each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->` so the next `--rich` run skips it.
+   - For each `strategy: "single"` pending entry: dispatch one Codex `spawn_agent` worker with the plan markdown + widget catalogue + output contract. The worker writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
+   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, dispatch one Codex `spawn_agent` worker per `pending` section **in parallel** (no cap) with `fork_context=false` — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
 3. **Run `--rich-assemble`** (`python3 .codex/skills/plan-view/generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
 

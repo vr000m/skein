@@ -273,8 +273,13 @@ def _find_title(body: str, frontmatter: dict[str, str]) -> str:
     return m.group(1).strip() if m else "(untitled)"
 
 
-_STATUS_LINE_RE = re.compile(r"^\*\*Status:?\*\*\s*(.+?)$", re.M)
-_FIELD_LINE_RE = re.compile(r"^\*\*(?P<field>[\w\s-]+?):?\*\*\s*(?P<value>.+?)$", re.M)
+_STATUS_LINE_RE = re.compile(r"^\*\*Status:?\*\*[:\s]*(.+?)$", re.M)
+# Accepts BOTH `**Field:** value` (colon inside bold) AND the more common
+# `**Field**: value` (colon outside bold, then space). The `[:\s]*` after `**`
+# eats any trailing colon and whitespace so it doesn't leak into the value.
+_FIELD_LINE_RE = re.compile(
+    r"^\*\*(?P<field>[\w\s-]+?):?\*\*[:\s]*(?P<value>.+?)$", re.M
+)
 
 
 def _find_status_string(body: str) -> str:
@@ -306,8 +311,11 @@ def _classify_status(status_raw: str) -> tuple[str, str]:
 
 
 def _find_field(body: str, name: str) -> str:
-    """Find a `**Name:** value` or field-table style field."""
-    pattern = re.compile(rf"^\*\*{re.escape(name)}:?\*\*\s*(.+?)$", re.M)
+    """Find a `**Name:** value` or `**Name**: value` or field-table style field."""
+    # `[:\s]*` after `**` eats both a trailing colon (when written outside the
+    # bold, e.g. `**Name**: value`) and whitespace, so the colon doesn't leak
+    # into the captured value.
+    pattern = re.compile(rf"^\*\*{re.escape(name)}:?\*\*[:\s]*(.+?)$", re.M)
     m = pattern.search(body)
     if m:
         return m.group(1).strip().strip("`")
@@ -603,7 +611,8 @@ def _inline_md(text: str) -> str:
     text = _ITALIC_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
     text = _LINK_RE.sub(
         lambda m: (
-            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">{m.group(1)}</a>'
+            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">'
+            f"{html.escape(m.group(1), quote=False)}</a>"
         ),
         text,
     )
@@ -774,6 +783,7 @@ def render_dashboard(
     git_head_sha: str,
     template: str,
     readme_used: bool,
+    script_path: str,
 ) -> str:
     # Group by component
     by_component: dict[str, list[Plan]] = {}
@@ -840,6 +850,7 @@ def render_dashboard(
         "{{CORPUS_SHA}}": corpus_sha,
         "{{PLANS_DIR}}": str(plans_dir),
         "{{PLANS_DIR_SHORT}}": plans_dir_short,
+        "{{SCRIPT_PATH}}": script_path,
         "{{GIT_HEAD}}": git_head_sha,
         "{{GIT_HEAD_SHORT}}": git_head_sha[:7] if git_head_sha else "—",
         "{{GENERATED_AT}}": now_iso,
@@ -925,7 +936,12 @@ def _render_edges_section(plan: Plan, plans: dict[str, Plan]) -> str:
 
 
 def render_plan_page(
-    plan: Plan, plans: dict[str, Plan], git_head_sha: str, template: str
+    plan: Plan,
+    plans: dict[str, Plan],
+    git_head_sha: str,
+    template: str,
+    script_path: str,
+    plans_dir_short: str,
 ) -> str:
     chip = _chip(
         plan.bucket, plan.chip_colour, " ?" if plan.bucket == "unknown" else ""
@@ -968,6 +984,8 @@ def render_plan_page(
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
+        "{{SCRIPT_PATH}}": script_path,
+        "{{PLANS_DIR_SHORT}}": plans_dir_short,
         "{{GIT_HEAD}}": git_head_sha,
         "{{GENERATED_AT}}": now_iso,
         "{{GENERATED_AT_SHORT}}": now_short,
@@ -1036,7 +1054,16 @@ def write_with_drift_guard(
     if path.exists() and not force:
         existing = path.read_text(encoding="utf-8", errors="replace")
         existing_sha_m = _META_SHA_RE.search(existing[:4096])
-        if existing_sha_m and existing_sha_m.group(1) == source_sha:
+        if existing_sha_m is None:
+            # File exists in the output dir but isn't a plan-view artefact
+            # (no embedded sha meta). Refuse to clobber — the user may have
+            # an index.html, an architecture doc, or other content here.
+            return (
+                False,
+                f"refused: {path.name} exists with no plan-view-source-sha256 meta "
+                f"(likely a non-plan-view file); pass --force to overwrite",
+            )
+        if existing_sha_m.group(1) == source_sha:
             existing_stable = _stable_content(existing)
             new_stable = _stable_content(new_content)
             if existing_stable == new_stable:
@@ -1046,6 +1073,8 @@ def write_with_drift_guard(
                 f"refused: {path.name} differs from regen but source markdown unchanged "
                 f"(hand-edit suspected); pass --force to overwrite",
             )
+        # else: file has plan-view meta but source-sha differs → source changed,
+        # overwrite freely.
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(new_content, encoding="utf-8")
     return True, f"wrote {path.name}"
@@ -1213,11 +1242,17 @@ def build_rich_manifest(
                 }
             )
 
-        aggregate_status = (
-            "cached"
-            if (all_cached and existing == plan.sha256)
-            else ("partial" if all_cached else "pending")
-        )
+        # State machine for sections-strategy plans:
+        #   cached  — all fragments fresh AND assembled .rich.html embeds matching sha
+        #   partial — some fragments still pending; the harness must render them
+        #   pending — all fragments fresh, but assembled .rich.html is missing/stale;
+        #             the harness must run `--rich-assemble` to stitch them
+        if all_cached and existing == plan.sha256:
+            aggregate_status = "cached"
+        elif not all_cached:
+            aggregate_status = "partial"
+        else:
+            aggregate_status = "pending"
         entries.append(
             {
                 "slug": slug,
@@ -1320,9 +1355,7 @@ def assemble_rich_sections(
 
         title = html.escape(plan.title or slug)
         sha_short = plan.sha256[:12]
-        rel_source = (
-            plan.path.relative_to(plans_dir.parent.parent) if False else plan.path.name
-        )
+        rel_source = plan.path.name
         bucket_chip = _chip(plan.bucket, plan.chip_colour)
         page = f"""<!doctype html>
 <html lang="en">
@@ -1485,6 +1518,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.gitignore:
         (out_dir / ".gitignore").write_text("*\n", encoding="utf-8")
 
+    # Compute script_path relative to repo_root once — kept harness-neutral so
+    # the generated HTML's "regenerate with …" footer points at the actual
+    # location (e.g. .claude/skills/plan-view/generate.py for Claude users,
+    # .codex/skills/plan-view/generate.py for Codex users).
+    try:
+        script_path = str(Path(__file__).resolve().relative_to(repo_root))
+    except ValueError:
+        script_path = str(Path(__file__).resolve())
+    plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
+
     # Dashboard
     dashboard_html = render_dashboard(
         plans,
@@ -1493,6 +1536,7 @@ def main(argv: list[str] | None = None) -> int:
         git_head_sha,
         dashboard_template,
         readme_used,
+        script_path,
     )
     corpus_sha = hashlib.sha256(
         "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
@@ -1508,7 +1552,9 @@ def main(argv: list[str] | None = None) -> int:
     refused = 0
     written = 1 if wrote else 0
     for plan in plans.values():
-        page_html = render_plan_page(plan, plans, git_head_sha, plan_template)
+        page_html = render_plan_page(
+            plan, plans, git_head_sha, plan_template, script_path, plans_dir_short
+        )
         wrote, msg = write_with_drift_guard(
             out_dir / f"plan-{plan.slug}.html",
             page_html,

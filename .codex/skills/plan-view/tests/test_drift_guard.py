@@ -14,6 +14,31 @@ def _build(sha: str, body_extra: str = "") -> str:
     )
 
 
+def test_refuses_to_clobber_file_without_plan_view_meta(tmp_path: Path) -> None:
+    # Pre-existing file with no plan-view sha (e.g. a hand-authored index.html
+    # the user dropped into the output dir) must not be silently overwritten.
+    target = tmp_path / "index.html"
+    target.write_text(
+        "<html><body>my hand-authored doc, not from plan-view</body></html>",
+        encoding="utf-8",
+    )
+    wrote, msg = G.write_with_drift_guard(
+        target, _build("a" * 64), "a" * 64, force=False
+    )
+    assert wrote is False
+    assert "no plan-view-source-sha256" in msg
+    # Original content preserved
+    assert "my hand-authored doc" in target.read_text(encoding="utf-8")
+
+
+def test_force_overwrites_file_without_plan_view_meta(tmp_path: Path) -> None:
+    target = tmp_path / "index.html"
+    target.write_text("<html><body>pre-existing</body></html>", encoding="utf-8")
+    wrote, _ = G.write_with_drift_guard(target, _build("a" * 64), "a" * 64, force=True)
+    assert wrote is True
+    assert "plan-view-source-sha256" in target.read_text(encoding="utf-8")
+
+
 def test_write_when_missing(tmp_path: Path) -> None:
     p = tmp_path / "out.html"
     wrote, msg = G.write_with_drift_guard(p, _build("a" * 64), "a" * 64, force=False)
