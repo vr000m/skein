@@ -89,16 +89,18 @@ Check:
 - [ ] **Missing items** — did the implementation add work not in the plan? (new files, phases, or decisions)
 - [ ] **Stale references** — do file paths, method names, or config keys in the plan match the code?
 - [ ] **Stale descriptions** — do technical-spec tables, authority decisions, and prose summaries still accurately describe what each file does in the current diff? Re-read each row/statement against the actual code, not just the path.
-- [ ] **Stale "PR open" claims** — grep the plan body for lines containing `PR #\d+` together with `open`, `pending`, `in review`, or `reviews pending`. Extract the unique PR numbers from those lines, then probe each once with `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it so the plan's PR-status text and primary `**Status**:` / `**Status:**` header can be refreshed.
+- [ ] **Stale "PR open" claims** — grep the plan body for lines containing `PR #\d+` together with `open`, `pending`, `in review`, or `reviews pending`, ignoring lines inside fenced code blocks. Extract the unique PR numbers from those lines into the audit's shared PR set (see below), then probe each once with `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it so the plan's PR-status text and primary `**Status**:` / `**Status:**` header can be refreshed. When locating the primary status header for the refresh, skip any `**Status**:` / `**Status:**` occurrence inside a fenced code block and prefer the first occurrence in normal prose near the top of the file.
 
 ### Dev Plans Index (`docs/dev_plans/README.md` if present)
 
 Read the index **unconditionally** — it is not tied to any one branch, so the primary-plan gate above must not exclude it. Skip only if the file does not exist.
 
+**Shared PR set:** Deduplicate PR numbers across both the per-plan "Stale PR open" check and the index "Stale PR refs" check below. Build one set of unique PR numbers from all matching lines across all audited files, then call `gh pr view N --json state,mergedAt` once per number and reuse the result.
+
 Check:
-- [ ] **Status mismatch** — for every row in lifecycle tables or sections (for example Current Tasks / Completed Tasks, In Progress / Planned / Shipped), open the linked plan file and compare the row's status text to the plan's first primary status header (`**Status**:` or `**Status:**` near the top of the file). Flag rows where the index status no longer matches the plan header.
-- [ ] **Lifecycle placement** — infer lifecycle placement from the index's existing section headings. A row whose linked plan's primary status starts with "Shipped" or "Complete" should live in the completed/shipped section; active statuses such as "In Progress", "In Review", or "Not Started" should live in the active/planned section. If the index structure is unfamiliar, flag the mismatch instead of inventing new sections.
-- [ ] **Stale PR refs** — for any row or status cell containing `PR #N` together with `open`, `pending`, `in review`, or `reviews pending`, collect unique PR numbers and probe each once with `gh pr view N --json state,mergedAt`. If MERGED or CLOSED, flag it.
+- [ ] **Status mismatch** — for every row in lifecycle tables or sections (for example Current Tasks / Completed Tasks, In Progress / Planned / Shipped), open the linked plan file and compare the row's status text to the plan's first primary status header (`**Status**:` or `**Status:**` in normal prose near the top of the file; skip occurrences inside fenced code blocks). Flag rows where the index status no longer matches the plan header.
+- [ ] **Lifecycle placement** — infer lifecycle placement from the index's existing section headings. A row whose linked plan's primary status starts with "Shipped" or "Complete" should live in the completed/shipped section; active statuses such as "In Progress", "In Review", or "Not Started" should live in the active/planned section. If the index distinguishes Planned from In Progress (three-bucket taxonomy), match the plan's status to the corresponding bucket precisely. If the index structure is unfamiliar, flag the mismatch instead of inventing new sections.
+- [ ] **Stale PR refs** — for any row or status cell containing `PR #N` together with `open`, `pending`, `in review`, or `reviews pending`, add the unique PR numbers to the shared PR set above and use the probed result. If MERGED or CLOSED, flag it.
 - [ ] **Broken links** — if a row points to a plan file that no longer exists or has been renamed, flag it.
 
 #### Sibling-plan audit (extend the audit pass — do NOT add a parallel grep)
@@ -272,7 +274,7 @@ If `--apply` was passed, or the user confirms, apply the updates. **Always show 
 
 1. Edit each document using the Edit tool (prefer surgical edits over full rewrites)
 2. For dev plans: check boxes, update status, add missing items; refresh stale "PR #N open/pending" text where the PR has merged
-3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's existing lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header; refresh stale PR refs
+3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's **existing** lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header, and refresh stale PR refs. If the target section doesn't exist in the current index, leave the row in place and report the mismatch — never create a new lifecycle section in `--apply` mode.
 4. For changelog: insert the new version section following existing format exactly
 5. For README: add missing sections/entries where appropriate
 6. For CLAUDE.md: update commands, layout, or versioning sections
