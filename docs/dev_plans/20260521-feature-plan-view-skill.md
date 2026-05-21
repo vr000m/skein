@@ -1,6 +1,6 @@
 # Feature: `plan-view` — HTML dashboard for dev-plan corpora
 
-**Status**: Shipped — `feat/plan-view-skill`; v1 cut as described below; rich-view experiments parked under koda-pipecat `docs/_rich_views/`
+**Status**: Shipped — `feat/plan-view-skill`; v1 cut as described below, plus `--rich` mode + widget toolkit added in the same pass (see "Changes from initial design" item 4 and "`--rich` workflow" below)
 **Assigned to**: Claude (skill author), user (design + review gates)
 **Priority**: Medium
 **Branch**: `feat/plan-view-skill`
@@ -133,7 +133,7 @@ The plan above reflects what shipped. Three substantive changes landed during th
 
 A fourth piece of work was scoped *out* of v1 after surfacing in the same conversation, and is parked under koda-pipecat:
 
-4. **Rich single-document HTML prototypes** — the user noted that the corpus-level dashboard captures one half of the Anthropic blog's insight, but the other half (HTML letting a *single* dense document express things markdown can't — tabs, SVG architecture diagrams, colour-coded review state per phase) belongs in a different artefact. Two hand-crafted prototypes shipped under `~/Code/pipecat-ai/koda-pipecat/docs/_rich_views/` (`bot-harness-decoupling.html` and `architecture.html`) to test whether the pattern earns a future `plan-view --rich` mode or stays one-off forever. Decision deferred until 3–4 more rich views exist and a pattern is visible.
+4. **Rich single-document HTML — first parked, then shipped in the same pass.** Two hand-crafted prototypes (`bot-harness-decoupling.html`, `architecture.html`) landed under koda-pipecat's `docs/_rich_views/` to test whether HTML's "express things markdown can't" insight applied to single dense documents. The original parking decision was "wait for 3–4 more rich views before deciding". A follow-up conversation re-opened that decision under a different constraint: if `plan-view` will run across N repos (pipecat, vr000m-website, koda, stt) and dev plans drive the work everywhere, hand-authoring per repo doesn't scale. The right shape: extract a constrained widget toolkit from the two prototypes and add a `--rich` mode that emits a per-plan manifest the agent harness consumes (spawning an LLM subagent per plan with the toolkit as the constraint surface). LLM cost stays proportional to actual plan edits because rich pages cache by source-sha. Shipped in the same PR — see `--rich workflow` in SKILL.md and the new `_widgets/` directory.
 
 ## Out of scope / Deferred to v2
 
@@ -141,10 +141,10 @@ Called out explicitly in `SKILL.md` so consumers know:
 
 - **SVG cross-reference graph** — v1 ships typed-edge pills as a `<ul>`. The graph layout is v2 once the typed-edge taxonomy proves itself.
 - **Timeline lane widget** — v1 sorts cards by last-touched within each component. Dedicated timeline lane is v2.
-- **Tabbed per-plan pages** — v1 uses single-scroll layout with anchored sections. Tabs (`<input type="radio">` + `:checked` CSS) are v2.
+- **Tabbed per-plan pages** — v1's deterministic per-plan view uses single-scroll layout with anchored sections. Tabbed layout is shipped in the **rich** per-plan view (`plan-<slug>.rich.html`) via the `_widgets/tabs.html` widget, which uses `<input type="radio">` + `:has()` (not `~`) for visibility because the sibling-selector pattern breaks when radios live inside a `.tab-bar` wrapper.
 - **`.plan-view.yml` config for component overrides** — v1 is heuristic-only. Config file is read silently if present, undocumented.
 - **Review-round inference beyond checkbox counting** — v1 counts `- [x]` / `- [ ]` in `## Progress` and `## Acceptance Criteria` sections. Parsing "review round 3 applied" / "deep-review fixed" deferred.
-- **Composition with `playground` skill** — different contract (`playground` = interactive single-file with controls; `plan-view` = static report from a dir). Kept separate in v1.
+- **Composition with `playground` skill** — different contract (`playground` = interactive single-file with controls; `plan-view --rich` = constrained widget-toolkit rendering gated on source-sha). `--rich` deliberately does NOT route through `playground` because the contracts conflict: `playground` is exploratory and user-prompted, `--rich` needs reproducible-enough output keyed to source-sha so the drift guard means something.
 
 ## Risks & mitigations
 
@@ -158,6 +158,6 @@ Called out explicitly in `SKILL.md` so consumers know:
 
 ## Out of scope for this plan
 
-- The Anthropic-blog-inspired *rich single-document* HTML pattern — see "Changes from initial design" item 4 and the prototypes under koda-pipecat `docs/_rich_views/`. Possibly becomes `plan-view --rich` mode in the future, or stays as hand-crafted per-document HTML.
+- ~~The Anthropic-blog-inspired *rich single-document* HTML pattern~~ — originally parked; shipped in the same pass as `--rich` + `_widgets/` toolkit (see "Changes from initial design" item 4).
 - A `/plan-view` mode that *writes back* to source markdown. The skill is strictly a renderer.
 - Cross-repo aggregation (rendering plans from multiple repos into one dashboard). Single-repo scope only.
