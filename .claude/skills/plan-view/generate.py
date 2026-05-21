@@ -833,10 +833,10 @@ def render_dashboard(
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # Mirror the drift-guard computation in main() exactly: render_sha is always
+    # populated by compute_render_shas() before this runs, so no sha256 fallback.
     corpus_sha = hashlib.sha256(
-        "".join(sorted(p.render_sha or p.sha256 for p in plans.values())).encode(
-            "utf-8"
-        )
+        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
     ).hexdigest()
     plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
     readme_note = (
@@ -967,7 +967,7 @@ def render_plan_page(
     commit_list = (
         "\n".join(
             f'<li><span class="date">{_esc(c.date[:10])}</span>'
-            f'<span class="sha">{c.short_sha}</span>'
+            f'<span class="sha">{_esc(c.short_sha)}</span>'
             f'<span class="subject">{_esc(c.subject)}</span></li>'
             for c in plan.commits[:50]
         )
@@ -1086,10 +1086,10 @@ def write_with_drift_guard(
 
 
 _RICH_SHA_RE = re.compile(
-    r'<meta name="plan-view-rich-source-sha256" content="([0-9a-f]+)"'
+    r'<meta name="plan-view-rich-source-sha256" content="([0-9a-f]{64})"'
 )
 _RICH_SECTION_SHA_RE = re.compile(
-    r"<!--\s*plan-view-rich-section-sha256:\s*([0-9a-f]+)\s*-->"
+    r"<!--\s*plan-view-rich-section-sha256:\s*([0-9a-f]{64})\s*-->"
 )
 _H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
 
@@ -1155,9 +1155,9 @@ def split_into_sections(plan: Plan) -> list[dict]:
         _push("body", "Body", plan.raw)
         return sections
 
-    preamble = plan.raw[: matches[0].start()].strip("\n")
-    if preamble:
-        _push("preamble", "(preamble)", preamble + "\n")
+    preamble = plan.raw[: matches[0].start()]
+    if preamble.strip():
+        _push("preamble", "(preamble)", preamble.strip("\n") + "\n")
 
     for i, m in enumerate(matches):
         title = m.group(1).strip()
@@ -1373,9 +1373,9 @@ def assemble_rich_sections(
 body {{ max-width: 1200px; margin: 0 auto; padding: 32px 24px 80px; }}
 header.plan-hero {{ padding: 24px 0; border-bottom: 1px solid var(--border); margin-bottom: 24px; }}
 header.plan-hero h1 {{ margin: 8px 0 12px; }}
-header.plan-hero .meta {{ color: var(--muted); font-size: 14px; }}
+header.plan-hero .meta {{ color: var(--fg-muted); font-size: 14px; }}
 .tab-bar {{ display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 24px; }}
-footer.plan-foot {{ margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: 13px; }}
+footer.plan-foot {{ margin-top: 64px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 13px; }}
 </style>
 </head>
 <body>
