@@ -15,6 +15,7 @@
 
 | Date | Type | Name | Status | Branch | Plan |
 |------|------|------|--------|--------|------|
+| 2026-05-21 | feature | plan-view-skill | Complete | feat/plan-view-skill | `docs/dev_plans/20260521-feature-plan-view-skill.md` |
 | 2026-05-15 | feature | review-auto-fix-tier | Complete | feature/review-auto-fix-tier | `docs/dev_plans/20260515-feature-review-auto-fix-tier.md` |
 | 2026-05-08 | feature | cross-lens-finding-reconciliation | Complete | feature/cross-lens-reconciliation | `docs/dev_plans/20260508-feature-cross-lens-finding-reconciliation.md` |
 | 2026-05-04 | feature | skill-improvements-from-usage-report | Complete | feature/skill-improvements-from-usage-report | `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md` |
