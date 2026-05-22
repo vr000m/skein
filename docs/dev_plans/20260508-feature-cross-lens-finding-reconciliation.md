@@ -1,6 +1,8 @@
 # Task: Cross-lens finding reconciliation in `deep-review` and `review-plan`
 
-**Status**: Complete
+**Status**: Complete (PR [#21](https://github.com/vr000m/skills.md/pull/21) merged 2026-05-10)
+**Component**: review-skills
+**Follows:** [20260317-feature-deep-review](20260317-feature-deep-review.md)
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/cross-lens-reconciliation

@@ -10,7 +10,7 @@ fi
 
 GLOBAL_CODEX_SKILLS_DIR="${GLOBAL_CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
 GLOBAL_CLAUDE_SKILLS_DIR="${GLOBAL_CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
-MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out review-plan rfc-finder spec-compliance update-docs}"
+MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out plan-view review-plan rfc-finder spec-compliance update-docs}"
 CLAUDE_ONLY_SKILLS="${CLAUDE_ONLY_SKILLS:-}"
 GLOBAL_CODEX_AGENTS="${GLOBAL_CODEX_AGENTS:-$HOME/.codex/AGENTS.md}"
 GLOBAL_CLAUDE_MD="${GLOBAL_CLAUDE_MD:-$HOME/.claude/CLAUDE.md}"
@@ -56,9 +56,9 @@ sync_skill() {
 	fi
 	mkdir -p "$target_dir"
 	if [[ "$skill" == "content-review" ]]; then
-		rsync -a --delete --exclude='references/' "$source_dir/" "$target_dir/"
+		rsync -a --delete --exclude='references/' --exclude='__pycache__' "$source_dir/" "$target_dir/"
 	else
-		rsync -a --delete "$source_dir/" "$target_dir/"
+		rsync -a --delete --exclude='__pycache__' "$source_dir/" "$target_dir/"
 	fi
 }
 

@@ -1,0 +1,86 @@
+<!--
+  compare.svg.html — side-by-side "today vs proposed" comparison.
+  Assumes base.css is loaded.
+
+  Input shape:
+    {
+      "left": {
+        "title": "Today — inline post-processing",
+        "kind": "today",                      // controls accent: "today" | "proposed" | "neutral"
+        "header_box": "bot/dual.py · TranscriptBuffer",
+        "header_arrow_label": "on flush (EndFrame)",
+        "subsystem_label": "run_post_processing() — detached task",
+        "items": [
+          { "text": "dictionary.apply()",     "kind": "ok" },
+          { "text": "segmenter.segment()",    "kind": "ok" },
+          { "text": "classifier.classify()  ← LLM", "kind": "warn" },
+          ...
+        ],
+        "caption": "LLM calls fail inside the recording process."
+      },
+      "right": { ...same shape, kind: "proposed"... },
+      "mapping": [
+        { "left_id": "classifier", "right_id": "claim", "label": "moved" }
+      ]
+    }
+
+  `items[].kind` controls row fill:
+    ok    → neutral surface
+    warn  → amber-tinted
+    err   → red-tinted
+    good  → green-tinted
+
+  Placeholders:
+    {{LEFT_SVG}}        — full <svg> markup for the "today" side
+    {{RIGHT_SVG}}       — full <svg> markup for the "proposed" side
+    {{LEFT_CAPTION}}, {{RIGHT_CAPTION}}
+    {{LEFT_TITLE}}, {{RIGHT_TITLE}}
+    {{LEFT_KIND}}, {{RIGHT_KIND}}   — class suffix: today | proposed | neutral
+    {{MAPPING_SVG}}     — optional overlay arrows between left and right
+                          (rendered as <svg> overlay with absolute positioning,
+                           or omitted)
+
+  Each side SVG follows this geometry (viewBox 0 0 320 360):
+    - Top header rect at y=10, height=36, x=50, w=220
+    - Down arrow from y=46 to y=70 with label
+    - Subsystem label rect at y=78, height=34
+    - Down arrow y=112 → y=132 (or y=138 if dashed)
+    - Item list container rect at y=138/144, height ~194, x=20, w=280
+    - Items inside container: each row height 22, gap 4, x=14, width=252
+-->
+<div class="compare-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0 24px;">
+  <style>
+    @media (max-width: 900px) { .compare-grid { grid-template-columns: 1fr !important; } }
+    .compare-card { background: var(--bg-elev); border: 1px solid var(--border);
+                    border-radius: 8px; padding: 16px; }
+    .compare-card h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600;
+                       color: var(--fg-dim); text-transform: uppercase;
+                       letter-spacing: 0.05em; }
+    .compare-card.today    h4 { color: var(--amber); }
+    .compare-card.proposed h4 { color: var(--green); }
+    .compare-card.neutral  h4 { color: var(--blue);  }
+    .compare-card svg { width: 100%; height: auto; display: block; }
+    .compare-card .caption { font-size: 11.5px; color: var(--fg-muted);
+                             margin-top: 10px; line-height: 1.5; }
+  </style>
+
+  <div class="compare-card {{LEFT_KIND}}">
+    <h4>{{LEFT_TITLE}}</h4>
+    {{LEFT_SVG}}
+    <p class="caption">{{LEFT_CAPTION}}</p>
+  </div>
+
+  <div class="compare-card {{RIGHT_KIND}}">
+    <h4>{{RIGHT_TITLE}}</h4>
+    {{RIGHT_SVG}}
+    <p class="caption">{{RIGHT_CAPTION}}</p>
+  </div>
+</div>
+
+{{MAPPING_SVG}}
+<!--
+  Mapping overlay (optional). If `mapping` is non-empty, the renderer may
+  emit a relatively-positioned <svg> sitting above the grid with absolute
+  cross-arrows from left_id boxes to right_id boxes. Most consumers leave
+  this empty and rely on the caption to explain the correspondence.
+-->

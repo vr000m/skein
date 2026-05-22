@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="plan-view-source-sha256" content="{{SOURCE_SHA}}">
+<meta name="plan-view-source-path" content="{{SOURCE_PATH}}">
+<meta name="plan-view-git-head" content="{{GIT_HEAD}}">
+<meta name="plan-view-generated-at" content="{{GENERATED_AT}}">
+<title>{{TITLE}} — Plan View</title>
+<style>
+:root {
+  --bg: #0f1115; --bg-elev: #161a22; --bg-card: #1c2230;
+  --fg: #e6e9ef; --fg-dim: #9aa3b2; --fg-muted: #6b7280;
+  --border: #2a313d; --accent: #7c9eff;
+  --green: #4ade80; --amber: #fbbf24; --blue: #60a5fa;
+  --red: #f87171; --grey: #9ca3af; --purple: #c084fc;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fafafa; --bg-elev: #ffffff; --bg-card: #ffffff;
+    --fg: #111827; --fg-dim: #4b5563; --fg-muted: #9ca3af;
+    --border: #e5e7eb; --accent: #2563eb;
+    --green: #16a34a; --amber: #d97706; --blue: #2563eb;
+    --red: #dc2626; --grey: #6b7280; --purple: #9333ea;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.55; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header {
+  padding: 24px 32px; border-bottom: 1px solid var(--border);
+  background: var(--bg-elev); position: sticky; top: 0; z-index: 10;
+  backdrop-filter: blur(10px);
+}
+header .breadcrumb { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px; }
+header h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+header .meta { color: var(--fg-dim); font-size: 12px; display: flex; flex-wrap: wrap; gap: 12px; }
+header .meta code { background: var(--bg-card); padding: 1px 6px; border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500;
+  border: 1px solid transparent;
+}
+.chip.green { background: rgba(74, 222, 128, 0.12); color: var(--green); border-color: rgba(74, 222, 128, 0.3); }
+.chip.amber { background: rgba(251, 191, 36, 0.12); color: var(--amber); border-color: rgba(251, 191, 36, 0.3); }
+.chip.blue  { background: rgba(96, 165, 250, 0.12); color: var(--blue);  border-color: rgba(96, 165, 250, 0.3); }
+.chip.red   { background: rgba(248, 113, 113, 0.12); color: var(--red);   border-color: rgba(248, 113, 113, 0.3); }
+.chip.grey  { background: rgba(156, 163, 175, 0.12); color: var(--grey);  border-color: rgba(156, 163, 175, 0.3); }
+nav.toc {
+  padding: 12px 32px; background: var(--bg-elev); border-bottom: 1px solid var(--border);
+  font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; position: sticky;
+  top: 90px; z-index: 9;
+}
+nav.toc a { color: var(--fg-dim); }
+nav.toc a:hover { color: var(--accent); }
+main { padding: 32px; max-width: 980px; margin: 0 auto; }
+section { margin-bottom: 32px; scroll-margin-top: 140px; }
+section h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.timeline-strip { display: block; margin: 8px 0 16px; }
+.timeline-strip rect { fill: var(--accent); opacity: 0.6; }
+.timeline-strip rect:hover { opacity: 1; }
+.timeline-strip line { stroke: var(--border); }
+.timeline-strip text { fill: var(--fg-muted); font-size: 10px; }
+.commit-list { list-style: none; padding: 0; margin: 0; max-height: 400px;
+  overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.commit-list li { padding: 8px 12px; border-bottom: 1px solid var(--border);
+  font-size: 12.5px; display: flex; gap: 12px; align-items: baseline; }
+.commit-list li:last-child { border-bottom: none; }
+.commit-list .sha { font-family: ui-monospace, monospace; color: var(--accent); font-size: 11px; }
+.commit-list .date { color: var(--fg-muted); font-size: 11px; min-width: 90px; }
+.commit-list .subject { color: var(--fg); flex: 1; }
+.edges-section ul { list-style: none; padding: 0; margin: 0; display: flex;
+  flex-direction: column; gap: 6px; }
+.edges-section li {
+  padding: 8px 12px; background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 4px; font-size: 12.5px; display: flex; align-items: center; gap: 10px;
+}
+.edges-section .label {
+  padding: 2px 7px; border-radius: 3px; font-size: 10.5px;
+  font-family: ui-monospace, monospace; font-weight: 500;
+}
+.edges-section .label.supersedes      { background: rgba(192, 132, 252, 0.15); color: var(--purple); }
+.edges-section .label.tracked-in      { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+.edges-section .label.structural-fix-of { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+.edges-section .label.follows         { background: rgba(251, 191, 36, 0.15); color: var(--amber); }
+.edges-section .label.references      { background: rgba(156, 163, 175, 0.12); color: var(--grey); }
+.markdown { background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px 24px; }
+.markdown h1, .markdown h2, .markdown h3 { margin-top: 24px; }
+.markdown h1:first-child, .markdown h2:first-child { margin-top: 0; }
+.markdown code { background: var(--bg-card); padding: 1px 5px; border-radius: 3px;
+  font-family: ui-monospace, monospace; font-size: 12.5px; }
+.markdown pre { background: var(--bg-card); padding: 12px; border-radius: 6px;
+  overflow-x: auto; font-size: 12.5px; }
+.markdown pre code { background: none; padding: 0; }
+.markdown blockquote { border-left: 3px solid var(--accent); padding-left: 12px;
+  color: var(--fg-dim); margin: 12px 0; }
+.markdown table { border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+.markdown th, .markdown td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+.markdown th { background: var(--bg-card); }
+details.raw-source > summary { cursor: pointer; padding: 8px 12px;
+  background: var(--bg-card); border-radius: 4px; margin-bottom: 8px; font-size: 12px;
+  color: var(--fg-dim); }
+footer { padding: 24px 32px; color: var(--fg-muted); font-size: 11px;
+  border-top: 1px solid var(--border); margin-top: 32px; text-align: center; }
+footer code { font-family: ui-monospace, monospace; background: var(--bg-card); padding: 1px 6px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="breadcrumb"><a href="index.html">← Plan View</a> · <code>{{COMPONENT}}</code></div>
+  <h1>{{TITLE}}</h1>
+  <div class="meta">
+    <span>{{STATUS_CHIP}}</span>
+    <span>Created <code>{{CREATED}}</code></span>
+    <span>Last touched <code>{{LAST_TOUCHED}}</code></span>
+    {{PR_LINKS}}
+    {{BRANCH}}
+  </div>
+</header>
+<nav class="toc">
+  <a href="#status">Status</a>
+  <a href="#edges">Cross-references</a>
+  <a href="#commits">Commit history</a>
+  <a href="#content">Plan content</a>
+</nav>
+<main>
+  <section id="status">
+    <h2>Status</h2>
+    <p>{{STATUS_DETAIL}}</p>
+    {{PROGRESS}}
+  </section>
+  <section id="edges" class="edges-section">
+    <h2>Cross-references</h2>
+    {{EDGES}}
+  </section>
+  <section id="commits">
+    <h2>Commit history</h2>
+    {{TIMELINE_SVG}}
+    <ul class="commit-list">{{COMMIT_LIST}}</ul>
+  </section>
+  <section id="content">
+    <h2>Plan content</h2>
+    <div class="markdown">{{MARKDOWN}}</div>
+  </section>
+</main>
+<footer>
+  Source: <code>{{SOURCE_PATH}}</code> · sha256 <code>{{SOURCE_SHA_SHORT}}</code> ·
+  rendered at <code>{{GENERATED_AT_SHORT}}</code> ·
+  do not hand-edit — regenerate with <code>python3 {{SCRIPT_PATH}} {{PLANS_DIR_SHORT}}</code>
+</footer>
+</body>
+</html>

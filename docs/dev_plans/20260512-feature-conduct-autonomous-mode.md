@@ -1,6 +1,8 @@
 # Task: Autonomous phased implementation mode in `/conduct`
 
-**Status**: Complete (PR #22 open; global promote deferred to post-merge)
+**Status**: Complete (PR [#22](https://github.com/vr000m/skills.md/pull/22) merged 2026-05-15; global promote done post-merge)
+**Component**: planning-skills
+**Follows:** [20260422-feature-conduct-skill](20260422-feature-conduct-skill.md)
 **Assigned to**: Claude + Codex (dual-mirror)
 **Priority**: Medium
 **Branch**: feature/conduct-autonomous-mode

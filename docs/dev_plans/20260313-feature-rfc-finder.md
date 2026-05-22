@@ -3,6 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Status** | Complete |
+| **Component** | spec-skills |
 | **Priority** | Medium |
 | **Branch** | `feat/rfc-finder-skill` |
 | **Created** | 2026-03-13 |
