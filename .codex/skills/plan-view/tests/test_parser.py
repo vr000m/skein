@@ -33,6 +33,46 @@ def test_field_parser_handles_colon_inside_bold(tmp_path: Path) -> None:
     assert plan.branch == "feat/x"
 
 
+def test_component_read_from_field_not_slug(tmp_path: Path) -> None:
+    # Component comes from the **Component** field, not a slug heuristic.
+    body = "# Title\n\n**Status**: Shipped\n**Component**: plan-view\n"
+    p = tmp_path / "20260521-feature-bot-harness.md"
+    p.write_text(body, encoding="utf-8")
+    plan = G.parse_plan(p)
+    assert plan.component == "plan-view"
+
+
+def test_component_from_field_table_row(tmp_path: Path) -> None:
+    body = (
+        "# Title\n\n| Field | Value |\n|---|---|\n"
+        "| **Status** | Shipped |\n| **Component** | Review Skills |\n"
+    )
+    p = tmp_path / "20260521-feature-x.md"
+    p.write_text(body, encoding="utf-8")
+    # Case-normalised + whitespace-collapsed grouping key.
+    assert G.parse_plan(p).component == "review skills"
+
+
+def test_component_missing_falls_to_uncategorized(tmp_path: Path) -> None:
+    p = tmp_path / "20260521-feature-x.md"
+    p.write_text("# Title\n\n**Status**: Planned\n", encoding="utf-8")
+    assert G.parse_plan(p).component == G.UNCATEGORIZED
+
+
+def test_component_case_normalised(tmp_path: Path) -> None:
+    p1 = tmp_path / "20260101-feature-a.md"
+    p1.write_text("# A\n\n**Component**: ASR\n", encoding="utf-8")
+    p2 = tmp_path / "20260102-feature-b.md"
+    p2.write_text("# B\n\n**Component**:   asr  \n", encoding="utf-8")
+    assert G.parse_plan(p1).component == G.parse_plan(p2).component == "asr"
+
+
+def test_component_multi_takes_primary(tmp_path: Path) -> None:
+    p = tmp_path / "20260101-feature-a.md"
+    p.write_text("# A\n\n**Component**: api, data, frontend\n", encoding="utf-8")
+    assert G.parse_plan(p).component == "api"
+
+
 def _write(tmp_path: Path, name: str, body: str) -> Path:
     p = tmp_path / name
     p.write_text(body, encoding="utf-8")

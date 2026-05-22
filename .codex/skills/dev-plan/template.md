@@ -7,6 +7,7 @@ Use this template when creating new development plans.
 # Task: [Title]
 
 **Status**: Not Started | In Progress | Blocked | Complete
+**Component**: [subsystem/skill area this plan touches — groups the plan in plan-view and the README index]
 **Assigned to**: [Agent/Person]
 **Priority**: High | Medium | Low
 **Branch**: [branch-name]

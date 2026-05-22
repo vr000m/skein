@@ -85,6 +85,7 @@ For each discovered document, compare its content against the branch diff and pr
 Look for the plan most relevant to the current branch (match by branch name in header, or by recency).
 Check:
 - [ ] **Status header** — should it be updated? (e.g., "In Progress" to "Complete", version bumped)
+- [ ] **Component field** — does the plan have a `**Component**` header field (the subsystem/skill area used for grouping in `/plan-view` and the index)? If absent, flag it so the author can add one (a plan without it groups as `(uncategorized)`). The plan is the source of truth for component — do not invent a value; flag for the author.
 - [ ] **Unchecked boxes** — are there checklist items that the diff shows are now done?
 - [ ] **Missing items** — did the implementation add work not in the plan? (new files, phases, or decisions)
 - [ ] **Stale references** — do file paths, method names, or config keys in the plan match the code?
@@ -101,6 +102,7 @@ Check:
 - [ ] **Status mismatch** — for every row in lifecycle tables or sections (for example Current Tasks / Completed Tasks, In Progress / Planned / Shipped), open the linked plan file and compare the row's status text to the plan's first primary status header (`**Status**:` or `**Status:**` in normal prose near the top of the file; skip occurrences inside fenced code blocks). Flag rows where the index status no longer matches the plan header.
 - [ ] **Lifecycle placement** — infer lifecycle placement from the index's existing section headings. A row whose linked plan's primary status starts with "Shipped" or "Complete" should live in the completed/shipped section; active statuses such as "In Progress", "In Review", or "Not Started" should live in the active/planned section. If the index distinguishes Planned from In Progress (three-bucket taxonomy), match the plan's status to the corresponding bucket precisely. If the index structure is unfamiliar, flag the mismatch instead of inventing new sections.
 - [ ] **Stale PR refs** — for any row or status cell containing `PR #N` together with `open`, `pending`, `in review`, or `reviews pending`, add the unique PR numbers to the shared PR set above and use the probed result. If MERGED or CLOSED, flag it.
+- [ ] **Component mismatch** — if the index has a `Comp` column, compare each plan-backed row's `Comp` value to the linked plan's `**Component**` field. The **plan is canonical**; the index derives. Flag rows where they differ so the index can be refreshed from the plan. **Reconcile, never regenerate:** rows in a "shipped without a dedicated plan file" table have no plan to derive from — leave their hand-entered `Comp` values untouched and never blank them. Do not add a `Comp` column if the index lacks one; just flag its absence as a suggestion.
 - [ ] **Broken links** — if a row points to a plan file that no longer exists or has been renamed, flag it.
 
 #### Sibling-plan audit (extend the audit pass — do NOT add a parallel grep)
@@ -274,7 +276,7 @@ If `--apply` was passed, or the user confirms, apply the updates. **Always show 
 
 1. Edit each document directly (prefer surgical edits over full rewrites)
 2. For dev plans: check boxes, update status, add missing items; refresh stale "PR #N open/pending" text where the PR has merged
-3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's **existing** lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header, and refresh stale PR refs. If the target section doesn't exist in the current index, leave the row in place and report the mismatch — never create a new lifecycle section in `--apply` mode.
+3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's **existing** lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header, and refresh stale PR refs. If the target section doesn't exist in the current index, leave the row in place and report the mismatch — never create a new lifecycle section in `--apply` mode. If the index has a `Comp` column, refresh a plan-backed row's `Comp` value from the linked plan's `**Component**` field (plan is canonical); leave plan-less rows' hand-entered `Comp` untouched. Never add or drop the `Comp` column in `--apply` mode — only update existing cells.
 4. For changelog: insert the new version section following existing format exactly
 5. For README: add missing sections/entries where appropriate
 6. For CLAUDE.md: update commands, layout, or versioning sections

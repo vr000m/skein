@@ -54,7 +54,7 @@ Before creating a plan, check the current branch:
 
 Every plan must include these sections (see template.md for full format):
 
-1. **Header** - Status, assignee, priority, branch, dates, objective
+1. **Header** - Status, **Component**, assignee, priority, branch, dates, objective. For `**Component**`: name the subsystem or skill area this plan touches (it groups the plan in `/plan-view` and the `dev_plans/README.md` index). Reuse an existing component value when one fits — scan sibling plans' `**Component**` fields (`rg '^\*\*Component\*\*' docs/dev_plans/`) and prefer an existing label over inventing a near-duplicate. Infer a sensible value from the objective/slug and confirm with the user. Omit only if genuinely cross-cutting; plan-view will group it as `(uncategorized)`.
 2. **Context** - Background, why this work is needed
 3. **Requirements** - Specific requirements and constraints
 4. **Implementation Checklist** - Phased contract section. Each phase should include a contract block directly under the heading with `**Impl files:**`, `**Test files:**`, `**Test command:**` (in backticks), and optionally `**Validation cmd:**` (in backticks, runs after tests pass or after a no-test phase, failure hands back to user). `/conduct` reads these to decide how to spawn subagents and run tests/validation. Keep phase tasks as plain bullets; per-phase completion and durable findings live below the review marker in `## Progress` and `## Findings`, so runtime edits do not invalidate the marker. Omit all slots only when the phase is not `/conduct`-driven; if every phase omits them, `/conduct` emits a degraded-mode warning.
@@ -200,6 +200,7 @@ The main agent owns plan prose — weave the verified facts into Technical Speci
 If `docs/dev_plans/README.md` exists, update the task tables:
 - Move completed tasks to "Completed Tasks" table
 - Keep "Current Tasks" table up to date
+- Record the plan's `**Component**` value in the row's `Comp` column so the README index stays consistent with the plan header. The plan is the source of truth for component; the README derives it. `/update-docs` reconciles drift between the two.
 
 ## Cost
 
