@@ -167,4 +167,3 @@ The deliberate constraint surface in each extension point is what allows the ski
 - **Strategy: sections** — `plan-view --rich` mode for large plans; one subagent per H2 in parallel; stitched by `--rich-assemble`.
 - **Envelope** — JSON contract returned by lenses to the reconciler; versioned (`ENVELOPE_SCHEMA_VERSION`).
 - **Drift guard** — `plan-view`'s detection of hand-edited generated HTML; compares stored vs recomputed render sha.
-

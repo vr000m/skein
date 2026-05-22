@@ -943,7 +943,7 @@ def render_plan_page(
         "{{GENERATED_AT}}": now_iso,
         "{{GENERATED_AT_SHORT}}": now_short,
         "{{TITLE}}": _esc(plan.title),
-        "{{COMPONENT}}": plan.component,
+        "{{COMPONENT}}": _esc(plan.component),
         "{{STATUS_CHIP}}": chip,
         "{{STATUS_DETAIL}}": _esc(plan.status_raw),
         "{{PROGRESS}}": progress,

@@ -73,6 +73,25 @@ def test_component_multi_takes_primary(tmp_path: Path) -> None:
     assert G.parse_plan(p).component == "api"
 
 
+def test_render_plan_page_escapes_component(tmp_path: Path) -> None:
+    p = tmp_path / "20260101-feature-a.md"
+    p.write_text(
+        "# A\n\n**Status**: Planned\n**Component**: <img src=x onerror=alert(1)>\n",
+        encoding="utf-8",
+    )
+    plan = G.parse_plan(p)
+    html = G.render_plan_page(
+        plan,
+        {plan.slug: plan},
+        git_head_sha="",
+        template="<code>{{COMPONENT}}</code>",
+        script_path=".claude/skills/plan-view/generate.py",
+        plans_dir_short="docs/dev_plans",
+    )
+    assert "<img" not in html
+    assert "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
 def _write(tmp_path: Path, name: str, body: str) -> Path:
     p = tmp_path / name
     p.write_text(body, encoding="utf-8")
