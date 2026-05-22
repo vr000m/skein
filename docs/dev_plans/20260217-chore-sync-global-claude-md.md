@@ -3,6 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Status** | Complete (PR [#2](https://github.com/vr000m/skills.md/pull/2) merged 2026-02-18) |
+| **Component** | sync-infra |
 | Assignee | Claude |
 | Priority | Medium |
 | Branch | `chore/sync-global-claude-md` |

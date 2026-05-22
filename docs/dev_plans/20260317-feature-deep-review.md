@@ -3,6 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Status** | In Progress |
+| **Component** | review-skills |
 | **Priority** | High |
 | **Branch** | `feature/deep-review` |
 | **Created** | 2026-03-17 |

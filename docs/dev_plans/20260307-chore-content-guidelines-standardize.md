@@ -3,6 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Status** | Complete (PR [#5](https://github.com/vr000m/skills.md/pull/5) merged 2026-03-07) |
+| **Component** | content-skills |
 | Assignee | Codex |
 | Priority | High |
 | Branch | `codex/content-guidelines-standardize` |

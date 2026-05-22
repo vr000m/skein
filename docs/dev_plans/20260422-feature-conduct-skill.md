@@ -1,6 +1,7 @@
 # Task: `conduct` skill — phased delegation for linear implementation
 
 **Status**: Phases 1–8 landed on `feature/conduct-skill`; post-review hardening applied on-branch
+**Component**: planning-skills
 **Assigned to**: Claude/Codex (harness-specific implementation), user (review gates)
 **Priority**: Medium
 **Branch**: `feature/conduct-skill`

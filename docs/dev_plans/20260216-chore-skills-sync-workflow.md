@@ -1,6 +1,7 @@
 # Skills Sync Workflow Plan
 
 **Status:** Complete (PR [#1](https://github.com/vr000m/skills.md/pull/1) merged 2026-02-16)
+**Component:** sync-infra
 
 - Type: chore
 - Priority: High

@@ -1,6 +1,7 @@
 # Task: Align local skills with Managed Agents conventions
 
 **Status**: Paused — initial alignment landed in PR [#10](https://github.com/vr000m/skills.md/pull/10) (merged 2026-04-14); broader work paused, no concrete follow-up beyond applying learnings ad-hoc to existing skills.
+**Component**: meta
 **Branch**: feature/managed-agents-alignment
 **Created**: 2026-04-14
 **Updated**: 2026-05-22

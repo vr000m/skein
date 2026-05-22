@@ -1,6 +1,7 @@
 # Task: Skill improvements driven by usage-report friction patterns
 
 **Status**: Complete
+**Component**: meta
 **Assigned to**: Claude Code
 **Priority**: Medium
 **Branch**: feature/skill-improvements-from-usage-report

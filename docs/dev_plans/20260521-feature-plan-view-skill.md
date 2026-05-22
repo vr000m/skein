@@ -1,6 +1,7 @@
 # Feature: `plan-view` — HTML dashboard for dev-plan corpora
 
 **Status**: Shipped — `feat/plan-view-skill`; v1 cut as described below, plus `--rich` mode + widget toolkit added in the same pass (see "Changes from initial design" item 4 and "`--rich` workflow" below)
+**Component**: planning-skills
 **Assigned to**: Claude (skill author), user (design + review gates)
 **Priority**: Medium
 **Branch**: `feat/plan-view-skill`
@@ -71,7 +72,7 @@ Patterns documented in `parser.md` (regex catalogue, status lexicon, edge-typing
 └── plan-template.html # per-plan drill-down scaffold
 ```
 
-`generate.py` sections in order: constants (status lexicon, component patterns, edge regex) → dataclasses (`Plan`, `Edge`, `Commit`) → plan parsing (frontmatter, status, fields, edges, checkboxes, phases) → README reconciliation → git collection → edge linking → stranded detection → minimal markdown renderer → HTML escape helpers → dashboard rendering → per-plan rendering → drift guard → arg parsing + main.
+`generate.py` sections in order: constants (status lexicon, edge regex; component is read per-plan, not pattern-matched) → dataclasses (`Plan`, `Edge`, `Commit`) → plan parsing (frontmatter, status, fields, edges, checkboxes, phases) → README reconciliation → git collection → edge linking → stranded detection → minimal markdown renderer → HTML escape helpers → dashboard rendering → per-plan rendering → drift guard → arg parsing + main.
 
 ### Parser strategy
 
@@ -79,7 +80,39 @@ Pure regex on markdown — 51 plans × subagent would be wasteful. Patterns live
 
 ### Component grouping
 
-Filename-slug heuristic in `COMPONENT_PATTERNS`. First match wins. Components: `bot-harness`, `asr`, `data-processing`, `web-ui`, `benchmark`, `infra`, `meta`, `other`. Optional `<plans-dir>/.plan-view.yml` override read silently if present (v1 undocumented).
+**Each plan declares its own component** in a `**Component**` bold-field header, parsed exactly like `**Status**` (inline-bold form and field-table-row form both accepted). The dashboard groups by the exact, case-normalised string. Plans with no `**Component**` field fall into an `(uncategorized)` group.
+
+**Ordering** is by plan count descending (busiest component first), alphabetical tiebreak, with `(uncategorized)` forced last. There is no `COMPONENT_ORDER` constant — order is derived from the corpus.
+
+**Superseded:** the original v1 design inferred the component from a filename-slug heuristic (`COMPONENT_PATTERNS` / `COMPONENT_ORDER`) with koda-pipecat-specific token lists, and a deferred `.plan-view.yml` config override. Both were removed before this branch shipped. Rationale below.
+
+#### Why a declared field beats inference or a config file
+
+The skill's headline principle is "the markdown remains the source of truth." A slug heuristic encodes the component in *one renderer's* private patterns; a config file is a *second* authority that drifts from the plans it describes. Declaring the component **in the plan** keeps a single source of truth and makes the value reusable by every downstream consumer (`update-docs`, `dev-plan`, the `dev_plans/README.md` index, plain `rg`), not just plan-view. It also deletes the YAML-vs-TOML format question (and the stdlib-only-dependency tension that came with it).
+
+#### Per-field ownership model
+
+Metadata about a plan lives on two surfaces — the plan header and `dev_plans/README.md` (which doubles as the changelog via its Shipped tables). Each field has one canonical owner; the others derive:
+
+| Field | Canonical source | Derived into |
+|-------|------------------|--------------|
+| **Component** | the plan's `**Component**` field | README column; changelog/Shipped rows |
+| **Status** | README section membership (curated lifecycle judgment) | plan `**Status**` is the fallback/detail |
+| Branch / Created / PR | plan header + git | README columns |
+
+Component flips the precedence relative to status: status is a curated judgment so the README wins; component is intrinsic to the plan so the plan wins. plan-view's existing "README grouping wins" rule therefore applies to **status only**, not component.
+
+#### Propagation pipeline (reuses existing skills)
+
+No new machinery — three skills already form the stages:
+
+1. **`dev-plan`** (author) — emits a `**Component**` field on `create`, inferred from the objective/slug and confirmed with the user (same as it seeds `**Status**`).
+2. **`update-docs`** (reconcile) — reads each plan's `**Component**`, ensures the README row carries it, and **warns on drift rather than overwriting** (non-destructive, matching its existing stance).
+3. **`plan-view`** (render) — reads the field; no slug heuristic, no config.
+
+**Why reconcile, not regenerate:** the README has rows with no backing plan file ("Shipped without a dedicated dev-plan file"). Those can never derive a component from a plan, so the README must stay hand-curatable — it is not a pure generated view. Therefore `update-docs` reconciles the overlap and warns on mismatch; it never regenerates the README wholesale.
+
+> **Naming note:** "component" in `20260504-feature-skill-improvements-from-usage-report.md` refers to update-docs's *file-overlap match heuristic* (a primary plan's `Files to Modify` paths searched against sibling plan bodies). That is a different concept from this `**Component**` grouping field — a homonym, not the same feature. The sibling-plan-update rule does not require changing that plan.
 
 ### Output ergonomics
 
@@ -142,7 +175,7 @@ Called out explicitly in `SKILL.md` so consumers know:
 - **SVG cross-reference graph** — v1 ships typed-edge pills as a `<ul>`. The graph layout is v2 once the typed-edge taxonomy proves itself.
 - **Timeline lane widget** — v1 sorts cards by last-touched within each component. Dedicated timeline lane is v2.
 - **Tabbed per-plan pages** — v1's deterministic per-plan view uses single-scroll layout with anchored sections. Tabbed layout is shipped in the **rich** per-plan view (`plan-<slug>.rich.html`) via the `_widgets/tabs.html` widget, which uses `<input type="radio">` + `:has()` (not `~`) for visibility because the sibling-selector pattern breaks when radios live inside a `.tab-bar` wrapper.
-- **`.plan-view.yml` config for component overrides** — v1 is heuristic-only. Config file is read silently if present, undocumented.
+- ~~**`.plan-view.yml` config for component overrides**~~ — **dropped.** Components are now declared per-plan in a `**Component**` field (see "Component grouping" above), so there is no config file and no slug heuristic. The plan is the source of truth.
 - **Review-round inference beyond checkbox counting** — v1 counts `- [x]` / `- [ ]` in `## Progress` and `## Acceptance Criteria` sections. Parsing "review round 3 applied" / "deep-review fixed" deferred.
 - **Composition with `playground` skill** — different contract (`playground` = interactive single-file with controls; `plan-view --rich` = constrained widget-toolkit rendering gated on source-sha). `--rich` deliberately does NOT route through `playground` because the contracts conflict: `playground` is exploratory and user-prompted, `--rich` needs reproducible-enough output keyed to source-sha so the drift guard means something.
 
@@ -151,7 +184,7 @@ Called out explicitly in `SKILL.md` so consumers know:
 | Risk | Mitigation |
 |------|-----------|
 | README grouping diverges from per-plan `**Status:**` headers (human edits one, forgets the other). | v1 prefers README when present; this is intentional (human is the authority). Future: surface mismatches as a warning chip. |
-| Component heuristic mis-buckets a new plan slug. | `.plan-view.yml` override exists (undocumented in v1); user can drop a config file to fix without code change. |
+| A plan omits the `**Component**` field. | Falls into the `(uncategorized)` group rather than being silently mis-bucketed. `dev-plan` emits the field on `create`; `update-docs` warns when a plan lacks it. |
 | Output committed accidentally because not gitignored by default. | `--gitignore` flag exists; this plan adds the entry to `.gitignore` for this repo. Per-repo decision otherwise. |
 | Generator hangs on a malformed plan. | Pure-regex parser with bounded patterns; no subagent calls; `git log --follow` per file is the only external call and has its own subprocess timeout via shell defaults. |
 | Hand-edit detection false-positives on PostToolUse hook reformatting (ruff, prettier). | Output is HTML, not Python — no formatter in the skill's hot path. Verified across multiple regens in CI-like conditions during implementation. |

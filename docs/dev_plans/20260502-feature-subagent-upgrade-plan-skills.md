@@ -1,6 +1,7 @@
 # Task: Subagent upgrades for dev-plan and review-plan skills
 
 **Status**: Not Started
+**Component**: planning-skills
 **Assigned to**: Claude Code
 **Priority**: Medium
 **Branch**: feature/subagent-upgrade-plan-skills
