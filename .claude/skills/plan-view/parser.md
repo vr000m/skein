@@ -110,20 +110,13 @@ In `## Progress` and `## Acceptance Criteria` sections, count `- \[[ x]\]` lines
 
 If `total > 0`, surface as a `done/total` chip on the card.
 
-## Component grouping heuristic
+## Component grouping
 
-Applied to the filename slug (filename minus the date prefix and `.md`). First match wins. Patterns live in `COMPONENT_PATTERNS` in `generate.py`; per-repo override via a `.plan-view.yml` config is deferred to v2 and not yet read.
+Read from each plan's `**Component**` bold-field header (parsed by `_find_field_string`, the same helper used for `**Status**` — both the `**Component**: value` inline form and the `| **Component** | value |` field-table row are accepted). The value is case-normalised and whitespace-collapsed (`_normalise_component`); for a comma-separated list the first entry is the primary group (multi-membership deferred). A plan with no `**Component**` field falls into `(uncategorized)`.
 
-| Component | Slug patterns |
-|---|---|
-| `bot-harness` | `bot`, `harness` (except `harness-replay`), `cron`, `scheduled`, `worker` |
-| `asr` | `asr`, `whisper`, `parakeet`, `diarization`, `transcript-quality`, `segmentation`, `hallucination` |
-| `data-processing` | `digest`, `topic`, `collation`, `map-reduce`, `query`, `action-item`, `ap-`, `classify`, `reprocess`, `merge`, `dedup` |
-| `web-ui` | `ui`, `web`, `admin`, `cmdk`, `cmd-k`, `live-call`, `calendar`, `ux`, `polish` |
-| `benchmark` | `benchmark`, `lmstudio`, `gemma` |
-| `infra` | `airpods`, `wedge`, `recovery`, `flush`, `legacy`, `id-rekey`, `id-fork`, `utc`, `markdown-headers` |
-| `meta` | `followup`, `followon`, `trend-analysis` |
-| `other` | (fallback) |
+There is **no slug heuristic and no config file** — the plan markdown is the source of truth. (v1 used a koda-specific `COMPONENT_PATTERNS` slug matcher; it was removed before shipping. See `docs/dev_plans/20260521-feature-plan-view-skill.md` "Component grouping" for the per-field ownership model: `dev-plan` emits the field, `update-docs` reconciles it into `dev_plans/README.md`, plan-view renders it.)
+
+Group display order is derived from the corpus — plan count descending, alphabetical tiebreak, `(uncategorized)` last. There is no fixed component order.
 
 Plans matching `bug-` or `fix-` carry an additional `bug` tag for the dashboard's red-state logic — they're shown alongside their component group but flagged.
 

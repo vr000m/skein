@@ -59,86 +59,12 @@ BUCKET_LABELS = {
     "unknown": "Unknown",
 }
 
-# Component heuristic — patterns matched against the filename slug (date prefix stripped).
-COMPONENT_PATTERNS: list[tuple[str, list[str]]] = [
-    (
-        "bot-harness",
-        [
-            "bot",
-            "harness-decoupling",
-            "harness-digest",
-            "cron",
-            "scheduled",
-            "worker",
-            "wedge",
-        ],
-    ),
-    (
-        "asr",
-        [
-            "asr",
-            "whisper",
-            "parakeet",
-            "diarization",
-            "transcript-quality",
-            "segmentation",
-            "hallucination",
-        ],
-    ),
-    (
-        "data-processing",
-        [
-            "digest",
-            "topic",
-            "collation",
-            "map-reduce",
-            "query",
-            "action-item",
-            "ap-",
-            "classify",
-            "reprocess",
-            "merge",
-            "dedup",
-            "answer-cache",
-            "ask-",
-            "ask_",
-            "extensible-koda-ask",
-            "harness-ask",
-            "cmdk",
-            "cmd-k",
-        ],
-    ),
-    (
-        "web-ui",
-        ["ui", "web", "admin", "live-call", "calendar", "ux", "polish", "redesign"],
-    ),
-    ("benchmark", ["benchmark", "lmstudio", "gemma"]),
-    (
-        "infra",
-        [
-            "airpods",
-            "recovery",
-            "flush",
-            "legacy",
-            "id-rekey",
-            "id-fork",
-            "utc",
-            "markdown-headers",
-        ],
-    ),
-    ("meta", ["followup", "followon", "trend-analysis"]),
-]
-
-COMPONENT_ORDER = [
-    "bot-harness",
-    "asr",
-    "data-processing",
-    "web-ui",
-    "benchmark",
-    "infra",
-    "meta",
-    "other",
-]
+# Component grouping. Each plan declares its own component in a `**Component**`
+# bold-field header (parsed like `**Status**`). The dashboard groups by the exact,
+# case-normalised string; plans with no field fall into UNCATEGORIZED. There is no
+# slug heuristic and no config file — the plan markdown is the source of truth.
+# See docs/dev_plans/20260521-feature-plan-view-skill.md "Component grouping".
+UNCATEGORIZED = "(uncategorized)"
 
 # Edge patterns. Order = precedence (highest first).
 # Slugs may appear after a bare token, backtick, bracket, paren, OR inside a
@@ -208,7 +134,7 @@ class Plan:
     status_raw: str = ""
     bucket: str = "unknown"
     chip_colour: str = "amber"
-    component: str = "other"
+    component: str = UNCATEGORIZED
     is_bug: bool = False
     pr_numbers: list[str] = field(default_factory=list)
     branch: str = ""
@@ -282,20 +208,43 @@ _FIELD_LINE_RE = re.compile(
 )
 
 
-def _find_status_string(body: str) -> str:
-    """Return the raw status string (best effort). Tries inline-bold then field-table."""
-    m = _STATUS_LINE_RE.search(body)
+def _find_field_string(body: str, field: str) -> str:
+    """Return a `**Field**` value (best effort). Tries inline-bold then field-table.
+
+    Accepts both `**Field:** value` and `**Field**: value`, and the field-table
+    row form `| **Field** | value |`. Used for both Status and Component.
+    """
+    inline = re.compile(rf"^\*\*{re.escape(field)}:?\*\*[:\s]*(.+?)$", re.M)
+    m = inline.search(body)
     if m:
         return m.group(1).strip()
-    # Field-table style: `| **Status** | value |`
+    # Field-table style: `| **Field** | value |`
+    needle, needle_colon = f"**{field}**", f"**{field}:**"
     for line in body.splitlines():
-        if "**Status**" not in line and "**Status:**" not in line:
+        if needle not in line and needle_colon not in line:
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         for i, cell in enumerate(cells):
-            if "**Status" in cell and i + 1 < len(cells):
+            if f"**{field}" in cell and i + 1 < len(cells):
                 return cells[i + 1].strip()
     return ""
+
+
+def _find_status_string(body: str) -> str:
+    """Return the raw status string (best effort)."""
+    return _find_field_string(body, "Status")
+
+
+def _normalise_component(raw: str) -> str:
+    """Map a raw `**Component**` value to a group key. Empty -> UNCATEGORIZED.
+
+    Case-normalised (lowercased) and whitespace-collapsed so `ASR`, `asr`, and
+    `  asr ` group together. Multi-component plans (comma-separated) take the
+    first listed value as the primary group (multi-membership is deferred)."""
+    primary = raw.split(",")[0].strip()
+    if not primary:
+        return UNCATEGORIZED
+    return " ".join(primary.lower().split())
 
 
 def _classify_status(status_raw: str) -> tuple[str, str]:
@@ -382,17 +331,11 @@ def _count_checkboxes(body: str) -> tuple[int, int]:
     return done, total
 
 
-def _classify_component(slug: str) -> tuple[str, bool]:
-    """Return (component, is_bug)."""
-    # Strip date prefix: 20260506-feature-bot-... -> feature-bot-...
+def _slug_is_bug(slug: str) -> bool:
+    """True if the slug names a bug/fix plan (date prefix stripped)."""
     m = PLAN_SLUG_RE.match(slug)
     rest = m.group(2) if m else slug
-    is_bug = rest.startswith(("bug-", "fix-")) or "-bug-" in rest or "-fix-" in rest
-    for component, patterns in COMPONENT_PATTERNS:
-        for pat in patterns:
-            if pat in rest:
-                return component, is_bug
-    return "other", is_bug
+    return rest.startswith(("bug-", "fix-")) or "-bug-" in rest or "-fix-" in rest
 
 
 def parse_plan(path: Path) -> Plan:
@@ -400,7 +343,8 @@ def parse_plan(path: Path) -> Plan:
     sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     frontmatter, body = _strip_frontmatter(raw)
     slug = path.stem
-    component, is_bug = _classify_component(slug)
+    is_bug = _slug_is_bug(slug)
+    component = _normalise_component(_find_field_string(body, "Component"))
     status_raw = _find_status_string(body)
     bucket, chip = _classify_status(status_raw)
     phases_total = _count_phases(body)
@@ -793,8 +737,17 @@ def render_dashboard(
     for plans_in in by_component.values():
         plans_in.sort(key=lambda x: x.last_touched or x.created or "", reverse=True)
 
+    # Order derived from the corpus: plan count desc, alphabetical tiebreak,
+    # with UNCATEGORIZED forced last. No COMPONENT_ORDER constant.
+    component_order = sorted(
+        (c for c in by_component if c != UNCATEGORIZED),
+        key=lambda c: (-len(by_component[c]), c),
+    )
+    if UNCATEGORIZED in by_component:
+        component_order.append(UNCATEGORIZED)
+
     component_sections: list[str] = []
-    for comp in COMPONENT_ORDER:
+    for comp in component_order:
         plans_in = by_component.get(comp, [])
         if not plans_in:
             continue

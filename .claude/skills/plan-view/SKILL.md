@@ -34,7 +34,7 @@ Options:
 The skill expects:
 - A directory of `.md` files (one per plan).
 - The directory is inside a git repository (`git log --follow` is used to build the commit-history strip).
-- Plans roughly follow the convention `yyyymmdd-type-name.md` — the date prefix and `type` slug (`feature`, `bug`, `fix`, `design`, `chore`, `refactor`) drive component grouping.
+- Plans roughly follow the convention `yyyymmdd-type-name.md` — the `type` slug (`feature`, `bug`, `fix`, `design`, `chore`, `refactor`) drives the `bug` tag for red-state logic. Component grouping comes from each plan's `**Component**` field, not the slug.
 
 A `<plans-dir>/README.md` is treated as **authoritative** for status grouping if it contains tables under headings `In Progress / Partially Shipped`, `Planned`, `Shipped`, `Paused / Abandoned`. Per-plan `**Status:**` parsing is the fallback.
 
@@ -200,7 +200,7 @@ Cost note: rich rendering costs one LLM call per plan (single) or per section (s
 - SVG cross-reference graph (v1 uses typed-edge pills).
 - Timeline lane widget (v1 sorts cards by last-touched within component).
 - Tabbed per-plan pages (v1 uses single scroll with sticky nav).
-- `.plan-view.yml` config for component overrides (v1 is heuristic-only; no config file is read — `COMPONENT_PATTERNS` in `generate.py` is the only source of groupings).
+- ~~`.plan-view.yml` config for component overrides~~ — dropped. Components are declared per-plan in a `**Component**` field (read by the parser, grouped by exact string); there is no slug heuristic and no config file. The plan is the source of truth.
 - Review-round inference beyond checkbox counting.
 
 ## Composing with other skills
