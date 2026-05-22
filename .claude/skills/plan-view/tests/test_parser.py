@@ -171,6 +171,28 @@ def test_inline_md_link_strips_javascript() -> None:
     assert 'href="#"' in out
 
 
+def test_inline_md_link_does_not_double_escape_ampersand() -> None:
+    out = G._inline_md("see [docs](https://x.com/a?b=1&c=2)")
+    assert 'href="https://x.com/a?b=1&amp;c=2"' in out
+    assert "&amp;amp;" not in out
+
+
+def test_inline_md_link_escapes_quote_in_href() -> None:
+    # A double-quote in the URL must not break out of the href attribute.
+    out = G._inline_md('[x](/a"onmouseover=alert(1))')
+    assert '"onmouseover' not in out
+    assert "&quot;onmouseover" in out
+
+
+def test_inline_md_does_not_format_inside_inline_code() -> None:
+    # Bold/italic/link markers inside `code` must stay literal.
+    assert G._inline_md("a `**b**` c") == "a <code>**b**</code> c"
+    out = G._inline_md("mix `x&y` and **b** and [t](/p)")
+    assert "<code>x&amp;y</code>" in out
+    assert "<strong>b</strong>" in out
+    assert '<a href="/p">t</a>' in out
+
+
 def test_link_edges_is_idempotent(tmp_path: Path) -> None:
     src = G.parse_plan(
         _write(
