@@ -87,3 +87,24 @@ def test_source_change_overwrites_freely(tmp_path: Path) -> None:
     )
     assert wrote
     assert "v2" in p.read_text(encoding="utf-8")
+
+
+def test_main_counts_index_refusal_in_exit_code(tmp_path: Path) -> None:
+    # A hand-edited index.html must surface in main()'s refused tally and exit
+    # code — not just the per-plan pages.
+    plans_dir = tmp_path / "dev_plans"
+    plans_dir.mkdir()
+    (plans_dir / "20260101-test-plan.md").write_text(
+        "# Test plan\n\n**Status**: Shipped\n\nBody.\n", encoding="utf-8"
+    )
+    out = tmp_path / "out"
+    assert G.main([str(plans_dir), "--out", str(out)]) == 0
+
+    index = out / "index.html"
+    index.write_text(
+        index.read_text(encoding="utf-8") + "\n<!-- hand edit -->\n", encoding="utf-8"
+    )
+    # Source markdown unchanged → index regen is a suspected hand-edit → refuse.
+    assert G.main([str(plans_dir), "--out", str(out)]) == 1
+    # --force overrides the refusal.
+    assert G.main([str(plans_dir), "--out", str(out), "--force"]) == 0

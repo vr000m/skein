@@ -548,16 +548,32 @@ def _safe_href(url: str) -> str:
 _FENCE_RE = re.compile(r"^```(\w*)\s*$")
 
 
+def _md_link(m: re.Match[str]) -> str:
+    # `text` is already HTML-escaped by _inline_md, so the captured href and
+    # label are too; only the attribute-delimiting quote still needs escaping.
+    # Re-running html.escape here would double-encode '&' (e.g. a URL's
+    # '&amp;' would become '&amp;amp;', which decodes back to a broken '&amp;').
+    href = _safe_href(m.group(2)).replace('"', "&quot;")
+    return f'<a href="{href}">{m.group(1)}</a>'
+
+
 def _inline_md(text: str) -> str:
     text = html.escape(text, quote=False)
-    text = _INLINE_CODE_RE.sub(lambda m: f"<code>{m.group(1)}</code>", text)
+    # Mask inline-code spans with sentinels so the bold/italic/link rules below
+    # can't reach inside them (e.g. `**x**` must stay literal, not turn bold).
+    code_spans: list[str] = []
+
+    def _stash_code(m: re.Match[str]) -> str:
+        code_spans.append(m.group(1))
+        return f"\x00CODE{len(code_spans) - 1}\x00"
+
+    text = _INLINE_CODE_RE.sub(_stash_code, text)
     text = _BOLD_RE.sub(lambda m: f"<strong>{m.group(1)}</strong>", text)
     text = _ITALIC_RE.sub(lambda m: f"<em>{m.group(1)}</em>", text)
-    text = _LINK_RE.sub(
-        lambda m: (
-            f'<a href="{html.escape(_safe_href(m.group(2)), quote=True)}">'
-            f"{html.escape(m.group(1), quote=False)}</a>"
-        ),
+    text = _LINK_RE.sub(_md_link, text)
+    text = re.sub(
+        r"\x00CODE(\d+)\x00",
+        lambda m: f"<code>{code_spans[int(m.group(1))]}</code>",
         text,
     )
     return text
@@ -1494,16 +1510,21 @@ def main(argv: list[str] | None = None) -> int:
     corpus_sha = hashlib.sha256(
         "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
     ).hexdigest()
+    refused = 0
+    written = 0
     wrote, msg = write_with_drift_guard(
         out_dir / "index.html",
         dashboard_html,
         corpus_sha,
         args.force,
     )
-    print(msg)
+    if wrote:
+        written += 1
+        print(msg)
+    else:
+        refused += 1
+        print(msg, file=sys.stderr)
 
-    refused = 0
-    written = 1 if wrote else 0
     for plan in plans.values():
         page_html = render_plan_page(
             plan, plans, git_head_sha, plan_template, script_path, plans_dir_short
