@@ -25,6 +25,7 @@ scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/par
 scripts/lib/        Shared bash helpers sourced by appliers (auto-fix-common.sh)
 tests/              Reconciliation, parity, and auto-fix test harnesses
 docs/dev_plans/     Development plans
+docs/skills_architecture/  Skills architecture design docs (source; rendered via /plan-view --rich)
 justfile            Task runner config
 .env.example        Template for local env overrides
 .deep-review/       Gitignored runtime state and auto-fix manifests for /deep-review (per-run)

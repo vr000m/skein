@@ -156,7 +156,7 @@ End-to-end against the koda-pipecat corpus:
 
 ## Changes from initial design
 
-The plan above reflects what shipped. Three substantive changes landed during the discussion-and-review cycle that aren't visible in the final spec but are worth documenting for future maintainers:
+The plan above reflects what shipped. Several substantive changes landed during the discussion-and-review cycle (and a later review pass) that aren't visible in the final spec but are worth documenting for future maintainers:
 
 1. **Clickable filter chips on the dashboard** — the initial dashboard rendered status chips as decoration only. After the first review pass the user pointed out the chips read as buttons; promoted them to actual filter buttons (multi-select toggle, clear-all reset, component sections hide when all their cards are filtered out). The CSS `.summary .stat` rule and the vanilla-JS handler at the bottom of `template.html` ship as a result.
 
@@ -167,6 +167,8 @@ The plan above reflects what shipped. Three substantive changes landed during th
 A fourth piece of work was scoped *out* of v1 after surfacing in the same conversation, and is parked under koda-pipecat:
 
 4. **Rich single-document HTML — first parked, then shipped in the same pass.** Two hand-crafted prototypes (`bot-harness-decoupling.html`, `architecture.html`) landed under koda-pipecat's `docs/_rich_views/` to test whether HTML's "express things markdown can't" insight applied to single dense documents. The original parking decision was "wait for 3–4 more rich views before deciding". A follow-up conversation re-opened that decision under a different constraint: if `plan-view` will run across N repos (pipecat, vr000m-website, koda, stt) and dev plans drive the work everywhere, hand-authoring per repo doesn't scale. The right shape: extract a constrained widget toolkit from the two prototypes and add a `--rich` mode that emits a per-plan manifest the agent harness consumes (spawning an LLM subagent per plan with the toolkit as the constraint surface). LLM cost stays proportional to actual plan edits because rich pages cache by source-sha. Shipped in the same PR — see `--rich workflow` in SKILL.md and the new `_widgets/` directory.
+
+5. **Component model pivot + deep-review fixes (later review pass, same PR).** After the initial cut, a `/deep-review` pass applied minor `generate.py` fixes — undefined CSS `var(--muted)`→`var(--fg-muted)` in the rich-page scaffold, HTML-escaping the commit `short_sha`, anchoring the rich-sha regexes to `{64}`, removing a dead `corpus_sha` fallback, and a SKILL.md note that `--rich` output embeds unsanitised LLM HTML. The larger change in the same pass: the koda-specific slug heuristic (`COMPONENT_PATTERNS`/`COMPONENT_ORDER`) was **removed before shipping** in favour of a per-plan `**Component**` field, with grouping derived from the corpus and the value threaded through `dev-plan` (authoring) and `update-docs` (reconciliation). See the "Component grouping" section above for the per-field ownership model and rationale.
 
 ## Out of scope / Deferred to v2
 
