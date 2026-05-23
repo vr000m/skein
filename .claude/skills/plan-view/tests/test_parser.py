@@ -276,3 +276,12 @@ def test_render_sha_reflects_commit_changes(tmp_path: Path) -> None:
     plan.commits = [G.Commit(sha="a" * 40, date="2026-05-21", subject="reworded")]
     after = plan.compute_render_sha()
     assert before != after, "render_sha must change when a commit subject changes"
+
+
+def test_render_markdown_code_fence_keeps_language_class() -> None:
+    # Regression: a section-scanner fence regex once shadowed the markdown
+    # renderer's _FENCE_RE (module-global name collision), making fenced code
+    # emit class="lang-```" instead of the captured language.
+    out = G.render_markdown("```python\nx = 1\n```\n")
+    assert 'class="lang-python"' in out
+    assert "lang-```" not in out
