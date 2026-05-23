@@ -194,6 +194,15 @@ def corpus_sha(plans: dict[str, "Plan"]) -> str:
     Single source of truth so `render_dashboard` (which embeds it) and `main`
     (which passes it to the drift guard) cannot diverge — divergence would make
     the guard fire on every run. Requires `compute_render_shas` to have run.
+
+    Derived from each plan's `render_sha`, which is a *superset* of what the
+    dashboard renders (it also folds in commit subjects/dates the dashboard
+    doesn't show). That makes this digest conservative: a commit-subject-only
+    rewrite shifts corpus_sha and rewrites index.html even though its visible
+    content is unchanged. We accept that on purpose — the alternative (hashing
+    only dashboard-rendered fields) would reintroduce the triple-edit hazard
+    findings #1/#7 removed, where a forgotten field makes the guard *falsely
+    refuse*. Over-writing harmless gitignored output beats false refusals.
     """
     return hashlib.sha256(
         "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
@@ -1107,7 +1116,10 @@ _RICH_SECTION_SHA_RE = re.compile(
     r"<!--\s*plan-view-rich-section-sha256:\s*([0-9a-f]{64})\s*-->"
 )
 _H2_RE = re.compile(r"^## +(.+?)\s*$")
-_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+# Distinct from the markdown renderer's _FENCE_RE (which captures the language
+# of a ``` fence): this one only detects fence *boundaries* (``` or ~~~, any
+# length, optionally indented) so _h2_spans can skip H2s inside code blocks.
+_SECTION_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
 
 # Plans larger than this OR with more H2s than this get section-fanout.
 SECTIONS_CHAR_THRESHOLD = 25_000
@@ -1127,7 +1139,7 @@ def _h2_spans(text: str) -> list[tuple[int, str]]:
     fence_char = ""
     offset = 0
     for line in text.splitlines(keepends=True):
-        fence_m = _FENCE_RE.match(line)
+        fence_m = _SECTION_FENCE_RE.match(line)
         if fence_m:
             marker = fence_m.group(1)[0]
             if not in_fence:
