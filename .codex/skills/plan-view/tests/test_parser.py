@@ -233,3 +233,46 @@ def test_render_sha_changes_when_corpus_state_changes(tmp_path: Path) -> None:
     G.compute_render_shas(plans2)
     sha_with_xref = plans2[a.slug].render_sha
     assert sha_alone != sha_with_xref, "render_sha must reflect backfilled edges_in"
+
+
+def test_self_reference_does_not_create_self_edge(tmp_path: Path) -> None:
+    # A plan mentioning its own filename must not link to itself (review #5).
+    slug = "20260521-feature-self"
+    body = f"# Self\n\n**Status:** Shipped\n\nsee the original {slug}.md for context\n"
+    p = tmp_path / f"{slug}.md"
+    p.write_text(body, encoding="utf-8")
+    plan = G.parse_plan(p)
+    assert all(e.target_slug != slug for e in plan.edges_out)
+    plans = {slug: plan}
+    G.link_edges(plans)
+    assert plans[slug].edges_in == []
+
+
+def test_frontmatter_closing_fence_at_eof(tmp_path: Path) -> None:
+    # Closing `---` as the final line with no trailing newline must still parse
+    # (review #6) — including a frontmatter-only file.
+    fm, body = G._strip_frontmatter("---\ntitle: X\nbranch: feat/y\n---")
+    assert fm == {"title": "X", "branch": "feat/y"}
+    assert body == ""
+
+
+def test_branch_value_strips_surrounding_backticks(tmp_path: Path) -> None:
+    # The merged field parser keeps strip_backticks behaviour for Branch (#2).
+    body = "# T\n\n**Status:** Shipped\n**Branch:** `feat/with-ticks`\n"
+    p = tmp_path / "20260521-feature-ticks.md"
+    p.write_text(body, encoding="utf-8")
+    plan = G.parse_plan(p)
+    assert plan.branch == "feat/with-ticks"
+
+
+def test_render_sha_reflects_commit_changes(tmp_path: Path) -> None:
+    # render_sha must fold in git-derived fields so a changed commit subject
+    # shifts it — otherwise the drift guard falsely refuses a regen (#1).
+    p = tmp_path / "20260521-feature-commits.md"
+    p.write_text("# C\n\n**Status:** Shipped\n", encoding="utf-8")
+    plan = G.parse_plan(p)
+    plan.commits = [G.Commit(sha="a" * 40, date="2026-05-21", subject="initial")]
+    before = plan.compute_render_sha()
+    plan.commits = [G.Commit(sha="a" * 40, date="2026-05-21", subject="reworded")]
+    after = plan.compute_render_sha()
+    assert before != after, "render_sha must change when a commit subject changes"
