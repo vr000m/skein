@@ -136,19 +136,21 @@ If `<plans-dir>/README.md` exists with `##`-level headings matching:
 For each generated HTML file, the generator embeds:
 
 ```html
-<meta name="plan-view-source-sha256" content="<sha256 of source .md>">
+<meta name="plan-view-source-sha256" content="<render sha>">
 <meta name="plan-view-source-path" content="<relative path>">
 <meta name="plan-view-git-head" content="<sha at render>">
 <meta name="plan-view-generated-at" content="<iso8601 UTC>">
 ```
 
-On regen, for each existing HTML output:
-1. Read its embedded `plan-view-source-sha256`.
-2. Read the *current* source `.md`'s sha256.
-3. If the *new* render (based on current source) would produce a different sha256 in the embedded slot — meaning the source markdown has changed — overwrite freely.
-4. If the source markdown is unchanged AND the existing HTML file's *content* sha256 differs from what regeneration would produce — someone hand-edited the HTML. Refuse without `--force`; print path and diff hint.
+The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket) and the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`). The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
 
-This catches the "I tweaked the HTML directly and now my edit will be wiped" foot-gun without preventing legitimate regeneration after source edits.
+On regen, for each existing HTML output:
+1. Read its embedded `plan-view-source-sha256` (the previous render sha).
+2. Recompute the *current* render sha for that plan (markdown + corpus + git fields).
+3. If the new render sha differs — meaning the source markdown, a corpus cross-reference, or the git history that feeds the page changed — overwrite freely.
+4. If the render sha is unchanged AND the existing HTML file's *content* sha256 differs from what regeneration would produce — someone hand-edited the HTML. Refuse without `--force`; print path and diff hint.
+
+This catches the "I tweaked the HTML directly and now my edit will be wiped" foot-gun without preventing legitimate regeneration after source edits. Folding git fields into the render sha means a rebase/amend that changes a commit subject or date takes the "source changed, overwrite freely" path (step 3) rather than a spurious hand-edit refusal.
 
 ## Section splitting (`--rich` mode)
 

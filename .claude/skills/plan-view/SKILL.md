@@ -138,7 +138,7 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
 
 The widget toolkit in `_widgets/` is the constraint surface. Widgets:
 - `base.css` — shared variables, chip/card/section primitives, tab scaffold.
-- `tabs.html` — CSS-only tab container (radio + `:checked` + `~`).
+- `tabs.html` — CSS-only tab container (radio + `:has(:checked)` for panel visibility; works when radios and panels aren't siblings).
 - `state-machine.svg.html` — finite-state machine with kind-coloured states and curved transitions.
 - `compare.svg.html` — today-vs-proposed side-by-side comparison.
 - `timeline.html` — unified history / findings timeline.

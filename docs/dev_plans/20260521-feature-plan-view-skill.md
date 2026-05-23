@@ -67,12 +67,12 @@ Patterns documented in `parser.md` (regex catalogue, status lexicon, edge-typing
 .claude/skills/plan-view/
 ├── SKILL.md           # trigger, contract, invocation guide
 ├── parser.md          # regex catalogue + status lexicon (reference doc)
-├── generate.py        # stdlib-only generator (single file, ~1.1k loc)
+├── generate.py        # stdlib-only generator (single file, ~1.7k loc)
 ├── template.html      # dashboard scaffold with {{PLACEHOLDER}} substitution
 └── plan-template.html # per-plan drill-down scaffold
 ```
 
-`generate.py` sections in order: constants (status lexicon, edge regex; component is read per-plan, not pattern-matched) → dataclasses (`Plan`, `Edge`, `Commit`) → plan parsing (frontmatter, status, fields, edges, checkboxes, phases) → README reconciliation → git collection → edge linking → stranded detection → minimal markdown renderer → HTML escape helpers → dashboard rendering → per-plan rendering → drift guard → arg parsing + main.
+`generate.py` sections in order: constants (status lexicon, edge regex; component is read per-plan, not pattern-matched) → dataclasses (`Plan`, `Edge`, `Commit`, `Section`) → plan parsing (frontmatter, status, fields, edges, checkboxes, phases) → README reconciliation → git collection → edge linking → stranded detection → render-sha + corpus-sha computation → minimal markdown renderer → HTML escape helpers → dashboard rendering → per-plan rendering → `--rich` section splitting (`split_into_sections`, fence-aware `_h2_spans`, `_SECTIONS_CACHE`) + widget substitution (`_apply_substitutions`) → drift guard → arg parsing + main.
 
 ### Parser strategy
 
@@ -124,7 +124,7 @@ Output directory defaults to `<plans-dir>/../_plan_view/` — sibling of the pla
 |------|---------|
 | `.claude/skills/plan-view/SKILL.md` | Trigger language, invocation contract, design notes |
 | `.claude/skills/plan-view/parser.md` | Regex catalogue + status lexicon reference |
-| `.claude/skills/plan-view/generate.py` | Stdlib-only generator (~1.1k loc) |
+| `.claude/skills/plan-view/generate.py` | Stdlib-only generator (~1.7k loc) |
 | `.claude/skills/plan-view/template.html` | Dashboard scaffold with inline CSS + filter JS |
 | `.claude/skills/plan-view/plan-template.html` | Per-plan scaffold with sticky nav + commit strip |
 | `docs/dev_plans/20260521-feature-plan-view-skill.md` | This plan |
@@ -164,7 +164,7 @@ The plan above reflects what shipped. Several substantive changes landed during 
 
 3. **Edge-pattern regex broadened after low-recall on koda's `**Follows**:` and `tracked in [link](slug.md)` formats** — first version of the catalogue captured 0 `follows` and 1 `tracked-in` edges. Root cause: regex required `[\s\`\[]+` immediately after `**Follows**` (which doesn't match `**Follows**:` — the colon sits outside the bold), and `tracked-in` didn't recognise the markdown-link form. Replaced with a shared `_SLUG_PREFIX = (?:\[[^\]]+\]\(|[`\[(\s])*` that accepts bare tokens, backticks, brackets, parens, OR markdown-link openers. Recall went 0→3 on `follows` and 1→3 on `tracked-in`.
 
-6. **Second deep-review pass (post-merge of PR #28, branch `fix/plan-view-review-followups`).** A multi-lens `/deep-review` of the merged PR found 9 items (Security and Documentation lenses clean; no Critical). All were fixed on a follow-up branch with regression tests; the `.codex/skills/plan-view/` mirror is updated separately by the sync workflow. Findings and fixes:
+6. **Second deep-review pass (post-merge of PR #28, branch `fix/plan-view-review-followups`, shipped as PR #29).** A multi-lens `/deep-review` of the merged PR found 9 items (Security and Documentation lenses clean; no Critical). All were fixed on a follow-up branch with regression tests; the `.codex/skills/plan-view/` mirror is updated separately by the sync workflow. Findings and fixes:
 
    | # | Sev | Location | Finding | Fix |
    |---|-----|----------|---------|-----|
