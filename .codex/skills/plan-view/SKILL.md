@@ -6,7 +6,7 @@ argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore
 
 # Plan View — HTML Dashboard for Dev-Plan Corpora
 
-Distills a directory of markdown dev plans into a navigable HTML dashboard plus one drill-down page per plan. The artefact is a derived view: the markdown remains the source of truth. Inspired by HTML-first agent workflows — markdown can't render colour-coded status chips, typed cross-reference pills, or commit-history strips that make corpus-level drift visible at a glance.
+Distills a directory of markdown dev plans into a navigable HTML dashboard plus one drill-down page per plan. The artefact is a derived view: the markdown remains the source of truth. Inspired by the Anthropic blog post on the [unreasonable effectiveness of HTML in Claude Code](https://claude.com/blog/using-claude-code-the-unreasonable-effectiveness-of-html) — markdown can't render colour-coded status chips, typed cross-reference pills, or commit-history strips that make corpus-level drift visible at a glance.
 
 ## When to use
 
@@ -17,7 +17,7 @@ Distills a directory of markdown dev plans into a navigable HTML dashboard plus 
 ## Invocation
 
 ```bash
-python3 .codex/skills/plan-view/generate.py <plans-dir> [options]
+python3 .claude/skills/plan-view/generate.py <plans-dir> [options]
 ```
 
 Options:
@@ -28,7 +28,7 @@ Options:
 | `--force` | off | Overwrite outputs even if the drift guard detects a hand-edit. |
 | `--stale-days N` | `30` | An `In Progress` plan whose last git-touch is > N days becomes a red **Stranded** chip. |
 | `--gitignore` | off | Write a `.gitignore` containing `*` in the output dir (opt-in). |
-| `--rich` | off | Emit `_rich_manifest.json` listing plans whose LLM-rendered rich view needs regeneration. Large plans get `strategy: "sections"` with one entry per H2 — Codex spawns N subagents in parallel. See `--rich workflow` below. |
+| `--rich` | off | Emit `_rich_manifest.json` listing plans whose LLM-rendered rich view needs regeneration. Large plans get `strategy: "sections"` with one entry per H2 — agent spawns N subagents in parallel. See `--rich workflow` below. |
 | `--rich-assemble` | off | After fragments exist, stitch them into final `plan-<slug>.rich.html` for `strategy: "sections"` plans using `tabs.html`. |
 
 The skill expects:
@@ -55,24 +55,24 @@ Each generated HTML file embeds drift-guard meta tags:
 <meta name="plan-view-generated-at" content="...">
 ```
 
-The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with corpus-derived state that affects its rendered HTML: backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, and the (possibly stranded-recoloured) status bucket. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha, and A regenerates without a spurious "hand-edit suspected" refusal.
+The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with everything else that affects its rendered HTML: corpus-derived state — backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, the (possibly stranded-recoloured) status bucket — **and the git-derived fields embedded in the page**: the commit list (sha/date/subject), the timeline SVG, `created`, and `last_touched`. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha; and a git history rewrite that changes a commit subject or date — even with the markdown bytes unchanged — also shifts the sha, so the page regenerates via the "source changed, overwrite freely" path rather than a spurious "hand-edit suspected" refusal. (The index aggregate is deliberately conservative: it derives from the per-plan render shas, so a commit-subject-only rewrite rewrites `index.html` even though the dashboard doesn't show subjects — harmless churn on gitignored output, chosen over the risk of a forgotten field making the guard falsely refuse.)
 
 On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
 
 ## `--rich` workflow
 
-The deterministic dashboard and per-plan pages cover corpus-level questions ("what's shipped, what's stranded, who references whom"). `--rich` adds an opinionated single-plan view for each plan that distils its content into tabs, SVG diagrams (state machines, today-vs-proposed comparisons), searchable tables, and findings timelines — the things markdown can't render. This applies the same HTML-first workflow to a single dense document.
+The deterministic dashboard and per-plan pages cover corpus-level questions ("what's shipped, what's stranded, who references whom"). `--rich` adds an opinionated single-plan view for each plan that distils its content into tabs, SVG diagrams (state machines, today-vs-proposed comparisons), searchable tables, and findings timelines — the things markdown can't render. Inspired by the same Anthropic blog post on HTML in Claude Code, applied to a single dense document.
 
 Rich rendering is **not** done by `generate.py`. The Python generator is deterministic; rich rendering is interpretive and uses an LLM. There are two strategies per plan, chosen at manifest emit time based on plan size:
 
 - **`strategy: "single"`** — small plans (< 25 KB markdown AND ≤ 10 H2s). One subagent renders the whole plan to `plan-<slug>.rich.html`.
-- **`strategy: "sections"`** — larger plans (> 25 KB OR > 10 H2s). The generator splits the markdown on `## H2` boundaries; one subagent renders each section in parallel to a fragment file under `_fragments/`; Codex then runs `--rich-assemble` to stitch fragments into final HTML.
+- **`strategy: "sections"`** — larger plans (> 25 KB OR > 10 H2s). The generator splits the markdown on `## H2` boundaries; one subagent renders each section in parallel to a fragment file under `_fragments/`; the agent then runs `--rich-assemble` to stitch fragments into final HTML.
 
-**There is no cap on how many subagents render a plan.** For a 100 KB plan with 12 H2s, Codex dispatches 12 `spawn_agent` workers in parallel, each operating in its own context window.
+**There is no cap on how many subagents render a plan.** For a 100 KB plan with 12 H2s, the harness spawns 12 subagents in parallel, each operating in its own context window.
 
 ### Flow
 
-1. **Generator emits a manifest** (`python3 .codex/skills/plan-view/generate.py <plans-dir> --rich`).
+1. **Generator emits a manifest** (`python3 generate.py <plans-dir> --rich`).
    `_rich_manifest.json` schema:
    ```jsonc
    {
@@ -99,9 +99,9 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
          "strategy": "sections",
          "title": "...",
          "aggregate_status": "cached|partial|pending",
-         // cached  — all fragments fresh AND assembled .rich.html embeds matching sha
-         // partial — some fragments still pending; Codex renders them, then runs --rich-assemble
-         // pending — all fragments fresh, but assembled .rich.html missing/stale; Codex runs --rich-assemble only
+         //   cached  — all fragments fresh AND assembled .rich.html embeds matching sha
+         //   partial — some fragments still pending; harness renders them, then runs --rich-assemble
+         //   pending — all fragments fresh, but assembled .rich.html missing/stale; harness runs --rich-assemble only
          "source_path": "...",
          "source_md_sha": "...",
          "output_path": "<out>/plan-<slug>.rich.html",
@@ -125,11 +125,11 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
    }
    ```
 
-2. **Codex consumes the manifest.**
-   - For each `strategy: "single"` pending entry: dispatch one Codex `spawn_agent` worker with the plan markdown + widget catalogue + output contract. The worker writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
-   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, dispatch one Codex `spawn_agent` worker per `pending` section **in parallel** (no cap) with `fork_context=false` — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
+2. **Agent harness consumes the manifest.**
+   - For each `strategy: "single"` pending entry: spawn one subagent with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
+   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap) — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
-3. **Run `--rich-assemble`** (`python3 .codex/skills/plan-view/generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
+3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
 
 4. **Caching.**
    - Single-strategy pages regenerate only when the plan's own markdown sha changes.
@@ -145,12 +145,6 @@ The widget toolkit in `_widgets/` is the constraint surface. Widgets:
 - `table.html` — searchable + chip-filterable table.
 
 Subagents pick widgets when the source has matching content (an ASCII state machine → `state-machine.svg.html`; a "Today vs Proposed" section → `compare.svg.html`) and fall back to rendered markdown for sections that don't map. Two runs against the same source produce visually-similar output, not byte-identical — drift guard accepts this and gates on source-sha only.
-
-### Codex delegation pattern
-
-For the `--rich` workflow, Main Codex is the orchestrator. It reads `_rich_manifest.json`, dispatches the required rich-rendering workers via `spawn_agent` with `fork_context=false`, waits with `wait_agent`, then closes completed workers with `close_agent`. This is the same clean-context parallel-dispatch primitive used by Codex `/deep-review` and `/conduct`: the subagent prompt is self-contained, parent conversation history is not shared, and workers must not spawn further subagents.
-
-The deterministic generator itself never calls `spawn_agent`. It is pure stdlib Python plus git CLI, and the manifest is the cross-runtime contract between the deterministic pass and the Codex rich-rendering orchestration.
 
 ### Suggested subagent prompt shapes
 
@@ -196,10 +190,11 @@ Cost note: rich rendering costs one LLM call per plan (single) or per section (s
 ## Design notes
 
 - **Renderer, not planner.** This skill does not modify markdown. To edit a plan, edit the `.md` and rerun.
-- **No subagent calls inside the generator.** Pure regex + git CLI + string templating. ~51 plans render in well under a second.
+- **No subagent calls.** Pure regex + git CLI + string templating. ~51 plans render in well under a second.
 - **Stdlib only.** No `jinja2`, no `markdown` lib. `markdown` → HTML conversion is minimal (headings, lists, code blocks, links) and lives in `generate.py::render_markdown`. If a plan uses exotic markdown, the rendered output falls back to a `<pre>` block.
 - **README grouping wins.** When the plans dir has a README with the koda-style status tables, those are authoritative — per-plan status parsing fills in only what the README omits.
 - **Deterministic output is escaped; `--rich` output is not.** The dashboard and per-plan pages route all plan-derived content through `html.escape`. The `--rich` path is different: section fragments are LLM subagent output and are inlined verbatim by `--rich-assemble` (they intentionally carry SVG and inline `<script>`). Untrusted plan markdown could steer a rendering subagent into emitting active content, so open `*.rich.html` only for plan corpora you trust.
+- **Template substitution is guarded.** All `{{KEY}}` → value substitution (dashboard, per-plan page, and the `--rich` tabs scaffold) goes through `generate.py::_apply_substitutions`, which scans the *template* (not the rendered output, so plan markdown that mentions `{{FOO}}` can't trip it) and prints `warning: template placeholder(s) with no substitution: …` to **stderr** when a placeholder has no mapping. If you add a field to a template, wire it into the substitutions dict or you'll see that warning — it means a literal `{{KEY}}` would otherwise ship into the HTML.
 
 ## What's deferred to v2
 

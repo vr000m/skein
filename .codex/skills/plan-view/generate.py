@@ -124,9 +124,14 @@ class Edge:
     target_slug: str  # slug of the referenced plan (no .md)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Section:
-    """One ``## H2`` slice of a plan, for rich-mode section fanout."""
+    """One ``## H2`` slice of a plan, for rich-mode section fanout.
+
+    Frozen because instances are memoised in `_SECTIONS_CACHE` and shared across
+    callers (and across tests in one process); immutability makes the shared
+    reference safe.
+    """
 
     section_id: str  # stable, unique slug (duplicate titles get -2, -3 suffixes)
     title: str
@@ -1119,7 +1124,10 @@ _H2_RE = re.compile(r"^## +(.+?)\s*$")
 # Distinct from the markdown renderer's _FENCE_RE (which captures the language
 # of a ``` fence): this one only detects fence *boundaries* (``` or ~~~, any
 # length, optionally indented) so _h2_spans can skip H2s inside code blocks.
-_SECTION_FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+# The capture group is the full marker run so the caller can compare lengths
+# (CommonMark: a closing fence must be the same char and at least as long as
+# the opening one — a ``` line does not close a ```` block).
+_SECTION_FENCE_RE = re.compile(r"^\s*((`{3,})|(~{3,}))")
 
 # Plans larger than this OR with more H2s than this get section-fanout.
 SECTIONS_CHAR_THRESHOLD = 25_000
@@ -1132,20 +1140,30 @@ def _h2_spans(text: str) -> list[tuple[int, str]]:
     Lines inside fenced code blocks (``` ``` ``` or ``~~~``) are skipped so a
     ``## ...`` line within a code fence is not mistaken for a section boundary.
     Fence state toggles on the fence character (backtick vs tilde) so a tilde
-    fence inside a backtick block doesn't prematurely close it.
+    fence inside a backtick block doesn't prematurely close it, and the closing
+    fence must be at least as long as the opening run (CommonMark) so a ``` line
+    does not close a ```` block.
     """
     spans: list[tuple[int, str]] = []
     in_fence = False
     fence_char = ""
+    fence_len = 0
     offset = 0
     for line in text.splitlines(keepends=True):
         fence_m = _SECTION_FENCE_RE.match(line)
         if fence_m:
-            marker = fence_m.group(1)[0]
+            marker_run = fence_m.group(1)
+            marker, run_len = marker_run[0], len(marker_run)
             if not in_fence:
-                in_fence, fence_char = True, marker
-            elif marker == fence_char:
-                in_fence, fence_char = False, ""
+                in_fence, fence_char, fence_len = True, marker, run_len
+                offset += len(line)
+                continue
+            if marker == fence_char and run_len >= fence_len:
+                in_fence, fence_char, fence_len = False, "", 0
+                offset += len(line)
+                continue
+            # Same-style-but-shorter or different-char fence line while open:
+            # it's content, not a boundary — fall through to skip it as in-fence.
             offset += len(line)
             continue
         if not in_fence:
@@ -1201,7 +1219,9 @@ def split_into_sections(plan: Plan) -> list[Section]:
     cache_key = (plan.slug, plan.sha256)
     cached = _SECTIONS_CACHE.get(cache_key)
     if cached is not None:
-        return cached
+        # Return a fresh list so a caller mutating the list (append/clear) can't
+        # corrupt the cached entry; the Section elements are frozen.
+        return list(cached)
 
     spans = _h2_spans(plan.raw)
     sections: list[Section] = []
@@ -1225,7 +1245,7 @@ def split_into_sections(plan: Plan) -> list[Section]:
     if not spans:
         _push("body", "Body", plan.raw)
         _SECTIONS_CACHE[cache_key] = sections
-        return sections
+        return list(sections)
 
     preamble = plan.raw[: spans[0][0]]
     if preamble.strip():
@@ -1237,7 +1257,7 @@ def split_into_sections(plan: Plan) -> list[Section]:
         _push(_slugify(title), title, body)
 
     _SECTIONS_CACHE[cache_key] = sections
-    return sections
+    return list(sections)
 
 
 def _needs_sections(plan: Plan) -> bool:
@@ -1417,11 +1437,14 @@ def assemble_rich_sections(
                 f'.tab-panel[data-slot="{sid}"] {{ display: block; }}'
             )
 
-        tabs_html = (
-            tabs_template.replace("{{TABS_ID}}", tabs_id)
-            .replace("{{TAB_BAR_HTML}}", "\n".join(tab_bar_html))
-            .replace("{{TAB_PANELS_HTML}}", "\n".join(tab_panels_html))
-            .replace("{{PANEL_VISIBILITY_RULES}}", "\n    ".join(rules))
+        tabs_html = _apply_substitutions(
+            tabs_template,
+            {
+                "{{TABS_ID}}": tabs_id,
+                "{{TAB_BAR_HTML}}": "\n".join(tab_bar_html),
+                "{{TAB_PANELS_HTML}}": "\n".join(tab_panels_html),
+                "{{PANEL_VISIBILITY_RULES}}": "\n    ".join(rules),
+            },
         )
 
         title = html.escape(plan.title or slug)
