@@ -124,6 +124,21 @@ class Edge:
     target_slug: str  # slug of the referenced plan (no .md)
 
 
+@dataclass(frozen=True)
+class Section:
+    """One ``## H2`` slice of a plan, for rich-mode section fanout.
+
+    Frozen because instances are memoised in `_SECTIONS_CACHE` and shared across
+    callers (and across tests in one process); immutability makes the shared
+    reference safe.
+    """
+
+    section_id: str  # stable, unique slug (duplicate titles get -2, -3 suffixes)
+    title: str
+    markdown: str
+    section_sha: str  # sha256 of markdown; gates per-section rich re-render
+
+
 @dataclass
 class Plan:
     slug: str  # filename minus .md (e.g. 20260506-feature-bot-harness-decoupling)
@@ -154,12 +169,21 @@ class Plan:
     def compute_render_sha(self) -> str:
         # Covers everything that affects this plan's rendered HTML:
         # own markdown, backfilled edges_in (corpus state), fixed_by pointer,
-        # and the (possibly stranded-recoloured) status bucket.
+        # the (possibly stranded-recoloured) status bucket, AND the git-derived
+        # fields embedded in the page (commit list, timeline SVG, created,
+        # last_touched). Folding git fields in means a rebase/amend that changes
+        # a commit subject or date — with the markdown bytes unchanged — shifts
+        # render_sha, so the drift guard takes the "source changed, overwrite
+        # freely" path instead of falsely flagging a hand-edit.
         parts = [
             self.sha256,
             "|edges_in=" + ",".join(f"{k}:{s}" for k, s in sorted(self.edges_in)),
             f"|fixed_by={self.fixed_by or ''}",
             f"|bucket={self.bucket}",
+            "|commits="
+            + ",".join(f"{c.sha}:{c.date}:{c.subject}" for c in self.commits),
+            f"|created={self.created}",
+            f"|last_touched={self.last_touched}",
         ]
         return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
 
@@ -167,6 +191,27 @@ class Plan:
 def compute_render_shas(plans: dict[str, "Plan"]) -> None:
     for p in plans.values():
         p.render_sha = p.compute_render_sha()
+
+
+def corpus_sha(plans: dict[str, "Plan"]) -> str:
+    """Stable hash of the whole corpus, used as the dashboard's drift-guard sha.
+
+    Single source of truth so `render_dashboard` (which embeds it) and `main`
+    (which passes it to the drift guard) cannot diverge — divergence would make
+    the guard fire on every run. Requires `compute_render_shas` to have run.
+
+    Derived from each plan's `render_sha`, which is a *superset* of what the
+    dashboard renders (it also folds in commit subjects/dates the dashboard
+    doesn't show). That makes this digest conservative: a commit-subject-only
+    rewrite shifts corpus_sha and rewrites index.html even though its visible
+    content is unchanged. We accept that on purpose — the alternative (hashing
+    only dashboard-rendered fields) would reintroduce the triple-edit hazard
+    findings #1/#7 removed, where a forgotten field makes the guard *falsely
+    refuse*. Over-writing harmless gitignored output beats false refusals.
+    """
+    return hashlib.sha256(
+        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
+    ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +224,14 @@ def _strip_frontmatter(text: str) -> tuple[dict[str, str], str]:
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
-    if end == -1:
+    if end != -1:
+        fm_block, body = text[4:end], text[end + 5 :]
+    elif text.endswith("\n---"):
+        # Closing `---` at end-of-string with no trailing newline, including
+        # frontmatter-only files. Body is then empty.
+        fm_block, body = text[4 : len(text) - 4], ""
+    else:
         return {}, text
-    fm_block = text[4:end]
-    body = text[end + 5 :]
     fm: dict[str, str] = {}
     for line in fm_block.splitlines():
         if ":" not in line:
@@ -208,16 +257,23 @@ _FIELD_LINE_RE = re.compile(
 )
 
 
-def _find_field_string(body: str, field: str) -> str:
+def _find_field_string(body: str, field: str, *, strip_backticks: bool = False) -> str:
     """Return a `**Field**` value (best effort). Tries inline-bold then field-table.
 
     Accepts both `**Field:** value` and `**Field**: value`, and the field-table
-    row form `| **Field** | value |`. Used for both Status and Component.
+    row form `| **Field** | value |`. Used for Status, Component, Branch, Created.
+    `strip_backticks=True` peels surrounding backticks off the value (e.g. a
+    branch name written as `` `feat/foo` ``).
     """
+
+    def _clean(value: str) -> str:
+        value = value.strip()
+        return value.strip("`") if strip_backticks else value
+
     inline = re.compile(rf"^\*\*{re.escape(field)}:?\*\*[:\s]*(.+?)$", re.M)
     m = inline.search(body)
     if m:
-        return m.group(1).strip()
+        return _clean(m.group(1))
     # Field-table style: `| **Field** | value |`
     needle, needle_colon = f"**{field}**", f"**{field}:**"
     for line in body.splitlines():
@@ -226,7 +282,7 @@ def _find_field_string(body: str, field: str) -> str:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         for i, cell in enumerate(cells):
             if f"**{field}" in cell and i + 1 < len(cells):
-                return cells[i + 1].strip()
+                return _clean(cells[i + 1])
     return ""
 
 
@@ -257,26 +313,6 @@ def _classify_status(status_raw: str) -> tuple[str, str]:
             # Detected at render time via phases_total comparison; here keep partial.
             return bucket, colour
     return "unknown", "amber"
-
-
-def _find_field(body: str, name: str) -> str:
-    """Find a `**Name:** value` or `**Name**: value` or field-table style field."""
-    # `[:\s]*` after `**` eats both a trailing colon (when written outside the
-    # bold, e.g. `**Name**: value`) and whitespace, so the colon doesn't leak
-    # into the captured value.
-    pattern = re.compile(rf"^\*\*{re.escape(name)}:?\*\*[:\s]*(.+?)$", re.M)
-    m = pattern.search(body)
-    if m:
-        return m.group(1).strip().strip("`")
-    # Field-table style
-    for line in body.splitlines():
-        if f"**{name}**" not in line:
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        for i, cell in enumerate(cells):
-            if f"**{name}" in cell and i + 1 < len(cells):
-                return cells[i + 1].strip().strip("`")
-    return ""
 
 
 def _find_pr_numbers(text: str) -> list[str]:
@@ -355,10 +391,17 @@ def parse_plan(path: Path) -> Plan:
     if rng and phases_total and int(rng.group(2)) >= phases_total:
         bucket, chip = "shipped", "green"
     done, total = _count_checkboxes(body)
-    edges = _find_edges(body)
+    # Drop self-references: a plan mentioning its own filename must not link to
+    # itself (would render a "→ self / ← self" cross-reference pair). Filtering
+    # here keeps it out of both edges_out and the edges_in backfill in link_edges.
+    edges = [e for e in _find_edges(body) if e.target_slug != slug]
     pr_numbers = _find_pr_numbers(status_raw + " " + body[:2000])
-    branch = frontmatter.get("branch") or _find_field(body, "Branch")
-    created = frontmatter.get("created") or _find_field(body, "Created")
+    branch = frontmatter.get("branch") or _find_field_string(
+        body, "Branch", strip_backticks=True
+    )
+    created = frontmatter.get("created") or _find_field_string(
+        body, "Created", strip_backticks=True
+    )
     return Plan(
         slug=slug,
         path=path,
@@ -736,6 +779,32 @@ def _render_card(plan: Plan, plans: dict[str, Plan]) -> str:
     )
 
 
+_PLACEHOLDER_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+
+
+def _apply_substitutions(template: str, substitutions: dict[str, str]) -> str:
+    """Replace `{{KEY}}` placeholders, warning if the template and dict drift.
+
+    Adding a rendered field requires editing the dataclass, the substitutions
+    dict, and the HTML template in lockstep. This catches the common slip — a
+    `{{PLACEHOLDER}}` in the template with no matching key — by scanning the
+    *template* (not the output, so plan markdown that mentions `{{FOO}}` can't
+    raise a false positive) and warning on stderr before shipping literal
+    placeholder text into the HTML.
+    """
+    unmapped = sorted(set(_PLACEHOLDER_RE.findall(template)) - set(substitutions))
+    if unmapped:
+        print(
+            f"warning: template placeholder(s) with no substitution: "
+            f"{', '.join(unmapped)}",
+            file=sys.stderr,
+        )
+    out = template
+    for key, val in substitutions.items():
+        out = out.replace(key, val)
+    return out
+
+
 def render_dashboard(
     plans: dict[str, Plan],
     plans_dir: Path,
@@ -802,11 +871,8 @@ def render_dashboard(
 
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    # Mirror the drift-guard computation in main() exactly: render_sha is always
-    # populated by compute_render_shas() before this runs, so no sha256 fallback.
-    corpus_sha = hashlib.sha256(
-        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
-    ).hexdigest()
+    # Shared helper so this embedded value matches the drift-guard sha in main().
+    corpus_digest = corpus_sha(plans)
     plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
     readme_note = (
         " · status grouping from <code>README.md</code>"
@@ -814,9 +880,8 @@ def render_dashboard(
         else " · status from per-plan <code>**Status:**</code> headers"
     )
 
-    html_out = template
     substitutions = {
-        "{{CORPUS_SHA}}": corpus_sha,
+        "{{CORPUS_SHA}}": corpus_digest,
         "{{PLANS_DIR}}": str(plans_dir),
         "{{PLANS_DIR_SHORT}}": plans_dir_short,
         "{{SCRIPT_PATH}}": script_path,
@@ -829,9 +894,7 @@ def render_dashboard(
         "{{COMPONENTS}}": "\n".join(component_sections),
         "{{README_NOTE}}": readme_note,
     }
-    for key, val in substitutions.items():
-        html_out = html_out.replace(key, val)
-    return html_out
+    return _apply_substitutions(template, substitutions)
 
 
 # ---------------------------------------------------------------------------
@@ -972,10 +1035,7 @@ def render_plan_page(
         "{{COMMIT_LIST}}": commit_list,
         "{{MARKDOWN}}": markdown_html,
     }
-    out = template
-    for key, val in substitutions.items():
-        out = out.replace(key, val)
-    return out
+    return _apply_substitutions(template, substitutions)
 
 
 # ---------------------------------------------------------------------------
@@ -1060,11 +1120,58 @@ _RICH_SHA_RE = re.compile(
 _RICH_SECTION_SHA_RE = re.compile(
     r"<!--\s*plan-view-rich-section-sha256:\s*([0-9a-f]{64})\s*-->"
 )
-_H2_RE = re.compile(r"^## +(.+?)\s*$", re.MULTILINE)
+_H2_RE = re.compile(r"^## +(.+?)\s*$")
+# Distinct from the markdown renderer's _FENCE_RE (which captures the language
+# of a ``` fence): this one only detects fence *boundaries* (``` or ~~~, any
+# length, optionally indented) so _h2_spans can skip H2s inside code blocks.
+# The capture group is the full marker run so the caller can compare lengths
+# (CommonMark: a closing fence must be the same char and at least as long as
+# the opening one — a ``` line does not close a ```` block).
+_SECTION_FENCE_RE = re.compile(r"^\s*((`{3,})|(~{3,}))")
 
 # Plans larger than this OR with more H2s than this get section-fanout.
 SECTIONS_CHAR_THRESHOLD = 25_000
 SECTIONS_H2_THRESHOLD = 10
+
+
+def _h2_spans(text: str) -> list[tuple[int, str]]:
+    """Return (start_offset, title) for each top-level ``## H2`` heading.
+
+    Lines inside fenced code blocks (``` ``` ``` or ``~~~``) are skipped so a
+    ``## ...`` line within a code fence is not mistaken for a section boundary.
+    Fence state toggles on the fence character (backtick vs tilde) so a tilde
+    fence inside a backtick block doesn't prematurely close it, and the closing
+    fence must be at least as long as the opening run (CommonMark) so a ``` line
+    does not close a ```` block.
+    """
+    spans: list[tuple[int, str]] = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        fence_m = _SECTION_FENCE_RE.match(line)
+        if fence_m:
+            marker_run = fence_m.group(1)
+            marker, run_len = marker_run[0], len(marker_run)
+            if not in_fence:
+                in_fence, fence_char, fence_len = True, marker, run_len
+                offset += len(line)
+                continue
+            if marker == fence_char and run_len >= fence_len:
+                in_fence, fence_char, fence_len = False, "", 0
+                offset += len(line)
+                continue
+            # Same-style-but-shorter or different-char fence line while open:
+            # it's content, not a boundary — fall through to skip it as in-fence.
+            offset += len(line)
+            continue
+        if not in_fence:
+            h2_m = _H2_RE.match(line)
+            if h2_m:
+                spans.append((offset, h2_m.group(1).strip()))
+        offset += len(line)
+    return spans
 
 
 def _existing_rich_sha(path: Path) -> str | None:
@@ -1094,15 +1201,30 @@ def _slugify(text: str) -> str:
     return s or "section"
 
 
-def split_into_sections(plan: Plan) -> list[dict]:
+# Memoise splits per (slug, markdown sha) so build_rich_manifest and
+# assemble_rich_sections — which each call split_into_sections for the same
+# plans, possibly in separate CLI runs but commonly together in tests — share
+# one deterministic result instead of recomputing. Keyed by content sha, so a
+# stale entry can never be served after the markdown changes.
+_SECTIONS_CACHE: dict[tuple[str, str], list[Section]] = {}
+
+
+def split_into_sections(plan: Plan) -> list[Section]:
     """Split a plan's markdown on `## H2` boundaries.
 
-    Returns ordered list of `{section_id, title, markdown, section_sha}`.
-    Content before the first H2 becomes `section_id="preamble"`. Duplicate
-    slugs get `-2`, `-3` suffixes for stable, unique ids.
+    Returns an ordered list of `Section`. Content before the first H2 becomes
+    `section_id="preamble"`. Duplicate slugs get `-2`, `-3` suffixes for stable,
+    unique ids. H2 lines inside fenced code blocks are not section boundaries.
     """
-    matches = list(_H2_RE.finditer(plan.raw))
-    sections: list[dict] = []
+    cache_key = (plan.slug, plan.sha256)
+    cached = _SECTIONS_CACHE.get(cache_key)
+    if cached is not None:
+        # Return a fresh list so a caller mutating the list (append/clear) can't
+        # corrupt the cached entry; the Section elements are frozen.
+        return list(cached)
+
+    spans = _h2_spans(plan.raw)
+    sections: list[Section] = []
     seen: dict[str, int] = {}
 
     def _push(section_id: str, title: str, body: str) -> None:
@@ -1112,34 +1234,34 @@ def split_into_sections(plan: Plan) -> list[dict]:
         if n > 1:
             section_id = f"{base}-{n}"
         sections.append(
-            {
-                "section_id": section_id,
-                "title": title,
-                "markdown": body,
-                "section_sha": hashlib.sha256(body.encode("utf-8")).hexdigest(),
-            }
+            Section(
+                section_id=section_id,
+                title=title,
+                markdown=body,
+                section_sha=hashlib.sha256(body.encode("utf-8")).hexdigest(),
+            )
         )
 
-    if not matches:
+    if not spans:
         _push("body", "Body", plan.raw)
-        return sections
+        _SECTIONS_CACHE[cache_key] = sections
+        return list(sections)
 
-    preamble = plan.raw[: matches[0].start()]
+    preamble = plan.raw[: spans[0][0]]
     if preamble.strip():
         _push("preamble", "(preamble)", preamble.strip("\n") + "\n")
 
-    for i, m in enumerate(matches):
-        title = m.group(1).strip()
-        start = m.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(plan.raw)
+    for i, (start, title) in enumerate(spans):
+        end = spans[i + 1][0] if i + 1 < len(spans) else len(plan.raw)
         body = plan.raw[start:end]
         _push(_slugify(title), title, body)
 
-    return sections
+    _SECTIONS_CACHE[cache_key] = sections
+    return list(sections)
 
 
 def _needs_sections(plan: Plan) -> bool:
-    h2_count = len(_H2_RE.findall(plan.raw))
+    h2_count = len(_h2_spans(plan.raw))
     return len(plan.raw) > SECTIONS_CHAR_THRESHOLD or h2_count > SECTIONS_H2_THRESHOLD
 
 
@@ -1194,17 +1316,17 @@ def build_rich_manifest(
         section_entries: list[dict] = []
         all_cached = True
         for sec in sections:
-            frag_path = fragments_dir / f"{slug}__{sec['section_id']}.html"
+            frag_path = fragments_dir / f"{slug}__{sec.section_id}.html"
             existing_sec = _existing_section_sha(frag_path)
-            sec_status = "cached" if existing_sec == sec["section_sha"] else "pending"
+            sec_status = "cached" if existing_sec == sec.section_sha else "pending"
             if sec_status == "pending":
                 all_cached = False
             section_entries.append(
                 {
-                    "section_id": sec["section_id"],
-                    "title": sec["title"],
-                    "section_md_sha": sec["section_sha"],
-                    "markdown_excerpt": sec["markdown"][:200],
+                    "section_id": sec.section_id,
+                    "title": sec.title,
+                    "section_md_sha": sec.section_sha,
+                    "markdown_excerpt": sec.markdown[:200],
                     "fragment_path": str(frag_path),
                     "status": sec_status,
                     "existing_section_sha": existing_sec,
@@ -1274,17 +1396,17 @@ def assemble_rich_sections(
             continue
         sections = split_into_sections(plan)
         # Verify all fragments present + sha-current
-        frag_contents: list[tuple[dict, str]] = []
+        frag_contents: list[tuple[Section, str]] = []
         any_missing = False
         for sec in sections:
-            frag_path = fragments_dir / f"{slug}__{sec['section_id']}.html"
+            frag_path = fragments_dir / f"{slug}__{sec.section_id}.html"
             existing_sec = _existing_section_sha(frag_path)
-            if existing_sec != sec["section_sha"]:
+            if existing_sec != sec.section_sha:
                 any_missing = True
                 missing.append(
-                    f"{slug}: {sec['section_id']} "
+                    f"{slug}: {sec.section_id} "
                     f"(have={existing_sec[:8] if existing_sec else 'none'}, "
-                    f"need={sec['section_sha'][:8]})"
+                    f"need={sec.section_sha[:8]})"
                 )
                 continue
             frag_contents.append((sec, frag_path.read_text(encoding="utf-8")))
@@ -1300,12 +1422,12 @@ def assemble_rich_sections(
         rules = []
         for i, (sec, frag) in enumerate(frag_contents):
             checked = " checked" if i == 0 else ""
-            sid = sec["section_id"]
+            sid = sec.section_id
             tab_bar_html.append(
                 f'<input type="radio" name="tabs-{tabs_id}" '
                 f'id="tab-{tabs_id}-{sid}" class="tab-radio"{checked}>\n'
                 f'<label for="tab-{tabs_id}-{sid}" class="tab-label">'
-                f"{html.escape(sec['title'])}</label>"
+                f"{html.escape(sec.title)}</label>"
             )
             tab_panels_html.append(
                 f'<div class="tab-panel" data-slot="{sid}">\n{frag}\n</div>'
@@ -1315,11 +1437,14 @@ def assemble_rich_sections(
                 f'.tab-panel[data-slot="{sid}"] {{ display: block; }}'
             )
 
-        tabs_html = (
-            tabs_template.replace("{{TABS_ID}}", tabs_id)
-            .replace("{{TAB_BAR_HTML}}", "\n".join(tab_bar_html))
-            .replace("{{TAB_PANELS_HTML}}", "\n".join(tab_panels_html))
-            .replace("{{PANEL_VISIBILITY_RULES}}", "\n    ".join(rules))
+        tabs_html = _apply_substitutions(
+            tabs_template,
+            {
+                "{{TABS_ID}}": tabs_id,
+                "{{TAB_BAR_HTML}}": "\n".join(tab_bar_html),
+                "{{TAB_PANELS_HTML}}": "\n".join(tab_panels_html),
+                "{{PANEL_VISIBILITY_RULES}}": "\n    ".join(rules),
+            },
         )
 
         title = html.escape(plan.title or slug)
@@ -1507,15 +1632,13 @@ def main(argv: list[str] | None = None) -> int:
         readme_used,
         script_path,
     )
-    corpus_sha = hashlib.sha256(
-        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
-    ).hexdigest()
+    dashboard_corpus_sha = corpus_sha(plans)
     refused = 0
     written = 0
     wrote, msg = write_with_drift_guard(
         out_dir / "index.html",
         dashboard_html,
-        corpus_sha,
+        dashboard_corpus_sha,
         args.force,
     )
     if wrote:

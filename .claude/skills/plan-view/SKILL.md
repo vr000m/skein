@@ -55,7 +55,7 @@ Each generated HTML file embeds drift-guard meta tags:
 <meta name="plan-view-generated-at" content="...">
 ```
 
-The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with corpus-derived state that affects its rendered HTML: backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, and the (possibly stranded-recoloured) status bucket. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha, and A regenerates without a spurious "hand-edit suspected" refusal.
+The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with everything else that affects its rendered HTML: corpus-derived state — backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, the (possibly stranded-recoloured) status bucket — **and the git-derived fields embedded in the page**: the commit list (sha/date/subject), the timeline SVG, `created`, and `last_touched`. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha; and a git history rewrite that changes a commit subject or date — even with the markdown bytes unchanged — also shifts the sha, so the page regenerates via the "source changed, overwrite freely" path rather than a spurious "hand-edit suspected" refusal. (The index aggregate is deliberately conservative: it derives from the per-plan render shas, so a commit-subject-only rewrite rewrites `index.html` even though the dashboard doesn't show subjects — harmless churn on gitignored output, chosen over the risk of a forgotten field making the guard falsely refuse.)
 
 On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
 
@@ -138,7 +138,7 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
 
 The widget toolkit in `_widgets/` is the constraint surface. Widgets:
 - `base.css` — shared variables, chip/card/section primitives, tab scaffold.
-- `tabs.html` — CSS-only tab container (radio + `:checked` + `~`).
+- `tabs.html` — CSS-only tab container (radio + `:has(:checked)` for panel visibility; works when radios and panels aren't siblings).
 - `state-machine.svg.html` — finite-state machine with kind-coloured states and curved transitions.
 - `compare.svg.html` — today-vs-proposed side-by-side comparison.
 - `timeline.html` — unified history / findings timeline.
@@ -194,6 +194,7 @@ Cost note: rich rendering costs one LLM call per plan (single) or per section (s
 - **Stdlib only.** No `jinja2`, no `markdown` lib. `markdown` → HTML conversion is minimal (headings, lists, code blocks, links) and lives in `generate.py::render_markdown`. If a plan uses exotic markdown, the rendered output falls back to a `<pre>` block.
 - **README grouping wins.** When the plans dir has a README with the koda-style status tables, those are authoritative — per-plan status parsing fills in only what the README omits.
 - **Deterministic output is escaped; `--rich` output is not.** The dashboard and per-plan pages route all plan-derived content through `html.escape`. The `--rich` path is different: section fragments are LLM subagent output and are inlined verbatim by `--rich-assemble` (they intentionally carry SVG and inline `<script>`). Untrusted plan markdown could steer a rendering subagent into emitting active content, so open `*.rich.html` only for plan corpora you trust.
+- **Template substitution is guarded.** All `{{KEY}}` → value substitution (dashboard, per-plan page, and the `--rich` tabs scaffold) goes through `generate.py::_apply_substitutions`, which scans the *template* (not the rendered output, so plan markdown that mentions `{{FOO}}` can't trip it) and prints `warning: template placeholder(s) with no substitution: …` to **stderr** when a placeholder has no mapping. If you add a field to a template, wire it into the substitutions dict or you'll see that warning — it means a literal `{{KEY}}` would otherwise ship into the HTML.
 
 ## What's deferred to v2
 

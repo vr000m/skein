@@ -73,7 +73,7 @@ owner: Varun
 ---
 ```
 
-Detected by a leading `^---\n` followed by `\n---\n`. Parsed with a tiny line-by-line `key: value` reader (no PyYAML dependency).
+Detected by a leading `^---\n` followed by a closing `\n---\n`, **or** a closing `---` as the final line with no trailing newline (including frontmatter-only files, where the body is then empty). Parsed with a tiny line-by-line `key: value` reader (no PyYAML dependency).
 
 ## PR / branch refs
 
@@ -136,16 +136,33 @@ If `<plans-dir>/README.md` exists with `##`-level headings matching:
 For each generated HTML file, the generator embeds:
 
 ```html
-<meta name="plan-view-source-sha256" content="<sha256 of source .md>">
+<meta name="plan-view-source-sha256" content="<render sha>">
 <meta name="plan-view-source-path" content="<relative path>">
 <meta name="plan-view-git-head" content="<sha at render>">
 <meta name="plan-view-generated-at" content="<iso8601 UTC>">
 ```
 
-On regen, for each existing HTML output:
-1. Read its embedded `plan-view-source-sha256`.
-2. Read the *current* source `.md`'s sha256.
-3. If the *new* render (based on current source) would produce a different sha256 in the embedded slot — meaning the source markdown has changed — overwrite freely.
-4. If the source markdown is unchanged AND the existing HTML file's *content* sha256 differs from what regeneration would produce — someone hand-edited the HTML. Refuse without `--force`; print path and diff hint.
+The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket) and the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`). The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
 
-This catches the "I tweaked the HTML directly and now my edit will be wiped" foot-gun without preventing legitimate regeneration after source edits.
+On regen, for each existing HTML output:
+1. Read its embedded `plan-view-source-sha256` (the previous render sha).
+2. Recompute the *current* render sha for that plan (markdown + corpus + git fields).
+3. If the new render sha differs — meaning the source markdown, a corpus cross-reference, or the git history that feeds the page changed — overwrite freely.
+4. If the render sha is unchanged AND the existing HTML file's *content* sha256 differs from what regeneration would produce — someone hand-edited the HTML. Refuse without `--force`; print path and diff hint.
+
+This catches the "I tweaked the HTML directly and now my edit will be wiped" foot-gun without preventing legitimate regeneration after source edits. Folding git fields into the render sha means a rebase/amend that changes a commit subject or date takes the "source changed, overwrite freely" path (step 3) rather than a spurious hand-edit refusal.
+
+## Section splitting (`--rich` mode)
+
+Large plans (`> 25,000` chars or `> 10` H2s) are diced into sections for parallel LLM fanout. `split_into_sections(plan)` returns an ordered list of `Section` dataclass instances:
+
+| Field | Meaning |
+|-------|---------|
+| `section_id` | Stable, unique slug from the H2 title; duplicate titles get `-2`, `-3` suffixes. Content before the first H2 is `preamble`; a plan with no H2 yields a single `body` section. |
+| `title` | The H2 heading text (`(preamble)` / `Body` for the synthetic sections). |
+| `markdown` | The raw slice of the plan for that section. |
+| `section_sha` | `sha256(markdown)` — gates per-section rich re-render so editing one section only re-renders that section. |
+
+`Section` is **frozen** (immutable); splits are memoised in a module-level cache keyed by `(slug, sha256)`, and `split_into_sections` hands back a fresh list copy so callers can't corrupt the cached entry.
+
+H2 boundaries are found by `_h2_spans()`, which is **fence-aware**: a `## ` line inside a fenced code block (` ``` ` or `~~~`) is not a section boundary. Fence state toggles on the fence character (a `~~~` line doesn't close a ` ``` ` block) and respects fence length (a ` ``` ` line does not close a ` ```` ` block — CommonMark). Note this scanner (`_SECTION_FENCE_RE`) is intentionally broader than the markdown renderer's own `_FENCE_RE` (which captures only a non-indented exactly-three-backtick fence's language): the splitter recognises indented and `~~~` fences too. The divergence is benign — it only shifts where a section boundary lands, never the deterministic per-plan HTML rendering.

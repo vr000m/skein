@@ -47,8 +47,8 @@
        (Chrome/Safari/Firefox 2023+). */
     .tabs[data-tabs-id="{{TABS_ID}}"] .tab-panel { display: none; }
     {{PANEL_VISIBILITY_RULES}}
-    /* Each rule is generated as:
-       .tabs[data-tabs-id="{{TABS_ID}}"]:has(#tab-{{TABS_ID}}-{{SLOT}}:checked) .tab-panel[data-slot="{{SLOT}}"] { display: block; }
+    /* Each rule is generated as (<id>/<slot> filled per tab):
+       .tabs[data-tabs-id="<id>"]:has(#tab-<id>-<slot>:checked) .tab-panel[data-slot="<slot>"] { display: block; }
     */
   </style>
 
