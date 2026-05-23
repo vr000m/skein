@@ -219,3 +219,40 @@ def test_needs_sections_ignores_fenced_h2(tmp_path: Path) -> None:
         tmp_path, "20260521-feature-fenced-many.md", "## One\nx\n" + fenced
     )
     assert G._needs_sections(plan) is False
+
+
+def test_h2_inside_longer_fence_not_split_by_inner_shorter_fence(
+    tmp_path: Path,
+) -> None:
+    # CommonMark: a ``` line does not close a ```` block. An H2 that sits
+    # between the inner ``` and the real closing ```` is still inside code.
+    body = (
+        "# T\n\n## Real\n\n"
+        "````\n"  # opening 4-backtick fence
+        "```\n"  # inner 3-backtick line — NOT a close
+        "## not a heading\n"
+        "````\n\n"  # real close (4 backticks)
+        "after\n"
+    )
+    plan = _make_plan(tmp_path, "20260521-feature-nested-fence.md", body)
+    ids = [s.section_id for s in G.split_into_sections(plan)]
+    assert "not-a-heading" not in ids
+    assert ids == ["preamble", "real"]
+
+
+def test_section_is_frozen_and_cache_returns_independent_list(tmp_path: Path) -> None:
+    import dataclasses
+
+    import pytest
+
+    plan = _make_plan(tmp_path, "20260521-feature-frozen.md", "## A\nx\n\n## B\ny\n")
+    first = G.split_into_sections(plan)
+    second = G.split_into_sections(plan)  # cache hit
+    assert first is not second, "cache must hand back independent list objects"
+    assert first == second
+    # Mutating the returned list must not corrupt the cached entry.
+    first.clear()
+    assert len(G.split_into_sections(plan)) == 2
+    # Section instances are immutable.
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        second[0].title = "mutated"  # type: ignore[misc]
