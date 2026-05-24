@@ -8,6 +8,9 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 	source "$ROOT_DIR/.env"
 fi
 
+# shellcheck source=scripts/lib/bundle-map.sh
+. "$ROOT_DIR/scripts/lib/bundle-map.sh"
+
 GLOBAL_CODEX_SKILLS_DIR="${GLOBAL_CODEX_SKILLS_DIR:-$HOME/.codex/skills}"
 GLOBAL_CLAUDE_SKILLS_DIR="${GLOBAL_CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}"
 MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out plan-view review-plan rfc-finder spec-compliance update-docs}"
@@ -69,7 +72,7 @@ if [[ -n "${CLAUDE_ONLY_SKILLS// /}" ]]; then
 		elif [[ ! -d "$ROOT_DIR/.claude/skills/$skill" ]]; then
 			echo "drift: .claude/skills/$skill missing from repo but exists globally"
 			CLAUDE_DIFF=1
-		elif ! diff -ru --exclude='__pycache__' "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" >/dev/null; then
+		elif ! skill_diff "$GLOBAL_CLAUDE_SKILLS_DIR/$skill" "$ROOT_DIR/.claude/skills/$skill" "$skill"; then
 			echo "drift: .claude/skills/$skill differs from global authority"
 			CLAUDE_DIFF=1
 		fi
@@ -142,19 +145,11 @@ fi
 # scripts/. Keep this set in sync with scripts/bundle-appliers.sh.
 BUNDLE_DIFF=0
 CANONICAL_SCRIPTS_DIR="$ROOT_DIR/scripts"
-bundle_shared=(reconcile-findings.sh audit-auto-fix-eligibility.sh render-reconciled-report.sh plan-scope-detect.sh auto-fix-allowlist.json lib/auto-fix-common.sh)
-
-bundle_applier_for() {
-	case "$1" in
-	deep-review) echo "apply-auto-fix-code.sh" ;;
-	review-plan) echo "apply-auto-fix-plan.sh" ;;
-	esac
-}
 
 check_bundle_dir() {
 	local tdir="$1"
 	shift
-	local f canon
+	local f canon found rel declared d
 	for f in "$@"; do
 		canon="$CANONICAL_SCRIPTS_DIR/$f"
 		if [[ ! -f "$tdir/$f" ]]; then
@@ -165,11 +160,22 @@ check_bundle_dir() {
 			BUNDLE_DIFF=1
 		fi
 	done
+	# Stale-leftover guard: no files beyond the declared set (e.g. a
+	# renamed-away applier lingering in a global mirror the diff no longer sees).
+	while IFS= read -r found; do
+		rel="${found#"$tdir"/}"
+		declared=0
+		for d in "$@"; do [[ "$rel" == "$d" ]] && declared=1 && break; done
+		if [[ "$declared" -eq 0 ]]; then
+			echo "drift: unexpected bundled $tdir/$rel"
+			BUNDLE_DIFF=1
+		fi
+	done < <(find "$tdir" -type f 2>/dev/null)
 }
 
-for skill in deep-review review-plan; do
+for skill in "${BUNDLE_SKILLS[@]}"; do
 	[[ " $MANAGED_SKILLS " == *" $skill "* ]] || continue
-	bundle_files=("${bundle_shared[@]}" "$(bundle_applier_for "$skill")")
+	bundle_files=("${BUNDLE_SHARED[@]}" "$(bundle_applier_for "$skill")")
 	# Repo bundled copies are committed and must always match canonical.
 	check_bundle_dir "$ROOT_DIR/.claude/skills/$skill/scripts" "${bundle_files[@]}"
 	check_bundle_dir "$ROOT_DIR/.codex/skills/$skill/scripts" "${bundle_files[@]}"

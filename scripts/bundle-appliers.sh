@@ -15,43 +15,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT_DIR/scripts"
 
-# Shared pipeline bundled into every auto-fix skill.
-SHARED=(
-	reconcile-findings.sh
-	audit-auto-fix-eligibility.sh
-	render-reconciled-report.sh
-	plan-scope-detect.sh
-	auto-fix-allowlist.json
-	lib/auto-fix-common.sh
-)
+# shellcheck source=scripts/lib/bundle-map.sh
+. "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
 MIRRORS=(.claude .codex)
-SKILLS=(deep-review review-plan)
-
-# Skill-specific applier. Keep in sync with tests/parity/test-applier-bundle-parity.sh.
-applier_for() {
-	case "$1" in
-	deep-review) printf 'apply-auto-fix-code.sh\n' ;;
-	review-plan) printf 'apply-auto-fix-plan.sh\n' ;;
-	*)
-		printf 'bundle-appliers: unknown skill %s\n' "$1" >&2
-		return 1
-		;;
-	esac
-}
 
 stage_root="$(mktemp -d)"
 trap 'rm -rf "$stage_root"' EXIT
 
 count=0
-for skill in "${SKILLS[@]}"; do
-	applier="$(applier_for "$skill")"
+for skill in "${BUNDLE_SKILLS[@]}"; do
+	applier="$(bundle_applier_for "$skill")"
 
 	# Build a canonical staging layout once per skill, then rsync --delete it
 	# into each mirror so stale files cannot linger (matches sync-skills.sh).
 	stage="$stage_root/$skill/scripts"
 	mkdir -p "$stage/lib"
-	for f in "${SHARED[@]}"; do
+	for f in "${BUNDLE_SHARED[@]}"; do
 		cp "$SRC/$f" "$stage/$f"
 	done
 	cp "$SRC/$applier" "$stage/$applier"

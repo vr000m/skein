@@ -10,25 +10,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="$ROOT_DIR/scripts"
 
-SHARED=(
-	reconcile-findings.sh
-	audit-auto-fix-eligibility.sh
-	render-reconciled-report.sh
-	plan-scope-detect.sh
-	auto-fix-allowlist.json
-	lib/auto-fix-common.sh
-)
+# shellcheck source=scripts/lib/bundle-map.sh
+. "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
 MIRRORS=(.claude .codex)
-SKILLS=(deep-review review-plan)
-
-applier_for() {
-	case "$1" in
-	deep-review) printf 'apply-auto-fix-code.sh\n' ;;
-	review-plan) printf 'apply-auto-fix-plan.sh\n' ;;
-	*) return 1 ;;
-	esac
-}
 
 pass_count=0
 fail_count=0
@@ -44,9 +29,9 @@ pass() {
 }
 
 # --- 1. Byte-identity: canonical vs every bundled copy, all mirrors ---------
-for skill in "${SKILLS[@]}"; do
-	applier="$(applier_for "$skill")"
-	files=("${SHARED[@]}" "$applier")
+for skill in "${BUNDLE_SKILLS[@]}"; do
+	applier="$(bundle_applier_for "$skill")"
+	files=("${BUNDLE_SHARED[@]}" "$applier")
 	for mirror in "${MIRRORS[@]}"; do
 		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
 		for f in "${files[@]}"; do
@@ -95,19 +80,21 @@ else
 fi
 
 # --- 4. Lib-resolution: bundled lib resolves allowlist to the bundled copy --
-for skill in "${SKILLS[@]}"; do
-	lib="$ROOT_DIR/.claude/skills/$skill/scripts/lib/auto-fix-common.sh"
-	expected="$ROOT_DIR/.claude/skills/$skill/scripts/auto-fix-allowlist.json"
-	if [[ ! -f "$lib" ]]; then
-		fail "lib-resolution (missing bundled lib for $skill)"
-		continue
-	fi
-	resolved="$(bash -c 'source "$1"; printf "%s\n" "$AF_ALLOWLIST_PATH"' _ "$lib")"
-	if [[ "$resolved" == "$expected" ]]; then
-		pass "lib-resolution $skill (allowlist -> bundled copy)"
-	else
-		fail "lib-resolution $skill (resolved $resolved, expected $expected)"
-	fi
+for mirror in "${MIRRORS[@]}"; do
+	for skill in "${BUNDLE_SKILLS[@]}"; do
+		lib="$ROOT_DIR/$mirror/skills/$skill/scripts/lib/auto-fix-common.sh"
+		expected="$ROOT_DIR/$mirror/skills/$skill/scripts/auto-fix-allowlist.json"
+		if [[ ! -f "$lib" ]]; then
+			fail "lib-resolution (missing bundled lib for $mirror/$skill)"
+			continue
+		fi
+		resolved="$(bash -c 'source "$1"; printf "%s\n" "$AF_ALLOWLIST_PATH"' _ "$lib")"
+		if [[ "$resolved" == "$expected" ]]; then
+			pass "lib-resolution $mirror/$skill (allowlist -> bundled copy)"
+		else
+			fail "lib-resolution $mirror/$skill (resolved $resolved, expected $expected)"
+		fi
+	done
 done
 
 echo ""

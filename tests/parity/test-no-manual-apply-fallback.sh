@@ -50,9 +50,13 @@ for entry in "${ANCHORED[@]}" "${PENDING[@]}"; do
 		fail "no-fallback ($mirror/$skill: missing SKILL.md)"
 		continue
 	}
-	if grep -inE '(apply|applied|applying)[^.]*(directly|by hand|by-hand|manually|without the)' "$file" | grep -iv 'never' | grep -q .; then
+	# Lines that look like they authorize a manual/direct apply. The ONLY
+	# permitted match is the sanctioned hard-fail sentence itself; any other
+	# match is a fallback authorization.
+	bad="$(grep -inE '(apply|applied|applying|hand-apply|hand apply)[^.]*(directly|by hand|by-hand|manually|yourself|without the bundled)' "$file" | grep -vF "$HARD_FAIL_SENTENCE" || true)"
+	if [[ -n "$bad" ]]; then
 		fail "no-fallback ($mirror/$skill authorizes a manual/direct apply)"
-		grep -inE '(apply|applied|applying)[^.]*(directly|by hand|by-hand|manually|without the)' "$file" | grep -iv 'never' | sed 's/^/    /'
+		printf '%s\n' "$bad" | sed 's/^/    /'
 	else
 		pass "no-fallback ($mirror/$skill)"
 	fi
@@ -81,12 +85,17 @@ done
 # --- Rule 3: an install without bundled scripts/ has nothing to run ----------
 empty_install="$(mktemp -d)"
 trap 'rm -rf "$empty_install"' EXIT
-mkdir -p "$empty_install/deep-review"
-: >"$empty_install/deep-review/SKILL.md"
-if [[ ! -x "$empty_install/deep-review/scripts/apply-auto-fix-code.sh" ]]; then
-	pass "missing-bundle (no bundled applier to run -> anchored path fails)"
+SKILL_DIR_SIM="$empty_install/deep-review"
+mkdir -p "$SKILL_DIR_SIM"
+: >"$SKILL_DIR_SIM/SKILL.md"
+# Drive the actual anchored invocation form against an install with no bundled
+# scripts/ subtree. The anchored path must fail (nothing to run) — that failure
+# is what forces the SKILL.md hard-fail rather than a silent fallback. A pass
+# here would mean the anchored command resolved to something runnable anyway.
+if bash "$SKILL_DIR_SIM/scripts/apply-auto-fix-code.sh" --test-cmd true </dev/null >/dev/null 2>&1; then
+	fail "missing-bundle (anchored applier ran despite absent bundled scripts/)"
 else
-	fail "missing-bundle (unexpected applier present in bundle-less install)"
+	pass "missing-bundle (anchored applier path fails when bundled scripts/ absent)"
 fi
 
 echo ""
