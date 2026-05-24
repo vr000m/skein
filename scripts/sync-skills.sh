@@ -55,11 +55,30 @@ sync_skill() {
 		return
 	fi
 	mkdir -p "$target_dir"
-	if [[ "$skill" == "content-review" ]]; then
+	case "$skill" in
+	content-review)
 		rsync -a --delete --exclude='references/' --exclude='__pycache__' "$source_dir/" "$target_dir/"
-	else
+		;;
+	deep-review | review-plan)
+		# The bundled scripts/ subtree is a generated mirror of canonical
+		# scripts/; never let a stale global copy clobber the repo. It is
+		# regenerated from canonical by sync_repo_bundled_appliers below.
+		rsync -a --delete --exclude='scripts/' --exclude='__pycache__' "$source_dir/" "$target_dir/"
+		;;
+	*)
 		rsync -a --delete --exclude='__pycache__' "$source_dir/" "$target_dir/"
+		;;
+	esac
+}
+
+sync_repo_bundled_appliers() {
+	local bundler="$ROOT_DIR/scripts/bundle-appliers.sh"
+	if [[ ! -x "$bundler" ]]; then
+		echo "warn: $bundler not found/executable, skipping applier re-bundle" >&2
+		return
 	fi
+	"$bundler" >/dev/null
+	echo "Regenerated bundled auto-fix appliers from canonical scripts/"
 }
 
 require_dir "$GLOBAL_CODEX_SKILLS_DIR" "GLOBAL_CODEX_SKILLS_DIR"
@@ -104,6 +123,8 @@ fi
 if [[ " $MANAGED_SKILLS " == *" content-review "* ]]; then
 	sync_repo_reference_copies
 fi
+
+sync_repo_bundled_appliers
 
 if [[ -f "$GLOBAL_CLAUDE_MD" ]]; then
 	cp "$GLOBAL_CLAUDE_MD" "$REPO_CLAUDE_MD"

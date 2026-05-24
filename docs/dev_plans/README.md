@@ -7,7 +7,9 @@ parser can pick up the slug.
 
 ## In Progress / Partially Shipped
 
-_None._
+| Date | Type | Name | Comp | PR | Branch | Plan |
+|------|------|------|------|----|--------|------|
+| 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 
 ## Planned
 
