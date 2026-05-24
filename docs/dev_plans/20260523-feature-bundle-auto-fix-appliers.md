@@ -186,9 +186,9 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 
 ## Progress
 
-- [ ] Phase 1: Bundle build step + drift-guard parity test
-- [ ] Phase 2: SKILL.md base-dir path convention (×4 mirrors; Codex conductor verifies `.codex` installed-path contract and `CODEX_HOME` behavior before marking complete)
-- [ ] Phase 3: Sync/promote/bootstrap round-trip + docs
+- [ ] Phase 1: Bundle build step + generate copies + drift-guard parity tests
+- [ ] Phase 2: SKILL.md base-dir path convention + no-fallback hard-fail (×4 mirrors)
+- [ ] Phase 3: Sync round-trip authority + check-sync gate + promote + docs
 
 ## Findings
 
