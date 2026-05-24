@@ -6,11 +6,15 @@
 # variables/functions only; the sourcing script owns `set -euo pipefail`.
 
 # Shared pipeline bundled into every auto-fix skill (paths relative to scripts/).
+# Only scripts the installed SKILL.md invokes by anchored path belong here, so
+# "bundled" stays synonymous with "operative". render-reconciled-report.sh is
+# deliberately excluded: it is the reference renderer (cited in prose, exercised
+# by tests/reconciliation/test-renderer.sh from the repo) and is never invoked
+# by an anchored "$SKILL_DIR"/scripts/... call, so it does not ship in the bundle.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_SHARED=(
 	reconcile-findings.sh
 	audit-auto-fix-eligibility.sh
-	render-reconciled-report.sh
 	plan-scope-detect.sh
 	auto-fix-allowlist.json
 	lib/auto-fix-common.sh
