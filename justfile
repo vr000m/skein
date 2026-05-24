@@ -33,6 +33,7 @@ parity-tests:
     bash tests/parity/test-applier-bundle-parity.sh
     bash tests/parity/test-allowlist-byte-identity.sh
     bash tests/parity/test-auto-fix-orchestration-contract.sh
+    bash tests/parity/test-no-manual-apply-fallback.sh
 
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
