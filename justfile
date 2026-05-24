@@ -23,6 +23,17 @@ check-prompt-parity:
 check-trunk-snippet-parity:
     ./scripts/check-trunk-snippet-parity.sh
 
+# Regenerate the bundled auto-fix pipeline inside each skill's scripts/ subtree
+bundle-appliers:
+    ./scripts/bundle-appliers.sh
+
+# Run every parity guard: bundle byte-identity, allowlist byte-identity, and
+# the auto-fix orchestration-contract literals.
+parity-tests:
+    bash tests/parity/test-applier-bundle-parity.sh
+    bash tests/parity/test-allowlist-byte-identity.sh
+    bash tests/parity/test-auto-fix-orchestration-contract.sh
+
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
     ./scripts/check-trunk-snippet-parity.sh
