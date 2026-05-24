@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
 # Guards the no-silent-degradation contract for --auto-fix across SKILL.md
 # mirrors:
-#   1. Anchored mirrors invoke the bundled applier via "$SKILL_DIR"/scripts/
+#   1. Anchored mirrors invoke the bundled applier via their harness-native
+#      skill-dir variable under scripts/
 #      and carry the hard-fail-on-missing-bundle sentence.
 #   2. No mirror authorizes a manual/direct apply fallback.
 #   3. A skill install without a bundled scripts/ subtree leaves nothing to run
 #      at the anchored path (the runtime hard-fail the prose mandates).
 #
-# .codex mirrors are anchored Codex-side (Phase 0 decision + .codex SKILL.md
-# prose). Until then they live in PENDING and are checked only for rule 2.
-# When Codex anchors them, move the two .codex entries from PENDING to ANCHORED.
+# .codex mirrors use CODEX_SKILL_DIR because Codex does not currently expose
+# a loaded-skill path in the shell environment and CODEX_HOME was not present
+# in the verified Codex Desktop env probe.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# entry: <mirror-dir>|<skill>|<applier-basename>
+# entry: <mirror-dir>|<skill>|<applier-basename>|<skill-dir-var>
 ANCHORED=(
-	".claude|deep-review|apply-auto-fix-code.sh"
-	".claude|review-plan|apply-auto-fix-plan.sh"
-)
-PENDING=(
-	".codex|deep-review|apply-auto-fix-code.sh"
-	".codex|review-plan|apply-auto-fix-plan.sh"
+	".claude|deep-review|apply-auto-fix-code.sh|SKILL_DIR"
+	".claude|review-plan|apply-auto-fix-plan.sh|SKILL_DIR"
+	".codex|deep-review|apply-auto-fix-code.sh|CODEX_SKILL_DIR"
+	".codex|review-plan|apply-auto-fix-plan.sh|CODEX_SKILL_DIR"
 )
 
 HARD_FAIL_SENTENCE='never fall back to applying fixes by hand'
@@ -43,7 +42,7 @@ skill_md() { printf '%s/%s/skills/%s/SKILL.md' "$ROOT_DIR" "$1" "$2"; }
 # --- Rule 2: no manual/direct-apply fallback phrasing in ANY mirror ----------
 # Match "apply/applied/applying ... directly|by hand|manually|without" but
 # exclude the hard-fail sentence, which legitimately says "never ... by hand".
-for entry in "${ANCHORED[@]}" "${PENDING[@]}"; do
+for entry in "${ANCHORED[@]}"; do
 	IFS='|' read -r mirror skill _ <<<"$entry"
 	file="$(skill_md "$mirror" "$skill")"
 	[[ -f "$file" ]] || {
@@ -64,16 +63,16 @@ done
 
 # --- Rule 1: anchored mirrors invoke the bundled applier + hard-fail prose ---
 for entry in "${ANCHORED[@]}"; do
-	IFS='|' read -r mirror skill applier <<<"$entry"
+	IFS='|' read -r mirror skill applier skill_dir_var <<<"$entry"
 	file="$(skill_md "$mirror" "$skill")"
 	[[ -f "$file" ]] || {
 		fail "anchored ($mirror/$skill: missing SKILL.md)"
 		continue
 	}
-	if grep -qF "\"\$SKILL_DIR\"/scripts/$applier" "$file"; then
-		pass "anchored invocation ($mirror/$skill -> \$SKILL_DIR/scripts/$applier)"
+	if grep -qF "\"\$$skill_dir_var\"/scripts/$applier" "$file"; then
+		pass "anchored invocation ($mirror/$skill -> \$$skill_dir_var/scripts/$applier)"
 	else
-		fail "anchored invocation ($mirror/$skill missing \$SKILL_DIR/scripts/$applier)"
+		fail "anchored invocation ($mirror/$skill missing \$$skill_dir_var/scripts/$applier)"
 	fi
 	if grep -qF "$HARD_FAIL_SENTENCE" "$file"; then
 		pass "hard-fail sentence ($mirror/$skill)"

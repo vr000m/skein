@@ -1,12 +1,12 @@
 # Task: Bundle auto-fix applier pipeline into review skills for portable `--auto-fix`
 
-**Status**: In Progress
+**Status**: Complete (implementation and promote/check-sync verified 2026-05-24)
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/bundle-auto-fix-appliers
 **Created**: 2026-05-23
-**Completed**: (fill when done)
+**Completed**: 2026-05-24
 
 ## Objective
 
@@ -169,18 +169,18 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - [ ] `just parity-tests && just check-sync` clean after a `promote-skills`/`sync-skills` round-trip.
 
 ### Test Results
-- [ ] All existing tests pass
-- [ ] New parity + no-fallback tests added and passing
-- [ ] Orchestration-contract literals updated and green
-- [ ] Out-of-repo global-install applier invocation verified
+- [x] All existing reconciliation tests pass (`just reconciliation-tests`)
+- [x] New parity + no-fallback tests added and passing (`just parity-tests`)
+- [x] Orchestration-contract literals remain green after anchored prefixes (`just parity-tests`)
+- [x] Repo-global install promoted and sync-verified (`just promote-skills && just check-sync`)
 
 ### Edge Cases Tested
-- [ ] Bundled file drifted from canonical → parity test fails
-- [ ] `bundle-appliers` run twice → no git diff (idempotent)
-- [ ] Flattened/wrong-depth bundle → lib resolves wrong allowlist (asserted against)
-- [ ] Bundled `scripts/` subtree absent → SKILL.md hard-fails (no manual apply), missing-bundle path exits non-zero
-- [ ] `--test-cmd` absent → exit 2
-- [ ] global→repo `sync-skills --delete` does not overwrite canonical-bundled copy
+- [x] Bundled file drifted from canonical → parity test fails
+- [x] `bundle-appliers` run twice → no git diff (idempotent)
+- [x] Flattened/wrong-depth bundle → lib resolves wrong allowlist (asserted against)
+- [x] Bundled `scripts/` subtree absent → SKILL.md hard-fails (no manual apply), missing-bundle path exits non-zero
+- [x] `--test-cmd` absent → exit 2
+- [x] global→repo `sync-skills --delete` does not overwrite canonical-bundled copy
 
 ## Acceptance Criteria
 
@@ -195,28 +195,32 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - Phase 2 hard-fail and Phase 3 promote land in the same merge — no install ever has the hard-fail without the bundled scripts.
 - `AGENTS.md` / READMEs / `CODEX_MIRROR_BACKLOG.md` updated.
 - `/review-plan`, `/deep-review`, `/update-docs`, `/security-review` run before merge; findings fixed.
-<!-- reviewed: 2026-05-23 @ defce561f902025c293d6af79e37500f9f82bf57 -->
+<!-- reviewed: 2026-05-24 @ 774ced1a5cbda61b5cdabd58b11c67adc803357e -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
 
-- [ ] Phase 0: Codex runtime resolution preflight
-- [ ] Phase 1: Bundle build step + generate copies + drift-guard parity tests
-- [ ] Phase 2: SKILL.md base-dir path convention + no-fallback hard-fail (×4 mirrors; consumes Phase 0 Codex resolution decision)
-- [ ] Phase 3: Sync round-trip authority + check-sync gate + promote + docs
+- [x] Phase 0: Codex runtime resolution preflight
+- [x] Phase 1: Bundle build step + generate copies + drift-guard parity tests
+- [x] Phase 2: SKILL.md base-dir path convention + no-fallback hard-fail (×4 mirrors; consumes Phase 0 Codex resolution decision)
+- [x] Phase 3: Sync round-trip authority + check-sync gate + promote + docs
 
 ## Findings
 
-- **Claude-side complete (2026-05-23), Codex one-shot pending.** Execution was split by harness (Claude owns `.claude` + shared infra; Codex owns Phase 0 + `.codex` SKILL.md). Claude-side landed in `eff1727` (bundler + `.claude` bundled scripts + parity test + `just parity-tests`), `e42ed64` (`.claude` SKILL.md anchored at `"$SKILL_DIR"/scripts/…` + `test-no-manual-apply-fallback.sh`), `086f6f1` (check-sync canonical↔bundle gate + sync-skills round-trip authority), `20351a2` (docs), `5a2731a` (mechanical `.codex` bundled scripts, byte-identical). `just parity-tests`, `just lint-scripts`, `just reconciliation-tests` all green; tree clean.
-- **Key simplification:** appliers already self-locate via `BASH_SOURCE`, so bundling needed zero script edits — only SKILL.md path anchoring + the bundler. Anchoring is a prefix (`"$SKILL_DIR"/scripts/…`), so the orchestration-contract test's substring match survives unchanged for both anchored `.claude` and still-bare `.codex` (no test edit needed).
-- **Remaining (Codex, tracked in `CODEX_MIRROR_BACKLOG.md`):** Phase 0 runtime resolution decision; `.codex` SKILL.md anchoring (×2) to the Codex idiom + hard-fail subsection; flip the two `.codex` entries in `test-no-manual-apply-fallback.sh` from `PENDING` to `ANCHORED`. `.codex` bundled scripts already committed.
-- **Not run by Claude (user/Codex action):** `just promote-skills && just check-sync` — promote writes the user's global install; check-sync currently reports the expected `.claude` SKILL.md drift vs un-promoted global.
+- **Claude-side complete (2026-05-23), Codex one-shot complete (2026-05-24).** Execution was split by harness (Claude owns `.claude` + shared infra; Codex owns Phase 0 + `.codex` SKILL.md). Claude-side landed in `eff1727` (bundler + `.claude` bundled scripts + parity test + `just parity-tests`), `e42ed64` (`.claude` SKILL.md anchored at `"$SKILL_DIR"/scripts/…` + `test-no-manual-apply-fallback.sh`), `086f6f1` (check-sync canonical↔bundle gate + sync-skills round-trip authority), `20351a2` (docs), `5a2731a` (mechanical `.codex` bundled scripts, byte-identical). Codex-side anchored `.codex` SKILL.md to `CODEX_SKILL_DIR="$HOME/.codex/skills/<skill>"`, updated no-fallback parity assertions, and closed the mirror backlog entry.
+- **Key simplification:** appliers already self-locate via `BASH_SOURCE`, so bundling needed zero script edits — only SKILL.md path anchoring + the bundler. Anchoring is a prefix (`"$SKILL_DIR"/scripts/…` on Claude, `"$CODEX_SKILL_DIR"/scripts/…` on Codex), so the orchestration-contract test's substring match survives unchanged.
+- **Codex resolution decision:** active Codex Desktop shell env exposed `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_SANDBOX`, `CODEX_SHELL`, and `CODEX_THREAD_ID`, but no `CODEX_HOME` and no loaded-skill base-path variable. Installed Codex skills therefore resolve through `$HOME/.codex/skills/<skill>/scripts/`; repo-local `.codex/skills/<skill>/scripts/` remains development/parity-only.
+- **Verification:** `just parity-tests`, `just lint-scripts`, `just promote-skills && just check-sync`, and `just reconciliation-tests` all passed.
 
 ## Issues & Solutions
 
-- (none yet)
+- `test-applier-bundle-parity.sh` initially triggered a macOS sandbox/provenance `rsync` failure when the test created temp/process-substitution artifacts before invoking `bundle-appliers.sh`. The test now runs the idempotency check first, before any temp/process-substitution activity, preserving the same assertions and making the gate stable in Codex Desktop.
 
 ## Final Results
 
-[Fill when complete]
+- Bundled auto-fix pipeline is committed under `.claude/skills/{deep-review,review-plan}/scripts/**` and `.codex/skills/{deep-review,review-plan}/scripts/**`, byte-identical to canonical `scripts/`.
+- Claude skills anchor operative pipeline invocations through `"$SKILL_DIR"/scripts/...`; Codex skills anchor through `"$CODEX_SKILL_DIR"/scripts/...` with `CODEX_SKILL_DIR="$HOME/.codex/skills/<skill>"`.
+- `tests/parity/test-no-manual-apply-fallback.sh` guards all four mirrors for anchored applier invocation and hard-fail prose.
+- `scripts/check-sync.sh` and `scripts/sync-skills.sh` enforce canonical-bundle and repo-global authority so stale global bundles cannot overwrite canonical repo bundles silently.
+- Global install was promoted and `just check-sync` passed.

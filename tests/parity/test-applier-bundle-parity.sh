@@ -28,7 +28,19 @@ pass() {
 	pass_count=$((pass_count + 1))
 }
 
-# --- 1. Byte-identity: canonical vs every bundled copy, all mirrors ---------
+# --- 1. Idempotency: re-running the bundler against an in-sync tree no-ops ---
+if command -v git >/dev/null 2>&1 && git -C "$ROOT_DIR" rev-parse >/dev/null 2>&1; then
+	bash "$SRC/bundle-appliers.sh" >/dev/null
+	if git -C "$ROOT_DIR" diff --quiet -- '.claude/skills/*/scripts' '.codex/skills/*/scripts'; then
+		pass "idempotency (re-bundle produced no diff)"
+	else
+		fail "idempotency (re-bundle changed the working tree; canonical edits not committed?)"
+	fi
+else
+	echo "SKIP: idempotency (not a git work tree)"
+fi
+
+# --- 2. Byte-identity: canonical vs every bundled copy, all mirrors ---------
 for skill in "${BUNDLE_SKILLS[@]}"; do
 	applier="$(bundle_applier_for "$skill")"
 	files=("${BUNDLE_SHARED[@]}" "$applier")
@@ -55,28 +67,15 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	done
 done
 
-# --- 2. Drift-injection: prove the comparison detects a mutated copy --------
+# --- 3. Drift-injection: prove the comparison detects a mutated copy --------
 drift_tmp="$(mktemp -d)"
 trap 'rm -rf "$drift_tmp"' EXIT
-cp "$SRC/reconcile-findings.sh" "$drift_tmp/canonical"
-cp "$SRC/reconcile-findings.sh" "$drift_tmp/mutated"
-printf '\n# injected drift\n' >>"$drift_tmp/mutated"
+printf 'canonical bundle payload\n' >"$drift_tmp/canonical"
+printf 'canonical bundle payload\n# injected drift\n' >"$drift_tmp/mutated"
 if cmp -s "$drift_tmp/canonical" "$drift_tmp/mutated"; then
 	fail "drift-injection (cmp did not detect a mutated copy)"
 else
 	pass "drift-injection (cmp detects mutation)"
-fi
-
-# --- 3. Idempotency: re-running the bundler against an in-sync tree no-ops ---
-if command -v git >/dev/null 2>&1 && git -C "$ROOT_DIR" rev-parse >/dev/null 2>&1; then
-	bash "$SRC/bundle-appliers.sh" >/dev/null
-	if git -C "$ROOT_DIR" diff --quiet -- '.claude/skills/*/scripts' '.codex/skills/*/scripts'; then
-		pass "idempotency (re-bundle produced no diff)"
-	else
-		fail "idempotency (re-bundle changed the working tree; canonical edits not committed?)"
-	fi
-else
-	echo "SKIP: idempotency (not a git work tree)"
 fi
 
 # --- 4. Lib-resolution: bundled lib resolves allowlist to the bundled copy --

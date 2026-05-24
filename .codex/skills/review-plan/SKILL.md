@@ -334,20 +334,28 @@ After every lens agent has returned (Step 2) and before the report is presented 
 
 The merge logic — schema, signature, severity policy, canonical sort, and related-findings cross-reference — is documented authoritatively in the GENERIC block. Read it as the binding contract; the prose around it walks through how the orchestrator applies it.
 
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex does not currently expose a loaded-skill base path in the shell environment; this session showed `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_SANDBOX`, `CODEX_SHELL`, and `CODEX_THREAD_ID`, but no `CODEX_HOME` or loaded-skill path. For installed Codex skills, bind the global skill directory explicitly:
+
+```
+CODEX_SKILL_DIR="$HOME/.codex/skills/review-plan"
+```
+
+Repo-local `.codex/skills/review-plan` paths are for development and parity checks only. Do not document or use `${CODEX_HOME:-$HOME/.codex}` unless Codex support for `CODEX_HOME` has been separately proven. All operative invocations below use `"$CODEX_SKILL_DIR"/scripts/…`. If `"$CODEX_SKILL_DIR"/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (the marker-hash check at Step 7, plus the per-fix blob restore) holds only when the bundled applier runs.
+
 Procedure:
 
 1. **Collect lens output as JSON-Lines.** For each of the four lens agents (architecture, sequencing, spec-and-testing, codebase-claims), serialise its returned findings into the schema documented in the GENERIC block — one JSON object per line, fields `{lens, severity, category, file, line, summary, evidence, suggestion}`. Errored or timed-out lenses are tracked separately for the report header (per the GENERIC block) and are NOT fed into reconciliation. The combined stream is written to `findings.jsonl`.
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | scripts/reconcile-findings.sh --skill review-plan
+   cat findings.jsonl | "$CODEX_SKILL_DIR"/scripts/reconcile-findings.sh --skill review-plan
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
-   scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
+   "$CODEX_SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist, path binding, drift, and scope-forbid gates the applier will use.
@@ -451,7 +459,7 @@ Preconditions:
 Invocation:
 
 ```
-scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
+"$CODEX_SKILL_DIR"/scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):
