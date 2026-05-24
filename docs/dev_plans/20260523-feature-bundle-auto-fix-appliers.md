@@ -1,6 +1,6 @@
 # Task: Bundle auto-fix applier pipeline into review skills for portable `--auto-fix`
 
-**Status**: Not Started
+**Status**: In Progress
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
@@ -195,7 +195,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - Phase 2 hard-fail and Phase 3 promote land in the same merge — no install ever has the hard-fail without the bundled scripts.
 - `AGENTS.md` / READMEs / `CODEX_MIRROR_BACKLOG.md` updated.
 - `/review-plan`, `/deep-review`, `/update-docs`, `/security-review` run before merge; findings fixed.
-<!-- reviewed: 2026-05-23 @ 739c3687f7014bd00c4f11b8f8e9fe121911083a -->
+<!-- reviewed: 2026-05-23 @ defce561f902025c293d6af79e37500f9f82bf57 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

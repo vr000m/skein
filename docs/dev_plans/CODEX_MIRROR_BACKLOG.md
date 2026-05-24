@@ -29,6 +29,7 @@ Claude-side bundling of the auto-fix pipeline has landed; the `.codex` analogue 
   4. `.codex/skills/{deep-review,review-plan}/scripts/**` are already committed mechanically (byte-identical to canonical via `bundle-appliers.sh`); Codex need only re-verify, not regenerate.
 - Required result: Codex-native path resolution (sanctioned divergence); bundled `scripts/` subtree + allowlist stay byte-identical to canonical. The orchestration-contract test uses substring matching, so it already passes for the bare `.codex` form and will keep passing after a prefix anchor.
 - Gating checks the Codex maintainer must clear: `just parity-tests` (bundle + allowlist + orchestration + no-fallback), then `just promote-skills && just check-sync` green.
+- Optional follow-ups surfaced by `/deep-review` (both touch the byte-identical GENERIC block, so they require all four mirrors and belong with the `.codex` pass): (a) add an inline `# documentation only` note to the bare `scripts/reconcile-findings.sh` example inside the GENERIC FINDING SCHEMA block so a future maintainer doesn't "fix" it by anchoring (which would break GENERIC-block parity); (b) decide whether `render-reconciled-report.sh` should remain in the bundle map — it is bundled but the SKILL.md render step is prose, not an operative `"$SKILL_DIR"/scripts/…` invocation. The Claude-side bundle map is now single-sourced in `scripts/lib/bundle-map.sh` (consumed by the bundler, the parity test, and check-sync), so any add/remove is a one-line change there.
 
 ---
 
