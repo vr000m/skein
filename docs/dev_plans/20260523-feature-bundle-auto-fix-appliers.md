@@ -37,7 +37,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - `scripts/` remains the single canonical source. Bundled copies are byte-identical mirrors enforced by a parity test (same posture as the existing `auto-fix-allowlist.json` byte-identity check). The bundled copies are **generated artifacts** produced by `bundle-appliers.sh` and committed; canonical `scripts/X` always wins on conflict.
 - The bundled-`scripts/` round-trip authority is explicit: the global→repo sync direction (`sync-skills`, `rsync -a --delete`) must not be allowed to overwrite the canonical-bundled repo copy with a stale global copy (the failure mode the content-review `references/` carve-out already guards against, `sync-skills.sh:58`, `check-sync.sh:63-122`).
 - All executable pipeline invocations in SKILL.md — `reconcile-findings.sh`, `audit-auto-fix-eligibility.sh`, `render-reconciled-report.sh`, and the applier — must be base-dir-anchored, not just the appliers. Prose citations of `scripts/…` (source-of-truth pointers) stay bare and are documentation-only.
-- Codex-side base-dir resolution must be defined as a contract, not left as an implementation note: document whether Codex exposes the loaded skill path directly; if it does not, use `${CODEX_HOME:-$HOME/.codex}/skills/<skill>` for installed skills, and the repo-local `.codex/skills/<skill>` path only for development/parity checks. The `.codex` SKILL.md prose must state the supported installed path, the `CODEX_HOME` behavior, and the hard-fail if the resolved bundled `scripts/` subtree is absent.
+- Codex-side base-dir resolution must be defined from verified runtime evidence, not left as an implementation note. First probe whether Codex exposes the loaded skill path directly. If it does not, use `$HOME/.codex/skills/<skill>` for installed skills unless `CODEX_HOME` is explicitly verified as a supported Codex install-root override; repo-local `.codex/skills/<skill>` paths are only for development/parity checks. The `.codex` SKILL.md prose must state the supported installed path, whether `CODEX_HOME` is supported, and the hard-fail if the resolved bundled `scripts/` subtree is absent.
 - `.claude` and `.codex` SKILL.md mirrors stay in prompt-parity (`scripts/check-prompt-parity.sh`, `tests/parity/`). The `auto-fix-allowlist.json` array literal stays byte-identical across all four SKILL.md mirrors (`tests/parity/test-allowlist-byte-identity.sh`). The `test-auto-fix-orchestration-contract.sh` literals (which assert the bare `scripts/audit-…` invocation today) must be updated in lockstep with the anchoring change.
 - All parity tests the plan relies on must be wired into an executed `just` target (there is no `.github/workflows`); `reconciliation-tests` currently runs neither `test-allowlist-byte-identity.sh` nor `test-auto-fix-orchestration-contract.sh`.
 - Bundled scripts must survive the sync/promote/bootstrap round-trip (`rsync -a --delete`) and reach the global install via `promote-skills`/`bootstrap-skills`.
@@ -45,7 +45,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 
 ## Review Focus
 
-- **Codex base-dir resolution (highest risk).** Claude discloses the skill base dir at load; confirm whether Codex CLI exposes an equivalent (env var, disclosed path, or AGENTS-relative anchor). If it does not, the `.codex` SKILL.md needs a distinct resolution idiom anchored at `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` for installed skills, with repo-local `.codex/skills/<skill>/scripts/` used only by development/parity checks. The dispatch/resolution idiom is the *one* place `.claude` and `.codex` mirrors are allowed to legitimately diverge (cf. the Explore-prompt mirroring note in `dev-plan/SKILL.md`); everything else must stay in parity.
+- **Codex base-dir resolution (highest risk).** Claude discloses the skill base dir at load; confirm whether Codex CLI exposes an equivalent (env var, disclosed path, or AGENTS-relative anchor). If it does not, the `.codex` SKILL.md needs a distinct resolution idiom anchored at `$HOME/.codex/skills/<skill>/scripts/` for installed skills. Only use `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` if Phase 0 proves Codex honors `CODEX_HOME` as an install-root override. Repo-local `.codex/skills/<skill>/scripts/` is development/parity-only. The dispatch/resolution idiom is the *one* place `.claude` and `.codex` mirrors are allowed to legitimately diverge (cf. the Explore-prompt mirroring note in `dev-plan/SKILL.md`); everything else must stay in parity.
 - **No silent degradation.** Verify the SKILL.md prose now hard-fails on missing bundled scripts and that no remaining sentence authorizes a manual/direct apply. Grep all four mirrors for fallback language.
 - **Drift guard correctness.** The new parity test must compare byte-identity between canonical `scripts/X` and *every* bundled copy across all four skill mirrors, and must be wired into a `just` target and `check-sync` so a forgotten re-bundle fails CI/local checks — not just exist as an orphan script.
 - **Round-trip stability.** Confirm `sync-skills` (global→repo, `--exclude='references/'`) and `promote-skills`/`bootstrap-skills` (repo→global, `--delete`) carry the bundled `scripts/` subtree both ways without deleting it or causing spurious drift.
@@ -53,7 +53,22 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 
 ## Implementation Checklist
 
-**Codex conduct note:** this plan is dual-harness. Run `/review-plan` in both Claude and Codex before implementation, then conduct with harness awareness: Phase 2 is the Codex-critical phase because it defines `.codex` runtime path resolution and updates `.codex/skills/{deep-review,review-plan}/SKILL.md`. A Codex conductor must not treat the Claude base-dir disclosure as sufficient evidence for Codex; it must verify the Codex loaded-skill-path probe or the `${CODEX_HOME:-$HOME/.codex}/skills/<skill>` fallback contract before marking Phase 2 complete.
+**Codex conduct note:** this plan is dual-harness. Run `/review-plan` in both Claude and Codex before implementation, then conduct with harness awareness: Phase 0/2 are the Codex-critical phases because they define `.codex` runtime path resolution and update `.codex/skills/{deep-review,review-plan}/SKILL.md`. A Codex conductor must not treat the Claude base-dir disclosure as sufficient evidence for Codex; it must record the Codex loaded-skill-path probe result and either prove `CODEX_HOME` support or deliberately use the `$HOME/.codex` installed-skill fallback before marking Phase 2 complete.
+
+### Phase 0: Codex runtime resolution preflight
+
+**Impl files:** none (evidence-gathering only; findings feed Phase 2 SKILL.md wording)
+**Test files:** none
+**Test command:** `env | rg '^CODEX|CODEX_HOME|CODEX_'`
+**Validation cmd:** record the observed Codex loaded-skill-path behavior and `CODEX_HOME` support decision in this plan before editing `.codex` SKILL.md
+
+- Probe the active Codex session for a loaded-skill base path exposed to the model/tooling. Accept only concrete runtime evidence, such as a disclosed skill path in the invocation context or a documented env var present in the process environment; do not infer from Claude's `Base directory for this skill:` behavior.
+- Probe `CODEX_HOME` separately. In the current Codex Desktop session, `env | rg '^CODEX|CODEX_HOME|CODEX_'` shows `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_SANDBOX`, `CODEX_SHELL`, and `CODEX_THREAD_ID`, but no `CODEX_HOME`; that absence is a signal to verify, not proof of unsupported behavior. If no authoritative support is found, do not document `${CODEX_HOME:-$HOME/.codex}` as the installed-skill contract.
+- Choose exactly one Codex installed-skill resolution contract for Phase 2:
+  - Use a runtime-disclosed loaded skill path if Codex exposes one.
+  - Else use `$HOME/.codex/skills/<skill>/scripts/` as the installed-skill fallback.
+  - Use `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` only if the preflight proves `CODEX_HOME` is a supported Codex install-root override.
+- Record the decision in the Phase 2 "Resolving the bundled applier" subsection for both `.codex` SKILL.md files and in `CODEX_MIRROR_BACKLOG.md` if it is a tracked harness divergence.
 
 ### Phase 1: Bundle build step + generate copies + drift-guard parity tests
 
@@ -75,7 +90,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 **Test files:** `tests/parity/test-no-manual-apply-fallback.sh`, `tests/parity/test-auto-fix-orchestration-contract.sh`, `tests/parity/test-allowlist-byte-identity.sh`
 **Test command:** `bash scripts/check-prompt-parity.sh && bash tests/parity/test-allowlist-byte-identity.sh && bash tests/parity/test-auto-fix-orchestration-contract.sh && bash tests/parity/test-no-manual-apply-fallback.sh`
 
-- Resolve the Codex base-dir question first (see Review Focus). Document the resolution idiom for each harness. For Codex, explicitly cover the loaded-skill-path probe result, `${CODEX_HOME:-$HOME/.codex}` handling, installed global skill paths, and repo-local mirror paths used only during development.
+- Consume the Phase 0 Codex resolution decision first. Document the resolution idiom for each harness. For Codex, explicitly cover the loaded-skill-path probe result, whether `CODEX_HOME` is supported, installed global skill paths, and repo-local mirror paths used only during development.
 - In each SKILL.md, replace **every executable pipeline invocation** (not just the appliers — `reconcile-findings.sh`, `audit-auto-fix-eligibility.sh`, `render-reconciled-report.sh` are invoked by path and `audit-` fails bare from a foreign cwd identically to the appliers) with a skill-base-dir-anchored path. Claude side: anchor at the disclosed base dir. Codex side: use the resolved idiom (may legitimately differ — the only sanctioned divergence). Enumerate the complete executable set per mirror; leave prose citations (e.g. deep-review `:392-399`) bare as documentation.
   - deep-review Claude executable lines: `:404` (reconcile), `:420` (reconcile), `:427` (audit), `:464` (apply). deep-review Codex: `:401` (apply) + its reconcile/audit lines.
   - review-plan Claude executable lines: `:328` (reconcile), `:335` (audit), `:437` (apply). review-plan Codex: `:454` (apply) + its reconcile/audit lines.
@@ -83,7 +98,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - Add a short "Resolving the bundled applier" subsection to each SKILL.md explaining the base-dir anchor and the **hard-fail** rule: if the bundled `scripts/` subtree is absent, abort with a clear error — never apply fixes manually.
 - Grep all four mirrors for any prose that authorizes a direct/manual apply fallback; remove or tighten it.
 - Write `tests/parity/test-no-manual-apply-fallback.sh`: assert (a) each mirror contains the hard-fail sentence, (b) no mirror contains direct/manual-apply authorizing phrasing, and (c) a reproducible missing-bundle case (rename a bundled `scripts/` dir in a temp install → assert the applier path exits non-zero). Add it to `just parity-tests`.
-- Add a Codex-specific resolution assertion to `test-auto-fix-orchestration-contract.sh` or a new parity test: the `.codex` SKILL.md for both `deep-review` and `review-plan` must name the resolved installed path (`${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` unless a real loaded-skill-path variable exists) and must not leave executable invocations as bare `scripts/...`.
+- Add a Codex-specific resolution assertion to `test-auto-fix-orchestration-contract.sh` or a new parity test: the `.codex` SKILL.md for both `deep-review` and `review-plan` must name the Phase 0 resolved installed path (runtime-disclosed loaded skill path, `$HOME/.codex/skills/<skill>/scripts/`, or `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` only when `CODEX_HOME` support is proven) and must not leave executable invocations as bare `scripts/...`.
 - Keep the allowlist array literal byte-identical in all four mirrors; re-run `bundle-appliers` only if `auto-fix-allowlist.json` changed (it should not).
 - **Atomicity note:** the hard-fail SKILL.md must not reach a global install before the bundled scripts do — Phase 2 and Phase 3's promote land in the same PR/merge, and the promote runs as part of merge (see Phase 3), so no install ever has the hard-fail without the bundled scripts.
 
@@ -150,7 +165,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - [ ] `check-prompt-parity.sh` + `test-allowlist-byte-identity.sh` — green after SKILL.md edits (allowlist literals untouched).
 - [ ] Existing `tests/auto-fix/test-deep-review-test-command-required.sh` exercises `--test-cmd` exit 2 against the bundled applier.
 - [ ] Scripted out-of-repo / global-install: from a cwd in an unrelated repo, `$HOME/.claude/skills/deep-review/scripts/apply-auto-fix-code.sh --test-cmd 'true' <fixture>` resolves lib + allowlist (post-promote).
-- [ ] Scripted Codex out-of-repo / global-install: from a cwd in an unrelated repo, invoke both `${CODEX_HOME:-$HOME/.codex}/skills/deep-review/scripts/apply-auto-fix-code.sh --test-cmd 'true' <fixture>` and `${CODEX_HOME:-$HOME/.codex}/skills/review-plan/scripts/apply-auto-fix-plan.sh --plan <fixture-plan> <fixture-envelope>` to prove the documented `.codex` installed-path idiom resolves the bundled lib + allowlist. Repeat with a temporary `CODEX_HOME` if the implementation claims `CODEX_HOME` support.
+- [ ] Scripted Codex out-of-repo / global-install: from a cwd in an unrelated repo, invoke both `<resolved-codex-skill-root>/deep-review/scripts/apply-auto-fix-code.sh --test-cmd 'true' <fixture>` and `<resolved-codex-skill-root>/review-plan/scripts/apply-auto-fix-plan.sh --plan <fixture-plan> <fixture-envelope>` to prove the documented `.codex` installed-path idiom resolves the bundled lib + allowlist. Run a temporary `CODEX_HOME` variant only if Phase 0 proves Codex honors `CODEX_HOME`.
 - [ ] `just parity-tests && just check-sync` clean after a `promote-skills`/`sync-skills` round-trip.
 
 ### Test Results
@@ -172,7 +187,7 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - `deep-review` and `review-plan` install dirs contain a `scripts/` subtree with the bundled pipeline; the gated applier resolves and runs from an arbitrary cwd (proven by the scripted global-install out-of-repo test, not a manual checkbox).
 - `--test-cmd` remains mandatory; missing bundled scripts hard-fail with no manual-apply fallback — asserted by `test-no-manual-apply-fallback.sh` (recurring), not a one-time grep.
 - Every executable pipeline invocation (reconcile/audit/render/apply) is base-dir-anchored across all four mirrors; prose citations remain bare and documented as such.
-- Codex resolution is documented and tested as an installed-skill contract: either use the runtime-disclosed loaded skill path, or `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/`; repo-local `.codex/skills/<skill>` paths are only used for development/parity checks.
+- Codex resolution is documented and tested as an installed-skill contract based on Phase 0 evidence: use the runtime-disclosed loaded skill path if present; otherwise use `$HOME/.codex/skills/<skill>/scripts/`; use `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` only if `CODEX_HOME` support is proven. Repo-local `.codex/skills/<skill>` paths are only used for development/parity checks.
 - `scripts/bundle-appliers.sh` + `tests/parity/test-applier-bundle-parity.sh` enforce canonical↔bundle byte-identity (incl. drift-injection, idempotency, lib-resolution); wired into `just parity-tests` and a distinct `check-sync.sh` gate (added after promote seeds global).
 - `tests/parity/test-auto-fix-orchestration-contract.sh` literals updated to the anchored form and green.
 - All four SKILL.md mirrors updated; `check-prompt-parity.sh` and `test-allowlist-byte-identity.sh` green; `.claude`/`.codex` divergence limited to the documented resolution idiom.
@@ -180,14 +195,15 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - Phase 2 hard-fail and Phase 3 promote land in the same merge — no install ever has the hard-fail without the bundled scripts.
 - `AGENTS.md` / READMEs / `CODEX_MIRROR_BACKLOG.md` updated.
 - `/review-plan`, `/deep-review`, `/update-docs`, `/security-review` run before merge; findings fixed.
-<!-- reviewed: 2026-05-23 @ c2b25b67609669b66e670d99ce0b12b20c01fd4a -->
+<!-- reviewed: 2026-05-23 @ 739c3687f7014bd00c4f11b8f8e9fe121911083a -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
 
+- [ ] Phase 0: Codex runtime resolution preflight
 - [ ] Phase 1: Bundle build step + generate copies + drift-guard parity tests
-- [ ] Phase 2: SKILL.md base-dir path convention + no-fallback hard-fail (×4 mirrors)
+- [ ] Phase 2: SKILL.md base-dir path convention + no-fallback hard-fail (×4 mirrors; consumes Phase 0 Codex resolution decision)
 - [ ] Phase 3: Sync round-trip authority + check-sync gate + promote + docs
 
 ## Findings
