@@ -224,3 +224,11 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 - `tests/parity/test-no-manual-apply-fallback.sh` guards all four mirrors for anchored applier invocation and hard-fail prose.
 - `scripts/check-sync.sh` and `scripts/sync-skills.sh` enforce canonical-bundle and repo-global authority so stale global bundles cannot overwrite canonical repo bundles silently.
 - Global install was promoted and `just check-sync` passed.
+
+## Post-completion follow-ups (A3/A5, 2026-05-24)
+
+Both `/deep-review` follow-ups from `CODEX_MIRROR_BACKLOG.md` were landed in this branch in a single four-mirror pass (the Codex side was already present, so the "defer to the Codex pass" rationale no longer applied). The reviewed body above is left intact to preserve the marker; this section records the two outcomes, which supersede the Phase-1/Phase-2 assumptions at lines 39/81/94.
+
+- **A5 — `render-reconciled-report.sh` removed from the bundle (commit `23bb40d`).** Confirmed it is never invoked by an anchored `"$SKILL_DIR"/scripts/…` call in any of the four SKILL.md files, and no other bundled script calls it. The reviewed body assumed it was an executable pipeline invocation (lines 39, 94) and bundled it (line 81); that was true during Phase 1 but A5 reversed it. It stays in canonical `scripts/` as the reference renderer (cited in SKILL.md prose, exercised by `tests/reconciliation/test-renderer.sh` from the repo). `scripts/lib/bundle-map.sh` now carries a rationale comment so it is not re-added. Invariant after A5: **bundled ⇔ operative**.
+- **A3 — bare reconcile example marked documentation-only (commit `02822b5`).** Added an inline, mirror-neutral `# documentation only …` note above the bare `scripts/reconcile-findings.sh` example inside the GENERIC FINDING SCHEMA block, identically across all four SKILL.md copies, so the block stays byte-identical (verified hash `636151…` across the four mirrors). Forestalls a future "anchor all invocations" sweep from anchoring the example and breaking GENERIC-block parity.
+- **Gates re-verified green:** `just parity-tests`, `just reconciliation-tests`, `just lint-scripts`, `bash tests/parity/test-prompt-parity-extended.sh` (13/0 on a clean tree), `just check-prompt-parity`, and `just promote-skills && just check-sync`.
