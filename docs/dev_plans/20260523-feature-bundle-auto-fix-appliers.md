@@ -208,7 +208,10 @@ Bundle the auto-fix applier pipeline into the `deep-review` and `review-plan` sk
 
 ## Findings
 
-- (append findings here as work proceeds)
+- **Claude-side complete (2026-05-23), Codex one-shot pending.** Execution was split by harness (Claude owns `.claude` + shared infra; Codex owns Phase 0 + `.codex` SKILL.md). Claude-side landed in `eff1727` (bundler + `.claude` bundled scripts + parity test + `just parity-tests`), `e42ed64` (`.claude` SKILL.md anchored at `"$SKILL_DIR"/scripts/…` + `test-no-manual-apply-fallback.sh`), `086f6f1` (check-sync canonical↔bundle gate + sync-skills round-trip authority), `20351a2` (docs), `5a2731a` (mechanical `.codex` bundled scripts, byte-identical). `just parity-tests`, `just lint-scripts`, `just reconciliation-tests` all green; tree clean.
+- **Key simplification:** appliers already self-locate via `BASH_SOURCE`, so bundling needed zero script edits — only SKILL.md path anchoring + the bundler. Anchoring is a prefix (`"$SKILL_DIR"/scripts/…`), so the orchestration-contract test's substring match survives unchanged for both anchored `.claude` and still-bare `.codex` (no test edit needed).
+- **Remaining (Codex, tracked in `CODEX_MIRROR_BACKLOG.md`):** Phase 0 runtime resolution decision; `.codex` SKILL.md anchoring (×2) to the Codex idiom + hard-fail subsection; flip the two `.codex` entries in `test-no-manual-apply-fallback.sh` from `PENDING` to `ANCHORED`. `.codex` bundled scripts already committed.
+- **Not run by Claude (user/Codex action):** `just promote-skills && just check-sync` — promote writes the user's global install; check-sync currently reports the expected `.claude` SKILL.md drift vs un-promoted global.
 
 ## Issues & Solutions
 
