@@ -9,7 +9,9 @@ just sync-skills        # Mirror global -> repo (day-to-day)
 just promote-skills     # Set repo -> global (intentional overwrite)
 just bootstrap-skills   # Init missing managed skills on new machine
 just bootstrap-skills-force  # Force overwrite bootstrap
-just check-sync         # Validate sync state
+just check-sync         # Validate sync state (incl. canonical<->bundle byte-identity)
+just bundle-appliers    # Regenerate the bundled auto-fix pipeline inside each skill
+just parity-tests       # Bundle + allowlist + orchestration-contract + no-fallback parity
 just reconciliation-tests  # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts       # shellcheck + shfmt on scripts/
 ```
@@ -19,9 +21,9 @@ Requires: `brew install just jq shellcheck shfmt`
 ## Architecture
 
 ```
-.claude/skills/     Claude Code skills (SKILL.md per skill)
-.codex/skills/      Codex CLI skills (mirrored structure)
-scripts/            Shell scripts for sync/promote/bootstrap/check/reconcile/parity/render/auto-fix
+.claude/skills/     Claude Code skills (SKILL.md per skill; deep-review/review-plan also carry a generated scripts/ subtree)
+.codex/skills/      Codex CLI skills (mirrored structure; same generated scripts/ subtree)
+scripts/            Canonical shell scripts for sync/promote/bootstrap/check/reconcile/parity/render/auto-fix/bundle
 scripts/lib/        Shared bash helpers sourced by appliers (auto-fix-common.sh)
 tests/              Reconciliation, parity, and auto-fix test harnesses
 docs/dev_plans/     Development plans
@@ -40,6 +42,7 @@ _rich_manifest.json /plan-view `--rich` manifest of plans needing LLM re-render 
 
 - Single source of truth for allowed kinds: `scripts/auto-fix-allowlist.json`. Cited byte-identical in all four `SKILL.md` mirrors; enforced by `scripts/check-prompt-parity.sh` and `tests/parity/test-allowlist-byte-identity.sh`.
 - Pipeline: lens emits v2 envelope → `scripts/reconcile-findings.sh --skill <s>` merges → `scripts/audit-auto-fix-eligibility.sh` annotates `auto_fix_status` → `scripts/render-reconciled-report.sh` renders → `scripts/apply-auto-fix-code.sh` (deep-review) or `scripts/apply-auto-fix-plan.sh` (review-plan) commits.
+- Bundled for portability: `scripts/bundle-appliers.sh` copies the pipeline byte-for-byte into each skill's `scripts/` subtree (preserving `scripts/lib/`), so SKILL.md invokes it via `"$SKILL_DIR"/scripts/…` (the harness-disclosed skill base dir) and `--auto-fix` resolves from any cwd — not just the repo. The appliers already self-locate via `BASH_SOURCE`, so no script edits are needed; the lib's `../..` walk requires the bundled layout depth be preserved. Canonical `scripts/` wins; bundled copies are generated artifacts whose byte-identity is enforced by `tests/parity/test-applier-bundle-parity.sh` and the `check-sync` canonical<->bundle gate. Run `just bundle-appliers` after editing any canonical applier, then `just promote-skills` (the global→repo `sync-skills` re-bundles from canonical so a stale global copy cannot clobber the repo). If the bundled `scripts/` is absent at runtime the skill hard-fails (`tests/parity/test-no-manual-apply-fallback.sh`) — it never falls back to hand-applying.
 - Code applier requires `--test-cmd` (or `AUTO_FIX_TEST_CMD`); runs the command exactly once per fix, restores from a saved blob on failure without touching `HEAD`.
 - Plan applier writes prose edits with `Auto-Fixed-By: review-plan` trailer; the real `<!-- reviewed: … -->` marker is only refreshed at the normal `/review-plan` acceptance step. `marker_pending` in the manifest does not satisfy `/conduct` preflight.
 - Manifests land in `.deep-review/auto-fix-<unix>-<pid>.json` and `.review-plan/auto-fix-<unix>-<pid>.json` (gitignored). PID suffix avoids same-second collisions if the advisory mkdir lock is bypassed.

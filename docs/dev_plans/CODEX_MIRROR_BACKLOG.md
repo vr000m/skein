@@ -16,6 +16,22 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-05-23 — `feature/bundle-auto-fix-appliers` (in progress; Codex one-shot owed)
+
+Claude-side bundling of the auto-fix pipeline has landed; the `.codex` analogue is intentionally deferred to a single Codex session. This is open drift until that one-shot lands.
+
+- Source: branch `feature/bundle-auto-fix-appliers` (Claude commits `eff1727` bundling + `.claude` bundled scripts, `e42ed64` `.claude` SKILL.md anchoring + no-fallback test, `086f6f1` check-sync/sync-skills round-trip authority).
+- Claude files changed: `.claude/skills/{deep-review,review-plan}/SKILL.md` (operative auto-fix invocations anchored at `"$SKILL_DIR"/scripts/…` + "Resolving the bundled pipeline" subsection + hard-fail-on-missing-bundle rule); generated `.claude/skills/{deep-review,review-plan}/scripts/**`; shared infra `scripts/bundle-appliers.sh`, `scripts/check-sync.sh`, `scripts/sync-skills.sh`, `justfile`, `tests/parity/test-applier-bundle-parity.sh`, `tests/parity/test-no-manual-apply-fallback.sh`, `AGENTS.md`.
+- Codex files needing analogous updates (the one-shot):
+  1. **Phase 0 (Codex runtime preflight)** — verify whether Codex exposes a loaded-skill base path to the model/tooling; decide the installed-skill resolution idiom: `$HOME/.codex/skills/<skill>/scripts/`, or `${CODEX_HOME:-$HOME/.codex}/skills/<skill>/scripts/` *only if* `CODEX_HOME` is proven a supported Codex install-root override. Repo-local `.codex/skills/<skill>/scripts/` is dev/parity-only.
+  2. `.codex/skills/deep-review/SKILL.md`, `.codex/skills/review-plan/SKILL.md` — anchor every operative pipeline invocation (reconcile/audit/apply) to the Codex idiom and add the "Resolving the bundled pipeline" subsection + hard-fail rule. Harness-native path is the **sanctioned divergence**; everything else stays in parity.
+  3. In `tests/parity/test-no-manual-apply-fallback.sh`, move the two `.codex` entries from `PENDING` to `ANCHORED` (and adjust the asserted anchor string if the Codex idiom is not `"$SKILL_DIR"`).
+  4. `.codex/skills/{deep-review,review-plan}/scripts/**` are already committed mechanically (byte-identical to canonical via `bundle-appliers.sh`); Codex need only re-verify, not regenerate.
+- Required result: Codex-native path resolution (sanctioned divergence); bundled `scripts/` subtree + allowlist stay byte-identical to canonical. The orchestration-contract test uses substring matching, so it already passes for the bare `.codex` form and will keep passing after a prefix anchor.
+- Gating checks the Codex maintainer must clear: `just parity-tests` (bundle + allowlist + orchestration + no-fallback), then `just promote-skills && just check-sync` green.
+
+---
+
 As of 2026-05-17, PR #23 (`feature/review-auto-fix-tier`) is **merged** at `f2d80ce` and lockstep-mirrors a fresh batch of Claude+Codex edits. Re-verified parity-clean on `main` post-merge; post-merge `scripts/promote-skills.sh --yes && just check-sync` ran green.
 
 - Source PR: #23 (`feature/review-auto-fix-tier`), merge commit `f2d80ce`. Pre-merge HEAD was `282dded` (the final test-alignment commit `282dded` followed security-review hardening `f9fc142`; earlier verification at `f770663` re-confirmed at `282dded`).
