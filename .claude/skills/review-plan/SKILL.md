@@ -376,6 +376,7 @@ The merge contract is:
 - **Single point of contact with the script**: the orchestrator collects per-lens findings as JSON-Lines and pipes them through the standalone reconciler. The literal command is:
 
   ```
+  # documentation only — the operative invocation is base-dir-anchored elsewhere; do not anchor this example (it would break GENERIC-block byte-parity)
   cat findings.jsonl | scripts/reconcile-findings.sh --skill <deep-review|review-plan>
   ```
 
