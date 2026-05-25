@@ -771,10 +771,10 @@ def _render_card(plan: Plan, plans: dict[str, Plan]) -> str:
         )
     return (
         f'<div class="card" data-bucket="{_esc(plan.bucket)}">'
-        f'<div class="title"><a href="plan-{_esc(plan.slug)}.html">{_esc(plan.title)}</a>'
-        f' <a class="rich-link" href="plan-{_esc(plan.slug)}.rich.html" '
+        f'<div class="title"><a href="plan-{_esc(plan.slug)}.html">{_esc(plan.title)}</a></div>'
+        f'<div class="meta-row">{chip}{bug_chip}{progress}<span>{_esc(plan.last_touched or plan.created or "—")}{prs}</span>'
+        f'<a class="rich-link" href="plan-{_esc(plan.slug)}.rich.html" '
         f'title="rich view (generate with --rich)">rich →</a></div>'
-        f'<div class="meta-row">{chip}{bug_chip}{progress}<span>{_esc(plan.last_touched or plan.created or "—")}{prs}</span></div>'
         f"{edges_html}"
         f"{fixed_by_html}"
         f"</div>"
