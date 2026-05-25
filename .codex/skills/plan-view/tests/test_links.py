@@ -53,4 +53,71 @@ def test_plan_page_rich_href_escapes_slug() -> None:
     page = G.render_plan_page(
         plan, {plan.slug: plan}, "abc1234", template, "generate.py", "~/plans"
     )
-    assert 'href="plan-20260101-feature-y&quot; onclick=&quot;alert(1).rich.html"' in page
+    assert (
+        'href="plan-20260101-feature-y&quot; onclick=&quot;alert(1).rich.html"' in page
+    )
+
+
+# ---------------------------------------------------------------------------
+# relink_rich_pages — deterministic back-link injection into existing rich pages
+# ---------------------------------------------------------------------------
+
+
+def _write_rich(out_dir: Path, slug: str, body_inner: str = "<h1>x</h1>") -> Path:
+    p = out_dir / f"plan-{slug}.rich.html"
+    p.write_text(
+        f"<!doctype html><html><head></head><body>\n{body_inner}\n</body></html>\n",
+        encoding="utf-8",
+    )
+    return p
+
+
+def test_relink_injects_backlink_after_body(tmp_path: Path) -> None:
+    slug = "20260101-feature-x"
+    page = _write_rich(tmp_path, slug)
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert (relinked, skipped) == (1, 0)
+    html = page.read_text(encoding="utf-8")
+    assert G.RICH_BACKLINK_MARKER in html
+    # Back-link targets derived from the filename slug.
+    assert 'href="index.html"' in html
+    assert f'href="plan-{slug}.html"' in html
+    assert "deterministic view" in html
+    # Injected immediately after the opening <body> tag, before page content.
+    body_idx = html.index("<body>")
+    assert html.index(G.RICH_BACKLINK_MARKER) < html.index("<h1>x</h1>")
+    assert body_idx < html.index(G.RICH_BACKLINK_MARKER)
+
+
+def test_relink_is_idempotent(tmp_path: Path) -> None:
+    _write_rich(tmp_path, "20260101-feature-x")
+    G.relink_rich_pages(tmp_path)
+    page = tmp_path / "plan-20260101-feature-x.rich.html"
+    first = page.read_text(encoding="utf-8")
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert (relinked, skipped) == (0, 1)
+    assert page.read_text(encoding="utf-8") == first  # no double-inject
+    assert first.count(G.RICH_BACKLINK_MARKER) == 1
+
+
+def test_relink_skips_page_without_body(tmp_path: Path) -> None:
+    p = tmp_path / "plan-20260101-feature-x.rich.html"
+    p.write_text("<div>no body tag here</div>\n", encoding="utf-8")
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert (relinked, skipped) == (0, 1)
+    assert G.RICH_BACKLINK_MARKER not in p.read_text(encoding="utf-8")
+
+
+def test_relink_only_touches_rich_html(tmp_path: Path) -> None:
+    # Deterministic pages must not be rewritten by the rich relink pass.
+    (tmp_path / "plan-20260101-feature-x.html").write_text(
+        "<html><body><h1>plain</h1></body></html>", encoding="utf-8"
+    )
+    (tmp_path / "index.html").write_text(
+        "<html><body>dash</body></html>", encoding="utf-8"
+    )
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert relinked == 0
+    assert G.RICH_BACKLINK_MARKER not in (
+        tmp_path / "plan-20260101-feature-x.html"
+    ).read_text(encoding="utf-8")

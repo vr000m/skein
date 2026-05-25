@@ -174,7 +174,11 @@ def test_assemble_stitches_when_all_fragments_present(tmp_path: Path) -> None:
         assert f">{sec.title}<" in html
     # Tabs scaffold leading comment was stripped (no documentation comment leaks)
     assert "tabs.html — pure-CSS tabbed container" not in html
-    # Back-links to the deterministic pages (rich pages must be navigable)
+    # Back-links are not embedded by assemble; relink_rich_pages injects them.
+    assert G.RICH_BACKLINK_MARKER not in html
+    G.relink_rich_pages(out_dir)
+    html = out_file.read_text(encoding="utf-8")
+    assert G.RICH_BACKLINK_MARKER in html
     assert 'href="index.html"' in html
     assert f'href="plan-{plan.slug}.html"' in html
 
