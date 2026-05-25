@@ -174,6 +174,9 @@ def test_assemble_stitches_when_all_fragments_present(tmp_path: Path) -> None:
         assert f">{sec.title}<" in html
     # Tabs scaffold leading comment was stripped (no documentation comment leaks)
     assert "tabs.html — pure-CSS tabbed container" not in html
+    # Back-links to the deterministic pages (rich pages must be navigable)
+    assert 'href="index.html"' in html
+    assert f'href="plan-{plan.slug}.html"' in html
 
 
 def test_assemble_skips_on_stale_fragment_sha(tmp_path: Path) -> None:
