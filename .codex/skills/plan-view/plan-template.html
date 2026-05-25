@@ -36,7 +36,9 @@ header {
   background: var(--bg-elev); position: sticky; top: 0; z-index: 10;
   backdrop-filter: blur(10px);
 }
-header .breadcrumb { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px; }
+header .breadcrumb { font-size: 12px; color: var(--fg-dim); margin-bottom: 4px;
+  display: flex; justify-content: space-between; gap: 12px; }
+header .breadcrumb .rich-link { color: var(--fg-dim); }
 header h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
 header .meta { color: var(--fg-dim); font-size: 12px; display: flex; flex-wrap: wrap; gap: 12px; }
 header .meta code { background: var(--bg-card); padding: 1px 6px; border-radius: 3px;
@@ -114,7 +116,7 @@ footer code { font-family: ui-monospace, monospace; background: var(--bg-card); 
 </head>
 <body>
 <header>
-  <div class="breadcrumb"><a href="index.html">← Plan View</a> · <code>{{COMPONENT}}</code></div>
+  <div class="breadcrumb"><span><a href="index.html">← Plan View</a> · <code>{{COMPONENT}}</code></span><a class="rich-link" href="{{RICH_HREF}}" title="rich view (generate with --rich)">rich view →</a></div>
   <h1>{{TITLE}}</h1>
   <div class="meta">
     <span>{{STATUS_CHIP}}</span>

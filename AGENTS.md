@@ -34,6 +34,7 @@ justfile            Task runner config
 .review-plan/       Gitignored auto-fix manifests for /review-plan (per-run)
 docs/_plan_view/    Gitignored generated HTML output from /plan-view (default out dir; sibling of docs/dev_plans/)
 _rich_manifest.json /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
+                    Deterministic and rich pages are cross-linked: forward links (plain → `.rich.html`) are emitted unconditionally; back-links (rich → plain/index, breadcrumb) are injected idempotently by `relink_rich_pages()` on every plain run, back-filling pre-existing rich pages.
 ```
 
 ### Auto-fix tier (opt-in)

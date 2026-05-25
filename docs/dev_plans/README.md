@@ -41,6 +41,7 @@ Component values here are hand-entered (no plan file to derive from) and best-ef
 
 | Date | Type | Name | Comp | PR |
 |------|------|------|------|----|
+| 2026-05-24 | feature | plan-view-rich-navigable | planning-skills | [#31](https://github.com/vr000m/skills.md/pull/31) |
 | 2026-05-23 | fix | plan-view-review-followups | planning-skills | [#29](https://github.com/vr000m/skills.md/pull/29) |
 | 2026-05-19 | chore | codex-skill-model-routing | sync-infra | [#25](https://github.com/vr000m/skills.md/pull/25), [#26](https://github.com/vr000m/skills.md/pull/26) |
 | 2026-05-08 | fix | conduct-marker-auto-refresh | planning-skills | [#20](https://github.com/vr000m/skills.md/pull/20) |

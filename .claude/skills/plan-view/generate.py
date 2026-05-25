@@ -721,6 +721,106 @@ def _esc(text: str) -> str:
     return html.escape(text or "", quote=True)
 
 
+# Single sources for the deterministic page-filename conventions. The forward
+# (rich) and backward (plain/index) links all derive their hrefs from these, so a
+# future filename-convention change updates one place, not three.
+def _index_href() -> str:
+    """HTML href to the dashboard index."""
+    return "index.html"
+
+
+def _plain_href(slug: str) -> str:
+    """HTML href to a plan's deterministic page (slug HTML-escaped for the
+    attribute context)."""
+    return f"plan-{_esc(slug)}.html"
+
+
+def _rich_href(slug: str) -> str:
+    """HTML href to a plan's rich page. Single source for the deterministic
+    `plan-<slug>.rich.html` link convention used by the dashboard card and the
+    per-plan page header (slug HTML-escaped for the attribute context)."""
+    return f"plan-{_esc(slug)}.rich.html"
+
+
+# Marker that makes back-link injection idempotent: relink_rich_pages skips any
+# rich page already carrying it. Kept in an HTML comment so it never renders.
+RICH_BACKLINK_MARKER = "<!-- plan-view-rich-backlink -->"
+
+
+def _rich_backlink_html(slug: str) -> str:
+    """Deterministic breadcrumb linking a rich page back to the dashboard and its
+    own deterministic page. Derivable entirely from the slug — no LLM, no source
+    markdown — so it can be injected into any `plan-<slug>.rich.html` after the
+    fact. Hrefs route through `_index_href`/`_plain_href` so the back-link shares
+    the same filename convention as the forward `_rich_href` link. Carries an
+    inline style because single-strategy rich pages inline their own CSS and
+    won't have a stylesheet rule for this class."""
+    return (
+        f"{RICH_BACKLINK_MARKER}\n"
+        f'<div class="rich-backlink" style="font-size:13px;margin:0 0 16px;">'
+        f'<a href="{_index_href()}">← Plan View</a> · '
+        f'<a href="{_plain_href(slug)}">deterministic view</a></div>'
+    )
+
+
+# Match the opening <body ...> tag once (case-insensitive); injection point for
+# the deterministic back-link breadcrumb.
+_BODY_OPEN_RE = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
+# Derive a slug from a `plan-<slug>.rich.html` filename.
+_RICH_FILENAME_RE = re.compile(r"^plan-(?P<slug>.+)\.rich\.html$")
+
+
+def relink_rich_pages(out_dir: Path) -> tuple[int, int]:
+    """Inject the deterministic back-link breadcrumb into existing rich pages.
+
+    The breadcrumb is HTML chrome derived from the filename, not from the LLM
+    render or source markdown — so this fixes navigation on rich pages that were
+    generated before back-links existed, with zero LLM cost. Idempotent via
+    RICH_BACKLINK_MARKER. Returns (relinked, skipped).
+    """
+    relinked = 0
+    skipped = 0
+    for path in sorted(out_dir.glob("plan-*.rich.html")):
+        m = _RICH_FILENAME_RE.match(path.name)
+        if not m:
+            skipped += 1
+            continue
+        # Don't follow symlinks: a planted `plan-*.rich.html` symlink could
+        # otherwise make the in-place rewrite escape out_dir.
+        if path.is_symlink():
+            skipped += 1
+            continue
+        # Strict decode: the generator only ever writes UTF-8 here. A file that
+        # fails to decode was produced or edited by something else — skip it
+        # rather than lossily rewriting it with U+FFFD replacement characters.
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            print(
+                f"warning: {path.name} is not valid UTF-8; skipped back-link inject",
+                file=sys.stderr,
+            )
+            skipped += 1
+            continue
+        if RICH_BACKLINK_MARKER in content:
+            skipped += 1
+            continue
+        body = _BODY_OPEN_RE.search(content)
+        if not body:
+            print(
+                f"warning: {path.name} has no <body> tag; skipped back-link inject",
+                file=sys.stderr,
+            )
+            skipped += 1
+            continue
+        backlink = _rich_backlink_html(m.group("slug"))
+        insert_at = body.end()
+        new_content = content[:insert_at] + "\n" + backlink + content[insert_at:]
+        path.write_text(new_content, encoding="utf-8")
+        relinked += 1
+    return relinked, skipped
+
+
 def _chip(bucket: str, colour: str, extra: str = "") -> str:
     label = BUCKET_LABELS.get(bucket, bucket)
     return f'<span class="chip {colour}">{label}{extra}</span>'
@@ -771,8 +871,10 @@ def _render_card(plan: Plan, plans: dict[str, Plan]) -> str:
         )
     return (
         f'<div class="card" data-bucket="{_esc(plan.bucket)}">'
-        f'<div class="title"><a href="plan-{_esc(plan.slug)}.html">{_esc(plan.title)}</a></div>'
-        f'<div class="meta-row">{chip}{bug_chip}{progress}<span>{_esc(plan.last_touched or plan.created or "—")}{prs}</span></div>'
+        f'<div class="title"><a href="{_plain_href(plan.slug)}">{_esc(plan.title)}</a></div>'
+        f'<div class="meta-row">{chip}{bug_chip}{progress}<span>{_esc(plan.last_touched or plan.created or "—")}{prs}</span>'
+        f'<a class="rich-link" href="{_rich_href(plan.slug)}" '
+        f'title="rich view (generate with --rich)">rich →</a></div>'
         f"{edges_html}"
         f"{fixed_by_html}"
         f"</div>"
@@ -1016,6 +1118,7 @@ def render_plan_page(
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
+        "{{RICH_HREF}}": _rich_href(plan.slug),
         "{{SCRIPT_PATH}}": script_path,
         "{{PLANS_DIR_SHORT}}": plans_dir_short,
         "{{GIT_HEAD}}": git_head_sha,
@@ -1734,6 +1837,16 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    {m}")
             if len(missing) > 20:
                 print(f"    … and {len(missing) - 20} more")
+
+    # Inject the deterministic back-link breadcrumb into any rich pages on disk.
+    # Single call site covering every path: it back-fills rich pages generated
+    # before back-links existed (plain run), breadcrumbs freshly stitched pages
+    # (--rich-assemble), and is a no-op when every page is already linked. The
+    # breadcrumb is filename-derived chrome (no LLM, no source sha) and idempotent
+    # via RICH_BACKLINK_MARKER, so running it unconditionally at the end is safe.
+    relinked, _ = relink_rich_pages(out_dir)
+    if relinked:
+        print(f"relinked {relinked} rich page(s) with back-link breadcrumb")
 
     return 0 if refused == 0 else 1
 

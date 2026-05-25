@@ -44,8 +44,11 @@ A `<plans-dir>/README.md` is treated as **authoritative** for status grouping if
 <out>/
 ├── index.html                  # dashboard
 ├── plan-<slug>.html            # one per plan
+├── plan-<slug>.rich.html       # one per plan, only after the --rich workflow runs
 └── _assets/                    # inline-only; this dir is empty in v1
 ```
+
+The deterministic pages always link to their rich counterpart by the fixed `plan-<slug>.rich.html` name (a `rich →` link on each dashboard card, a `rich view →` link in each plan-page header), and the rich pages link back to `index.html` and `plan-<slug>.html`. The forward link is emitted unconditionally — the filename mapping is deterministic, so a rich view becomes navigable the moment it is generated; before then the link is a dead local file. The back-link breadcrumb is injected into existing rich pages by `relink_rich_pages()` on every plain run (idempotent; see the `--rich` workflow), so a plain regeneration is the only step needed to add navigation to rich pages — their LLM-rendered *content* is never touched, only the breadcrumb is added.
 
 Each generated HTML file embeds drift-guard meta tags:
 
@@ -58,6 +61,8 @@ Each generated HTML file embeds drift-guard meta tags:
 The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with everything else that affects its rendered HTML: corpus-derived state — backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, the (possibly stranded-recoloured) status bucket — **and the git-derived fields embedded in the page**: the commit list (sha/date/subject), the timeline SVG, `created`, and `last_touched`. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha; and a git history rewrite that changes a commit subject or date — even with the markdown bytes unchanged — also shifts the sha, so the page regenerates via the "source changed, overwrite freely" path rather than a spurious "hand-edit suspected" refusal. (The index aggregate is deliberately conservative: it derives from the per-plan render shas, so a commit-subject-only rewrite rewrites `index.html` even though the dashboard doesn't show subjects — harmless churn on gitignored output, chosen over the risk of a forgotten field making the guard falsely refuse.)
 
 On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
+
+**Template-change migration.** The render sha covers plan/corpus/git inputs, not the HTML *template*. So when this skill's templates change (e.g. the rich cross-links added here) but a plan's inputs don't, a previously generated page on disk carries the old content under an unchanged embedded sha — the guard reads that as a hand-edit and refuses. This is expected for any template revision: rerun once with `--force`, or point `--out` at a fresh directory, to adopt the new template. Output is a derived, typically gitignored artefact, so overwriting it is safe.
 
 ## `--rich` workflow
 
@@ -130,6 +135,8 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
    - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap) — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
 3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
+
+   **Back-links are deterministic, not LLM-authored.** The `← Plan View · deterministic view` breadcrumb that makes a rich page navigable back to `index.html` and `plan-<slug>.html` is injected by `relink_rich_pages()`, which targets every `plan-<slug>.rich.html` on disk regardless of strategy. The breadcrumb is derived purely from the filename slug — no source markdown, no fragments, no LLM call — so it works the same for `single` and `sections` pages, and it back-fills rich pages generated before back-links existed. Injection runs automatically at the end of `--rich-assemble` **and** on every plain deterministic run (`python3 generate.py <plans-dir>`); it is idempotent via the `<!-- plan-view-rich-backlink -->` marker. This means a rich page's content stays source-sha-cached (the LLM does not re-render to gain a back-link), while a plain regeneration is all that's needed to add or refresh the breadcrumb.
 
 4. **Caching.**
    - Single-strategy pages regenerate only when the plan's own markdown sha changes.

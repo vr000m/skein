@@ -16,7 +16,7 @@ Reusable skills for [Claude Code](https://docs.anthropic.com/en/docs/claude-code
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
-| plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit |
+| plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
 
 ## Setup
 
