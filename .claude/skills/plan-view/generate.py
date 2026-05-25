@@ -1018,7 +1018,7 @@ def render_plan_page(
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
-        "{{RICH_HREF}}": f"plan-{plan.slug}.rich.html",
+        "{{RICH_HREF}}": f"plan-{_esc(plan.slug)}.rich.html",
         "{{SCRIPT_PATH}}": script_path,
         "{{PLANS_DIR_SHORT}}": plans_dir_short,
         "{{GIT_HEAD}}": git_head_sha,
