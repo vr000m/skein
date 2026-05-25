@@ -44,8 +44,11 @@ A `<plans-dir>/README.md` is treated as **authoritative** for status grouping if
 <out>/
 ├── index.html                  # dashboard
 ├── plan-<slug>.html            # one per plan
+├── plan-<slug>.rich.html       # one per plan, only after the --rich workflow runs
 └── _assets/                    # inline-only; this dir is empty in v1
 ```
+
+The deterministic pages always link to their rich counterpart by the fixed `plan-<slug>.rich.html` name (a `rich →` link on each dashboard card, a `rich view →` link in each plan-page header), and the rich pages link back to `index.html` and `plan-<slug>.html`. The link is emitted unconditionally — the filename mapping is deterministic, so a rich view becomes navigable the moment it is generated; before then the link is a dead local file. The rich pages are not part of the deterministic write path, so they survive a plain regeneration untouched.
 
 Each generated HTML file embeds drift-guard meta tags:
 
@@ -58,6 +61,8 @@ Each generated HTML file embeds drift-guard meta tags:
 The `plan-view-source-sha256` value is a **render sha**, not just `sha256(markdown)`. It composes the plan's own markdown sha with everything else that affects its rendered HTML: corpus-derived state — backfilled `edges_in` (other plans referencing it), `fixed_by` pointer, the (possibly stranded-recoloured) status bucket — **and the git-derived fields embedded in the page**: the commit list (sha/date/subject), the timeline SVG, `created`, and `last_touched`. The index page stores an aggregate of all per-plan render shas. This means a change to plan B that affects plan A's render (e.g. B starts referencing A, or B ships as a `structural-fix-of` A) invalidates A's stored sha; and a git history rewrite that changes a commit subject or date — even with the markdown bytes unchanged — also shifts the sha, so the page regenerates via the "source changed, overwrite freely" path rather than a spurious "hand-edit suspected" refusal. (The index aggregate is deliberately conservative: it derives from the per-plan render shas, so a commit-subject-only rewrite rewrites `index.html` even though the dashboard doesn't show subjects — harmless churn on gitignored output, chosen over the risk of a forgotten field making the guard falsely refuse.)
 
 On regeneration, if a generated file's embedded sha doesn't match the new render sha → overwrite freely (something that affects this plan's render changed). If the embedded sha matches but the rendered stable content differs → hand-edit suspected; refuse unless `--force`.
+
+**Template-change migration.** The render sha covers plan/corpus/git inputs, not the HTML *template*. So when this skill's templates change (e.g. the rich cross-links added here) but a plan's inputs don't, a previously generated page on disk carries the old content under an unchanged embedded sha — the guard reads that as a hand-edit and refuses. This is expected for any template revision: rerun once with `--force`, or point `--out` at a fresh directory, to adopt the new template. Output is a derived, typically gitignored artefact, so overwriting it is safe.
 
 ## `--rich` workflow
 
@@ -156,6 +161,8 @@ Output: single self-contained HTML at {output_path}.
 Constraints:
   - Use widgets where source has matching content; render markdown for the rest.
   - Embed <meta name="plan-view-rich-source-sha256" content="{source_md_sha}">.
+  - Start the <body> with a breadcrumb linking back to the deterministic pages:
+    <a href="index.html">← Plan View</a> · <a href="plan-{slug}.html">deterministic view</a>
   - Inline all CSS (Inter font CDN link is fine).
   - One tab per H2 in source, plus a final "Source" tab with rendered markdown.
   - tabs.html uses :has() selectors — emit the rules exactly as documented.
