@@ -721,6 +721,13 @@ def _esc(text: str) -> str:
     return html.escape(text or "", quote=True)
 
 
+def _rich_href(slug: str) -> str:
+    """HTML href to a plan's rich page. Single source for the deterministic
+    `plan-<slug>.rich.html` link convention used by the dashboard card and the
+    per-plan page header (slug HTML-escaped for the attribute context)."""
+    return f"plan-{_esc(slug)}.rich.html"
+
+
 def _chip(bucket: str, colour: str, extra: str = "") -> str:
     label = BUCKET_LABELS.get(bucket, bucket)
     return f'<span class="chip {colour}">{label}{extra}</span>'
@@ -773,7 +780,7 @@ def _render_card(plan: Plan, plans: dict[str, Plan]) -> str:
         f'<div class="card" data-bucket="{_esc(plan.bucket)}">'
         f'<div class="title"><a href="plan-{_esc(plan.slug)}.html">{_esc(plan.title)}</a></div>'
         f'<div class="meta-row">{chip}{bug_chip}{progress}<span>{_esc(plan.last_touched or plan.created or "—")}{prs}</span>'
-        f'<a class="rich-link" href="plan-{_esc(plan.slug)}.rich.html" '
+        f'<a class="rich-link" href="{_rich_href(plan.slug)}" '
         f'title="rich view (generate with --rich)">rich →</a></div>'
         f"{edges_html}"
         f"{fixed_by_html}"
@@ -1018,7 +1025,7 @@ def render_plan_page(
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
-        "{{RICH_HREF}}": f"plan-{_esc(plan.slug)}.rich.html",
+        "{{RICH_HREF}}": _rich_href(plan.slug),
         "{{SCRIPT_PATH}}": script_path,
         "{{PLANS_DIR_SHORT}}": plans_dir_short,
         "{{GIT_HEAD}}": git_head_sha,
@@ -1477,7 +1484,7 @@ footer.plan-foot {{ margin-top: 64px; padding-top: 16px; border-top: 1px solid v
 </head>
 <body>
 <header class="plan-hero">
-  <div class="meta"><a href="index.html">← Plan View</a> · <a href="plan-{html.escape(slug)}.html">deterministic view</a></div>
+  <div class="meta"><a href="index.html">← Plan View</a> · <a href="plan-{_esc(slug)}.html">deterministic view</a></div>
   <div class="meta">plan-view · rich · {html.escape(slug)}</div>
   <h1>{title}</h1>
   <div class="meta">{bucket_chip} · Source sha <code>{sha_short}</code> · {len(frag_contents)} sections (assembled from fragments)</div>
