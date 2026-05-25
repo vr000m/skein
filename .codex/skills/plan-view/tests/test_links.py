@@ -121,3 +121,31 @@ def test_relink_only_touches_rich_html(tmp_path: Path) -> None:
     assert G.RICH_BACKLINK_MARKER not in (
         tmp_path / "plan-20260101-feature-x.html"
     ).read_text(encoding="utf-8")
+
+
+def test_relink_skips_symlinked_rich_page(tmp_path: Path) -> None:
+    # A symlinked rich page must not be followed: the in-place rewrite could
+    # otherwise escape out_dir and mutate a file elsewhere.
+    target = tmp_path / "outside.html"
+    target.write_text(
+        "<!doctype html><html><body>\n<h1>secret</h1>\n</body></html>\n",
+        encoding="utf-8",
+    )
+    link = tmp_path / "plan-20260101-feature-x.rich.html"
+    link.symlink_to(target)
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert (relinked, skipped) == (0, 1)
+    # The symlink target was left untouched.
+    assert G.RICH_BACKLINK_MARKER not in target.read_text(encoding="utf-8")
+
+
+def test_relink_skips_invalid_utf8(tmp_path: Path) -> None:
+    # A rich page that is not valid UTF-8 was not produced by the generator;
+    # skip it rather than lossily rewriting it with replacement characters.
+    p = tmp_path / "plan-20260101-feature-x.rich.html"
+    p.write_bytes(b"<html><body>\n\xff\xfe bad bytes\n</body></html>\n")
+    before = p.read_bytes()
+    relinked, skipped = G.relink_rich_pages(tmp_path)
+    assert (relinked, skipped) == (0, 1)
+    # File left byte-for-byte untouched (no U+FFFD substitution written back).
+    assert p.read_bytes() == before
