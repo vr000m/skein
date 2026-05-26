@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-05-25 | chore | skein-plugin-packaging | meta | — | feature/skein-plugin-migration | [plan](20260525-chore-skein-plugin-packaging.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 
 ## Planned
