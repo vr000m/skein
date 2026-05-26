@@ -4,19 +4,21 @@
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
-**Branch**: feature/skein-plugin-migration
+**Branch**: feature/skein-plugin-migration (this plan authored in `skills.md`); implementation runs in the cloned **`skein`** repo
 **Created**: 2026-05-25
 **Completed**: (fill when done)
 
 ## Objective
 
-Repackage the 11 managed skills from the flat dual-mirror layout (`.claude/skills/`, `.codex/skills/` promoted into `~/.claude/skills/` and `~/.codex/skills/`) into a single distributable **`skein` plugin** per harness, so every skill is invoked namespaced as `skein:dev-plan`, `skein:plan-view`, etc. — eliminating name collisions with third-party/downloaded skills.
+Repackage the 11 managed skills from the flat dual-mirror layout (`.claude/skills/`, `.codex/skills/` promoted into `~/.claude/skills/` and `~/.codex/skills/`) into a single distributable **`skein` plugin** per harness, so every skill is invoked namespaced as `skein:dev-plan`, `skein:plan-view`, etc. — eliminating name collisions with third-party/downloaded skills. The work is done in a **fresh `vr000m/skein` repo cloned from `skills.md`** (full history preserved); `skills.md` is left untouched for now.
 
 ## Context
 
 The collection has grown to 11 skills installed *flat* into the global skill dirs. Flat global skills carry the original (un-prefixed) names, so a downloaded plugin shipping its own `dev-plan` or `review` would collide. Claude Code's native collision fix is the **plugin namespace** (`plugin:skill`), and research this session confirmed **Codex also has a plugin/marketplace system** whose plugin `name` supplies the namespace — so the fix is symmetric: one `skein` plugin per target, both fed from this repo.
 
 This is the **foundation** plan. The GTM/lead-intelligence corpus, the `name-finder` skill, and any new GTM skills are explicitly **out of scope** and will slot into the `skein` namespace once it exists. Naming decision (`skein`, domain `skein.sh` registered) is locked.
+
+**Repo strategy (decided 2026-05-25):** implementation happens in a **fresh `vr000m/skein` repo created by `git clone`-ing `skills.md`** so full commit history of every skill is preserved (no `filter-repo` needed unless we later choose to prune). `skills.md` is **left intact, not archived** — the archive-vs-keep-as-dev-lab decision is **deferred** until `skein` is proven (rationale: the skills/tooling may have value beyond the `skein` product). Consequence: because the clone starts from the flat layout, Phase 3 is still an in-place `git mv` + tooling retarget — the C4 atomic-commit constraint still applies (a from-scratch build would drop it but lose history, which we reject).
 
 The migration is mostly structural (move files, add manifests, rework tooling). The Codex packaging surface was reported in detail by a Codex self-review (manifest format, marketplace path, CLI verbs — see Review Focus and Phase 1) and is treated as authoritative-pending-experimental-confirmation. The one genuine unknown that must be resolved before any bulk `git mv` is whether plugin-bundled skills still resolve `$SKILL_DIR` for their helper scripts on **either** harness.
 
@@ -43,6 +45,18 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - **History preservation** — `git status` must show **renames** (not add/delete) across the whole move set; spot-check `git log --follow` per distinct asset type (a `.py`, a `SKILL.md`, a `references/` file).
 
 ## Implementation Checklist
+
+### Phase 0: Establish the `skein` repo (clone with history)
+
+**Impl files:** (operational — new GitHub repo + local clone; no file edits)
+**Test files:** (none — git verification)
+**Test command:** `echo "manual: confirm vr000m/skein exists and clone is intact"`
+**Validation cmd:** `git -C ../skein log --oneline -1 && git -C ../skein log --follow --oneline -- .claude/skills/plan-view/generate.py | tail -1`
+
+- Create empty GitHub repo `vr000m/skein` (private to start; flip public when ready).
+- `git clone` `skills.md` locally to `skein`, set `origin` to `vr000m/skein`, push `main` (full history carried by the clone — verify `git log` depth matches and `git log --follow` traces a pre-existing skill asset).
+- Leave `skills.md` untouched (no archive — deferred decision). All subsequent phases run **inside the `skein` clone**, on a `feature/plugin-restructure` branch.
+- Carry this plan forward in the clone (it travels with the history); update its `**Branch**` header to the skein-repo branch.
 
 ### Phase 1: De-risk spike — confirm formats & runtime path resolution
 
@@ -141,6 +155,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - `.codex/skills/<name>/` → `plugins/skein-codex/skills/<name>/` (11 skills + all internal assets).
 
 ### Architecture Decisions
+- **Fresh `vr000m/skein` repo, cloned from `skills.md` (history-preserving).** Gives the branded repo identity (`github.com/vr000m/skein`, matching the `skein.sh` domain) and makes the skills portable, without losing commit history (`git clone` carries it; `filter-repo` reserved for optional later pruning). `skills.md` is left intact; archive-vs-keep-as-lab is deferred. Rejected: naive copy (loses history, contradicts the history-preservation criterion); GitHub rename (would not leave `skills.md` available as a possible dev lab).
 - **Dedicated `plugins/skein{,-codex}/` roots, not reuse of `.claude/`/`.codex/`.** Rationale: the repo's own `.claude/` is project-config (holds `settings.local.json`) and its `.claude/skills/` auto-loads as *project* skills when developing in-repo; making `.claude/` double as the distributable plugin root would re-introduce the duplicate-skill problem during development. A separate `plugins/` tree decouples distribution from repo config. (Alternative considered: add `.claude/.claude-plugin/plugin.json` in place — minimal moves but rejected for the doubling hazard.)
 - **Two in-repo skill copies retained.** The Claude/Codex dispatch-idiom divergence is legitimate; collapsing to one source is out of scope.
 - **Promote splits into two flows, not one (I2).** The skill-body promote becomes plugin `add`/refresh; the `content-review/references` copy and the `CLAUDE.md`/`AGENTS.md` cp **remain** rsync/cp because plugin install does not place those global files. Promote must target the plugin *source*, not a version-managed plugin *cache* (I6). Flat global skill copies are removed in Phase 4 (install-and-verify first), never leaving a no-skills window (C5).
@@ -184,6 +199,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 
 ## Acceptance Criteria
 
+- `vr000m/skein` repo exists, cloned from `skills.md` with full history (verified via `git log --follow` on a pre-existing asset); `skills.md` left intact (archive deferred).
 - All 11 skills invoke as `skein:<name>` on both Claude Code and Codex; no un-namespaced duplicates remain, verified via `codex plugin list` + the Claude skill-list (not visual-only).
 - `git mv` history preserved — `git status` shows renames across the move set; `git log --follow` traces a file per asset type.
 - Move + tooling retarget landed in one boundary commit; `just check-sync` is green at that commit (no broken intermediate state).
@@ -194,10 +210,11 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - Docs reflect the plugin layout and correct install/add flow.
 - GTM/name-finder work explicitly deferred (this plan packaging-only).
 
-<!-- reviewed: 2026-05-25 @ 804a567fa5504551d40826d884b6f0cf01008aac -->
+<!-- reviewed: 2026-05-25 @ 0a1cb0ae5018bceabfd700933650fb58afa9a10c -->
 
 ## Progress
 
+- [ ] Phase 0: Establish the `skein` repo (clone with history)
 - [ ] Phase 1: De-risk spike — confirm formats & runtime path resolution
 - [ ] Phase 2: Scaffold plugin + marketplace structure
 - [ ] Phase 3: Atomic move + tooling retarget (single boundary commit)
