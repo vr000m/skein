@@ -83,22 +83,25 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - `test_manifests.sh`: assert each manifest is valid JSON, declares `name: skein`, and (Codex) passes the local Codex plugin validator when available; assert the two marketplace files do not collide in path.
 - Leave `skills/` dirs empty at this stage (populated in Phase 3).
 
-### Phase 3: Atomic move + tooling retarget (single boundary commit)
+### Phase 3: Atomic move + tooling cleanup (single boundary commit)
 
-> **Why one phase (C4):** every promote/sync/check-sync script hard-codes `$ROOT_DIR/.{claude,codex}/skills` (`sync-skills.sh:18-19`, `check-sync.sh:44-60`). A commit *between* the `git mv` and the tooling retarget leaves `just check-sync`/`sync`/`promote` failing (`require_dir` exits 1) and the parity guards broken/vacuous. The move and the retarget therefore land in **one commit**; the phase's Test command is the green-at-boundary gate.
+> **Why one phase (C4):** the `git mv` and the tooling cleanup land in **one commit** because the bundle-destination + parity-test paths are coupled to the new skill roots — splitting them across commits would leave `bundle-appliers`/`check-sync` axis (b)/`tests/parity/*` broken at the intermediate commit. The phase's Test command is the green-at-boundary gate.
+>
+> **Posture shift (2026-05-25 — locked in skills.md handoff):** the original plan said "retarget all the scripts". The actual posture is **delete much, retarget a little**. `/plugin install skein` (Claude) and `codex plugin add skein@<marketplace>` (Codex) replace the rsync-driven promote/sync/bootstrap flow entirely; only the intra-repo invariant guards (bundle byte-identity + mirror prompt parity) survive — those are orthogonal to install mechanism.
 
-**Impl files:** `plugins/skein/skills/*, plugins/skein-codex/skills/* (git mv), scripts/promote-skills.sh, scripts/sync-skills.sh, scripts/check-sync.sh, scripts/bundle-appliers.sh, scripts/bootstrap-skills.sh, justfile, tests/parity/test-applier-bundle-parity.sh, tests/parity/test_skill_md_presence.py`
-**Test files:** `tests/plugin/test_history_and_assets.sh, tests/plugin/test_sync_roundtrip.sh, tests/parity/test-applier-bundle-parity.sh, tests/parity/test_skill_md_presence.py`
-**Test command:** `just check-sync && bash tests/plugin/test_history_and_assets.sh && bash tests/plugin/test_sync_roundtrip.sh && bash tests/parity/test-applier-bundle-parity.sh && python3 -m pytest tests/parity/test_skill_md_presence.py -q`
-**Validation cmd:** `HOME="$(mktemp -d)" bash scripts/bootstrap-skills.sh && bash scripts/check-sync.sh` (bootstrap smoke in a temp HOME — M1)
+**Impl files:** `plugins/skein/skills/*, plugins/skein-codex/skills/* (git mv), scripts/check-sync.sh, scripts/bundle-appliers.sh, justfile, tests/parity/test-applier-bundle-parity.sh, tests/parity/test_skill_md_presence.py`
+**Files to delete (in the same commit):** `scripts/promote-skills.sh, scripts/sync-skills.sh, scripts/bootstrap-skills.sh`
+**Test files:** `tests/plugin/test_history_and_assets.sh, tests/parity/test-applier-bundle-parity.sh, tests/parity/test_skill_md_presence.py`
+**Test command:** `just check-sync && just parity-tests && just reconciliation-tests && bash tests/plugin/test_history_and_assets.sh && bash tests/parity/test-applier-bundle-parity.sh && python3 -m pytest tests/parity/test_skill_md_presence.py -q`
+**Validation cmd:** `! test -e scripts/promote-skills.sh && ! test -e scripts/sync-skills.sh && ! test -e scripts/bootstrap-skills.sh && ! grep -qE '^(sync-skills|promote-skills|bootstrap-skills)' justfile`
 
 - `git mv` all 11 skills: `.claude/skills/<name>/` → `plugins/skein/skills/<name>/`, `.codex/skills/<name>/` → `plugins/skein-codex/skills/<name>/`, preserving internal assets (conduct/*.py+prompts+tests, plan-view/generate.py+_widgets+templates+tests, deep-review & review-plan scripts/lib, content-review/references, dev-plan/template.md+rubric.md, fan-out scripts/toolchains, spec-compliance/rubric.md).
-- Apply the Phase-1 `$SKILL_DIR` decision. If "rewrite": update anchors in `deep-review/SKILL.md` (418,421,429,436,473) and `review-plan/SKILL.md` (328,336,343,446) to the plugin-root var, and add a grep-guard asserting **no** surviving bare `"$SKILL_DIR"` anchors (I4). If "survives": no SKILL.md edits.
-- Retarget `MANAGED_SKILLS` source-path assumptions in `promote-skills.sh:13`, `sync-skills.sh:13`, `check-sync.sh:16` to the `plugins/skein{,-codex}/skills/` roots.
-- `promote-skills.sh`: switch only the **skill-body** promote to plugin refresh — `codex plugin add skein@<marketplace>` / Claude plugin refresh, or a safe sync into the plugin source (NOT directly into a version-managed plugin *cache* — I6). **Keep** the `content-review/references` copy (29-38) and the `CLAUDE.md`/`AGENTS.md` cp (63-79) as rsync/cp — plugin install does not place `~/.claude/CLAUDE.md` (I2).
-- `check-sync.sh`: retarget **both axes** (I1) — (a) the repo↔global `diff -ru` loop, *preserving* the `scripts/`-exclusion for bundle skills and its rationale comment; (b) the canonical↔bundle byte-identity check, retargeting the destination anchor (~lines 180-181). **`scripts/lib/bundle-map.sh` is NOT edited** — `BUNDLE_SHARED` is canonical-`scripts/`-relative (C2); only `bundle-appliers.sh` and the check-sync destination anchor change.
+- Apply the Phase-1 `$SKILL_DIR` decision. If "rewrite": update anchors in `deep-review/SKILL.md` and `review-plan/SKILL.md` (anchor lines re-grep at edit time — line numbers drift; affected files are the contract, not the line numbers) and `conduct/tests/test_skill_spawn_grep.sh` (Phase-1 finding) to `${CLAUDE_PLUGIN_ROOT}/skills/<name>/…` (Claude) and the Codex equivalent. Add a grep-guard asserting **no** surviving bare `"$SKILL_DIR"` anchors (I4). If "survives": no SKILL.md edits.
+- **Delete** `scripts/promote-skills.sh`, `scripts/sync-skills.sh`, `scripts/bootstrap-skills.sh` outright. `/plugin install skein` and `codex plugin add skein@<marketplace>` replace them; the `~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md` cp block (formerly `promote-skills.sh:63-79`) is **not preserved on the skein side** — those globals are authored in `skills.md`, not skein (see Architecture Decision below). The `content-review/references` copy block is also dropped here because plugin install carries `references/` inside the plugin tree.
+- `check-sync.sh`: **delete axis (a)** (the repo↔global `diff -ru` loop) — global-state diffing is obsolete once install runs through the plugin CLI. **Keep axis (b)** (canonical↔bundle byte-identity), retargeting the destination anchor to the new skill roots. `scripts/lib/bundle-map.sh` is NOT edited — `BUNDLE_SHARED` is canonical-`scripts/`-relative (C2).
+- `scripts/bundle-appliers.sh`: retarget the bundle **destination** anchor (the skill `scripts/` write target) to the new roots.
 - Retarget existing parity tests (C3): `tests/parity/test-applier-bundle-parity.sh` (`MIRRORS=(.claude .codex)` + glob) and `tests/parity/test_skill_md_presence.py` (path constants) to the new roots; add a non-vacuous assertion (the bundle glob must match >0 files, so it cannot false-pass).
-- `sync-skills.sh` (global→repo) src/dest + excludes (60/66); `bootstrap-skills.sh` rsync paths; `justfile` recipes — all retargeted.
+- `justfile`: delete recipes `sync-skills`, `promote-skills`, `bootstrap-skills`, `bootstrap-skills-force`. **Keep** recipes `bundle-appliers`, `check-prompt-parity`, `check-trunk-snippet-parity`, `parity-tests`, `reconciliation-tests`, `lint-scripts`, and the retargeted `check-sync`. Add a top-of-file comment noting that install runs through `/plugin install skein` (Claude) and `codex plugin add skein@<marketplace>` (Codex), not through repo scripts.
 
 ### Phase 4: Migrate the live global install (install-and-verify FIRST, then remove)
 
@@ -117,12 +120,13 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 
 ### Phase 5: Docs & references
 
-**Impl files:** `AGENTS.md, README.md, docs/dev_plans/README.md, .claude/CLAUDE.md, .codex/AGENTS.md`
+**Impl files:** `AGENTS.md, README.md, docs/dev_plans/README.md`
 **Test files:** (none — doc review)
 **Test command:** `just check-prompt-parity && just check-trunk-snippet-parity`
 
-- Update install/promote/sync flow descriptions and skill-layout references in `AGENTS.md` (esp. the "Sync Workflow" section), `README.md`, `docs/dev_plans/README.md`. Use the correct Codex verb (`codex plugin add`, not `install`) and the `.agents/plugins/marketplace.json` path.
-- Update any skill-path references in the promoted `.claude/CLAUDE.md` / `.codex/AGENTS.md`.
+- Rewrite install-flow descriptions in `AGENTS.md` (drop the "Sync Workflow" section — that flow is deleted; replace with a "Plugin install" section pointing at `/plugin install skein` and `codex plugin add skein@<marketplace>`), `README.md`, `docs/dev_plans/README.md`. Use the correct Codex verb (`codex plugin add`, not `install`) and the `.agents/plugins/marketplace.json` path.
+- Remove any references to `scripts/promote-skills.sh`, `scripts/sync-skills.sh`, `scripts/bootstrap-skills.sh` from in-repo docs (they've been deleted).
+- **Do NOT touch `.claude/CLAUDE.md` or `.codex/AGENTS.md`** — those global instruction files are owned by `skills.md`, not skein.
 - Index this plan in `docs/dev_plans/README.md` task table with Component `meta`.
 - Run `/update-docs` to catch residual staleness.
 
@@ -131,17 +135,23 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 > Line numbers below are anchors as of plan-authoring (codebase-claims verified them accurate); prefer the named variable/function when editing, as line numbers drift (M3).
 
 ### Files to Modify
-- `scripts/promote-skills.sh` — `MANAGED_SKILLS` (line 13) → plugin roots; **only** the skill-body rsync loop (lines 40-44) switches to plugin refresh; the `content-review/references` copy (`copy_reference_files_to_global`, lines 29-38) and the `CLAUDE.md`/`AGENTS.md` cp (lines 63-79) **stay rsync/cp** (I2). Do not rsync into a version-managed plugin cache (I6).
-- `scripts/sync-skills.sh` — `MANAGED_SKILLS` (line 13), `REPO_*_DIR` (lines 18-19), rsync src/dest + excludes (lines 42, 60, 66, 69).
-- `scripts/check-sync.sh` — `MANAGED_SKILLS` (line 16); axis (a) repo↔global `diff -ru` loop (lines 42-60), **preserving** the bundle-skill `scripts/`-exclusion + rationale (lines 21-35); axis (b) canonical↔bundle byte-identity destination anchor (~lines 180-181) (I1).
+- `scripts/check-sync.sh` — **delete axis (a)** (repo↔global `diff -ru` loop and its `MANAGED_SKILLS` driver); **keep + retarget axis (b)** (canonical↔bundle byte-identity destination anchor → new skill roots) (I1).
 - `scripts/bundle-appliers.sh` — bundle **destination** anchor (the skill `scripts/` write target) → new roots (C2).
-- `scripts/bootstrap-skills.sh` — rsync paths (lines 52,58,69,75,94).
 - `tests/parity/test-applier-bundle-parity.sh` — `MIRRORS=(.claude .codex)` + skill-`scripts/` glob → new roots; add non-vacuous (>0 files) assertion (C3).
 - `tests/parity/test_skill_md_presence.py` — SKILL.md path constants → new roots (C3).
-- `justfile` — recipes `sync-skills:3`, `promote-skills:6`, `bootstrap-skills:9/12`, `check-sync:15`, parity targets.
-- `deep-review/SKILL.md` (418,421,429,436,473), `review-plan/SKILL.md` (328,336,343,446) — **only if** Phase 1 decides `$SKILL_DIR` must be rewritten (I4).
-- `AGENTS.md`, `README.md`, `docs/dev_plans/README.md`, `.claude/CLAUDE.md`, `.codex/AGENTS.md` — layout/flow references.
-- **NOT modified:** `scripts/lib/bundle-map.sh` — `BUNDLE_SHARED` (15-21) is canonical-`scripts/`-relative, not skill-root-relative; the move requires zero edits here (C2).
+- `justfile` — delete recipes `sync-skills`, `promote-skills`, `bootstrap-skills`, `bootstrap-skills-force`; retarget `check-sync`; keep `bundle-appliers`, `check-prompt-parity`, `check-trunk-snippet-parity`, `parity-tests`, `reconciliation-tests`, `lint-scripts`. Add top-of-file comment pointing to `/plugin install skein` / `codex plugin add skein@<marketplace>` as the install path.
+- `deep-review/SKILL.md`, `review-plan/SKILL.md`, `conduct/tests/test_skill_spawn_grep.sh` (Phase-1 finding) — **only if** Phase 1 decides `$SKILL_DIR` must be rewritten; re-grep anchor lines at edit time (numbers drift).
+- `AGENTS.md`, `README.md`, `docs/dev_plans/README.md` — layout/flow references; remove rsync/promote/sync/bootstrap mentions, replace with plugin-install flow.
+- **NOT modified:** `scripts/lib/bundle-map.sh` — `BUNDLE_SHARED` is canonical-`scripts/`-relative, not skill-root-relative; the move requires zero edits here (C2). `scripts/lib/*` more generally is unchanged.
+
+### Files to Delete (Phase 3, same boundary commit)
+- `scripts/promote-skills.sh` — entire script. `/plugin install skein` (Claude) and `codex plugin add skein@<marketplace>` (Codex) replace the skill-body promote; the `content-review/references` copy block is dropped (plugin install carries `references/` inside the plugin tree); the `~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md` cp block is dropped because **global instruction files are authored in `skills.md`, not skein** (see Architecture Decision).
+- `scripts/sync-skills.sh` — entire script. Global→repo back-sync is obsolete once the plugin tree is the authored source and install runs through the plugin CLI.
+- `scripts/bootstrap-skills.sh` — entire script. `/plugin install skein` is the bootstrap path on a fresh machine; no rsync-into-`~/.claude/skills/` step remains.
+- (Implied) `MANAGED_SKILLS` env / array — disappears with the three scripts above; no other caller remains.
+
+### Files NOT touched by skein (authored elsewhere)
+- `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` — global instruction files; **owned by `skills.md`**, not skein. The two repos are not synced; this is a one-way ownership split, not a copy.
 
 ### New Files to Create
 - `.claude-plugin/marketplace.json` — Claude local marketplace listing the `skein` plugin (`source: ./plugins/skein`).
@@ -158,7 +168,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - **Fresh `vr000m/skein` repo (private to start), cloned from `skills.md` (history-preserving).** Gives the branded repo identity (`github.com/vr000m/skein`, matching the `skein.sh` domain) and makes the skills portable, without losing commit history (`git clone` carries it; `filter-repo` reserved for optional later pruning). `skills.md` is **kept as the dev lab for future non-skein skills**; **no sync** between repos; the 11 migrated skills are **deleted from `skills.md` once `skein` is in production use** (deferred follow-up). Rejected: naive copy (loses history, contradicts the history-preservation criterion); GitHub rename (would not leave `skills.md` available as a lab); ongoing two-repo sync (the source-of-truth burden we've been avoiding all session).
 - **Dedicated `plugins/skein{,-codex}/` roots, not reuse of `.claude/`/`.codex/`.** Rationale: the repo's own `.claude/` is project-config (holds `settings.local.json`) and its `.claude/skills/` auto-loads as *project* skills when developing in-repo; making `.claude/` double as the distributable plugin root would re-introduce the duplicate-skill problem during development. A separate `plugins/` tree decouples distribution from repo config. (Alternative considered: add `.claude/.claude-plugin/plugin.json` in place — minimal moves but rejected for the doubling hazard.)
 - **Two in-repo skill copies retained.** The Claude/Codex dispatch-idiom divergence is legitimate; collapsing to one source is out of scope.
-- **Promote splits into two flows, not one (I2).** The skill-body promote becomes plugin `add`/refresh; the `content-review/references` copy and the `CLAUDE.md`/`AGENTS.md` cp **remain** rsync/cp because plugin install does not place those global files. Promote must target the plugin *source*, not a version-managed plugin *cache* (I6). Flat global skill copies are removed in Phase 4 (install-and-verify first), never leaving a no-skills window (C5).
+- **Promote becomes plugin install; no rsync/cp shim survives in skein (revised 2026-05-25).** The skill-body install path is `/plugin install skein` (Claude) and `codex plugin add skein@<marketplace>` (Codex). `scripts/promote-skills.sh`, `scripts/sync-skills.sh`, `scripts/bootstrap-skills.sh` are **deleted outright** in Phase 3 — not retargeted. The `content-review/references` directory ships inside the plugin tree, so the legacy references-copy block is dropped. The `~/.claude/CLAUDE.md` / `~/.codex/AGENTS.md` cp block is also dropped: **those globals are owned by `skills.md`, not skein.** The two repos are not synced; ownership is split, not duplicated. Flat global skill copies are removed in Phase 4 (install-and-verify first), never leaving a no-skills window (C5). (Supersedes the earlier "Promote splits into two flows" framing — I2 / I6 references in this plan should be read in that light.)
 - **Move + tooling retarget are atomic (C4).** Because all sync/check/promote scripts hard-code `.{claude,codex}/skills`, the `git mv` and the script retarget land in one boundary commit; the repo guards are green only after both, so they cannot be split across commits.
 - **`bundle-map.sh` is unchanged; the move touches bundle *destinations* (C2).** `BUNDLE_SHARED` is relative to canonical `scripts/`; the bundle is copied into each skill's `scripts/` subtree, so only the destination anchors in `check-sync.sh` and `bundle-appliers.sh` change.
 - **Path-resolution approach decided empirically in Phase 1** (`$SKILL_DIR` survives on both harnesses → no SKILL.md edits; else migrate anchors to the plugin-root variable and test the rewrite — I4).
@@ -172,9 +182,9 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 | Seam | Writer | Caller | Contract |
 |------|--------|--------|----------|
 | Skill script path | SKILL.md script anchors | harness runtime | Bundled scripts must resolve via the path var that works for plugin skills on BOTH harnesses (`$SKILL_DIR` or `${CLAUDE_PLUGIN_ROOT}` — Phase 1); affected set is `deep-review`, `review-plan` (conduct/fan-out have no anchors) |
-| Managed-skill list | `MANAGED_SKILLS` (3 scripts) | promote/sync/check-sync | Single canonical list; all three must point at the new `plugins/` roots |
+| Install path | `plugins/skein{,-codex}/` tree | `/plugin install skein` (Claude); `codex plugin add skein@<marketplace>` (Codex) | Plugin CLI is the **only** install mechanism in skein; no rsync/cp shim survives. `MANAGED_SKILLS` and promote/sync/bootstrap scripts deleted in Phase 3. |
 | Bundle destination | canonical `scripts/` (via `bundle-appliers.sh`) | each skill `scripts/` subtree; `check-sync.sh` axis (b) | Bundle copied into new skill roots and verified byte-identical to canonical; `bundle-map.sh` unchanged |
-| Doc/reference promote | `.codex` content-review/references; repo `CLAUDE.md`/`AGENTS.md` | promote-skills.sh (rsync/cp, NOT plugin install) | Plugin `add` does not place global `CLAUDE.md`/references — these stay on the rsync/cp path |
+| Global instruction files | `skills.md` repo | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` | **Out of scope for skein.** Owned by `skills.md`; no sync between repos. |
 | Live install ordering | plugin `add` + verify | flat-copy removal | Install + `skein:*` trigger confirmed BEFORE removing flat copies; never a no-skills window |
 
 ## Testing Notes
@@ -203,19 +213,20 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - All 11 skills invoke as `skein:<name>` on both Claude Code and Codex; no un-namespaced duplicates remain, verified via `codex plugin list` + the Claude skill-list (not visual-only).
 - `git mv` history preserved — `git status` shows renames across the move set; `git log --follow` traces a file per asset type.
 - Move + tooling retarget landed in one boundary commit; `just check-sync` is green at that commit (no broken intermediate state).
-- Reworked `promote`/`sync`/`check-sync`/`bootstrap` + `justfile` + retargeted `tests/parity/*` operate on the plugin layout and pass; bundle-parity check is non-vacuous.
-- Bundle-parity preserved (`bundle-map.sh` unchanged; destinations retargeted); references-canon and `CLAUDE.md`/`AGENTS.md` promotion preserved on the rsync/cp path.
+- `scripts/promote-skills.sh`, `scripts/sync-skills.sh`, `scripts/bootstrap-skills.sh` and their `justfile` recipes are deleted; remaining `justfile` + retargeted `tests/parity/*` operate on the plugin layout and pass; bundle-parity check is non-vacuous.
+- Bundle-parity preserved (`bundle-map.sh` unchanged; destinations retargeted to new skill roots).
+- Global instruction files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) untouched by skein — ownership remains in `skills.md`.
 - Codex packaging uses confirmed facts: JSON `.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `codex plugin add` (not `install`).
 - Live migration installed-and-verified before flat-copy removal (no no-skills window); backup retained until post-removal `check-sync` passes.
 - Docs reflect the plugin layout and correct install/add flow.
 - GTM/name-finder work explicitly deferred (this plan packaging-only).
 
-<!-- reviewed: 2026-05-25 @ 7de2d730b834cf8fe0444c2db58f423e0d3d4242 -->
+<!-- reviewed: 2026-05-25 @ 989ef5b84877ce4c793cbe40ef07cbf711cca5ed -->
 
 ## Progress
 
 - [x] Phase 0: Establish the `skein` repo (clone with history)
-- [ ] Phase 1: De-risk spike — confirm formats & runtime path resolution
+- [x] Phase 1: De-risk spike — confirm formats & runtime path resolution
 - [ ] Phase 2: Scaffold plugin + marketplace structure
 - [ ] Phase 3: Atomic move + tooling retarget (single boundary commit)
 - [ ] Phase 4: Migrate the live global install (install-and-verify first, then remove)
@@ -224,6 +235,58 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 ## Findings
 
 - Phase 0 (2026-05-25): vr000m/skein created private (https://github.com/vr000m/skein); local clone at /Users/vr000m/Code/vr000m/skein, origin = git@github.com:vr000m/skein.git. History preserved: 398 commits on main (matches skills.md exactly); `git log --follow .claude/skills/plan-view/generate.py` traces back to commit `064dbb4` ("plan-view: HTML dashboard for dev-plan corpora"). main + feature/skein-plugin-migration pushed to new origin. skills.md left untouched.
+
+- Phase 1 partial — research + scaffolding (2026-05-25, pre-handback):
+  - **Claude plugin docs** (code.claude.com/docs/en/plugins.md, plugins-reference.md): `.claude-plugin/plugin.json` requires only `name` (kebab-case → `<name>:<skill>` namespace). Marketplace lives at `.claude-plugin/marketplace.json` with `plugins[].source` accepting a path string. Install verbs: `/plugin marketplace add <path>` then `/plugin install <plugin>@<marketplace>`; non-interactive CLI `claude plugin install <plugin>@<marketplace>`; reload via `/reload-plugins`; local dev shortcut `claude --plugin-dir <path>`. Validator: `claude plugin validate ./my-plugin [--strict]`.
+  - **`$SKILL_DIR` is NOT documented** for plugin-bundled skills. The documented plugin-context env vars are `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${CLAUDE_PROJECT_DIR}` — substituted in skill content AND exported to hook/MCP/LSP subprocesses. Whether they reach a SKILL.md-invoked bundled script remains unverified by docs and requires the live spike on each harness.
+  - **Codex CLI confirmed** (codex-cli 0.133.0): subcommand set is `add | list | marketplace | remove`. `codex plugin install` errors with `unrecognized subcommand 'install'` → **verb is `add`** (matches plan). `codex plugin add <PLUGIN[@MARKETPLACE]>` syntax confirmed. `codex plugin marketplace add <SOURCE>` accepts `a local path, owner/repo[@ref], HTTPS Git URL, or SSH Git URL`. **No `codex plugin validate` subcommand exists** — plan must drop the "use the local Codex plugin validator" instruction (fall back to `jq`/schema linting in Phase 2 tests).
+  - **Codex marketplace-file location and manifest field set remain unconfirmed by the CLI help.** `codex plugin marketplace add <local-path>` accepts a directory, but the help does not state which filename Codex looks for inside it. The plan's claims (`.agents/plugins/marketplace.json`, full `interface.*` field set) come from the Codex self-review and are still **pending live install confirmation** — the manual spike below resolves this.
+  - **Throwaway plugins scaffolded** at `/tmp/skein-spike/` (outside the repo to satisfy "no repo restructuring"):
+    - `/tmp/skein-spike/claude-plugin/` — basic rfc-finder spike (Claude side)
+    - `/tmp/skein-spike/codex-plugin/` — basic rfc-finder spike (Codex side)
+    - `/tmp/skein-spike/claude-skill-dir-test/` — `show-dir` skill whose bundled script echoes `SKILL_DIR=$SKILL_DIR` and `CLAUDE_PLUGIN_ROOT=$CLAUDE_PLUGIN_ROOT`
+    - `/tmp/skein-spike/codex-skill-dir-test/` — same `show-dir` skill for Codex
+    Each scaffold contains a README with the verbatim install command sequence (next section).
+  - **`$SKILL_DIR` affected-set in repo** (`rg -n '\$SKILL_DIR' .claude/skills/`):
+    - `deep-review/SKILL.md` lines **421, 429, 436, 473** (4 occurrences — plan lists 5 at 418/421/429/436/473; line 418 has drifted out, update plan anchors at Phase 3 time)
+    - `review-plan/SKILL.md` lines **328, 336, 343, 446** (matches plan)
+    - **`conduct/tests/test_skill_spawn_grep.sh` lines 47, 57** also depend on `$SKILL_DIR` — plan's Review Focus says "conduct has no anchors", which is true for SKILL.md but the test script is affected. **Plan amendment needed: extend the Review Focus affected-set to include this test.**
+  - Not yet checked: `$SKILL_DIR` references in `.codex/skills/` mirror (do as part of the manual spike or Phase 3 prep).
+
+- Phase 1 manual harness verification — **Claude side resolved**, Codex side still pending:
+  - **Claude basic spike** (skein-spike:rfc-finder install): ✓ installed and namespaced correctly via `/plugin install skein-spike@skein-spike-local`. Trigger works.
+  - **Claude `$SKILL_DIR` test** (skill-dir-test:show-dir): ran with both candidate forms.
+    - `$SKILL_DIR` env var: **`<UNSET>`** in the Bash subprocess.
+    - `${CLAUDE_PLUGIN_ROOT}` env var: **`<UNSET>`** in the Bash subprocess.
+    - BUT the SKILL.md template literal `${CLAUDE_PLUGIN_ROOT}` **is substituted at render time** before the model sees the content (the literal `${CLAUDE_PLUGIN_ROOT}` in SKILL.md was rendered as the absolute path `/tmp/skein-spike/claude-skill-dir-test/plugins/skill-dir-test`). The literal `$SKILL_DIR` is **not** substituted and is also not env-exported.
+    - Decision (Claude side): rewrite SKILL.md anchors from `"$SKILL_DIR"/scripts/...` to `${CLAUDE_PLUGIN_ROOT}/skills/<name>/scripts/...`. Resolution mechanism is **template substitution**, not env-var export.
+    - Affected on Claude: `deep-review/SKILL.md` (4 anchors), `review-plan/SKILL.md` (4 anchors), and `conduct/tests/test_skill_spawn_grep.sh` — needs separate review since that test reads `$SKILL_DIR` from its own runtime, not from SKILL.md substitution.
+    - Other env probes: `CLAUDE_PLUGIN_DATA` was set but to a **different plugin's data dir** (`/Users/vr000m/.claude/plugins/data/codex-openai-codex`) — env leakage, not this skill's value. `CLAUDE_PROJECT_DIR` was `<UNSET>`.
+  - **Codex basic spike** (skein-spike@skein-spike-local): ✓ installed and enabled per `codex plugin list`. Installed plugin root: `/Users/vr000m/.codex/plugins/cache/skein-spike-local/skein-spike/0.0.1`.
+  - **Codex `$SKILL_DIR` test** (skill-dir-test:show-dir): bundled script ran with these values:
+    - `SKILL_DIR=/Users/vr000m/.codex/plugins/cache/skill-dir-test-local/skill-dir-test/0.0.1` — **Codex DOES env-export `$SKILL_DIR`** to the bundled-script subprocess. Path resolves to the plugin install cache root, including the skill-subdir suffix.
+    - `CLAUDE_PLUGIN_ROOT=<UNSET>`, `CLAUDE_PLUGIN_DATA=<UNSET>`, `CLAUDE_PROJECT_DIR=<UNSET>` — Claude-specific vars are NOT set on Codex (expected).
+    - Decision (Codex side): **no rewrite needed.** Codex-mirror SKILL.md anchors continue to use `"$SKILL_DIR"/scripts/...` as today.
+  - **Codex manifest schema findings (from install errors / successful manifest):**
+    - `policy.installation` enum: `NOT_AVAILABLE | AVAILABLE | INSTALLED_BY_DEFAULT` (the plan's original `manual` is invalid; the Codex self-review's wording was wrong here).
+    - `policy.authentication` value `ON_INSTALL` is accepted (full enum not exhaustively probed).
+    - Marketplace file path **`.agents/plugins/marketplace.json`** confirmed — `codex plugin marketplace add <dir>` finds it there.
+    - Plugin manifest at `<plugin>/.codex-plugin/plugin.json` with `name`, `version`, `description`, `interface.*` confirmed accepted (the scaffold passed schema).
+  - **Single-repo distribution check** (partial): `codex plugin list` shows only Codex marketplaces (`.agents/plugins/marketplace.json` paths); Claude's `.claude-plugin/marketplace.json` is NOT loaded by Codex. The two harnesses cleanly partition by marketplace-file path. ✓ holds.
+  - **Path-resolution decision (final, Phase 1 close):** **harness-divergent**, matching the existing two-mirror policy.
+    - Claude mirror (`plugins/skein/skills/<name>/SKILL.md`): rewrite anchors from `"$SKILL_DIR"/scripts/...` → `${CLAUDE_PLUGIN_ROOT}/skills/<name>/scripts/...`. Resolution is **template substitution at SKILL.md render time**.
+    - Codex mirror (`plugins/skein-codex/skills/<name>/SKILL.md`): **no change.** Resolution is **env-var export** of `$SKILL_DIR` to the script subprocess.
+    - Phase 3's grep-guard must be **harness-aware**: assert no surviving bare `"$SKILL_DIR"` anchors in `plugins/skein/skills/**/SKILL.md` (Claude tree) but allow them in `plugins/skein-codex/skills/**/SKILL.md` (Codex tree, unchanged).
+    - `conduct/tests/test_skill_spawn_grep.sh` uses `$SKILL_DIR` inside a child shell — needs verification at Phase 3 time that the test invocation context still provides `$SKILL_DIR` on both harnesses (Codex exports it; on Claude, the test runs from where? Check whether the conduct skill's test harness inherits from Claude's substituted skill context or runs a separate subprocess).
+  - **Plan amendment list (for Phase 2/3 to apply):**
+    - Drop "use the local Codex plugin validator" from Phase 1/2 wording — no such `codex plugin validate` subcommand exists.
+    - Update Codex `policy.installation` example to `AVAILABLE` (not `manual`) wherever the plan describes the manifest.
+    - Mark the `$SKILL_DIR` rewrite scope as **Claude-mirror-only**; Codex mirror unchanged.
+
+- Contract amendments folded in (2026-05-25, skills.md handoff):
+  - **Phase 3 posture shifted from "retarget all the scripts" to "delete much, retarget a little".** `scripts/promote-skills.sh`, `sync-skills.sh`, `bootstrap-skills.sh` and their `justfile` recipes are deleted outright; `/plugin install skein` and `codex plugin add skein@<marketplace>` replace them. `check-sync.sh` axis (a) (repo↔global diff) is deleted; axis (b) (canonical↔bundle byte-identity) is retargeted. `bundle-appliers.sh`, `scripts/lib/*`, `check-prompt-parity`, `check-trunk-snippet-parity`, `tests/parity/*`, `tests/reconciliation/*` are all kept (intra-repo invariants orthogonal to install mechanism).
+  - **`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` ownership stays in `skills.md`, not skein.** No cp shim survives in skein; the two repos are not synced; ownership is split, not duplicated. Phase 5 no longer touches those files; the `promote-skills.sh:63-79` cp block is dropped, not slim-replaced.
+  - **Marker re-stamped** to `989ef5b8…` after these contract edits (previous: `29bf039c…`).
 
 ## Issues & Solutions
 
