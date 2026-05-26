@@ -119,6 +119,10 @@ for field in "${REQUIRED_INTERFACE_FIELDS[@]}"; do
 	echo "ok: $CODEX_PLUGIN interface.$field present"
 done
 
+# Codex-only: Codex's plugin schema requires an explicit `skills` pointer.
+# Claude Code auto-discovers skills inside the plugin's `skills/` directory
+# without an explicit field, so $CLAUDE_PLUGIN is intentionally not checked
+# here (verified via Phase 1 spike + Phase 4 live install).
 skills_value="$(jq -r '.skills // ""' "$CODEX_PLUGIN")"
 if [[ "$skills_value" != "./skills/" ]]; then
 	fail "$CODEX_PLUGIN: top-level .skills must equal \"./skills/\", got \"$skills_value\""
