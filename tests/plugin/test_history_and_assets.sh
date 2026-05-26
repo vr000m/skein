@@ -75,12 +75,18 @@ echo "ok: each of the 11 skills has >=1 rename into both plugin halves"
 DELETED_SKILL_FILES=$(printf '%s\n' "$NAME_STATUS" \
 	| awk '$1 == "D" && ($2 ~ /^\.claude\/skills\// || $2 ~ /^\.codex\/skills\//) {print $2}')
 if [[ -n "$DELETED_SKILL_FILES" ]]; then
-	# Any `A` whose basename matches a deletion basename is a D/A pair.
+	# A D/A pair must share the post-skill-root suffix. Strip the
+	# `.{claude,codex}/skills/` prefix from each deletion and look for an
+	# `A` under `plugins/skein{,-codex}/skills/` ending in the same suffix.
+	# This avoids false positives from unrelated files that share only a
+	# basename (e.g., a deleted `README.md` somewhere matching an added
+	# `README.md` elsewhere).
 	while IFS= read -r dpath; do
 		[[ -z "$dpath" ]] && continue
-		base=$(basename "$dpath")
+		suffix="${dpath#.claude/skills/}"
+		suffix="${suffix#.codex/skills/}"
 		match=$(printf '%s\n' "$NAME_STATUS" \
-			| awk -v b="$base" '$1 == "A" && $2 ~ ("/" b "$") {print $2; exit}')
+			| awk -v s="$suffix" '$1 == "A" && ($2 ~ ("^plugins/skein/skills/" s "$") || $2 ~ ("^plugins/skein-codex/skills/" s "$")) {print $2; exit}')
 		if [[ -n "$match" ]]; then
 			fail "D/A pair detected (history lost): D $dpath  /  A $match"
 		fi

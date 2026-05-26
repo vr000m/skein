@@ -108,7 +108,7 @@ Skills delegate heavy phases (research, analysis, report generation) to subagent
 Use this section for project-specific won't-fix and analysis-error patterns that deep review should suppress on future runs. Keep entries stable, specific, and dated.
 Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 
-- **[Architecture] won't-fix**: mirrored Claude and Codex skill trees are intentional (2026-03-17)
+- **[Architecture] won't-fix**: two skill copies per harness (`plugins/skein/skills/` and `plugins/skein-codex/skills/`) retained for dispatch-idiom divergence (2026-03-17, scope updated 2026-05-26 for plugin layout)
 - **[Architecture] won't-fix**: harness-divergent path-resolution idiom (Claude `${CLAUDE_PLUGIN_ROOT}` substitution vs Codex `$SKILL_DIR` env-export) is the working contract — do not collapse to a single anchor form (2026-05-25)
 
 ## Gotchas

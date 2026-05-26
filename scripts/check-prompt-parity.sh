@@ -323,6 +323,25 @@ else
 	fi
 fi
 
+# --- content-review references parity ---------------------------------
+#
+# The content-review skill ships shared style guidelines under
+# `references/`. Pre-migration, `check-sync.sh` axis (a) compared the
+# `.codex` canonical against the `.claude` mirror; that axis was deleted
+# when the install flow moved to plugin marketplaces. Keep the cross-
+# mirror byte-identity guard here so a future edit to one side cannot
+# silently drift without tripping `just check-prompt-parity`.
+
+cr_claude="$ROOT_DIR/plugins/skein/skills/content-review/references"
+cr_codex="$ROOT_DIR/plugins/skein-codex/skills/content-review/references"
+if [[ -d "$cr_claude" || -d "$cr_codex" ]]; then
+	if ! diff -r "$cr_claude" "$cr_codex" >/dev/null 2>&1; then
+		echo "drift: content-review/references differs between .claude and .codex mirrors"
+		diff -r "$cr_claude" "$cr_codex" || true
+		PARITY_DIFF=1
+	fi
+fi
+
 # --- scripts/reconcile-findings.sh existence + executable bit ----------
 #
 # The GENERIC FINDING SCHEMA AND MERGE block in every SKILL.md cites
