@@ -229,7 +229,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 - [x] Phase 1: De-risk spike — confirm formats & runtime path resolution
 - [x] Phase 2: Scaffold plugin + marketplace structure
 - [x] Phase 3: Atomic move + tooling retarget (single boundary commit)
-- [ ] Phase 4: Migrate the live global install (install-and-verify first, then remove)
+- [x] Phase 4: Migrate the live global install (install-and-verify first, then remove)
 - [ ] Phase 5: Docs & references
 
 ## Findings
