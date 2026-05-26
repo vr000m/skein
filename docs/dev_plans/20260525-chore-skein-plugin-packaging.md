@@ -214,7 +214,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 
 ## Progress
 
-- [ ] Phase 0: Establish the `skein` repo (clone with history)
+- [x] Phase 0: Establish the `skein` repo (clone with history)
 - [ ] Phase 1: De-risk spike — confirm formats & runtime path resolution
 - [ ] Phase 2: Scaffold plugin + marketplace structure
 - [ ] Phase 3: Atomic move + tooling retarget (single boundary commit)
@@ -223,7 +223,7 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 
 ## Findings
 
-- (append findings here as work proceeds)
+- Phase 0 (2026-05-25): vr000m/skein created private (https://github.com/vr000m/skein); local clone at /Users/vr000m/Code/vr000m/skein, origin = git@github.com:vr000m/skein.git. History preserved: 398 commits on main (matches skills.md exactly); `git log --follow .claude/skills/plan-view/generate.py` traces back to commit `064dbb4` ("plan-view: HTML dashboard for dev-plan corpora"). main + feature/skein-plugin-migration pushed to new origin. skills.md left untouched.
 
 ## Issues & Solutions
 
