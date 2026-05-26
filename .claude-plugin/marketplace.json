@@ -1,0 +1,11 @@
+{
+  "name": "skein-local",
+  "owner": { "name": "Varun Singh" },
+  "plugins": [
+    {
+      "name": "skein",
+      "source": "./plugins/skein",
+      "description": "Namespaced skill collection for Claude and Codex (dev plans, code review, content drafting, plan orchestration)."
+    }
+  ]
+}

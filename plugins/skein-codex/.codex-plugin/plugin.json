@@ -1,0 +1,16 @@
+{
+  "name": "skein",
+  "version": "0.1.0",
+  "description": "Namespaced skill collection for Claude and Codex (dev plans, code review, content drafting, plan orchestration).",
+  "author": { "name": "Varun Singh" },
+  "interface": {
+    "displayName": "Skein",
+    "shortDescription": "Namespaced skill collection for Claude and Codex.",
+    "longDescription": "Skein bundles managed skills (dev plans, code review, content drafting, plan orchestration, fan-out, conduct, plan-view, and more) under a single namespace so they can be invoked as skein:<skill> without colliding with third-party skills.",
+    "developerName": "Varun Singh",
+    "category": "developer-tools",
+    "capabilities": ["skills"],
+    "defaultPrompt": "Use the skein:* skills as needed."
+  },
+  "skills": "./skills/"
+}
