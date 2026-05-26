@@ -10,9 +10,8 @@
 #
 # Claude mirrors (plugins/skein/skills/) anchor on ${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/
 # because the Claude Code plugin runtime exports CLAUDE_PLUGIN_ROOT at load.
-# Codex mirrors (plugins/skein-codex/skills/) anchor on "$CODEX_SKILL_DIR"/scripts/
-# because Codex does not currently expose a loaded-skill path in the shell
-# environment and CODEX_HOME was not present in the verified Codex Desktop env probe.
+# Codex mirrors (plugins/skein-codex/skills/) anchor on "$SKILL_DIR"/scripts/
+# because Codex env-exports SKILL_DIR to the loaded skill directory.
 
 set -euo pipefail
 
@@ -23,8 +22,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ANCHORED=(
 	"plugins/skein|deep-review|apply-auto-fix-code.sh|\${CLAUDE_PLUGIN_ROOT}/skills/deep-review"
 	"plugins/skein|review-plan|apply-auto-fix-plan.sh|\${CLAUDE_PLUGIN_ROOT}/skills/review-plan"
-	"plugins/skein-codex|deep-review|apply-auto-fix-code.sh|\"\$CODEX_SKILL_DIR\""
-	"plugins/skein-codex|review-plan|apply-auto-fix-plan.sh|\"\$CODEX_SKILL_DIR\""
+	"plugins/skein-codex|deep-review|apply-auto-fix-code.sh|\"\$SKILL_DIR\""
+	"plugins/skein-codex|review-plan|apply-auto-fix-plan.sh|\"\$SKILL_DIR\""
 )
 
 HARD_FAIL_SENTENCE='never fall back to applying fixes by hand'

@@ -334,7 +334,7 @@ After every lens agent has returned (Step 2) and before the report is presented 
 
 The merge logic — schema, signature, severity policy, canonical sort, and related-findings cross-reference — is documented authoritatively in the GENERIC block. Read it as the binding contract; the prose around it walks through how the orchestrator applies it.
 
-**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex env-exports $SKILL_DIR to the plugin-bundled script subprocess pointing at the plugin install-cache root.
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex env-exports $SKILL_DIR to the plugin-bundled script subprocess pointing at the plugin install-cache root. If `"$SKILL_DIR"/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script.
 
 Procedure:
 

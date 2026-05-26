@@ -360,7 +360,7 @@ when no review brief is present.
 
 After every lens subagent has returned and before the consolidated report is emitted to the main context, run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3.5**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block above; the orchestrator never asks a model to decide whether two findings are the same defect.
 
-**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex env-exports $SKILL_DIR to the plugin-bundled script subprocess pointing at the plugin install-cache root.
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex env-exports $SKILL_DIR to the plugin-bundled script subprocess pointing at the plugin install-cache root. If `"$SKILL_DIR"/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script.
 
 Procedure:
 
