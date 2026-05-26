@@ -8,20 +8,23 @@
 #   3. A skill install without a bundled scripts/ subtree leaves nothing to run
 #      at the anchored path (the runtime hard-fail the prose mandates).
 #
-# .codex mirrors use CODEX_SKILL_DIR because Codex does not currently expose
-# a loaded-skill path in the shell environment and CODEX_HOME was not present
-# in the verified Codex Desktop env probe.
+# Claude mirrors (plugins/skein/skills/) anchor on ${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/
+# because the Claude Code plugin runtime exports CLAUDE_PLUGIN_ROOT at load.
+# Codex mirrors (plugins/skein-codex/skills/) anchor on "$CODEX_SKILL_DIR"/scripts/
+# because Codex does not currently expose a loaded-skill path in the shell
+# environment and CODEX_HOME was not present in the verified Codex Desktop env probe.
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-# entry: <mirror-dir>|<skill>|<applier-basename>|<skill-dir-var>
+# entry: <mirror-dir>|<skill>|<applier-basename>|<anchor-form>
+# anchor-form is the literal prefix-up-to-/scripts/ that grep matches in SKILL.md.
 ANCHORED=(
-	".claude|deep-review|apply-auto-fix-code.sh|SKILL_DIR"
-	".claude|review-plan|apply-auto-fix-plan.sh|SKILL_DIR"
-	".codex|deep-review|apply-auto-fix-code.sh|CODEX_SKILL_DIR"
-	".codex|review-plan|apply-auto-fix-plan.sh|CODEX_SKILL_DIR"
+	"plugins/skein|deep-review|apply-auto-fix-code.sh|\${CLAUDE_PLUGIN_ROOT}/skills/deep-review"
+	"plugins/skein|review-plan|apply-auto-fix-plan.sh|\${CLAUDE_PLUGIN_ROOT}/skills/review-plan"
+	"plugins/skein-codex|deep-review|apply-auto-fix-code.sh|\"\$CODEX_SKILL_DIR\""
+	"plugins/skein-codex|review-plan|apply-auto-fix-plan.sh|\"\$CODEX_SKILL_DIR\""
 )
 
 HARD_FAIL_SENTENCE='never fall back to applying fixes by hand'
@@ -63,16 +66,16 @@ done
 
 # --- Rule 1: anchored mirrors invoke the bundled applier + hard-fail prose ---
 for entry in "${ANCHORED[@]}"; do
-	IFS='|' read -r mirror skill applier skill_dir_var <<<"$entry"
+	IFS='|' read -r mirror skill applier anchor_form <<<"$entry"
 	file="$(skill_md "$mirror" "$skill")"
 	[[ -f "$file" ]] || {
 		fail "anchored ($mirror/$skill: missing SKILL.md)"
 		continue
 	}
-	if grep -qF "\"\$$skill_dir_var\"/scripts/$applier" "$file"; then
-		pass "anchored invocation ($mirror/$skill -> \$$skill_dir_var/scripts/$applier)"
+	if grep -qF "$anchor_form/scripts/$applier" "$file"; then
+		pass "anchored invocation ($mirror/$skill -> $anchor_form/scripts/$applier)"
 	else
-		fail "anchored invocation ($mirror/$skill missing \$$skill_dir_var/scripts/$applier)"
+		fail "anchored invocation ($mirror/$skill missing $anchor_form/scripts/$applier)"
 	fi
 	if grep -qF "$HARD_FAIL_SENTENCE" "$file"; then
 		pass "hard-fail sentence ($mirror/$skill)"

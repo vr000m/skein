@@ -1,21 +1,15 @@
 set dotenv-load := true
 
-sync-skills:
-    ./scripts/sync-skills.sh
-
-promote-skills:
-    ./scripts/promote-skills.sh --yes
-
-bootstrap-skills:
-    ./scripts/bootstrap-skills.sh --yes
-
-bootstrap-skills-force:
-    ./scripts/bootstrap-skills.sh --yes --force
+# Skein ships as two Claude Code marketplace plugins (skein/, skein-codex/)
+# under plugins/. Installation is via `/plugin install skein` (Claude Code)
+# and `codex plugin add skein@<marketplace>` (Codex), not through repo
+# scripts. The recipes below cover parity, drift, and bundle regeneration
+# only — there are no sync/promote/bootstrap workflows.
 
 check-sync:
     ./scripts/check-sync.sh
 
-# Verify rubric.md parity between .claude and .codex mirrors
+# Verify rubric.md parity between the skein (Claude) and skein-codex mirrors
 check-prompt-parity:
     ./scripts/check-prompt-parity.sh
 

@@ -59,22 +59,22 @@ check_file() {
 
 check_file \
 	"claude deep-review" \
-	"$REPO_ROOT/.claude/skills/deep-review/SKILL.md" \
+	"$REPO_ROOT/plugins/skein/skills/deep-review/SKILL.md" \
 	"scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>"
 
 check_file \
 	"codex deep-review" \
-	"$REPO_ROOT/.codex/skills/deep-review/SKILL.md" \
+	"$REPO_ROOT/plugins/skein-codex/skills/deep-review/SKILL.md" \
 	"scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>"
 
 check_file \
 	"claude review-plan" \
-	"$REPO_ROOT/.claude/skills/review-plan/SKILL.md" \
+	"$REPO_ROOT/plugins/skein/skills/review-plan/SKILL.md" \
 	"scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>"
 
 check_file \
 	"codex review-plan" \
-	"$REPO_ROOT/.codex/skills/review-plan/SKILL.md" \
+	"$REPO_ROOT/plugins/skein-codex/skills/review-plan/SKILL.md" \
 	"scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>"
 
 echo ""

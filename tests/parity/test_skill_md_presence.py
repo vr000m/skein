@@ -1,8 +1,9 @@
 """Presence-only parity test for ``SKILL.md`` across managed skills.
 
 For every entry in ``MANAGED_SKILLS`` (mirrored from
-``scripts/check-prompt-parity.sh``), assert that BOTH ``.claude/skills/<skill>/SKILL.md``
-AND ``.codex/skills/<skill>/SKILL.md`` exist on disk.
+``scripts/check-prompt-parity.sh``), assert that BOTH
+``plugins/skein/skills/<skill>/SKILL.md`` AND
+``plugins/skein-codex/skills/<skill>/SKILL.md`` exist on disk.
 
 This is intentionally a presence-only check. Content parity for SKILL.md
 prompt blocks is handled by ``scripts/check-prompt-parity.sh`` (the
@@ -49,7 +50,7 @@ MANAGED_SKILLS = [
 @pytest.mark.parametrize("skill", MANAGED_SKILLS)
 def test_skill_md_present_on_both_runtimes(skill: str) -> None:
     root = _repo_root()
-    claude_skill_md = root / ".claude" / "skills" / skill / "SKILL.md"
-    codex_skill_md = root / ".codex" / "skills" / skill / "SKILL.md"
+    claude_skill_md = root / "plugins" / "skein" / "skills" / skill / "SKILL.md"
+    codex_skill_md = root / "plugins" / "skein-codex" / "skills" / skill / "SKILL.md"
     assert claude_skill_md.is_file(), f"missing {claude_skill_md}"
     assert codex_skill_md.is_file(), f"missing {codex_skill_md}"

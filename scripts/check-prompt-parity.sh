@@ -2,8 +2,8 @@
 # check-prompt-parity.sh
 #
 # Verify that prompt-contract artefacts (currently `rubric.md`) are
-# byte-identical between `.claude/skills/<skill>/` and
-# `.codex/skills/<skill>/` for every entry in MANAGED_SKILLS.
+# byte-identical between `plugins/skein/skills/<skill>/` and
+# `plugins/skein-codex/skills/<skill>/` for every entry in MANAGED_SKILLS.
 #
 # Scope: rubric.md only. Lens prompt bodies and finding schema embedded
 # inside SKILL.md are not script-checkable and require manual review per
@@ -57,8 +57,8 @@ for skill in "${managed_skills[@]}"; do
 		continue
 	fi
 
-	claude_rubric="$ROOT_DIR/.claude/skills/$skill/rubric.md"
-	codex_rubric="$ROOT_DIR/.codex/skills/$skill/rubric.md"
+	claude_rubric="$ROOT_DIR/plugins/skein/skills/$skill/rubric.md"
+	codex_rubric="$ROOT_DIR/plugins/skein-codex/skills/$skill/rubric.md"
 
 	if [[ ! -f "$claude_rubric" && ! -f "$codex_rubric" ]]; then
 		# Skill ships no rubric on either side — nothing to compare.
@@ -95,7 +95,7 @@ done
 #
 # Phase 3 (autonomous-mode plan) extension: for every skill in
 # MANAGED_SKILLS, diff each *-prompt.md file between
-# `.claude/skills/<skill>/` and `.codex/skills/<skill>/`.
+# `plugins/skein/skills/<skill>/` and `plugins/skein-codex/skills/<skill>/`.
 #
 # Lagging-mirror override: ``CONDUCT_LAGGING_MIRROR_OK`` is a comma- or
 # whitespace-separated list of ``<skill>/<prompt-file>`` paths whose drift is
@@ -158,8 +158,8 @@ for skill in "${managed_skills[@]}"; do
 		# Already reported in the rubric loop; skip silently here.
 		continue
 	fi
-	claude_skill_dir="$ROOT_DIR/.claude/skills/$skill"
-	codex_skill_dir="$ROOT_DIR/.codex/skills/$skill"
+	claude_skill_dir="$ROOT_DIR/plugins/skein/skills/$skill"
+	codex_skill_dir="$ROOT_DIR/plugins/skein-codex/skills/$skill"
 	# Build the union of prompt files on either side. ``shopt -s nullglob``
 	# would be cleaner but we keep the script POSIX-flexible.
 	prompt_files=()
@@ -235,10 +235,10 @@ fi
 # review-plan would require breaking this check intentionally and
 # replacing it with per-skill blocks.
 GENERIC_TARGETS=(
-	"$ROOT_DIR/.claude/skills/deep-review/SKILL.md"
-	"$ROOT_DIR/.claude/skills/review-plan/SKILL.md"
-	"$ROOT_DIR/.codex/skills/deep-review/SKILL.md"
-	"$ROOT_DIR/.codex/skills/review-plan/SKILL.md"
+	"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/review-plan/SKILL.md"
 )
 
 extract_generic() {

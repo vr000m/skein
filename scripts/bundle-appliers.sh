@@ -18,7 +18,7 @@ SRC="$ROOT_DIR/scripts"
 # shellcheck source=scripts/lib/bundle-map.sh
 . "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
-MIRRORS=(.claude .codex)
+MIRRORS=(plugins/skein plugins/skein-codex)
 
 stage_root="$(mktemp -d)"
 trap 'rm -rf "$stage_root"' EXIT

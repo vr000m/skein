@@ -418,7 +418,7 @@ After every lens subagent has returned (Step 2) and before the report is emitted
 SKILL_DIR="<the disclosed base directory for this skill>"
 ```
 
-All operative invocations below use `"$SKILL_DIR"/scripts/…`. If `"$SKILL_DIR"/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (mandatory `--test-cmd`, one test run per fix, blob restore on failure without touching `HEAD`) holds only when the bundled applier runs.
+All operative invocations below use `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/…`. If `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (mandatory `--test-cmd`, one test run per fix, blob restore on failure without touching `HEAD`) holds only when the bundled applier runs.
 
 Procedure:
 
@@ -426,14 +426,14 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review
+   cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/reconcile-findings.sh --skill deep-review
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
-   "$SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
+   ${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
@@ -470,7 +470,7 @@ Preconditions:
 Invocation:
 
 ```
-"$SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):
