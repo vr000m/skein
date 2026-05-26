@@ -360,13 +360,7 @@ when no review brief is present.
 
 After every lens subagent has returned and before the consolidated report is emitted to the main context, run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3.5**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block above; the orchestrator never asks a model to decide whether two findings are the same defect.
 
-**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex does not currently expose a loaded-skill base path in the shell environment; this session showed `CODEX_CI`, `CODEX_INTERNAL_ORIGINATOR_OVERRIDE`, `CODEX_SANDBOX`, `CODEX_SHELL`, and `CODEX_THREAD_ID`, but no `CODEX_HOME` or loaded-skill path. For installed Codex skills, bind the global skill directory explicitly:
-
-```
-CODEX_SKILL_DIR="$HOME/.codex/skills/deep-review"
-```
-
-Repo-local `.codex/skills/deep-review` paths are for development and parity checks only. Do not document or use `${CODEX_HOME:-$HOME/.codex}` unless Codex support for `CODEX_HOME` has been separately proven. All operative invocations below use `"$CODEX_SKILL_DIR"/scripts/…`. If `"$CODEX_SKILL_DIR"/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (mandatory `--test-cmd`, one test run per fix, blob restore on failure without touching `HEAD`) holds only when the bundled applier runs.
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. Codex env-exports $SKILL_DIR to the plugin-bundled script subprocess pointing at the plugin install-cache root.
 
 Procedure:
 
@@ -374,14 +368,14 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | "$CODEX_SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review
+   cat findings.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
-   "$CODEX_SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
+   "$SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
@@ -407,7 +401,7 @@ Preconditions:
 Invocation:
 
 ```
-"$CODEX_SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+"$SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):
