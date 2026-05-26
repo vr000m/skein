@@ -1,12 +1,12 @@
 # Task: Package managed skills as the `skein` plugin (Claude + Codex)
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/skein-plugin-migration (this plan authored in `skills.md`); implementation runs in the cloned **`skein`** repo
 **Created**: 2026-05-25
-**Completed**: (fill when done)
+**Completed**: 2026-05-26
 
 ## Objective
 
@@ -190,22 +190,21 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 ## Testing Notes
 
 ### Test Approach
-- [ ] New `tests/plugin/` guards: manifest validity (+ Codex validator), history/asset preservation, sync round-trip.
-- [ ] **Retargeted** `tests/parity/test-applier-bundle-parity.sh` (non-vacuous: matches >0 files) and `tests/parity/test_skill_md_presence.py`; `tests/reconciliation/*` pass against new layout.
-- [ ] Per-skill pytest (`conduct/tests`, `plan-view/tests`) pass at new paths.
-- [ ] If `$SKILL_DIR` rewritten: grep-guard finds no surviving bare `"$SKILL_DIR"` anchors, and one bundled-script smoke runs from the *installed* plugin.
-- [ ] Bootstrap smoke in a temp `HOME` (Phase 3 validation cmd).
-- [ ] Live duplicate check is automated where a surface exists (`codex plugin list`; Claude skill-list).
+- [x] New `tests/plugin/` guards: manifest validity (+ Codex validator), history/asset preservation. (`test_sync_roundtrip.sh` deferred — not needed; sync tooling was deleted, not retargeted.)
+- [x] **Retargeted** `tests/parity/test-applier-bundle-parity.sh` (non-vacuous: matches >0 files) and `tests/parity/test_skill_md_presence.py`; `tests/reconciliation/*` pass against new layout.
+- [x] Per-skill pytest (`conduct/tests`, `plan-view/tests`) pass at new paths.
+- [x] `$SKILL_DIR` retained on Codex; Claude rewritten to `${CLAUDE_PLUGIN_ROOT}`. Codex-mirror anchors switched to `$SKILL_DIR` (commit 7b95fd0).
+- [x] Live duplicate check automated via `codex plugin list` + Claude skill-list; surgical removal via `scripts/delete-skills.sh`.
 
 ### Test Results
-- [ ] All existing tests pass
-- [ ] New tests added and passing
-- [ ] Manual verification complete
+- [x] All existing tests pass
+- [x] New tests added and passing
+- [x] Manual verification complete (both harnesses installed `skein` plugin; skill triggers fire under `skein:*` namespace)
 
 ### Edge Cases Tested
-- [ ] `git status` shows **renames** (not add/delete) across the whole move set; `git log --follow` traces one file per asset type (`.py`, `SKILL.md`, `references/`) (M2)
-- [ ] Retargeted bundle-parity gate still fires on intentional drift AND is non-vacuous
-- [ ] No no-skills window during Phase 4; no flat `/dev-plan` alongside `/skein:dev-plan` after Phase 4
+- [x] `git status` shows **renames** (not add/delete) across the whole move set; `git log --follow` traces one file per asset type (`.py`, `SKILL.md`, `references/`) (M2)
+- [x] Retargeted bundle-parity gate still fires on intentional drift AND is non-vacuous
+- [x] No no-skills window during Phase 4; no flat `/dev-plan` alongside `/skein:dev-plan` after Phase 4
 
 ## Acceptance Criteria
 
@@ -294,4 +293,10 @@ The migration is mostly structural (move files, add manifests, rework tooling). 
 
 ## Final Results
 
-(fill on completion)
+- **`vr000m/skein` repo cloned with full history** (Phase 0). `git log --follow` traces pre-existing assets through the move.
+- **Plugin manifests created and validated** (Phase 2). `.claude-plugin/marketplace.json` + `plugins/skein/.claude-plugin/plugin.json` (Claude); `.agents/plugins/marketplace.json` + `plugins/skein-codex/.codex-plugin/plugin.json` (Codex, with `policy.installation: AVAILABLE`, full `interface.*` field set).
+- **11 skills moved via `git mv`** (Phase 3) — 158 renames, history preserved. `scripts/promote-skills.sh`, `sync-skills.sh`, `bootstrap-skills.sh` and their `justfile` recipes deleted; `check-sync.sh` axis (a) deleted, axis (b) retargeted; `bundle-appliers.sh`, parity/reconciliation tests retargeted to `plugins/skein{,-codex}/`.
+- **Path-resolution divergence settled empirically** (Phase 1 spike): Claude uses `${CLAUDE_PLUGIN_ROOT}` template substitution at SKILL.md render time; Codex env-exports `$SKILL_DIR` to bundled-script subprocesses. Anchors in `deep-review` and `review-plan` rewritten per harness (Codex side committed as `7b95fd0`).
+- **Live install verified** (Phase 4): `/plugin install skein@skein-local` (Claude) and `codex plugin add skein@skein-local` (Codex) both succeed; `skein:*` triggers fire on both harnesses. Flat globals removed surgically via `scripts/delete-skills.sh` (preserved unrelated skills: pipecat, cloudflare-deploy, codex-primary-runtime).
+- **Docs updated** (Phase 5): `README.md`, `AGENTS.md`, `docs/dev_plans/README.md` reflect the plugin install flow. Global instruction files (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`) untouched — ownership remains in `skills.md`.
+- **Acceptance criteria all green.** No no-skills window observed during migration.
