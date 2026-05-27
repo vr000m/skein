@@ -48,7 +48,7 @@ _fail() {
 # {deep-review, review-plan}) and a placeholder rubric/prompt set.
 make_fake_root() {
     local root="$1"
-    mkdir -p "$root/scripts" "$root/.claude/skills" "$root/.codex/skills"
+    mkdir -p "$root/scripts" "$root/plugins/skein/skills" "$root/plugins/skein-codex/skills"
     cp "$REAL_SCRIPT" "$root/scripts/check-prompt-parity.sh"
     chmod +x "$root/scripts/check-prompt-parity.sh"
     # ``check-prompt-parity.sh`` references scripts/reconcile-findings.sh —
@@ -69,7 +69,7 @@ seed_skill_pair() {
     local root="$1"
     local skill="$2"
     local prompt_basename="${3:-implementer-prompt.md}"
-    mkdir -p "$root/.claude/skills/$skill" "$root/.codex/skills/$skill"
+    mkdir -p "$root/plugins/skein/skills/$skill" "$root/plugins/skein-codex/skills/$skill"
     # SKILL.md must contain the GENERIC block for deep-review/review-plan
     # plus the verbatim allowlist citations consumed by check-prompt-parity.
     if [[ "$skill" == "deep-review" || "$skill" == "review-plan" ]]; then
@@ -93,13 +93,13 @@ trailing
 EOF
         done
     else
-        echo "stub" >"$root/.claude/skills/$skill/SKILL.md"
-        echo "stub" >"$root/.codex/skills/$skill/SKILL.md"
+        echo "stub" >"$root/plugins/skein/skills/$skill/SKILL.md"
+        echo "stub" >"$root/plugins/skein-codex/skills/$skill/SKILL.md"
     fi
-    echo "matching-rubric" >"$root/.claude/skills/$skill/rubric.md"
-    echo "matching-rubric" >"$root/.codex/skills/$skill/rubric.md"
-    echo "shared prompt" >"$root/.claude/skills/$skill/$prompt_basename"
-    echo "shared prompt" >"$root/.codex/skills/$skill/$prompt_basename"
+    echo "matching-rubric" >"$root/plugins/skein/skills/$skill/rubric.md"
+    echo "matching-rubric" >"$root/plugins/skein-codex/skills/$skill/rubric.md"
+    echo "shared prompt" >"$root/plugins/skein/skills/$skill/$prompt_basename"
+    echo "shared prompt" >"$root/plugins/skein-codex/skills/$skill/$prompt_basename"
 }
 
 # Required pair for the GENERIC block extraction — deep-review and
@@ -136,7 +136,7 @@ test_mirror_commit_required_after_impl() {
     seed_skill_pair "$tmp" "conduct"
     seed_generic_pair "$tmp"
     # Remove the codex mirror of the prompt → impl-only commit fixture.
-    rm "$tmp/.codex/skills/conduct/implementer-prompt.md"
+    rm "$tmp/plugins/skein-codex/skills/conduct/implementer-prompt.md"
 
     local out rc
     out="$(run_script "$tmp" "conduct deep-review review-plan" 2>&1 || true)"
@@ -171,7 +171,7 @@ test_prompt_divergence_detected() {
     make_fake_root "$tmp"
     seed_skill_pair "$tmp" "conduct"
     seed_generic_pair "$tmp"
-    echo "DIVERGED prompt" >"$tmp/.codex/skills/conduct/implementer-prompt.md"
+    echo "DIVERGED prompt" >"$tmp/plugins/skein-codex/skills/conduct/implementer-prompt.md"
 
     local out rc
     set +e
@@ -203,7 +203,7 @@ test_ci_parity_prompt_included() {
     make_fake_root "$tmp"
     seed_skill_pair "$tmp" "conduct" "ci-parity-prompt.md"
     seed_generic_pair "$tmp"
-    echo "DIVERGED ci-parity" >"$tmp/.codex/skills/conduct/ci-parity-prompt.md"
+    echo "DIVERGED ci-parity" >"$tmp/plugins/skein-codex/skills/conduct/ci-parity-prompt.md"
 
     local out rc
     set +e
@@ -268,7 +268,7 @@ test_check_prompt_parity_exits_with_documented_expected_drift() {
     seed_skill_pair "$tmp" "conduct"
     seed_generic_pair "$tmp"
     # Add ci-parity-prompt.md only on the claude side.
-    echo "ci-parity prompt" >"$tmp/.claude/skills/conduct/ci-parity-prompt.md"
+    echo "ci-parity prompt" >"$tmp/plugins/skein/skills/conduct/ci-parity-prompt.md"
 
     local out rc
     set +e
@@ -303,7 +303,7 @@ test_check_prompt_parity_exits_zero_when_all_drift_expected() {
     make_fake_root "$tmp"
     seed_skill_pair "$tmp" "conduct"
     seed_generic_pair "$tmp"
-    echo "ci-parity prompt" >"$tmp/.claude/skills/conduct/ci-parity-prompt.md"
+    echo "ci-parity prompt" >"$tmp/plugins/skein/skills/conduct/ci-parity-prompt.md"
 
     local rc
     set +e
@@ -335,9 +335,9 @@ test_check_prompt_parity_exits_non_zero_on_mixed_drift() {
     seed_skill_pair "$tmp" "conduct"
     seed_generic_pair "$tmp"
     # Expected drift.
-    echo "ci-parity prompt" >"$tmp/.claude/skills/conduct/ci-parity-prompt.md"
+    echo "ci-parity prompt" >"$tmp/plugins/skein/skills/conduct/ci-parity-prompt.md"
     # Unexpected drift.
-    echo "rogue prompt" >"$tmp/.claude/skills/conduct/rogue-prompt.md"
+    echo "rogue prompt" >"$tmp/plugins/skein/skills/conduct/rogue-prompt.md"
 
     local out rc
     set +e
@@ -535,35 +535,35 @@ _phase4_mutate_and_assert_caught() {
 test_phase4_codex_only_allowlist_citation_drift_fails_parity() {
     _phase4_mutate_and_assert_caught \
         "phase4-codex-only-auto-fix-wiring-drift-fails-parity" \
-        ".codex/skills/deep-review/SKILL.md" \
+        "plugins/skein-codex/skills/deep-review/SKILL.md" \
         _phase4_tamper_allowlist
 }
 
 test_phase4_claude_only_allowlist_citation_drift_fails_parity() {
     _phase4_mutate_and_assert_caught \
         "phase4-claude-only-auto-fix-wiring-drift-fails-parity" \
-        ".claude/skills/deep-review/SKILL.md" \
+        "plugins/skein/skills/deep-review/SKILL.md" \
         _phase4_tamper_allowlist
 }
 
 test_phase4_codex_only_generic_block_drift_fails_parity() {
     _phase4_mutate_and_assert_caught \
         "phase4-codex-only-generic-finding-block-drift-fails-parity" \
-        ".codex/skills/deep-review/SKILL.md" \
+        "plugins/skein-codex/skills/deep-review/SKILL.md" \
         _phase4_tamper_generic_block
 }
 
 test_phase4_claude_only_generic_block_drift_fails_parity() {
     _phase4_mutate_and_assert_caught \
         "phase4-claude-only-generic-finding-block-drift-fails-parity" \
-        ".claude/skills/deep-review/SKILL.md" \
+        "plugins/skein/skills/deep-review/SKILL.md" \
         _phase4_tamper_generic_block
 }
 
 test_phase4_review_plan_codex_only_allowlist_drift_fails_parity() {
     _phase4_mutate_and_assert_caught \
         "phase4-review-plan-codex-only-auto-fix-wiring-drift-fails-parity" \
-        ".codex/skills/review-plan/SKILL.md" \
+        "plugins/skein-codex/skills/review-plan/SKILL.md" \
         _phase4_tamper_allowlist
 }
 

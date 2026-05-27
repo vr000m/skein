@@ -83,10 +83,10 @@ check_skill_array() {
 	local seen=0
 
 	for target in \
-		"$ROOT_DIR/.claude/skills/deep-review/SKILL.md" \
-		"$ROOT_DIR/.claude/skills/review-plan/SKILL.md" \
-		"$ROOT_DIR/.codex/skills/deep-review/SKILL.md" \
-		"$ROOT_DIR/.codex/skills/review-plan/SKILL.md"; do
+		"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" \
+		"$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md" \
+		"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md" \
+		"$ROOT_DIR/plugins/skein-codex/skills/review-plan/SKILL.md"; do
 		seen=$((seen + 1))
 		if [[ ! -f "$target" ]]; then
 			fail "$allowlist_key allowlist mirror missing: $target"

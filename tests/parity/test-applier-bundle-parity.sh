@@ -13,7 +13,7 @@ SRC="$ROOT_DIR/scripts"
 # shellcheck source=scripts/lib/bundle-map.sh
 . "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
-MIRRORS=(.claude .codex)
+MIRRORS=(plugins/skein plugins/skein-codex)
 
 pass_count=0
 fail_count=0
@@ -31,7 +31,7 @@ pass() {
 # --- 1. Idempotency: re-running the bundler against an in-sync tree no-ops ---
 if command -v git >/dev/null 2>&1 && git -C "$ROOT_DIR" rev-parse >/dev/null 2>&1; then
 	bash "$SRC/bundle-appliers.sh" >/dev/null
-	if git -C "$ROOT_DIR" diff --quiet -- '.claude/skills/*/scripts' '.codex/skills/*/scripts'; then
+	if git -C "$ROOT_DIR" diff --quiet -- 'plugins/skein/skills/*/scripts' 'plugins/skein-codex/skills/*/scripts'; then
 		pass "idempotency (re-bundle produced no diff)"
 	else
 		fail "idempotency (re-bundle changed the working tree; canonical edits not committed?)"
@@ -98,4 +98,10 @@ done
 
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
+# Non-vacuous-pass guard: if the bundle glob matched zero files we would exit 0
+# with nothing checked. Require at least one byte-identity pass.
+if [[ "$pass_count" -eq 0 ]]; then
+	echo "FAIL: vacuous pass — no bundled files were checked (layout drift?)"
+	exit 1
+fi
 [[ "$fail_count" -eq 0 ]]

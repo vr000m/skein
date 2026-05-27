@@ -14,7 +14,7 @@ note() {
 }
 
 commit_files() {
-	git -C "$REPO_ROOT" show --name-only --format= "$1" -- .claude/skills/conduct .codex/skills/conduct
+	git -C "$REPO_ROOT" show --name-only --format= "$1" -- plugins/skein/skills/conduct plugins/skein-codex/skills/conduct
 }
 
 touches_runtime() {

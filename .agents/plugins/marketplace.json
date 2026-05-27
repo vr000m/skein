@@ -1,0 +1,14 @@
+{
+  "name": "skein-local",
+  "plugins": [
+    {
+      "name": "skein",
+      "source": { "source": "local", "path": "./plugins/skein-codex" },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "developer-tools"
+    }
+  ]
+}
