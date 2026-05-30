@@ -21,8 +21,8 @@ Requires: `brew install just jq shellcheck shfmt`
 ```
 plugins/skein/skills/        Claude Code skills (SKILL.md per skill; deep-review/review-plan also carry a generated scripts/ subtree)
 plugins/skein-codex/skills/  Codex CLI skills (mirrored structure; same generated scripts/ subtree; per-harness dispatch idiom retained)
-.claude-plugin/marketplace.json   Claude local marketplace entry (skein-local)
-.agents/plugins/marketplace.json  Codex local marketplace entry (skein-local)
+.claude-plugin/marketplace.json   Claude marketplace entry (name: skein)
+.agents/plugins/marketplace.json  Codex marketplace entry (name: skein)
 plugins/skein/.claude-plugin/plugin.json       Claude plugin manifest
 plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle
@@ -70,19 +70,23 @@ The plugin tree is the authoritative source; install runs through the harness pl
 
 Install runs through the harness plugin CLI; there are no rsync/promote/sync/bootstrap scripts in skein.
 
-- **Claude**: marketplace declared in `.claude-plugin/marketplace.json` (marketplace name: `skein-local`, plugin source: `./plugins/skein`).
+Both harnesses can install directly from the public GitHub repo; clone-first is only needed for local development.
+
+- **Claude**: marketplace declared in `.claude-plugin/marketplace.json` (marketplace name: `skein`, plugin source: `./plugins/skein`).
   ```bash
-  /plugin marketplace add /path/to/skein
-  /plugin install skein@skein-local
+  /plugin marketplace add vr000m/skein
+  /plugin install skein@skein
   ```
-- **Codex**: marketplace declared in `.agents/plugins/marketplace.json` (marketplace name: `skein-local`, plugin source: `./plugins/skein-codex`).
+- **Codex**: marketplace declared in `.agents/plugins/marketplace.json` (marketplace name: `skein`, plugin source: `./plugins/skein-codex`). Codex clones the marketplace repo first, then resolves the plugin's relative `local` source inside the clone.
   ```bash
-  codex plugin marketplace add /path/to/skein
-  codex plugin add skein@skein-local
+  codex plugin marketplace add vr000m/skein --ref main
+  codex plugin add skein@skein
   ```
   (The verb is `add`, not `install`.)
 
-**Propagating repo edits to a live install:** re-run `/plugin install skein@skein-local` on Claude, or `codex plugin add skein@skein-local` on Codex, after editing the relevant mirror. There is no sync step that runs in the background.
+For local development against a clone, swap the marketplace source for a path: `/plugin marketplace add /path/to/skein` or `codex plugin marketplace add /path/to/skein`.
+
+**Propagating repo edits to a live install:** re-run `/plugin install skein@skein` on Claude, or `codex plugin add skein@skein` on Codex, after editing the relevant mirror. If you installed from the public GitHub source, re-`marketplace add` to fetch the latest commit first. There is no sync step that runs in the background.
 
 **Cleaning up pre-plugin flat copies:** the older flat layout (`~/.claude/skills/<name>/` and `~/.codex/skills/<name>/` populated by the deleted `promote-skills.sh` / `bootstrap-skills.sh`) is removed via `scripts/delete-skills.sh`. Back up first per the repo's destructive-ops rule.
 
@@ -115,6 +119,6 @@ Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 - **Repo invariants are orthogonal to install mechanism.** `just check-sync` / `check-prompt-parity` / `check-trunk-snippet-parity` / `parity-tests` / `reconciliation-tests` operate inside the plugin tree (canonical `scripts/` ↔ bundled skill `scripts/`, and Claude-mirror ↔ Codex-mirror SKILL.md parity). Run them after editing canonical scripts or either mirror's SKILL.md.
 - **Do not edit `~/.claude/CLAUDE.md` or `~/.codex/AGENTS.md` from skein** — those globals are owned by the `skills.md` repo.
-- **Re-install after edits.** A `git pull` or local edit in this repo does not propagate to a live plugin install until you re-run `/plugin install skein@skein-local` (Claude) or `codex plugin add skein@skein-local` (Codex).
+- **Re-install after edits.** A `git pull` or local edit in this repo does not propagate to a live plugin install until you re-run `/plugin install skein@skein` (Claude) or `codex plugin add skein@skein` (Codex). If installed from GitHub, re-`marketplace add` first to refresh the cached commit.
 - **Bundled scripts are generated.** Edit the canonical files under `scripts/` (and `scripts/lib/`), then run `just bundle-appliers` to refresh each skill's `scripts/` subtree. `just check-sync` enforces canonical↔bundle byte-identity.
 - **Path anchors differ per mirror.** When editing `deep-review/SKILL.md` or `review-plan/SKILL.md`, keep the Claude mirror on `${CLAUDE_PLUGIN_ROOT}/skills/<name>/scripts/...` and the Codex mirror on `"$SKILL_DIR"/scripts/...`. The prompt-parity check tolerates this specific divergence.
