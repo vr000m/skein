@@ -4,7 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
-First public release. At tag time, rename this section to `[0.1.0] - YYYY-MM-DD` and start a fresh `[Unreleased]` above it.
+## [0.1.0] - 2026-05-30
+
+First public release.
 
 ### Added
 - Eleven namespaced skills under `skein:*` shipped as a single plugin for Claude Code and OpenAI Codex CLI: `dev-plan`, `review-plan`, `conduct`, `fan-out`, `deep-review`, `content-draft`, `content-review`, `rfc-finder`, `spec-compliance`, `update-docs`, `plan-view`.
@@ -17,4 +19,5 @@ First public release. At tag time, rename this section to `[0.1.0] - YYYY-MM-DD`
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/main...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vr000m/skein/releases/tag/v0.1.0
