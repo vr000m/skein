@@ -88,6 +88,10 @@ For local development against a clone, swap the marketplace source for a path: `
 
 **Propagating repo edits to a live install:** re-run `/plugin install skein@skein` on Claude, or `codex plugin add skein@skein` on Codex, after editing the relevant mirror. If you installed from the public GitHub source, re-`marketplace add` to fetch the latest commit first. There is no sync step that runs in the background.
 
+**Versioning and releases:** skein follows SemVer; changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog format). The first tagged release is **v0.1.0**, queued for immediately after the public-install PR merges. Until v0.1.0 ships, all install commands above resolve against `main`; once it ships, pin Codex installs with `--ref v0.1.0` (or a later tag) instead of `--ref main`.
+
+**Cutting a release:** after merging a release-worthy commit set to `main`, (1) rename the `[Unreleased]` section in `CHANGELOG.md` to `[X.Y.Z] - YYYY-MM-DD` and start a fresh `[Unreleased]` above it; (2) bump `version` in `plugins/skein/.claude-plugin/plugin.json` and `plugins/skein-codex/.codex-plugin/plugin.json`; (3) commit as `release: vX.Y.Z`; (4) `git tag -a vX.Y.Z -m "skein vX.Y.Z"` and `git push origin vX.Y.Z`; (5) `gh release create vX.Y.Z` with the new changelog section as the body.
+
 **Cleaning up pre-plugin flat copies:** the older flat layout (`~/.claude/skills/<name>/` and `~/.codex/skills/<name>/` populated by the deleted `promote-skills.sh` / `bootstrap-skills.sh`) is removed via `scripts/delete-skills.sh`. Back up first per the repo's destructive-ops rule.
 
 ## Skill Workflow
