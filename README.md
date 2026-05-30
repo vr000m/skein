@@ -22,26 +22,35 @@ Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`)
 
 ## Plugin install
 
-Install through the harness plugin CLI on each machine. There are no rsync, promote, or bootstrap scripts — the marketplace files in this repo are the install surface.
+Install through the harness plugin CLI on each machine. There are no rsync, promote, or bootstrap scripts — the marketplace files in this repo are the install surface. Both harnesses can install directly from GitHub; no clone required.
 
 **Claude Code:**
 
 ```bash
-# from a clone of this repo, point Claude at the local marketplace
-/plugin marketplace add /path/to/skein
-/plugin install skein@skein-local
+/plugin marketplace add vr000m/skein
+/plugin install skein@skein
 ```
 
 **Codex CLI:**
 
 ```bash
-codex plugin marketplace add /path/to/skein
-codex plugin add skein@skein-local
+codex plugin marketplace add vr000m/skein --ref main
+codex plugin add skein@skein
 ```
 
-The marketplace name `skein-local` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). When you edit skills in this repo, re-run `/plugin install skein@skein-local` or `codex plugin add skein@skein-local` on the relevant harness to pick up the changes — there is no separate sync step.
+The marketplace name `skein` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). To pick up upstream changes, re-add the marketplace (or `git pull` your clone if you installed from a local path) and re-run `/plugin install skein@skein` / `codex plugin add skein@skein` — there is no separate sync step.
+
+**Pinning to a release.** Once tagged releases exist (the first will be `v0.1.0`, cut after this install switch merges), prefer pinning over tracking `main`: pass `--ref v0.1.0` to `codex plugin marketplace add`, and check tagged releases on [the GitHub releases page](https://github.com/vr000m/skein/releases) for Claude Code (which resolves the marketplace at add time). Tracking `main` follows unreleased commits.
+
+If you are developing against a local clone instead, swap the marketplace source for a path: `/plugin marketplace add /path/to/skein` (Claude) or `codex plugin marketplace add /path/to/skein` (Codex).
 
 If you are migrating from the older flat layout (skills installed directly under `~/.claude/skills/` and `~/.codex/skills/`), use `scripts/delete-skills.sh` to remove the pre-plugin copies after verifying the plugin install loads correctly.
+
+## Releases
+
+skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+The first tagged release will be **v0.1.0**, cut from `main` immediately after the public-GitHub install switch merges. Until then, all install instructions above resolve against `main`. Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases).
 
 ## Setup (for contributors)
 

@@ -1,5 +1,5 @@
 {
-  "name": "skein-local",
+  "name": "skein",
   "plugins": [
     {
       "name": "skein",
