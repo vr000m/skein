@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-03
+
 ### Added
 - Fifth `assumptions` lens (Opus) for `/review-plan`: audits claims the plan states as settled fact but cannot verify from the codebase — backend/external behaviour, business semantics, data shape, unread contracts, environmental facts. `/review-plan` now runs four high-reasoning Opus lenses plus one Haiku factual lens.
 
@@ -25,5 +27,6 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/vr000m/skein/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vr000m/skein/releases/tag/v0.1.0
