@@ -20,7 +20,11 @@ SRC="$ROOT_DIR/scripts"
 
 MIRRORS=(plugins/skein plugins/skein-codex)
 
-stage_root="$(mktemp -d)"
+temp_root="${TMPDIR:-/tmp}"
+if [[ -d /private/tmp && -w /private/tmp ]]; then
+	temp_root="/private/tmp"
+fi
+stage_root="$(mktemp -d "${temp_root%/}/skein-bundle.XXXXXX")"
 trap 'rm -rf "$stage_root"' EXIT
 
 count=0

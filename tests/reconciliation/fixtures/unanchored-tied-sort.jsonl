@@ -1,0 +1,2 @@
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"beta upstream guarantee","evidence":"plan line 12","suggestion":"verify beta"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"alpha upstream guarantee","evidence":"plan line 11","suggestion":"verify alpha"}

@@ -48,9 +48,9 @@
 #   - A finding with BOTH an empty `file` AND an absent `line` (normalised
 #     to -1) has no structural identity — the (file, line, category)
 #     signature is meaningless, so it must NOT collapse with any other
-#     unanchored finding. The assumptions lens routinely emits such
-#     findings (claims about external/backend behaviour have no in-repo
-#     location), and architecture/sequencing can too.
+#     unanchored finding. Review lenses can still emit such findings when no
+#     concrete plan or code location is available, especially for claims about
+#     external/backend behaviour, environment, or unread contracts.
 #   - Each unanchored finding is given a per-row uniqueness discriminator
 #     (parse column 14) so its signature is unique: it never merges and is
 #     excluded from `related` cross-references. The discriminator is empty
