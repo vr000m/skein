@@ -458,6 +458,61 @@ CASE8_EXPECTED="${CASE8_EXPECTED}"$'\n'
 run_case "unanchored-different-category-no-related" "$CASE8_INPUT" "$CASE8_EXPECTED"
 
 # ---------------------------------------------------------------------------
+# Case 8b: Unanchored findings with an EXPLICIT line:-1 must not collapse.
+#
+# `-1` is the sentinel for "no line", produced both when `line` is absent
+# and when a lens emits `line:-1` (or "-1") literally. The discriminator
+# must treat all of these as unanchored — earlier the jq path only checked
+# null/empty, so explicit -1 fell through and two such findings collapsed
+# into one (and diverged from the awk fallback, which tested line=="-1").
+# Both parser paths now apply the same normalised test; this case guards
+# the jq path and Case 9 cross-checks the two.
+# ---------------------------------------------------------------------------
+
+CASE8B_INPUT='{"lens":"assumptions","severity":"Critical","category":"Assumption","file":"","line":-1,"summary":"alpha","evidence":"plan line 1","suggestion":"verify alpha"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","file":"","line":-1,"summary":"beta","evidence":"plan line 2","suggestion":"verify beta"}
+'
+
+read -r -d '' CASE8B_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "alpha",
+      "evidence": "plan line 1",
+      "suggestion": "verify alpha"
+    },
+    {
+      "severity": "Important",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "beta",
+      "evidence": "plan line 2",
+      "suggestion": "verify beta"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE8B_EXPECTED="${CASE8B_EXPECTED}"$'\n'
+
+run_case "unanchored-explicit-line-minus-1-do-not-collapse" "$CASE8B_INPUT" "$CASE8B_EXPECTED"
+
+# ---------------------------------------------------------------------------
 # Case 9: awk-fallback (no jq) parses identically to the jq path.
 #
 # The script has two independent JSON parsers selected by `command -v jq`.
@@ -479,6 +534,7 @@ CASE9_INPUT='{"lens":"architecture","severity":"Important","category":"Risk","fi
 this is not json
 {"lens":"sequencing","severity":"Critical","category":"Risk","file":"src/a.py","line":10,"summary":"order","evidence":"e","suggestion":"s"}
 {"lens":"assumptions","severity":"Important","category":"Assumption","summary":"queue is fifo","evidence":"plan line 2","suggestion":"verify queue"}
+{"lens":"spec-and-testing","severity":"Minor","category":"Ambiguity","file":"","line":-1,"summary":"explicit minus-one line","evidence":"plan line 3","suggestion":"verify"}
 '
 
 if ! command -v jq >/dev/null 2>&1; then

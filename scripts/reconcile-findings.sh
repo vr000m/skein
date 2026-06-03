@@ -45,11 +45,12 @@
 #     callout under each.
 #
 # Unanchored findings (no location anchor):
-#   - A finding with BOTH an empty `file` AND an absent `line` (normalised
-#     to -1) has no structural identity — the (file, line, category)
-#     signature is meaningless, so it must NOT collapse with any other
-#     unanchored finding. Review lenses can still emit such findings when no
-#     concrete plan or code location is available, especially for claims about
+#   - A finding with BOTH an empty `file` AND no real line (the line is
+#     absent, empty, or the explicit -1 sentinel — all normalise to -1) has
+#     no structural identity — the (file, line, category) signature is
+#     meaningless, so it must NOT collapse with any other unanchored
+#     finding. Review lenses can still emit such findings when no concrete
+#     plan or code location is available, especially for claims about
 #     external/backend behaviour, environment, or unread contracts.
 #   - Each unanchored finding is given a per-row uniqueness discriminator
 #     (parse column 14) so its signature is unique: it never merges and is
@@ -200,8 +201,10 @@ validate_auto_fix_blocks
 # Tabs / newlines inside string fields are escaped as \t / \n so awk's
 # field splitting stays correct. `unanchored_disc` (column 14) is a
 # per-row unique token for findings with no location anchor (empty file +
-# -1 line) and empty for every anchored finding; it is folded into the
-# merge signature so unanchored findings never collapse together.
+# a line that normalises to -1, i.e. absent/empty/explicit -1) and empty
+# for every anchored finding; it is folded into the merge signature so
+# unanchored findings never collapse together. Both parser paths apply the
+# same normalised test so jq and the awk fallback partition identically.
 
 parse_tsv() {
 	if [[ "$HAVE_JQ" -eq 1 ]]; then
@@ -228,7 +231,8 @@ parse_tsv() {
 				(if has("auto_fix") then (.auto_fix.before // "" | tostring) else "" end),
 				(if has("auto_fix") then (.auto_fix.after // "" | tostring) else "" end),
 				(if has("auto_fix") then (.auto_fix.scope // "" | tostring) else "" end),
-				(if ((.file // "") == "") and (.line == null or .line == "")
+				(if ((.file // "") == "")
+				    and (((if (.line == null or .line == "") then -1 else .line end) | tostring) == "-1")
 				 then (input_line_number | tostring) else "" end)
 			]
 			| map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n"))
