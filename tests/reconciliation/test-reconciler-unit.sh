@@ -350,6 +350,227 @@ CASE6_NONSTRING_BEFORE='{"lens":"logic","severity":"Minor","category":"style","f
 run_failure_case "malformed-auto-fix-nonstring-before" "$CASE6_NONSTRING_BEFORE" "auto_fix block malformed"
 
 # ---------------------------------------------------------------------------
+# Case 7: Unanchored findings (empty file + absent line) from the SAME lens
+# and SAME category MUST NOT collapse into one record.
+#
+# Acceptance: a finding with no location anchor has no structural identity,
+# so the (file, line, category) signature is meaningless and each such
+# finding is kept distinct (per-row discriminator). Regression guard for the
+# assumptions lens, whose findings (claims about external/backend behaviour)
+# routinely carry no in-repo file/line. Before the fix, both collapsed to a
+# single rendered finding under the shared ("", -1, Assumption) signature.
+# ---------------------------------------------------------------------------
+
+CASE7_INPUT='{"lens":"assumptions","severity":"Critical","category":"Assumption","summary":"api returns 200 on dup","evidence":"plan line 1","suggestion":"verify api"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"queue is fifo","evidence":"plan line 2","suggestion":"verify queue"}
+'
+
+read -r -d '' CASE7_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "api returns 200 on dup",
+      "evidence": "plan line 1",
+      "suggestion": "verify api"
+    },
+    {
+      "severity": "Important",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "queue is fifo",
+      "evidence": "plan line 2",
+      "suggestion": "verify queue"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE7_EXPECTED="${CASE7_EXPECTED}"$'\n'
+
+run_case "unanchored-findings-do-not-collapse" "$CASE7_INPUT" "$CASE7_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 8: Unanchored findings of DIFFERENT categories MUST NOT emit a `related`
+# cross-reference.
+#
+# Acceptance: `related` keys on a shared (file, line). Unanchored findings all
+# share ("", -1), but they have no real location, so cross-linking them as
+# "Related findings" would be spurious. They are excluded from the related
+# pass entirely; only genuinely co-located (anchored) findings cross-reference.
+# ---------------------------------------------------------------------------
+
+CASE8_INPUT='{"lens":"security","severity":"Critical","category":"authz","summary":"external svc trusts header","evidence":"plan line 9","suggestion":"verify"}
+{"lens":"logic","severity":"Important","category":"correctness","summary":"upstream nullable","evidence":"plan line 9","suggestion":"verify"}
+'
+
+read -r -d '' CASE8_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "authz",
+      "file": "",
+      "line": -1,
+      "lenses": ["security"],
+      "summary": "external svc trusts header",
+      "evidence": "plan line 9",
+      "suggestion": "verify"
+    },
+    {
+      "severity": "Important",
+      "category": "correctness",
+      "file": "",
+      "line": -1,
+      "lenses": ["logic"],
+      "summary": "upstream nullable",
+      "evidence": "plan line 9",
+      "suggestion": "verify"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE8_EXPECTED="${CASE8_EXPECTED}"$'\n'
+
+run_case "unanchored-different-category-no-related" "$CASE8_INPUT" "$CASE8_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 8b: Unanchored findings with an EXPLICIT line:-1 must not collapse.
+#
+# `-1` is the sentinel for "no line", produced both when `line` is absent
+# and when a lens emits `line:-1` (or "-1") literally. The discriminator
+# must treat all of these as unanchored — earlier the jq path only checked
+# null/empty, so explicit -1 fell through and two such findings collapsed
+# into one (and diverged from the awk fallback, which tested line=="-1").
+# Both parser paths now apply the same normalised test; this case guards
+# the jq path and Case 9 cross-checks the two.
+# ---------------------------------------------------------------------------
+
+CASE8B_INPUT='{"lens":"assumptions","severity":"Critical","category":"Assumption","file":"","line":-1,"summary":"alpha","evidence":"plan line 1","suggestion":"verify alpha"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","file":"","line":-1,"summary":"beta","evidence":"plan line 2","suggestion":"verify beta"}
+'
+
+read -r -d '' CASE8B_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "alpha",
+      "evidence": "plan line 1",
+      "suggestion": "verify alpha"
+    },
+    {
+      "severity": "Important",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "beta",
+      "evidence": "plan line 2",
+      "suggestion": "verify beta"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE8B_EXPECTED="${CASE8B_EXPECTED}"$'\n'
+
+run_case "unanchored-explicit-line-minus-1-do-not-collapse" "$CASE8B_INPUT" "$CASE8B_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 9: awk-fallback (no jq) parses identically to the jq path.
+#
+# The script has two independent JSON parsers selected by `command -v jq`.
+# Every other case here runs against whatever jq the environment provides
+# (present in dev/CI), so the awk fallback — including the unanchored
+# discriminator (disc = NR) — had no regression coverage. This case forces
+# the fallback by running the script with a PATH that contains only the
+# coreutils it needs (no jq) and asserts byte-identical output to the jq
+# path for a mixed input: an anchored merge pair, two same-category
+# unanchored findings, and a malformed line between them (so the dropped
+# line advances the line counter without corrupting unanchored uniqueness).
+#
+# Skips (does not fail) when jq is unavailable for the baseline or a needed
+# coreutil cannot be resolved, so the suite stays portable.
+# ---------------------------------------------------------------------------
+
+CASE9_INPUT='{"lens":"architecture","severity":"Important","category":"Risk","file":"src/a.py","line":10,"summary":"coupling","evidence":"e","suggestion":"s"}
+{"lens":"assumptions","severity":"Critical","category":"Assumption","summary":"api returns 200 on dup","evidence":"plan line 1","suggestion":"verify api"}
+this is not json
+{"lens":"sequencing","severity":"Critical","category":"Risk","file":"src/a.py","line":10,"summary":"order","evidence":"e","suggestion":"s"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"queue is fifo","evidence":"plan line 2","suggestion":"verify queue"}
+{"lens":"spec-and-testing","severity":"Minor","category":"Ambiguity","file":"","line":-1,"summary":"explicit minus-one line","evidence":"plan line 3","suggestion":"verify"}
+'
+
+if ! command -v jq >/dev/null 2>&1; then
+	echo "SKIP: awk-fallback-parity-unanchored (jq unavailable for baseline)"
+else
+	nojq_bin="$(mktemp -d "$TMPDIR_ROOT/nojqbin.XXXXXX")"
+	bash_bin="$(command -v bash)"
+	missing=""
+	for tool in awk sort grep cat head; do
+		tp="$(command -v "$tool" 2>/dev/null || true)"
+		if [[ -z "$tp" ]]; then
+			missing="$missing $tool"
+		else
+			ln -s "$tp" "$nojq_bin/$tool"
+		fi
+	done
+	if [[ -n "$missing" ]]; then
+		echo "SKIP: awk-fallback-parity-unanchored (unresolved coreutils:$missing)"
+	else
+		# Baseline: jq path (normal PATH). Fallback: PATH limited to nojq_bin
+		# so `command -v jq` fails inside the script. bash is invoked by
+		# absolute path so the restricted PATH does not hide it.
+		out_jq="$(printf '%s' "$CASE9_INPUT" | bash "$SCRIPT" --skill deep-review 2>/dev/null)"
+		out_nojq="$(printf '%s' "$CASE9_INPUT" | PATH="$nojq_bin" "$bash_bin" "$SCRIPT" --skill deep-review 2>/dev/null)"
+		if [[ "$out_jq" == "$out_nojq" ]]; then
+			echo "PASS: awk-fallback-parity-unanchored"
+			pass_count=$((pass_count + 1))
+		else
+			echo "FAIL: awk-fallback-parity-unanchored (jq vs awk output differ)"
+			diff <(printf '%s' "$out_jq") <(printf '%s' "$out_nojq") | sed 's/^/    /'
+			fail_count=$((fail_count + 1))
+		fi
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # Final tally
 # ---------------------------------------------------------------------------
 

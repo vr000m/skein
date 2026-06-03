@@ -44,6 +44,21 @@
 #     signatures so the report template can render a "Related findings"
 #     callout under each.
 #
+# Unanchored findings (no location anchor):
+#   - A finding with BOTH an empty `file` AND no real line (the line is
+#     absent, empty, or the explicit -1 sentinel — all normalise to -1) has
+#     no structural identity — the (file, line, category) signature is
+#     meaningless, so it must NOT collapse with any other unanchored
+#     finding. Review lenses can still emit such findings when no concrete
+#     plan or code location is available, especially for claims about
+#     external/backend behaviour, environment, or unread contracts.
+#   - Each unanchored finding is given a per-row uniqueness discriminator
+#     (parse column 14) so its signature is unique: it never merges and is
+#     excluded from `related` cross-references. The discriminator is empty
+#     for every anchored finding, so anchored merge/related behaviour is
+#     byte-for-byte unchanged. A finding anchored by file alone (file set,
+#     line -1) is still anchored and merges/relates normally.
+#
 # Sort order (canonical):
 #   severity (Critical, Important, Minor) -> category -> file -> line
 #   -> sorted lenses (joined with comma).
@@ -182,9 +197,14 @@ validate_auto_fix_blocks
 
 # Parse stdin into a TSV stream we can group/sort with awk + sort.
 # Columns (tab-separated):
-#   sev_rank  severity  category  file  line  lens  summary  evidence  suggestion  auto_kind  auto_before  auto_after  auto_scope
+#   sev_rank  severity  category  file  line  lens  summary  evidence  suggestion  auto_kind  auto_before  auto_after  auto_scope  unanchored_disc
 # Tabs / newlines inside string fields are escaped as \t / \n so awk's
-# field splitting stays correct.
+# field splitting stays correct. `unanchored_disc` (column 14) is a
+# per-row unique token for findings with no location anchor (empty file +
+# a line that normalises to -1, i.e. absent/empty/explicit -1) and empty
+# for every anchored finding; it is folded into the merge signature so
+# unanchored findings never collapse together. Both parser paths apply the
+# same normalised test so jq and the awk fallback partition identically.
 
 parse_tsv() {
 	if [[ "$HAVE_JQ" -eq 1 ]]; then
@@ -210,7 +230,10 @@ parse_tsv() {
 				(if has("auto_fix") then (.auto_fix.kind // "" | tostring) else "" end),
 				(if has("auto_fix") then (.auto_fix.before // "" | tostring) else "" end),
 				(if has("auto_fix") then (.auto_fix.after // "" | tostring) else "" end),
-				(if has("auto_fix") then (.auto_fix.scope // "" | tostring) else "" end)
+				(if has("auto_fix") then (.auto_fix.scope // "" | tostring) else "" end),
+				(if ((.file // "") == "")
+				    and (((if (.line == null or .line == "") then -1 else .line end) | tostring) == "-1")
+				 then (input_line_number | tostring) else "" end)
 			]
 			| map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n"))
 			| join("\t")
@@ -303,11 +326,12 @@ parse_tsv() {
 				summary = field($0, "summary")
 				evidence = field($0, "evidence")
 				suggestion = field($0, "suggestion")
+				disc = (file == "" && line == "-1") ? NR : ""
 				if (severity == "Critical") rank = 0
 				else if (severity == "Important") rank = 1
 				else if (severity == "Minor") rank = 2
 				else rank = 3
-				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t\t\t\n", rank, esc(severity), esc(category), esc(file), line, esc(lens), esc(summary), esc(evidence), esc(suggestion)
+				printf "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t\t\t\t\t%s\n", rank, esc(severity), esc(category), esc(file), line, esc(lens), esc(summary), esc(evidence), esc(suggestion), disc
 			}
 		'
 	fi
@@ -341,8 +365,10 @@ if [[ "$raw" -eq 0 ]]; then
 fi
 
 # Group by signature (category, file, line), then merge.
-# Sort key for the merge phase: category, file, line, sev_rank, lens.
-sorted="$(printf '%s\n' "$tsv" | sort -t $'\t' -k3,3 -k4,4 -k5,5n -k1,1n -k6,6)"
+# Sort key for the merge phase: category, file, line, sev_rank, lens, then
+# the unanchored discriminator (numeric; empty -> 0 for anchored rows) so
+# identical signatures stay adjacent for the merge pass.
+sorted="$(printf '%s\n' "$tsv" | sort -t $'\t' -k3,3 -k4,4 -k5,5n -k1,1n -k6,6 -k14,14n)"
 
 # Build merged groups in a temp file: one merged record per signature.
 # Merged record fields:
@@ -377,7 +403,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 	}
 	BEGIN { count = 0 }
 	{
-		sig = $3 SUBSEP $4 SUBSEP $5
+		sig = $3 SUBSEP $4 SUBSEP $5 SUBSEP $14
 		if (sig != cur_sig) {
 			flush()
 			cur_sig = sig
@@ -410,6 +436,7 @@ merged_tsv="$(printf '%s\n' "$sorted" | awk -F '\t' '
 # (file, line).
 related_tsv="$(printf '%s\n' "$merged_tsv" | awk -F '\t' '
 	{
+		if ($4 == "" && $5 == "-1") next
 		key = $4 SUBSEP $5
 		count[key]++
 		# Append a record id (line number in merged stream) per key.
@@ -452,7 +479,7 @@ fi
 # finding twice, not cross-lens reconciliation.
 combined_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
 	{
-		sig = $3 SUBSEP $4 SUBSEP $5
+		sig = $3 SUBSEP $4 SUBSEP $5 SUBSEP $14
 		# Track distinct lenses per signature.
 		key = sig SUBSEP $6
 		if (!(key in seen)) {
@@ -472,7 +499,7 @@ combined_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
 # Invariant: merged + unique == merged_count == findings.length.
 single_source_groups=$(printf '%s\n' "$sorted" | awk -F '\t' '
 	{
-		sig = $3 SUBSEP $4 SUBSEP $5
+		sig = $3 SUBSEP $4 SUBSEP $5 SUBSEP $14
 		key = sig SUBSEP $6
 		if (!(key in seen)) {
 			seen[key] = 1

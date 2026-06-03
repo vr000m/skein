@@ -11,7 +11,7 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 | content-draft | Yes | Yes | Draft content following style guidelines |
 | content-review | Yes | Yes | Review content against style guidelines |
 | deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies a hard-coded allowlist of mechanical fixes (requires `--test-cmd`) |
-| review-plan | Yes | Yes | Audit a dev plan via four parallel fresh-context lenses (architecture, sequencing, spec-and-testing, codebase-claims) before implementation; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies allowlisted prose edits outside the immutable contract sections |
+| review-plan | Yes | Yes | Audit a dev plan via five parallel fresh-context lenses (architecture, sequencing, spec-and-testing, assumptions, codebase-claims; four high-reasoning + one factual) before implementation; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies allowlisted prose edits outside the immutable contract sections |
 | rfc-finder | Yes | Yes | Find and link to IETF RFCs and related drafts |
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
