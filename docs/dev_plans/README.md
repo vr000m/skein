@@ -42,6 +42,7 @@ Component values here are hand-entered (no plan file to derive from) and best-ef
 
 | Date | Type | Name | Comp | PR |
 |------|------|------|------|----|
+| 2026-06-03 | feature | review-plan-assumptions-lens | review-skills | [#4](https://github.com/vr000m/skein/pull/4) |
 | 2026-05-24 | feature | plan-view-rich-navigable | planning-skills | [#31](https://github.com/vr000m/skills.md/pull/31) |
 | 2026-05-23 | fix | plan-view-review-followups | planning-skills | [#29](https://github.com/vr000m/skills.md/pull/29) |
 | 2026-05-19 | chore | codex-skill-model-routing | sync-infra | [#25](https://github.com/vr000m/skills.md/pull/25), [#26](https://github.com/vr000m/skills.md/pull/26) |

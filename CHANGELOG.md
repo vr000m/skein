@@ -4,6 +4,12 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- Fifth `assumptions` lens (Opus) for `/review-plan`: audits claims the plan states as settled fact but cannot verify from the codebase — backend/external behaviour, business semantics, data shape, unread contracts, environmental facts. `/review-plan` now runs four high-reasoning Opus lenses plus one Haiku factual lens.
+
+### Fixed
+- Cross-lens reconciliation (`scripts/reconcile-findings.sh`) no longer collapses unanchored findings. Findings with no location anchor (empty `file` + `-1` line) each receive a unique merge signature instead of sharing one `("", -1, category)` signature and silently dropping all but one. Anchored merge/related behaviour is byte-for-byte unchanged; both the `jq` and awk-fallback parsers partition identically (including an explicit `line:-1`). Also benefits `/deep-review`, which shares the engine.
+
 ## [0.1.0] - 2026-05-30
 
 First public release.
