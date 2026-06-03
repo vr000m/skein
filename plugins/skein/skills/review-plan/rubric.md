@@ -1,6 +1,6 @@
 # Review-Plan Output Rubric
 
-Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Mirrored byte-identically in `.claude/skills/review-plan/rubric.md` and `.codex/skills/review-plan/rubric.md`.
+Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Mirrored byte-identically in `plugins/skein/skills/review-plan/rubric.md` and `plugins/skein-codex/skills/review-plan/rubric.md`.
 
 ## Coverage
 
