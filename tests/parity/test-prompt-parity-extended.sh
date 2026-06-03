@@ -4,8 +4,9 @@
 # Phase 3 acceptance suite for the extended ``scripts/check-prompt-parity.sh``.
 #
 # Each sub-test runs the script against a synthetic ``MANAGED_SKILLS`` value
-# pointing at a temporary directory that mimics the ``.claude/`` /
-# ``.codex/`` layout the production script expects. We override
+# pointing at a temporary directory that mimics the
+# ``plugins/skein/`` / ``plugins/skein-codex/`` layout the production
+# script expects. We override
 # ``MANAGED_SKILLS`` and run the script from a fake $ROOT_DIR so the test
 # doesn't touch the real repo.
 #
@@ -77,7 +78,7 @@ seed_skill_pair() {
         allowlist_text="$(tr -d '\n' <"$root/scripts/auto-fix-allowlist.json")"
         deep_review_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"deep-review":(\[[^]]*\]).*/\1/')"
         review_plan_allowlist="$(printf '%s' "$allowlist_text" | sed -E 's/.*"review-plan":(\[[^]]*\]).*/\1/')"
-        for side in .claude .codex; do
+        for side in plugins/skein plugins/skein-codex; do
             cat >"$root/$side/skills/$skill/SKILL.md" <<EOF
 stub
 
@@ -124,7 +125,7 @@ run_script() {
 # ---------------------------------------------------------------------------
 # 1. mirror-commit-required-after-impl
 #
-# A prompt file landed on .claude but not on .codex → drift detected,
+# A prompt file landed on the skein mirror but not on skein-codex → drift detected,
 # non-zero exit, message names the missing-mirror file.
 # ---------------------------------------------------------------------------
 
