@@ -350,6 +350,114 @@ CASE6_NONSTRING_BEFORE='{"lens":"logic","severity":"Minor","category":"style","f
 run_failure_case "malformed-auto-fix-nonstring-before" "$CASE6_NONSTRING_BEFORE" "auto_fix block malformed"
 
 # ---------------------------------------------------------------------------
+# Case 7: Unanchored findings (empty file + absent line) from the SAME lens
+# and SAME category MUST NOT collapse into one record.
+#
+# Acceptance: a finding with no location anchor has no structural identity,
+# so the (file, line, category) signature is meaningless and each such
+# finding is kept distinct (per-row discriminator). Regression guard for the
+# assumptions lens, whose findings (claims about external/backend behaviour)
+# routinely carry no in-repo file/line. Before the fix, both collapsed to a
+# single rendered finding under the shared ("", -1, Assumption) signature.
+# ---------------------------------------------------------------------------
+
+CASE7_INPUT='{"lens":"assumptions","severity":"Critical","category":"Assumption","summary":"api returns 200 on dup","evidence":"plan line 1","suggestion":"verify api"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"queue is fifo","evidence":"plan line 2","suggestion":"verify queue"}
+'
+
+read -r -d '' CASE7_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "api returns 200 on dup",
+      "evidence": "plan line 1",
+      "suggestion": "verify api"
+    },
+    {
+      "severity": "Important",
+      "category": "Assumption",
+      "file": "",
+      "line": -1,
+      "lenses": ["assumptions"],
+      "summary": "queue is fifo",
+      "evidence": "plan line 2",
+      "suggestion": "verify queue"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE7_EXPECTED="${CASE7_EXPECTED}"$'\n'
+
+run_case "unanchored-findings-do-not-collapse" "$CASE7_INPUT" "$CASE7_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 8: Unanchored findings of DIFFERENT categories MUST NOT emit a `related`
+# cross-reference.
+#
+# Acceptance: `related` keys on a shared (file, line). Unanchored findings all
+# share ("", -1), but they have no real location, so cross-linking them as
+# "Related findings" would be spurious. They are excluded from the related
+# pass entirely; only genuinely co-located (anchored) findings cross-reference.
+# ---------------------------------------------------------------------------
+
+CASE8_INPUT='{"lens":"security","severity":"Critical","category":"authz","summary":"external svc trusts header","evidence":"plan line 9","suggestion":"verify"}
+{"lens":"logic","severity":"Important","category":"correctness","summary":"upstream nullable","evidence":"plan line 9","suggestion":"verify"}
+'
+
+read -r -d '' CASE8_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 2,
+    "merged": 0,
+    "unique": 2,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Critical",
+      "category": "authz",
+      "file": "",
+      "line": -1,
+      "lenses": ["security"],
+      "summary": "external svc trusts header",
+      "evidence": "plan line 9",
+      "suggestion": "verify"
+    },
+    {
+      "severity": "Important",
+      "category": "correctness",
+      "file": "",
+      "line": -1,
+      "lenses": ["logic"],
+      "summary": "upstream nullable",
+      "evidence": "plan line 9",
+      "suggestion": "verify"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE8_EXPECTED="${CASE8_EXPECTED}"$'\n'
+
+run_case "unanchored-different-category-no-related" "$CASE8_INPUT" "$CASE8_EXPECTED"
+
+# ---------------------------------------------------------------------------
 # Final tally
 # ---------------------------------------------------------------------------
 
