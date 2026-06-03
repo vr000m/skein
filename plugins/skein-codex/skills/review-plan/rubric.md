@@ -39,6 +39,7 @@ Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrat
 - Findings are merged across lenses and grouped by severity (Critical → Important → Minor)
 - Within a severity tier, findings are grouped by lens for traceability
 - Duplicate findings are reconciled per the Reconciliation section below — same `(file, line, category)` merges, same `(file, line)` different category emits a Related findings cross-reference (no collapse)
+- Findings with no location anchor (empty file + `-1` line — common for `assumptions`) are reported individually: never merged into one another, never cross-referenced as Related
 - Empty lenses are dropped from the output silently; if all five are empty the report says "No findings — plan looks ready" explicitly
 - One-line overall summary at the top
 - Markdown is well-formed and renders cleanly

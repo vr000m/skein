@@ -302,7 +302,7 @@ Hunt specifically for:
 - Backend / external-system behavior: how an API, service, queue, or third-party endpoint responds — status codes, error shapes, ordering, idempotency, rate limits — that the plan relies on but cannot confirm from the codebase
 - Business semantics: what a field, status, flag, or rule *means* in the domain, when the meaning is not pinned down in readable code
 - Data shape: the schema, nullability, units, ranges, or encoding of data the plan consumes from outside the repo (external APIs, user input, upstream events, existing production data)
-- Contracts the author could not read: file formats, protocols, or interfaces the plan names but that are not present in the codebase
+- Contracts the author could not read: file formats, protocols, or interfaces the plan names but that are not present in the codebase — flag the *assumed shape or behavior* of the contract, not its mere absence (whether the reference exists at all is the codebase-claims lens's job)
 - Environmental facts: assumed config values, feature-flag states, deployment topology, or runtime versions the plan treats as known
 
 For each such claim the defect is the same: the plan states it as fact rather than naming it as an
