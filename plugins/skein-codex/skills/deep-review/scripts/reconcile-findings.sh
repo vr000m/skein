@@ -361,8 +361,10 @@ if [[ "$raw" -eq 0 ]]; then
 fi
 
 # Group by signature (category, file, line), then merge.
-# Sort key for the merge phase: category, file, line, sev_rank, lens.
-sorted="$(printf '%s\n' "$tsv" | sort -t $'\t' -k3,3 -k4,4 -k5,5n -k1,1n -k6,6 -k14,14)"
+# Sort key for the merge phase: category, file, line, sev_rank, lens, then
+# the unanchored discriminator (numeric; empty -> 0 for anchored rows) so
+# identical signatures stay adjacent for the merge pass.
+sorted="$(printf '%s\n' "$tsv" | sort -t $'\t' -k3,3 -k4,4 -k5,5n -k1,1n -k6,6 -k14,14n)"
 
 # Build merged groups in a temp file: one merged record per signature.
 # Merged record fields:

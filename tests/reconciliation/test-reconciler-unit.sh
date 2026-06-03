@@ -458,6 +458,63 @@ CASE8_EXPECTED="${CASE8_EXPECTED}"$'\n'
 run_case "unanchored-different-category-no-related" "$CASE8_INPUT" "$CASE8_EXPECTED"
 
 # ---------------------------------------------------------------------------
+# Case 9: awk-fallback (no jq) parses identically to the jq path.
+#
+# The script has two independent JSON parsers selected by `command -v jq`.
+# Every other case here runs against whatever jq the environment provides
+# (present in dev/CI), so the awk fallback — including the unanchored
+# discriminator (disc = NR) — had no regression coverage. This case forces
+# the fallback by running the script with a PATH that contains only the
+# coreutils it needs (no jq) and asserts byte-identical output to the jq
+# path for a mixed input: an anchored merge pair, two same-category
+# unanchored findings, and a malformed line between them (so the dropped
+# line advances the line counter without corrupting unanchored uniqueness).
+#
+# Skips (does not fail) when jq is unavailable for the baseline or a needed
+# coreutil cannot be resolved, so the suite stays portable.
+# ---------------------------------------------------------------------------
+
+CASE9_INPUT='{"lens":"architecture","severity":"Important","category":"Risk","file":"src/a.py","line":10,"summary":"coupling","evidence":"e","suggestion":"s"}
+{"lens":"assumptions","severity":"Critical","category":"Assumption","summary":"api returns 200 on dup","evidence":"plan line 1","suggestion":"verify api"}
+this is not json
+{"lens":"sequencing","severity":"Critical","category":"Risk","file":"src/a.py","line":10,"summary":"order","evidence":"e","suggestion":"s"}
+{"lens":"assumptions","severity":"Important","category":"Assumption","summary":"queue is fifo","evidence":"plan line 2","suggestion":"verify queue"}
+'
+
+if ! command -v jq >/dev/null 2>&1; then
+	echo "SKIP: awk-fallback-parity-unanchored (jq unavailable for baseline)"
+else
+	nojq_bin="$(mktemp -d "$TMPDIR_ROOT/nojqbin.XXXXXX")"
+	bash_bin="$(command -v bash)"
+	missing=""
+	for tool in awk sort grep cat head; do
+		tp="$(command -v "$tool" 2>/dev/null || true)"
+		if [[ -z "$tp" ]]; then
+			missing="$missing $tool"
+		else
+			ln -s "$tp" "$nojq_bin/$tool"
+		fi
+	done
+	if [[ -n "$missing" ]]; then
+		echo "SKIP: awk-fallback-parity-unanchored (unresolved coreutils:$missing)"
+	else
+		# Baseline: jq path (normal PATH). Fallback: PATH limited to nojq_bin
+		# so `command -v jq` fails inside the script. bash is invoked by
+		# absolute path so the restricted PATH does not hide it.
+		out_jq="$(printf '%s' "$CASE9_INPUT" | bash "$SCRIPT" --skill deep-review 2>/dev/null)"
+		out_nojq="$(printf '%s' "$CASE9_INPUT" | PATH="$nojq_bin" "$bash_bin" "$SCRIPT" --skill deep-review 2>/dev/null)"
+		if [[ "$out_jq" == "$out_nojq" ]]; then
+			echo "PASS: awk-fallback-parity-unanchored"
+			pass_count=$((pass_count + 1))
+		else
+			echo "FAIL: awk-fallback-parity-unanchored (jq vs awk output differ)"
+			diff <(printf '%s' "$out_jq") <(printf '%s' "$out_nojq") | sed 's/^/    /'
+			fail_count=$((fail_count + 1))
+		fi
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # Final tally
 # ---------------------------------------------------------------------------
 
