@@ -66,7 +66,7 @@ brew install just jq shellcheck shfmt
 just check-sync                  # canonical scripts/ ↔ bundled skill scripts byte-identity
 just check-prompt-parity         # Claude vs Codex SKILL.md content parity for bundle skills
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
-just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback parity
+just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + conduct-marker parity
 just reconciliation-tests        # reconciliation parity + fixture + renderer + determinism
 just bundle-appliers             # regenerate bundled auto-fix pipeline inside each skill
 ```
