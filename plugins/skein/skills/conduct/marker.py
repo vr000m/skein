@@ -188,14 +188,21 @@ def write_marker(plan_path: str | Path, when: date | None = None) -> str:
     path = Path(plan_path)
     plan = path.read_text(encoding="utf-8")
     above, below = _split_around_marker(plan)
-    sha = _hash_stripped(above)
 
-    iso = (when or date.today()).isoformat()
-    marker_line = f"<!-- reviewed: {iso} @ {sha} -->"
-
+    # Normalize the above-marker bytes to their final written form *before*
+    # hashing: the marker line is placed immediately after ``above_text``, so
+    # the bytes the validator later hashes are ``above_text`` — not ``above``.
+    # When the source plan had no trailing newline, ``above_text`` gains one
+    # here; hashing ``above`` instead would record the hash of bytes that are
+    # never written above the marker, leaving the plan stale the instant it is
+    # marked. Hash exactly what lands above the marker.
     above_text = above
     if above_text and not above_text.endswith("\n"):
         above_text += "\n"
+
+    sha = _hash_stripped(above_text)
+    iso = (when or date.today()).isoformat()
+    marker_line = f"<!-- reviewed: {iso} @ {sha} -->"
 
     if below:
         # Preserve the workspace below the marker; ensure exactly one blank

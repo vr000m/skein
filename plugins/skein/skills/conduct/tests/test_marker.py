@@ -270,6 +270,23 @@ def test_strip_is_byte_faithful_with_crlf_line_endings(tmp_path: Path):
     assert compute_plan_hash(plan_path) == _git_hash_object_stdin(above.encode())
 
 
+@requires_git
+def test_write_marker_not_stale_on_plan_without_trailing_newline(tmp_path: Path):
+    """`write_marker` must hash the exact bytes it writes above the marker. A
+    fresh unmarked plan with no trailing newline gains one when the marker is
+    appended; hashing the pre-append bytes would leave the plan stale the
+    instant it is marked, so `/review-plan` would accept a plan that `/conduct`
+    immediately rejects. Regression for that write/validate byte mismatch.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(b"# Plan\n\nbody")  # deliberately no trailing newline
+
+    sha = write_marker(plan_path)
+    assert read_marker(plan_path)[1] == sha
+    assert compute_plan_hash(plan_path) == sha
+    assert marker_is_stale(plan_path) is False
+
+
 # ---------------------------------------------------------------------------
 # /review-plan auto-fix tier integration (Phase 3)
 #
