@@ -184,9 +184,19 @@ def write_marker(plan_path: str | Path, when: date | None = None) -> str:
 
     Idempotent: running this repeatedly on an unchanged plan yields the same
     marker hash, possibly with a newer date.
+
+    Reads and writes bytes (decode/encode ``utf-8``) rather than ``read_text``/
+    ``write_text``: text mode applies universal-newline translation, and the
+    direction differs by platform (on Windows ``write_text`` would re-expand
+    ``\\n`` to ``\\r\\n`` on disk). Since :func:`compute_plan_hash` validates the
+    on-disk bytes byte-faithfully, any translation here that the validator does
+    not see would record a hash over different bytes than land above the
+    marker — marking the plan stale the instant it is written. Reading and
+    writing raw bytes keeps both sides on the exact same bytes on every
+    platform.
     """
     path = Path(plan_path)
-    plan = path.read_text(encoding="utf-8")
+    plan = path.read_bytes().decode("utf-8")
     above, below = _split_around_marker(plan)
 
     # Normalize the above-marker bytes to their final written form *before*
@@ -213,7 +223,7 @@ def write_marker(plan_path: str | Path, when: date | None = None) -> str:
             new_text += "\n"
     else:
         new_text = f"{above_text}{marker_line}\n"
-    path.write_text(new_text, encoding="utf-8")
+    path.write_bytes(new_text.encode("utf-8"))
     return sha
 
 

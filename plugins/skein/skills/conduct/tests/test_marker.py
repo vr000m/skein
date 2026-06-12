@@ -287,6 +287,24 @@ def test_write_marker_not_stale_on_plan_without_trailing_newline(tmp_path: Path)
     assert marker_is_stale(plan_path) is False
 
 
+@requires_git
+def test_write_marker_preserves_crlf_and_is_not_stale(tmp_path: Path):
+    """`write_marker` reads and writes bytes, so a CRLF plan keeps its contract
+    line endings and validates non-stale. Text-mode I/O would translate line
+    endings — and on Windows `write_text` would re-expand `\\n` to `\\r\\n` on
+    disk, recording a hash over different bytes than `compute_plan_hash` reads
+    back. Pins byte-faithful, platform-independent write behaviour.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(b"# Plan\r\n\r\nbody\r\n")
+
+    write_marker(plan_path)
+    on_disk = plan_path.read_bytes()
+    # Contract bytes above the marker keep CRLF; nothing normalized them to LF.
+    assert b"# Plan\r\n\r\nbody\r\n" in on_disk
+    assert marker_is_stale(plan_path) is False
+
+
 # ---------------------------------------------------------------------------
 # /review-plan auto-fix tier integration (Phase 3)
 #
