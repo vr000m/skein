@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-12
+
 ### Documentation
 - Clarified in both `deep-review` SKILL.md copies that `scripts/render-reconciled-report.sh` is a repo-only reference renderer, deliberately **not** bundled into the installed skill (per `scripts/lib/bundle-map.sh`) — the running review renders by hand from the report template, so the renderer's absence under the installed `scripts/` is expected, not a broken bundle. Prevents review runs from false-flagging it as a missing artifact.
 
@@ -30,6 +32,7 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/vr000m/skein/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/vr000m/skein/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vr000m/skein/releases/tag/v0.1.0
