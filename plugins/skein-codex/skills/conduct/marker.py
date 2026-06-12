@@ -28,9 +28,7 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-MARKER_RE = re.compile(
-    r"^<!-- reviewed: (\d{4}-\d{2}-\d{2}) @ ([0-9a-f]{40}) -->\s*$"
-)
+MARKER_RE = re.compile(r"^<!-- reviewed: (\d{4}-\d{2}-\d{2}) @ ([0-9a-f]{40}) -->\s*$")
 MARKER_PLACEHOLDER_RE = re.compile(r"^<!-- reviewed: YYYY-MM-DD @ <hash> -->\s*$")
 
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
@@ -63,6 +61,30 @@ def last_marker_index(
     return last
 
 
+def _marker_line_span(plan_text: str) -> tuple[int, int] | None:
+    """Return ``(start, end)`` byte offsets of the last unfenced marker (or
+    placeholder) line, or ``None`` if no such line exists.
+
+    ``start`` is the offset of the marker line's first character; ``end`` is
+    the offset just past its line terminator. Offsets are reconstructed from
+    ``splitlines(keepends=True)`` so they are exact even for CRLF input — the
+    caller can slice ``plan_text`` byte-faithfully on either side.
+    """
+    in_fence = False
+    pos = 0
+    span = None
+    for line in plan_text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if FENCE_RE.match(content):
+            in_fence = not in_fence
+        elif not in_fence and (
+            MARKER_RE.match(content) or MARKER_PLACEHOLDER_RE.match(content)
+        ):
+            span = (pos, pos + len(line))
+        pos += len(line)
+    return span
+
+
 def strip_marker_for_hashing(plan_text: str) -> str:
     """Return the plan content above the marker line, ready for hashing.
 
@@ -71,24 +93,28 @@ def strip_marker_for_hashing(plan_text: str) -> str:
     marker and must not affect the hash. If no marker line is found, the plan
     is returned unchanged.
 
-    Locating the marker: scan from the end and pick the last line that matches
-    the marker regex (so a plan documenting marker syntax in prose earlier in
-    the file is unaffected).
+    **Byte-faithful.** The returned text is exactly ``plan_text`` truncated at
+    the byte where the marker line begins — every byte above the marker is
+    preserved verbatim, including blank lines immediately above it and the
+    original line endings (LF or CRLF). This is the documented recipe ("take
+    the plan with the marker line and everything after it stripped, pipe to
+    ``git hash-object --stdin``"), so the hash this module computes equals
+    ``git hash-object`` of the above-marker bytes that ``/review-plan`` writes
+    and any byte-faithful external checker reproduces. Do **not** re-introduce
+    trailing-blank trimming or ``splitlines``/``join`` normalization here: a
+    plan with a blank line before its marker (the common markdown style) would
+    then hash differently from what wrote it and report a false staleness.
+
+    Locating the marker: scan for the last unfenced line that matches the
+    marker regex (so a plan documenting marker syntax in prose earlier in the
+    file is unaffected).
     """
     if not plan_text:
         return plan_text
-    has_trailing_newline = plan_text.endswith("\n")
-    lines = plan_text.splitlines()
-    marker_idx = last_marker_index(lines, include_placeholder=True)
-    if marker_idx is None:
+    span = _marker_line_span(plan_text)
+    if span is None:
         return plan_text
-    remaining = lines[:marker_idx]
-    while remaining and not remaining[-1].strip():
-        remaining.pop()
-    result = "\n".join(remaining)
-    if remaining and has_trailing_newline:
-        result += "\n"
-    return result
+    return plan_text[: span[0]]
 
 
 def _hash_stripped(plan_text: str) -> str:
@@ -105,8 +131,15 @@ def _hash_stripped(plan_text: str) -> str:
 def compute_plan_hash(plan_path: str | Path) -> str:
     """Return ``git hash-object`` of the plan with marker stripped per the rule
     above. Streams via stdin — no temp file is created on disk.
+
+    Reads the file as bytes and decodes explicitly rather than via
+    ``read_text``: ``read_text`` applies universal-newline translation
+    (CRLF/CR → LF), which would silently rewrite line endings before hashing
+    and make a CRLF plan hash differently from its on-disk bytes. The hash must
+    match ``git hash-object`` of the literal above-marker bytes, so the read
+    must be byte-faithful too.
     """
-    plan = Path(plan_path).read_text(encoding="utf-8")
+    plan = Path(plan_path).read_bytes().decode("utf-8")
     return _hash_stripped(strip_marker_for_hashing(plan))
 
 
@@ -161,25 +194,22 @@ def write_marker(plan_path: str | Path, when: date | None = None) -> str:
 def _split_around_marker(plan_text: str) -> tuple[str, str]:
     """Split plan into ``(above_marker, below_marker)``.
 
-    ``above_marker`` is the contract content with trailing blank lines trimmed
-    and a single trailing newline preserved iff the original had one.
-    ``below_marker`` is the workspace section verbatim (empty string when no
-    marker is found).
+    ``above_marker`` is the contract content **byte-faithful** — exactly the
+    bytes above the marker line, blank lines and original line endings
+    preserved. ``write_marker`` hashes these bytes, so the recorded hash equals
+    what :func:`strip_marker_for_hashing` recomputes on the rewritten plan (the
+    two must use the same byte-faithful slice or write/validate would disagree).
+    ``below_marker`` is the workspace section with leading and trailing blank
+    lines dropped (empty string when no marker is found, or when only
+    whitespace follows the marker — avoids stray blank rewrites).
     """
     if not plan_text:
         return plan_text, ""
-    has_trailing_newline = plan_text.endswith("\n")
-    lines = plan_text.splitlines()
-    marker_idx = last_marker_index(lines, include_placeholder=True)
-    if marker_idx is None:
+    span = _marker_line_span(plan_text)
+    if span is None:
         return plan_text, ""
-    above = lines[:marker_idx]
-    while above and not above[-1].strip():
-        above.pop()
-    above_text = "\n".join(above)
-    if above and has_trailing_newline:
-        above_text += "\n"
-    below_lines = lines[marker_idx + 1 :]
+    above_text = plan_text[: span[0]]
+    below_lines = plan_text[span[1] :].splitlines()
     # Drop leading and trailing blank lines so a marker followed only by
     # whitespace produces an empty workspace (avoids stray blank rewrites).
     while below_lines and not below_lines[0].strip():
@@ -189,7 +219,7 @@ def _split_around_marker(plan_text: str) -> tuple[str, str]:
     if not below_lines:
         return above_text, ""
     below_text = "\n".join(below_lines)
-    if has_trailing_newline:
+    if plan_text.endswith("\n"):
         below_text += "\n"
     return above_text, below_text
 

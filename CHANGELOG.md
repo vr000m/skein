@@ -8,6 +8,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ### Fixed
 - Quoted SKILL.md frontmatter values that contain multiple bracketed argument tokens or colon-bearing prose so Codex can load all bundled `skein:*` skills without YAML parse warnings.
+- `/conduct` review-marker hashing (`conduct/marker.py`) is now byte-faithful, matching the documented recipe (`git hash-object` of the bytes above the marker line). `strip_marker_for_hashing` previously popped the blank line that normally precedes the marker and round-tripped through `splitlines()`/`join()`, silently normalizing CRLF→LF; `compute_plan_hash` also read via `read_text`, translating line endings before hashing. Together these made the computed hash disagree with `git hash-object` of the above-marker bytes whenever a plan had a blank line before its marker (the common markdown style) or used CRLF endings — so preflight false-flagged a valid plan as stale (hard-stopping a first run, or, on `--resume`, rewriting the marker into a form no byte-faithful external checker accepts). Hashing now slices the plan at the marker line's exact byte offset with line endings preserved. **Migration:** markers written by `/review-plan` with a blank line before them now validate correctly; any marker previously written by the old `marker.py` blank-popping path on such a plan reports stale once and refreshes on the next `/review-plan` or `--resume`.
 
 ## [0.2.1] - 2026-06-12
 
