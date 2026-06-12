@@ -28,6 +28,7 @@ parity-tests:
     bash tests/parity/test-allowlist-byte-identity.sh
     bash tests/parity/test-auto-fix-orchestration-contract.sh
     bash tests/parity/test-no-manual-apply-fallback.sh
+    bash tests/parity/test-conduct-marker-parity.sh
 
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh

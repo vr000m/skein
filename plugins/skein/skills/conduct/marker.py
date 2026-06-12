@@ -34,6 +34,34 @@ MARKER_PLACEHOLDER_RE = re.compile(r"^<!-- reviewed: YYYY-MM-DD @ <hash> -->\s*$
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 
 
+def _scan_marker_lines(lines: list[str], *, include_placeholder: bool):
+    """Yield the index of every unfenced line matching the real marker regex
+    (or, when ``include_placeholder``, the template placeholder), in document
+    order.
+
+    This is the single fence-tracking + match core shared by
+    ``last_marker_index`` (line index) and ``_marker_line_span`` (byte offset).
+    Keeping one stateful traversal here means the two public/private locators
+    can never disagree on *which* line is the marker — a drift that would let
+    ``read_marker`` and ``compute_plan_hash`` anchor to different markers.
+
+    Accepts lines split with **or** without keepends: each line is matched on
+    ``line.rstrip("\\r\\n")``, so a trailing terminator (present only under
+    ``splitlines(keepends=True)``) does not affect the match, and the marker
+    regex's own ``\\s*$`` still tolerates trailing spaces.
+    """
+    in_fence = False
+    for i, line in enumerate(lines):
+        content = line.rstrip("\r\n")
+        if FENCE_RE.match(content):
+            in_fence = not in_fence
+        elif not in_fence and (
+            MARKER_RE.match(content)
+            or (include_placeholder and MARKER_PLACEHOLDER_RE.match(content))
+        ):
+            yield i
+
+
 def last_marker_index(
     lines: list[str], *, include_placeholder: bool = False
 ) -> int | None:
@@ -46,18 +74,9 @@ def last_marker_index(
     Public so ``parser.py`` (and other plan-walking code) can locate the
     contract/workspace boundary without re-implementing fence tracking.
     """
-    in_fence = False
     last = None
-    for i, line in enumerate(lines):
-        if FENCE_RE.match(line):
-            in_fence = not in_fence
-            continue
-        if in_fence:
-            continue
-        if MARKER_RE.match(line) or (
-            include_placeholder and MARKER_PLACEHOLDER_RE.match(line)
-        ):
-            last = i
+    for i in _scan_marker_lines(lines, include_placeholder=include_placeholder):
+        last = i
     return last
 
 
@@ -69,20 +88,20 @@ def _marker_line_span(plan_text: str) -> tuple[int, int] | None:
     the offset just past its line terminator. Offsets are reconstructed from
     ``splitlines(keepends=True)`` so they are exact even for CRLF input — the
     caller can slice ``plan_text`` byte-faithfully on either side.
+
+    Always includes the placeholder (the hashing path consumes the template
+    divider on first review); ``read_marker`` excludes it via
+    ``last_marker_index``'s default. Both go through the same
+    :func:`_scan_marker_lines` core so they locate the identical line.
     """
-    in_fence = False
-    pos = 0
-    span = None
-    for line in plan_text.splitlines(keepends=True):
-        content = line.rstrip("\r\n")
-        if FENCE_RE.match(content):
-            in_fence = not in_fence
-        elif not in_fence and (
-            MARKER_RE.match(content) or MARKER_PLACEHOLDER_RE.match(content)
-        ):
-            span = (pos, pos + len(line))
-        pos += len(line)
-    return span
+    lines = plan_text.splitlines(keepends=True)
+    last_idx = None
+    for i in _scan_marker_lines(lines, include_placeholder=True):
+        last_idx = i
+    if last_idx is None:
+        return None
+    start = sum(len(lines[k]) for k in range(last_idx))
+    return start, start + len(lines[last_idx])
 
 
 def strip_marker_for_hashing(plan_text: str) -> str:

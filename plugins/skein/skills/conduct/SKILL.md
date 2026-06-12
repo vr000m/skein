@@ -87,7 +87,7 @@ The marker acts as a **contract / workspace divider**. Everything above the mark
 
 - Match against regex `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$`. The last unfenced, column-zero match wins; marker-shaped text inside fenced code blocks or indented prose is ignored.
 - The template-placeholder line `<!-- reviewed: YYYY-MM-DD @ <hash> -->` does **not** count as a real marker — a plan that still carries the placeholder is treated as unmarked and rejected. (`/review-plan` consumes the placeholder as the divider on first review and replaces it with the dated marker.)
-- Recompute the plan's content hash: take the plan with the marker line and everything after it stripped, pipe to `git hash-object --stdin`. Compare to the SHA recorded in the marker.
+- Recompute the plan's content hash: take the plan with the marker line and everything after it stripped, pipe to `git hash-object --stdin`. Compare to the SHA recorded in the marker. The strip is **byte-faithful** — the bytes above the marker line are hashed verbatim, including any blank line immediately above the marker and the original line endings (LF or CRLF). Do **not** trim trailing blanks or normalize line endings before hashing: a plan with a blank line before its marker (the common markdown style) would then hash differently from what `/review-plan` wrote and report a false staleness.
 - If marker absent → hard-stop with: `Run: /review-plan <plan-path>` and exit.
 - If hash mismatches (stale marker):
   - **Initial run** (no `--resume`): hard-stop with the same message. A stale marker before the first phase means the plan drifted between `/review-plan` and `/conduct`; re-review.
