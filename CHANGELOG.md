@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Documentation
+- Clarified in both `deep-review` SKILL.md copies that `scripts/render-reconciled-report.sh` is a repo-only reference renderer, deliberately **not** bundled into the installed skill (per `scripts/lib/bundle-map.sh`) — the running review renders by hand from the report template, so the renderer's absence under the installed `scripts/` is expected, not a broken bundle. Prevents review runs from false-flagging it as a missing artifact.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added
