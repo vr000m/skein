@@ -1,6 +1,6 @@
 ---
 name: review-plan
-description: Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five parallel fresh-context lens agents (architecture, sequencing, spec-and-testing, assumptions, codebase-claims) that audit the plan against the actual codebase. Cost: four high-reasoning Opus lenses + one cheap Haiku factual lens per run. Use after a dev-plan is created, when the user says "review plan", "audit plan", "check plan", or "/review-plan", and proactively after the dev-plan skill produces a new plan file.
+description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five parallel fresh-context lens agents (architecture, sequencing, spec-and-testing, assumptions, codebase-claims) that audit the plan against the actual codebase. Cost: four high-reasoning Opus lenses + one cheap Haiku factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
 argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
 ---
 

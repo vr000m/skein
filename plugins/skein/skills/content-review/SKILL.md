@@ -1,7 +1,7 @@
 ---
 name: content-review
 description: Reviews written markdown content (blog posts, TILs, technical docs, Notion docs) against style guidelines and returns a structured report with Critical / Important / Suggestion findings plus inline diff-style fixes. Use when the user says "/content-review" or asks to "review a blog post", "proofread my content", "check my TIL", "edit this doc", "review content", or "check this draft".
-argument-hint: [file-path] [--type blog|til|technical-doc|notion|general]
+argument-hint: "[file-path] [--type blog|til|technical-doc|notion|general]"
 ---
 
 # Content Review Skill

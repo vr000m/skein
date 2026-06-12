@@ -4,6 +4,11 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-12
+
+### Fixed
+- Quoted SKILL.md frontmatter values that contain multiple bracketed argument tokens or colon-bearing prose so Codex can load all bundled `skein:*` skills without YAML parse warnings.
+
 ## [0.2.1] - 2026-06-12
 
 ### Documentation
@@ -32,7 +37,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/vr000m/skein/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/vr000m/skein/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/vr000m/skein/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vr000m/skein/releases/tag/v0.1.0
