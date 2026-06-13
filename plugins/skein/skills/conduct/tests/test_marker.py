@@ -226,6 +226,85 @@ def test_compute_plan_hash_matches_git_hash_object(tmp_path: Path):
     assert compute_plan_hash(plan_path) == expected
 
 
+def _git_hash_object_stdin(data: bytes) -> str:
+    return (
+        subprocess.run(
+            ["git", "hash-object", "--stdin"],
+            input=data,
+            capture_output=True,
+            check=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
+
+
+@requires_git
+def test_strip_is_byte_faithful_with_blank_line_before_marker(tmp_path: Path):
+    """The common markdown style puts a blank line before the marker. The hash
+    must cover the above-marker bytes *verbatim* (blank line included) so it
+    equals `git hash-object` of those bytes — the documented recipe that
+    /review-plan and any external checker reproduce. Regression for a stale
+    `strip_marker_for_hashing` that popped the trailing blank.
+    """
+    above = "contract line\n\n"
+    marker = "<!-- reviewed: 2026-01-01 @ " + "0" * 40 + " -->\n"
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes((above + marker).encode("utf-8"))
+
+    assert strip_marker_for_hashing(above + marker) == above
+    assert compute_plan_hash(plan_path) == _git_hash_object_stdin(above.encode())
+
+
+@requires_git
+def test_strip_is_byte_faithful_with_crlf_line_endings(tmp_path: Path):
+    """A CRLF plan must hash to `git hash-object` of its above-marker bytes
+    with CRLF preserved — no silent LF normalization in the hashing path.
+    """
+    above = "contract line\r\n\r\n"
+    marker = "<!-- reviewed: 2026-01-01 @ " + "0" * 40 + " -->\r\n"
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes((above + marker).encode("utf-8"))
+
+    assert strip_marker_for_hashing(above + marker) == above
+    assert compute_plan_hash(plan_path) == _git_hash_object_stdin(above.encode())
+
+
+@requires_git
+def test_write_marker_not_stale_on_plan_without_trailing_newline(tmp_path: Path):
+    """`write_marker` must hash the exact bytes it writes above the marker. A
+    fresh unmarked plan with no trailing newline gains one when the marker is
+    appended; hashing the pre-append bytes would leave the plan stale the
+    instant it is marked, so `/review-plan` would accept a plan that `/conduct`
+    immediately rejects. Regression for that write/validate byte mismatch.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(b"# Plan\n\nbody")  # deliberately no trailing newline
+
+    sha = write_marker(plan_path)
+    assert read_marker(plan_path)[1] == sha
+    assert compute_plan_hash(plan_path) == sha
+    assert marker_is_stale(plan_path) is False
+
+
+@requires_git
+def test_write_marker_preserves_crlf_and_is_not_stale(tmp_path: Path):
+    """`write_marker` reads and writes bytes, so a CRLF plan keeps its contract
+    line endings and validates non-stale. Text-mode I/O would translate line
+    endings — and on Windows `write_text` would re-expand `\\n` to `\\r\\n` on
+    disk, recording a hash over different bytes than `compute_plan_hash` reads
+    back. Pins byte-faithful, platform-independent write behaviour.
+    """
+    plan_path = tmp_path / "plan.md"
+    plan_path.write_bytes(b"# Plan\r\n\r\nbody\r\n")
+
+    write_marker(plan_path)
+    on_disk = plan_path.read_bytes()
+    # Contract bytes above the marker keep CRLF; nothing normalized them to LF.
+    assert b"# Plan\r\n\r\nbody\r\n" in on_disk
+    assert marker_is_stale(plan_path) is False
+
+
 # ---------------------------------------------------------------------------
 # /review-plan auto-fix tier integration (Phase 3)
 #

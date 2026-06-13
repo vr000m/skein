@@ -1,6 +1,6 @@
 ---
 name: review-plan
-description: Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five parallel fresh-context lens agents (architecture, sequencing, spec-and-testing, assumptions, codebase-claims) that audit the plan against the actual codebase. Cost: four high-reasoning Opus lenses + one cheap Haiku factual lens per run. Use after a dev-plan is created, when the user says "review plan", "audit plan", "check plan", or "/review-plan", and proactively after the dev-plan skill produces a new plan file.
+description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five parallel fresh-context lens agents (architecture, sequencing, spec-and-testing, assumptions, codebase-claims) that audit the plan against the actual codebase. Cost: four high-reasoning Opus lenses + one cheap Haiku factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
 argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
 ---
 
@@ -553,14 +553,14 @@ The **review marker** is a single HTML-comment line written into the plan file. 
 ```
 
 - `YYYY-MM-DD` — today's date.
-- `<hash>` — 40-character SHA-1 from `git hash-object` of the plan content **above** the marker line. Anything on the marker line or below it is excluded from hashing. This means the user (or `/conduct`) can tick `## Progress` checkboxes or append `## Findings` after review without invalidating the marker.
+- `<hash>` — 40-character SHA-1 from `git hash-object` of the plan content **above** the marker line. Anything on the marker line or below it is excluded from hashing. This means the user (or `/conduct`) can tick `## Progress` checkboxes or append `## Findings` after review without invalidating the marker. The hash is **byte-faithful**: `above_marker` is the bytes above the marker line verbatim — any blank line immediately above the marker and the original line endings (LF/CRLF) are preserved, never trimmed or normalized. `/conduct` validates with the same byte-faithful slice, so the two agree.
 
 Procedure:
 
 1. Read the plan file.
 2. Find the last unfenced, column-zero line matching **either** the real-marker regex `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$` **or** the template-placeholder regex `^<!-- reviewed: YYYY-MM-DD @ <hash> -->\s*$`. Marker-shaped text inside fenced code blocks or indented prose is ignored. The placeholder is the divider written by `dev-plan/template.md` for new plans — on first review it must be treated as the divider so `## Progress` / `## Findings` end up below the new marker rather than inside the hashed contract.
-3. Split the plan into `(above_marker, below_marker)` at that line. If no marker line of either form is found, treat the whole plan as `above_marker` and `below_marker` as empty.
-4. Compute `git hash-object --stdin` of `above_marker`.
+3. Split the plan into `(above_marker, below_marker)` at that line. `above_marker` is the bytes above the marker line **verbatim** — preserve any trailing blank line and the original line endings; do not trim or normalize. If no marker line of either form is found, treat the whole plan as `above_marker` and `below_marker` as empty.
+4. Compute `git hash-object --stdin` of `above_marker` (the verbatim bytes from step 3 — no normalization).
 5. Compose the new marker line with today's date and the computed hash.
 6. Write the plan back: `above_marker` + new marker + a single blank line + `below_marker` (preserved verbatim, so workspace content survives re-review). If `below_marker` was empty, just append the marker as the final line with a trailing newline.
 

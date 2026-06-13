@@ -1,7 +1,7 @@
 ---
 name: dev-plan
 description: Creates and updates development plans for multi-component features, architecture changes, and complex work. On `create`, dispatches a single fresh-context Explore subagent (one balanced/low-cost Sonnet call per `/dev-plan create`) that gathers structured codebase facts (verified paths, observed patterns, dependency versions) before drafting Technical Specifications and Files-to-Modify. Use when work affects 3+ files, involves UI/UX changes, database migrations, or is estimated at 2+ hours, or when the user says "dev plan", "plan this", or "/dev-plan".
-argument-hint: [action] [type] [name]
+argument-hint: "[action] [type] [name]"
 ---
 
 # Development Plan Skill

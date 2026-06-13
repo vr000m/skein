@@ -1,7 +1,7 @@
 ---
 name: dev-plan
 description: Creates and updates development plans for multi-component features, architecture changes, and complex work. On `create`, runs one balanced/low-cost Explore step via spawn_agent using the harness-selected model with medium reasoning when available, or inline same-prompt fact-gathering fallback, before drafting Technical Specifications and Files-to-Modify. Use when work affects 3+ files, involves UI/UX changes, database migrations, or is estimated at 2+ hours, or when the user says "dev plan", "plan this", or "/dev-plan".
-argument-hint: [action] [type] [name]
+argument-hint: "[action] [type] [name]"
 ---
 
 # Development Plan Skill

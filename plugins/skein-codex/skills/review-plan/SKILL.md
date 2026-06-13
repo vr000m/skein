@@ -564,14 +564,14 @@ The review marker is a single HTML-comment line written into the plan file. It a
 ```
 
 - `YYYY-MM-DD` is today's date.
-- `<hash>` is the 40-character SHA-1 from `git hash-object` of the plan content **above** the marker line. Anything on the marker line or below it is excluded from hashing. This means the user (or `/conduct`) can tick `## Progress` checkboxes or append `## Findings` after review without invalidating the marker.
+- `<hash>` is the 40-character SHA-1 from `git hash-object` of the plan content **above** the marker line. Anything on the marker line or below it is excluded from hashing. This means the user (or `/conduct`) can tick `## Progress` checkboxes or append `## Findings` after review without invalidating the marker. The hash is byte-faithful: `above_marker` is the bytes above the marker line verbatim, with any blank line immediately above the marker and the original line endings (LF/CRLF) preserved, never trimmed or normalized; `/conduct` validates with the same byte-faithful slice so the two always agree.
 
 Procedure:
 
 1. Read the plan file.
 2. Find the last unfenced, column-zero line matching either the real marker regex `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$` or the template placeholder `<!-- reviewed: YYYY-MM-DD @ <hash> -->`. Marker-shaped text inside fenced code blocks or indented prose is ignored.
-3. Split the plan into `(above_marker, below_marker)` at that line. If no real marker or placeholder is found, treat the whole plan as `above_marker` and `below_marker` as empty. The placeholder is only a replaceable divider; it is never a valid review marker for `/conduct` preflight.
-4. Compute `git hash-object --stdin` of `above_marker`.
+3. Split the plan into `(above_marker, below_marker)` at that line. `above_marker` is the bytes above the marker line verbatim: preserve any trailing blank line and the original line endings; do not trim or normalize. If no real marker or placeholder is found, treat the whole plan as `above_marker` and `below_marker` as empty. The placeholder is only a replaceable divider; it is never a valid review marker for `/conduct` preflight.
+4. Compute `git hash-object --stdin` of those verbatim `above_marker` bytes, with no normalization.
 5. Compose the new marker line with today's date and the computed hash.
 6. Write the plan back: `above_marker` + new marker + a single blank line + `below_marker` (preserved verbatim, so workspace content survives re-review). If `below_marker` was empty, just append the marker as the final line with a trailing newline.
 

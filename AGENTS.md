@@ -9,7 +9,7 @@ just check-sync                  # canonical scripts/ <-> bundled skill scripts 
 just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundle skills)
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
-just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback parity
+just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + conduct-marker parity
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts                # shellcheck + shfmt on scripts/
 ```
@@ -121,7 +121,7 @@ Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 ## Gotchas
 
-- **Repo invariants are orthogonal to install mechanism.** `just check-sync` / `check-prompt-parity` / `check-trunk-snippet-parity` / `parity-tests` / `reconciliation-tests` operate inside the plugin tree (canonical `scripts/` ↔ bundled skill `scripts/`, and Claude-mirror ↔ Codex-mirror SKILL.md parity). Run them after editing canonical scripts or either mirror's SKILL.md.
+- **Repo invariants are orthogonal to install mechanism.** `just check-sync` / `check-prompt-parity` / `check-trunk-snippet-parity` / `parity-tests` / `reconciliation-tests` operate inside the plugin tree (canonical `scripts/` ↔ bundled skill `scripts/`, Claude-mirror ↔ Codex-mirror SKILL.md parity, and `conduct/marker.py` byte-identity across both mirrors). Run them after editing canonical scripts or either mirror's SKILL.md.
 - **Do not edit `~/.claude/CLAUDE.md` or `~/.codex/AGENTS.md` from skein** — those globals are owned by the `skills.md` repo.
 - **Re-install after edits.** A `git pull` or local edit in this repo does not propagate to a live plugin install until you re-run `/plugin install skein@skein` (Claude) or `codex plugin add skein@skein` (Codex). If installed from GitHub, re-`marketplace add` first to refresh the cached commit.
 - **Bundled scripts are generated.** Edit the canonical files under `scripts/` (and `scripts/lib/`), then run `just bundle-appliers` to refresh each skill's `scripts/` subtree. `just check-sync` enforces canonical↔bundle byte-identity.
