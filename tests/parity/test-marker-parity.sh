@@ -22,9 +22,16 @@
 # no-EOF-newline case. Each fixture carries a real marker or the template
 # placeholder so write_marker has a divider to place the marker at.
 #
-# Out of scope (owned by Phase 4 / the review-plan-marker-write test): the
-# named 9fa0989-vs-df8d891 byte-faithful-vs-rstripped divergence assertion and
-# the abort / no-divider cases. This test stays focused on (a) and (b).
+# Part (c) — Named regression (9fa0989-vs-df8d891). On a fixture with a blank
+# line immediately above the marker, the byte-faithful slice
+# (strip_marker_for_hashing -> plan_text[:span_start], keeps the newline) and
+# the buggy rstripped slice (b'\n'.join(lines[:idx]), drops the newline) hash
+# to DIFFERENT values, and write_marker records the byte-faithful one. This
+# proves the deterministic path would have caught the original hand-rolled bug,
+# not merely that the new path is internally consistent.
+#
+# Out of scope (owned by the review-plan-marker-write test): the abort /
+# no-divider cases.
 #
 # Exit codes: 0 clean, 1 drift / missing copy / round-trip mismatch.
 
@@ -159,6 +166,68 @@ else
 	roundtrip_fixture "placeholder-divider" \
 		"b'# Plan\n\nContract body.\n\n${PLACEHOLDER}\n\n## Workspace\n'" \
 		"1"
+fi
+
+# --- (c) Named regression: byte-faithful slice != rstripped slice -----------
+# Reproduce the original bug's computation and prove it diverges from the
+# canonical byte-faithful slice on a blank-line-above-marker fixture, and that
+# write_marker records the byte-faithful hash (not the rstripped one).
+if [[ ! -f "$ANCHOR" ]]; then
+	echo "SKIP: regression divergence (canonical anchor absent)"
+elif ! command -v git >/dev/null 2>&1; then
+	echo "SKIP: regression divergence (git not available)"
+else
+	if out="$(
+		ANCHOR="$ANCHOR" python3 - <<'PY'
+import os, sys, subprocess, importlib.util
+
+anchor = os.environ["ANCHOR"]
+spec = importlib.util.spec_from_file_location("canonical_marker", anchor)
+marker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(marker)
+
+# Blank line immediately above the marker — the exact shape that exposed the bug.
+REAL = "<!-- reviewed: 2026-06-15 @ " + "0" * 40 + " -->"
+text = "# Plan\n\nContract body.\n\n" + REAL + "\n\n## Workspace\n"
+
+def git_hash(b: bytes) -> str:
+    return subprocess.run(
+        ["git", "hash-object", "--stdin"], input=b,
+        capture_output=True, check=True,
+    ).stdout.decode().strip()
+
+# byte-faithful slice: everything above the marker line, verbatim (keeps the
+# blank line and its trailing newline).
+faithful = marker.strip_marker_for_hashing(text)
+faithful_sha = git_hash(faithful.encode("utf-8"))
+
+# buggy rstripped slice: the original b'\n'.join(lines[:idx]) — drops the
+# newline that precedes the marker.
+lines = text.split("\n")
+idx = next(i for i, l in enumerate(lines) if l.startswith("<!-- reviewed:"))
+rstripped = "\n".join(lines[:idx]).encode("utf-8")
+rstripped_sha = git_hash(rstripped)
+
+diverge = faithful_sha != rstripped_sha
+
+# write_marker must record the byte-faithful hash, not the rstripped one.
+import tempfile
+with tempfile.TemporaryDirectory() as d:
+    p = os.path.join(d, "plan.md")
+    open(p, "w", encoding="utf-8").write(text)
+    written = marker.write_marker(p)
+
+records_faithful = written == faithful_sha and written != rstripped_sha
+
+print(f"faithful={faithful_sha[:12]} rstripped={rstripped_sha[:12]} "
+      f"written={written[:12]} diverge={diverge} records_faithful={records_faithful}")
+sys.exit(0 if (diverge and records_faithful) else 1)
+PY
+	)"; then
+		pass "regression divergence: byte-faithful != rstripped, write_marker records faithful ($out)"
+	else
+		fail "regression divergence ($out)"
+	fi
 fi
 
 echo ""
