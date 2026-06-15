@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-06-15 | bug | review-plan-marker-hash | review-skills | — | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 
 ## Planned
