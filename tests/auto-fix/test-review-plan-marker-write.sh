@@ -19,6 +19,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 SKILL_MD="$REPO_ROOT/plugins/skein/skills/review-plan/SKILL.md"
+CODEX_SKILL_MD="$REPO_ROOT/plugins/skein-codex/skills/review-plan/SKILL.md"
 ENTRYPOINT="$REPO_ROOT/plugins/skein/skills/review-plan/scripts/write-review-marker.py"
 
 pass_count=0
@@ -64,6 +65,33 @@ if [[ -f "$SKILL_MD" ]]; then
 	else
 		pass "hand-compute recipe removed from SKILL.md (negative assertion holds)"
 	fi
+fi
+
+# --- Codex mirror: same negative assertion, with the $SKILL_DIR anchor -------
+if [[ -f "$CODEX_SKILL_MD" ]]; then
+	if grep -q 'write-review-marker.py' "$CODEX_SKILL_MD"; then
+		pass "codex mirror references bundled entrypoint (write-review-marker.py)"
+	else
+		fail "codex mirror does not reference write-review-marker.py"
+	fi
+	# Codex must use the $SKILL_DIR anchor, never the Claude ${CLAUDE_PLUGIN_ROOT}.
+	if grep -Eq '"\$SKILL_DIR"/scripts/write-review-marker.py' "$CODEX_SKILL_MD"; then
+		pass "codex mirror invokes entrypoint via \$SKILL_DIR anchor"
+	else
+		fail "codex mirror missing \$SKILL_DIR-anchored write-review-marker.py invocation"
+	fi
+	if grep -q 'CLAUDE_PLUGIN_ROOT' "$CODEX_SKILL_MD"; then
+		fail "codex mirror leaks \${CLAUDE_PLUGIN_ROOT} (Claude anchor must not appear)"
+	else
+		pass "codex mirror has no \${CLAUDE_PLUGIN_ROOT} leak"
+	fi
+	if grep -Eq 'Compute .git hash-object --stdin. of .above_marker.' "$CODEX_SKILL_MD"; then
+		fail "hand-compute recipe still present in codex SKILL.md (must be removed)"
+	else
+		pass "hand-compute recipe removed from codex SKILL.md (negative assertion holds)"
+	fi
+else
+	fail "codex mirror SKILL.md missing at $CODEX_SKILL_MD"
 fi
 
 # ============================================================================
