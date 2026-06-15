@@ -35,3 +35,23 @@ bundle_applier_for() {
 		;;
 	esac
 }
+
+# Skill-specific bundle extras (one basename per line; empty for skills with
+# none). These are NOT in BUNDLE_SHARED on purpose: adding them there would copy
+# them into every auto-fix skill, breaking the "bundled == operative" invariant
+# documented above. review-plan's Step 7 invokes write-review-marker.py (which
+# imports the byte-faithful marker.py hashing authority), so both files ship
+# only into review-plan's mirrors. Returns 0 with no output for deep-review.
+bundle_extra_for() {
+	case "$1" in
+	review-plan)
+		printf 'marker.py\n'
+		printf 'write-review-marker.py\n'
+		;;
+	deep-review) ;;
+	*)
+		printf 'bundle-map: unknown skill %s\n' "$1" >&2
+		return 1
+		;;
+	esac
+}

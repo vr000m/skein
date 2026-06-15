@@ -46,6 +46,12 @@ check_bundle_dir() {
 
 for skill in "${BUNDLE_SKILLS[@]}"; do
 	bundle_files=("${BUNDLE_SHARED[@]}" "$(bundle_applier_for "$skill")")
+	# Per-skill extras (review-plan's marker.py + write-review-marker.py) are
+	# bundled too; include them so the byte-identity check covers them and the
+	# stale-leftover guard does not flag them as unexpected.
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] && bundle_files+=("$extra")
+	done < <(bundle_extra_for "$skill")
 	check_bundle_dir "$ROOT_DIR/plugins/skein/skills/$skill/scripts" "${bundle_files[@]}"
 	check_bundle_dir "$ROOT_DIR/plugins/skein-codex/skills/$skill/scripts" "${bundle_files[@]}"
 done
