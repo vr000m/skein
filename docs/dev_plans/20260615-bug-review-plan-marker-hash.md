@@ -179,11 +179,11 @@ This fits the existing direction of the repo: `20260523-feature-bundle-auto-fix-
 
 ## Progress
 
-- [ ] Phase 1: Canonical marker.py + CLI, wired into the bundler
-- [ ] Phase 2: Rewire review-plan Step 7 + fix prose (skein)
-- [ ] Phase 3: Mirror SKILL.md into skein-codex
-- [ ] Phase 4: Consolidated regression + edge-case proof
-- [ ] Phase 5: Docs + manifest bump
+- [x] Phase 1: Canonical marker.py + CLI, wired into the bundler
+- [x] Phase 2: Rewire review-plan Step 7 + fix prose (skein)
+- [x] Phase 3: Mirror SKILL.md into skein-codex
+- [x] Phase 4: Consolidated regression + edge-case proof
+- [x] Phase 5: Docs + manifest bump
 
 ## Findings
 
