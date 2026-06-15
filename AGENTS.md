@@ -9,7 +9,7 @@ just check-sync                  # canonical scripts/ <-> bundled skill scripts 
 just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundle skills)
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
-just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + conduct-marker parity
+just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker parity (conduct + canonical anchor + review-plan marker write)
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts                # shellcheck + shfmt on scripts/
 ```

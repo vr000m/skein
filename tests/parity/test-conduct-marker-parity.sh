@@ -11,6 +11,15 @@
 # silently make the Claude and Codex plugins disagree on staleness for the same
 # plan. This guard fails fast on that drift.
 #
+# NOTE: As of 0.2.3 the authoritative marker-parity contract is
+# tests/parity/test-marker-parity.sh, which anchors EVERY copy (conduct
+# skein/codex AND review-plan skein/codex) byte-identical to the canonical
+# scripts/marker.py. That anchored check subsumes this conduct-only mutual
+# diff. This file is retained as a fast, dependency-light smoke check (pure
+# `diff`, no python/git round-trip); it is intentionally redundant. Do not
+# treat the conduct-to-conduct mutual diff here as the single source of the
+# parity contract — scripts/marker.py is the anchor.
+#
 # Exit codes: 0 clean, 1 drift (or a copy missing).
 
 set -euo pipefail

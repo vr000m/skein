@@ -69,7 +69,10 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 				[[ "$rel" == "$f" ]] && declared=1 && break
 			done
 			[[ "$declared" -eq 0 ]] && fail "unexpected bundled file $mirror/skills/$skill/scripts/$rel"
-		done < <(find "$dest" -type f 2>/dev/null)
+			# Exclude __pycache__: importing a bundled .py entrypoint writes
+			# transient, gitignored .pyc files into the bundle dir; they are
+			# not part of the declared set and must not read as drift.
+		done < <(find "$dest" -type f -not -path '*/__pycache__/*' 2>/dev/null)
 	done
 done
 
