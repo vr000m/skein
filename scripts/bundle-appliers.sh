@@ -39,7 +39,16 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 		cp "$SRC/$f" "$stage/$f"
 	done
 	cp "$SRC/$applier" "$stage/$applier"
+	# Per-skill extras (e.g. review-plan's marker.py + write-review-marker.py).
+	# Staged here so they fan out byte-identically into both mirrors alongside
+	# the shared pipeline; deep-review has none (bundle_extra_for prints nothing).
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] || continue
+		cp "$SRC/$extra" "$stage/$extra"
+	done < <(bundle_extra_for "$skill")
 	chmod +x "$stage"/*.sh "$stage"/lib/*.sh
+	# write-review-marker.py is an executable entrypoint; keep its bit set.
+	[[ -f "$stage/write-review-marker.py" ]] && chmod +x "$stage/write-review-marker.py"
 
 	for mirror in "${MIRRORS[@]}"; do
 		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"

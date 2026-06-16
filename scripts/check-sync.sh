@@ -41,11 +41,22 @@ check_bundle_dir() {
 			echo "drift: unexpected bundled $tdir/$rel"
 			BUNDLE_DIFF=1
 		fi
-	done < <(find "$tdir" -type f 2>/dev/null)
+		# Exclude __pycache__: importing a bundled .py entrypoint (e.g.
+		# review-plan/scripts/write-review-marker.py importing its sibling
+		# marker.py) writes .pyc files into the bundle dir. They are gitignored
+		# and transient, never part of the declared bundle set, so a guard that
+		# counted them would false-flag drift after any python run in the tree.
+	done < <(find "$tdir" -type f -not -path '*/__pycache__/*' 2>/dev/null)
 }
 
 for skill in "${BUNDLE_SKILLS[@]}"; do
 	bundle_files=("${BUNDLE_SHARED[@]}" "$(bundle_applier_for "$skill")")
+	# Per-skill extras (review-plan's marker.py + write-review-marker.py) are
+	# bundled too; include them so the byte-identity check covers them and the
+	# stale-leftover guard does not flag them as unexpected.
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] && bundle_files+=("$extra")
+	done < <(bundle_extra_for "$skill")
 	check_bundle_dir "$ROOT_DIR/plugins/skein/skills/$skill/scripts" "${bundle_files[@]}"
 	check_bundle_dir "$ROOT_DIR/plugins/skein-codex/skills/$skill/scripts" "${bundle_files[@]}"
 done

@@ -4,6 +4,17 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-15
+
+### Fixed
+- `/review-plan` now writes its review marker via a bundled deterministic entrypoint (`scripts/write-review-marker.py`) instead of an LLM hand-following a prose recipe at Step 7. **Root cause (confirmed from session transcripts, both `/review-plan` and `/conduct` on 0.2.2):** the 0.2.2 fix hardened `conduct/marker.py` (code) and both SKILL.md mirrors (prose), but `/review-plan` still computed the marker hash by hand — and an agent, despite the byte-faithful prose in context, wrote `above = b'\n'.join(lines[:idx])`, which drops the newline immediately above the marker (`join` separates, it does not terminate). That rstripped hash diverged from `conduct`'s byte-faithful slice (`plan_text[:span_start]`), so `/conduct` false-flagged a freshly reviewed plan as drifted. Prose cannot prevent the `splitlines`/`join` newline-eating trap; only shared deterministic code can.
+- The marker hash is now computed by the same `marker.py` authority `/conduct` validates with — promoted to a canonical `scripts/marker.py` and fanned into both `review-plan` mirrors by `scripts/bundle-appliers.sh` (per-skill extras via `bundle_extra_for`). All copies (conduct ×2, review-plan ×2) are anchored byte-identical to the canonical file by `tests/parity/test-marker-parity.sh`, so the two skills can no longer disagree on a plan's hash.
+- `/review-plan` Step 7 adopts the auto-fix applier's abort-if-absent / never-hand-compute contract, and now **aborts** (rather than appending the marker at EOF) when a plan has no marker line and no template placeholder divider — burying the marker below the workspace would fold the workspace into the hashed contract.
+
+### Changed
+- Bundle map (`scripts/lib/bundle-map.sh`) grows a per-skill extras hook (`bundle_extra_for`) so `marker.py` + `write-review-marker.py` ship into `review-plan` only (not `deep-review`), preserving the "bundled == operative" invariant. `check-sync.sh` and `tests/parity/test-applier-bundle-parity.sh` enumerate the extras so their byte-identity is guarded.
+- Added `tests/parity/test-marker-parity.sh` (anchored byte-identity + post-write round-trip + the named `9fa0989`-vs-`df8d891` divergence regression) and `tests/auto-fix/test-review-plan-marker-write.sh` (recipe-removed negative assertion across both mirrors, abort contract, placeholder happy path).
+
 ## [0.2.2] - 2026-06-12
 
 ### Fixed
@@ -44,7 +55,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/vr000m/skein/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/vr000m/skein/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/vr000m/skein/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/vr000m/skein/compare/v0.1.0...v0.2.0

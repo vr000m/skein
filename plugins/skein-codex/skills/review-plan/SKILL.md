@@ -568,16 +568,23 @@ The review marker is a single HTML-comment line written into the plan file. It a
 
 Procedure:
 
-1. Read the plan file.
-2. Find the last unfenced, column-zero line matching either the real marker regex `^<!-- reviewed: \d{4}-\d{2}-\d{2} @ [0-9a-f]{40} -->\s*$` or the template placeholder `<!-- reviewed: YYYY-MM-DD @ <hash> -->`. Marker-shaped text inside fenced code blocks or indented prose is ignored.
-3. Split the plan into `(above_marker, below_marker)` at that line. `above_marker` is the bytes above the marker line verbatim: preserve any trailing blank line and the original line endings; do not trim or normalize. If no real marker or placeholder is found, treat the whole plan as `above_marker` and `below_marker` as empty. The placeholder is only a replaceable divider; it is never a valid review marker for `/conduct` preflight.
-4. Compute `git hash-object --stdin` of those verbatim `above_marker` bytes, with no normalization.
-5. Compose the new marker line with today's date and the computed hash.
-6. Write the plan back: `above_marker` + new marker + a single blank line + `below_marker` (preserved verbatim, so workspace content survives re-review). If `below_marker` was empty, just append the marker as the final line with a trailing newline.
+1. Resolve the bundled marker writer at `"$SKILL_DIR"/scripts/write-review-marker.py`. It ships *inside this skill* under `scripts/` so it resolves wherever the skill is installed. If `"$SKILL_DIR"/scripts/write-review-marker.py` is absent, **abort with a clear error** — never fall back to hand-computing the hash.
+2. Run:
+
+   ```
+   "$SKILL_DIR"/scripts/write-review-marker.py <reviewed-plan>
+   ```
+
+   This entrypoint performs the byte-faithful slice + write in one shot: it finds the last unfenced, column-zero real marker or template placeholder divider, computes `git hash-object --stdin` from the bytes above that divider, writes the dated marker, and keeps workspace content below the marker outside the hashed contract. Edge blank lines bounding the below-marker region may be normalized; that is harmless because below-marker content is never hashed.
+3. Capture the entrypoint's stdout (the 40-hex SHA-1) as the marker hash.
+
+Do not hand-roll the split. A `splitlines` / `b'\n'.join` implementation silently drops the newline immediately above the marker, producing a hash `/conduct` rejects as false drift.
+
+If the plan has no real marker line and no template placeholder divider, `write-review-marker.py` ABORTS with a clear error. The marker is NOT appended at EOF: burying it below the workspace would fold the workspace into the hashed contract. The dev-plan template always emits the placeholder, so the first-review flow is unaffected.
 
 The marker is idempotent: replacing an existing marker on otherwise unchanged content produces the same hash. Workspace content below the marker is never rehashed, so workspace edits during a `/conduct` run do not require re-review.
 
-**Interaction with auto-fix.** When Step 6.5 applied one or more prose edits, manifest entries carry `status: applied` plus a separate `marker_pending: true` flag, and the plan's previous review marker is intentionally unchanged. Step 7 is the single point where the real marker is written: it hashes the post-edit contract section so the marker reflects the current plan content. Lens-emitted `marker_refresh` blocks are NEVER honoured pre-acceptance — they record `marker_pending` in the manifest and only Step 7's hash-and-write path publishes a real marker. If the plan has no marker line at all (fresh plan), Step 7 writes a new marker at the template position (after the final immutable-contract heading) rather than raising. If the marker hash computation fails because the plan is not valid UTF-8, the applier exits `marker_failed` during Step 6.5 and rolls back the batch before Step 7 runs.
+**Interaction with auto-fix.** When Step 6.5 applied one or more prose edits, manifest entries carry `status: applied` plus a separate `marker_pending: true` flag, and the plan's previous review marker is intentionally unchanged. Step 7 is the single point where the real marker is written: it hashes the post-edit contract section so the marker reflects the current plan content. Lens-emitted `marker_refresh` blocks are NEVER honoured pre-acceptance — they record `marker_pending` in the manifest and only Step 7's bundled hash-and-write path publishes a real marker. If the plan has no marker line but does have the template placeholder, Step 7 writes a new marker at the template position (after the final immutable-contract heading). If the marker hash computation fails because the plan is not valid UTF-8, the applier exits `marker_failed` during Step 6.5 and rolls back the batch before Step 7 runs.
 
 ## Constraints
 

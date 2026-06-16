@@ -9,7 +9,7 @@ just check-sync                  # canonical scripts/ <-> bundled skill scripts 
 just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundle skills)
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
-just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + conduct-marker parity
+just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker parity (conduct + canonical anchor + review-plan marker write)
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts                # shellcheck + shfmt on scripts/
 ```
@@ -122,6 +122,7 @@ Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 ## Gotchas
 
 - **Repo invariants are orthogonal to install mechanism.** `just check-sync` / `check-prompt-parity` / `check-trunk-snippet-parity` / `parity-tests` / `reconciliation-tests` operate inside the plugin tree (canonical `scripts/` ↔ bundled skill `scripts/`, Claude-mirror ↔ Codex-mirror SKILL.md parity, and `conduct/marker.py` byte-identity across both mirrors). Run them after editing canonical scripts or either mirror's SKILL.md.
+- **The review marker has one hashing authority: canonical `scripts/marker.py`.** Both `/conduct` (its own `conduct/marker.py` copy) and `/review-plan` (the bundled `review-plan/scripts/marker.py` + the `write-review-marker.py` CLI it ships) compute the byte-faithful marker hash from the same code; `tests/parity/test-marker-parity.sh` anchors every copy byte-identical to `scripts/marker.py`. **Never hand-compute the marker hash in SKILL.md prose** — an LLM following a prose recipe wrote `b'\n'.join(lines[:idx])`, dropped the newline above the marker, and produced false `/conduct` drift (the 0.2.3 fix). `/review-plan` Step 7 invokes the bundled `write-review-marker.py` and aborts if it is absent or if the plan has no divider; it does not append the marker at EOF.
 - **Do not edit `~/.claude/CLAUDE.md` or `~/.codex/AGENTS.md` from skein** — those globals are owned by the `skills.md` repo.
 - **Re-install after edits.** A `git pull` or local edit in this repo does not propagate to a live plugin install until you re-run `/plugin install skein@skein` (Claude) or `codex plugin add skein@skein` (Codex). If installed from GitHub, re-`marketplace add` first to refresh the cached commit.
 - **Bundled scripts are generated.** Edit the canonical files under `scripts/` (and `scripts/lib/`), then run `just bundle-appliers` to refresh each skill's `scripts/` subtree. `just check-sync` enforces canonical↔bundle byte-identity.
