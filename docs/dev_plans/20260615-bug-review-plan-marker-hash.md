@@ -1,12 +1,12 @@
 # Task: Deterministic review marker — make /review-plan reuse conduct's marker.py
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: High
 **Branch**: fix/review-plan-deterministic-marker-hash
 **Created**: 2026-06-15
-**Completed**: (fill when done)
+**Completed**: 2026-06-15
 
 ## Objective
 
@@ -173,7 +173,7 @@ This fits the existing direction of the repo: `20260523-feature-bundle-auto-fix-
 - Both manifests at `0.2.3`; CHANGELOG/AGENTS/README updated.
 - Code reviewed and approved; tests passing; documentation updated.
 
-<!-- reviewed: 2026-06-15 @ 3054b55136ffd10c7e57c0695805bfc95079a997 -->
+<!-- reviewed: 2026-06-15 @ 55fcade37ce39e74f3b9000bf26ab3cc456cb6ca -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
