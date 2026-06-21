@@ -322,6 +322,7 @@ AF_FORBIDDEN_HEADINGS=(
 	"### New Files to Create"
 	"### Architecture Decisions"
 	"### Integration Seams"
+	"## Architecture & Call Flow"
 )
 readonly AF_FORBIDDEN_HEADINGS
 
