@@ -381,7 +381,7 @@ Per-phase completion tracked here so ticking a box during a run does not bust th
 - [x] Phase 3: Negative-space architecture lens + topology-omission backstop in review-plan
 - [x] Phase 4: Interactive triage-and-clarify elicitation loop in review-plan SKILL.md
 - [x] Phase 5: Version bump, parity + sync checks
-- [ ] Phase 6: Document model / thinking-level routing (docs-only)
+- [x] Phase 6: Document model / thinking-level routing (docs-only)
 
 ## Findings
 
