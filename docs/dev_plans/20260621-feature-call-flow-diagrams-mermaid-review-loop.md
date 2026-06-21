@@ -379,7 +379,7 @@ Per-phase completion tracked here so ticking a box during a run does not bust th
 - [x] Phase 1: Mermaid rendering in plan-view
 - [x] Phase 2: Architecture & Call Flow section in dev-plan template + SKILL.md
 - [x] Phase 3: Negative-space architecture lens + topology-omission backstop in review-plan
-- [ ] Phase 4: Interactive triage-and-clarify elicitation loop in review-plan SKILL.md
+- [x] Phase 4: Interactive triage-and-clarify elicitation loop in review-plan SKILL.md
 - [ ] Phase 5: Version bump, parity + sync checks
 - [ ] Phase 6: Document model / thinking-level routing (docs-only)
 
