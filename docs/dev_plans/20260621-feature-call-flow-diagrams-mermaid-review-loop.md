@@ -376,7 +376,7 @@ None.
 
 Per-phase completion tracked here so ticking a box during a run does not bust the review marker. `/conduct` reads this section to skip already-done phases. Format: `- [ ] Phase <label>: <title>`.
 
-- [ ] Phase 1: Mermaid rendering in plan-view
+- [x] Phase 1: Mermaid rendering in plan-view
 - [ ] Phase 2: Architecture & Call Flow section in dev-plan template + SKILL.md
 - [ ] Phase 3: Negative-space architecture lens + topology-omission backstop in review-plan
 - [ ] Phase 4: Interactive triage-and-clarify elicitation loop in review-plan SKILL.md
