@@ -82,10 +82,11 @@ Keep it short, concrete, and specific. If a plan references external standards, 
 1. Check branch (suggest feature branch if on main)
 2. Create plan with initial structure
 3. **Explore (create only)** — dispatch a single `Agent` call with isolated context, `model: sonnet`, that gathers structured codebase facts before drafting Technical Specifications and Files-to-Modify. See "Explore Step" below for the prompt and contract. Explore facts land **above the review marker** in the immutable contract, and **only on `create`** — never on `update` / `complete`.
-4. Define phases and acceptance criteria
-5. Weave Explore facts (verified paths, observed patterns, dependency versions) into Technical Specifications / Files-to-Modify. Identify files to modify, potential risks, and any Review Focus items that should be written into the plan.
-6. Run `/review-plan` to audit for gaps, undocumented assumptions, missing constraints, and Review Focus coverage before coding starts
-7. Address review findings, then proceed to implementation. For a linear multi-phase plan, run `/conduct <plan>` to walk phases with per-phase clean-context subagents (fill the `**Impl files:**`, `**Test files:**`, `**Test command:**`, and optional `**Validation cmd:**` slots so the conductor can decide spawn strategy and run tests/validation). Use `/fan-out` when phases are independent enough to parallelise.
+4. **Architecture & Call Flow gate (create only, conditional)** — if the system has **2+ independently-executing components**, draft the `## Architecture & Call Flow` section after Explore returns and **present it to the user for confirmation before writing phases** (gate: show the draft, ask "does this look correct?"). Omit the section entirely for single-component changes. See "Architecture & Call Flow Section" below.
+5. Define phases and acceptance criteria
+6. Weave Explore facts (verified paths, observed patterns, dependency versions) into Technical Specifications / Files-to-Modify. Identify files to modify, potential risks, and any Review Focus items that should be written into the plan.
+7. Run `/review-plan` to audit for gaps, undocumented assumptions, missing constraints, and Review Focus coverage before coding starts
+8. Address review findings, then proceed to implementation. For a linear multi-phase plan, run `/conduct <plan>` to walk phases with per-phase clean-context subagents (fill the `**Impl files:**`, `**Test files:**`, `**Test command:**`, and optional `**Validation cmd:**` slots so the conductor can decide spawn strategy and run tests/validation). Use `/fan-out` when phases are independent enough to parallelise.
 
 ## Explore Step (`create` only)
 
@@ -169,6 +170,23 @@ Each fact is one line or one short bullet — no narrative paragraphs. Do not dr
 After Explore returns, self-check the structured-fact output against [rubric.md](rubric.md) before weaving facts into the Technical Specifications and Files-to-Modify sections. The rubric covers scope discipline (facts only, no plan prose), fact quality (verified paths, cited line ranges, exact version strings), coverage-vs-honesty (unverified items are listed, not dropped), prompt-injection posture, and integration with the plan body. Correct any rubric violations (e.g. a "pattern" with no file/line evidence) before incorporating facts.
 
 The main agent owns plan prose — weave the verified facts into Technical Specifications / Files-to-Modify; do not paste raw Explore output verbatim.
+
+## Architecture & Call Flow Section (`create` only)
+
+On `/dev-plan create`, after Explore returns and **before phases are written**, decide whether the plan needs an `## Architecture & Call Flow` section, draft it if so, and confirm it with the user at a gate.
+
+**When to include it.** Include the section only when the system has **2 or more independently-executing components** — e.g. a Claude SDK call, an LLM router, an MCP server, a subagent, a CLI front-end, a storage layer. These are components that run in their own execution context and hand control (and context) to one another. **Omit the section entirely** for single-component changes: a typo fix, an isolated script tweak, a one-file refactor. When in doubt, count the components that would appear as distinct nodes in a call graph; 2+ means include.
+
+**The gate.** Because the call-flow section encodes cross-component assumptions, draft it *before* writing phases and present it to the user for confirmation: show the draft section and ask "does this look correct?". Getting confirmation before phases are written avoids building the whole plan on a misunderstood topology. Revise per the user's answer, then continue to phase definition. This gate runs on `create` only.
+
+**The three sub-elements.** The section contains exactly:
+1. A Mermaid `graph` (or `architecture`) diagram — the **component graph**, showing which component triggers which.
+2. A Mermaid `sequenceDiagram` — the **trigger order**, the sequence of calls across a single run.
+3. A markdown **context-lifecycle table** with these exact columns: `Step | Trigger | Enters context | Cleared/persisted | Turn boundary`.
+
+**Placement.** The section heading is `## Architecture & Call Flow`. It is placed **immediately after the `### Integration Seams` subsection (the last subsection of `## Technical Specifications`) and before `## Testing Notes`** — see `template.md`. Do NOT place it "before the marker": `## Testing Notes` and `## Acceptance Criteria` both sit between Technical Specifications and the marker, so "before the marker" would land it after Acceptance Criteria, away from the topology facts it belongs next to.
+
+**Immutability.** The section sits **above the review marker**, so it is part of the immutable contract. Editing it after `/review-plan` invalidates the marker hash and forces re-review — this is correct: a topology error is a plan error, not a runtime fixup. The Mermaid fences in this section render as live diagrams in `/plan-view` HTML output.
 
 ### During Implementation
 1. Update `## Progress` checkboxes as phases complete
