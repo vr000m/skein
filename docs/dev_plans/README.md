@@ -14,7 +14,9 @@ parser can pick up the slug.
 
 ## Planned
 
-_None._
+| Date | Type | Name | Comp | PR | Branch | Plan |
+|------|------|------|------|----|--------|------|
+| 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | — | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |
 
 ## Shipped
 
