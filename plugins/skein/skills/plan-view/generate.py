@@ -647,8 +647,11 @@ def render_markdown(text: str) -> str:
                 i += 1
             i += 1  # skip closing fence
             escaped = html.escape("\n".join(code_lines), quote=False)
-            cls = f' class="lang-{lang}"' if lang else ""
-            out.append(f"<pre><code{cls}>{escaped}</code></pre>")
+            if lang == "mermaid":
+                out.append(f'<pre class="mermaid">{escaped}</pre>')
+            else:
+                cls = f' class="lang-{lang}"' if lang else ""
+                out.append(f"<pre><code{cls}>{escaped}</code></pre>")
             continue
         heading = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
         if heading:

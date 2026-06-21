@@ -6,6 +6,7 @@ Lock the regex catalogue against silent drift as plan conventions evolve.
 from pathlib import Path
 
 import generate as G
+import pytest
 
 
 def test_field_parser_handles_colon_outside_bold(tmp_path: Path) -> None:
@@ -285,3 +286,37 @@ def test_render_markdown_code_fence_keeps_language_class() -> None:
     out = G.render_markdown("```python\nx = 1\n```\n")
     assert 'class="lang-python"' in out
     assert "lang-```" not in out
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        "```mermaid\ngraph LR\n    A-->B\n```\n",
+        "```mermaid\ngraph LR\n    A-->B\n```",  # no trailing newline before EOF
+    ],
+)
+def test_render_markdown_mermaid_fence(src: str) -> None:
+    out = G.render_markdown(src)
+    assert '<pre class="mermaid">' in out
+    assert '<code class="lang-mermaid">' not in out
+
+
+def test_render_markdown_mermaid_fence_empty() -> None:
+    out = G.render_markdown("```mermaid\n```\n")
+    assert '<pre class="mermaid"></pre>' in out
+
+
+def test_templates_load_mermaid_runtime() -> None:
+    from pathlib import Path as _P
+
+    skill_dir = _P(G.__file__).resolve().parent
+    for name in ("template.html", "plan-template.html"):
+        html_text = (skill_dir / name).read_text(encoding="utf-8")
+        head_idx = html_text.index("</head>")
+        before_head = html_text[:head_idx]
+        assert "mermaid.esm.min.mjs" in before_head, (
+            f"{name}: mermaid script missing before </head>"
+        )
+        assert 'type="module"' in before_head, (
+            f"{name}: module script tag missing before </head>"
+        )
