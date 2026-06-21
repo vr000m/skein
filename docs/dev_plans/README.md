@@ -9,7 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | — | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |
+| 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | [#10](https://github.com/vr000m/skein/pull/10) | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |
 | 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 
