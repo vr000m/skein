@@ -1,7 +1,7 @@
 ---
 name: review-plan
 description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five Codex review lenses via parallel spawn_agent workers when available, with sequential in-session fallback. Cost: four high-reasoning judgment lenses plus one lower-effort factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
-argument-hint: "[path/to/plan.md] [--auto-fix=trivial]"
+argument-hint: "[path/to/plan.md] [--auto-fix=trivial] [--batch]"
 ---
 
 # Review Plan: Independent Plan Audit
@@ -514,6 +514,31 @@ Do NOT modify the plan body automatically. The findings are a starting point for
 
 Only after the user has reviewed and addressed the findings (or explicitly decided to proceed) should implementation begin.
 
+### Step 6.4: Interactive Triage-and-Clarify Elicitation Loop (default-on; `--batch` skips)
+
+**Default-on.** Unless the caller passed `--batch`, run this structured loop after Discussion (Step 6) and **before** the auto-fix step (Step 6.5) and marker write (Step 7). It captures the user's triage decisions and the design choices that resolve each finding, then persists those decisions back into the plan via `/dev-plan update` so they live in the plan, not only in the transcript. The main Codex agent drives this loop directly with plain-text prompts; there is no shell script and no fixed-option picker.
+
+**`--batch` (non-interactive) skips this entire step** and falls through to today's behaviour: the findings were already presented (Step 5), and Step 7 issues the `yes`/`waive`/`no` marker prompt. This preserves unattended / CI runs. `--batch` skips **only** this loop (Step 6.4); it does NOT skip Step 6.5 — see *Composability* below.
+
+The loop has three interactive sub-steps, then hands off to the marker write:
+
+1. **Triage.** Present the reconciled findings as a numbered list using the Step 5 ordering. Ask which findings to address via a **free-form plain-text selection**, for example: `1,3,4`, `all`, `none`, or `critical+important`. Do **not** use a fixed 2-4-option picker: the finding count is unbounded and Codex has no AskUserQuestion-style fixed-option widget. Parse the free-form answer into the selected finding set.
+2. **Clarify (per selected finding).** For each selected finding, present 2-3 design-consistent resolution options as a plain-text prompt: list the options and ask the user to choose one in text. When no clear options exist, ask a free-text clarification question instead. Capture the chosen resolution or free-text decision for that finding.
+3. **Route.**
+   - For findings the user chose to **act on**, call `/dev-plan update` with a **prose summary of the decision** (what to change and why), not an inline diff. `/dev-plan update` weaves the decision into the plan **above the marker** (Technical Specifications). The loop records decisions, not hand-written patch text.
+   - For findings the user **waived**, append the finding and reason under a dedicated `### Review Waivers` subheading inside `## Findings` **below the marker**. Keep these distinct from `/conduct` runtime findings. The below-marker workspace is outside the hash window, so this write is order-independent.
+
+After the loop completes (every selected finding routed through `/dev-plan update` or waived), proceed to Step 6.5 if `--auto-fix=trivial` was passed, then Step 7, which writes the marker **exactly once**.
+
+**Write-then-hash ordering invariant (mandatory).** Three writers can touch above-marker content in one run: this loop's `/dev-plan update`, the `--auto-fix=trivial` applier (Step 6.5), and the Step 7 marker entrypoint. They MUST run in this fixed order:
+1. This loop's `/dev-plan update` edits land and are **flushed to disk**.
+2. `--auto-fix=trivial` (if passed) runs on the **updated** content (Step 6.5).
+3. Step 7's single entrypoint **reads and hashes the final above-marker bytes**.
+
+Every `/dev-plan update` from this loop MUST complete and be re-read from disk before the marker entrypoint runs. Otherwise the marker hashes stale content and `/conduct` rejects it as drift. The waived-findings write to `### Review Waivers` is **not** a fourth ordering constraint: it targets the below-marker workspace, which is outside the hash window, so it is order-independent relative to the sequence above.
+
+**Composability with `--auto-fix=trivial`.** `--batch` and `--auto-fix=trivial` are **orthogonal** and may be combined. `--batch` skips only this interactive loop (Step 6.4); it does NOT skip Step 6.5. So `--batch --auto-fix=trivial` = today's behaviour (present findings, `yes`/`waive`/`no` marker prompt) **plus** trivial auto-fixes.
+
 ### Step 6.5: Apply Trivial Auto-Fixes (opt-in)
 
 Run this step **only when** the caller passed `--auto-fix=trivial`. Without the flag the workflow skips straight to Step 7 with `[AUTO-FIXABLE]` annotations from the pre-render audit (dry-run preview).
@@ -523,7 +548,7 @@ Run this step **only when** the caller passed `--auto-fix=trivial`. Without the 
 Preconditions:
 
 - The reconciled v2 envelope from Step 3 has been annotated by `scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>` so each candidate carries an `auto_fix_status` (`would_apply`, `rejected_kind`, `rejected_scope`, `drift`, ...).
-- The user has accepted or waived all remaining findings in Step 6. Auto-fix runs only on plan content the user has signed off on.
+- The user has accepted or waived all remaining findings in Step 6 (and, when not in `--batch`, routed or waived them through the Step 6.4 loop). Auto-fix runs only on plan content the user has signed off on, and **only after** any Step 6.4 `/dev-plan update` edits have landed and been flushed to disk (per the write-then-hash ordering invariant in Step 6.4).
 
 Invocation:
 
@@ -550,6 +575,8 @@ The applier handles unknown kinds (anything outside the `review-plan` allowlist)
 After the applier returns, proceed to Step 7. The marker write in Step 7 hashes the post-edit contract section so a successful auto-fix batch followed by `yes` produces a valid marker on the new content.
 
 ### Step 7: Write the Review Marker
+
+This is the **single** point where the real marker is written. Per the write-then-hash ordering invariant (Step 6.4), any `/dev-plan update` edits from the Step 6.4 loop and any Step 6.5 auto-fixes MUST have completed and been flushed before the marker entrypoint reads and hashes the above-marker bytes. Otherwise the marker hashes stale content and `/conduct` rejects it as drift.
 
 After findings have been presented and discussed, ask the user one question:
 
@@ -590,7 +617,7 @@ The marker is idempotent: replacing an existing marker on otherwise unchanged co
 
 ## Constraints
 
-- Never modify the plan body automatically - findings drive a conversation, not automatic edits. The trailing review marker footer is the only allowed automated write *outside* the opt-in `--auto-fix=trivial` tier; even with that flag, only the structural allowlist in `scripts/auto-fix-allowlist.json` may be applied, and only after explicit user acceptance (`yes`/`waive`). Edits inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, or any `### Phase N:` section are **never** auto-applied — they stay advisory regardless of lens confidence.
+- Never modify the plan body automatically - findings drive a conversation, not automatic edits. The trailing review marker footer is the only allowed automated write *outside* the opt-in `--auto-fix=trivial` tier; even with that flag, only the structural allowlist in `scripts/auto-fix-allowlist.json` may be applied, and only after explicit user acceptance (`yes`/`waive`). Edits inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, Architecture & Call Flow, or any `### Phase N:` section are **never** auto-applied — they stay advisory regardless of lens confidence.
 - Auto-fix never publishes a real `/conduct` review marker before Step 7. Applied prose edits record `marker_pending` in the manifest; the marker hash is computed and written exactly once at acceptance.
 - Review from the plan text and the codebase, not from unstated parent-conversation context.
 - Spawned lens workers must not receive parent conversation context; pass only plan content, Review Focus, repo-root checklist material, and the lens prompt.
