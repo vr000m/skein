@@ -1,12 +1,12 @@
 # Task: Call-Flow Diagrams, Mermaid Plan-View Rendering, and Interactive Review Loop
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: planning-skills
 **Assigned to**: Agent
 **Priority**: High
 **Branch**: feature/plan-call-flow-and-interactive-review
 **Created**: 2026-06-21
-**Completed**: —
+**Completed**: 2026-06-21
 
 ## Objective
 
@@ -368,7 +368,7 @@ None.
 - `docs/skills_architecture/20260522-design-claude-skills-architecture.md` carries an up-to-date model/thinking-level routing table covering the touched skills, with a maintenance note.
 - Code reviewed, tests passing, documentation updated.
 
-<!-- reviewed: 2026-06-21 @ eb8d5728cbd1c33540e88744c86a546f1ee2d0c8 -->
+<!-- reviewed: 2026-06-21 @ cd9ef23e74afdfe78e30868095d2266ff8bc4301 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -393,8 +393,25 @@ Per-phase completion tracked here so ticking a box during a run does not bust th
 
 ### Summary
 
+All six phases implemented, reviewed (`/deep-review` + a Codex self-review of its own mirror adaptations), and shipped on PR #10 at version 0.2.4. Both mirrors landed in lockstep with no deferred Codex drift.
+
 ### Outcomes
+
+- **Phase 1** — plan-view `render_markdown` emits `<pre class="mermaid">`; templates load the Mermaid v11 ESM CDN runtime with `securityLevel: 'strict'`. Tests: 60/60 both mirrors.
+- **Phase 2** — conditional `## Architecture & Call Flow` section in the dev-plan template (byte-mirrored) + SKILL.md gating prose (Codex adapted via `codex:rescue`).
+- **Phase 3** — negative-space topology + omission-backstop scope items in the review-plan architecture lens; `## Architecture & Call Flow` added to `AF_FORBIDDEN_HEADINGS` (canonical + re-bundled) and both prose forbid lists. Invariant verified: `af_heading_is_forbidden` rejects the heading.
+- **Phase 4** — default-on Step 6.4 triage-and-clarify elicitation loop with a `--batch` escape hatch and a documented write-then-hash ordering invariant.
+- **Phase 5** — both plugin manifests bumped to 0.2.4 (asserted equal); README index + CODEX_MIRROR_BACKLOG refreshed.
+- **Phase 6** — model/thinking-level routing table added to the skills-architecture design doc.
+- Post-implementation: deep-review surfaced 1 Critical (missing CHANGELOG 0.2.4 entry) + 3 Minor (Mermaid `securityLevel` made explicit; `AF_FORBIDDEN_HEADINGS` comment clarified; CDN no-SRI accepted per plan). All fixed except the accepted CDN risk.
 
 ### Learnings
 
+- Phases 3 and 4 edited the same file, so a clean-tree commit between them was required before the parity-extended mutate-guard test would run — committing per-phase boundary made the gate pass.
+- The `securityLevel: 'strict'` default in Mermaid v11 is safe, but pinning it explicitly in source guards against a future default change or an accidental `'loose'` edit.
+
 ### Follow-up Work
+
+- **Manual verification still owed** (not automatable): open generated plan-view HTML in a browser to confirm Mermaid fences render; fixture-run the negative-space lens against a 2+-component plan lacking the section; end-to-end `--auto-fix=trivial` rejection of an edit scoped into `## Architecture & Call Flow`.
+- Optional: a lightweight check asserting the routing-table values match each skill's SKILL.md dispatch annotations; a `check-sync` entry for `dev-plan/template.md` cross-mirror parity (currently manual discipline).
+- At merge: move the README index row to **Shipped** and tag the release per the AGENTS.md "Cutting a release" workflow.
