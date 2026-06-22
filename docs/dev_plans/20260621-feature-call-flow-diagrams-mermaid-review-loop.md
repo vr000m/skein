@@ -414,4 +414,4 @@ All six phases implemented, reviewed (`/deep-review` + a Codex self-review of it
 
 - **Manual verification still owed** (not automatable): open generated plan-view HTML in a browser to confirm Mermaid fences render; fixture-run the negative-space lens against a 2+-component plan lacking the section; end-to-end `--auto-fix=trivial` rejection of an edit scoped into `## Architecture & Call Flow`.
 - Optional: a lightweight check asserting the routing-table values match each skill's SKILL.md dispatch annotations; a `check-sync` entry for `dev-plan/template.md` cross-mirror parity (currently manual discipline).
-- At merge: move the README index row to **Shipped** and tag the release per the AGENTS.md "Cutting a release" workflow.
+- Release prep folded into this PR (no separate release PR): version 0.2.4 in both manifests, CHANGELOG `[0.2.4]` promoted, README index row moved to **Shipped**. Post-merge: tag `v0.2.4` and `gh release create` per the AGENTS.md "Cutting a release" workflow.
