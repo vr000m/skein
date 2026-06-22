@@ -113,6 +113,43 @@ and tells the merge phase what to verify.
 
 For each seam, consider: who calls it, resource lifecycle (open/close), error paths, and idempotency.
 
+## Architecture & Call Flow
+
+<!-- Include only when the plan has 2+ independently-executing components. Omit for single-component changes. -->
+
+> **Conditional section.** Include only when the system has **2 or more independently-executing
+> components** (e.g., Claude SDK, LLM router, MCP server, subagent, CLI, storage layer). Omit the
+> section entirely for single-component changes (a typo fix, an isolated script tweak). This section
+> sits **above the review marker** — it is part of the immutable contract, so editing it after
+> `/review-plan` invalidates the marker hash (topology errors are plan errors, not runtime fixups).
+
+Component graph — which component triggers which:
+
+```mermaid
+graph LR
+    A[Component A] -->|triggers| B[Component B]
+    B -->|reads| C[Storage layer]
+```
+
+Trigger order — the sequence of calls across a single run:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Component A
+    participant B as Component B
+    U->>A: invoke
+    A->>B: dispatch
+    B-->>A: result
+```
+
+Context lifecycle — what enters context at each step, and whether it clears or persists:
+
+| Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
+|------|---------|----------------|-------------------|---------------|
+| 1 | [e.g., `/cmd` invoked] | [user request, repo basics] | [persists to file] | [after X written] |
+| 2 | [subagent dispatched] | [prompt + codebase] | [fresh/isolated context] | [subagent completes] |
+
 ## Testing Notes
 
 ### Test Approach

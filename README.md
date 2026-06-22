@@ -6,17 +6,17 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 | Skill | Claude | Codex | Description |
 |-------|--------|-------|-------------|
-| dev-plan | Yes | Yes | Generate and manage development plans; `create` runs one fresh-context Explore subagent that gathers verified paths, patterns, dependency versions, and git refs before drafting |
+| dev-plan | Yes | Yes | Generate and manage development plans; `create` runs one fresh-context Explore subagent that gathers verified paths, patterns, dependency versions, and git refs before drafting, and drafts a conditional `## Architecture & Call Flow` section (Mermaid diagrams + context-lifecycle table, confirmed at a gate) for plans with 2+ independently-executing components |
 | fan-out | Yes | Yes | Parallel agent orchestration via worktrees |
 | content-draft | Yes | Yes | Draft content following style guidelines |
 | content-review | Yes | Yes | Review content against style guidelines |
 | deep-review | Yes | Yes | Multi-lens code review with fresh-context subagents; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies a hard-coded allowlist of mechanical fixes (requires `--test-cmd`) |
-| review-plan | Yes | Yes | Audit a dev plan via five parallel fresh-context lenses (architecture, sequencing, spec-and-testing, assumptions, codebase-claims; four high-reasoning + one factual) before implementation; reconciles findings by structural signature. Opt-in `--auto-fix=trivial` applies allowlisted prose edits outside the immutable contract sections |
+| review-plan | Yes | Yes | Audit a dev plan via five parallel fresh-context lenses (architecture, sequencing, spec-and-testing, assumptions, codebase-claims; four high-reasoning + one factual) before implementation; the architecture lens also audits negative-space topology gaps; reconciles findings by structural signature. A default-on triage-and-clarify loop records decisions into the plan before the marker is written (`--batch` skips it for CI). Opt-in `--auto-fix=trivial` applies allowlisted prose edits outside the immutable contract sections |
 | rfc-finder | Yes | Yes | Find and link to IETF RFCs and related drafts |
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
-| plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
+| plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; renders Mermaid fences as live diagrams via the Mermaid CDN runtime; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
 
 Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`).
 

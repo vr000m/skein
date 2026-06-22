@@ -14,12 +14,14 @@ parser can pick up the slug.
 
 ## Planned
 
-_None._
+| Date | Type | Name | Comp | PR | Branch | Plan |
+|------|------|------|------|----|--------|------|
 
 ## Shipped
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | [#10](https://github.com/vr000m/skein/pull/10) | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |
 | 2026-05-25 | chore | skein-plugin-packaging | meta | — | feature/skein-plugin-migration | [plan](20260525-chore-skein-plugin-packaging.md) |
 | 2026-05-21 | feature | plan-view-skill | planning-skills | [#28](https://github.com/vr000m/skills.md/pull/28) | feat/plan-view-skill | [plan](20260521-feature-plan-view-skill.md) |
 | 2026-05-15 | feature | review-auto-fix-tier | review-skills | [#23](https://github.com/vr000m/skills.md/pull/23) | feature/review-auto-fix-tier | [plan](20260515-feature-review-auto-fix-tier.md) |

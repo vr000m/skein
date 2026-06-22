@@ -63,12 +63,31 @@ Skills divide into four subagent-shape buckets:
 
 - **Single Sonnet** — `dev-plan create`, `content-draft`, `content-review`, `update-docs`, `rfc-finder`. One call per invocation, mostly to gather facts (Explore) or draft prose.
 - **Single Opus** — `spec-compliance`. RFC 2119 mapping benefits from the harder model on a single shot.
-- **Parallel lens panel** — `review-plan` (4 lenses: architecture / sequencing / spec-and-testing / codebase-claims), `deep-review` (5 lenses: logic / security / spec / architecture / documentation). Lenses run in fresh-context subagents and a reconciler folds duplicates.
+- **Parallel lens panel** — `review-plan` (5 lenses: architecture / sequencing / spec-and-testing / assumptions / codebase-claims), `deep-review` (5 lenses: logic / security / spec / architecture / documentation). Lenses run in fresh-context subagents and a reconciler folds duplicates.
 - **Iterative dispatcher** — `conduct` spawns 2–3 subagents *per phase* (implementer, test-writer, optional reviewer) and loops the phase until tests pass or `--max-iterations` is hit. `fan-out` spawns one subagent per *independent task* (cap `--max-agents`, default 5), each in its own git worktree.
 
 `plan-view` is the outlier: deterministic Python by default (0 subagent calls), with an opt-in `--rich` workflow that emits a manifest the *parent* agent consumes — the skill itself does not dispatch. This is the contract being tested by this document.
 
 The model tier is not arbitrary: lens panels mix tiers because cheap lenses (Haiku for codebase-claims, documentation) absorb verbose factual checks while expensive lenses (Opus for architecture, security) handle judgement calls. `deep-review` lands at 5 lenses because code review has more orthogonal axes than plan review.
+
+### Model / Thinking-Level Routing
+
+Each skill subagent/lens is assigned a model + reasoning tier. The Claude and Codex mirrors express the **same intent** in different forms: Claude pins a concrete `model:` (`opus` / `sonnet` / `haiku`), while Codex inherits the harness-selected model and expresses tier as a `reasoning:` / `reasoning_effort:` level (`high` / `medium` / `low`). The two columns therefore differ in **form, not intent** — `opus ≈ reasoning: high`, `sonnet ≈ reasoning_effort: medium`, `haiku ≈ reasoning: low`.
+
+| Skill | Subagent / lens | Claude | Codex |
+|-------|-----------------|--------|-------|
+| dev-plan | Explore | `model: sonnet` | `reasoning_effort: medium` |
+| review-plan | architecture | `model: opus` | `reasoning: high` |
+| review-plan | sequencing | `model: opus` | `reasoning: high` |
+| review-plan | spec-and-testing | `model: opus` | `reasoning: high` |
+| review-plan | assumptions | `model: opus` | `reasoning: high` |
+| review-plan | codebase-claims | `model: haiku` | `reasoning: low` |
+| plan-view | (none — deterministic Python) | — | — |
+| conduct | per-phase subagents | (per phase) | (per phase) |
+
+`conduct` does not pin a tier: its per-phase implementer / test-writer / reviewer subagents inherit the conductor's model, and the phase contract (not this table) governs their work. `plan-view` dispatches no subagents by default.
+
+**Maintenance note.** This table MUST be updated whenever any skill/lens model or reasoning-effort assignment changes — the same discipline applied to the dual-manifest version bump (a routing change that lands in only one mirror is a silent drift). The source of truth is each skill's `SKILL.md` dispatch annotation: Claude `#### <Lens> Lens (model: …)` headers, Codex `#### <Lens> Lens (reasoning: …)` headers, and the dev-plan Explore routing hint. A lightweight check that diffs this table against those annotations is a possible follow-up, not in scope here.
 
 ## Composition Graph
 
