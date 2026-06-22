@@ -309,8 +309,11 @@ af_parse_plan_scope() {
 	fi
 }
 
-# AF_FORBIDDEN_HEADINGS — review-plan scope-forbid list. Single source of
-# truth. Matched against `scripts/plan-scope-detect.sh` output (exact
+# AF_FORBIDDEN_HEADINGS — plan-section scope-forbid list. Single source of
+# truth. Operative only on the review-plan auto-fix path (the deep-review
+# auditor/applier never consult it); it is byte-bundled into the deep-review
+# scripts/ subtree as a side effect of the shared-lib bundling, where it is
+# inert. Matched against `scripts/plan-scope-detect.sh` output (exact
 # string match for these entries; `### Phase N:` is matched separately as a
 # regex below to allow any digit count). Auditor and applier MUST consult
 # this array via af_heading_is_forbidden to avoid the bug class where

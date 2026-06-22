@@ -4,6 +4,19 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-21
+
+### Added
+- **Mermaid diagrams render live in `/plan-view` HTML.** `render_markdown` now emits `<pre class="mermaid">` for ` ```mermaid ` fences (HTML-escaped, `<pre>` chosen so the raw diagram source stays readable as fallback), and both `template.html` / `plan-template.html` load the Mermaid v11 ESM runtime from jsDelivr (`mermaid@11`, `startOnLoad: true`, `securityLevel: 'strict'`). CDN-only by design (no vendoring); diagrams need a network fetch to render. Applied identically to the skein-codex mirror.
+- **Conditional `## Architecture & Call Flow` section in the dev-plan template.** Included only when a plan has 2+ independently-executing components: a component graph (Mermaid), a trigger-order `sequenceDiagram`, and a context-lifecycle table. `dev-plan` SKILL.md documents the inclusion heuristic, a pre-phase user-confirmation gate, the three sub-elements, placement (after Integration Seams, before Testing Notes), and that the section is above the review marker (immutable contract).
+- **Negative-space topology audit in the `/review-plan` architecture lens.** The lens now reconstructs the implied call-flow from Files-to-Modify + Technical Specifications and flags components/triggers/context-transitions a plan needs but never names, plus a topology-omission backstop (Missing Task / Important when 2+ components lack an `## Architecture & Call Flow` section).
+- **Interactive triage-and-clarify elicitation loop in `/review-plan`** (default-on Step 6.4): triage via free-form selection over unbounded findings, per-finding clarify options, then route — act-on decisions to `/dev-plan update` (above the marker), waived findings to a `### Review Waivers` subheading (below the marker). New `--batch` flag skips the loop for unattended/CI runs and is orthogonal to `--auto-fix=trivial`. A write-then-hash ordering invariant pins: loop edits flush → auto-fix → marker hashed exactly once.
+- Model / thinking-level routing table in the skills-architecture design doc (per skill → lens → Claude model+effort → Codex reasoning level) with a maintenance note.
+
+### Changed
+- Bumped both plugin manifests to `0.2.4` in lockstep (the `version` field is the update cache key; both mirrors must move together).
+- `## Architecture & Call Flow` added to `AF_FORBIDDEN_HEADINGS` (canonical `scripts/lib/auto-fix-common.sh`, re-bundled to all skill subtrees) and to both `review-plan` prose forbid lists, so `--auto-fix=trivial` cannot rewrite the new immutable section.
+
 ## [0.2.3] - 2026-06-15
 
 ### Fixed
@@ -55,7 +68,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/vr000m/skein/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/vr000m/skein/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/vr000m/skein/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/vr000m/skein/compare/v0.2.0...v0.2.1
