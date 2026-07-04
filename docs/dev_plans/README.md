@@ -16,6 +16,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-07-04 | chore | model-effort-explicit-spawns | meta | — | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
 
 ## Shipped
 
