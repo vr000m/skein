@@ -23,7 +23,7 @@ def test_add_positive():
 
 
 def test_add_zero():
-    assert add(0, 0) == 0
+    assert add(0, 5) == 5
 
 
 def test_add_inverse():

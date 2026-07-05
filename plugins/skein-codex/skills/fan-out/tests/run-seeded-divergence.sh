@@ -57,6 +57,11 @@ run_contract_test() {
 	fi
 }
 
+contract_failed_by_assertion() {
+	local rc="$1"
+	[[ "$rc" -eq 1 ]] && grep -Eq 'AssertionError|^[[:space:]]*E[[:space:]]+assert|^FAILED .*::test_' "$RUN_LOG"
+}
+
 echo "=== Codex R6 seeded-divergence direct-mode runner ==="
 if [[ "$use_pytest" -eq 1 ]]; then
 	echo "Mode: python3 -m pytest"
@@ -78,8 +83,14 @@ divergent_failed=0
 if run_contract_test "$DIVERGENT_DIR"; then
 	echo "FAIL: divergent slice (slice_divergent) — contract test unexpectedly PASSED (should have failed)"
 else
-	divergent_failed=1
-	echo "PASS: divergent slice (slice_divergent) — contract test failed as expected"
+	divergent_rc=$?
+	if contract_failed_by_assertion "$divergent_rc"; then
+		divergent_failed=1
+		echo "PASS: divergent slice (slice_divergent) — contract assertion failed as expected"
+	else
+		echo "FAIL: divergent slice (slice_divergent) — contract test failed for a non-assertion reason (exit $divergent_rc)"
+	fi
+	cat "$RUN_LOG" 2>/dev/null || true
 fi
 
 echo

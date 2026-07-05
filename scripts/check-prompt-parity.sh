@@ -157,19 +157,20 @@ is_expected_drift() {
 # The excised spans are NOT left unguarded: tests/parity/test-spawn-tiers.sh
 # guards the test-writer *tier* annotation, the R6 anti-cheat "contract wins"
 # rule, and the presence of the excision anchors themselves (`### Phase 5`,
-# `Filled by the fan-out worker`) in BOTH mirrors — so a dropped anchor (which
-# would over-excise to EOF) or a weakened anti-cheat rule fails the census even
-# though byte-parity here would still pass. Deeper R4 semantic alignment of the
-# span wording is the plan's Phase 6 manual enumeration.
+# `Filled by the fan-out worker`) in BOTH mirrors — so a dropped anchor or a
+# weakened anti-cheat rule fails the census even though byte-parity here would
+# still pass. Deeper R4 semantic alignment of the span wording is the plan's
+# Phase 6 manual enumeration.
 normalize_fanout_prompt() {
 	sed \
 		-e 's/spawned Claude agent/spawned Codex agent/g' \
 		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
 		"$1" \
+		| perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' \
 		| sed \
-			-e '/<!--/,/-->/d' \
 			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
-			-e '/Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
+			-e '/^\*\*Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
+			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
 			-e '/\*\*Status note (read first):\*\*/,/^Filled by the fan-out worker/{/^Filled by the fan-out worker/!d;}'
 }
 

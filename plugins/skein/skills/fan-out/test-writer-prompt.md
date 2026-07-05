@@ -1,21 +1,16 @@
 # Fan-Out Test-Writer Subagent Prompt Template (R6 contract)
 
-**Status note (read first):** under the current Claude-track fallback, this contract
-is consumed **single-context by the worker itself** — the worker authors tests to
-this same contract inside its own Phase 2 (see `agent-prompt.md`), rather than
-spawning a separate subagent to do it. The template below documents the **intended
-design**: a separate clean-context test-writer subagent, spawned by the worker with
-`model: sonnet, effort: medium`, that never sees the implementer's diff. That
-separate-subagent topology is **gated** on runtime nested-`Agent`-in-`claude -p`
-support, which is unconfirmed in this environment (see
-`docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04 entry). This file stays ready to
-use verbatim once the gate is confirmed; until then, the worker plays both roles but
-must still follow the anti-cheat rule (`agent-prompt.md` Phase 4) as if the two
-contexts were genuinely separate.
+**Status note (read first):** the Claude R6 topology is **CONFIRMED LIVE** as of
+2026-07-04: the fan-out worker spawns a separate clean-context test-writer subagent
+with `model: sonnet`; effort is inherited from the worker's `--effort medium`
+session because the Task tool has no per-call effort argument. The test-writer never
+sees the implementer's diff. The manual gate at `tests/check-r6-gate.sh` proved the
+child actually ran on the requested child model via `result.modelUsage`, not merely
+by echoing the spawn request.
 
-Filled by the fan-out worker before spawning the test-writer (once the nested-spawn
-gate is confirmed). The filled prompt is passed as the full subagent input — the
-subagent has no prior conversation history and never receives the worker's diff.
+Filled by the fan-out worker before spawning the test-writer. The filled prompt is
+passed as the full subagent input — the subagent has no prior conversation history
+and never receives the worker's diff.
 
 Placeholders: `{{TASK_DESCRIPTION}}`, `{{WRITER_SEAM_ROWS}}`, `{{EXISTING_TESTS}}`.
 

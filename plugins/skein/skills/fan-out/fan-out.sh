@@ -70,8 +70,22 @@ cmd_spawn() {
   shift 3
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --model) model="$2"; shift 2 ;;
-      --effort) effort="$2"; shift 2 ;;
+      --model)
+        if [[ $# -lt 2 ]]; then
+          echo "ERROR: --model requires a value" >&2
+          return 1
+        fi
+        model="$2"
+        shift 2
+        ;;
+      --effort)
+        if [[ $# -lt 2 ]]; then
+          echo "ERROR: --effort requires a value" >&2
+          return 1
+        fi
+        effort="$2"
+        shift 2
+        ;;
       *) shift ;;
     esac
   done
@@ -86,6 +100,16 @@ cmd_spawn() {
     return 1
   fi
 
+  local -a cmd_args
+  cmd_args=(claude -p "$(cat "$prompt_file")" --dangerously-skip-permissions --model "$model")
+  if [[ -n "$effort" ]]; then
+    if command_supports_effort claude; then
+      cmd_args+=(--effort "$effort")
+    else
+      echo "WARNING: --effort '$effort' requested but the resolved Claude command 'claude' does not advertise --effort; effort intent NOT applied." >&2
+    fi
+  fi
+
   # Launch claude in the worktree directory.
   # Unset CLAUDECODE to allow spawning from within a Claude Code session.
   # exec replaces the subshell so $! is the claude process PID (not a wrapper),
@@ -93,15 +117,16 @@ cmd_spawn() {
   (
     cd "$worktree_path"
     unset CLAUDECODE
-    exec claude -p "$(cat "$prompt_file")" \
-      --dangerously-skip-permissions \
-      --model "$model" \
-      --effort "$effort" \
-      > "$log_file" 2>&1
+    exec "${cmd_args[@]}" > "$log_file" 2>&1
   ) &
 
   local pid=$!
   echo "$pid"
+}
+
+command_supports_effort() {
+  local cmd="$1"
+  "$cmd" --help 2>/dev/null | grep -q -- '--effort'
 }
 
 # --- status: check agent PIDs from state file ---
