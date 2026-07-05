@@ -8,8 +8,9 @@
 # file only forbids stray skill-name mentions inside the conduct directory
 # and cannot read the other ten skills or assert tiers).
 #
-# This census walks plugins/skein/skills/*/SKILL.md and asserts PINNED,
-# per-file expected-tier counts, not a bare "does the string appear" check —
+# This census walks plugins/skein/skills/*/SKILL.md and
+# plugins/skein-codex/skills/*/SKILL.md, then asserts PINNED per-file
+# expected-tier counts, not a bare "does the string appear" check —
 # a bare presence check passes on one match while three are missing. Each
 # assertion here is falsifiable: removing any one `effort: high` or
 # `opus/high:` why-comment from the tree makes this script exit 1.
@@ -20,6 +21,7 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 SKILLS_DIR="$ROOT_DIR/plugins/skein/skills"
+CODEX_SKILLS_DIR="$ROOT_DIR/plugins/skein-codex/skills"
 
 pass_count=0
 fail_count=0
@@ -116,6 +118,92 @@ assert_absent() {
 	fi
 }
 
+echo "=== R2 tier census: plugins/skein-codex/skills/*/SKILL.md ==="
+echo
+
+# --- (7) Codex per-skill reasoning_effort counts ---
+# These counts intentionally use Codex's prose-hint idiom (`reasoning_effort=X`)
+# rather than Claude `model:`/`effort:` fields. They cover all Codex SKILL.md
+# spawns/lenses that declare a tier in the mirror, including the R6 fan-out
+# test-writer intended topology, even though that topology is gated/inactive
+# until the nested-spawn runtime gate is confirmed.
+CODEX_HIGH_RE='reasoning_effort=high'
+CODEX_MEDIUM_RE='reasoning_effort=medium'
+CODEX_LOW_RE='reasoning_effort=low'
+
+assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_HIGH_RE" 4 \
+	"codex review-plan reasoning_effort=high judgment lens count"
+assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex review-plan reasoning_effort=low factual lens count"
+assert_count "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "$CODEX_HIGH_RE" 4 \
+	"codex deep-review reasoning_effort=high review lens count"
+assert_count "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex deep-review reasoning_effort=low documentation lens count"
+assert_count "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" "$CODEX_HIGH_RE" 1 \
+	"codex spec-compliance reasoning_effort=high count"
+assert_count "$CODEX_SKILLS_DIR/conduct/SKILL.md" "$CODEX_MEDIUM_RE" 5 \
+	"codex conduct reasoning_effort=medium lifecycle count"
+assert_count "$CODEX_SKILLS_DIR/conduct/SKILL.md" "$CODEX_HIGH_RE" 2 \
+	"codex conduct reasoning_effort=high reviewer lifecycle count"
+assert_count "$CODEX_SKILLS_DIR/dev-plan/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
+	"codex dev-plan reasoning_effort=medium Explore count"
+assert_count "$CODEX_SKILLS_DIR/plan-view/SKILL.md" "$CODEX_LOW_RE" 2 \
+	"codex plan-view reasoning_effort=low rich-render spawn count"
+assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 2 \
+	"codex fan-out reasoning_effort=medium test-writer gated-topology count"
+assert_count "$CODEX_SKILLS_DIR/content-draft/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex content-draft reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/content-review/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex content-review reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/update-docs/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex update-docs reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/rfc-finder/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex rfc-finder reasoning_effort=low count"
+
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 11 \
+	"codex total reasoning_effort=high occurrences across SKILL.md"
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 8 \
+	"codex total reasoning_effort=medium occurrences across SKILL.md"
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_LOW_RE" 8 \
+	"codex total reasoning_effort=low occurrences across SKILL.md"
+
+# --- (8) Codex review-tier rationale / R3 why coverage ---
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Deep reasoning' \
+	"codex deep-review Logic high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*High-impact findings' \
+	"codex deep-review Security high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Cross-referencing standards' \
+	"codex deep-review Spec high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Review-tier architecture judgment' \
+	"codex deep-review Architecture high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Patterns, coupling, integration seams' \
+	"codex review-plan Architecture high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Task order, hidden dependencies' \
+	"codex review-plan Sequencing high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Review Focus, RFC/spec references' \
+	"codex review-plan Spec-and-testing high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Unverifiable claims stated as fact' \
+	"codex review-plan Assumptions high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'R3 why: normative spec compliance is judgment work' \
+	"codex spec-compliance R3 why-comment"
+assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'R3 why: code review is judgment work' \
+	"codex conduct reviewer R3 why-comment"
+
+# --- (9) Codex R6 and dispatch-idiom guards ---
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'reasoning_effort=medium.*fork_context=false' \
+	"codex fan-out R6 intended test-writer spawn carries medium effort and fork_context=false"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/agent-prompt.md" 'reasoning_effort=medium' \
+	"codex fan-out agent-prompt documents gated test-writer reasoning_effort=medium"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/test-writer-prompt.md" 'reasoning_effort=medium' \
+	"codex fan-out test-writer-prompt documents medium effort"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'Codex does not pin model names' \
+	"codex fan-out documents no default model pin"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
+	"codex fan-out.sh FANOUT_EFFORT support present"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'command_supports_effort' \
+	"codex fan-out.sh first-class --effort detection present"
+
+echo
 echo "=== R2 tier census: plugins/skein/skills/*/SKILL.md ==="
 echo
 

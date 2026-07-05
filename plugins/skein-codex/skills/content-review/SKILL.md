@@ -51,7 +51,7 @@ Before spawning the subagent, read the content to review (from file or conversat
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and a low reasoning-effort hint when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
 
 ````
 You are reviewing written content against style guidelines and producing a structured report.

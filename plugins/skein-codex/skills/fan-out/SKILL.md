@@ -1,7 +1,7 @@
 ---
 name: fan-out
 description: Fan out independent tasks from a dev-plan to parallel Codex agents running in isolated git worktrees, then merge and verify the results. Use after planning when 2+ tasks can run independently, or when the user says "fan out", "parallelize this", or "/fan-out".
-argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL]"
+argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL] [--effort LEVEL]"
 ---
 
 # Fan Out: Parallel Agent Orchestration
@@ -13,6 +13,12 @@ Dispatch independent tasks to parallel Codex agents, each in an isolated git wor
 Spawned agents are one level deep — they implement their assigned task and must not themselves invoke `/fan-out` or start a new parallel-agent tier. This keeps the worktree/process model and merge accounting tractable.
 
 A fan-out-spawned Codex session may invoke `/conduct` as its top-level skill — the process/worktree boundary starts a new orchestrator tree, so `fan-out → conduct → {implementer, test-writer}` stays within the per-tree one-level rule. `/conduct` itself does not fan out; keep parallelism at the outer layer.
+
+### R6: clean-context test-writer graft (intended design, gated)
+
+The worker's Test phase (agent-prompt.md Phase 2) is designed to delegate test authoring to a **separate clean-context test-writer subagent**: inherit the harness-selected model, request `reasoning_effort=medium` when supported, and spawn with `fork_context=false`. This is one in-process `spawn_agent` level below the worker, does not start a new fan-out tier, and does not invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
+
+**This topology is currently GATED, not active.** The Phase-5 live gate could not confirm that a non-interactive `codex exec` worker can initialize the app-server client and spawn a nested `spawn_agent` test-writer with `fork_context=false` and `reasoning_effort=medium` in this environment, without unsafe bypass flags (see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04 Codex-track divergence entry). Until that gate is confirmed, the **active fallback** is: the worker keeps its existing single-context Test phase (it writes and runs its own tests) but tests to the same slice contract, and the anti-cheat rule below still applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below) regardless of which Test-phase mode is active.
 
 ## Usage
 
@@ -106,7 +112,7 @@ Then for each task:
 2. **Build agent prompt**: Read the template from `agent-prompt.md` in this skill directory. Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
-   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan
+   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (R6 contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
    - `{{WORKTREE_PATH}}` — Absolute path to worktree
    - `{{BRANCH_NAME}}` — Git branch for this agent
    - `{{BASE_BRANCH}}` — The base branch
@@ -124,7 +130,7 @@ Then for each task:
 
 3. **Spawn agent**:
    ```bash
-   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model <model>)
+   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --effort medium)
    ```
 
 4. **Record state**: After spawning all agents, write `.fan-out-state.json` in the repo root:
@@ -249,7 +255,8 @@ tail -100 <worktree>/fan-out.log
 - **Prompt mode**: `inline` (override with `FANOUT_PROMPT_MODE=inline|file`)
 - **Permission flag**: empty (override with `FANOUT_PERMS_FLAG`)
 - **Extra args**: none (override with `FANOUT_EXTRA_ARGS`)
-- **Model**: configured in `fan-out.sh` (override with `--model` or `FANOUT_MODEL`)
+- **Model**: inherited from the Codex harness by default. Codex does not pin model names in this mirror; override with `--model` or `FANOUT_MODEL` only when the user explicitly requests it or the current runtime requires it.
+- **Effort intent**: `--effort medium` / `FANOUT_EFFORT=medium` by default (mechanical — the worker executes an already-scoped task under the two-tier policy). If the configured Codex CLI advertises a first-class `--effort` flag, `fan-out.sh` passes it. The current checked CLI does not advertise one, so use `FANOUT_EXTRA_ARGS` for runtime-specific config/profile flags that request reasoning effort. For genuinely hard tasks, request a higher effort and add a one-line why-note in the invocation (e.g. "high: slice touches concurrency-sensitive locking logic").
 - **Max agents**: 5 (override with `--max-agents 3`)
 - **Worktree location**: `../<repo-name>-fanout-<slug>` (sibling to repo)
 - **Branch naming**: `fanout/<base-slug>-<task-slug>`

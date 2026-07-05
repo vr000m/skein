@@ -280,7 +280,7 @@ _(per-phase completion recorded here by /conduct — below the marker, not part 
 - [x] Phase 2: Claude effort + why-comments on review/plan spawns — commit `ad564df`
 - [x] Phase 3: Fill the unannotated spawns + fan-out default + R2 census — commit `c0938c7`
 - [x] Phase 4: fan-out R6 test-writer graft (Claude-track fallback) — commit `e33b62c`
-- [ ] Phase 5: Codex track (via codex:rescue) — depends on Phases 2–4
+- [x] Phase 5: Codex track (via codex:rescue) — working tree ready, symmetric R6 fallback taken
 - [ ] Phase 6: Verify invariant + docs sync
 
 ## Findings
@@ -307,6 +307,28 @@ and the user's instruction, the **Claude-track fallback** was taken:
 - R6 seeded-divergence AC item is satisfied by the **direct-mode runner + logged
   limitation** (manual-verify equivalent), not the live separate-subagent topology.
 - Limitation logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` (2026-07-04 entry).
+
+### R6 nested-spawn gate: UNCONFIRMED → Codex-track fallback taken (2026-07-04)
+
+The Phase-5 gate — whether a non-interactive `codex exec` worker can spawn a nested
+`spawn_agent` test-writer honoring `fork_context=false` and `reasoning_effort=medium`
+— **could not be exercised** in this session without unsafe bypass flags. The safe
+probe first confirmed this CLI does not advertise a first-class `--effort` flag,
+then failed before nested tools were available:
+`failed to initialize in-process app-server client: Operation not permitted`.
+
+Per the plan's symmetric fallback rule, the **Codex-track fallback** was taken:
+- Separate clean-context test-writer **topology is documented but GATED/inactive**;
+  the worker keeps its single-context Test phase, authored to the slice contract.
+- **Landed regardless of the gate:** the `{{TECHNICAL_SPECIFICATIONS}}` Writer-row
+  seams injection (contract source), the Phase-2 contract framing, the **Phase-4
+  anti-cheat rule** (contract wins), `test-writer-prompt.md`, and a deterministic
+  direct-mode `run-seeded-divergence.sh` (divergent slice fails the contract test,
+  conformant passes).
+- R6 seeded-divergence AC item is satisfied by the **direct-mode runner + logged
+  limitation** (manual-verify equivalent), not the live separate-subagent topology.
+- Limitation logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` (2026-07-04
+  Codex-track divergence entry).
 
 ## Issues & Solutions
 

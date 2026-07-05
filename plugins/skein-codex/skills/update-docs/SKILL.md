@@ -26,7 +26,7 @@ Run this after finishing implementation work on a feature branch, before creatin
 
 These phases involve heavy git diffs, file reads, and cross-referencing. If subagent delegation is available and explicitly allowed in the current Codex runtime, you may delegate them to keep the main context lean. Otherwise, run the same steps in the main context so the skill still works without delegation.
 
-If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and a low reasoning-effort hint when supported to run the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
 
 ````
 You are auditing project documentation for staleness against the current branch's code changes.

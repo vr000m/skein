@@ -63,6 +63,43 @@ fallback if the gate fails").
   worker delegation and logs its own divergence if needed.
 - Gating checks cleared: `bash plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh` (exit 0, direct mode) and `bash tests/parity/test-spawn-tiers.sh` (14 passed, 0 failed, including the new test-writer tier assertion).
 
+### 2026-07-04 — R6 nested-spawn gate unconfirmed (Codex-track divergence, not drift)
+
+Phase 5 of `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`
+attempted the symmetric Codex gate without unsafe bypass flags: whether a
+non-interactive `codex exec` worker can spawn a nested `spawn_agent` test-writer
+subagent with `fork_context=false` and a `reasoning_effort=medium` request. The
+gate could **not confirm** this topology in this environment. The checked CLI does
+not advertise a first-class `--effort` flag, and the safe non-interactive probe
+failed before nested tools could be exercised:
+`failed to initialize in-process app-server client: Operation not permitted`.
+
+- Fallback taken, per the plan's symmetric Codex fallback: (a) the fan-out worker
+  keeps its existing single-context Test phase (`agent-prompt.md` Phase 2) — it
+  authors and runs its own tests, but now explicitly to the same slice contract a
+  separate test-writer would have used; (b) this entry logs the limitation; (c) the
+  R6 seeded-divergence acceptance criterion is satisfied via a **direct-mode**
+  runner rather than an end-to-end nested-spawn run.
+- What still landed regardless of the gate: the R6 contract definition (the
+  `{{TECHNICAL_SPECIFICATIONS}}` injection at `fan-out/SKILL.md:106-109` now embeds
+  Integration Seams rows with a per-row Writer designation); the anti-cheat rule in
+  `agent-prompt.md` Phase 4 (contract wins on impl-vs-test divergence — worker may
+  not weaken assertions); `fan-out/test-writer-prompt.md` as a Codex contract
+  artifact documenting the intended `spawn_agent`/`fork_context=false` design; and
+  a deterministic seeded-divergence fixture +
+  `plugins/skein-codex/skills/fan-out/tests/run-seeded-divergence.sh` that drives
+  the R6 contract-divergence mechanism directly against two fixture implementations
+  (proving a contract test fails on a divergent impl and passes on a conformant one).
+- What is deferred: the separate-subagent Codex test-writer topology itself
+  (documented as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft"
+  section and `agent-prompt.md` Phase 2's inline comment) — reactivate it once a
+  non-interactive Codex worker can initialize delegation and spawn a nested
+  `spawn_agent` worker honoring `fork_context=false` and `reasoning_effort=medium`.
+- Required result: **logged limitation, not mirrored end-to-end topology**, per the
+  plan's fallback clause. This is a harness-behavior gate, not a semantic mirror
+  drift item.
+- Gating checks to clear after Phase 5: `bash plugins/skein-codex/skills/fan-out/tests/run-seeded-divergence.sh` (direct mode) and `bash tests/parity/test-spawn-tiers.sh` (Claude + Codex census).
+
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
 Claude-side bundling of the auto-fix pipeline landed first; the `.codex` analogue has now landed in the same branch. This entry is retained as handoff history, not open drift.
