@@ -4,7 +4,8 @@ set -euo pipefail
 # fan-out.sh — Worktree setup, agent spawning, monitoring, and cleanup
 # Companion script for the /fan-out skill.
 
-DEFAULT_MODEL="opus"
+DEFAULT_MODEL="sonnet"
+DEFAULT_EFFORT="medium"
 
 usage() {
   cat <<'EOF'
@@ -12,14 +13,15 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
-  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL]  Launch claude -p
+  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch claude -p
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
   cleanup <state-file>                              Remove worktrees and branches
   help                                              Show this message
 
 Environment:
-  FANOUT_MODEL=opus|sonnet|haiku   Override default model (opus)
+  FANOUT_MODEL=opus|sonnet|haiku   Override default model (sonnet)
+  FANOUT_EFFORT=high|medium|low   Override default effort (medium)
 EOF
 }
 
@@ -62,12 +64,28 @@ cmd_spawn() {
   local prompt_file="$2"
   local log_file="$3"
   local model="${FANOUT_MODEL:-$DEFAULT_MODEL}"
+  local effort="${FANOUT_EFFORT:-$DEFAULT_EFFORT}"
 
-  # Parse optional --model flag
+  # Parse optional --model / --effort flags
   shift 3
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --model) model="$2"; shift 2 ;;
+      --model)
+        if [[ $# -lt 2 ]]; then
+          echo "ERROR: --model requires a value" >&2
+          return 1
+        fi
+        model="$2"
+        shift 2
+        ;;
+      --effort)
+        if [[ $# -lt 2 ]]; then
+          echo "ERROR: --effort requires a value" >&2
+          return 1
+        fi
+        effort="$2"
+        shift 2
+        ;;
       *) shift ;;
     esac
   done
@@ -82,6 +100,16 @@ cmd_spawn() {
     return 1
   fi
 
+  local -a cmd_args
+  cmd_args=(claude -p "$(cat "$prompt_file")" --dangerously-skip-permissions --model "$model")
+  if [[ -n "$effort" ]]; then
+    if command_supports_effort claude; then
+      cmd_args+=(--effort "$effort")
+    else
+      echo "WARNING: --effort '$effort' requested but the resolved Claude command 'claude' does not advertise --effort; effort intent NOT applied." >&2
+    fi
+  fi
+
   # Launch claude in the worktree directory.
   # Unset CLAUDECODE to allow spawning from within a Claude Code session.
   # exec replaces the subshell so $! is the claude process PID (not a wrapper),
@@ -89,14 +117,16 @@ cmd_spawn() {
   (
     cd "$worktree_path"
     unset CLAUDECODE
-    exec claude -p "$(cat "$prompt_file")" \
-      --dangerously-skip-permissions \
-      --model "$model" \
-      > "$log_file" 2>&1
+    exec "${cmd_args[@]}" > "$log_file" 2>&1
   ) &
 
   local pid=$!
   echo "$pid"
+}
+
+command_supports_effort() {
+  local cmd="$1"
+  "$cmd" --help 2>/dev/null | grep -q -- '--effort'
 }
 
 # --- status: check agent PIDs from state file ---

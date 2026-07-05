@@ -35,6 +35,13 @@ Delegation depth from this skill is exactly 1: conduct → workers. Workers neve
 
 Subagents are spawned via `spawn_agent` with `fork_context=false`. Shared workspace — worktree isolation is the user's concern at the outer layer. Clean context comes from explicitly not forking the parent conversation, not from filesystem separation.
 
+Codex-native role routing:
+- Implementer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical implementation of a reviewed phase.
+- Test-writer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical test authoring against the phase contract.
+- Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported. R3 why: code review is judgment work, so the advisory reviewer gets the review tier.
+
+Do not use literal model names or a literal `reasoning:` field in these dispatches. Express the tier as the `reasoning_effort` request supported by the current Codex runtime, and always keep `fork_context=false`.
+
 ## Delegation Availability
 
 Codex `/conduct` does **not** silently degrade into inline main-session implementation when delegated workers are unavailable. If the current runtime lacks `spawn_agent`, `wait_agent`, or `close_agent`, hard-stop with this message and do no phase work:
@@ -177,7 +184,7 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 
 Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
-Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
+Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
 
 ### Step 4 — Await both, parse reports
 
@@ -220,12 +227,12 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 - Helper block priority: `stall_threshold exceeded`, then `max_iterations_ceiling exceeded`, then `max_iterations exceeded (legacy)`.
 - Persist state immediately after the helper returns (crash recovery; stall counters survive `--resume`).
 - Else capture `git diff --cached` into `{{PRIOR_DIFF}}`. Normally then run `git reset` (mixed, no `--hard`) to clear the staging area so the respawned implementer starts from a clean index with the prior diff visible only inside its prompt.
-- Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = a redacted failure summary (or pre-commit hook summary, if the failure came from the boundary commit).
-- Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration and keep the previously staged implementation diff in the index so the follow-up commit can still include the original implementation work plus the newly staged tests. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again).
+- Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = a redacted failure summary (or pre-commit hook summary, if the failure came from the boundary commit). Use `spawn_agent` with `fork_context=false`, then `wait_agent` and `close_agent` for the lifecycle; request `reasoning_effort=medium` when supported.
+- Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration and keep the previously staged implementation diff in the index so the follow-up commit can still include the original implementation work plus the newly staged tests. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again). Use the same `fork_context=false` lifecycle and `reasoning_effort=medium` request.
 
 ### Step 7 — Optional mid-phase reviewer (one-shot)
 
-Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
+Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Use `spawn_agent` with `fork_context=false`, request `reasoning_effort=high` when supported, then `wait_agent` and `close_agent` for the lifecycle. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
 
 ### Step 8 — Phase-boundary commit
 

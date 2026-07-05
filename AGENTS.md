@@ -45,6 +45,23 @@ _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM r
 
 This divergence is intentional and parallels the existing dispatch-idiom split (`Agent` on Claude vs `spawn_agent` on Codex).
 
+### Model/Effort Policy (target policy, not yet fully enforced)
+
+Every subagent spawn should declare its own model/effort tier rather than inheriting the parent session's — this is the policy of record the tree is converging to. It is being rolled out in phases (see `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`): as of this doc, an enforcing cross-skill census and full spawn compliance have not yet landed, so the presence of this section is **not** proof that every spawn below is already tiered. Treat it as the target, verify compliance against the actual `SKILL.md` files.
+
+The two-tier policy, harness-independent:
+
+- **Judgment work → strongest model, high effort.** Plan review, code review, and planning reasoning (e.g. `review-plan`'s judgment lenses, `deep-review`'s logic/security/spec/architecture lenses, `spec-compliance`, `conduct`'s advisory reviewer) bet on a strong reviewer at high effort catching the details.
+- **Mechanical work → cheaper model, lower effort.** Implementation and testing (e.g. `conduct`'s implementer/test-writer, `fan-out`'s worker, `plan-view` render, `dev-plan`'s Explore, `content-draft`, `content-review`, `update-docs`, `rfc-finder`) execute an already-reviewed plan and don't need heavy reasoning.
+- **Factual lookups stay cheapest regardless of the skill they live in** (e.g. `review-plan`'s `codebase-claims` lens, `deep-review`'s `documentation` lens) — checking whether a path/API exists or a doc is stale is a lookup, not reasoning.
+
+The inheritance invariant: every spawn declares its own tier; no spawn inherits the session tier for mechanical work. A strong main loop (e.g. a top-tier default model) must push work down to cheaper tiers explicitly, not silently run mechanical work at its own expensive tier by omission.
+
+Per-harness idiom (the split itself is sanctioned, not drift — see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`):
+
+- **Claude**: set `model:` and `effort:` explicitly on the `Agent` tool call.
+- **Codex**: inherit the harness-selected model; request `reasoning_effort=high|medium|low` in prose when the target skill/tool supports it, rather than pinning a model name.
+
 ### Auto-fix tier (opt-in)
 
 `/deep-review` and `/review-plan` accept `--auto-fix=trivial` to apply a hard-coded allowlist of mechanical fixes from lens-emitted `auto_fix` blocks. The default tier is advisory-only.

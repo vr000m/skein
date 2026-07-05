@@ -133,20 +133,60 @@ is_expected_drift() {
 	return 1
 }
 
+# fan-out R6 idiom-divergence normalizer.
+#
+# The R6 clean-context test-writer graft (see
+# docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md, R4) makes
+# fan-out/agent-prompt.md and fan-out/test-writer-prompt.md diverge between the
+# .claude and .codex mirrors ONLY inside four harness-divergent spans:
+#   - the R6 design/status block (Claude `model:`/`effort:` + `Agent`-in-
+#     `claude -p` vs Codex `reasoning_effort`/`fork_context=false` + `spawn_agent`
+#     in a `codex exec` worker), carried as an HTML comment in agent-prompt.md and
+#     as a "Status note (read first)" paragraph in test-writer-prompt.md;
+#   - the Phase-2 "If your task has an applicable test framework" directive, which
+#     now diverges by CONFIRMED-LIVE status too, not just idiom: the Claude gate
+#     passed (2026-07-04, see fan-out/tests/check-r6-gate.sh) so the Claude worker
+#     spawns a separate clean-context test-writer, while the Codex worker keeps the
+#     single-context fallback (its gate is still unconfirmed); and
+#   - the anti-cheat-rule paragraph (same rule, harness-tuned wording).
+# This divergence is sanctioned per R4 / CODEX_MIRROR_BACKLOG.md:15 (idiom, not
+# drift). This normalizer excises exactly those spans between stable structural
+# anchors and byte-compares the entire remainder, so any real (non-idiom) drift
+# elsewhere in the files is still caught.
+#
+# The excised spans are NOT left unguarded: tests/parity/test-spawn-tiers.sh
+# guards the test-writer *tier* annotation, the R6 anti-cheat "contract wins"
+# rule, and the presence of the excision anchors themselves (`### Phase 5`,
+# `Filled by the fan-out worker`) in BOTH mirrors — so a dropped anchor or a
+# weakened anti-cheat rule fails the census even though byte-parity here would
+# still pass. Deeper R4 semantic alignment of the span wording is the plan's
+# Phase 6 manual enumeration.
+normalize_fanout_prompt() {
+	sed \
+		-e 's/spawned Claude agent/spawned Codex agent/g' \
+		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
+		"$1" \
+		| perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' \
+		| sed \
+			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
+			-e '/^\*\*Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
+			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
+			-e '/\*\*Status note (read first):\*\*/,/^Filled by the fan-out worker/{/^Filled by the fan-out worker/!d;}'
+}
+
 prompt_files_match() {
 	local skill="$1"
 	local prompt_file="$2"
 	local claude_file="$3"
 	local codex_file="$4"
-	if [[ "$skill/$prompt_file" == "fan-out/agent-prompt.md" ]]; then
+	case "$skill/$prompt_file" in
+	fan-out/agent-prompt.md | fan-out/test-writer-prompt.md)
 		diff -q \
-			<(sed \
-				-e 's/spawned Claude agent/spawned Codex agent/g' \
-				-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
-				"$claude_file") \
-			"$codex_file" >/dev/null 2>&1
+			<(normalize_fanout_prompt "$claude_file") \
+			<(normalize_fanout_prompt "$codex_file") >/dev/null 2>&1
 		return
-	fi
+		;;
+	esac
 	diff -q "$claude_file" "$codex_file" >/dev/null 2>&1
 }
 

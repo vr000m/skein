@@ -30,6 +30,7 @@ parity-tests:
     bash tests/parity/test-no-manual-apply-fallback.sh
     bash tests/parity/test-conduct-marker-parity.sh
     bash tests/parity/test-marker-parity.sh
+    bash tests/parity/test-spawn-tiers.sh
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
 reconciliation-tests:

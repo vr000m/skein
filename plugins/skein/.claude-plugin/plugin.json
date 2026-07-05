@@ -1,6 +1,6 @@
 {
   "name": "skein",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "Namespaced skill collection for Claude and Codex (dev plans, code review, content drafting, plan orchestration).",
   "author": { "name": "Varun Singh" }
 }

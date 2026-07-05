@@ -26,7 +26,7 @@ Run this after finishing implementation work on a feature branch, before creatin
 
 These phases involve heavy git diffs, file reads, and cross-referencing — delegate them to a subagent to keep the main context lean.
 
-**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"` to spawn a single subagent. Pass it the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`):
+**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"`, `effort: "low"` to spawn a single subagent. Pass it the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`):
 
 ````
 You are auditing project documentation for staleness against the current branch's code changes.

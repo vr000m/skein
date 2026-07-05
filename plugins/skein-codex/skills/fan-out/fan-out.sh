@@ -9,6 +9,7 @@ DEFAULT_PROMPT_FLAG="-p"
 DEFAULT_PROMPT_MODE="inline"
 DEFAULT_PERMS_FLAG=""
 DEFAULT_MODEL=""
+DEFAULT_EFFORT="medium"
 
 usage() {
   cat <<'EOF'
@@ -16,7 +17,7 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
-  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL]  Launch codex
+  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch codex
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
   cleanup <state-file>                              Remove worktrees and branches
@@ -29,6 +30,12 @@ Environment:
   FANOUT_PERMS_FLAG=              Permission flag(s), if needed
   FANOUT_EXTRA_ARGS=              Extra args appended to the command
   FANOUT_MODEL=                   Default model (optional)
+  FANOUT_EFFORT=medium            Default reasoning effort intent (high|medium|low)
+
+If the configured Codex command advertises a first-class --effort flag, fan-out passes
+--effort LEVEL. If it does not, fan-out records the intent but does not append an
+unsupported flag; use FANOUT_EXTRA_ARGS for runtime-specific config/profile flags
+that request reasoning effort in that Codex CLI version.
 EOF
 }
 
@@ -76,12 +83,14 @@ cmd_spawn() {
   local perms_flag="${FANOUT_PERMS_FLAG:-$DEFAULT_PERMS_FLAG}"
   local extra_args="${FANOUT_EXTRA_ARGS:-}"
   local model="${FANOUT_MODEL:-$DEFAULT_MODEL}"
+  local effort="${FANOUT_EFFORT:-$DEFAULT_EFFORT}"
 
-  # Parse optional --model flag
+  # Parse optional --model / --effort flags
   shift 3
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;;
+      --effort) effort="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -112,6 +121,13 @@ cmd_spawn() {
   if [[ -n "$model" ]]; then
     cmd_args+=("--model" "$model")
   fi
+  if [[ -n "$effort" ]]; then
+    if command_supports_effort "$cmd"; then
+      cmd_args+=("--effort" "$effort")
+    else
+      echo "WARNING: --effort '$effort' requested but the resolved Codex command '$cmd' does not advertise --effort; effort intent NOT applied. Pass a runtime-specific knob via FANOUT_EXTRA_ARGS to honor it." >&2
+    fi
+  fi
   if [[ -n "$extra_args" ]]; then
     read -r -a extra_split <<< "$extra_args"
     cmd_args+=("${extra_split[@]}")
@@ -129,6 +145,11 @@ cmd_spawn() {
 
   local pid=$!
   echo "$pid"
+}
+
+command_supports_effort() {
+  local cmd="$1"
+  "$cmd" --help 2>/dev/null | grep -q -- '--effort'
 }
 
 # --- status: check agent PIDs from state file ---

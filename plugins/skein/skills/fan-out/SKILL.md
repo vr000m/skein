@@ -1,7 +1,7 @@
 ---
 name: fan-out
 description: Fans out independent tasks from a dev-plan to parallel Claude agents running in isolated git worktrees, then merges and verifies the results. Use after planning when 2+ tasks can run independently, or when the user says "fan out", "parallelize this", or "/fan-out".
-argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL]"
+argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL] [--effort LEVEL]"
 ---
 
 # Fan Out: Parallel Agent Orchestration
@@ -13,6 +13,16 @@ Dispatch independent tasks to parallel Claude agents, each in an isolated git wo
 Spawned agents are one level deep — they implement their assigned task and must not themselves invoke `/fan-out` or spawn further parallel agents. This keeps the worktree/process model and merge accounting tractable. Agents may still use the `Agent` tool for in-process subagent delegation within their own task (e.g., calling `/review-plan` on a file), but they cannot start a new fan-out tier.
 
 A fan-out-spawned Claude subprocess may invoke `/conduct` as its top-level skill — the subprocess boundary in `fan-out.sh` starts a new orchestrator tree, so `fan-out → (subprocess) → conduct → {implementer, test-writer}` stays within the per-tree one-level rule. `/conduct` itself does not fan out; keep parallelism at the outer layer.
+
+### R6: clean-context test-writer graft (live on Claude)
+
+The worker's Test phase (agent-prompt.md Phase 2) delegates test authoring to a **separate clean-context test-writer subagent** (`model: sonnet, effort: medium`), one in-process `Agent` level below the worker — permitted in doctrine by the "Delegation Depth" rule above; it does not start a new fan-out tier or invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
+
+**This topology is CONFIRMED LIVE on the Claude harness (gate passed 2026-07-04).** A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset, exactly as `fan-out.sh` launches it) can spawn a nested Task subagent that honors a per-call `model` — verified end to end: the child actually ran on the requested tier (`result.modelUsage` billed `claude-haiku-4-5` tokens in the probe), not merely echoed the request. Re-confirm any time with `plugins/skein/skills/fan-out/tests/check-r6-gate.sh` (a manual, skip-permissions gate — deliberately **not** in `just parity-tests`). One caveat baked into the tier: the Task tool has **no per-call `effort` argument**, so the test-writer's `model: sonnet` is set per-call while its `effort: medium` is *inherited* from the worker's `--effort medium` session. The deterministic contract-mechanism half of R6 (a contract-derived test catches a divergent impl) is guarded in CI by `tests/run-seeded-divergence.sh`; the live topology half is this manual gate.
+
+The anti-cheat rule below applies in full: the worker re-runs the test-writer's tests as the authoritative pass/fail and may not weaken them. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below).
+
+**Codex mirror:** the equivalent topology stays **gated** on the Codex side — its non-interactive `codex exec` nested-`spawn_agent` gate is still unconfirmed (`Operation not permitted` in probe), so the Codex worker keeps the single-context fallback. This Claude-live / Codex-gated asymmetry is a per-harness status divergence (logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04), not drift.
 
 ## Usage
 
@@ -106,7 +116,7 @@ Then for each task:
 2. **Build agent prompt**: Read the template from `agent-prompt.md` in this skill directory. Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
-   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan
+   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (R6 contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
    - `{{WORKTREE_PATH}}` — Absolute path to worktree
    - `{{BRANCH_NAME}}` — Git branch for this agent
    - `{{BASE_BRANCH}}` — The base branch
@@ -124,7 +134,7 @@ Then for each task:
 
 3. **Spawn agent**:
    ```bash
-   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model opus)
+   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
    ```
 
 4. **Record state**: After spawning all agents, write `.fan-out-state.json` in the repo root:
@@ -244,7 +254,7 @@ tail -100 <worktree>/fan-out.log
 
 ## Defaults
 
-- **Model**: opus (override with `--model sonnet`)
+- **Model**: `--model sonnet --effort medium` (mechanical — the worker executes an already-scoped task under the two-tier policy, `AGENTS.md` Model/Effort Policy). Override with `--model opus` for genuinely hard tasks; when overriding, add a one-line why-note in the invocation (e.g. "opus: slice touches concurrency-sensitive locking logic").
 - **Max agents**: 5 (override with `--max-agents 3`)
 - **Worktree location**: `../<repo-name>-fanout-<slug>` (sibling to repo)
 - **Branch naming**: `fanout/<base-slug>-<task-slug>`

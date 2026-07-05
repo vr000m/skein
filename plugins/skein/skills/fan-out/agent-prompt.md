@@ -64,11 +64,44 @@ Write the code described in your task. Commit your work.
 
 ### Phase 2: Test
 
-Run the test and type/lint checking commands from the Toolchain section. If the
+<!--
+R6 status: the separate clean-context test-writer topology is CONFIRMED LIVE on the
+Claude harness as of 2026-07-04. A `claude -p --dangerously-skip-permissions` worker
+(with CLAUDECODE unset, exactly as fan-out.sh launches it) can spawn a nested Task
+subagent that honors a per-call model — verified end to end: the child actually ran
+on haiku (result.modelUsage billed claude-haiku-4-5 tokens), not just echoed the
+request. Re-check any time with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
+Caveat carried into the active directive below: the Task tool has NO per-call effort
+argument, so the test-writer's effort is inherited from this worker's session (which
+fan-out.sh runs at `--effort medium`), while its model IS set per-call. The Codex
+mirror keeps this topology GATED (its non-interactive `codex exec` nested-`spawn_agent`
+gate is still unconfirmed — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04).
+-->
+
+If your task has an applicable test framework, delegate test authoring to a **separate
+clean-context test-writer subagent**: spawn it via the Task/Agent tool at
+`model: sonnet, effort: medium` (the model is set per-call and honored; effort has no
+per-call Task argument, so it is inherited from this worker's `--effort medium`
+session). Pass
+the test-writer ONLY the slice contract — the `{{TASK_DESCRIPTION}}` above plus the
+Integration Seams rows where you are the Writer (concrete import paths, symbol names,
+function signatures) — and **never your implementation diff or internal code**, so it
+validates the contract rather than ratifying your code. It authors the test files and
+returns them (its own one-shot run is advisory); **you** then run those files verbatim
+as the authoritative pass/fail. See `test-writer-prompt.md` for the test-writer's
+contract. (Nested-spawn topology confirmed on Claude — see the R6 status note above.)
+
+If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
+note that explicitly in your result file and continue; do not attempt to write
+contract tests against nothing.
+
+Then run the test and type/lint checking commands from the Toolchain section. If the
 Toolchain section is empty, infer equivalent commands from project config files.
 
 If anything fails, fix and re-run until everything passes. Do not proceed to
-Phase 3 with failures.
+Phase 3 with failures. Remember: fixing means changing your implementation to satisfy
+the contract, never relaxing the contract-derived assertions (see the anti-cheat rule
+in Phase 4, which applies here too).
 
 ### Phase 3: Self-Review
 
@@ -96,6 +129,16 @@ Write down every issue you find.
 ### Phase 4: Fix
 
 Fix every issue found in Phase 3. Add tests for any gaps you identified. Commit the fixes.
+
+**Anti-cheat rule (hard, applies regardless of Test-phase mode above):** you may
+**not** relax, delete, or rewrite the contract-derived test assertions from Phase 2
+to make them pass. When your implementation and the contract tests disagree, **the
+contract wins** — fix the implementation, not the test. If you believe the contract
+itself is wrong or under-specified, do not silently edit the test to match your
+implementation; instead leave the test as written and escalate the divergence in the
+"Remaining Concerns" section of `.fan-out-result.md` for the merge/reconciliation
+phase to resolve. Weakening a contract test to make it pass defeats the entire
+purpose of testing to the contract rather than to your own code.
 
 ### Phase 5: Final Verification
 

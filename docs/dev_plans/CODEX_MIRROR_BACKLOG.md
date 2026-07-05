@@ -16,6 +16,122 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-07-04 — R6 Claude gate CONFIRMED, topology flipped live (Claude only; Codex still gated)
+
+Supersedes the "Claude-track fallback" entry below for the Claude side. The R6
+nested-spawn gate was re-run in the user's own shell (the harness auto-mode classifier
+blocks a `--dangerously-skip-permissions` subprocess from inside the agent session).
+
+- **Result: CONFIRMED.** A `claude -p --dangerously-skip-permissions` worker
+  (CLAUDECODE unset) spawned a nested Task subagent that honored a **per-call model** —
+  the child ran on `claude-haiku-4-5` (proven by `result.modelUsage` billing haiku
+  tokens, not a mere request echo). Effort has **no per-call Task argument**, so a
+  nested subagent inherits the worker session's effort; `fan-out.sh` runs the worker at
+  `--effort medium`, so the test-writer lands sonnet/medium (model per-call, effort
+  inherited). Repeatable via `plugins/skein/skills/fan-out/tests/check-r6-gate.sh`.
+- **Claude side flipped live:** `agent-prompt.md` Phase 2 now spawns the separate
+  clean-context test-writer as the active path; `fan-out/SKILL.md` marks it live.
+- **Codex side unchanged — still GATED.** The Codex `codex exec` nested-`spawn_agent`
+  gate is still unconfirmed (`Operation not permitted`), so the Codex worker keeps the
+  single-context fallback. **Claude-live / Codex-gated is a sanctioned per-harness
+  status divergence, not drift.** `check-prompt-parity.sh` excises the now-divergent
+  Phase-2 test directive span (with census anchor floors in `test-spawn-tiers.sh`);
+  the anti-cheat rule + tier remain census-guarded. When the Codex gate is later
+  confirmed, mirror the flip and remove this asymmetry note.
+
+### 2026-07-04 — `feature/explicit-model-effort-policy` (in progress, not drift)
+
+Tracking the model/effort annotation rollout from `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`. Logged here proactively, before the Codex-track phase lands, so the upcoming per-mirror annotation-idiom split reads as sanctioned rather than an unplanned parity gap.
+
+- Source: branch `feature/explicit-model-effort-policy` (Phase 1 of the plan; Claude-track Phases 2–4 and Codex-track Phase 5 follow).
+- Claude files changed (Phase 1): `AGENTS.md` (new Model/Effort Policy subsection), `README.md` (pointer to the policy), this file.
+- Codex files needing analogous updates: none yet at Phase 1 (docs only). Phases 2–4 add `model:`/`effort:` annotations across `plugins/skein/skills/*/SKILL.md`; Phase 5 (authored via `codex:rescue`, after Phases 2–4 land) adds the semantically-equivalent `reasoning_effort=high|medium|low` prose hints across `plugins/skein-codex/skills/*/SKILL.md`.
+- Required result: **Codex-native adaptation, not byte-identical parity.** Per R4 of the plan, the Claude `model:`+`effort:` idiom and the Codex "inherit harness model, request `reasoning_effort=X`" prose idiom are a sanctioned divergence (same tier intent per spawn, different knobs) — not drift to reconcile away.
+- Gating checks the Codex maintainer must clear once Phase 5 lands: `just check-prompt-parity`, `just parity-tests`, and the new cross-skill tier census `tests/parity/test-spawn-tiers.sh` (added in Phase 3) extended with Codex `reasoning_effort` expectations.
+
+### 2026-07-04 — R6 nested-spawn gate unconfirmed (Claude-track fallback, not drift)
+
+Phase 4 of `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md` ran the
+required live gate for R6 (whether a `claude -p --dangerously-skip-permissions`
+worker subprocess can spawn a nested `Agent` test-writer subagent honoring its own
+`model:`/`effort:` tier) and could **not confirm** it in this environment: the
+skip-permissions subprocess was blocked by harness permission policy before a
+nested spawn could even be attempted. This is a harness-behavior gate, not a code
+defect — see the plan's Claude-Specific Section ("Assumption to verify… Claude-track
+fallback if the gate fails").
+
+- Fallback taken, per the plan's documented Claude-track fallback: (a) the fan-out
+  worker keeps its existing single-context Test phase (`agent-prompt.md` Phase 2) —
+  it authors and runs its own tests, but now explicitly to the same slice contract a
+  separate test-writer would have used; (b) this entry logs the limitation; (c) the
+  R6 seeded-divergence acceptance criterion is satisfied via a **direct-mode**
+  runner rather than an end-to-end nested-spawn run.
+- What still landed regardless of the gate: the R6 contract definition (the
+  `{{TECHNICAL_SPECIFICATIONS}}` injection at `fan-out/SKILL.md:106-109` now embeds
+  Integration Seams rows with a per-row Writer designation); the anti-cheat rule in
+  `agent-prompt.md` Phase 4 (contract wins on impl-vs-test divergence — worker may
+  not weaken assertions); `fan-out/test-writer-prompt.md` as a contract artifact
+  documenting the intended separate-subagent design; and a deterministic seeded-
+  divergence fixture + `plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh`
+  that drives the R6 contract-divergence mechanism directly against two fixture
+  implementations (proving a contract test fails on a divergent impl and passes on
+  a conformant one), exit 0 confirmed locally.
+- What is deferred: the separate-subagent test-writer topology itself (documented
+  as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft" section and
+  `agent-prompt.md` Phase 2's inline comment) — reactivate it once a `claude -p`
+  nested-`Agent` spawn honoring its tier is confirmed in this environment.
+- Required result: **logged limitation, not mirrored end-to-end topology**, per the
+  plan's fallback clause. No Codex-side action is owed by this entry; Phase 5
+  (Codex track) inherits the same gate question independently for `codex -p`
+  worker delegation and logs its own divergence if needed.
+- Gating checks cleared: `bash plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh` (exit 0, direct mode) and `bash tests/parity/test-spawn-tiers.sh` (14 passed, 0 failed, including the new test-writer tier assertion).
+
+### 2026-07-04 — R6 nested-spawn gate unconfirmed (Codex-track divergence, not drift)
+
+Phase 5 of `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`
+attempted the symmetric Codex gate without unsafe bypass flags: whether a
+non-interactive `codex exec` worker can spawn a nested `spawn_agent` test-writer
+subagent with `fork_context=false` and a `reasoning_effort=medium` request. The
+gate could **not confirm** this topology in this environment. The checked CLI does
+not advertise a first-class `--effort` flag, and the safe non-interactive probe
+failed before nested tools could be exercised:
+`failed to initialize in-process app-server client: Operation not permitted`.
+
+- Fallback taken, per the plan's symmetric Codex fallback: (a) the fan-out worker
+  keeps its existing single-context Test phase (`agent-prompt.md` Phase 2) — it
+  authors and runs its own tests, but now explicitly to the same slice contract a
+  separate test-writer would have used; (b) this entry logs the limitation; (c) the
+  R6 seeded-divergence acceptance criterion is satisfied via a **direct-mode**
+  runner rather than an end-to-end nested-spawn run.
+- What still landed regardless of the gate: the R6 contract definition (the
+  `{{TECHNICAL_SPECIFICATIONS}}` injection at `fan-out/SKILL.md:106-109` now embeds
+  Integration Seams rows with a per-row Writer designation); the anti-cheat rule in
+  `agent-prompt.md` Phase 4 (contract wins on impl-vs-test divergence — worker may
+  not weaken assertions); `fan-out/test-writer-prompt.md` as a Codex contract
+  artifact documenting the intended `spawn_agent`/`fork_context=false` design; and
+  a deterministic seeded-divergence fixture +
+  `plugins/skein-codex/skills/fan-out/tests/run-seeded-divergence.sh` that drives
+  the R6 contract-divergence mechanism directly against two fixture implementations
+  (proving a contract test fails on a divergent impl and passes on a conformant one).
+- What is deferred: the separate-subagent Codex test-writer topology itself
+  (documented as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft"
+  section and `agent-prompt.md` Phase 2's inline comment) — reactivate it once a
+  non-interactive Codex worker can initialize delegation and spawn a nested
+  `spawn_agent` worker honoring `fork_context=false` and `reasoning_effort=medium`.
+- Required result: **logged limitation, not mirrored end-to-end topology**, per the
+  plan's fallback clause. This is a harness-behavior gate, not a semantic mirror
+  drift item.
+- Gating checks to clear after Phase 5: `bash plugins/skein-codex/skills/fan-out/tests/run-seeded-divergence.sh` (direct mode) and `bash tests/parity/test-spawn-tiers.sh` (Claude + Codex census).
+- **Reactivation probe:** `bash plugins/skein-codex/skills/fan-out/tests/check-r6-gate-codex.sh` — the runnable symmetric analogue of the Claude gate. Run it from a permitted shell (externally sandboxed, or `FANOUT_PERMS_FLAG=--dangerously-bypass-approvals-and-sandbox`). Under the nested `codex-companion` launch context it hits the `Operation not permitted` app-server init block (exit 2). Run fresh from a plain shell, see the finding below.
+
+#### 2026-07-05 — probe exercised: topology RUNS, but tier is unverifiable via `codex exec --json` (CLI 0.142.5)
+
+Running the reactivation probe from a plain shell (not nested inside a codex session) got **past** the `Operation not permitted` block: the worker spawned a real nested child and returned `NESTED_SPAWN_WORKED`. The `codex exec --json` stream contains genuine inter-agent thread activity — `collab_tool_call` items with `tool: spawn_agent`/`wait`/`close_agent`, distinct `sender_thread_id` and `receiver_thread_ids`, and `agents_states` keyed by the child thread id — i.e. the **nested-spawn topology actually works in this environment**. The earlier `Operation not permitted` was an artifact of the nested launch context, not a fundamental block.
+
+- **But the tier cannot be confirmed.** `codex exec --json` (CLI 0.142.5) exposes **no per-child billing and no `reasoning_effort` echo** anywhere in the stream — token usage appears only at `turn.completed` (whole-session aggregate), never attributed to the spawned child, and no field records the child's effort. So the probe's billing-evidence acceptance model (borrowed by analogy from Claude's `result.modelUsage`, which *does* attribute per-model billing) is **structurally unsatisfiable** on this CLI. The `reasoning_effort=medium` half of the R6 contract is unverifiable from Codex output.
+- **Probe behavior (as of this commit):** exit 0 (confirm) is reserved for a future CLI that emits per-child billed usage at the requested effort — it cannot fire on 0.142.5. The observed "spawn ran + success sentinel fired, but no per-child billing/effort" case reports **INCONCLUSIVE (exit 2)**, *not* exit 1 — the topology did not fail, the tier just cannot be measured. Exit 1 is reserved for a `NESTED_SPAWN_FAILED` report or no real spawn evidence (echoed text is never acceptance).
+- **Status unchanged: Codex R6 stays gated.** The topology plausibly works, but (a) the tier is unverifiable and (b) availability is launch-context-dependent (blocked when nested). Reactivating the separate-subagent Codex topology still requires a Codex CLI that exposes per-child usage so the tier can be confirmed the way the Claude gate confirms it.
+
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
 Claude-side bundling of the auto-fix pipeline landed first; the `.codex` analogue has now landed in the same branch. This entry is retained as handoff history, not open drift.

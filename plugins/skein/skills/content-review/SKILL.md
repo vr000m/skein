@@ -51,7 +51,7 @@ Before spawning the subagent, read the content to review (from file or conversat
 
 ### Subagent delegation
 
-**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
+**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"`, `effort: "medium"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
 
 ````
 You are reviewing written content against style guidelines and producing a structured report.

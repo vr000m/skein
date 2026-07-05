@@ -43,7 +43,7 @@ The actual drafting and authenticity pass involve reading reference files and it
 
 ### Subagent delegation
 
-**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
+**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"`, `effort: "medium"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
 
 ````
 You are drafting written content (a TIL or blog post) from a session summary provided below.

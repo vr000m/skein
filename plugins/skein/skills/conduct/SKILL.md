@@ -33,7 +33,7 @@ These helpers are a pure-Python library — there is no CLI entry point. Main Cl
 
 Delegation depth from this skill is exactly 1: conduct → workers. Workers never spawn further subagents. This skill is invoked directly by the user as a top-level skill, OR inside a subprocess spawned by `/fan-out` that re-baselines depth at the process boundary. It is never invoked as an `Agent` subagent.
 
-Subagents are spawned via the `Agent` tool with `subagent_type: general-purpose`. Shared workspace — worktree isolation is the user's concern at the outer layer. Clean context comes from the `Agent` tool's default behaviour (no parent conversation history), not from filesystem separation.
+Subagents are spawned via the `Agent` tool with `subagent_type: general-purpose`. Shared workspace — worktree isolation is the user's concern at the outer layer. Clean context comes from the `Agent` tool's default behaviour (no parent conversation history), not from filesystem separation. Tiers per the two-tier policy (`AGENTS.md` Model/Effort Policy): implementer and test-writer are mechanical → `model: sonnet, effort: medium`; the advisory reviewer (Step 7) is judgment work → `model: opus, effort: high`.
 
 ## Invocation
 
@@ -165,7 +165,7 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 
 Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
-Spawn via the `Agent` tool, `subagent_type: general-purpose`, with the filled template as the full prompt. Do not thread parent conversation context. In parallel mode, issue both Agent tool calls in a single message.
+Spawn via the `Agent` tool, `subagent_type: general-purpose`, with the filled template as the full prompt. Do not thread parent conversation context. In parallel mode, issue both Agent tool calls in a single message. Both the implementer and the test-writer are mechanical work (executing an already-reviewed plan, not judgment) → `model: sonnet, effort: medium`.
 
 ### Step 4 — Await both, parse reports
 
@@ -228,7 +228,12 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 
 ### Step 7 — Optional mid-phase reviewer (one-shot)
 
-Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
+Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff.
+
+<!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (R1) even though it is only advisory -->
+`model: opus, effort: high`.
+
+Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
 
 ### Step 8 — Phase-boundary commit
 

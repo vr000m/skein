@@ -1,0 +1,297 @@
+#!/usr/bin/env bash
+# test-spawn-tiers.sh — cross-skill R2 tier census.
+#
+# R2 (the inheritance invariant) says every subagent spawn declares its own
+# tier; no spawn inherits the session tier for mechanical work. This is a
+# fresh, mandatory census — NOT an extension of the conduct-scoped mention
+# guard `plugins/skein/skills/conduct/tests/test_skill_spawn_grep.sh` (that
+# file only forbids stray skill-name mentions inside the conduct directory
+# and cannot read the other ten skills or assert tiers).
+#
+# This census walks plugins/skein/skills/*/SKILL.md and
+# plugins/skein-codex/skills/*/SKILL.md, then asserts PINNED per-file
+# expected-tier counts, not a bare "does the string appear" check —
+# a bare presence check passes on one match while three are missing. Each
+# assertion here is falsifiable: removing any one `effort: high` or
+# `opus/high:` why-comment from the tree makes this script exit 1.
+#
+# Exit codes: 0 all assertions pass, 1 any assertion fails.
+
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+SKILLS_DIR="$ROOT_DIR/plugins/skein/skills"
+CODEX_SKILLS_DIR="$ROOT_DIR/plugins/skein-codex/skills"
+
+pass_count=0
+fail_count=0
+
+pass() {
+	echo "PASS: $1"
+	pass_count=$((pass_count + 1))
+}
+
+fail() {
+	echo "FAIL: $1"
+	fail_count=$((fail_count + 1))
+}
+
+# assert_count FILE PATTERN EXPECTED LABEL
+# PATTERN is an extended regex passed to `grep -oE`; count is the number of
+# matched occurrences (not matching lines) across the whole file.
+assert_count() {
+	local file="$1" pattern="$2" expected="$3" label="$4"
+	local actual
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	actual=$(grep -oE -- "$pattern" "$file" 2>/dev/null | wc -l | tr -d ' ' || true)
+	if [[ "$actual" -eq "$expected" ]]; then
+		pass "$label ($file): expected=$expected actual=$actual"
+	else
+		fail "$label ($file): expected=$expected actual=$actual"
+	fi
+}
+
+# assert_count_glob PATTERN_GLOB GREP_PATTERN EXPECTED LABEL
+# Sums occurrences of GREP_PATTERN across every file matching PATTERN_GLOB.
+assert_count_total() {
+	local glob="$1" pattern="$2" expected="$3" label="$4"
+	local actual=0
+	local f
+	local n
+	shopt -s nullglob
+	for f in $glob; do
+		n=$(grep -oE -- "$pattern" "$f" 2>/dev/null | wc -l | tr -d ' ' || true)
+		actual=$((actual + n))
+	done
+	shopt -u nullglob
+	if [[ "$actual" -eq "$expected" ]]; then
+		pass "$label: expected=$expected actual=$actual"
+	else
+		fail "$label: expected=$expected actual=$actual"
+	fi
+}
+
+# assert_min FILE PATTERN MIN LABEL
+assert_min() {
+	local file="$1" pattern="$2" min="$3" label="$4"
+	local actual
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	actual=$(grep -oE -- "$pattern" "$file" 2>/dev/null | wc -l | tr -d ' ' || true)
+	if [[ "$actual" -ge "$min" ]]; then
+		pass "$label ($file): expected>=$min actual=$actual"
+	else
+		fail "$label ($file): expected>=$min actual=$actual"
+	fi
+}
+
+# assert_present FILE PATTERN LABEL
+assert_present() {
+	local file="$1" pattern="$2" label="$3"
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	if grep -qE -- "$pattern" "$file" 2>/dev/null; then
+		pass "$label ($file): present"
+	else
+		fail "$label ($file): NOT present"
+	fi
+}
+
+# assert_absent FILE PATTERN LABEL
+assert_absent() {
+	local file="$1" pattern="$2" label="$3"
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	if grep -qE -- "$pattern" "$file" 2>/dev/null; then
+		fail "$label ($file): unexpectedly present"
+	else
+		pass "$label ($file): absent as expected"
+	fi
+}
+
+echo "=== R2 tier census: plugins/skein-codex/skills/*/SKILL.md ==="
+echo
+
+# --- (7) Codex per-skill reasoning_effort counts ---
+# These counts intentionally use Codex's prose-hint idiom (`reasoning_effort=X`)
+# rather than Claude `model:`/`effort:` fields. They cover all Codex SKILL.md
+# spawns/lenses that declare a tier in the mirror, including the R6 fan-out
+# test-writer intended topology, even though that topology is gated/inactive
+# until the nested-spawn runtime gate is confirmed.
+CODEX_HIGH_RE='reasoning_effort=high'
+CODEX_MEDIUM_RE='reasoning_effort=medium'
+CODEX_LOW_RE='reasoning_effort=low'
+
+assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_HIGH_RE" 4 \
+	"codex review-plan reasoning_effort=high judgment lens count"
+assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex review-plan reasoning_effort=low factual lens count"
+assert_count "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "$CODEX_HIGH_RE" 4 \
+	"codex deep-review reasoning_effort=high review lens count"
+assert_count "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex deep-review reasoning_effort=low documentation lens count"
+assert_count "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" "$CODEX_HIGH_RE" 1 \
+	"codex spec-compliance reasoning_effort=high count"
+assert_count "$CODEX_SKILLS_DIR/conduct/SKILL.md" "$CODEX_MEDIUM_RE" 5 \
+	"codex conduct reasoning_effort=medium lifecycle count"
+assert_count "$CODEX_SKILLS_DIR/conduct/SKILL.md" "$CODEX_HIGH_RE" 2 \
+	"codex conduct reasoning_effort=high reviewer lifecycle count"
+assert_count "$CODEX_SKILLS_DIR/dev-plan/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
+	"codex dev-plan reasoning_effort=medium Explore count"
+assert_count "$CODEX_SKILLS_DIR/plan-view/SKILL.md" "$CODEX_LOW_RE" 2 \
+	"codex plan-view reasoning_effort=low rich-render spawn count"
+assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 2 \
+	"codex fan-out reasoning_effort=medium test-writer gated-topology count"
+assert_count "$CODEX_SKILLS_DIR/content-draft/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex content-draft reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/content-review/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex content-review reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/update-docs/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex update-docs reasoning_effort=low count"
+assert_count "$CODEX_SKILLS_DIR/rfc-finder/SKILL.md" "$CODEX_LOW_RE" 1 \
+	"codex rfc-finder reasoning_effort=low count"
+
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 11 \
+	"codex total reasoning_effort=high occurrences across SKILL.md"
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 8 \
+	"codex total reasoning_effort=medium occurrences across SKILL.md"
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_LOW_RE" 8 \
+	"codex total reasoning_effort=low occurrences across SKILL.md"
+
+# --- (8) Codex review-tier rationale / R3 why coverage ---
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Deep reasoning' \
+	"codex deep-review Logic high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*High-impact findings' \
+	"codex deep-review Security high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Cross-referencing standards' \
+	"codex deep-review Spec high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" 'reasoning_effort=high.*Review-tier architecture judgment' \
+	"codex deep-review Architecture high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Patterns, coupling, integration seams' \
+	"codex review-plan Architecture high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Task order, hidden dependencies' \
+	"codex review-plan Sequencing high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Review Focus, RFC/spec references' \
+	"codex review-plan Spec-and-testing high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Unverifiable claims stated as fact' \
+	"codex review-plan Assumptions high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'R3 why: normative spec compliance is judgment work' \
+	"codex spec-compliance R3 why-comment"
+assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'R3 why: code review is judgment work' \
+	"codex conduct reviewer R3 why-comment"
+
+# --- (9) Codex R6 and dispatch-idiom guards ---
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'reasoning_effort=medium.*fork_context=false' \
+	"codex fan-out R6 intended test-writer spawn carries medium effort and fork_context=false"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/agent-prompt.md" 'reasoning_effort=medium' \
+	"codex fan-out agent-prompt documents gated test-writer reasoning_effort=medium"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/test-writer-prompt.md" 'reasoning_effort=medium' \
+	"codex fan-out test-writer-prompt documents medium effort"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'Codex does not pin model names' \
+	"codex fan-out documents no default model pin"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
+	"codex fan-out.sh FANOUT_EFFORT support present"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'command_supports_effort' \
+	"codex fan-out.sh first-class --effort detection present"
+
+echo
+echo "=== R2 tier census: plugins/skein/skills/*/SKILL.md ==="
+echo
+
+# --- (1) Pinned total of opus/high why-comments across all skills ---
+# review-plan 4 + deep-review 4 (logic/security/spec/architecture) +
+# spec-compliance 1 + conduct 1 (reviewer) = 10
+assert_count_total "$SKILLS_DIR/*/SKILL.md" 'opus/high:' 10 \
+	"pinned total opus/high why-comments across plugins/skein/skills/*/SKILL.md"
+
+# --- (2) Per-skill expected effort:high counts (both quoting styles) ---
+# Trailing ([^/]|$) excludes prose like "effort: high/low" (a generic doc
+# sentence describing both tiers, not a per-lens annotation) from the count.
+EFFORT_HIGH_RE='effort:[[:space:]]*"?high"?([^/]|$)'
+assert_count "$SKILLS_DIR/review-plan/SKILL.md" "$EFFORT_HIGH_RE" 4 \
+	"review-plan effort:high count"
+assert_count "$SKILLS_DIR/deep-review/SKILL.md" "$EFFORT_HIGH_RE" 4 \
+	"deep-review effort:high count"
+assert_count "$SKILLS_DIR/spec-compliance/SKILL.md" "$EFFORT_HIGH_RE" 1 \
+	"spec-compliance effort:high count"
+
+# --- (3) deep-review architecture lens is opus, not sonnet ---
+arch_line=$(grep -nE '^#### Architecture Lens' "$SKILLS_DIR/deep-review/SKILL.md" || true)
+if [[ -z "$arch_line" ]]; then
+	fail "deep-review Architecture Lens header not found"
+elif echo "$arch_line" | grep -q 'model: opus'; then
+	pass "deep-review Architecture Lens header carries model: opus"
+elif echo "$arch_line" | grep -q 'model: sonnet'; then
+	fail "deep-review Architecture Lens header still carries model: sonnet (must be opus)"
+else
+	fail "deep-review Architecture Lens header has neither model: opus nor model: sonnet: $arch_line"
+fi
+
+# --- (4) Factual-tier lenses present: effort:low + model:haiku ---
+EFFORT_LOW_RE='effort:[[:space:]]*"?low"?([^/]|$)'
+MODEL_HAIKU_RE='model:[[:space:]]*"?haiku"?([^/]|$)'
+assert_min "$SKILLS_DIR/review-plan/SKILL.md" "$EFFORT_LOW_RE" 1 \
+	"review-plan codebase-claims effort:low present"
+assert_min "$SKILLS_DIR/review-plan/SKILL.md" "$MODEL_HAIKU_RE" 1 \
+	"review-plan codebase-claims model:haiku present"
+assert_min "$SKILLS_DIR/deep-review/SKILL.md" "$EFFORT_LOW_RE" 1 \
+	"deep-review documentation effort:low present"
+assert_min "$SKILLS_DIR/deep-review/SKILL.md" "$MODEL_HAIKU_RE" 1 \
+	"deep-review documentation model:haiku present"
+
+# --- (5) fan-out.sh default flip + --effort support ---
+FANOUT_SH="$SKILLS_DIR/fan-out/fan-out.sh"
+assert_present "$FANOUT_SH" 'DEFAULT_MODEL="sonnet"' "fan-out.sh DEFAULT_MODEL=sonnet"
+assert_absent "$FANOUT_SH" 'DEFAULT_MODEL="opus"' "fan-out.sh DEFAULT_MODEL=opus (must be gone)"
+assert_present "$FANOUT_SH" 'DEFAULT_EFFORT' "fan-out.sh DEFAULT_EFFORT present"
+assert_present "$FANOUT_SH" '\-\-effort' "fan-out.sh --effort flag handling present"
+
+# --- (6) R6: fan-out test-writer spawn documented at sonnet/medium ---
+# The test-writer topology is currently gated (see CODEX_MIRROR_BACKLOG.md,
+# 2026-07-04 entry) but its intended tier must still be documented in
+# agent-prompt.md so the annotation survives once the gate is confirmed. This
+# does not change the pinned opus/high total above (10) — sonnet/medium is a
+# mechanical tier, not a judgment tier.
+FANOUT_AGENT_PROMPT="$SKILLS_DIR/fan-out/agent-prompt.md"
+assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
+	"fan-out agent-prompt.md test-writer spawn documented at model: sonnet, effort: medium"
+
+# --- (6b) R6 anti-cheat semantics floor (both mirrors) ---
+# scripts/check-prompt-parity.sh excises the R6 idiom spans (the anti-cheat
+# paragraph and the gated-topology block) before byte-comparing the two fan-out
+# prompt mirrors, so byte-parity no longer guards R6's load-bearing "contract
+# wins" anti-cheat rule. Assert its presence here in BOTH mirrors so the excised
+# span keeps an automated floor (deep-review Architecture finding, 2026-07-04).
+for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
+	assert_present "$tree/fan-out/agent-prompt.md" 'contract wins' \
+		"fan-out agent-prompt.md ($tree) carries the R6 anti-cheat 'contract wins' rule"
+	# The parity normalizer's excision ranges end on these anchors; if a future
+	# edit drops an anchor in one mirror the sed range would run to EOF and
+	# over-excise, masking real drift (Logic finding, 2026-07-04). Pin them.
+	assert_present "$tree/fan-out/agent-prompt.md" '^### Phase 5' \
+		"fan-out agent-prompt.md ($tree) retains the '### Phase 5' excision anchor"
+	assert_present "$tree/fan-out/agent-prompt.md" '^If your task has an applicable test framework' \
+		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision start anchor"
+	assert_present "$tree/fan-out/agent-prompt.md" '^If no relevant test framework exists' \
+		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision end anchor"
+	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
+		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
+done
+
+echo
+echo "=== Summary: $pass_count passed, $fail_count failed ==="
+
+if [[ "$fail_count" -gt 0 ]]; then
+	exit 1
+fi
+
+exit 0

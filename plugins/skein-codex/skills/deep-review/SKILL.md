@@ -94,7 +94,7 @@ reasoning-effort hints instead of version-pinned model names.
 | Logic | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Deep reasoning for edge cases, state transitions, and failure paths |
 | Security | Inherit the harness-selected model; request `reasoning_effort=high` when supported | High-impact findings deserve strong analysis |
 | Spec compliance | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Cross-referencing standards requires careful reading |
-| Architecture | Inherit the harness-selected model; request `reasoning_effort=medium` when supported | Pattern and compatibility analysis with balanced reasoning cost |
+| Architecture | Inherit the harness-selected model; request `reasoning_effort=high` when supported | Review-tier architecture judgment needs deep reasoning for coupling, compatibility, and public API risk |
 | Documentation | Inherit the harness-selected model; request `reasoning_effort=low` when supported | Mostly mechanical drift detection across docs and plans |
 
 ## Lens Prompts
@@ -302,7 +302,7 @@ observable.
     "logic": { "status": "completed", "model": "<resolved-or-harness-default>", "reasoning_effort": "high", "findings": [] },
     "security": { "status": "timed_out", "model": "<resolved-or-harness-default>", "reasoning_effort": "high", "findings": [] },
     "spec": { "status": "skipped", "reason": "no specs in Review Focus" },
-    "architecture": { "status": "completed", "model": "<resolved-or-harness-default>", "reasoning_effort": "medium", "findings": [] },
+    "architecture": { "status": "completed", "model": "<resolved-or-harness-default>", "reasoning_effort": "high", "findings": [] },
     "documentation": { "status": "completed", "model": "<resolved-or-harness-default>", "reasoning_effort": "low", "findings": [] }
   }
 }
@@ -468,7 +468,7 @@ informational after setup, not a second confirmation prompt:
 
 ```text
 Deep review will run 4 lenses:
-  Logic (high), Security (high), Architecture (medium), Documentation (low); model inherited from harness default
+  Logic (high), Security (high), Architecture (high), Documentation (low); model inherited from harness default
   Spec compliance: skipped (no specs in Review Focus)
 ```
 
