@@ -16,6 +16,16 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-07-04 — `feature/explicit-model-effort-policy` (in progress, not drift)
+
+Tracking the model/effort annotation rollout from `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`. Logged here proactively, before the Codex-track phase lands, so the upcoming per-mirror annotation-idiom split reads as sanctioned rather than an unplanned parity gap.
+
+- Source: branch `feature/explicit-model-effort-policy` (Phase 1 of the plan; Claude-track Phases 2–4 and Codex-track Phase 5 follow).
+- Claude files changed (Phase 1): `AGENTS.md` (new Model/Effort Policy subsection), `README.md` (pointer to the policy), this file.
+- Codex files needing analogous updates: none yet at Phase 1 (docs only). Phases 2–4 add `model:`/`effort:` annotations across `plugins/skein/skills/*/SKILL.md`; Phase 5 (authored via `codex:rescue`, after Phases 2–4 land) adds the semantically-equivalent `reasoning_effort=high|medium|low` prose hints across `plugins/skein-codex/skills/*/SKILL.md`.
+- Required result: **Codex-native adaptation, not byte-identical parity.** Per R4 of the plan, the Claude `model:`+`effort:` idiom and the Codex "inherit harness model, request `reasoning_effort=X`" prose idiom are a sanctioned divergence (same tier intent per spawn, different knobs) — not drift to reconcile away.
+- Gating checks the Codex maintainer must clear once Phase 5 lands: `just check-prompt-parity`, `just parity-tests`, and the new cross-skill tier census `tests/parity/test-spawn-tiers.sh` (added in Phase 3) extended with Codex `reasoning_effort` expectations.
+
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
 Claude-side bundling of the auto-fix pipeline landed first; the `.codex` analogue has now landed in the same branch. This entry is retained as handoff history, not open drift.

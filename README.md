@@ -18,7 +18,7 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
 | plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; renders Mermaid fences as live diagrams via the Mermaid CDN runtime; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
 
-Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`).
+Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`). Judgment lenses ("high-reasoning" above) vs. mechanical/factual work follow the two-tier model/effort policy in [AGENTS.md](AGENTS.md#modeleffort-policy-target-policy-not-yet-fully-enforced).
 
 ## Plugin install
 
@@ -81,4 +81,4 @@ plugins/skein-codex/skills/<name>/   Codex skills (mirrored structure; per-harne
 scripts/                             Canonical shell scripts (bundle/check/reconcile/parity/render/auto-fix)
 ```
 
-See [AGENTS.md](AGENTS.md) for commands, architecture, authority model, and contributor workflow.
+See [AGENTS.md](AGENTS.md) for commands, architecture, authority model, contributor workflow, and the model/effort policy.
