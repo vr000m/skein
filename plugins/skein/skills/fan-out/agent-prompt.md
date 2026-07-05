@@ -64,11 +64,40 @@ Write the code described in your task. Commit your work.
 
 ### Phase 2: Test
 
-Run the test and type/lint checking commands from the Toolchain section. If the
+<!--
+INTENDED DESIGN (currently GATED, not active): the worker spawns a separate
+clean-context test-writer subagent (`model: sonnet, effort: medium` —
+sonnet/medium: mechanical test authoring against an already-defined contract,
+not judgment work) that receives ONLY the slice contract —
+`{{TASK_DESCRIPTION}}` plus the Writer-designated Integration Seams rows
+(concrete import paths, symbol names, signatures) injected via
+`{{TECHNICAL_SPECIFICATIONS}}` — and never the implementer's diff or
+internal code. That topology is gated on runtime nested-`Agent`-in-`claude -p`
+support, which is UNCONFIRMED in this environment (the skip-permissions
+subprocess was blocked by harness permission policy during the Phase-4 live
+gate run — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04 entry).
+Until that gate is confirmed, the ACTIVE PATH below is single-context
+authoring: you write and run your own tests, but you author them to the same
+contract a separate test-writer would have used.
+-->
+
+If your task has an applicable test framework, write or update tests **to the slice
+contract**: the `{{TASK_DESCRIPTION}}` above plus the Integration Seams rows in your
+Technical Context where you are listed as the Writer (concrete import paths, symbol
+names, function signatures). Treat that contract — not your own implementation — as
+the source of truth for what the tests assert.
+
+If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
+note that explicitly in your result file and continue; do not attempt to write
+contract tests against nothing.
+
+Then run the test and type/lint checking commands from the Toolchain section. If the
 Toolchain section is empty, infer equivalent commands from project config files.
 
 If anything fails, fix and re-run until everything passes. Do not proceed to
-Phase 3 with failures.
+Phase 3 with failures. Remember: fixing means changing your implementation to satisfy
+the contract, never relaxing the contract-derived assertions (see the anti-cheat rule
+in Phase 4, which applies here too).
 
 ### Phase 3: Self-Review
 
@@ -96,6 +125,16 @@ Write down every issue you find.
 ### Phase 4: Fix
 
 Fix every issue found in Phase 3. Add tests for any gaps you identified. Commit the fixes.
+
+**Anti-cheat rule (hard, applies regardless of Test-phase mode above):** you may
+**not** relax, delete, or rewrite the contract-derived test assertions from Phase 2
+to make them pass. When your implementation and the contract tests disagree, **the
+contract wins** — fix the implementation, not the test. If you believe the contract
+itself is wrong or under-specified, do not silently edit the test to match your
+implementation; instead leave the test as written and escalate the divergence in the
+"Remaining Concerns" section of `.fan-out-result.md` for the merge/reconciliation
+phase to resolve. Weakening a contract test to make it pass defeats the entire
+purpose of testing to the contract rather than to your own code.
 
 ### Phase 5: Final Verification
 

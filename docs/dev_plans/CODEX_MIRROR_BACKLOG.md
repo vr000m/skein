@@ -26,6 +26,43 @@ Tracking the model/effort annotation rollout from `docs/dev_plans/20260704-chore
 - Required result: **Codex-native adaptation, not byte-identical parity.** Per R4 of the plan, the Claude `model:`+`effort:` idiom and the Codex "inherit harness model, request `reasoning_effort=X`" prose idiom are a sanctioned divergence (same tier intent per spawn, different knobs) — not drift to reconcile away.
 - Gating checks the Codex maintainer must clear once Phase 5 lands: `just check-prompt-parity`, `just parity-tests`, and the new cross-skill tier census `tests/parity/test-spawn-tiers.sh` (added in Phase 3) extended with Codex `reasoning_effort` expectations.
 
+### 2026-07-04 — R6 nested-spawn gate unconfirmed (Claude-track fallback, not drift)
+
+Phase 4 of `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md` ran the
+required live gate for R6 (whether a `claude -p --dangerously-skip-permissions`
+worker subprocess can spawn a nested `Agent` test-writer subagent honoring its own
+`model:`/`effort:` tier) and could **not confirm** it in this environment: the
+skip-permissions subprocess was blocked by harness permission policy before a
+nested spawn could even be attempted. This is a harness-behavior gate, not a code
+defect — see the plan's Claude-Specific Section ("Assumption to verify… Claude-track
+fallback if the gate fails").
+
+- Fallback taken, per the plan's documented Claude-track fallback: (a) the fan-out
+  worker keeps its existing single-context Test phase (`agent-prompt.md` Phase 2) —
+  it authors and runs its own tests, but now explicitly to the same slice contract a
+  separate test-writer would have used; (b) this entry logs the limitation; (c) the
+  R6 seeded-divergence acceptance criterion is satisfied via a **direct-mode**
+  runner rather than an end-to-end nested-spawn run.
+- What still landed regardless of the gate: the R6 contract definition (the
+  `{{TECHNICAL_SPECIFICATIONS}}` injection at `fan-out/SKILL.md:106-109` now embeds
+  Integration Seams rows with a per-row Writer designation); the anti-cheat rule in
+  `agent-prompt.md` Phase 4 (contract wins on impl-vs-test divergence — worker may
+  not weaken assertions); `fan-out/test-writer-prompt.md` as a contract artifact
+  documenting the intended separate-subagent design; and a deterministic seeded-
+  divergence fixture + `plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh`
+  that drives the R6 contract-divergence mechanism directly against two fixture
+  implementations (proving a contract test fails on a divergent impl and passes on
+  a conformant one), exit 0 confirmed locally.
+- What is deferred: the separate-subagent test-writer topology itself (documented
+  as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft" section and
+  `agent-prompt.md` Phase 2's inline comment) — reactivate it once a `claude -p`
+  nested-`Agent` spawn honoring its tier is confirmed in this environment.
+- Required result: **logged limitation, not mirrored end-to-end topology**, per the
+  plan's fallback clause. No Codex-side action is owed by this entry; Phase 5
+  (Codex track) inherits the same gate question independently for `codex -p`
+  worker delegation and logs its own divergence if needed.
+- Gating checks cleared: `bash plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh` (exit 0, direct mode) and `bash tests/parity/test-spawn-tiers.sh` (14 passed, 0 failed, including the new test-writer tier assertion).
+
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
 Claude-side bundling of the auto-fix pipeline landed first; the `.codex` analogue has now landed in the same branch. This entry is retained as handoff history, not open drift.

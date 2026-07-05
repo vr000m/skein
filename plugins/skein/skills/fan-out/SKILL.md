@@ -14,6 +14,12 @@ Spawned agents are one level deep — they implement their assigned task and mus
 
 A fan-out-spawned Claude subprocess may invoke `/conduct` as its top-level skill — the subprocess boundary in `fan-out.sh` starts a new orchestrator tree, so `fan-out → (subprocess) → conduct → {implementer, test-writer}` stays within the per-tree one-level rule. `/conduct` itself does not fan out; keep parallelism at the outer layer.
 
+### R6: clean-context test-writer graft (intended design, gated)
+
+The worker's Test phase (agent-prompt.md Phase 2) is designed to delegate test authoring to a **separate clean-context test-writer subagent** (`model: sonnet, effort: medium`), one in-process `Agent` level below the worker — permitted in doctrine by the "Delegation Depth" rule above and does not start a new fan-out tier or invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
+
+**This topology is currently GATED, not active.** The Phase-4 live run could not confirm that a `claude -p --dangerously-skip-permissions` worker subprocess can spawn a nested `Agent` subagent honoring its own tier in this environment (the skip-permissions subprocess was blocked by harness permission policy — see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04 entry). Until that gate is confirmed, the **active fallback** is: the worker keeps its existing single-context Test phase (it writes and runs its own tests) but tests to the same slice contract, and the anti-cheat rule below still applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below) regardless of which Test-phase mode is active.
+
 ## Usage
 
 - `/fan-out docs/dev_plans/20260206-feature-xyz.md` -- Parse plan, fan out independent tasks
@@ -106,7 +112,7 @@ Then for each task:
 2. **Build agent prompt**: Read the template from `agent-prompt.md` in this skill directory. Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
-   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan
+   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (R6 contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
    - `{{WORKTREE_PATH}}` — Absolute path to worktree
    - `{{BRANCH_NAME}}` — Git branch for this agent
    - `{{BASE_BRANCH}}` — The base branch
