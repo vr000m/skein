@@ -130,9 +130,9 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
    }
    ```
 
-2. **Agent harness consumes the manifest.**
-   - For each `strategy: "single"` pending entry: spawn one subagent with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
-   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap) — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
+2. **Agent harness consumes the manifest.** Both spawn shapes are mechanical transform work (render markdown + widgets to HTML per a fixed contract, no judgment) → `model: sonnet, effort: low`.
+   - For each `strategy: "single"` pending entry: spawn one subagent (`model: sonnet, effort: low`) with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
+   - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap), each at `model: sonnet, effort: low` — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
 3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
 
@@ -155,7 +155,7 @@ Subagents pick widgets when the source has matching content (an ASCII state mach
 
 ### Suggested subagent prompt shapes
 
-**Single-strategy (whole plan):**
+**Single-strategy (whole plan, `model: sonnet, effort: low`):**
 ```
 Source: {plan markdown at source_path}
 Widget catalogue: {_widgets/README.md plus each widget file}
@@ -169,7 +169,7 @@ Constraints:
 Return: {"output_path": "...", "widgets_used": [...], "fallback_sections": [...]}.
 ```
 
-**Sections-strategy (one subagent per section, spawned in parallel):**
+**Sections-strategy (one subagent per section, spawned in parallel, `model: sonnet, effort: low`):**
 ```
 Section: {section_title} (id: {section_id})
 Source: {plan markdown at source_path, sliced to this H2's body}

@@ -30,7 +30,7 @@ These steps involve multiple WebSearch/WebFetch calls to Datatracker and RFC Edi
 
 ### Subagent delegation
 
-**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
+**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "sonnet"`, `effort: "low"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
 
 ````
 You are finding IETF RFCs and returning structured results with direct links and brief factual annotations.

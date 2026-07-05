@@ -1,7 +1,7 @@
 ---
 name: fan-out
 description: Fans out independent tasks from a dev-plan to parallel Claude agents running in isolated git worktrees, then merges and verifies the results. Use after planning when 2+ tasks can run independently, or when the user says "fan out", "parallelize this", or "/fan-out".
-argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL]"
+argument-hint: "[plan-file | status | logs N | cancel [N] | merge | cleanup] [--dry-run] [--max-agents N] [--model MODEL] [--effort LEVEL]"
 ---
 
 # Fan Out: Parallel Agent Orchestration
@@ -124,7 +124,7 @@ Then for each task:
 
 3. **Spawn agent**:
    ```bash
-   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model opus)
+   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
    ```
 
 4. **Record state**: After spawning all agents, write `.fan-out-state.json` in the repo root:
@@ -244,7 +244,7 @@ tail -100 <worktree>/fan-out.log
 
 ## Defaults
 
-- **Model**: opus (override with `--model sonnet`)
+- **Model**: `--model sonnet --effort medium` (mechanical — the worker executes an already-scoped task under the two-tier policy, `AGENTS.md` Model/Effort Policy). Override with `--model opus` for genuinely hard tasks; when overriding, add a one-line why-note in the invocation (e.g. "opus: slice touches concurrency-sensitive locking logic").
 - **Max agents**: 5 (override with `--max-agents 3`)
 - **Worktree location**: `../<repo-name>-fanout-<slug>` (sibling to repo)
 - **Branch naming**: `fanout/<base-slug>-<task-slug>`

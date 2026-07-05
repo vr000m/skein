@@ -4,7 +4,8 @@ set -euo pipefail
 # fan-out.sh — Worktree setup, agent spawning, monitoring, and cleanup
 # Companion script for the /fan-out skill.
 
-DEFAULT_MODEL="opus"
+DEFAULT_MODEL="sonnet"
+DEFAULT_EFFORT="medium"
 
 usage() {
   cat <<'EOF'
@@ -12,14 +13,15 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
-  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL]  Launch claude -p
+  spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch claude -p
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
   cleanup <state-file>                              Remove worktrees and branches
   help                                              Show this message
 
 Environment:
-  FANOUT_MODEL=opus|sonnet|haiku   Override default model (opus)
+  FANOUT_MODEL=opus|sonnet|haiku   Override default model (sonnet)
+  FANOUT_EFFORT=high|medium|low   Override default effort (medium)
 EOF
 }
 
@@ -62,12 +64,14 @@ cmd_spawn() {
   local prompt_file="$2"
   local log_file="$3"
   local model="${FANOUT_MODEL:-$DEFAULT_MODEL}"
+  local effort="${FANOUT_EFFORT:-$DEFAULT_EFFORT}"
 
-  # Parse optional --model flag
+  # Parse optional --model / --effort flags
   shift 3
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --model) model="$2"; shift 2 ;;
+      --effort) effort="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -92,6 +96,7 @@ cmd_spawn() {
     exec claude -p "$(cat "$prompt_file")" \
       --dangerously-skip-permissions \
       --model "$model" \
+      --effort "$effort" \
       > "$log_file" 2>&1
   ) &
 
