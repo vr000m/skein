@@ -276,9 +276,37 @@ Three runtime behavior changes: fan-out's default worker `--model` (opus→sonne
 
 _(per-phase completion recorded here by /conduct — below the marker, not part of the hashed contract)_
 
+- [x] Phase 1: Encode the policy of record (docs) — commit `56c5f3c`
+- [x] Phase 2: Claude effort + why-comments on review/plan spawns — commit `ad564df`
+- [x] Phase 3: Fill the unannotated spawns + fan-out default + R2 census — commit `c0938c7`
+- [x] Phase 4: fan-out R6 test-writer graft (Claude-track fallback) — commit `e33b62c`
+- [ ] Phase 5: Codex track (via codex:rescue) — depends on Phases 2–4
+- [ ] Phase 6: Verify invariant + docs sync
+
 ## Findings
 
 _(durable findings recorded during implementation, below the marker)_
+
+### R6 nested-spawn gate: UNCONFIRMED → Claude-track fallback taken (2026-07-04)
+
+The Phase-4 gate — whether a `claude -p --dangerously-skip-permissions` worker can
+spawn a nested `Agent` test-writer honoring its own tier — **could not be exercised**
+in this session: the harness auto-mode permission classifier denied launching the
+skip-permissions subprocess ([Create Unsafe Agents]), and the user's CLAUDE.md
+discourages `--dangerously-skip-permissions`. This is *unconfirmed*, not
+*demonstrated-false* — but per the plan's standing rule ("do not assume success")
+and the user's instruction, the **Claude-track fallback** was taken:
+- Separate clean-context test-writer **topology is documented but GATED/inactive**;
+  the worker keeps its single-context Test phase, authored to the slice contract.
+- **Landed regardless of the gate:** the `{{TECHNICAL_SPECIFICATIONS}}` Writer-row
+  seams injection (contract source), the Phase-2 contract framing, the **Phase-4
+  anti-cheat rule** (contract wins), `test-writer-prompt.md`, and a **deterministic
+  direct-mode** `run-seeded-divergence.sh` (divergent slice fails the contract test,
+  conformant passes; `-B`/`PYTHONDONTWRITEBYTECODE` hardened against stale-pyc
+  masking — conductor caught and fixed that fragility during verification).
+- R6 seeded-divergence AC item is satisfied by the **direct-mode runner + logged
+  limitation** (manual-verify equivalent), not the live separate-subagent topology.
+- Limitation logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` (2026-07-04 entry).
 
 ## Issues & Solutions
 
