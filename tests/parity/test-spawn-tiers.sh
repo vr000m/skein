@@ -265,6 +265,24 @@ FANOUT_AGENT_PROMPT="$SKILLS_DIR/fan-out/agent-prompt.md"
 assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
 	"fan-out agent-prompt.md test-writer spawn documented at model: sonnet, effort: medium"
 
+# --- (6b) R6 anti-cheat semantics floor (both mirrors) ---
+# scripts/check-prompt-parity.sh excises the R6 idiom spans (the anti-cheat
+# paragraph and the gated-topology block) before byte-comparing the two fan-out
+# prompt mirrors, so byte-parity no longer guards R6's load-bearing "contract
+# wins" anti-cheat rule. Assert its presence here in BOTH mirrors so the excised
+# span keeps an automated floor (deep-review Architecture finding, 2026-07-04).
+for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
+	assert_present "$tree/fan-out/agent-prompt.md" 'contract wins' \
+		"fan-out agent-prompt.md ($tree) carries the R6 anti-cheat 'contract wins' rule"
+	# The parity normalizer's excision ranges end on these anchors; if a future
+	# edit drops an anchor in one mirror the sed range would run to EOF and
+	# over-excise, masking real drift (Logic finding, 2026-07-04). Pin them.
+	assert_present "$tree/fan-out/agent-prompt.md" '^### Phase 5' \
+		"fan-out agent-prompt.md ($tree) retains the '### Phase 5' excision anchor"
+	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
+		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
+done
+
 echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="
 

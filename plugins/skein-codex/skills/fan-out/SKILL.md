@@ -256,7 +256,7 @@ tail -100 <worktree>/fan-out.log
 - **Permission flag**: empty (override with `FANOUT_PERMS_FLAG`)
 - **Extra args**: none (override with `FANOUT_EXTRA_ARGS`)
 - **Model**: inherited from the Codex harness by default. Codex does not pin model names in this mirror; override with `--model` or `FANOUT_MODEL` only when the user explicitly requests it or the current runtime requires it.
-- **Effort intent**: `--effort medium` / `FANOUT_EFFORT=medium` by default (mechanical — the worker executes an already-scoped task under the two-tier policy). If the configured Codex CLI advertises a first-class `--effort` flag, `fan-out.sh` passes it. The current checked CLI does not advertise one, so use `FANOUT_EXTRA_ARGS` for runtime-specific config/profile flags that request reasoning effort. For genuinely hard tasks, request a higher effort and add a one-line why-note in the invocation (e.g. "high: slice touches concurrency-sensitive locking logic").
+- **Effort intent**: `--effort medium` / `FANOUT_EFFORT=medium` by default (mechanical — the worker executes an already-scoped task under the two-tier policy). If the configured Codex CLI advertises a first-class `--effort` flag, `fan-out.sh` passes it; otherwise it warns and continues, so use `FANOUT_EXTRA_ARGS` for runtime-specific config/profile flags that request reasoning effort. For genuinely hard tasks, request a higher effort and add a one-line why-note in the invocation (e.g. "high: slice touches concurrency-sensitive locking logic").
 - **Max agents**: 5 (override with `--max-agents 3`)
 - **Worktree location**: `../<repo-name>-fanout-<slug>` (sibling to repo)
 - **Branch naming**: `fanout/<base-slug>-<task-slug>`

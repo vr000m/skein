@@ -145,11 +145,17 @@ is_expected_drift() {
 #     as a "Status note (read first)" paragraph in test-writer-prompt.md, and
 #   - the anti-cheat-rule paragraph (same rule, harness-tuned wording).
 # This divergence is sanctioned per R4 / CODEX_MIRROR_BACKLOG.md:15 (idiom, not
-# drift). Semantic tier parity of these spans is guarded by
-# tests/parity/test-spawn-tiers.sh (the cross-skill tier census, both trees) and
-# the plan's Phase 6 manual enumeration — NOT by byte-diff. This normalizer excises
-# exactly those spans between stable structural anchors and byte-compares the entire
-# remainder, so any real (non-idiom) drift elsewhere in the files is still caught.
+# drift). This normalizer excises exactly those spans between stable structural
+# anchors and byte-compares the entire remainder, so any real (non-idiom) drift
+# elsewhere in the files is still caught.
+#
+# The excised spans are NOT left unguarded: tests/parity/test-spawn-tiers.sh
+# guards the test-writer *tier* annotation, the R6 anti-cheat "contract wins"
+# rule, and the presence of the excision anchors themselves (`### Phase 5`,
+# `Filled by the fan-out worker`) in BOTH mirrors — so a dropped anchor (which
+# would over-excise to EOF) or a weakened anti-cheat rule fails the census even
+# though byte-parity here would still pass. Deeper R4 semantic alignment of the
+# span wording is the plan's Phase 6 manual enumeration.
 normalize_fanout_prompt() {
 	sed \
 		-e 's/spawned Claude agent/spawned Codex agent/g' \

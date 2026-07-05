@@ -121,8 +121,12 @@ cmd_spawn() {
   if [[ -n "$model" ]]; then
     cmd_args+=("--model" "$model")
   fi
-  if [[ -n "$effort" ]] && command_supports_effort "$cmd"; then
-    cmd_args+=("--effort" "$effort")
+  if [[ -n "$effort" ]]; then
+    if command_supports_effort "$cmd"; then
+      cmd_args+=("--effort" "$effort")
+    else
+      echo "WARNING: --effort '$effort' requested but the resolved Codex command '$cmd' does not advertise --effort; effort intent NOT applied. Pass a runtime-specific knob via FANOUT_EXTRA_ARGS to honor it." >&2
+    fi
   fi
   if [[ -n "$extra_args" ]]; then
     read -r -a extra_split <<< "$extra_args"
