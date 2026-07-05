@@ -280,8 +280,27 @@ _(per-phase completion recorded here by /conduct — below the marker, not part 
 - [x] Phase 2: Claude effort + why-comments on review/plan spawns — commit `ad564df`
 - [x] Phase 3: Fill the unannotated spawns + fan-out default + R2 census — commit `c0938c7`
 - [x] Phase 4: fan-out R6 test-writer graft (Claude-track fallback) — commit `e33b62c`
-- [x] Phase 5: Codex track (via codex:rescue) — working tree ready, symmetric R6 fallback taken
-- [ ] Phase 6: Verify invariant + docs sync
+- [x] Phase 5: Codex track (via codex:rescue) — commit `7586b88`, symmetric R6 fallback taken
+- [x] Phase 6: Verify invariant + docs sync — commit `47fe408`
+
+### Final Results (conduct autonomous run, 2026-07-04)
+
+All 6 phases landed. R2/R4 verified by manual enumeration across both trees + the
+falsifiable cross-skill census. Gates green: `just parity-tests` (census 47/47, both
+trees), `just check-prompt-parity`, `just check-sync`, both `run-seeded-divergence.sh`
+runners, conduct mention guard.
+
+- **R6 nested-spawn gate UNCONFIRMED on both harnesses** (environment blocked the
+  skip-permissions / non-interactive worker subprocess): symmetric Claude + Codex
+  fallbacks — topology GATED; contract injection + anti-cheat + test-writer-prompt +
+  direct-mode runners landed on both sides.
+- **check-prompt-parity extended** (Phase 6, user decision "extend normalization"):
+  the R6 idiom-divergent spans in fan-out agent-prompt.md + test-writer-prompt.md are
+  excised between structural anchors; the remainder is still byte-guarded
+  (falsifiability confirmed: a shared-line tamper still fails the check).
+- **conduct pytest suite not run** (no network for `uvx`, no local pytest) — no
+  conduct Python/test files changed by this plan, so the suite is unaffected.
+- Pre-merge remaining (user-gated): `/update-docs`, `/deep-review`, PR create/update.
 
 ## Findings
 
