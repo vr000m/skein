@@ -133,20 +133,47 @@ is_expected_drift() {
 	return 1
 }
 
+# fan-out R6 idiom-divergence normalizer.
+#
+# The R6 clean-context test-writer graft (see
+# docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md, R4) makes
+# fan-out/agent-prompt.md and fan-out/test-writer-prompt.md diverge between the
+# .claude and .codex mirrors ONLY inside three harness-idiom spans:
+#   - the GATED-topology design block (Claude `model:`/`effort:` + `Agent`-in-
+#     `claude -p` vs Codex `reasoning_effort`/`fork_context=false` + `spawn_agent`
+#     in a `codex exec` worker), carried as an HTML comment in agent-prompt.md and
+#     as a "Status note (read first)" paragraph in test-writer-prompt.md, and
+#   - the anti-cheat-rule paragraph (same rule, harness-tuned wording).
+# This divergence is sanctioned per R4 / CODEX_MIRROR_BACKLOG.md:15 (idiom, not
+# drift). Semantic tier parity of these spans is guarded by
+# tests/parity/test-spawn-tiers.sh (the cross-skill tier census, both trees) and
+# the plan's Phase 6 manual enumeration — NOT by byte-diff. This normalizer excises
+# exactly those spans between stable structural anchors and byte-compares the entire
+# remainder, so any real (non-idiom) drift elsewhere in the files is still caught.
+normalize_fanout_prompt() {
+	sed \
+		-e 's/spawned Claude agent/spawned Codex agent/g' \
+		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
+		"$1" \
+		| sed \
+			-e '/<!--/,/-->/d' \
+			-e '/Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
+			-e '/\*\*Status note (read first):\*\*/,/^Filled by the fan-out worker/{/^Filled by the fan-out worker/!d;}'
+}
+
 prompt_files_match() {
 	local skill="$1"
 	local prompt_file="$2"
 	local claude_file="$3"
 	local codex_file="$4"
-	if [[ "$skill/$prompt_file" == "fan-out/agent-prompt.md" ]]; then
+	case "$skill/$prompt_file" in
+	fan-out/agent-prompt.md | fan-out/test-writer-prompt.md)
 		diff -q \
-			<(sed \
-				-e 's/spawned Claude agent/spawned Codex agent/g' \
-				-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
-				"$claude_file") \
-			"$codex_file" >/dev/null 2>&1
+			<(normalize_fanout_prompt "$claude_file") \
+			<(normalize_fanout_prompt "$codex_file") >/dev/null 2>&1
 		return
-	fi
+		;;
+	esac
 	diff -q "$claude_file" "$codex_file" >/dev/null 2>&1
 }
 
