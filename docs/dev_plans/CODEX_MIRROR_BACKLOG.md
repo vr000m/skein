@@ -16,6 +16,29 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-07-04 — R6 Claude gate CONFIRMED, topology flipped live (Claude only; Codex still gated)
+
+Supersedes the "Claude-track fallback" entry below for the Claude side. The R6
+nested-spawn gate was re-run in the user's own shell (the harness auto-mode classifier
+blocks a `--dangerously-skip-permissions` subprocess from inside the agent session).
+
+- **Result: CONFIRMED.** A `claude -p --dangerously-skip-permissions` worker
+  (CLAUDECODE unset) spawned a nested Task subagent that honored a **per-call model** —
+  the child ran on `claude-haiku-4-5` (proven by `result.modelUsage` billing haiku
+  tokens, not a mere request echo). Effort has **no per-call Task argument**, so a
+  nested subagent inherits the worker session's effort; `fan-out.sh` runs the worker at
+  `--effort medium`, so the test-writer lands sonnet/medium (model per-call, effort
+  inherited). Repeatable via `plugins/skein/skills/fan-out/tests/check-r6-gate.sh`.
+- **Claude side flipped live:** `agent-prompt.md` Phase 2 now spawns the separate
+  clean-context test-writer as the active path; `fan-out/SKILL.md` marks it live.
+- **Codex side unchanged — still GATED.** The Codex `codex exec` nested-`spawn_agent`
+  gate is still unconfirmed (`Operation not permitted`), so the Codex worker keeps the
+  single-context fallback. **Claude-live / Codex-gated is a sanctioned per-harness
+  status divergence, not drift.** `check-prompt-parity.sh` excises the now-divergent
+  Phase-2 test directive span (with census anchor floors in `test-spawn-tiers.sh`);
+  the anti-cheat rule + tier remain census-guarded. When the Codex gate is later
+  confirmed, mirror the flip and remove this asymmetry note.
+
 ### 2026-07-04 — `feature/explicit-model-effort-policy` (in progress, not drift)
 
 Tracking the model/effort annotation rollout from `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`. Logged here proactively, before the Codex-track phase lands, so the upcoming per-mirror annotation-idiom split reads as sanctioned rather than an unplanned parity gap.

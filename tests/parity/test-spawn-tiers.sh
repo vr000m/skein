@@ -279,6 +279,10 @@ for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 	# over-excise, masking real drift (Logic finding, 2026-07-04). Pin them.
 	assert_present "$tree/fan-out/agent-prompt.md" '^### Phase 5' \
 		"fan-out agent-prompt.md ($tree) retains the '### Phase 5' excision anchor"
+	assert_present "$tree/fan-out/agent-prompt.md" '^If your task has an applicable test framework' \
+		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision start anchor"
+	assert_present "$tree/fan-out/agent-prompt.md" '^If no relevant test framework exists' \
+		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision end anchor"
 	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
 		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
 done

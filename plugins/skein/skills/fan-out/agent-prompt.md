@@ -65,27 +65,31 @@ Write the code described in your task. Commit your work.
 ### Phase 2: Test
 
 <!--
-INTENDED DESIGN (currently GATED, not active): the worker spawns a separate
-clean-context test-writer subagent (`model: sonnet, effort: medium` —
-sonnet/medium: mechanical test authoring against an already-defined contract,
-not judgment work) that receives ONLY the slice contract —
-`{{TASK_DESCRIPTION}}` plus the Writer-designated Integration Seams rows
-(concrete import paths, symbol names, signatures) injected via
-`{{TECHNICAL_SPECIFICATIONS}}` — and never the implementer's diff or
-internal code. That topology is gated on runtime nested-`Agent`-in-`claude -p`
-support, which is UNCONFIRMED in this environment (the skip-permissions
-subprocess was blocked by harness permission policy during the Phase-4 live
-gate run — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04 entry).
-Until that gate is confirmed, the ACTIVE PATH below is single-context
-authoring: you write and run your own tests, but you author them to the same
-contract a separate test-writer would have used.
+R6 status: the separate clean-context test-writer topology is CONFIRMED LIVE on the
+Claude harness as of 2026-07-04. A `claude -p --dangerously-skip-permissions` worker
+(with CLAUDECODE unset, exactly as fan-out.sh launches it) can spawn a nested Task
+subagent that honors a per-call model — verified end to end: the child actually ran
+on haiku (result.modelUsage billed claude-haiku-4-5 tokens), not just echoed the
+request. Re-check any time with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
+Caveat carried into the active directive below: the Task tool has NO per-call effort
+argument, so the test-writer's effort is inherited from this worker's session (which
+fan-out.sh runs at `--effort medium`), while its model IS set per-call. The Codex
+mirror keeps this topology GATED (its non-interactive `codex exec` nested-`spawn_agent`
+gate is still unconfirmed — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04).
 -->
 
-If your task has an applicable test framework, write or update tests **to the slice
-contract**: the `{{TASK_DESCRIPTION}}` above plus the Integration Seams rows in your
-Technical Context where you are listed as the Writer (concrete import paths, symbol
-names, function signatures). Treat that contract — not your own implementation — as
-the source of truth for what the tests assert.
+If your task has an applicable test framework, delegate test authoring to a **separate
+clean-context test-writer subagent**: spawn it via the Task/Agent tool at
+`model: sonnet, effort: medium` (the model is set per-call and honored; effort has no
+per-call Task argument, so it is inherited from this worker's `--effort medium`
+session). Pass
+the test-writer ONLY the slice contract — the `{{TASK_DESCRIPTION}}` above plus the
+Integration Seams rows where you are the Writer (concrete import paths, symbol names,
+function signatures) — and **never your implementation diff or internal code**, so it
+validates the contract rather than ratifying your code. It authors the test files and
+returns them (its own one-shot run is advisory); **you** then run those files verbatim
+as the authoritative pass/fail. See `test-writer-prompt.md` for the test-writer's
+contract. (Nested-spawn topology confirmed on Claude — see the R6 status note above.)
 
 If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
 note that explicitly in your result file and continue; do not attempt to write

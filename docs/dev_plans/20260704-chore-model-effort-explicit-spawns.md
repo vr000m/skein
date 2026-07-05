@@ -327,6 +327,26 @@ and the user's instruction, the **Claude-track fallback** was taken:
   limitation** (manual-verify equivalent), not the live separate-subagent topology.
 - Limitation logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` (2026-07-04 entry).
 
+#### UPDATE — Claude R6 gate subsequently CONFIRMED, topology flipped live (2026-07-04)
+
+The gate was re-run once the user authorised it in their own shell (the harness
+auto-mode classifier blocks a skip-permissions subprocess from inside the session).
+A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset) **spawned a
+nested Task subagent that honored a per-call `model`** — the child actually ran on
+`claude-haiku-4-5` (proven by `result.modelUsage` billing haiku tokens, not just the
+Task request echoing `model:haiku`). So on the **Claude side the fallback is lifted**:
+- `agent-prompt.md` Phase 2 now makes the separate clean-context test-writer spawn the
+  **active** path (`model: sonnet` per-call; `effort: medium` **inherited** from the
+  worker's `--effort medium` — the Task tool has no per-call effort argument).
+- `fan-out/SKILL.md` R6 section marked live; `tests/check-r6-gate.sh` added as the
+  repeatable **manual** gate (skip-permissions, not in CI). The CI-deterministic
+  `run-seeded-divergence.sh` still guards the contract *mechanism*.
+- `check-prompt-parity.sh` excises the now live-vs-gated Phase-2 directive span
+  (Claude live / Codex gated) with census anchor floors; census 57/0.
+- **Codex R6 stays gated** — its `codex exec` gate remains unconfirmed
+  (`Operation not permitted`). Claude-live / Codex-gated is a per-harness status
+  divergence, logged in the backlog, not drift.
+
 ### R6 nested-spawn gate: UNCONFIRMED → Codex-track fallback taken (2026-07-04)
 
 The Phase-5 gate — whether a non-interactive `codex exec` worker can spawn a nested

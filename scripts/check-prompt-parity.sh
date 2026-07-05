@@ -138,11 +138,16 @@ is_expected_drift() {
 # The R6 clean-context test-writer graft (see
 # docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md, R4) makes
 # fan-out/agent-prompt.md and fan-out/test-writer-prompt.md diverge between the
-# .claude and .codex mirrors ONLY inside three harness-idiom spans:
-#   - the GATED-topology design block (Claude `model:`/`effort:` + `Agent`-in-
+# .claude and .codex mirrors ONLY inside four harness-divergent spans:
+#   - the R6 design/status block (Claude `model:`/`effort:` + `Agent`-in-
 #     `claude -p` vs Codex `reasoning_effort`/`fork_context=false` + `spawn_agent`
 #     in a `codex exec` worker), carried as an HTML comment in agent-prompt.md and
-#     as a "Status note (read first)" paragraph in test-writer-prompt.md, and
+#     as a "Status note (read first)" paragraph in test-writer-prompt.md;
+#   - the Phase-2 "If your task has an applicable test framework" directive, which
+#     now diverges by CONFIRMED-LIVE status too, not just idiom: the Claude gate
+#     passed (2026-07-04, see fan-out/tests/check-r6-gate.sh) so the Claude worker
+#     spawns a separate clean-context test-writer, while the Codex worker keeps the
+#     single-context fallback (its gate is still unconfirmed); and
 #   - the anti-cheat-rule paragraph (same rule, harness-tuned wording).
 # This divergence is sanctioned per R4 / CODEX_MIRROR_BACKLOG.md:15 (idiom, not
 # drift). This normalizer excises exactly those spans between stable structural
@@ -163,6 +168,7 @@ normalize_fanout_prompt() {
 		"$1" \
 		| sed \
 			-e '/<!--/,/-->/d' \
+			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
 			-e '/Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
 			-e '/\*\*Status note (read first):\*\*/,/^Filled by the fan-out worker/{/^Filled by the fan-out worker/!d;}'
 }

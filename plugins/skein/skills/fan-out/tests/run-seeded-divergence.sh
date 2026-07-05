@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # run-seeded-divergence.sh — R6 gating fixture (DIRECT MODE).
 #
-# DIRECT MODE, not a real fan-out/nested-spawn run: the Phase-4 live gate could
-# not confirm that a `claude -p --dangerously-skip-permissions` worker
-# subprocess can spawn a nested `Agent` test-writer honoring its own tier in
-# this environment (the skip-permissions subprocess was blocked by harness
-# permission policy — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04
-# entry). Rather than fake an end-to-end fan-out invocation, this runner
-# drives the R6 CONTRACT MECHANISM directly: it runs the same contract test
+# DIRECT MODE — the deterministic, CI-safe half of R6 acceptance. It validates
+# the R6 CONTRACT MECHANISM (a contract-derived test surfaces a divergent impl)
+# without launching real workers, so it can live in `just parity-tests`.
+#
+# The other half — that a `claude -p --dangerously-skip-permissions` worker can
+# spawn a nested test-writer honoring its per-call model — is now CONFIRMED on the
+# Claude harness (gate passed 2026-07-04; the child actually ran on haiku per
+# result.modelUsage). That topology gate is NOT run here: it needs skip-permissions
+# + network and cannot be deterministic in CI. Re-confirm it out-of-band with the
+# manual `check-r6-gate.sh` in this directory. The Codex mirror's equivalent gate
+# is still unconfirmed (see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04).
+#
+# So this runner drives the R6 CONTRACT MECHANISM directly: it runs the same contract test
 # (contract_test_adder.py, authored from the fixture-plan.md Integration Seams
 # Writer row) against two fixture implementations — one that honors the
 # contract, one that deliberately violates it — and asserts the divergent
