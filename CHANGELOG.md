@@ -4,6 +4,17 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **Two-tier model/effort policy across all Skein skills.** Every subagent spawn now names its own tier rather than inheriting the parent session's: judgment work (review/planning) → strongest model at high effort; mechanical work (implementation/testing) → cheaper model at lower effort; factual lookups → cheapest tier. Documented in `AGENTS.md` (Model/Effort Policy) with a README pointer. Claude uses `model:`+`effort:` on the `Agent` call; the Codex mirror uses `reasoning_effort=high|medium|low` prose hints (idiom-divergent by sanctioned convention, not drift).
+- **`tests/parity/test-spawn-tiers.sh`** — a new cross-skill tier census that walks both `plugins/skein/skills/*/SKILL.md` and `plugins/skein-codex/skills/*/SKILL.md`, asserting per-spawn/per-lens expected tier counts and a pinned total of opus/high (Claude) / reasoning_effort=high (Codex) spawns each carrying a why-comment. Falsifiable and wired into `just parity-tests`.
+- **`/fan-out` worker `--effort` support.** `fan-out.sh` gains an `--effort` flag and `FANOUT_EFFORT` env (Codex mirror: `FANOUT_EFFORT` + `FANOUT_EXTRA_ARGS` pass-through), threaded into the `claude -p` / `codex exec` worker launch.
+- **R6 fan-out clean-context test-writer contract** — `fan-out/test-writer-prompt.md`, a Writer-designated Integration-Seams contract injection, an anti-cheat "contract wins" rule in `agent-prompt.md`, and a deterministic seeded-divergence fixture + `run-seeded-divergence.sh` runner (both trees). The separate-subagent spawn topology ships documented but gated on unconfirmed nested-spawn runtime support (see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`).
+
+### Changed
+- **`/deep-review` architecture lens is now the strong review tier** — `model: opus, effort: high` (Claude) / `reasoning_effort=high` (Codex), up from the previous cheaper diff-level tier, so all code-review lenses except the factual documentation lookup run at the review tier.
+- **`/fan-out` default worker tier is `--model sonnet --effort medium`** (was `opus`); `--model opus` opt-up documented for hard tasks.
+- **`check-prompt-parity` normalizes R6 idiom divergence** in `fan-out/agent-prompt.md` + `test-writer-prompt.md`, excising the harness-idiom spans while still byte-guarding the remainder.
+
 ## [0.2.4] - 2026-06-21
 
 ### Added

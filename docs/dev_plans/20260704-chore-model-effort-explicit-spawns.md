@@ -1,6 +1,6 @@
 # Make Model/Effort Explicit and Intentional on Every Subagent Spawn
 
-**Status**: Not Started
+**Status**: Complete (implementation landed on `feature/explicit-model-effort-policy`; pending PR/merge)
 **Component**: meta
 **Assignee**: Varun
 **Priority**: Medium
@@ -268,7 +268,7 @@ Three runtime behavior changes: fan-out's default worker `--model` (opus→sonne
 - [ ] `AGENTS.md` states the two-tier policy + inheritance invariant.
 - [ ] Phase 6 manual enumeration demonstrates R2/R4 across both trees (parity script does not cover SKILL.md tiers).
 
-<!-- reviewed: 2026-07-04 @ 5f8fbe5edb954b00fbe3cbecc62e645b984a1eeb -->
+<!-- reviewed: 2026-07-04 @ 16f65c3d7de5593d8918b6266850eb34aaf091ab -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
