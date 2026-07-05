@@ -122,6 +122,7 @@ failed before nested tools could be exercised:
   plan's fallback clause. This is a harness-behavior gate, not a semantic mirror
   drift item.
 - Gating checks to clear after Phase 5: `bash plugins/skein-codex/skills/fan-out/tests/run-seeded-divergence.sh` (direct mode) and `bash tests/parity/test-spawn-tiers.sh` (Claude + Codex census).
+- **Reactivation probe:** `bash plugins/skein-codex/skills/fan-out/tests/check-r6-gate-codex.sh` — the runnable symmetric analogue of the Claude gate. Run it from a permitted shell (externally sandboxed, or `FANOUT_PERMS_FLAG=--dangerously-bypass-approvals-and-sandbox`); exit 0 confirms the Codex nested-spawn topology and clears this divergence. In the sandbox it reports INCONCLUSIVE (exit 2) on the `Operation not permitted` app-server init block, which is why the topology stays gated.
 
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
