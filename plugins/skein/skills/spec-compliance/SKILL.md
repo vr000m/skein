@@ -42,7 +42,11 @@ Before spawning the subagent, read the code file(s) identified in Step 1 using t
 
 ### Subagent delegation
 
-**Use the Agent tool** with `subagent_type: "general-purpose"` and `model: "opus"` to spawn a single subagent. Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
+**Use the Agent tool** with `subagent_type: "general-purpose"`, `model: "opus"`, and `effort: "high"` to spawn a single subagent.
+
+<!-- opus/high: mapping RFC 2119 requirements onto code correctly requires careful multi-step reasoning, not a lookup -->
+
+Pass it the following self-contained prompt (fill in `{{PLACEHOLDERS}}`):
 
 ````
 You are performing a spec compliance check — mapping normative requirements from a specification against code to produce a structured compliance report.
