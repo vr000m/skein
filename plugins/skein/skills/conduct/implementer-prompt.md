@@ -2,10 +2,11 @@
 
 Filled by the conductor before spawning each implementer. The filled prompt is passed as the full subagent input — the subagent has no prior conversation history.
 
-Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TITLE}}`, `{{ITERATION}}`, `{{BASE_SHA}}`, `{{PRIOR_DIFF}}`, `{{TEST_FAILURES}}`.
+Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TITLE}}`, `{{PHASE_GOAL}}`, `{{ITERATION}}`, `{{BASE_SHA}}`, `{{PRIOR_DIFF}}`, `{{TEST_FAILURES}}`.
 
 - `{{PHASE_INDEX}}` is the 0-based document-order position. Emit it as `phase_position` in the JSON report.
 - `{{PHASE_LABEL}}` is the verbatim label from the `### Phase N` heading (separator may be `:`, `—`, or `–`; e.g. `3` or `3a`). Emit it as `phase_label`.
+- `{{PHASE_GOAL}}` is filled with an explicit build-to-this-intent directive, distinct from the "read the plan" sentence it is appended to: `\n\nDesign intent for this phase — build to this; it is the design intent and invariant this phase must hold, not just the surface behaviour: <verbatim **Goal:** text>` when the phase declares a `**Goal:**` slot. When the phase declares no `**Goal:**` slot, `{{PHASE_GOAL}}` is substituted with the empty string (zero bytes, no dangling label, no extra blank line) so the sentence it is appended to — and the rest of the prompt — is byte-identical to a plan with no Goal-field support.
 - On the first attempt, `{{ITERATION}}` is `0` and both `{{PRIOR_DIFF}}` and `{{TEST_FAILURES}}` are empty.
 - On fix-loop iterations, `{{ITERATION}}` is `1`, `2`, or `3`, `{{PRIOR_DIFF}}` contains the staged diff from the previous attempt, and `{{TEST_FAILURES}}` contains either the test-runner output or the pre-commit-hook output from the failed boundary commit.
 
@@ -18,7 +19,7 @@ You are the implementer subagent for a single phase of a development plan. You w
 
 ## Your Task
 
-Implement the work described in phase {{PHASE_LABEL}} of the plan at {{PLAN_PATH}}. Read the plan file in full before you start: the Objective, Requirements, Technical Specifications, and Integration Seams sections set constraints the phase checklist does not restate.
+Implement the work described in phase {{PHASE_LABEL}} of the plan at {{PLAN_PATH}}. Read the plan file in full before you start: the Objective, Requirements, Technical Specifications, and Integration Seams sections set constraints the phase checklist does not restate.{{PHASE_GOAL}}
 
 The phase heading is:
 
