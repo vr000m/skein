@@ -347,7 +347,13 @@ Context lifecycle — what enters context at each step, and whether it clears or
 
 ## Findings
 
-- (append findings here as work proceeds)
+- **Stage 3 (Claude phases 1–6) complete** — commits `ddbbb41` (P1 SKILL.md), `e6b460b` (P2 scripts), `035cab0` (P2 layout fixup), `3051d3e` (P3 Review Gates field), `b475547` (P4 conduct hook), `1e29be0` (P5 fan-out hook), `73438bc` (P6 bundle/tests/docs/cross-links). Gates green: `just parity-tests`, `just gauntlet-tests` (204 assertions across 9 files), `check-mirror-handoff.sh`, `ruff`.
+- **LAYOUT CORRECTION — authored scripts moved to `lib/` (affects Codex phases C1/C3).** review-gauntlet is the first skill with BOTH authored operative scripts AND a bundled shared pipeline. The bundle-parity invariant (`test-applier-bundle-parity.sh` stale-leftover guard + `bundle-appliers.sh` `rsync --delete`) requires a `BUNDLE_SKILLS` skill's `scripts/` to contain ONLY the bundled pipeline. So the three authored scripts were relocated **out of `scripts/` into the skill's `lib/`**:
+  - `run-gate.sh`, `convergence-ledger.sh`, `gauntlet-common.sh` now live at `plugins/skein/skills/review-gauntlet/lib/` (flat — `gauntlet-common.sh` is no longer under a nested `lib/lib`).
+  - `scripts/` holds only the bundled pipeline (`reconcile-findings.sh`, `apply-auto-fix-code.sh`, `audit-auto-fix-eligibility.sh`, `plan-scope-detect.sh`, `auto-fix-allowlist.json`, `lib/auto-fix-common.sh`).
+  - `gauntlet-common.sh` resolves the bundled dir at `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts` (unchanged); dev fallback is now the sibling `../scripts`.
+  - **C1 must mirror this:** author the Codex operative scripts at `plugins/skein-codex/skills/review-gauntlet/lib/{run-gate.sh,convergence-ledger.sh,gauntlet-common.sh}` (NOT `scripts/…` as the C1/C3 Impl-files blocks above state — those paths predate this correction), using `$SKILL_DIR` anchors that resolve the bundled dir at `$SKILL_DIR/scripts`. Phase 6 already bundled the shared pipeline into `plugins/skein-codex/skills/review-gauntlet/scripts/`.
+- **C1 still owns the `MANAGED_SKILLS` edit** (`tests/parity/test_skill_md_presence.py`) per the I4 commit-boundary NB — deferred from Phase 6 (Claude-only) so the repo is never red without the Codex SKILL.md.
 
 ## Issues & Solutions
 
