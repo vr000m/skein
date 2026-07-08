@@ -10,15 +10,15 @@
 
 ## Objective
 
-Add a new skein conductor skill, `review-gauntlet`, that automates the manual multi-pass review cycle: it runs the review gates in sequence, delegates every gate and every fix batch to clean-context subagents, and loops until findings converge — so the operator never has to hand-run 6–12 review passes or clear context between them.
+Add a new skein conductor skill, `review-gauntlet`, that automates the manual multi-pass review cycle: it runs the review gates in sequence at the conductor's top level, delegates every fix batch to clean-context subagents, and loops until findings converge — so the operator never has to hand-run 6–12 review passes or clear context between them.
 
 ## Context
 
-Today the review-and-fix workflow is entirely manual. The operator runs `/code-review`, applies fixes, runs `/codex:adversarial-review`, applies fixes, runs `/deep-review`, then `/security-review` — and because each pass bloats the working context, they must `/clear` and restart the cycle after a rest. The usage-report insights (see `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md`) flagged this as the dominant, most repetitive workflow: "code review is your top goal by a wide margin (37 sessions)… you routinely stack multiple review passes."
+Today the review-and-fix workflow is entirely manual. The operator runs the available review gates (`/code-review` or Codex's native `codex exec review` code-review path, an adversarial Codex review prompt when needed, `/deep-review`, then `/security-review` where the harness provides it), applies fixes between passes, and because each pass bloats the working context, they must `/clear` and restart the cycle after a rest. The usage-report insights (see `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md`) flagged this as the dominant, most repetitive workflow: "code review is your top goal by a wide margin (37 sessions)… you routinely stack multiple review passes."
 
 The gates already exist as discrete skills. What does **not** exist is an orchestrator that chains them, applies fixes, decides when to re-run, and knows when to stop (Explore confirmed: no skill chains multiple review gates — the only gate primitives are conduct's single CI-parity gate and fan-out's Phase 6). The manual assembly *is* the friction.
 
-`review-gauntlet` is a **conductor** in the mold of `skein:conduct`: main context stays lean because each gate and each fixer runs as an isolated-context subagent, and only structured findings/verdicts return. That is the core value — it makes 6–12 loops sustainable in a single session with no manual context clears.
+`review-gauntlet` is a **conductor** in the mold of `skein:conduct`, but with a deliberate delegation split (**Option A**). The multi-spawn gates — `/code-review` and `skein:deep-review` — already fan out their own verifier/lens subagents, and both forbid being run as a nested subagent (`conduct/implementer-prompt.md` Scope Rule 2; `deep-review/SKILL.md` "Delegation Pattern": one level of delegation only). They therefore run at the **conductor's top level, in its own context**, and the conductor absorbs their structured findings. Only the **fixer batches** run as isolated clean-context subagents. Because the fixer is the largest and most-repeated context consumer across 6–12 loops (every round re-reads findings + diff + dev-plan), isolating *it* — not the gates — is what keeps a multi-loop run sustainable in a single session with no manual context clears, even though gate output lands in the conductor's context.
 
 This plan is the same lineage as the usage-report improvement plan and reuses primitives already built for deep-review (auto-fix appliers, cross-lens reconciliation). It is **not** standalone: it hooks into `conduct`, `fan-out`, and `dev-plan`, whose sibling plans are cross-linked below and must be updated in the same pass.
 
@@ -27,26 +27,31 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 ## Requirements
 
 - **Gate sequence (fixed order), all fixes applied to the same branch/PR — never a follow-up PR:**
-  1. `/code-review` at **medium** effort (spawns its verifier subagents)
-  2. `/codex:adversarial-review` (returns `approve`/`needs-attention` JSON with per-finding confidence)
-  3. `skein:deep-review` (5 lenses)
-  4. `/security-review`
-- **Conductor pattern:** every gate invocation and every fix batch runs as a clean-context subagent; only structured findings/verdicts/verdict-ledgers return to the conductor. One level of delegation (match deep-review's isolation model).
+  1. Code-review gate. Claude runner: `/code-review` at **medium** effort (spawns its verifier subagents). Codex runner: `codex exec review` (or `codex review` when no structured output is needed) with `--base <base>` / `--uncommitted`; use `codex exec review --output-schema <schema>` when the gauntlet needs machine-readable findings.
+  2. Adversarial Codex-review gate. There is no repo or CLI command named `/codex:adversarial-review`; the Codex runner is `codex exec review --output-schema <schema> "<adversarial-review prompt>"` with the same diff target as gate 1. The gauntlet-owned schema returns `{ "gate": string, "status": "approve" | "needs-attention" | "skipped" | "deferred" | "error", "findings": [...], "notes": string|null }`, where each finding carries `file`, `line`, `category`, `severity`, `confidence`, `summary`, `evidence`, and optional `auto_fix`.
+  3. `skein:deep-review` (5 lenses). Present in `plugins/skein-codex/skills/deep-review`, but the Codex gauntlet may not invoke it from inside another delegated worker until the nested-spawn gate is confirmed.
+  4. Security-review gate. Claude runner: `/security-review`. Codex runner for v1: explicit `skipped` / `deferred` verdict unless a real Codex security-review primitive is configured later; `plugins/skein-codex` currently ships no `security-review` skill.
+- **Codex gate matrix:** Codex mirror must document each slot as `native-codex-review`, `skein-deep-review-gated`, or `deferred`, not claim same-command parity with Claude. `quick` maps to Codex gate 1 only. `full` on Codex is allowed to run only the supported native Codex review gates and must surface `deferred` entries for unsupported/gated slots; it must not silently pretend gate 3/4 ran.
+- **Conductor pattern (Option A — split delegation):** the multi-spawn gates (`/code-review`, `skein:deep-review`) run at the conductor's **top level, in its own context** — they already spawn their own verifier/lens subagents and forbid nested spawning (`conduct/implementer-prompt.md` Scope Rule 2; `deep-review/SKILL.md` "Delegation Pattern"), so they cannot be dispatched as clean-context subagents. Only the **fixer batches** run as isolated clean-context subagents, returning structured fix reports + blast-radius + quarantine ledgers. The conductor's context therefore absorbs gate findings, but the fixer — the dominant repeated consumer across loops — stays isolated. Codex full behavioural parity is currently gated because invoking gates like `skein:deep-review` from inside a gauntlet worker can require a second `spawn_agent` level whose tier is not confirmable in the current Codex CLI.
 - **Convergence algorithm:**
   - After fixing, the fixer subagent classifies each applied fix's blast radius as `local` or `structural`. **Trust the LLM's self-classification** — no mechanical/deterministic backstop (races, deadlocks, protocol-state mismanagement cannot be caught by line-count heuristics).
   - If **any** `structural` fix lands in a round → **restart from gate 1** (full corpus). Rationale: code-review and codex adversarial overlap but are not identical; a structural change can reintroduce a class of bug only the earlier gate catches.
   - If only `local` fixes land → run **one confirming pass**, no full restart.
-  - **Stop conditions:** (a) a full pass yields zero actionable findings → **success**; (b) hard cap of **10 loops** → stop; (c) **non-convergence** — findings not trending down across rounds → **bail and escalate to human** with the explicit message that the plan/implementation has a deeper structural problem the loop cannot resolve.
+  - **Stop conditions:** (a) a full pass (`pass_type: full`) yields zero actionable findings → **success**; a clean local-confirming pass (`pass_type: confirm`) is NOT terminal — it returns to the loop, because only a clean *full* pass proves global convergence. (b) hard cap of **10 loops** → stop; **every round — including a gate-1 structural restart — increments the single monotonic loop counter**, so a plan that structurally restarts every round still reaches the cap. (c) **non-convergence, defined concretely: bail when the reconciled-finding count has not strictly decreased for K=2 consecutive rounds** → **bail and escalate to human** with the explicit message that the plan/implementation has a deeper structural problem the loop cannot resolve. (d) converged clean but with a non-empty quarantine queue → terminal status **`success_with_quarantine`** (distinct from `success`).
 - **Guardrail 1 — design-conflict findings are never auto-fixed.** The fixer subagent receives the **dev-plan** in context as the source of truth for design intent — specifically the per-phase `**Goal:**` field defined by the sibling plan `docs/dev_plans/20260707-feature-conduct-phase-goal-field.md` (the authoritative, concentrated statement of intent; the fixer falls back to whole-plan prose only when a phase has no `**Goal:**`). Handling depends on blast radius:
   - conflict + `local` → **quarantine**, continue applying other safe fixes, report the quarantine queue at the end.
   - conflict + `structural`/cascading (fixing it would force major changes elsewhere) → **halt immediately**, human needed.
-- **Guardrail 2 — fix all findings regardless of confidence score.** The *only* quarantine trigger is design/architecture conflict, not a confidence threshold.
+- **Guardrail 2 — fix all findings regardless of confidence score.** The *only* quarantine trigger is design/architecture conflict, not a confidence threshold. Fixes are applied by **route, not confidence**: trivial/allowlisted findings through the bundled `apply-auto-fix-code.sh`; substantive logic/security findings as **direct fixer edits** (the applier is trivial-allowlist-only — see "Reuse, do not reinvent").
 - **Invocation model (three modes, opt-in by default so a 10-loop run is never a surprise spend):**
   - Standalone: `review-gauntlet [--plan <path>] [<branch> | --pr]`
-  - dev-plan marker: a new **header field** `**Review Gates:** none | quick | full` (default `none`; `quick` = code-review gate only; `full` = all four). NB: plans have **no YAML frontmatter** — this is an inline header field above the review marker (Explore fact).
+  - dev-plan marker: a new **header field** `**Review Gates:** none | quick | full` (default `none`; `quick` = code-review gate only; `full` = all logical gate slots, with Codex reporting unsupported slots as gated/deferred per the Codex gate matrix). NB: plans have **no YAML frontmatter** — this is an inline header field above the review marker (Explore fact).
+- **`quick` = single-pass, no convergence loop.** `quick` runs the code-review gate exactly once (fix trivial/direct findings inline) and returns — it does **not** enter the up-to-10-loop convergence cycle. Only `full` and standalone invocation run the convergence loop; the 10-loop cap is reachable only under `full`/standalone.
   - Auto-chain: `conduct`'s terminal step (after the CI-parity gate) and `fan-out`'s Phase 6 (post-merge) read the marker and invoke `review-gauntlet` only when the plan opts in.
-- **Reuse, do not reinvent:** the fixer must call deep-review's bundled auto-fix appliers (`apply-auto-fix-code.sh`, `audit-auto-fix-eligibility.sh`, `auto-fix-allowlist.json`, `lib/auto-fix-common.sh`) and cross-gate finding dedup must use `reconcile-findings.sh` (signature `(file,line,category)`).
-- **Dual-plugin parity:** ship a Claude SKILL.md (`${CLAUDE_PLUGIN_ROOT}` anchors) and a byte-parity Codex mirror (`$SKILL_DIR` anchors); the only legitimate divergence is the dispatch idiom (Agent vs spawn_agent). Must pass existing parity tests.
+- **Reuse, do not reinvent:** skein does **not** share the auto-fix pipeline by relative path — `scripts/bundle-appliers.sh` (driven by `scripts/lib/bundle-map.sh`'s `BUNDLE_SKILLS`) **copies** it byte-identically into each skill's own `scripts/`, enforced by `tests/parity/test-applier-bundle-parity.sh`. So `review-gauntlet` joins `BUNDLE_SKILLS` and calls its **own bundled** copies (never `../../deep-review/scripts/`). Apply by route:
+  - **Trivial/allowlisted** fixes (`docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort`) → the bundled `apply-auto-fix-code.sh` (+ `audit-auto-fix-eligibility.sh`, `auto-fix-allowlist.json`, `lib/auto-fix-common.sh`). That applier only applies the trivial allowlist and is hardcoded `SKILL="deep-review"`.
+  - **Substantive logic/security** fixes → **direct edits by the fixer subagent**, not via the applier (the applier cannot apply them).
+  - Cross-gate finding dedup → the bundled `reconcile-findings.sh` (signature `(file,line,category)`) called **without `--skill`** (it rejects any skill other than `deep-review`/`review-plan` with exit 2). Gate findings **must not carry `auto_fix` blocks** at the reconcile stage — the reconciler requires `--skill` only when `auto_fix` is present, so trivial-fix proposals are handled separately by the fixer route, never fed through reconcile with an `auto_fix` payload.
+- **Dual-plugin parity:** ship a Claude SKILL.md (`${CLAUDE_PLUGIN_ROOT}` anchors) and a Codex mirror (`$SKILL_DIR` anchors) that are semantically aligned where the harnesses support the same behaviour. Byte parity is required only for shared runtime artifacts and parity-checked generic blocks; Codex-specific gate support, dispatch idiom, nested-spawn gating, and path anchors are legitimate divergences. Must pass existing parity tests without asserting unsupported Codex behaviour.
 
 ## Review Focus
 
@@ -54,18 +59,20 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 - **Guardrail correctness:** a design-conflict finding must never be silently auto-fixed; verify the dev-plan-as-source-of-truth is actually in the fixer's context on every fix batch, at every call site.
 - **Spend safety:** default `none` marker; auto-chain must be strictly opt-in. Verify no path triggers a full 10-loop run without an explicit `full` marker or explicit standalone invocation.
 - **Reuse integrity:** confirm the gauntlet calls the *existing* appliers/reconciler rather than forking logic — no duplicated allowlist, no reimplemented signature scheme.
-- **Dual-plugin parity:** Codex mirror must satisfy `tests/parity/*` (SKILL.md presence, applier-bundle byte-identity, mirror handoff). Harness-divergent anchors (`${CLAUDE_PLUGIN_ROOT}` vs `$SKILL_DIR`) must never be collapsed.
+- **Dual-plugin parity:** Codex mirror must satisfy the real `tests/parity/*` coverage (SKILL.md presence, applier-bundle byte-identity, allowlist byte-identity, marker parity, spawn-tier census, no-manual-fallback, mirror handoff). Harness-divergent anchors (`${CLAUDE_PLUGIN_ROOT}` vs `$SKILL_DIR`) and the Codex gate matrix above must never be collapsed into false byte-parity claims.
 - **Same-PR invariant:** all fixes land on the working branch; the gauntlet never opens a second PR.
 
 ## Implementation Checklist
 
-> **Phase split:** Phases 1–6 are **Claude-authored** (repo-level files: Claude SKILL.md, bundled scripts, hooks into other Claude skills, tests, docs). Phases C1–Cn are **Codex-authored** (the Codex-mirror SKILL.md content and mirror edits), delegated via `codex:rescue` per the mirror-edit rule. Codex authors the content of the C-phases below.
+> **Phase split:** Phases 1–6 are **Claude-authored** (repo-level files: Claude SKILL.md, bundled scripts, hooks into other Claude skills, tests, docs). Phases C1–Cn are **Codex-authored** (the Codex-mirror SKILL.md content and mirror edits), using Codex-native review/adaptation rather than hand-copying Claude prose. Historical plans call this route `codex:rescue`; it is a repo convention for Codex-authored adaptation, not a review-gauntlet gate command. Codex authors the content of the C-phases below.
 
 ### Phase 1: Core orchestrator SKILL.md (Claude)
 
 **Impl files:** `plugins/skein/skills/review-gauntlet/SKILL.md`
 **Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh`
 **Test command:** `bash tests/gauntlet/test-gauntlet-skill-shape.sh`
+
+> **Cross-plan prerequisite gate (blocking):** Guardrail 1 reads the per-phase `**Goal:**` field. That field is defined by the sibling plan `docs/dev_plans/20260707-feature-conduct-phase-goal-field.md`. **Its Phase 1 (`**Goal:**` schema) MUST land before this plan's Guardrail-1 wiring** so the field the fixer reads actually exists. Do not merge the Guardrail-1 dispatch prose until the Goal-field schema is on the branch.
 
 - Write the SKILL.md frontmatter (`name: review-gauntlet`, `description` with trigger phrases: "review gauntlet", "run the review gates", "run all reviews", "review loop until clean"; `argument-hint`).
 - Document the conductor loop: gate sequence, per-gate clean-context subagent dispatch, structured-findings return contract.
@@ -80,9 +87,10 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 **Test files:** `tests/gauntlet/test-convergence-ledger.sh, tests/gauntlet/test-reuse-wiring.sh`
 **Test command:** `bash tests/gauntlet/test-convergence-ledger.sh && bash tests/gauntlet/test-reuse-wiring.sh`
 
-- `convergence-ledger.sh`: track per-round finding counts + blast-radius tallies; emit `continue|restart|confirm|success|cap|non-converge` decisions. Pure function of the ledger — deterministic, unit-testable.
-- `run-gate.sh`: thin dispatcher that normalizes each gate's output into the common finding schema and pipes cross-gate findings through the **existing** `../../deep-review/scripts/reconcile-findings.sh` (do not fork it).
-- Fixer wiring calls the **existing** deep-review appliers (`apply-auto-fix-code.sh`, `audit-auto-fix-eligibility.sh`, `auto-fix-allowlist.json`) — reference them, do not copy allowlist logic.
+- `convergence-ledger.sh`: track per-round reconciled finding counts + blast-radius tallies + `pass_type` + quarantine-queue size; emit `continue|restart|confirm|success|success_with_quarantine|cap|non-converge` decisions. **INPUT contract per round:** `{count, structural_tally, local_tally, pass_type: full|confirm, quarantine_size}`. `success` requires a clean `pass_type: full`; a clean `pass_type: confirm` returns `continue`. Non-convergence fires when `count` has not strictly decreased for **K=2** consecutive rounds. The **single monotonic loop counter** increments every round including a gate-1 restart, so the 10-loop cap always binds. Pure function of the ledger — deterministic, unit-testable.
+- **Bundling (skein copies, never relative-path):** add `review-gauntlet` to `BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh` (applier basename `apply-auto-fix-code.sh` via a `bundle_applier_for` arm; no `bundle_extra_for` extras) so `scripts/bundle-appliers.sh` copies the byte-identical shared pipeline (`reconcile-findings.sh`, `apply-auto-fix-code.sh`, `audit-auto-fix-eligibility.sh`, `auto-fix-allowlist.json`, `lib/auto-fix-common.sh`) into `plugins/skein/skills/review-gauntlet/scripts/`. Extend `tests/parity/test-applier-bundle-parity.sh` and `tests/parity/test-allowlist-byte-identity.sh` to cover the new skill.
+- `run-gate.sh`: thin dispatcher that normalizes each gate's output into the common finding schema and pipes cross-gate findings through the **bundled** `"$SKILL_DIR"/scripts/reconcile-findings.sh` (or `${CLAUDE_PLUGIN_ROOT}` anchor on Claude) called **without `--skill`** — do not fork it, and do not reference `../../deep-review/scripts/`.
+- Fixer wiring: **trivial/allowlisted** fixes route through the bundled `apply-auto-fix-code.sh` (+ `audit-auto-fix-eligibility.sh`, `auto-fix-allowlist.json`); **substantive** logic/security fixes are **direct fixer edits** (the applier is trivial-only and hardcoded `SKILL="deep-review"`). Reference the appliers, do not copy allowlist logic.
 - Quarantine ledger: record design-conflict findings with blast radius so the conductor can decide quarantine-continue vs halt.
 
 ### Phase 3: dev-plan `**Review Gates:**` header marker field (Claude)
@@ -94,6 +102,7 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 - Add `**Review Gates:** none | quick | full` to the plan Header (Required Sections item 1) and to `template.md`, documented as an above-marker contract field (default `none`).
 - Document that `conduct`/`fan-out` read this field to decide whether to auto-chain `review-gauntlet`.
 - Note the immutability consequence: because it sits above the marker, changing it post-`/review-plan` invalidates the marker hash (correct — opting a plan into gates is a contract decision).
+- **Shared-file ownership (reciprocal with the Goal-field plan):** this phase and the sibling Goal-field plan both edit `dev-plan/SKILL.md` + `template.md`. Ownership split to avoid clobbering on parallel edits: **this plan owns the `**Review Gates:**` header field** (plan Header / Required Sections item 1); **the Goal-field plan owns the per-phase `**Goal:**` slot** (phase contract block / Required Sections item 4). Neither plan edits the other's lines.
 
 ### Phase 4: conduct terminal hook (Claude)
 
@@ -101,9 +110,10 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 **Test files:** `tests/gauntlet/test-conduct-hook.sh`
 **Test command:** `bash tests/gauntlet/test-conduct-hook.sh`
 
-- After the CI-parity gate (`conduct/SKILL.md:297`, `_dispatch_ci_parity_if_eligible` at `:416`), when status would become `complete`, read the plan's `**Review Gates:**` field; if `quick`/`full`, invoke `review-gauntlet` with `--plan <this plan>` scoped to the correct gate subset.
+- After the CI-parity gate (the `## CI Parity Gate` section and its `_dispatch_ci_parity_if_eligible` dispatch protocol; ~`conduct/SKILL.md:297+`), when status would become `complete`, read the plan's `**Review Gates:**` field; if `quick`/`full`, invoke `review-gauntlet` with `--plan <this plan>` scoped to the correct gate subset.
 - Strictly opt-in: absent or `none` marker → no gauntlet, current behavior unchanged.
-- Update conduct's handback prose (which currently anticipates the operator manually running `/deep-review`, `:246`) to reflect the automated path.
+- Update conduct's handback prose (which currently anticipates the operator manually running `/deep-review`, in the `### Step 8 — Phase-boundary commit` / hard-stop handback area; ~`:246`) to reflect the automated path.
+- **Commit ownership at the terminal seam (who commits gauntlet fixes):** conduct's `### Step 8 — Phase-boundary commit` freezes each phase's `commit_sha` as **immutable**, and its `--resume` preflight absorbs any follow-up commits into `resume_base_sha` for the rogue-commit check (it does NOT rewrite `commit_sha`). Therefore the gauntlet, running *after* the final phase boundary, must **land its own single `review-gauntlet fixes` commit** on the working branch; conduct must treat that commit as an absorbed follow-up (rolled into `resume_base_sha`), not as a rogue commit and not by rewriting a prior phase's frozen `commit_sha`. Specify this reconciliation explicitly so the rogue-commit check does not flag the gauntlet's own commit.
 
 ### Phase 5: fan-out Phase 6 hook (Claude)
 
@@ -111,56 +121,66 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 **Test files:** `tests/gauntlet/test-fanout-hook.sh`
 **Test command:** `bash tests/gauntlet/test-fanout-hook.sh`
 
-- At the end of Phase 6 (Merge + post-merge verification, `fan-out/SKILL.md:209-224`), before Phase 7 Cleanup, read the `**Review Gates:**` field and invoke `review-gauntlet` on the merged feature branch when `quick`/`full`.
+- At the end of the `### Phase 6: Merge` section (Merge + post-merge verification; ~`fan-out/SKILL.md:209-224`), before `### Phase 7: Cleanup`, read the `**Review Gates:**` field and invoke `review-gauntlet` on the merged feature branch when `quick`/`full`.
+- **No-op on the PR-per-task exit path:** `### Phase 6: Merge` is reached only via `/fan-out merge` (option 1 — branches merged into one current branch). The alternative exit (option 2, "Create individual PRs for each branch") produces **no single merged branch** — the hook must **no-op** there. The gauntlet runs **only on the merged-branch path**; there is no unified diff to gate under PR-per-task.
 - Opt-in identical to Phase 4; default behavior unchanged.
 
 ### Phase 6: Tests, docs, and sibling cross-links (Claude)
 
-**Impl files:** `tests/parity/test_skill_md_presence.py, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260422-feature-conduct-skill.md, docs/dev_plans/20260512-feature-conduct-autonomous-mode.md, docs/dev_plans/20260317-feature-deep-review.md`
+**Impl files:** `justfile, scripts/lib/bundle-map.sh, scripts/bundle-appliers.sh, tests/parity/test-applier-bundle-parity.sh, tests/parity/test-allowlist-byte-identity.sh, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260422-feature-conduct-skill.md, docs/dev_plans/20260512-feature-conduct-autonomous-mode.md, docs/dev_plans/20260317-feature-deep-review.md`
 **Test files:** `tests/gauntlet/`
-**Test command:** `bash tests/run-all.sh` <!-- resolve to repo's actual aggregate test entry; see justfile -->
+**Test command:** `just parity-tests && just gauntlet-tests` <!-- no tests/run-all.sh exists; use justfile recipes -->
 
-- Extend `tests/parity/test_skill_md_presence.py` to require the review-gauntlet skill in both plugins.
+- Add a `gauntlet-tests` recipe to `justfile` that runs the `tests/gauntlet/*` suite; the aggregate entry point is `just parity-tests` (existing) + `just gauntlet-tests` (new). There is no `tests/run-all.sh`.
+- Add `review-gauntlet` to `BUNDLE_SKILLS` (`scripts/lib/bundle-map.sh`) and its `bundle_applier_for` arm; extend `tests/parity/test-applier-bundle-parity.sh` and `tests/parity/test-allowlist-byte-identity.sh` to cover the bundled review-gauntlet copies. (See Phase 2.)
 - Add the gauntlet unit suite (convergence stop conditions, blast-radius restart logic, quarantine-vs-halt classification, opt-in gating).
 - Update `AGENTS.md` (skill roster + Model/Effort policy note for the gauntlet's gate tiers), `CHANGELOG.md`, and the `docs/dev_plans/README.md` task table (Component `review-skills`).
+- **NB (commit boundary, I4):** the `tests/parity/test_skill_md_presence.py` `MANAGED_SKILLS` edit is **NOT** done here — it requires the skill to exist in **both** plugins, and the Codex mirror lands in Phase C1. That edit is moved into Phase C1 so the repo never goes red between Phase 6 and C1.
 - Cross-link this plan into the conduct/deep-review sibling plans' "related work" so the corpus stays coherent (repo rule: update siblings in the same pass).
 
 <!-- BEGIN CODEX-AUTHORED PHASES -->
 ### Phase C1: Codex-mirror review-gauntlet SKILL.md
 
 **Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/scripts/run-gate.sh, plugins/skein-codex/skills/review-gauntlet/scripts/convergence-ledger.sh, plugins/skein-codex/skills/review-gauntlet/scripts/lib/gauntlet-common.sh`
-**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh, tests/gauntlet/test-convergence-ledger.sh, tests/gauntlet/test-reuse-wiring.sh, tests/parity/test_skill_md_presence.py`
-**Test command:** `bash tests/gauntlet/test-gauntlet-skill-shape.sh && bash tests/gauntlet/test-convergence-ledger.sh && bash tests/gauntlet/test-reuse-wiring.sh && python -m pytest tests/parity/test_skill_md_presence.py`
+**Test files:** `tests/parity/test_skill_md_presence.py, tests/parity/test-spawn-tiers.sh`
+**Test command:** `python -m pytest tests/parity/test_skill_md_presence.py && bash tests/parity/test-spawn-tiers.sh`
 
-- Author the Codex mirror SKILL.md via `codex:rescue`, preserving the Claude-side conductor contract while using Codex dispatch language (`spawn_agent`, `fork_context: false`, reasoning-effort hints) instead of Claude `Agent` tool prose.
+- Author the Codex mirror SKILL.md from the Codex side, preserving the Claude-side conductor contract while using Codex dispatch language (`spawn_agent`, `fork_context: false`, reasoning-effort hints) instead of Claude `Agent` tool prose.
 - Use Codex `$SKILL_DIR` anchors for bundled-script invocations and never collapse them to the Claude `${CLAUDE_PLUGIN_ROOT}` idiom.
 - Mirror the review-gauntlet bundled scripts under the Codex skill directory with byte-parity wherever the scripts are shared runtime artifacts.
-- Keep the same gate sequence, convergence algorithm, guardrails, same-branch invariant, and `<untrusted-content>` wrapping contract as the Claude SKILL.md.
+- Keep the same logical gate slots, convergence algorithm, guardrails, same-branch invariant, and `<untrusted-content>` wrapping contract as the Claude SKILL.md, but document Codex's real runner per slot:
+  - gate 1 `code-review`: invoke native `codex exec review` (machine mode: `--output-schema <schema>`; target by `--base <branch>` / `--uncommitted`; effort by supported config such as `-c model_reasoning_effort="medium"` when used from a CLI subprocess).
+  - gate 2 `adversarial-review`: invoke native `codex exec review --output-schema <schema>` with an adversarial prompt; do not reference `/codex:adversarial-review`.
+  - gate 3 `deep-review`: available as `skein:deep-review`, but gated when running beneath another Codex worker because nested `spawn_agent` topology/tier confirmation is still gated.
+  - gate 4 `security-review`: no `plugins/skein-codex` skill or Codex CLI subcommand exists; emit a structured `skipped` / `deferred` verdict unless a future real security primitive is added.
+- Add the Codex gauntlet output adapter/schema for native Codex review gates: `{ "gate": string, "status": "approve" | "needs-attention" | "skipped" | "deferred" | "error", "findings": [ { "file": string, "line": integer|null, "category": string, "severity": string, "confidence": number|null, "summary": string, "evidence": string, "auto_fix": object|null } ], "notes": string|null }`. `approve` and `needs-attention` are review outcomes; `skipped`/`deferred` are explicit Codex capability outcomes and are never counted as clean gate passes.
+- Hard-stop or downgrade `full` mode on Codex when it would require unsupported nested gate execution; do not claim full behavioural parity until the R6 nested-spawn gate is confirmed for topology and child tier.
 - Ensure the new `plugins/skein-codex/skills/review-gauntlet/SKILL.md` is registered by directory convention and by the existing Codex plugin `"skills": "./skills/"` manifest surface.
+- **Add `review-gauntlet` to `MANAGED_SKILLS` in `tests/parity/test_skill_md_presence.py` in THIS phase's commit (I4 commit-boundary):** that test asserts the skill exists in **both** plugins, so the `MANAGED_SKILLS` edit must land together with the Codex mirror created here — not in Phase 6 (Claude-only), which would leave the repo red until C1. If Phase 6 and C1 are instead landed as a single commit, this edit may live there; the invariant is that `MANAGED_SKILLS` never lists review-gauntlet while the Codex mirror is absent.
 
 ### Phase C2: Codex-mirror hook edits (conduct / fan-out / dev-plan mirrors + template)
 
 **Impl files:** `plugins/skein-codex/skills/conduct/SKILL.md, plugins/skein-codex/skills/fan-out/SKILL.md, plugins/skein-codex/skills/dev-plan/SKILL.md, plugins/skein-codex/skills/dev-plan/template.md`
-**Test files:** `tests/gauntlet/test-review-gates-marker.sh, tests/gauntlet/test-conduct-hook.sh, tests/gauntlet/test-fanout-hook.sh`
-**Test command:** `bash tests/gauntlet/test-review-gates-marker.sh && bash tests/gauntlet/test-conduct-hook.sh && bash tests/gauntlet/test-fanout-hook.sh`
+**Test files:** `tests/parity/test-prompt-parity-extended.sh, tests/parity/test-spawn-tiers.sh, tests/parity/check-mirror-handoff.sh`
+**Test command:** `bash tests/parity/test-prompt-parity-extended.sh && bash tests/parity/test-spawn-tiers.sh && bash tests/parity/check-mirror-handoff.sh`
 
 - Mirror the `**Review Gates:** none | quick | full` header-field documentation into the Codex dev-plan skill and template, keeping it above the review marker and defaulting to `none`.
-- Mirror the conduct terminal auto-chain hook prose into the Codex conduct SKILL.md using Codex-native invocation wording for `review-gauntlet --plan <this plan>`.
-- Mirror the fan-out Phase 6 auto-chain hook prose into the Codex fan-out SKILL.md, preserving the opt-in-only behavior and merged-feature-branch scope.
-- Keep the hook semantics byte-equivalent to the Claude side except for legitimate Codex-vs-Claude dispatch wording and `$SKILL_DIR` path-anchor differences.
+- Mirror the conduct terminal auto-chain hook prose into the Codex conduct SKILL.md using Codex-native invocation wording for `review-gauntlet --plan <this plan>`, but preserve Codex's delegation-availability hard stop: no inline implementation when `spawn_agent` / `wait_agent` / `close_agent` are unavailable.
+- Mirror the fan-out Phase 6 auto-chain hook prose into the Codex fan-out SKILL.md, preserving the opt-in-only behavior and merged-feature-branch scope while respecting the existing R6 note that nested test-writer topology is gated.
+- Keep hook semantics aligned with the Claude side only for supported gates. Codex hooks must pass through the Codex gate matrix (`quick` = native code review; `full` = native supported gates plus explicit deferred/gated entries) instead of claiming byte-equivalent execution of missing `/security-review` or `/codex:adversarial-review` commands.
 - Do not edit repo-level files in this phase; Codex owns only the mirror SKILL.md/template content, while Claude owns shared scripts, tests, AGENTS.md, CHANGELOG.md, and README changes.
 
 ### Phase C3: Codex-mirror parity verification
 
 **Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/scripts/, plugins/skein-codex/skills/conduct/SKILL.md, plugins/skein-codex/skills/fan-out/SKILL.md, plugins/skein-codex/skills/dev-plan/SKILL.md, plugins/skein-codex/skills/dev-plan/template.md`
-**Test files:** `tests/parity/test_skill_md_presence.py, tests/parity/test-applier-bundle-parity.sh, tests/parity/test-allowlist-byte-identity.sh, tests/parity/check-mirror-handoff.sh, tests/gauntlet/`
-**Test command:** `just parity-tests && bash tests/parity/check-mirror-handoff.sh && bash tests/gauntlet/test-gauntlet-skill-shape.sh && bash tests/gauntlet/test-convergence-ledger.sh && bash tests/gauntlet/test-reuse-wiring.sh && bash tests/gauntlet/test-review-gates-marker.sh && bash tests/gauntlet/test-conduct-hook.sh && bash tests/gauntlet/test-fanout-hook.sh`
+**Test files:** `tests/parity/test_skill_md_presence.py, tests/parity/test-applier-bundle-parity.sh, tests/parity/test-allowlist-byte-identity.sh, tests/parity/test-spawn-tiers.sh, tests/parity/check-mirror-handoff.sh`
+**Test command:** `just parity-tests && bash tests/parity/check-mirror-handoff.sh`
 
-- Run the parity suite that covers SKILL.md presence, applier-bundle byte-identity, allowlist byte-identity, marker parity, spawn-tier contracts, and no-manual-fallback behavior.
+- Run the real parity suite that covers SKILL.md presence, applier-bundle byte-identity, allowlist byte-identity, marker parity, spawn-tier contracts, and no-manual-fallback behavior: `just parity-tests`, plus `bash tests/parity/check-mirror-handoff.sh` for handoff hygiene.
 - Run `tests/parity/check-mirror-handoff.sh` after the Codex mirror work has landed in phase-bounded commits, so mixed-mirror handoff regressions are caught.
-- Compare the Claude and Codex `review-gauntlet` SKILL.md files and assert that the only intended prose divergences are dispatch idiom (`Agent` vs `spawn_agent`) and path anchors (`${CLAUDE_PLUGIN_ROOT}` vs `$SKILL_DIR`).
+- Compare the Claude and Codex `review-gauntlet` SKILL.md files and assert only the parity that is real: shared script artifacts and generic schemas byte-identical where tests require it; prose semantically aligned for shared behaviour; Codex-specific divergences allowed for `codex exec review` invocation, the absence of `/codex:adversarial-review`, the absence/deferment of `security-review`, and the R6 nested-spawn gate.
 - Confirm mirrored review-gauntlet scripts are byte-identical where parity requires it, including `run-gate.sh`, `convergence-ledger.sh`, and `lib/gauntlet-common.sh`.
-- Record any non-parity divergence as a blocker before the plan can proceed to implementation or review acceptance.
+- Record any accidental non-parity divergence as a blocker before the plan can proceed to implementation or review acceptance. Record the intentional Codex runtime limitation as `gated` rather than a blocker: `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` documents that the Codex nested-spawn topology can run in a plain shell but remains gated because child `reasoning_effort` is not observable from `codex exec --json` and availability is launch-context-dependent.
 <!-- END CODEX-AUTHORED PHASES -->
 
 ## Technical Specifications
@@ -170,7 +190,11 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 - `plugins/skein/skills/dev-plan/template.md` — add the field to the header block (Phase 3).
 - `plugins/skein/skills/conduct/SKILL.md` — terminal auto-chain hook after CI-parity gate (Phase 4).
 - `plugins/skein/skills/fan-out/SKILL.md` — Phase 6 auto-chain hook (Phase 5).
-- `tests/parity/test_skill_md_presence.py` — require review-gauntlet in both plugins (Phase 6).
+- `scripts/lib/bundle-map.sh` — add `review-gauntlet` to `BUNDLE_SKILLS` + `bundle_applier_for` arm (Phase 2/6).
+- `scripts/bundle-appliers.sh` — no code change expected, but re-run to emit the bundled copies; verify it handles the new skill (Phase 2/6).
+- `tests/parity/test-applier-bundle-parity.sh`, `tests/parity/test-allowlist-byte-identity.sh` — extend to cover review-gauntlet's bundled copies (Phase 6).
+- `justfile` — add `gauntlet-tests` recipe; aggregate = `just parity-tests` + `just gauntlet-tests` (Phase 6).
+- `tests/parity/test_skill_md_presence.py` — add review-gauntlet to `MANAGED_SKILLS` (requires both plugins → landed in **Phase C1** with the Codex mirror, per I4).
 - `AGENTS.md`, `CHANGELOG.md`, `docs/dev_plans/README.md` — roster/changelog/index (Phase 6).
 - Codex mirrors of all of the above (Phases C1–C3, Codex-authored).
 
@@ -181,25 +205,25 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 - `tests/gauntlet/*` — unit + hook + shape tests (Phases 1–6).
 
 ### Architecture Decisions
-- **Conductor, not monolith:** each gate/fixer is a clean-context subagent (one delegation level). Keeps the conductor's context flat across all loops — the whole reason the skill exists. Mirrors deep-review's per-lens isolation (`deep-review/SKILL.md:83`).
-- **Reuse the deep-review script bundle** for appliers + reconciliation rather than forking — a single allowlist and a single `(file,line,category)` signature scheme across the review surface.
+- **Conductor, not monolith (Option A):** the multi-spawn gates (`/code-review`, `skein:deep-review`) run at the conductor's **top level** because they fan out their own subagents and forbid nesting (`deep-review/SKILL.md` "Delegation Pattern"; `conduct/implementer-prompt.md` Scope Rule 2); only the **fixer** runs as a clean-context subagent. The fixer is the dominant per-loop context consumer, so isolating *it* — not the gates — keeps the conductor sustainable across 6–12 loops. Gate output lands in the conductor's context by design.
+- **Reuse the shared script bundle** for appliers + reconciliation rather than forking — a single allowlist and a single `(file,line,category)` signature scheme across the review surface. skein does not share via relative path: `scripts/bundle-appliers.sh` (driven by `scripts/lib/bundle-map.sh`'s `BUNDLE_SKILLS`) **copies** the pipeline byte-identically into each skill's own `scripts/`, enforced by `tests/parity/test-applier-bundle-parity.sh`. `review-gauntlet` joins `BUNDLE_SKILLS` (applier basename `apply-auto-fix-code.sh`, no extras) and gets its own bundled copy; trivial fixes use that applier, substantive fixes are direct fixer edits.
 - **Marker is an inline header field, not frontmatter** — plans carry no YAML frontmatter (Explore fact); the field lives above the review marker as immutable contract.
 - **Opt-in by default** — the marker defaults to `none`; auto-chain fires only on explicit `quick`/`full`. Protects against surprise 10-loop spend (a named friction in the usage report).
 - **Convergence decision is a pure, unit-testable function** of the per-round ledger — termination provability lives in `convergence-ledger.sh`, not in prose.
 
 ### Dependencies
-- No new language deps (no root manifest; plugin manifests at `0.3.0`). Depends on existing skills: `/code-review`, `/codex:adversarial-review`, `skein:deep-review`, `/security-review`, and the deep-review script bundle.
+- No new language deps (no root manifest; plugin manifests at `0.3.0`). Claude depends on the existing review commands `/code-review`, `skein:deep-review`, and `/security-review`, plus the deep-review script bundle. Codex depends on the installed Codex CLI `review` / `exec review` subcommands for code/adversarial review, `skein:deep-review` for the deep-review slot when nested delegation is confirmed, and explicit `deferred` output for any missing Codex security-review primitive.
 
 ### Integration Seams
 
 | Seam | Writer (task) | Caller (task) | Contract |
 |------|---------------|---------------|----------|
-| Review Gates marker | dev-plan (Phase 3) | conduct hook (P4), fan-out hook (P5) | Field parsed from plan header above marker; absent/`none` ⇒ no-op; `quick` ⇒ code-review gate only; `full` ⇒ all four gates |
-| Gate finding schema | run-gate.sh (P2) | reconcile-findings.sh (deep-review) | Findings normalized to `(file,line,category,severity,confidence)` before dedup; reconciler is called, never forked |
-| Auto-fix apply | fixer subagent (P1/P2) | apply-auto-fix-code.sh (deep-review) | Fixer routes eligible fixes through the existing applier + allowlist; ineligible/design-conflict fixes bypass the applier and go to the quarantine ledger |
-| Convergence decision | convergence-ledger.sh (P2) | conductor loop (P1) | Given per-round finding counts + blast-radius tallies, returns exactly one of `continue|restart|confirm|success|cap|non-converge` |
+| Review Gates marker | dev-plan (Phase 3) | conduct hook (P4), fan-out hook (P5) | Field parsed from plan header above marker; absent/`none` ⇒ no-op; `quick` ⇒ code-review gate only; `full` ⇒ all logical gate slots, with Codex gated/deferred slots reported explicitly |
+| Gate finding schema | run-gate.sh (P2) | bundled reconcile-findings.sh | Findings normalized to `(file,line,category,severity,confidence)` and dedup'd via `reconcile-findings.sh` called **without `--skill`** (it rejects any skill other than deep-review/review-plan, exit 2); gate findings **must not carry `auto_fix` blocks** at reconcile (reconciler requires `--skill` only when `auto_fix` is present — trivial-fix proposals handled separately); Codex native review gates are adapted from the gauntlet-owned JSON schema; reconciler is called, never forked |
+| Auto-fix apply | fixer subagent (P1/P2) | bundled apply-auto-fix-code.sh | Trivial/allowlisted fixes route through the bundled applier; substantive logic/security fixes are made as **direct fixer edits** (applier is trivial-only, hardcoded `SKILL=deep-review`); design-conflict fixes bypass both and go to the quarantine ledger |
+| Convergence decision | convergence-ledger.sh (P2) | conductor loop (P1) | Given per-round finding counts + blast-radius tallies + `pass_type` (full\|confirm) + quarantine size, returns exactly one of `continue\|restart\|confirm\|success\|success_with_quarantine\|cap\|non-converge`; non-convergence = count not strictly decreasing for K=2 rounds; loop counter is monotonic across restarts |
 | Quarantine ledger | fixer subagent (P1) | conductor loop (P1) | Design-conflict findings recorded with blast radius; `local` ⇒ continue, `structural` ⇒ halt |
-| Codex-mirror parity | Codex mirror (C1–C3) | tests/parity/* | Mirror SKILL.md + scripts satisfy presence + byte-identity + handoff tests; only anchor idiom diverges |
+| Codex-mirror parity | Codex mirror (C1–C3) | tests/parity/* | Mirror scripts satisfy byte-identity where parity tests require it; SKILL.md prose is semantically aligned but may diverge for Codex CLI review invocation, missing security-review, nested-spawn gating, and anchor idiom |
 
 ## Architecture & Call Flow
 
@@ -210,12 +234,12 @@ Component graph — which component triggers which:
 ```mermaid
 graph LR
     CALL[conduct / fan-out / standalone] -->|invoke on opt-in| GA[review-gauntlet conductor]
-    GA -->|dispatch gate| G1[code-review medium]
-    GA -->|dispatch gate| G2[codex:adversarial-review]
-    GA -->|dispatch gate| G3[deep-review 5-lens]
-    GA -->|dispatch gate| G4[security-review]
-    G1 & G2 & G3 & G4 -->|findings| REC[reconcile-findings.sh]
-    REC -->|deduped findings| FX[fixer subagent]
+    GA -->|run at top level, own context| G1[code-review medium]
+    GA -->|run at top level, own context| G2[Codex exec review adversarial prompt]
+    GA -->|run at top level, own context| G3[deep-review 5-lens]
+    GA -->|run at top level, own context| G4[security-review / Codex deferred]
+    G1 & G2 & G3 & G4 -->|findings| REC[reconcile-findings.sh no --skill]
+    REC -->|deduped findings| FX[fixer subagent — isolated clean context]
     FX -->|eligible fixes| AP[apply-auto-fix appliers]
     FX -->|design-conflict| QL[quarantine ledger]
     FX -->|blast-radius tallies| CL[convergence-ledger.sh]
@@ -235,15 +259,16 @@ sequenceDiagram
     participant L as convergence-ledger.sh
     C->>G: invoke (opt-in marker or standalone)
     loop each gate in sequence
-        G->>GATE: dispatch (clean context, <untrusted-content> wrap)
+        G->>GATE: run at conductor top level (own context, gate spawns its OWN subagents, <untrusted-content> wrap)
         GATE-->>G: structured findings
     end
-    G->>R: reconcile findings across gates
+    G->>R: reconcile findings across gates (no --skill)
     R-->>G: deduped findings
-    G->>F: fix batch (+ dev-plan as design truth)
+    Note over G,F: fixer is the ONLY isolated clean-context subagent
+    G->>F: fix batch (+ dev-plan **Goal:** as design truth)
     F-->>G: applied fixes + blast-radius + quarantine ledger
-    G->>L: per-round counts + tallies
-    L-->>G: continue | restart-gate-1 | confirm | success | cap | non-converge
+    G->>L: per-round counts + tallies + pass_type + quarantine size
+    L-->>G: continue | restart-gate-1 | confirm | success | success_with_quarantine | cap | non-converge
     G-->>C: final report (gates passed, findings fixed, quarantine queue, or halt reason)
 ```
 
@@ -252,21 +277,30 @@ Context lifecycle — what enters context at each step, and whether it clears or
 | Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
 |------|---------|----------------|-------------------|---------------|
 | 1 | gauntlet invoked | invocation args, marker/plan path, branch | conductor holds only the ledger + report | persists ledger to a run file |
-| 2 | gate dispatched | gate prompt + diff/plan (wrapped untrusted) | fresh/isolated per gate subagent | subagent returns structured findings, context discarded |
+| 2 | gate run (top level) | gate prompt + diff/plan (wrapped untrusted) | runs in the **conductor's own context**; the gate spawns its **own** verifier/lens subagents (cannot nest under the conductor) | gate returns structured findings; its internal subagent context is discarded, but its output lands in the conductor |
 | 3 | reconcile | deduped finding set only | conductor holds findings, not raw gate output | after reconcile writes deduped set |
-| 4 | fixer dispatched | findings batch + dev-plan (design truth) | fresh/isolated per fixer subagent | fixer returns fixes + blast-radius + quarantine |
+| 4 | fixer dispatched (isolated) | findings batch + dev-plan `**Goal:**` (design truth) | fresh/isolated clean-context subagent — the **only** delegated tier | fixer returns fixes + blast-radius + quarantine |
 | 5 | convergence decision | per-round counts + tallies (ledger only) | ledger persists across rounds to a run file | decision returned; loop or stop |
 | 6 | terminate | final report | report persists; conductor context released | success / cap / non-converge / halt |
 
 ## Testing Notes
 
 ### Test Approach
-- [ ] Unit: `convergence-ledger.sh` decision table — every input row maps to exactly one of the six outcomes; termination is provable (cap and non-converge are reachable and mutually exclusive with success).
+- [ ] Unit: `convergence-ledger.sh` decision table — every input row maps to exactly one of the seven outcomes; termination is provable (cap and non-converge are reachable and mutually exclusive with success).
+- [ ] Unit (C4): **plateau** `3→3→3` ⇒ non-converge (count not strictly decreasing for K=2 rounds).
+- [ ] Unit (C4): **oscillation** `5→3→5→3` ⇒ non-converge (no strict decrease across K=2 rounds).
+- [ ] Unit (C4): **structural-restart-every-round** ⇒ monotonic loop counter still reaches the **cap** at 10 (restart does not reset the counter).
+- [ ] Unit (C4): **clean-confirm vs clean-full** — clean `pass_type: confirm` ⇒ `continue`; clean `pass_type: full` ⇒ `success`.
+- [ ] Unit (C4): **converged-with-quarantine** — clean full pass + non-empty quarantine queue ⇒ `success_with_quarantine`.
 - [ ] Unit: blast-radius restart logic (any `structural` ⇒ restart gate 1; all `local` ⇒ single confirming pass).
+- [ ] Unit (I6): the 10-loop cap is reachable **only under `full`/standalone**; `quick` runs a single code-review pass and never enters the convergence loop.
 - [ ] Unit: guardrail classification (design-conflict + `local` ⇒ quarantine-continue; + `structural` ⇒ halt; non-conflict ⇒ fix regardless of confidence).
-- [ ] Unit: opt-in gating (`none`/absent ⇒ no-op; `quick` ⇒ gate 1 only; `full` ⇒ all four).
-- [ ] Reuse wiring: `run-gate.sh` invokes the existing `reconcile-findings.sh` and appliers, not a fork (assert by path + no duplicated allowlist).
-- [ ] Parity: SKILL.md presence in both plugins; applier-bundle byte-identity; mirror handoff.
+- [ ] Unit: opt-in gating (`none`/absent ⇒ no-op; `quick` ⇒ gate 1 only, single pass; `full` ⇒ all logical gate slots, with unsupported Codex slots surfaced as gated/deferred).
+- [ ] Unit (minor): **gate-order enforcement** — gates run in the fixed sequence (code-review → adversarial → deep-review → security); assert order, not just membership.
+- [ ] Unit (minor): **gate/applier failure mid-loop** — a gate subagent that **errors** (status `error`) is distinguished from one that **returns findings**; define the ledger's behavior for a mid-loop error (does not count as a clean pass; surfaces to the conductor without silently converging).
+- [ ] Shape (I1, Guardrail 1): grep/AST assertion that **every** fixer-dispatch block in `SKILL.md` embeds both the dev-plan/`**Goal:**` design-intent reference AND the `<untrusted-content>` wrap, so a future edit cannot silently drop either. Model on `tests/parity/test-spawn-tiers.sh`.
+- [ ] Reuse wiring: `run-gate.sh` invokes the **bundled** `reconcile-findings.sh` (no `--skill`) and appliers, not a fork (assert by path + no duplicated allowlist); bundled copies are byte-identical (`test-applier-bundle-parity.sh`, `test-allowlist-byte-identity.sh` extended to review-gauntlet).
+- [ ] Parity: SKILL.md presence in both plugins; applier-bundle byte-identity; allowlist byte-identity; spawn-tier census; mirror handoff; Codex-specific gated/deferred review slots documented.
 - [ ] Integration (manual): drive the gauntlet on a seeded branch with known findings; confirm it converges and lands all fixes on the same branch.
 
 ### Test Results
@@ -284,13 +318,13 @@ Context lifecycle — what enters context at each step, and whether it clears or
 ## Acceptance Criteria
 
 - `review-gauntlet` skill exists in both plugins, passes `tests/parity/*`, and triggers on the documented phrases.
-- Running it drives all four gates in order, applies fixes to the working branch only, and reports gates passed / findings fixed / quarantine queue.
+- Running it drives all supported gates in order, applies fixes to the working branch only, and reports gates passed / findings fixed / quarantine queue. Claude full mode drives all four gates; Codex full mode must explicitly report gated/deferred slots until real Codex primitives and nested-spawn confirmation exist.
 - Convergence loop provably terminates via one of the three stop conditions; unit tests cover all six ledger outcomes.
 - Both guardrails enforced at every fixer call site with the dev-plan in context.
 - `**Review Gates:**` marker gates auto-chain from conduct and fan-out; default `none` is a strict no-op.
 - Fixer reuses the existing deep-review appliers + reconciler (no forked allowlist/signature logic).
 - Sibling plans (conduct, deep-review) cross-linked; README task table + CHANGELOG + AGENTS.md updated.
-- Codex mirror authored (Phases C1–C3) and byte-parity where required.
+- Codex mirror authored (Phases C1–C3), byte-parity where required, and honest capability parity where full behavioural parity is gated by Codex nested-spawn/tier observability.
 - Code reviewed and approved
 - Tests passing
 - Documentation updated
