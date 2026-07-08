@@ -72,7 +72,7 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 
 ### Phase 3: Tests, docs, cross-links (Claude)
 
-**Impl files:** `justfile, tests/parity/check-prompt-parity.sh, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260707-feature-review-gauntlet-skill.md, docs/dev_plans/20260422-feature-conduct-skill.md`
+**Impl files:** `justfile, scripts/check-prompt-parity.sh, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260707-feature-review-gauntlet-skill.md, docs/dev_plans/20260422-feature-conduct-skill.md`
 **Test files:** `tests/gauntlet/`
 **Test command:** `just parity-tests && just gauntlet-tests` <!-- no tests/run-all.sh exists; use justfile recipes -->
 
@@ -205,7 +205,8 @@ Context lifecycle:
 - Sibling plans (gauntlet, conduct-skill) cross-linked; README/CHANGELOG/AGENTS.md updated.
 - Code reviewed and approved; tests passing; docs updated.
 
-<!-- reviewed: YYYY-MM-DD @ <hash> -->
+<!-- reviewed: 2026-07-08 @ cab86cfc129c57cafeae8234ac743072fc5cde92 -->
+
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
