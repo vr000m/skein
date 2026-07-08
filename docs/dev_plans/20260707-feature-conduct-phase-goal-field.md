@@ -214,8 +214,8 @@ Context lifecycle:
 - [x] Phase 1: Goal-field schema in dev-plan (Claude) — c58f66a
 - [x] Phase 2: {{PHASE_GOAL}} injection in conduct (Claude) — 8c48ebf
 - [x] Phase 3: Tests, docs, cross-links (Claude) — d7be637
-- [ ] Phase C1: Codex-mirror Goal schema + template (Codex)
-- [ ] Phase C2: Codex-mirror injection + parity (Codex)
+- [x] Phase C1: Codex-mirror Goal schema + template (Codex) — 0f95ddf
+- [x] Phase C2: Codex-mirror injection + parity (Codex) — 40d3cb2
 
 ## Findings
 
@@ -223,6 +223,8 @@ Context lifecycle:
 - **Parser note (Phase 3):** the Phase 3 `**Test command:**` line carries a trailing `<!-- ... -->` HTML comment, which defeats conduct's strict `Test command:` regex (it expects the line to end right after the closing backtick). The conductor resolved the command manually (`just parity-tests && just gauntlet-tests`). Harmless, but a future cleanup could move the comment off the slot line.
 - **Mid-phase reviews:** Phase 2 reviewer flagged (Important) that the no-regression test only checked doc strings, not the byte-identity invariant — fixed by adding assertions that `{{PHASE_GOAL}}` is glued to the preceding sentence with no leading space. Phase 3 reviewer flagged (Minor) a nested-bold CHANGELOG bullet — fixed.
 - **Marker safety:** the review-marked sibling gauntlet plan (`20260707-feature-review-gauntlet-skill.md`) was deliberately left untouched during Phase 3 cross-linking; its cross-link to this plan already existed.
+- **Stage 2 (Codex mirror C1–C2) conducted 2026-07-08** via `codex:rescue` (task-mrbwigeg-305pt2). Mirror parity verified: `test_skill_md_presence` 11/0, `test-prompt-parity-extended` 13/0, `check-prompt-parity` PASS (conduct prompt drifts cleared), `test-spawn-tiers` 57/0. No `${CLAUDE_PLUGIN_ROOT}` leaked into Codex files; `$SKILL_DIR` anchors preserved; Codex delegation hard-stop contract + `reasoning_effort=medium` intact.
+- **Pre-existing failing check (NOT caused by this work):** the C2 test command lists `tests/parity/check-mirror-handoff.sh`, which fails with `missing phase 1 claude boundary commit`. It inspects git *history* for conduct-skill mirror-development boundary commits under the old-layout paths `.claude/skills/conduct` / `.codex/skills/conduct` with `Conducted-By:` trailers. This branch adds zero commits touching those paths (`git log main..HEAD -- .claude/skills/conduct .codex/skills/conduct` is empty), so it fails identically on `main`. The script appears half-migrated to the `plugins/skein/` layout (its `touches_both_mirrors` helper uses the new paths, but `find_strict_boundary`/`find_legacy_boundary` still query the old ones). Worth a separate fix; out of scope for the Goal field.
 
 - (append findings here as work proceeds)
 
