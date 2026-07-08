@@ -329,7 +329,8 @@ Context lifecycle — what enters context at each step, and whether it clears or
 - Tests passing
 - Documentation updated
 
-<!-- reviewed: YYYY-MM-DD @ <hash> -->
+<!-- reviewed: 2026-07-08 @ b948a92a5eea39ce871780931c640f2a10f2a5bb -->
+
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
