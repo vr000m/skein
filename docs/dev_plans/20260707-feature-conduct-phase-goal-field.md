@@ -211,13 +211,18 @@ Context lifecycle:
 
 ## Progress
 
-- [ ] Phase 1: Goal-field schema in dev-plan (Claude)
-- [ ] Phase 2: {{PHASE_GOAL}} injection in conduct (Claude)
-- [ ] Phase 3: Tests, docs, cross-links (Claude)
+- [x] Phase 1: Goal-field schema in dev-plan (Claude) — c58f66a
+- [x] Phase 2: {{PHASE_GOAL}} injection in conduct (Claude) — 8c48ebf
+- [x] Phase 3: Tests, docs, cross-links (Claude) — d7be637
 - [ ] Phase C1: Codex-mirror Goal schema + template (Codex)
 - [ ] Phase C2: Codex-mirror injection + parity (Codex)
 
 ## Findings
+
+- **Stage 1 (Claude phases 1–3) conducted 2026-07-08**, autonomous, `--max-phases 3`; stopped at the max-phases cap before the Codex-mirror phases (C1/C2) per the dual-runtime split. All phases: tests green, no rogue commits.
+- **Parser note (Phase 3):** the Phase 3 `**Test command:**` line carries a trailing `<!-- ... -->` HTML comment, which defeats conduct's strict `Test command:` regex (it expects the line to end right after the closing backtick). The conductor resolved the command manually (`just parity-tests && just gauntlet-tests`). Harmless, but a future cleanup could move the comment off the slot line.
+- **Mid-phase reviews:** Phase 2 reviewer flagged (Important) that the no-regression test only checked doc strings, not the byte-identity invariant — fixed by adding assertions that `{{PHASE_GOAL}}` is glued to the preceding sentence with no leading space. Phase 3 reviewer flagged (Minor) a nested-bold CHANGELOG bullet — fixed.
+- **Marker safety:** the review-marked sibling gauntlet plan (`20260707-feature-review-gauntlet-skill.md`) was deliberately left untouched during Phase 3 cross-linking; its cross-link to this plan already existed.
 
 - (append findings here as work proceeds)
 
