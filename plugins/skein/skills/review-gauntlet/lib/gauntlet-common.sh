@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# gauntlet-common.sh — shared helpers for review-gauntlet's bundled scripts
-# (`run-gate.sh`, `convergence-ledger.sh`).
+# gauntlet-common.sh — shared helpers for review-gauntlet's authored scripts
+# (`run-gate.sh`, `convergence-ledger.sh`). Lives in the skill's lib/ dir,
+# alongside them; the bundled shared pipeline lives in the sibling scripts/.
 #
 # Source this file; it does not run on its own (no top-level side effects).
 #
@@ -54,9 +55,11 @@ gc_bundled_scripts_dir() {
 	if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
 		dir="${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts"
 	else
-		# GC_LIB_DIR is .../review-gauntlet/scripts/lib; the bundled scripts
-		# dir is its parent.
-		dir="$(cd "$GC_LIB_DIR/.." && pwd)"
+		# GC_LIB_DIR is .../review-gauntlet/lib (this skill's authored scripts);
+		# the bundled shared pipeline lives in the sibling scripts/ dir. If it is
+		# not present yet (pre-bundle dev tree), the command substitution yields
+		# an empty string and the -d guard below aborts.
+		dir="$(cd "$GC_LIB_DIR/../scripts" && pwd)"
 	fi
 	if [[ ! -d "$dir" ]]; then
 		echo "gauntlet: bundled scripts dir not found at $dir — never falling back to a hand copy or ../../deep-review/scripts" >&2

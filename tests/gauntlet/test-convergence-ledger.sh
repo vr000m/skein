@@ -24,7 +24,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/scripts/convergence-ledger.sh"
+LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh"
 
 pass_count=0
 fail_count=0

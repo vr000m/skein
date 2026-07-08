@@ -18,10 +18,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-GAUNTLET_SCRIPTS_DIR="$ROOT_DIR/plugins/skein/skills/review-gauntlet/scripts"
-RUN_GATE="$GAUNTLET_SCRIPTS_DIR/run-gate.sh"
-LEDGER="$GAUNTLET_SCRIPTS_DIR/convergence-ledger.sh"
-COMMON="$GAUNTLET_SCRIPTS_DIR/lib/gauntlet-common.sh"
+GAUNTLET_LIB_DIR="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib"
+RUN_GATE="$GAUNTLET_LIB_DIR/run-gate.sh"
+LEDGER="$GAUNTLET_LIB_DIR/convergence-ledger.sh"
+COMMON="$GAUNTLET_LIB_DIR/gauntlet-common.sh"
 
 pass_count=0
 fail_count=0

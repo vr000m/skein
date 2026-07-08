@@ -47,8 +47,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=plugins/skein/skills/review-gauntlet/scripts/lib/gauntlet-common.sh disable=SC1091
-. "$SCRIPT_DIR/lib/gauntlet-common.sh"
+# shellcheck source=plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh disable=SC1091
+. "$SCRIPT_DIR/gauntlet-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
