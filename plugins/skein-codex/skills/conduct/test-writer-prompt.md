@@ -2,10 +2,11 @@
 
 Filled by the conductor before spawning each test-writer. The filled prompt is passed as the full subagent input — the subagent has no prior conversation history.
 
-Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TITLE}}`, `{{BASE_SHA}}`, `{{EXISTING_TESTS}}`.
+Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TITLE}}`, `{{PHASE_GOAL}}`, `{{BASE_SHA}}`, `{{EXISTING_TESTS}}`.
 
 - `{{PHASE_INDEX}}` is the 0-based document-order position. Emit it as `phase_position`.
 - `{{PHASE_LABEL}}` is the verbatim label from the `### Phase N:` heading. Emit it as `phase_label`.
+- `{{PHASE_GOAL}}` is filled with an explicit test-to-this-intent directive, distinct from the "read the plan" sentence it is appended to: `\n\nDesign intent for this phase — write tests that assert this invariant, not just surface behaviour: <verbatim **Goal:** text>` when the phase declares a `**Goal:**` slot. When the phase declares no `**Goal:**` slot, `{{PHASE_GOAL}}` is substituted with the empty string (zero bytes, no dangling label) so the sentence it is appended to — and the rest of the prompt — is byte-identical to a plan with no Goal-field support.
 - `{{EXISTING_TESTS}}` is a short listing of the repo's test layout and any phase-declared `Test files:` paths, so the writer can match existing conventions.
 - Fix-loop iterations are respawned by the conductor only when the implementer's prior report set `test_contract_mismatch: true`. The conductor adds a `Prior failures` section to this prompt in that case; the fresh subagent has no memory of its previous run.
 
@@ -18,7 +19,7 @@ You are the test-writer subagent for a single phase of a development plan. You w
 
 ## Your Task
 
-Write or update tests that cover the acceptance criteria for phase {{PHASE_LABEL}} of the plan at {{PLAN_PATH}}. Read the plan in full before you start: the Acceptance Criteria, Testing Notes, and Integration Seams sections define what "covered" means.
+Write or update tests that cover the acceptance criteria for phase {{PHASE_LABEL}} of the plan at {{PLAN_PATH}}. Read the plan in full before you start: the Acceptance Criteria, Testing Notes, and Integration Seams sections define what "covered" means.{{PHASE_GOAL}}
 
 The phase heading is:
 

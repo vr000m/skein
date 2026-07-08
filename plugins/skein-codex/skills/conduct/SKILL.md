@@ -156,6 +156,7 @@ From the phase block, extract:
 - `**Test files:**` — comma-separated paths, globs allowed.
 - `` **Test command:** `<cmd>` `` — parsed with `^\*\*Test command:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
 - `` **Validation cmd:** `<cmd>` `` — optional, parsed with `^\*\*Validation cmd:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
+- `**Goal:**` — optional. A 1-2 line design-intent/invariant statement for the phase, sitting in the phase contract block alongside the slots above (above the review marker; editing it invalidates the marker like any other contract edit). Separator may be `:`, `—`, or `–`, matching the phase-heading tolerance. Captured verbatim (including embedded newlines for a 2-line goal) as `{{PHASE_GOAL}}`'s source text. Absent slot -> `{{PHASE_GOAL}}` substitutes to the empty string everywhere it is used (Step 3).
 
 Any slot may be absent; see Fallbacks below.
 
@@ -177,12 +178,15 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 | `{{PHASE_INDEX}}` | phase's 0-based position | substitute bare int (no quotes) |
 | `{{PHASE_LABEL}}` | verbatim heading label | substitute JSON-escaped string |
 | `{{PHASE_TITLE}}` | verbatim heading title | string (appears in prose, not JSON) |
+| `{{PHASE_GOAL}}` | formatted design-intent directive built from the phase's `**Goal:**` slot, else empty string | string (appears in prose, not JSON) |
 | `{{ITERATION}}` | current fix-loop iteration | substitute bare int (no quotes) |
 | `{{BASE_SHA}}` | `git rev-parse HEAD` at phase start | string |
 | `{{PRIOR_DIFF}}` | staged diff from previous attempt, else empty | string |
 | `{{TEST_FAILURES}}` | redacted failure summary from the test runner or pre-commit hook, else empty | string |
 
-Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
+`{{PHASE_GOAL}}` is substituted the same way on every implementer/test-writer spawn: first attempt (iteration 0) AND every fix-loop respawn (Step 6), since it is re-read from the same phase contract block on each respawn - it is not carried over from a prior iteration's prompt. When the phase's `**Goal:**` slot is present, substitute the directive text (see `implementer-prompt.md` / `test-writer-prompt.md` for the exact wording each template expects); when absent, substitute the empty string so the sentence the placeholder is appended to renders byte-identical to a plan with no `**Goal:**` slot.
+
+Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, phase goal, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
 Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
 
