@@ -226,6 +226,22 @@ gh pr create --base <base-branch> --head <task-branch> \
   --body "<summary from .fan-out-result.md>"
 ```
 
+### Review Gauntlet Auto-Chain
+
+After post-merge integration-seam verification finishes on option 1, read the plan's `**Review Gates:**` header field (values `none | quick | full`, default `none`) and decide whether to auto-chain `review-gauntlet` on the merged feature branch.
+
+**Merged-branch path only.** This hook runs strictly on the option-1 exit from Phase 5/6: every successful task branch has been merged into the current branch with `git merge --no-ff`, and the full post-merge test suite has run. Option 2 creates individual PRs and leaves task diffs on separate unmerged branches, so there is no unified merged branch to gate. The hook no-ops on option 2 and on options 3/4.
+
+**Activation**, same opt-in shape as conduct's terminal hook:
+
+- **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation and no additional dispatch. Current merge behavior is unchanged for every plan that does not explicitly opt in.
+- **`quick` -> invoke `review-gauntlet` scoped to Codex gate 1 only**, a single native code-review pass with no convergence loop.
+- **`full` -> invoke `review-gauntlet` through the Codex gate matrix**, with native supported gates run and unsupported/gated slots reported explicitly as `deferred` or `skipped`; do not claim Claude command parity for missing `/security-review` or `/codex:adversarial-review` commands.
+
+**Dispatch:** `review-gauntlet` is a conductor in its own right. Fan-out invokes it directly as a top-level skill against the merged feature branch, not as a fan-out worker and not as another fan-out tier. This does not activate the gated R6 nested test-writer topology; that topology remains gated exactly as documented above. Await the gauntlet terminal report before continuing to Phase 7.
+
+If `review-gauntlet` applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the merged branch, never a follow-up PR. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
+
 ### Phase 7: Cleanup (on `/fan-out cleanup`)
 
 Run:
