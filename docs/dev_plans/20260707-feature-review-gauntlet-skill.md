@@ -335,12 +335,12 @@ Context lifecycle — what enters context at each step, and whether it clears or
 
 ## Progress
 
-- [ ] Phase 1: Core orchestrator SKILL.md (Claude)
-- [ ] Phase 2: Gate-runner + convergence bundled scripts (Claude)
-- [ ] Phase 3: dev-plan Review Gates header marker field (Claude)
-- [ ] Phase 4: conduct terminal hook (Claude)
-- [ ] Phase 5: fan-out Phase 6 hook (Claude)
-- [ ] Phase 6: Tests, docs, and sibling cross-links (Claude)
+- [x] Phase 1: Core orchestrator SKILL.md (Claude) — ddbbb41
+- [x] Phase 2: Gate-runner + convergence bundled scripts (Claude) — e6b460b
+- [x] Phase 3: dev-plan Review Gates header marker field (Claude) — 3051d3e
+- [x] Phase 4: conduct terminal hook (Claude) — b475547
+- [x] Phase 5: fan-out Phase 6 hook (Claude) — 1e29be0
+- [x] Phase 6: Tests, docs, and sibling cross-links (Claude) — 73438bc
 - [ ] Phase C1: Codex-mirror review-gauntlet SKILL.md (Codex)
 - [ ] Phase C2: Codex-mirror hook edits (Codex)
 - [ ] Phase C3: Codex-mirror parity verification (Codex)
