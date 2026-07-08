@@ -22,7 +22,7 @@ This plan was shaped by three `/review-plan` cycles. v1 → v2 resolved worktree
 
 **Implementation ownership.** Phases 1–7 describe the Claude-first implementation and documentation pass. Phase 8 adds the Codex incarnation plus any shared-contract cleanup needed so plans authored/reviewed in either harness can participate in the same `/conduct` workflow.
 
-**Related work:** `docs/dev_plans/20260707-feature-conduct-phase-goal-field.md` extends the per-phase contract block introduced here with an optional `**Goal:**` design-intent slot, injected into the implementer/test-writer prompts as `{{PHASE_GOAL}}`.
+**Related work:** `docs/dev_plans/20260707-feature-conduct-phase-goal-field.md` extends the per-phase contract block introduced here with an optional `**Goal:**` design-intent slot, injected into the implementer/test-writer prompts as `{{PHASE_GOAL}}`. `docs/dev_plans/20260707-feature-review-gauntlet-skill.md` adds a terminal auto-chain hook after this skill's CI-parity gate: when the plan's `**Review Gates:**` header field is `quick`/`full`, `/conduct` invokes `review-gauntlet --plan <this plan>` and treats the gauntlet's own follow-up commit as absorbed into `resume_base_sha`, not a rogue commit.
 
 ## Requirements
 

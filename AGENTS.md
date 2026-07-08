@@ -10,6 +10,7 @@ just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundl
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker parity (conduct + canonical anchor + review-plan marker write)
+just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + reuse-wiring + marker + conduct/fan-out hooks
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts                # shellcheck + shfmt on scripts/
 ```
@@ -19,7 +20,7 @@ Requires: `brew install just jq shellcheck shfmt`
 ## Architecture
 
 ```
-plugins/skein/skills/        Claude Code skills (SKILL.md per skill; deep-review/review-plan also carry a generated scripts/ subtree)
+plugins/skein/skills/        Claude Code skills (SKILL.md per skill; deep-review/review-plan/review-gauntlet also carry a generated scripts/ subtree)
 plugins/skein-codex/skills/  Codex CLI skills (mirrored structure; same generated scripts/ subtree; per-harness dispatch idiom retained)
 .claude-plugin/marketplace.json   Claude marketplace entry (name: skein)
 .agents/plugins/marketplace.json  Codex marketplace entry (name: skein)
@@ -54,6 +55,7 @@ The two-tier policy, harness-independent:
 - **Judgment work → strongest model, high effort.** Plan review, code review, and planning reasoning (e.g. `review-plan`'s judgment lenses, `deep-review`'s logic/security/spec/architecture lenses, `spec-compliance`, `conduct`'s advisory reviewer) bet on a strong reviewer at high effort catching the details.
 - **Mechanical work → cheaper model, lower effort.** Implementation and testing (e.g. `conduct`'s implementer/test-writer, `fan-out`'s worker, `plan-view` render, `dev-plan`'s Explore, `content-draft`, `content-review`, `update-docs`, `rfc-finder`) execute an already-reviewed plan and don't need heavy reasoning.
 - **Factual lookups stay cheapest regardless of the skill they live in** (e.g. `review-plan`'s `codebase-claims` lens, `deep-review`'s `documentation` lens) — checking whether a path/API exists or a doc is stale is a lookup, not reasoning.
+- **`review-gauntlet`'s gate tiers follow the same split, not a uniform tier.** The gates it chains keep their own native model/effort policy unchanged — `/code-review` at medium effort, `skein:deep-review`'s four judgment lenses at high effort/opus plus its cheap documentation lens, `/security-review` at whatever tier that skill declares. The gauntlet does not override any gate's tier; only the **fixer** batch is a gauntlet-owned spawn, and it is mechanical-tier (implementation work applying already-decided fixes), matching `conduct`'s implementer tier rather than the judgment-lens tier of the gates that found the issues.
 
 The inheritance invariant: every spawn declares its own tier; no spawn inherits the session tier for mechanical work. A strong main loop (e.g. a top-tier default model) must push work down to cheaper tiers explicitly, not silently run mechanical work at its own expensive tier by omission.
 
@@ -69,6 +71,7 @@ Per-harness idiom (the split itself is sanctioned, not drift — see `docs/dev_p
 - Single source of truth for allowed kinds: `scripts/auto-fix-allowlist.json`. Cited byte-identical in all four `SKILL.md` mirrors; enforced by `scripts/check-prompt-parity.sh` and `tests/parity/test-allowlist-byte-identity.sh`.
 - Pipeline: lens emits v2 envelope → `scripts/reconcile-findings.sh --skill <s>` merges → `scripts/audit-auto-fix-eligibility.sh` annotates `auto_fix_status` → `scripts/render-reconciled-report.sh` renders → `scripts/apply-auto-fix-code.sh` (deep-review) or `scripts/apply-auto-fix-plan.sh` (review-plan) commits.
 - Bundled for portability: `scripts/bundle-appliers.sh` copies the pipeline byte-for-byte into each skill's `scripts/` subtree (preserving `scripts/lib/`), so SKILL.md invokes it via the harness-appropriate path anchor (see Path-resolution idiom above) and `--auto-fix` resolves from any cwd — not just the repo. The appliers self-locate via `BASH_SOURCE`; the lib's `../..` walk requires the bundled layout depth be preserved. Canonical `scripts/` wins; bundled copies are generated artifacts whose byte-identity is enforced by `tests/parity/test-applier-bundle-parity.sh` and the `check-sync` canonical↔bundle gate. Run `just bundle-appliers` after editing any canonical applier. If the bundled `scripts/` is absent at runtime the skill hard-fails (`tests/parity/test-no-manual-apply-fallback.sh`) — it never falls back to hand-applying.
+- `review-gauntlet` (`BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh`) gets its own bundled copy of the same pipeline — reusing `apply-auto-fix-code.sh` (hardcoded `SKILL="deep-review"` internally, so it applies the deep-review trivial allowlist regardless of which skill bundles it) rather than forking a fourth allowlist. The gauntlet's fixer routes trivial/allowlisted findings through this bundled applier and makes substantive logic/security fixes as direct edits; it never reaches into `deep-review/scripts/` by relative path.
 - Code applier requires `--test-cmd` (or `AUTO_FIX_TEST_CMD`); runs the command exactly once per fix, restores from a saved blob on failure without touching `HEAD`.
 - Plan applier writes prose edits with `Auto-Fixed-By: review-plan` trailer; the real `<!-- reviewed: … -->` marker is only refreshed at the normal `/review-plan` acceptance step. `marker_pending` in the manifest does not satisfy `/conduct` preflight.
 - Manifests land in `.deep-review/auto-fix-<unix>-<pid>.json` and `.review-plan/auto-fix-<unix>-<pid>.json` (gitignored). PID suffix avoids same-second collisions if the advisory mkdir lock is bypassed.
@@ -121,6 +124,7 @@ Recommended development workflow using skills:
 4. `skein:conduct` — Walk a reviewed linear plan phase by phase, delegating implementation + tests per phase to harness-native clean-context subagents while preserving the shared review-marker, phase-slot (`**Impl files:**`, `**Test files:**`, `**Test command:**`, optional `**Validation cmd:**`, optional `**Goal:**` — a 1-2 line per-phase design intent injected into implementer/test-writer prompts as `{{PHASE_GOAL}}`), report-schema, and handback contracts. On `--resume`, a stale review marker is auto-refreshed in place; initial runs and missing markers still hard-stop. Pair with `skein:fan-out` at the outer layer when phases themselves fan out.
 5. `skein:fan-out` — Fan out independent tasks to parallel agents (or implement manually).
 6. `skein:deep-review` — Run a multi-lens code review after implementation and before merge. Reconciles findings by structural signature to suppress false-positive amplification across lenses.
+7. `skein:review-gauntlet` — Chain the review gates (code-review, adversarial Codex review, deep-review, security-review) into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Opt-in via a plan's `**Review Gates:** quick | full` header field (default `none`); `conduct`'s terminal step and `fan-out`'s Phase 6 auto-chain into it when the plan opts in. `quick` runs the code-review gate once with no loop; `full`/standalone run the up-to-10-loop convergence algorithm with structural-restart, single-confirming-pass, and non-convergence-bail stop conditions.
 
 Skills delegate heavy phases (research, analysis, report generation) to subagents and return only the structured result to the main context. This keeps main context lean and preserves token budgets on long sessions. User-facing I/O (confirmations, applying edits, presenting results) stays in the main context.
 

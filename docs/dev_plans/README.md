@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-07-07 | feature | review-gauntlet-skill | review-skills | — | feature/review-gauntlet-skill | [plan](20260707-feature-review-gauntlet-skill.md) |
 | 2026-07-07 | feature | conduct-phase-goal-field | planning-skills | — | feature/review-gauntlet-skill | [plan](20260707-feature-conduct-phase-goal-field.md) |
 | 2026-07-04 | chore | model-effort-explicit-spawns | meta | — | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
 | 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
