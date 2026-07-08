@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- Optional per-phase `**Goal:**` contract slot in dev-plan, injected into conduct as `{{PHASE_GOAL}}`. Phases can now carry a 1-2 line design-intent/invariant statement above the review marker, documented in `dev-plan/SKILL.md` (Required Sections item 4) and `template.md`. `/conduct` parses it from the phase contract block and substitutes it into the implementer and test-writer prompts at every spawn and fix-loop respawn, as an explicit "build/test to this goal" directive distinct from the existing whole-plan read. Absent `**Goal:**` renders an empty placeholder — byte-identical prompts to before, no regression. The same field is the single design-intent source the `review-gauntlet` fixer's Guardrail 1 (sibling plan) reads for its quarantine-vs-fix decision — one field, two consumers. New `just gauntlet-tests` recipe runs `tests/gauntlet/test-goal-field-schema.sh` and `tests/gauntlet/test-goal-injection.sh`.
+
 ## [0.3.0] - 2026-07-04
 
 ### Added

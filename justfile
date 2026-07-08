@@ -33,6 +33,12 @@ parity-tests:
     bash tests/parity/test-spawn-tiers.sh
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
+# Run the review-gauntlet test suite (schema + injection coverage).
+gauntlet-tests:
+    bash tests/gauntlet/test-goal-field-schema.sh
+    bash tests/gauntlet/test-goal-injection.sh
+    bash tests/gauntlet/test-goal-docs.sh
+
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
     ./scripts/check-trunk-snippet-parity.sh

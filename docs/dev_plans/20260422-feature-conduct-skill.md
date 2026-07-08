@@ -22,6 +22,8 @@ This plan was shaped by three `/review-plan` cycles. v1 → v2 resolved worktree
 
 **Implementation ownership.** Phases 1–7 describe the Claude-first implementation and documentation pass. Phase 8 adds the Codex incarnation plus any shared-contract cleanup needed so plans authored/reviewed in either harness can participate in the same `/conduct` workflow.
 
+**Related work:** `docs/dev_plans/20260707-feature-conduct-phase-goal-field.md` extends the per-phase contract block introduced here with an optional `**Goal:**` design-intent slot, injected into the implementer/test-writer prompts as `{{PHASE_GOAL}}`.
+
 ## Requirements
 
 ### Invocation contract
