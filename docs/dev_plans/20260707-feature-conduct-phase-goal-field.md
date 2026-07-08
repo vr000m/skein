@@ -32,7 +32,7 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 - **Test-writer injection:** the test-writer prompt also receives `{{PHASE_GOAL}}` so tests assert the intended invariant, not just surface behaviour.
 - **Gauntlet consumption (defined here, wired there):** document that `review-gauntlet`'s fixer reads per-phase `**Goal:**` as the authoritative design-intent for its quarantine-vs-fix decision. The actual wiring lands in the gauntlet plan; this plan owns the field definition and a cross-reference.
 - **No mini-review per phase.** This is deliberately the lightweight shift-left: inject intent only. Running review lenses on each phase before it returns is explicitly out of scope (it overlaps the gauntlet and risks redundant spend).
-- **Dual-plugin parity:** mirror the dev-plan schema doc, template, and conduct prompt/injection into `plugins/skein-codex/...` with `$SKILL_DIR` anchors; only the dispatch idiom diverges. Must pass `tests/parity/*`.
+- **Dual-plugin parity:** mirror the dev-plan schema doc, template, and conduct prompt/injection into `plugins/skein-codex/...` with `$SKILL_DIR` anchors where paths are needed. Prompt/template content that is harness-neutral should stay byte-identical where parity tests cover it; Codex `SKILL.md` prose may use Codex-native `spawn_agent`, `wait_agent`, `close_agent`, `fork_context=false`, and `reasoning_effort` wording. Must pass the real parity checks (`just parity-tests`, `just check-prompt-parity`, and `bash tests/parity/check-mirror-handoff.sh` where handoff hygiene matters).
 - **Marker-hash awareness:** because `**Goal:**` sits above the marker, adding/editing it on an already-reviewed plan invalidates the marker hash and forces re-review — correct, and consistent with how other contract-slot edits behave.
 
 ## Review Focus
@@ -45,7 +45,7 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 
 ## Implementation Checklist
 
-> **Phase split:** Phases 1–3 are **Claude-authored** (dev-plan schema, conduct injection, tests/docs). Phases C1–C2 are **Codex-authored** via `codex:rescue` (Codex-mirror SKILL.md/template/prompt content).
+> **Phase split:** Phases 1–3 are **Claude-authored** (dev-plan schema, conduct injection, tests/docs). Phases C1–C2 are **Codex-authored** for Codex-mirror SKILL.md/template/prompt content. Historical plans call this route `codex:rescue`; it means Codex-native adaptation/review, not a separate CLI command that the implementation can invoke.
 
 ### Phase 1: `**Goal:**` schema in dev-plan (Claude)
 
@@ -56,6 +56,9 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 - Add the optional `**Goal:**` slot to the phase-contract documentation in `dev-plan/SKILL.md` (Required Sections item 4) and to `template.md`'s phase blocks, above the marker.
 - Document it as optional (absent ⇒ current behaviour) and as the per-phase design-intent read by both conduct's implementer and `review-gauntlet`'s fixer.
 - Note the immutability consequence (above-marker edit ⇒ re-review).
+
+> **Cross-plan gate (blocking, reciprocal with the gauntlet plan):** this Phase 1 defines the `**Goal:**` schema that the sibling plan `docs/dev_plans/20260707-feature-review-gauntlet-skill.md` Guardrail 1 **consumes**. **This phase MUST land before the gauntlet plan's Guardrail-1 wiring** so the field exists when the fixer reads it.
+> **Shared-file ownership:** both plans edit `dev-plan/SKILL.md` + `template.md`. Ownership split to avoid clobbering on parallel edits — **this plan owns the per-phase `**Goal:**` slot** (phase contract block / Required Sections item 4); **the gauntlet plan owns the `**Review Gates:**` header field** (plan Header / Required Sections item 1). Neither plan edits the other's lines.
 
 ### Phase 2: `{{PHASE_GOAL}}` injection in conduct (Claude)
 
@@ -69,10 +72,11 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 
 ### Phase 3: Tests, docs, cross-links (Claude)
 
-**Impl files:** `tests/parity/check-prompt-parity.sh, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260707-feature-review-gauntlet-skill.md, docs/dev_plans/20260422-feature-conduct-skill.md`
+**Impl files:** `justfile, tests/parity/check-prompt-parity.sh, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md, docs/dev_plans/20260707-feature-review-gauntlet-skill.md, docs/dev_plans/20260422-feature-conduct-skill.md`
 **Test files:** `tests/gauntlet/`
-**Test command:** `bash tests/run-all.sh` <!-- resolve to repo aggregate entry; see justfile -->
+**Test command:** `just parity-tests && just gauntlet-tests` <!-- no tests/run-all.sh exists; use justfile recipes -->
 
+- Add a `gauntlet-tests` recipe to `justfile` (if not already added by the sibling gauntlet plan) covering `tests/gauntlet/*`; the aggregate is `just parity-tests` (existing) + `just gauntlet-tests`. There is no `tests/run-all.sh`.
 - Extend prompt-parity coverage for the new placeholder across Claude/Codex prompt templates.
 - Update `AGENTS.md` (dev-plan phase-contract slots list), `CHANGELOG.md`, README task table (Component `planning-skills`).
 - Cross-link this plan ↔ the gauntlet plan (Guardrail 1 ↔ `**Goal:**`) and the conduct-skill plan; record the sequencing dependency.
@@ -80,11 +84,26 @@ A concentrated per-phase `**Goal:**` is the demand-side complement to the gauntl
 <!-- BEGIN CODEX-AUTHORED PHASES -->
 ### Phase C1: Codex-mirror `**Goal:**` schema + template
 
-_(Codex authors this phase's contract + tasks via `codex:rescue`.)_
+**Impl files:** `plugins/skein-codex/skills/dev-plan/SKILL.md, plugins/skein-codex/skills/dev-plan/template.md`
+**Test files:** `tests/parity/test_skill_md_presence.py, tests/parity/test-prompt-parity-extended.sh`
+**Test command:** `python -m pytest tests/parity/test_skill_md_presence.py && bash tests/parity/test-prompt-parity-extended.sh`
+
+- Mirror the optional `**Goal:**` phase-contract slot into the Codex dev-plan SKILL.md using Codex-native planning prose where the Claude source mentions harness mechanics.
+- Keep `plugins/skein-codex/skills/dev-plan/template.md` mechanically aligned with the Claude template for the phase header block; this file is harness-neutral markdown and should not gain Codex-only wording.
+- Document the same above-marker immutability rule: adding or changing `**Goal:**` invalidates a reviewed plan marker and requires re-review.
+- Do not claim `tests/run-all.sh` exists in this Codex phase; use the existing parity checks above for Codex mirror verification.
 
 ### Phase C2: Codex-mirror `{{PHASE_GOAL}}` injection + parity
 
-_(Codex authors this phase's contract + tasks via `codex:rescue`.)_
+**Impl files:** `plugins/skein-codex/skills/conduct/implementer-prompt.md, plugins/skein-codex/skills/conduct/test-writer-prompt.md, plugins/skein-codex/skills/conduct/SKILL.md`
+**Test files:** `tests/parity/test-prompt-parity-extended.sh, tests/parity/test-spawn-tiers.sh, tests/parity/check-mirror-handoff.sh`
+**Test command:** `just check-prompt-parity && bash tests/parity/test-prompt-parity-extended.sh && bash tests/parity/test-spawn-tiers.sh && bash tests/parity/check-mirror-handoff.sh`
+
+- Add `{{PHASE_GOAL}}` to the Codex implementer and test-writer prompt templates in the same semantic location as the Claude templates. If the prompt templates are parity-checked byte-for-byte, keep the new prompt block byte-identical.
+- Update Codex conduct parsing/substitution prose to extract `**Goal:**` from the phase contract block and substitute it at every implementer/test-writer spawn and fix-loop respawn.
+- Preserve the existing Codex conduct delegation contract: top-level `/conduct` hard-stops when `spawn_agent`, `wait_agent`, or `close_agent` are unavailable; it does not inline phase implementation. The Goal-field work adds a placeholder to existing top-level conduct workers and does not depend on the gated fan-out R6 nested-spawn topology.
+- Request Codex-native worker tiers with `reasoning_effort=medium` where supported; do not introduce Claude `model:` / `effort:` fields into Codex SKILL.md.
+- Run handoff and parity checks after the Codex mirror commit so prompt drift and accidental mixed-mirror edits are caught.
 <!-- END CODEX-AUTHORED PHASES -->
 
 ## Technical Specifications
@@ -93,8 +112,9 @@ _(Codex authors this phase's contract + tasks via `codex:rescue`.)_
 - `plugins/skein/skills/dev-plan/SKILL.md`, `plugins/skein/skills/dev-plan/template.md` — add `**Goal:**` slot (Phase 1).
 - `plugins/skein/skills/conduct/implementer-prompt.md`, `plugins/skein/skills/conduct/test-writer-prompt.md` — add `{{PHASE_GOAL}}` directive (Phase 2).
 - `plugins/skein/skills/conduct/SKILL.md` — parse `**Goal:**`, substitute `{{PHASE_GOAL}}` at all spawn/respawn sites (Phase 2).
+- `justfile` — `gauntlet-tests` recipe (Phase 3; shared with the sibling gauntlet plan, add only if absent).
 - `AGENTS.md`, `CHANGELOG.md`, `docs/dev_plans/README.md` (Phase 3).
-- Codex mirrors of all the above (Phases C1–C2, Codex-authored).
+- Codex mirrors of all the above (Phases C1–C2, Codex-authored/adapted): `plugins/skein-codex/skills/dev-plan/SKILL.md`, `plugins/skein-codex/skills/dev-plan/template.md`, `plugins/skein-codex/skills/conduct/implementer-prompt.md`, `plugins/skein-codex/skills/conduct/test-writer-prompt.md`, `plugins/skein-codex/skills/conduct/SKILL.md`.
 
 ### New Files to Create
 - `tests/gauntlet/test-goal-field-schema.sh`, `tests/gauntlet/test-goal-injection.sh`.
@@ -106,7 +126,7 @@ _(Codex authors this phase's contract + tasks via `codex:rescue`.)_
 - **Injection, not per-phase review** — deliberately lightweight; per-phase lens review stays the gauntlet's job.
 
 ### Dependencies
-- No new language deps. Depends on the conduct prompt-template mechanism and the dev-plan phase-contract schema.
+- No new language deps. Depends on the conduct prompt-template mechanism and the dev-plan phase-contract schema. Codex-specific verification also depends on the existing parity scripts in `tests/parity/`; no Codex nested-spawn gate is required because this plan only changes top-level conduct worker prompts.
 
 ### Integration Seams
 
@@ -164,7 +184,7 @@ Context lifecycle:
 - [ ] No-regression: phase without `**Goal:**` ⇒ implementer/test-writer prompt byte-identical to today.
 - [ ] Substitution: `{{PHASE_GOAL}}` filled on first attempt and on fix-loop respawn (iteration ≥ 1).
 - [ ] Schema: `**Goal:**` documented in SKILL.md + template; parser tolerates the `:`/`—`/`–` separators used elsewhere.
-- [ ] Parity: Claude/Codex prompt templates carry the placeholder; `tests/parity/*` green.
+- [ ] Parity: Claude/Codex prompt templates carry the placeholder; `just check-prompt-parity`, `bash tests/parity/test-prompt-parity-extended.sh`, `bash tests/parity/test-spawn-tiers.sh`, and `bash tests/parity/check-mirror-handoff.sh` green after mirror commits.
 
 ### Test Results
 - [ ] All existing tests pass
@@ -181,7 +201,7 @@ Context lifecycle:
 - Optional `**Goal:**` slot exists in dev-plan schema + template, documented as dual-consumer design intent.
 - conduct injects `{{PHASE_GOAL}}` into implementer + test-writer at every spawn/respawn; absent goal is a no-op (proven by byte-identical prompt test).
 - The gauntlet plan's Guardrail 1 is cross-referenced to consume this field; sequencing recorded.
-- Codex mirror authored (C1–C2), parity green.
+- Codex mirror authored/adapted (C1–C2), prompt parity and handoff checks green.
 - Sibling plans (gauntlet, conduct-skill) cross-linked; README/CHANGELOG/AGENTS.md updated.
 - Code reviewed and approved; tests passing; docs updated.
 
