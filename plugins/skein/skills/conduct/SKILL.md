@@ -247,7 +247,7 @@ After tests pass (or were skipped with warning):
 2. **No-op branch.** If `git diff --cached` is empty (the phase resolved to a diagnostic-only or accepted-behaviour outcome with no code change), skip the commit: record the phase entry with `commit_sha` = current `HEAD` (unchanged), add `no_op: true`, emit warning `no staged changes; skipping commit`, and proceed to Step 9. Do NOT use `--allow-empty`.
 3. **Impl commit.** Run `git commit -m "conduct: phase <label> — <phase title>"`. Commit author = current git user (no impersonation).
 4. **Hook retry (one-shot formatter retry).** If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). If `git diff --name-only` is non-empty at this point, run `git add -u` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings. If the retry also fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration via `_check_iteration_bound`. Do NOT use `--no-verify`.
-5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback (for example after `/deep-review`), the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check — it does NOT rewrite the previous phase's `commit_sha`.
+5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback — including the operator manually running `/deep-review` on a plan that has no `**Review Gates:**` opt-in, or the automated review-gauntlet auto-chain (see "Review Gauntlet Auto-Chain" below) landing its own fix commit on a plan that opts in — the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check. It does NOT rewrite the previous phase's `commit_sha`.
 
 **Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
@@ -353,6 +353,33 @@ Between the conductor's lock release at `awaiting_ci_parity` and the orchestrato
 - `/conduct` invoked with `--resume <plan>` against `awaiting_ci_parity` state follows the five-sub-case flow (idempotent).
 - `/conduct` invoked with `<plan>` (no `--resume`) against `awaiting_ci_parity` state hard-fails preflight with `state shows awaiting_ci_parity; use --resume to consume the ci-parity result or --skip-ci-parity to abandon the gate`.
 - A separate `/conduct` invocation with `--resume <other-plan>` and a different `plan_id` is unaffected (different state file, different lock).
+
+## Review Gauntlet Auto-Chain
+
+After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | quick | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
+
+### Activation
+
+- **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
+- **`quick` → invoke `review-gauntlet --plan <this plan>` scoped to the code-review gate only**, single pass, no convergence loop.
+- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm.
+
+### Trigger point
+
+- This is a **single-exit** hook, same shape as the CI-parity gate: it fires only on the healthy path where `conduct()` would otherwise return `status=complete` — after the CI-parity gate has passed, been skipped (`--skip-ci-parity`), or was never activated. It never fires on an intermediate `--resume`.
+- It does NOT fire on any hard-stop path (Step 9b) or on `ci_failed`. If the CI-parity gate reports `failed`, `status` stays `ci_failed` and conduct hands back per the normal rules — `review-gauntlet` is not consulted.
+
+### Dispatch
+
+- `review-gauntlet` is a conductor in its own right: its multi-spawn gates (`/code-review`, `skein:deep-review`) run at **its own top level**, in its own context, because they fan out their own verifier/lens subagents and forbid nesting (`review-gauntlet`'s Delegation Pattern). conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it — this is **not** an `Agent`-tool subagent spawn like the implementer/test-writer/reviewer dispatches in Step 3/Step 7, and it is not routed through the CI-parity gate's result-file dispatch protocol either. conduct simply calls the skill and awaits its terminal report before finalizing `status = complete`.
+- If `review-gauntlet` itself hands back a non-clean terminal state (`success_with_quarantine`, hits its loop cap, or bails on non-convergence/design-conflict halt), conduct surfaces that as its own handback: `status = "awaiting_user"` with the blocker text taken from the gauntlet's terminal report, following the same Step 9b hard-stop shape as any other blocker. A non-clean gauntlet outcome is never silently folded into `complete`.
+
+### Commit ownership at the terminal seam
+
+`review-gauntlet` runs strictly **after** the final phase's boundary commit (Step 8), which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the working branch — never a follow-up PR.
+
+- conduct treats that commit exactly as it already treats any other follow-up commit landed during handback (Step 8 item 5, Preflight item 4): the next `--resume`'s preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commit into the new baseline for the rogue-commit check.
+- conduct does **not** rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commit, and does **not** treat the gauntlet's commit as a rogue commit. The rogue-commit check (Step 8 item 1) only fires on HEAD movement observed *during* a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window, so that check does not — and must not — flag it.
 
 ## Fallbacks
 
