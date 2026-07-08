@@ -341,9 +341,9 @@ Context lifecycle — what enters context at each step, and whether it clears or
 - [x] Phase 4: conduct terminal hook (Claude) — b475547
 - [x] Phase 5: fan-out Phase 6 hook (Claude) — 1e29be0
 - [x] Phase 6: Tests, docs, and sibling cross-links (Claude) — 73438bc
-- [ ] Phase C1: Codex-mirror review-gauntlet SKILL.md (Codex)
-- [ ] Phase C2: Codex-mirror hook edits (Codex)
-- [ ] Phase C3: Codex-mirror parity verification (Codex)
+- [x] Phase C1: Codex-mirror review-gauntlet SKILL.md (Codex) — e31e5af
+- [x] Phase C2: Codex-mirror hook edits (Codex) — 0b281e6
+- [x] Phase C3: Codex-mirror parity verification (Codex) — verified (no authored change)
 
 ## Findings
 
@@ -354,6 +354,7 @@ Context lifecycle — what enters context at each step, and whether it clears or
   - `gauntlet-common.sh` resolves the bundled dir at `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts` (unchanged); dev fallback is now the sibling `../scripts`.
   - **C1 must mirror this:** author the Codex operative scripts at `plugins/skein-codex/skills/review-gauntlet/lib/{run-gate.sh,convergence-ledger.sh,gauntlet-common.sh}` (NOT `scripts/…` as the C1/C3 Impl-files blocks above state — those paths predate this correction), using `$SKILL_DIR` anchors that resolve the bundled dir at `$SKILL_DIR/scripts`. Phase 6 already bundled the shared pipeline into `plugins/skein-codex/skills/review-gauntlet/scripts/`.
 - **C1 still owns the `MANAGED_SKILLS` edit** (`tests/parity/test_skill_md_presence.py`) per the I4 commit-boundary NB — deferred from Phase 6 (Claude-only) so the repo is never red without the Codex SKILL.md.
+- **Stage 4 (Codex mirror C1–C3) complete** — driven via `codex:rescue`. `C1` (`e31e5af`): Codex `SKILL.md` (`$SKILL_DIR` anchors, `spawn_agent`, gate matrix, no `/codex:adversarial-review`) + `lib/` scripts (`convergence-ledger.sh`/`run-gate.sh` byte-identical to Claude, `gauntlet-common.sh` anchor-adapted) + `MANAGED_SKILLS`/spawn-tier registration. `C2` (`0b281e6`): Codex conduct/fan-out hooks + dev-plan Review-Gates field, single-mirror. `C3`: verification-only — `just parity-tests`, `check-mirror-handoff.sh`, `check-prompt-parity`, `check-sync`, `test_skill_md_presence.py`, `gauntlet-tests`, `reconciliation-tests` all green; bundles idempotent; both mirrors in sync. **Robustness pre-check before mirroring:** an end-to-end smoke of the Claude runtime (`run-gate.sh` normalize→reconcile→route against the real bundled pipeline; `gc_bundled_scripts_dir` anchor + dev-fallback + abort; the reconcile-without-`--skill`/`auto_fix`-guard invariant) passed, so no runtime bug was mirrored into both plugins.
 
 ## Issues & Solutions
 
