@@ -151,6 +151,8 @@ assert_count "$CODEX_SKILLS_DIR/plan-view/SKILL.md" "$CODEX_LOW_RE" 2 \
 	"codex plan-view reasoning_effort=low rich-render spawn count"
 assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 2 \
 	"codex fan-out reasoning_effort=medium test-writer gated-topology count"
+assert_count "$CODEX_SKILLS_DIR/review-gauntlet/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
+	"codex review-gauntlet reasoning_effort=medium fixer lifecycle count"
 assert_count "$CODEX_SKILLS_DIR/content-draft/SKILL.md" "$CODEX_LOW_RE" 1 \
 	"codex content-draft reasoning_effort=low count"
 assert_count "$CODEX_SKILLS_DIR/content-review/SKILL.md" "$CODEX_LOW_RE" 1 \
@@ -162,7 +164,7 @@ assert_count "$CODEX_SKILLS_DIR/rfc-finder/SKILL.md" "$CODEX_LOW_RE" 1 \
 
 assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 11 \
 	"codex total reasoning_effort=high occurrences across SKILL.md"
-assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 8 \
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 9 \
 	"codex total reasoning_effort=medium occurrences across SKILL.md"
 assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_LOW_RE" 8 \
 	"codex total reasoning_effort=low occurrences across SKILL.md"
