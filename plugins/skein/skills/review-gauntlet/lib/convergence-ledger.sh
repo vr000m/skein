@@ -37,21 +37,32 @@
 #                              unconditional on any structural fix landing.
 #   4. non-converge         — the reconciled count has failed to reach a new
 #                              running minimum for K (default 2) consecutive
-#                              rounds. Per round, track the minimum count seen
-#                              so far; a round whose count is strictly below
-#                              that running minimum resets the stall streak to
-#                              0, otherwise the streak increments. A stall
-#                              streak >= K fires non-converge. This classifies
-#                              a plateau (3,3,3) and a sustained oscillation
-#                              (5,3,5,3) as non-converge, but — unlike a raw
-#                              K-round window comparison — does NOT bail on a
-#                              genuinely converging run with a transient blip
-#                              (5,4,5,3,2,1: the running minimum keeps
-#                              improving, so the streak never reaches K). Needs
-#                              >= K+1 recorded rounds before it can fire (the
-#                              first round is always a new minimum). Trade-off:
-#                              a sawtooth whose minimum keeps improving at least
-#                              once every K rounds (e.g. 5,3,5,2,5,1) resets the
+#                              rounds, SCOPED TO THE CURRENT EPOCH (the rounds
+#                              since the last structural restart, if any — a
+#                              restart changes the diff a fresh gate-1 corpus
+#                              reviews, so a count from before it is not
+#                              commensurate with counts after it and must not
+#                              anchor the running minimum). Per round in the
+#                              epoch, track the minimum count seen so far
+#                              within it; a round whose count is strictly
+#                              below that running minimum resets the stall
+#                              streak to 0, otherwise the streak increments. A
+#                              stall streak >= K fires non-converge. This
+#                              classifies a plateau (3,3,3) and a sustained
+#                              oscillation (5,3,5,3) as non-converge, but —
+#                              unlike a raw K-round window comparison — does
+#                              NOT bail on a genuinely converging run with a
+#                              transient blip (5,4,5,3,2,1: the running
+#                              minimum keeps improving, so the streak never
+#                              reaches K). Needs >= K+1 recorded rounds IN THE
+#                              CURRENT EPOCH before it can fire (the first
+#                              round of an epoch is always a new minimum) —
+#                              so a fresh post-restart epoch gets a full K+1
+#                              rounds of its own before non-convergence can
+#                              fire again, rather than inheriting a stale
+#                              pre-restart minimum. Trade-off: a sawtooth
+#                              whose minimum keeps improving at least once
+#                              every K rounds (e.g. 5,3,5,2,5,1) resets the
 #                              streak each time, so it is bounded by the cap
 #                              (rule 2), not this rule — the deliberate cost of
 #                              never false-bailing on genuine convergence.
@@ -255,7 +266,6 @@ jq \
 mv "$tmp_ledger" "$LEDGER_PATH"
 
 loop_counter="$(jq -r '.loop_counter' "$LEDGER_PATH")"
-rounds_len="$(jq -r '.rounds | length' "$LEDGER_PATH")"
 
 # 1. Clean full pass -> success / success_with_quarantine. An unresolved gate
 # (error/skipped/deferred this round) blocks a clean pass even at count=0: the
@@ -290,24 +300,40 @@ if [[ "$STRUCTURAL" -gt 0 ]]; then
 	exit 0
 fi
 
-# 4. Non-convergence: running-minimum stall. Walk the rounds tracking the
-# minimum count seen so far; a round whose count is strictly below that
-# running minimum resets the stall streak to 0, otherwise the streak
-# increments. A trailing stall streak >= K means the count has failed to
-# reach a new best for K consecutive rounds — a plateau or a sustained
-# oscillation — without false-positive-bailing on a converging run that has a
-# transient blip (the running minimum keeps improving). The first round is
-# always a new minimum, so the streak can only reach K after >= K+1 rounds.
-if [[ "$rounds_len" -ge $((K + 1)) ]]; then
-	stall_streak="$(jq -r '
-		.rounds
-		| reduce .[] as $round ({min: null, streak: 0};
-			if (.min == null) or ($round.count < .min)
-			then {min: $round.count, streak: 0}
-			else {min: .min, streak: (.streak + 1)}
-			end)
-		| .streak
-	' "$LEDGER_PATH")"
+# 4. Non-convergence: running-minimum stall, scoped to the current "epoch"
+# (the rounds since the last structural restart, if any). A structural fix
+# changes the diff a fresh gate-1 pass reviews, so a count from before that
+# restart is not commensurate with counts after it and must not anchor the
+# running minimum or contribute to the stall streak — otherwise a
+# genuinely re-converging post-restart corpus (e.g. epoch counts 5,4) can be
+# compared against a stale pre-restart minimum and bail to non-converge
+# before the new corpus has even had a fair chance to converge. Walk the
+# epoch's rounds tracking the minimum count seen so far within it; a round
+# whose count is strictly below that running minimum resets the stall
+# streak to 0, otherwise the streak increments. A trailing stall streak >= K
+# means the count has failed to reach a new best for K consecutive rounds
+# within the current epoch — a plateau or a sustained oscillation — without
+# false-positive-bailing on a converging run that has a transient blip (the
+# running minimum keeps improving). The first round of an epoch is always a
+# new minimum, so the streak can only reach K after >= K+1 rounds IN THAT
+# EPOCH (not >= K+1 rounds in the whole ledger history).
+epoch_stats="$(jq -c '
+	(.rounds | to_entries | map(select(.value.structural_tally > 0)) | last | .key) as $restart_idx
+	| (if $restart_idx == null then .rounds else .rounds[($restart_idx + 1):] end) as $epoch
+	| {
+		epoch_len: ($epoch | length),
+		streak: ($epoch
+			| reduce .[] as $round ({min: null, streak: 0};
+				if (.min == null) or ($round.count < .min)
+				then {min: $round.count, streak: 0}
+				else {min: .min, streak: (.streak + 1)}
+				end)
+			| .streak)
+	}
+' "$LEDGER_PATH")"
+epoch_len="$(printf '%s' "$epoch_stats" | jq -r '.epoch_len')"
+if [[ "$epoch_len" -ge $((K + 1)) ]]; then
+	stall_streak="$(printf '%s' "$epoch_stats" | jq -r '.streak')"
 	if [[ "$stall_streak" -ge "$K" ]]; then
 		echo "non-converge"
 		exit 0

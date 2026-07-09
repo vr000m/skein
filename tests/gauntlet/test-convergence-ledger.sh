@@ -230,6 +230,30 @@ tok3="$(round "$L" 5 1 0 full 0)"
 assert_ne "$tok3" "non-converge" "restart-precedes-non-converge round 3 (stall streak reaches K=2) must not bail to non-converge"
 assert_eq "$tok3" "restart" "restart-precedes-non-converge round 3 (count stalled AND structural fix present) -> restart wins over non-converge"
 
+# --- 9c. Stall streak is scoped to the post-restart epoch -----------------
+# Regression for a second, distinct bug: even with restart correctly taking
+# precedence (9b above), the running-minimum stall detector walked the
+# ENTIRE ledger history, so a count recorded before a structural restart
+# could anchor the running minimum for rounds AFTER it -- comparing a
+# freshly-restarted corpus against a stale pre-restart floor from a
+# different corpus state. Sequence: round 1 count=1 (no restart, sets a low
+# historical floor), round 2 count=5 structural=1 (restart -- corpus
+# changes), round 3 count=4 (fresh post-restart measurement, no restart).
+# Under the old whole-history reduce, round 3's streak was 2 (>= K=2)
+# because neither round 2's nor round 3's count beat round 1's stale
+# minimum of 1, incorrectly firing non-converge on a round that has no
+# structural fix and where only ONE round has occurred since the restart
+# (an epoch needs its own K+1 rounds before it can stall).
+
+L="$(new_ledger)"
+tok1="$(round "$L" 1 0 1 full 0)"
+assert_eq "$tok1" "confirm" "epoch-scoping round 1 (count=1, no structural, sets a low pre-restart floor) -> confirm"
+tok2="$(round "$L" 5 1 0 full 0)"
+assert_eq "$tok2" "restart" "epoch-scoping round 2 (count=5, structural=1) -> restart (corpus changes here)"
+tok3="$(round "$L" 4 0 1 full 0)"
+assert_ne "$tok3" "non-converge" "epoch-scoping round 3 (count=4, fresh post-restart, only 1 round into the new epoch) must not bail to non-converge on the stale pre-restart minimum"
+assert_eq "$tok3" "confirm" "epoch-scoping round 3 resolves to confirm (findings remain, no structural fix, epoch too young to stall)"
+
 # --- 10. Determinism: same ledger + inputs -> same token -----------------
 
 L="$(new_ledger)"
