@@ -94,11 +94,12 @@ The **only** quarantine trigger is a design/architecture conflict (Guardrail 1) 
   cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/reconcile-findings.sh
   ```
   Gate findings passed into reconcile **must not** carry `auto_fix` blocks — the reconciler only requires `--skill` when `auto_fix` is present, and trivial-fix proposals are handled by the fixer's route logic (Guardrail 2), not by the reconcile stage.
-- **Trivial-fix apply**:
+- **Trivial-fix apply**: `run-gate.sh route` (see Gate Sequence's dispatcher usage) already delegates to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — **do not run a separate eligibility audit before applying; route already did it.** `trivial_envelope` is the ready-to-apply annotated envelope; extract it and feed it to the applier:
   ```
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+  route_output.json | jq -c '.trivial_envelope' > annotated-envelope.json
+  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
-- **Allowlist eligibility audit**: `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/audit-auto-fix-eligibility.sh <envelope>` before applying.
+  **Never pipe `route`'s raw stdout directly into the applier** — the applier reads a top-level `.findings[]` (see `apply-auto-fix-code.sh`), but route's raw output has no top-level `.findings` key (it's nested under `.trivial_envelope.findings`); doing so silently applies zero fixes every round (the applier reports "no would_apply findings" and exits 0), and every allowlisted trivial fix reappears next gate pass, stalling convergence exactly like the fixer-before-applier ordering bug above.
 
 These bundled scripts and the convergence-decision helper are built in a later phase of this skill's dev plan; this file only documents how the conductor calls them once they exist.
 

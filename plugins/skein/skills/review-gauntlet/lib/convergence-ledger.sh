@@ -28,7 +28,14 @@
 #                              rule even at count=0 — the round falls through
 #                              to `continue` so the errored gate re-runs.
 #   2. cap                  — loop_counter >= cap (default 10)
-#   3. non-converge         — the reconciled count has failed to reach a new
+#   3. restart              — structural_tally > 0. Checked BEFORE
+#                              non-convergence: a structural fix changes the
+#                              diff a fresh gate-1 corpus will re-review, so a
+#                              stalled count in a structural round reflects a
+#                              corpus still being restructured, not a stuck
+#                              loop — Requirements makes this restart
+#                              unconditional on any structural fix landing.
+#   4. non-converge         — the reconciled count has failed to reach a new
 #                              running minimum for K (default 2) consecutive
 #                              rounds. Per round, track the minimum count seen
 #                              so far; a round whose count is strictly below
@@ -48,7 +55,6 @@
 #                              streak each time, so it is bounded by the cap
 #                              (rule 2), not this rule — the deliberate cost of
 #                              never false-bailing on genuine convergence.
-#   4. restart              — structural_tally > 0
 #   5. confirm              — count>0 && structural_tally=0 && local_tally>0
 #   6. clean confirm pass   — pass_type=confirm && count=0 -> continue (NOT
 #                              terminal; a clean confirm returns to the loop)
@@ -270,7 +276,21 @@ if [[ "$loop_counter" -ge "$CAP" ]]; then
 	exit 0
 fi
 
-# 3. Non-convergence: running-minimum stall. Walk the rounds tracking the
+# 3. Restart: any structural fix this round. Checked BEFORE non-convergence
+# (rule 4): a structural fix changes the diff a fresh gate-1 corpus will
+# re-review, so a stalled reconciled count in a structural round reflects a
+# corpus that's still being restructured, not a stuck loop. Requirements says
+# "any structural fix lands in a round -> restart" unconditionally; a
+# stalled-count round with a genuine structural fix must still restart, not
+# bail to non-converge. (Regression: a plan that structurally restarts every
+# round, per the existing cap test, relies on this precedence to keep
+# restarting all the way to the cap instead of non-converging early.)
+if [[ "$STRUCTURAL" -gt 0 ]]; then
+	echo "restart"
+	exit 0
+fi
+
+# 4. Non-convergence: running-minimum stall. Walk the rounds tracking the
 # minimum count seen so far; a round whose count is strictly below that
 # running minimum resets the stall streak to 0, otherwise the streak
 # increments. A trailing stall streak >= K means the count has failed to
@@ -292,12 +312,6 @@ if [[ "$rounds_len" -ge $((K + 1)) ]]; then
 		echo "non-converge"
 		exit 0
 	fi
-fi
-
-# 4. Restart: any structural fix this round.
-if [[ "$STRUCTURAL" -gt 0 ]]; then
-	echo "restart"
-	exit 0
 fi
 
 # 5. Confirm: only-local round with remaining findings.

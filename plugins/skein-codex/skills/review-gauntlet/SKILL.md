@@ -49,8 +49,8 @@ Every `full`/standalone round evaluates the same four logical slots in order. Co
    codex exec review --output-schema <schema> "<adversarial-review prompt>"
    ```
    Target the same diff as gate 1 via `--base <branch>` or `--uncommitted`; request `-c model_reasoning_effort="medium"` when used from a CLI subprocess.
-3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review` at conductor top level. Otherwise emit `status: "deferred"` with notes explaining the nested-spawn/tier gate.
-4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` (or `skipped` when explicitly configured off); never pretend this gate ran.
+3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review` at conductor top level. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
+4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` with notes explaining that this is a permanent capability gap (or `skipped` when explicitly configured off); never pretend this gate ran.
 
 The Codex gauntlet-owned output adapter/schema for native gates is:
 
@@ -74,7 +74,7 @@ The Codex gauntlet-owned output adapter/schema for native gates is:
 }
 ```
 
-`approve` and `needs-attention` are review outcomes. `skipped` and `deferred` are explicit Codex capability outcomes and are never counted as clean gate passes.
+`approve` and `needs-attention` are review outcomes. `skipped` and `deferred` are explicit Codex capability outcomes and are never counted as clean gate passes. For convergence, classify each non-clean slot before computing `--unresolved`: `error` always counts as unresolved; `skipped` or `deferred` counts as unresolved only when it is unexpected or transient for that round; a known-in-advance permanent capability gap is excluded from `--unresolved` and reported separately.
 
 Findings from supported gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`. Any `auto_fix` proposal is held aside for Guardrail 2 route logic and stripped before dedup. The bundled reconciler receives only auto-fix-free findings.
 
@@ -86,11 +86,11 @@ After the fixer batch returns:
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
 - A clean `pass_type: confirm` pass is not terminal; it returns to the loop for a fresh full pass.
-- A clean `pass_type: full` pass is terminal success — but only when every gate produced a clean review this round. Tally the gates that returned a non-clean status (`error`/`skipped`/`deferred` — each surfaced by `run-gate.sh normalize` exiting 4) and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: a full pass at count 0 with any unresolved gate is **not** success — the ledger falls through to `continue` so the errored/deferred gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
+- A clean `pass_type: full` pass is terminal success when the supported/native gates produced no findings and there are no transient unresolved gate outcomes. Tally only truly unresolved gates and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: `error` always counts; an unexpected `skipped` or transient `deferred` status counts; known permanent capability gaps do not count. Today the permanent deferred slots are gate 4 (`security-review`, always, because Codex has no security-review primitive) and gate 3 (`skein:deep-review`) while nested-spawn topology/tier evidence remains unconfirmed. A full pass at count 0 with `--unresolved 0` may resolve to success even when those permanent gaps are present, but a full pass at count 0 with any transient unresolved gate is **not** success — the ledger falls through to `continue` so the errored/transient gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
 - A single monotonic counter increments every round, including structural restarts, and caps at 10.
 - Non-convergence is a running-minimum stall, K=2: the reconciled count must fail to reach a new running minimum for K consecutive rounds before the loop bails and reports `non-converge`. Track the lowest count seen so far; a round that beats it resets the stall streak, a round that does not increments it, and a streak of 2 bails. This catches a plateau (`3,3,3`) and a sustained oscillation (`5,3,5,3`), but deliberately does not bail on a genuinely converging run with a transient blip like `5,4,5,3,2,1` — the running minimum keeps improving there. `convergence-ledger.sh` owns the deterministic decision.
 
-Report terminal status, gates passed/deferred, findings fixed per round, and the quarantine or non-convergence rationale when present.
+Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
 
 ## Guardrails
 
@@ -128,6 +128,11 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   ```
   "$SKILL_DIR"/lib/run-gate.sh route --autofix-cache <path> <reconciled-envelope.json>
   ```
+  `route` already delegates eligibility to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — do not run a separate eligibility audit before applying. Extract `.trivial_envelope` and feed it to the applier; **never pipe `route`'s raw stdout directly into `apply-auto-fix-code.sh`** — the applier reads a top-level `.findings[]`, which does not exist on route's raw output (it's nested under `.trivial_envelope.findings`), so doing so silently applies zero fixes every round:
+  ```
+  route_output.json | jq -c '.trivial_envelope' > annotated-envelope.json
+  "$SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
+  ```
 - **Convergence decision**:
   ```
   "$SKILL_DIR"/lib/convergence-ledger.sh --ledger <path> --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
@@ -149,8 +154,8 @@ All fixes land on the working branch or PR that the gauntlet was invoked on. The
 
 ## Failure and Error Handling
 
-A gate with `status: "error"` is not a clean pass. A `skipped` or `deferred` gate is also not a clean pass; it is an explicit capability outcome. Full mode on Codex must report native gates that ran and gated/deferred gates that did not run, rather than claiming full Claude behavioural parity.
+A gate with `status: "error"` is not a clean pass and always counts toward `--unresolved`. A `skipped` or `deferred` gate is also not a clean pass; it is an explicit capability outcome. Full mode on Codex must report native gates that ran and gated/deferred gates that did not run, rather than claiming full Claude behavioural parity.
 
-This is wired deterministically, not left to conductor discretion: `run-gate.sh normalize` exits 4 for each such gate, and the conductor passes the per-round count of unresolved gates to `convergence-ledger.sh --unresolved <N>`. The ledger's clean-full-pass rule requires `--unresolved 0`, so a round where a gate errored/skipped/deferred can never resolve to `success`/`success_with_quarantine` even at a reconciled count of 0 — it falls through to `continue`, re-running the unresolved gate.
+This is wired deterministically, not left to conductor discretion: `run-gate.sh normalize` exits 4 for each non-clean gate, and the conductor classifies that outcome before passing the per-round count of truly unresolved gates to `convergence-ledger.sh --unresolved <N>`. Permanent capability gaps are omitted from that integer and listed in the terminal report; errors and unexpected/transient skipped/deferred outcomes are included. The ledger's clean-full-pass rule still requires `--unresolved 0`, so a round where a real gate errored or was unexpectedly skipped/deferred can never resolve to `success`/`success_with_quarantine` even at a reconciled count of 0 — it falls through to `continue`, re-running the unresolved gate.
 
 The Codex plugin registers this skill by directory convention through the existing plugin manifest surface (`"skills": "./skills/"`); no per-skill manifest entry is required.

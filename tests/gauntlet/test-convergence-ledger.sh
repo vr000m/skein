@@ -211,6 +211,25 @@ assert_eq "$last_tok" "cap" "structural-restart-every-round: round 10 -> cap (lo
 loop_counter="$(jq -r '.loop_counter' "$L")"
 assert_eq "$loop_counter" "10" "monotonic loop counter after 10 rounds (including every structural restart) == 10"
 
+# --- 9b. Restart precedes non-convergence: a stalled count with a genuine --
+# structural fix must still restart, not bail to non-converge. Regression
+# for a rule-ordering bug: the stall-streak check was evaluated BEFORE the
+# structural-restart check, so a structural round whose count failed to beat
+# the running minimum for K rounds could resolve to non-converge instead of
+# restart -- contradicting Requirements' unconditional "any structural fix
+# lands in a round -> restart". Same count (5) every round with structural=1
+# each time reaches a stall streak of K=2 by round 3, which would have fired
+# non-converge under the old precedence.
+
+L="$(new_ledger)"
+tok1="$(round "$L" 5 1 0 full 0)"
+assert_eq "$tok1" "restart" "restart-precedes-non-converge round 1 (count=5, structural=1) -> restart"
+tok2="$(round "$L" 5 1 0 full 0)"
+assert_eq "$tok2" "restart" "restart-precedes-non-converge round 2 (count=5, structural=1, stall streak building) -> restart"
+tok3="$(round "$L" 5 1 0 full 0)"
+assert_ne "$tok3" "non-converge" "restart-precedes-non-converge round 3 (stall streak reaches K=2) must not bail to non-converge"
+assert_eq "$tok3" "restart" "restart-precedes-non-converge round 3 (count stalled AND structural fix present) -> restart wins over non-converge"
+
 # --- 10. Determinism: same ledger + inputs -> same token -----------------
 
 L="$(new_ledger)"

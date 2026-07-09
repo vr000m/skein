@@ -46,6 +46,7 @@ gauntlet-tests:
     bash tests/gauntlet/test-review-gates-marker.sh
     bash tests/gauntlet/test-conduct-hook.sh
     bash tests/gauntlet/test-fanout-hook.sh
+    bash tests/gauntlet/test-codex-capability-gap-unresolved.sh
 
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
