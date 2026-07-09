@@ -51,7 +51,7 @@ If you are migrating from the older flat layout (skills installed directly under
 
 skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-The first tagged release will be **v0.1.0**, cut from `main` immediately after the public-GitHub install switch merges. Until then, all install instructions above resolve against `main`. Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases).
+Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.4.0**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
 
 ## Setup (for contributors)
 
