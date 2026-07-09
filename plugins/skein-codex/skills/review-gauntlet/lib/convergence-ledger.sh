@@ -42,7 +42,12 @@
 #                              (5,4,5,3,2,1: the running minimum keeps
 #                              improving, so the streak never reaches K). Needs
 #                              >= K+1 recorded rounds before it can fire (the
-#                              first round is always a new minimum).
+#                              first round is always a new minimum). Trade-off:
+#                              a sawtooth whose minimum keeps improving at least
+#                              once every K rounds (e.g. 5,3,5,2,5,1) resets the
+#                              streak each time, so it is bounded by the cap
+#                              (rule 2), not this rule — the deliberate cost of
+#                              never false-bailing on genuine convergence.
 #   4. restart              — structural_tally > 0
 #   5. confirm              — count>0 && structural_tally=0 && local_tally>0
 #   6. clean confirm pass   — pass_type=confirm && count=0 -> continue (NOT

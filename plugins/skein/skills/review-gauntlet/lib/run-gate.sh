@@ -236,10 +236,16 @@ cmd_route() {
 	# Warn if two cached findings share a (file, line, category) signature: the
 	# re-attach below builds a last-writer-wins map, so a collision silently
 	# drops one gate's auto_fix proposal. Surface it rather than lose it quietly.
+	# Partition on the SAME BEL-joined signature the re-attach map below
+	# uses, so the collision set is exactly the set of proposals the map would
+	# collapse — a display-only "|" join here could split/merge differently
+	# when a field contains a literal separator. Emit a human-readable
+	# file:line:category for the operator warning.
 	local sig_collisions
 	sig_collisions="$(printf '%s' "$cache_array" | jq -r '
-		def sig: [.file, (.line|tostring), .category] | join("|");
-		group_by(sig) | map(select(length > 1)) | .[] | (.[0] | sig)
+		def sig: [.file, (.line|tostring), .category] | join("\u0007");
+		group_by(sig) | map(select(length > 1)) | .[]
+		| (.[0] | [.file, (.line|tostring), .category] | join(":"))
 	')"
 	if [[ -n "$sig_collisions" ]]; then
 		while IFS= read -r sig; do
