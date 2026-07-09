@@ -10,7 +10,7 @@ just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundl
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker parity (conduct + canonical anchor + review-plan marker write)
-just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + reuse-wiring + marker + conduct/fan-out hooks
+just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite
 just lint-scripts                # shellcheck + shfmt on scripts/
 ```
@@ -108,7 +108,7 @@ For local development against a clone, swap the marketplace source for a path: `
 
 **Propagating repo edits to a live install:** re-run `/plugin install skein@skein` on Claude, or `codex plugin add skein@skein` on Codex, after editing the relevant mirror. If you installed from the public GitHub source, re-`marketplace add` to fetch the latest commit first. There is no sync step that runs in the background.
 
-**Versioning and releases:** skein follows SemVer; changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog format). Tags v0.1.0 through v0.4.0 are cut; pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
+**Versioning and releases:** skein follows SemVer; changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) (Keep a Changelog format). Tags v0.1.0 through v0.3.0 are cut; pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
 
 **Cutting a release:** for a single release-worthy change set, fold the CHANGELOG promotion and version bump into the feature PR itself (no separate release PR needed); the tag and GitHub release are created post-merge on `main`. (1) In the PR, rename the `[Unreleased]` section in `CHANGELOG.md` to `[X.Y.Z] - YYYY-MM-DD`, start a fresh `[Unreleased]` above it, and update the compare-link footer; (2) in the same PR, bump `version` in `plugins/skein/.claude-plugin/plugin.json` and `plugins/skein-codex/.codex-plugin/plugin.json`; (3) merge to `main` (regular merge, no squash); (4) on `main`, `git tag -a vX.Y.Z -m "skein vX.Y.Z"` and `git push origin vX.Y.Z`; (5) `gh release create vX.Y.Z` with the new changelog section as the body. When **batching several merged change sets** into one release, instead keep accumulating under `[Unreleased]` and cut a dedicated `release: vX.Y.Z` commit (or release PR) on `main` for steps 1–2 before tagging.
 
