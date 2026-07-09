@@ -63,7 +63,7 @@
 # emitted; the caller must not count this round as a clean pass).
 #
 # Dependencies: bash + jq. Bundled-script resolution is via
-# gauntlet-common.sh (${CLAUDE_PLUGIN_ROOT} anchor; aborts rather than
+# gauntlet-common.sh (runtime-specific anchor; aborts rather than
 # falling back to a hand copy or a relative deep-review path).
 
 set -euo pipefail
