@@ -1,12 +1,12 @@
 # Task: Per-phase `**Goal:**` field — shift-left design intent for conduct implementers
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: planning-skills
 **Assigned to**: Claude + Codex (dual-plugin)
 **Priority**: Medium
 **Branch**: feature/review-gauntlet-skill
 **Created**: 2026-07-07
-**Completed**: (fill when done)
+**Completed**: 2026-07-09
 
 ## Objective
 
