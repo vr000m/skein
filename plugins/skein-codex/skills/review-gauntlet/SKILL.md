@@ -116,6 +116,8 @@ The only quarantine trigger is a design/architecture conflict. Do not use confid
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
 
+`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The three bullets below are its `normalize`/`reconcile`/`route` subcommands.
+
 - **Cross-gate dedup**:
   ```
   cat findings.jsonl | "$SKILL_DIR"/lib/run-gate.sh reconcile
