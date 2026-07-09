@@ -343,12 +343,10 @@ while IFS= read -r finding; do
 				line="$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')"
 				path="$(resolve_path "$file")"
 				if ! line_matches_before "$path" "$line" "$before"; then
-					rc=$?
-					if [[ "$rc" -eq 2 ]]; then
-						status="unsupported"
-					else
-						status="drift"
-					fi
+					# line_matches_before only ever returns 0 (match) or 1 (no
+					# match / bad line / missing file / past EOF), so a non-match
+					# is always drift.
+					status="drift"
 				else
 					stripped_before="${before%$'\n'}"
 					if [[ "$stripped_before" == *$'\n'* ]]; then
@@ -443,12 +441,9 @@ while IFS= read -r finding; do
 						elif line_matches_before "$path" "$SCOPE_START" "$before"; then
 							status="would_apply"
 						else
-							rc=$?
-							if [[ "$rc" -eq 2 ]]; then
-								status="unsupported"
-							else
-								status="drift"
-							fi
+							# line_matches_before returns only 0 or 1; a
+							# non-match here is always drift.
+							status="drift"
 						fi
 					fi
 				fi

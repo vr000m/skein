@@ -301,8 +301,25 @@ fi
 while IFS= read -r finding; do
 	[[ -n "$finding" ]] || continue
 	kind="$(printf '%s' "$finding" | jq -r '.auto_fix.kind')"
+	# Reject a malformed auto_fix envelope whose before/after are not the
+	# expected JSON types (before: string; after: string, or null meaning
+	# "delete the matched line(s)"). `jq -r` renders a JSON null as the literal
+	# text "null"; without this type guard a crafted `after: null` reaching the
+	# applier would write the string "null" into the source instead of deleting
+	# the line. The auditor rejects the same shapes as "malformed", but this
+	# applier re-validates in case it is fed an envelope the auditor never saw.
+	af_types="$(printf '%s' "$finding" | jq -r '(.auto_fix.before | type) + "/" + (.auto_fix.after | type)')"
+	case "$af_types" in
+	string/string | string/null) ;;
+	*)
+		af_manifest_record "$kind" "$(printf '%s' "$finding" | jq -r '.file // ""')" "$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')" "rejected_malformed" "" ""
+		continue
+		;;
+	esac
 	before="$(printf '%s' "$finding" | jq -r '.auto_fix.before')"
-	after="$(printf '%s' "$finding" | jq -r '.auto_fix.after')"
+	# `// ""` maps a validated null `after` to the empty string so the
+	# deletion branch below (both stripped_after and after empty) fires.
+	after="$(printf '%s' "$finding" | jq -r '.auto_fix.after // ""')"
 	file="$(printf '%s' "$finding" | jq -r '.file // ""')"
 	line="$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')"
 
