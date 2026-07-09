@@ -301,25 +301,22 @@ fi
 while IFS= read -r finding; do
 	[[ -n "$finding" ]] || continue
 	kind="$(printf '%s' "$finding" | jq -r '.auto_fix.kind')"
-	# Reject a malformed auto_fix envelope whose before/after are not the
-	# expected JSON types (before: string; after: string, or null meaning
-	# "delete the matched line(s)"). `jq -r` renders a JSON null as the literal
-	# text "null"; without this type guard a crafted `after: null` reaching the
-	# applier would write the string "null" into the source instead of deleting
-	# the line. The auditor rejects the same shapes as "malformed", but this
-	# applier re-validates in case it is fed an envelope the auditor never saw.
+	# Reject a malformed auto_fix envelope whose before/after are not BOTH
+	# strings — matching the auditor's exact type check
+	# (audit-auto-fix-eligibility.sh rejects any non-string before/after as
+	# "malformed"), so this defence-in-depth re-validation is never laxer than
+	# the eligibility gate that runs before it. A legitimate deletion is an
+	# empty STRING `after` (type "string"), which passes; a null / absent /
+	# non-string `after` is malformed and dropped here. This also closes the
+	# original bug where `jq -r` rendered a JSON null `after` as the literal
+	# text "null" and wrote it into the source instead of rejecting it.
 	af_types="$(printf '%s' "$finding" | jq -r '(.auto_fix.before | type) + "/" + (.auto_fix.after | type)')"
-	case "$af_types" in
-	string/string | string/null) ;;
-	*)
+	if [[ "$af_types" != "string/string" ]]; then
 		af_manifest_record "$kind" "$(printf '%s' "$finding" | jq -r '.file // ""')" "$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')" "rejected_malformed" "" ""
 		continue
-		;;
-	esac
+	fi
 	before="$(printf '%s' "$finding" | jq -r '.auto_fix.before')"
-	# `// ""` maps a validated null `after` to the empty string so the
-	# deletion branch below (both stripped_after and after empty) fires.
-	after="$(printf '%s' "$finding" | jq -r '.auto_fix.after // ""')"
+	after="$(printf '%s' "$finding" | jq -r '.auto_fix.after')"
 	file="$(printf '%s' "$finding" | jq -r '.file // ""')"
 	line="$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')"
 
