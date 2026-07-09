@@ -86,9 +86,9 @@ After the fixer batch returns:
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
 - A clean `pass_type: confirm` pass is not terminal; it returns to the loop for a fresh full pass.
-- A clean `pass_type: full` pass is terminal success, or `success_with_quarantine` when the quarantine queue is non-empty.
+- A clean `pass_type: full` pass is terminal success — but only when every gate produced a clean review this round. Tally the gates that returned a non-clean status (`error`/`skipped`/`deferred` — each surfaced by `run-gate.sh normalize` exiting 4) and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: a full pass at count 0 with any unresolved gate is **not** success — the ledger falls through to `continue` so the errored/deferred gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
 - A single monotonic counter increments every round, including structural restarts, and caps at 10.
-- Non-convergence is a K=2 bail: if the reconciled finding count has not strictly decreased across the configured lookback, stop and report `non-converge`.
+- Non-convergence is a running-minimum stall, K=2: the reconciled count must fail to reach a new running minimum for K consecutive rounds before the loop bails and reports `non-converge`. Track the lowest count seen so far; a round that beats it resets the stall streak, a round that does not increments it, and a streak of 2 bails. This catches a plateau (`3,3,3`) and a sustained oscillation (`5,3,5,3`), but deliberately does not bail on a genuinely converging run with a transient blip like `5,4,5,3,2,1` — the running minimum keeps improving there. `convergence-ledger.sh` owns the deterministic decision.
 
 Report terminal status, gates passed/deferred, findings fixed per round, and the quarantine or non-convergence rationale when present.
 
@@ -110,6 +110,8 @@ The only quarantine trigger is a design/architecture conflict. Do not use confid
 - **Trivial/allowlisted** findings (`docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort`) go through the bundled `apply-auto-fix-code.sh`.
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
 
+**Ordering is not optional: run the trivial-fix applier before dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7) so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index. If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing next pass and stalling convergence. Within each round: reconcile -> route -> applier (trivial) + commit -> then fixer subagent (substantive).
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
@@ -128,7 +130,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   ```
 - **Convergence decision**:
   ```
-  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger <path> --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N>
+  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger <path> --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
   ```
 
 `run-gate.sh reconcile` invokes this skill's bundled `reconcile-findings.sh` without `--skill`. Gate findings passed into reconcile must not carry `auto_fix` blocks.
@@ -148,5 +150,7 @@ All fixes land on the working branch or PR that the gauntlet was invoked on. The
 ## Failure and Error Handling
 
 A gate with `status: "error"` is not a clean pass. A `skipped` or `deferred` gate is also not a clean pass; it is an explicit capability outcome. Full mode on Codex must report native gates that ran and gated/deferred gates that did not run, rather than claiming full Claude behavioural parity.
+
+This is wired deterministically, not left to conductor discretion: `run-gate.sh normalize` exits 4 for each such gate, and the conductor passes the per-round count of unresolved gates to `convergence-ledger.sh --unresolved <N>`. The ledger's clean-full-pass rule requires `--unresolved 0`, so a round where a gate errored/skipped/deferred can never resolve to `success`/`success_with_quarantine` even at a reconciled count of 0 — it falls through to `continue`, re-running the unresolved gate.
 
 The Codex plugin registers this skill by directory convention through the existing plugin manifest surface (`"skills": "./skills/"`); no per-skill manifest entry is required.

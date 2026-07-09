@@ -5,7 +5,13 @@
 # Usage:
 #   convergence-ledger.sh --ledger <path> --count <N> --structural <N> \
 #       --local <N> --pass-type <full|confirm> --quarantine <N> \
-#       [--cap 10] [--k 2]
+#       [--unresolved <N>] [--cap 10] [--k 2]
+#
+# --unresolved <N> is the number of gates that returned a non-clean status
+# (error|skipped|deferred) this round — run-gate.sh signals each such gate by
+# exiting 4, and the conductor tallies them. A round with any unresolved gate
+# is NOT a clean pass even when the reconciled count reached 0, because a gate
+# that errored never actually reviewed the diff. Default 0.
 #
 # Records exactly one round into the persistent JSON ledger at <path>
 # (created if absent: `{"loop_counter": 0, "rounds": []}`), appends the
@@ -16,24 +22,27 @@
 #   continue | restart | confirm | success | success_with_quarantine | cap | non-converge
 #
 # Decision precedence (first match wins):
-#   1. clean full pass      — pass_type=full && count=0
-#                              -> success_with_quarantine (quarantine>0) else success
+#   1. clean full pass      — pass_type=full && count=0 && unresolved=0
+#                              -> success_with_quarantine (quarantine>0) else success.
+#                              An unresolved gate (unresolved>0) blocks this
+#                              rule even at count=0 — the round falls through
+#                              to `continue` so the errored gate re-runs.
 #   2. cap                  — loop_counter >= cap (default 10)
-#   3. non-converge         — reconciled count has not strictly decreased
-#                              over a K-round lookback (default K=2): the
-#                              current round's count is compared to the
-#                              count from K rounds earlier; a non-decrease
-#                              (>=) over that window fires non-converge.
-#                              This is a window comparison, not K
-#                              consecutive single-round deltas — it is the
-#                              only definition that classifies BOTH a
-#                              plateau (3,3,3) AND a pure oscillation
-#                              (5,3,5,3) as non-converge, since an
-#                              oscillation never has two consecutive
-#                              non-decreasing single-round deltas but does
-#                              fail to make net progress over a 2-round
-#                              window. Needs >= K+1 recorded rounds before
-#                              it can fire.
+#   3. non-converge         — the reconciled count has failed to reach a new
+#                              running minimum for K (default 2) consecutive
+#                              rounds. Per round, track the minimum count seen
+#                              so far; a round whose count is strictly below
+#                              that running minimum resets the stall streak to
+#                              0, otherwise the streak increments. A stall
+#                              streak >= K fires non-converge. This classifies
+#                              a plateau (3,3,3) and a sustained oscillation
+#                              (5,3,5,3) as non-converge, but — unlike a raw
+#                              K-round window comparison — does NOT bail on a
+#                              genuinely converging run with a transient blip
+#                              (5,4,5,3,2,1: the running minimum keeps
+#                              improving, so the streak never reaches K). Needs
+#                              >= K+1 recorded rounds before it can fire (the
+#                              first round is always a new minimum).
 #   4. restart              — structural_tally > 0
 #   5. confirm              — count>0 && structural_tally=0 && local_tally>0
 #   6. clean confirm pass   — pass_type=confirm && count=0 -> continue (NOT
@@ -54,7 +63,7 @@ usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --ledger <path> --count <N> --structural <N> \
            --local <N> --pass-type <full|confirm> --quarantine <N> \
-           [--cap 10] [--k 2]
+           [--unresolved <N>] [--cap 10] [--k 2]
 EOF
 }
 
@@ -64,6 +73,7 @@ STRUCTURAL=""
 LOCAL=""
 PASS_TYPE=""
 QUARANTINE=""
+UNRESOLVED=0
 CAP=10
 K=2
 
@@ -116,6 +126,14 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		QUARANTINE="$1"
+		;;
+	--unresolved)
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		UNRESOLVED="$1"
 		;;
 	--cap)
 		shift
@@ -174,6 +192,10 @@ if [[ -z "$QUARANTINE" ]] || ! is_nonneg_int "$QUARANTINE"; then
 	echo "convergence-ledger: --quarantine must be a non-negative integer (got '${QUARANTINE}')" >&2
 	exit 2
 fi
+if [[ -z "$UNRESOLVED" ]] || ! is_nonneg_int "$UNRESOLVED"; then
+	echo "convergence-ledger: --unresolved must be a non-negative integer (got '${UNRESOLVED}')" >&2
+	exit 2
+fi
 if ! is_nonneg_int "$CAP" || [[ "$CAP" -eq 0 ]]; then
 	echo "convergence-ledger: --cap must be a positive integer (got '${CAP}')" >&2
 	exit 2
@@ -199,19 +221,24 @@ fi
 # records exactly one round, including a gate-1 structural restart — the
 # counter never resets.
 tmp_ledger="$(mktemp)"
+# Remove the temp ledger if we abort before the mv (e.g. jq fails under
+# `set -e`); the successful mv renames it away so the rm is a no-op then.
+trap 'rm -f "$tmp_ledger"' EXIT
 jq \
 	--argjson count "$COUNT" \
 	--argjson structural "$STRUCTURAL" \
 	--argjson local "$LOCAL" \
 	--arg pass_type "$PASS_TYPE" \
 	--argjson quarantine "$QUARANTINE" \
+	--argjson unresolved "$UNRESOLVED" \
 	'.loop_counter += 1
 	 | .rounds += [{
 		 count: $count,
 		 structural_tally: $structural,
 		 local_tally: $local,
 		 pass_type: $pass_type,
-		 quarantine_size: $quarantine
+		 quarantine_size: $quarantine,
+		 unresolved_gates: $unresolved
 	 }]' \
 	"$LEDGER_PATH" >"$tmp_ledger"
 mv "$tmp_ledger" "$LEDGER_PATH"
@@ -219,8 +246,11 @@ mv "$tmp_ledger" "$LEDGER_PATH"
 loop_counter="$(jq -r '.loop_counter' "$LEDGER_PATH")"
 rounds_len="$(jq -r '.rounds | length' "$LEDGER_PATH")"
 
-# 1. Clean full pass -> success / success_with_quarantine.
-if [[ "$PASS_TYPE" == "full" && "$COUNT" -eq 0 ]]; then
+# 1. Clean full pass -> success / success_with_quarantine. An unresolved gate
+# (error/skipped/deferred this round) blocks a clean pass even at count=0: the
+# gate never actually reviewed the diff, so the round falls through to
+# `continue` and the conductor re-runs it.
+if [[ "$PASS_TYPE" == "full" && "$COUNT" -eq 0 && "$UNRESOLVED" -eq 0 ]]; then
 	if [[ "$QUARANTINE" -gt 0 ]]; then
 		echo "success_with_quarantine"
 	else
@@ -235,18 +265,25 @@ if [[ "$loop_counter" -ge "$CAP" ]]; then
 	exit 0
 fi
 
-# 3. Non-convergence: K-round lookback window. Compare the current round's
-# count to the count from K rounds earlier; a non-decrease (>=) over that
-# window means no net progress was made across the window, regardless of
-# any single-round zig-zag inside it. Requires at least K+1 recorded
-# rounds (an earlier round K steps back must exist).
+# 3. Non-convergence: running-minimum stall. Walk the rounds tracking the
+# minimum count seen so far; a round whose count is strictly below that
+# running minimum resets the stall streak to 0, otherwise the streak
+# increments. A trailing stall streak >= K means the count has failed to
+# reach a new best for K consecutive rounds — a plateau or a sustained
+# oscillation — without false-positive-bailing on a converging run that has a
+# transient blip (the running minimum keeps improving). The first round is
+# always a new minimum, so the streak can only reach K after >= K+1 rounds.
 if [[ "$rounds_len" -ge $((K + 1)) ]]; then
-	non_decrease="$(jq -r --argjson k "$K" '
-		.rounds as $r
-		| ($r | length) as $n
-		| ($r[$n - 1].count >= $r[$n - 1 - $k].count)
+	stall_streak="$(jq -r '
+		.rounds
+		| reduce .[] as $round ({min: null, streak: 0};
+			if (.min == null) or ($round.count < .min)
+			then {min: $round.count, streak: 0}
+			else {min: .min, streak: (.streak + 1)}
+			end)
+		| .streak
 	' "$LEDGER_PATH")"
-	if [[ "$non_decrease" == "true" ]]; then
+	if [[ "$stall_streak" -ge "$K" ]]; then
 		echo "non-converge"
 		exit 0
 	fi

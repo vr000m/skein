@@ -16,7 +16,7 @@
 #       [--cap N] [--k N]
 # against a fresh `mktemp` ledger, and asserts the decision token printed on
 # stdout. Ledger internals (loop_counter, rounds[].count) are inspected via
-# `jq` only to corroborate the monotonic-counter and window-lookback
+# `jq` only to corroborate the monotonic-counter and running-min-stall
 # invariants — the token itself is always read from stdout, never inferred.
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
@@ -146,7 +146,11 @@ assert_eq "$tok1" "confirm" "plateau round 1 (count=3, insufficient history) -> 
 assert_eq "$tok2" "confirm" "plateau round 2 (count=3, still insufficient K+1 history) -> confirm, not a premature bail"
 assert_eq "$tok3" "non-converge" "plateau round 3 (3,3,3 across the K=2 lookback window) -> terminal non-converge"
 
-# --- 7. Oscillation 5 -> 3 -> 5 -> 3 => terminal non-converge ------------
+# --- 7. Sustained oscillation 5 -> 3 -> 5 -> 3 => terminal non-converge ---
+# Under running-minimum-stall semantics, a lone up-tick is NOT terminal: after
+# 5,3,5 the running minimum (3) has only stalled for one round, so round 3 is
+# still `confirm`. It is the SECOND consecutive failure to beat the running
+# minimum (round 4, giving stall streak K=2) that fires non-converge.
 
 L="$(new_ledger)"
 tok1="$(round "$L" 5 0 1 confirm 0)"
@@ -154,9 +158,27 @@ tok2="$(round "$L" 3 0 1 confirm 0)"
 tok3="$(round "$L" 5 0 1 confirm 0)"
 tok4="$(round "$L" 3 0 1 confirm 0)"
 assert_eq "$tok1" "confirm" "oscillation round 1 (count=5, insufficient history) -> confirm"
-assert_eq "$tok2" "confirm" "oscillation round 2 (count=3, insufficient history) -> confirm"
-assert_eq "$tok3" "non-converge" "oscillation round 3 (5,3,5 — no net progress over the K=2 window) -> non-converge"
-assert_eq "$tok4" "non-converge" "oscillation round 4 (3,5,3 — still no net progress over the K=2 window) -> non-converge"
+assert_eq "$tok2" "confirm" "oscillation round 2 (count=3, new running min) -> confirm"
+assert_eq "$tok3" "confirm" "oscillation round 3 (5,3,5 — running min 3 stalled only 1 round) -> confirm, NOT a premature bail"
+assert_eq "$tok4" "non-converge" "oscillation round 4 (5,3,5,3 — running min 3 stalled K=2 rounds) -> terminal non-converge"
+
+# --- 7b. Converging run with a transient blip must NOT false-bail ---------
+# 5,4,5,3,2,1: a genuine convergence with one up-tick at round 3. A raw
+# K-round window comparison would bail at round 3 (count[2]=5 >= count[0]=5);
+# running-min-stall must not, because the running minimum keeps improving
+# (5,4,4,3,2,1) so the stall streak never reaches K.
+
+L="$(new_ledger)"
+blip_bail=""
+i=0
+for c in 5 4 5 3 2 1; do
+	i=$((i + 1))
+	tok="$(round "$L" "$c" 0 1 confirm 0)"
+	if [[ "$tok" == "non-converge" ]]; then
+		blip_bail="round $i (count=$c)"
+	fi
+done
+assert_eq "$blip_bail" "" "converging-with-blip 5,4,5,3,2,1 never fires non-converge (running min keeps improving)"
 
 # --- 8. Monotonic decrease 5 -> 4 -> 3 must NOT false-positive-bail ------
 
@@ -217,6 +239,28 @@ assert_nonzero_exit "non-integer --count -> non-zero exit" \
 L="$(new_ledger)"
 assert_nonzero_exit "--cap 0 -> non-zero exit (cap must be positive)" \
 	"$LEDGER_SCRIPT" --ledger "$L" --count 1 --structural 0 --local 0 --pass-type full --quarantine 0 --cap 0
+
+L="$(new_ledger)"
+assert_nonzero_exit "non-integer --unresolved -> non-zero exit" \
+	"$LEDGER_SCRIPT" --ledger "$L" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 --unresolved not-a-number
+
+# --- 12. Unresolved gate blocks a clean full pass ------------------------
+# A full pass at count=0 is `success` only when every gate produced a clean
+# review. If any gate errored/skipped/deferred this round (--unresolved > 0),
+# the round is NOT terminal — it must fall through to `continue` so the
+# conductor re-runs the errored gate.
+
+L="$(new_ledger)"
+tok="$(round "$L" 0 0 0 full 0 --unresolved 0)"
+assert_eq "$tok" "success" "clean full pass with --unresolved 0 -> success"
+
+L="$(new_ledger)"
+tok="$(round "$L" 0 0 0 full 0 --unresolved 1)"
+assert_eq "$tok" "continue" "full pass count=0 but --unresolved 1 (a gate errored) -> continue, NOT success"
+
+L="$(new_ledger)"
+tok="$(round "$L" 0 0 0 full 2 --unresolved 1)"
+assert_eq "$tok" "continue" "full pass count=0, quarantine>0, --unresolved 1 -> continue, NOT success_with_quarantine (errored gate outranks quarantine terminal)"
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
