@@ -41,6 +41,7 @@ gauntlet-tests:
     bash tests/gauntlet/test-goal-docs.sh
     bash tests/gauntlet/test-gauntlet-skill-shape.sh
     bash tests/gauntlet/test-convergence-ledger.sh
+    bash tests/gauntlet/test-run-gate.sh
     bash tests/gauntlet/test-reuse-wiring.sh
     bash tests/gauntlet/test-review-gates-marker.sh
     bash tests/gauntlet/test-conduct-hook.sh

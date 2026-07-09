@@ -19,18 +19,11 @@
 #                                        script/asset by basename, resolved
 #                                        under gc_bundled_scripts_dir.
 #                                        Aborts if the file itself is absent.
-#   gc_strip_auto_fix <json-line>     — echo the finding with any `auto_fix`
-#                                        key removed (jq `del(.auto_fix)`).
 #   gc_normalize_finding <json>       — echo a finding normalised to exactly
 #                                        the common schema keys
 #                                        (file, line, category, severity,
 #                                        confidence, summary, evidence),
 #                                        defaulting absent keys to null/"".
-#   gc_quarantine_record <ledger> <file> <line> <category> <blast_radius> <reason>
-#                                      — append one quarantine entry to the
-#                                        JSON array at <ledger> (created if
-#                                        absent) so the conductor can decide
-#                                        quarantine-continue vs halt.
 #
 # Dependencies: bash + jq. jq is required — the gauntlet's finding schema is
 # JSON throughout, matching the reconciler and appliers this skill bundles.
@@ -80,12 +73,6 @@ gc_bundled_script() {
 	printf '%s\n' "$path"
 }
 
-gc_strip_auto_fix() {
-	local line="$1"
-	gc_have_jq
-	printf '%s' "$line" | jq -c 'del(.auto_fix)'
-}
-
 gc_normalize_finding() {
 	local finding="$1"
 	gc_have_jq
@@ -98,23 +85,4 @@ gc_normalize_finding() {
 		summary: (.summary // ""),
 		evidence: (.evidence // "")
 	}'
-}
-
-gc_quarantine_record() {
-	local ledger="$1" file="$2" line="$3" category="$4" blast_radius="$5" reason="$6"
-	gc_have_jq
-	if [[ ! -e "$ledger" ]]; then
-		printf '[]\n' >"$ledger"
-	fi
-	local entry tmp
-	entry="$(jq -n \
-		--arg file "$file" \
-		--arg line "$line" \
-		--arg category "$category" \
-		--arg blast_radius "$blast_radius" \
-		--arg reason "$reason" \
-		'{file: $file, line: ($line | tonumber? // $line), category: $category, blast_radius: $blast_radius, reason: $reason}')"
-	tmp="$(mktemp)"
-	jq --argjson entry "$entry" '. + [$entry]' "$ledger" >"$tmp"
-	mv "$tmp" "$ledger"
 }

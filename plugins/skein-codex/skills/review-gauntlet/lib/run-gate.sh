@@ -63,7 +63,7 @@
 # emitted; the caller must not count this round as a clean pass).
 #
 # Dependencies: bash + jq. Bundled-script resolution is via
-# gauntlet-common.sh (${CLAUDE_PLUGIN_ROOT} anchor; aborts rather than
+# gauntlet-common.sh ($SKILL_DIR anchor; aborts rather than
 # falling back to a hand copy or a relative deep-review path).
 
 set -euo pipefail
@@ -230,11 +230,29 @@ cmd_route() {
 	# Re-attach any cached auto_fix proposal by matching (file, line,
 	# category) — the same structural signature reconcile-findings.sh
 	# itself groups on.
+	local cache_array
+	cache_array="$(printf '%s' "$cache_jsonl" | jq -cs 'if length == 0 then [] else . end')"
+
+	# Warn if two cached findings share a (file, line, category) signature: the
+	# re-attach below builds a last-writer-wins map, so a collision silently
+	# drops one gate's auto_fix proposal. Surface it rather than lose it quietly.
+	local sig_collisions
+	sig_collisions="$(printf '%s' "$cache_array" | jq -r '
+		def sig: [.file, (.line|tostring), .category] | join("|");
+		group_by(sig) | map(select(length > 1)) | .[] | (.[0] | sig)
+	')"
+	if [[ -n "$sig_collisions" ]]; then
+		while IFS= read -r sig; do
+			[[ -n "$sig" ]] || continue
+			echo "run-gate route: WARNING multiple cached auto_fix proposals share signature ($sig); last one wins" >&2
+		done <<<"$sig_collisions"
+	fi
+
 	local envelope_with_autofix
 	envelope_with_autofix="$(
 		jq -n \
 			--argjson reconciled "$reconciled" \
-			--argjson cache "$(printf '%s' "$cache_jsonl" | jq -cs 'if length == 0 then [] else . end')" \
+			--argjson cache "$cache_array" \
 			'
 			def sig: [.file, (.line|tostring), .category] | join("\u0007");
 			($cache | map({(sig): .auto_fix}) | add // {}) as $by_sig

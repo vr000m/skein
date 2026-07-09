@@ -83,7 +83,7 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 
 ### Phase 2: Gate-runner + convergence bundled scripts (Claude)
 
-**Impl files:** `plugins/skein/skills/review-gauntlet/scripts/run-gate.sh, plugins/skein/skills/review-gauntlet/scripts/convergence-ledger.sh, plugins/skein/skills/review-gauntlet/scripts/lib/gauntlet-common.sh`
+**Impl files:** `plugins/skein/skills/review-gauntlet/lib/run-gate.sh, plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh`
 **Test files:** `tests/gauntlet/test-convergence-ledger.sh, tests/gauntlet/test-reuse-wiring.sh`
 **Test command:** `bash tests/gauntlet/test-convergence-ledger.sh && bash tests/gauntlet/test-reuse-wiring.sh`
 
@@ -141,7 +141,7 @@ This plan is the same lineage as the usage-report improvement plan and reuses pr
 <!-- BEGIN CODEX-AUTHORED PHASES -->
 ### Phase C1: Codex-mirror review-gauntlet SKILL.md
 
-**Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/scripts/run-gate.sh, plugins/skein-codex/skills/review-gauntlet/scripts/convergence-ledger.sh, plugins/skein-codex/skills/review-gauntlet/scripts/lib/gauntlet-common.sh`
+**Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/lib/run-gate.sh, plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh`
 **Test files:** `tests/parity/test_skill_md_presence.py, tests/parity/test-spawn-tiers.sh`
 **Test command:** `python -m pytest tests/parity/test_skill_md_presence.py && bash tests/parity/test-spawn-tiers.sh`
 
