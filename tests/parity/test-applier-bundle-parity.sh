@@ -105,6 +105,18 @@ for mirror in "${MIRRORS[@]}"; do
 	done
 done
 
+# --- 5. Skill-identity pin: apply-auto-fix-code.sh's hardcoded SKILL --------
+# review-gauntlet has no first-class identity in the auto-fix subsystem — it
+# masquerades as `--skill deep-review` (see run-gate.sh route) to match this
+# hardcoded value, so it silently inherits deep-review's allowlist. Pin the
+# value here so a future change to it fails loudly instead of silently
+# shifting review-gauntlet's (and review-plan's) apply policy underneath them.
+if grep -qx 'SKILL="deep-review"' "$SRC/apply-auto-fix-code.sh"; then
+	pass "skill-identity pin: scripts/apply-auto-fix-code.sh hardcodes SKILL=\"deep-review\""
+else
+	fail "skill-identity pin: scripts/apply-auto-fix-code.sh no longer hardcodes SKILL=\"deep-review\" — review-gauntlet's run-gate.sh route (--skill deep-review) and review-plan's applier invocation both assume this value"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 # Non-vacuous-pass guard: if the bundle glob matched zero files we would exit 0
