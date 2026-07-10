@@ -20,7 +20,7 @@ This skill is a **conductor** in the mold of `skein:conduct`, with Option A spli
 
 Three modes are opt-in; nothing here fires without an explicit trigger. `--resume` and `--fresh` modify only standalone/full loop startup; they do not make absent `Review Gates` markers run.
 
-1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source. `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger.
+1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source. `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
@@ -36,6 +36,8 @@ Before entering a standalone/full loop, derive one canonical target string and r
 
 `--plan <path>` is not part of the target string; it supplies design intent only. The scheme guarantees repeated invocations through the same surface resolve to the same ledger (`--pr 42` resumes `pr:42`), but it deliberately does not unify `--pr 42` with an equivalent branch-name invocation of that PR's head.
 
+The ledger also persists the `--cap`/`--k` values in force when it was created (or first appended to), so a `--last-decision` peek is always resolved against the same cap/k the run itself used — never against whatever `--cap`/`--k` defaults the peek call happens to pass (or omits). Never pass `--cap`/`--k` on a `--last-decision` call expecting to override a ledger's stored values; they are ignored once the ledger has recorded its own.
+
 `gc_ledger_path` is a shell function from this skill's authored helpers, so source it before using it in shell snippets:
 
 ```bash
@@ -44,25 +46,37 @@ canonical_target="<pr:N-or-branch:name>"
 ledger_path="$(gc_ledger_path "$canonical_target" codex)"
 ```
 
-For a non-`--resume` loop, initialize once before round 1:
+**Standalone loop entry** (mode 1 — an operator is present to supply `--resume`/`--fresh`): for a non-`--resume` loop, initialize once before round 1:
 
 ```bash
 "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"
 ```
 
-If that exits because the ledger already exists, stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
+If that exits because the ledger already exists (exit 6), stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
 
 ```bash
 "$SKILL_DIR"/lib/convergence-ledger.sh --init --force --ledger "$ledger_path" --target "$canonical_target"
 ```
 
-For `--resume`, never initialize. Run the read-only peek against the same target:
+For `--resume` alone, never initialize. Run the read-only peek against the same target:
 
 ```bash
 "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
 ```
 
-If the ledger is missing, stop with a clear error instead of silently starting fresh.
+If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
+
+**Auto-chain loop entry** (modes 2/3 — `conduct`/`fan-out` invoke this skill with no operator present to supply `--resume`/`--fresh`): never blind-`--init` first. A prior interrupted auto-chained run's ledger sitting at this target would make a bare `--init` refuse with exit 6, and there is no operator to answer "pass `--resume` or `--fresh`" — that would dead-end the auto-chain on every resume-after-interruption of a `full`-mode run. Instead, peek first, against the same target:
+
+```bash
+"$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
+```
+
+- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1.
+- **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
+- **Exit 5** (terminal — `success`/`success_with_quarantine`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
+
+This makes auto-chain invocations self-resuming by construction: they never pass `--resume`/`--fresh` explicitly, and the standalone path's exit-6 refusal never fires for them.
 
 ## Delegation Pattern (Option A - split delegation)
 
