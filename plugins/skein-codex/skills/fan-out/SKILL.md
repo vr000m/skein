@@ -240,7 +240,7 @@ After post-merge integration-seam verification finishes on option 1, read the pl
 
 **Dispatch:** `review-gauntlet` is a conductor in its own right. Fan-out invokes it directly as a top-level skill against the merged feature branch, not as a fan-out worker and not as another fan-out tier. This does not activate the gated R6 nested test-writer topology; that topology remains gated exactly as documented above. Await the gauntlet terminal report before continuing to Phase 7.
 
-If `review-gauntlet` applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the merged branch, never a follow-up PR. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
+If `review-gauntlet` applies fixes, it lands them as one or more commits on the merged branch over the course of its loop — never a follow-up PR. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
 
 ### Phase 7: Cleanup (on `/fan-out cleanup`)
 

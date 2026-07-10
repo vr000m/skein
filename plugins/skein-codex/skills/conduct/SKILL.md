@@ -359,10 +359,10 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ### Commit ownership at the terminal seam
 
-`review-gauntlet` runs strictly after the final phase's boundary commit, which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the working branch, never a follow-up PR.
+`review-gauntlet` runs strictly after the final phase's boundary commit, which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as one or more commits on the working branch over the course of its loop — never a follow-up PR.
 
-- conduct treats that commit exactly as any other follow-up commit landed during handback: the next `--resume` preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet commit into the new baseline for the rogue-commit check.
-- conduct does not rewrite any completed phase's frozen `commit_sha` to account for the gauntlet commit, and does not treat the gauntlet commit as rogue. The rogue-commit check only fires on HEAD movement observed during a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window.
+- conduct treats those commits exactly as any other follow-up commits landed during handback: the next `--resume` preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
+- conduct does not rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does not treat the gauntlet's commits as rogue. The rogue-commit check only fires on HEAD movement observed during a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window.
 
 ## Fallbacks
 
