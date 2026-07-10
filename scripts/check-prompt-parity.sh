@@ -173,9 +173,9 @@ normalize_fanout_prompt() {
 	sed \
 		-e 's/spawned Claude agent/spawned Codex agent/g' \
 		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
-		"$1" \
-		| perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' \
-		| sed \
+		"$1" |
+		perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' |
+		sed \
 			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
 			-e '/^\*\*Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
 			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
