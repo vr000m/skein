@@ -139,6 +139,7 @@ Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 - **[Architecture] won't-fix**: two skill copies per harness (`plugins/skein/skills/` and `plugins/skein-codex/skills/`) retained for dispatch-idiom divergence (2026-03-17, scope updated 2026-05-26 for plugin layout)
 - **[Architecture] won't-fix**: harness-divergent path-resolution idiom (Claude `${CLAUDE_PLUGIN_ROOT}` substitution vs Codex `$SKILL_DIR` env-export) is the working contract — do not collapse to a single anchor form (2026-05-25)
+- **[Security] won't-fix**: `scripts/audit-auto-fix-eligibility.sh`'s `resolve_path` accepts absolute paths from the untrusted finding envelope (used only for a read-only line-content drift check, never a write); tightening it to the applier's stricter `resolve_repo_path` containment guard breaks `tests/reconciliation/test-renderer.sh`'s `audit-then-render-end-to-end` test, which intentionally audits fixture files living outside the repo tree via absolute path. Residual risk is a low-value file-read oracle — the applier independently re-verifies with its own strict guard before any write, so no write-path exposure exists (2026-07-10)
 
 ## Gotchas
 
