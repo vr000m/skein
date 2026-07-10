@@ -1,12 +1,11 @@
 # Task: review-gauntlet — chained review-gate conductor with convergence loop
 
-**Status**: Complete
+**Status**: In Progress
 **Component**: review-skills
 **Assigned to**: Claude + Codex (dual-plugin)
 **Priority**: High
 **Branch**: feature/review-gauntlet-skill
 **Created**: 2026-07-07
-**Completed**: 2026-07-09
 
 ## Objective
 
@@ -298,9 +297,9 @@ Context lifecycle — what enters context at each step, and whether it clears or
 - [x] Unit (I6): the 10-loop cap is reachable **only under `full`/standalone**; `quick` runs a single code-review pass and never enters the convergence loop. (documented and asserted via `test-gauntlet-skill-shape.sh:187`; no separate integration harness runs the loop live)
 - [x] Unit: guardrail classification (design-conflict + `local` ⇒ quarantine-continue; + `structural` ⇒ halt; non-conflict ⇒ fix regardless of confidence). (fixer classification is LLM self-classification per Requirements, not a scriptable unit; verified via `test-gauntlet-skill-shape.sh:155-173` asserting both guardrails are fully specified in `SKILL.md`)
 - [x] Unit: opt-in gating (`none`/absent ⇒ no-op; `quick` ⇒ gate 1 only, single pass; `full` ⇒ all logical gate slots, with unsupported Codex slots surfaced as gated/deferred). (`test-gauntlet-skill-shape.sh:178-187`, `test-conduct-hook.sh`, `test-fanout-hook.sh`)
-- [ ] Unit (minor): **gate-order enforcement** — gates run in the fixed sequence (code-review → adversarial → deep-review → security); assert order, not just membership. Not yet covered by a dedicated test — `SKILL.md` documents the sequence in prose (Requirements) but no grep/AST assertion pins gate ordering independent of membership.
+- [x] Unit (minor): **gate-order enforcement** — gates run in the fixed sequence (code-review → adversarial → deep-review → security); assert order, not just membership. (`test-gauntlet-skill-shape.sh`: asserts each gate heading's line number is strictly increasing)
 - [x] Unit (minor, fixup `13d9055`): **gate/applier failure mid-loop** — a gate subagent that **errors** (status `error`/`skipped`/`deferred`) is tracked via the ledger's `--unresolved` count and distinguished from one that returns findings; it blocks the clean-full-pass `success` rule even at `count=0` (does not silently converge).
-- [ ] Shape (I1, Guardrail 1): grep/AST assertion that **every** fixer-dispatch block in `SKILL.md` embeds both the dev-plan/`**Goal:**` design-intent reference AND the `<untrusted-content>` wrap, so a future edit cannot silently drop either. Model on `tests/parity/test-spawn-tiers.sh`. Not yet implemented — `test-gauntlet-skill-shape.sh` asserts the `**Goal:**` and `<untrusted-content>` tokens each appear somewhere in `SKILL.md`, but does not yet assert co-occurrence per fixer-dispatch block.
+- [x] Shape (I1, Guardrail 1): grep/AST assertion that the fixer-dispatch block in `SKILL.md` embeds both the dev-plan/`**Goal:**` design-intent reference AND the `<untrusted-content>` wrap, so a future edit cannot silently drop either. (`test-gauntlet-skill-shape.sh`: asserts co-occurrence within the "Every fixer dispatch ... must include both" paragraph, not just independent presence anywhere in the file. `SKILL.md` has a single fixer-dispatch description, so paragraph-scoped co-occurrence covers the whole surface.)
 - [x] Shape (fixup, `13d9055`): **applier-before-fixer ordering** — assert every fixer-dispatch block in `SKILL.md` sequences the trivial-fix applier run/commit strictly before the fixer subagent's substantive edits, per the Guardrail 2 ordering invariant.
 - [x] Reuse wiring: `run-gate.sh` invokes the **bundled** `reconcile-findings.sh` (no `--skill`) and appliers, not a fork (assert by path + no duplicated allowlist); bundled copies are byte-identical (`test-applier-bundle-parity.sh`, `test-allowlist-byte-identity.sh` extended to review-gauntlet). (`test-reuse-wiring.sh`)
 - [x] Integration (fixup, `318aef2`): **`tests/gauntlet/test-run-gate.sh`** (17 assertions) — end-to-end coverage of `run-gate.sh normalize|reconcile|route`: auto_fix stripped from the pooled/reconcile-bound payload but cached unstripped; `lens=<gate>` tagging; non-clean gate status (`error`) exits 4 and still emits findings; route re-attaches cached `auto_fix` by `(file,line,category)` and delegates eligibility to the bundled auditor; route warns to stderr on a colliding `(file,line,category)` auto_fix signature (using the same BEL-joined signature the re-attach map itself uses, per `915cceb`) instead of silently dropping one gate's proposal.

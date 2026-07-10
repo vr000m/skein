@@ -209,6 +209,37 @@ assert_grep "$SKILL_MD" '\$\{CLAUDE_PLUGIN_ROOT\}' \
 assert_not_grep "$SKILL_MD" '\.\./\.\./deep-review/scripts/' \
 	"does not reference \`../../deep-review/scripts/\` (relative-path fork)"
 
+# --- Gate order: the four gates must appear in the fixed sequence ---------
+# Membership alone (each gate mentioned somewhere) does not prove the SKILL.md
+# documents the fixed run order (code-review -> adversarial -> deep-review ->
+# security-review). Pin the order by asserting each gate's line number is
+# strictly increasing.
+
+code_review_line="$(grep -n -m1 -E '\*\*Code-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
+adversarial_line="$(grep -n -m1 -E '\*\*Adversarial Codex-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
+deep_review_line="$(grep -n -m1 -E '\*\*.skein:deep-review.* \(5 lenses\)\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
+security_review_line="$(grep -n -m1 -E '\*\*Security-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
+
+if [[ -n "$code_review_line" && -n "$adversarial_line" && -n "$deep_review_line" && -n "$security_review_line" ]] &&
+	((code_review_line < adversarial_line && adversarial_line < deep_review_line && deep_review_line < security_review_line)); then
+	pass "gate order is fixed: code-review ($code_review_line) < adversarial ($adversarial_line) < deep-review ($deep_review_line) < security-review ($security_review_line)"
+else
+	fail "gate order is not the fixed code-review -> adversarial -> deep-review -> security-review sequence (lines: $code_review_line, $adversarial_line, $deep_review_line, $security_review_line)"
+fi
+
+# --- Fixer-dispatch co-location: <untrusted-content> and Goal/design-intent
+# must appear together, not just independently somewhere in the file. Assert
+# they co-occur within the same paragraph as the "must include both" sentence.
+
+fixer_dispatch_para="$(awk '/Every fixer dispatch in this skill must include/{print; found=1; next} found && NF==0{exit} found{print}' "$SKILL_MD")"
+if [[ -n "$fixer_dispatch_para" ]] &&
+	grep -q '<untrusted-content>' <<<"$fixer_dispatch_para" &&
+	grep -qE '\*\*Goal:\*\*|design-intent' <<<"$fixer_dispatch_para"; then
+	pass "fixer-dispatch paragraph co-locates <untrusted-content> wrap with the Goal/design-intent reference"
+else
+	fail "fixer-dispatch paragraph does not co-locate <untrusted-content> wrap with the Goal/design-intent reference"
+fi
+
 # --- Sanity: non-empty / non-truncation guard ------------------------------
 
 if [[ -s "$SKILL_MD" ]]; then
