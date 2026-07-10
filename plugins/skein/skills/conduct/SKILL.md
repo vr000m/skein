@@ -376,10 +376,10 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ### Commit ownership at the terminal seam
 
-`review-gauntlet` runs strictly **after** the final phase's boundary commit (Step 8), which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the working branch — never a follow-up PR.
+`review-gauntlet` runs strictly **after** the final phase's boundary commit (Step 8), which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as one or more commits on the working branch over the course of its loop — never a follow-up PR.
 
-- conduct treats that commit exactly as it already treats any other follow-up commit landed during handback (Step 8 item 5, Preflight item 4): the next `--resume`'s preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commit into the new baseline for the rogue-commit check.
-- conduct does **not** rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commit, and does **not** treat the gauntlet's commit as a rogue commit. The rogue-commit check (Step 8 item 1) only fires on HEAD movement observed *during* a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window, so that check does not — and must not — flag it.
+- conduct treats those commits exactly as it already treats any other follow-up commits landed during handback (Step 8 item 5, Preflight item 4): the next `--resume`'s preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
+- conduct does **not** rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does **not** treat the gauntlet's commits as rogue. The rogue-commit check (Step 8 item 1) only fires on HEAD movement observed *during* a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window, so that check does not — and must not — flag them.
 
 ## Fallbacks
 

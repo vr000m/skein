@@ -23,7 +23,7 @@ Extend `/conduct` with an autonomous mode that walks all phases of a reviewed de
 
 This plan addresses all three. Pre-commit hooks already cover lint/typecheck/format via the Step 8.4 hook-failure-into-fix-loop path, so no new `Check cmd:` slot is needed.
 
-**Related work:** `docs/dev_plans/20260707-feature-review-gauntlet-skill.md` adds a terminal auto-chain hook after this plan's end-of-run CI-parity gate (the same seam this plan introduced): when the plan's `**Review Gates:**` header field is `quick`/`full`, `/conduct` invokes `review-gauntlet --plan <this plan>` and reconciles the gauntlet's own follow-up commit into `resume_base_sha` rather than flagging it as a rogue commit.
+**Related work:** `docs/dev_plans/20260707-feature-review-gauntlet-skill.md` adds a terminal auto-chain hook after this plan's end-of-run CI-parity gate (the same seam this plan introduced): when the plan's `**Review Gates:**` header field is `quick`/`full`, `/conduct` invokes `review-gauntlet --plan <this plan>` and reconciles the gauntlet's own follow-up commits into `resume_base_sha` rather than flagging them as rogue commits.
 
 The horizon note for this item is in `~/.claude/projects/-Users-vr000m-Code-vr000m-skills-md/memory/project_horizon_followups.md` (item 2). Item 1 — self-healing review pipelines — shipped in PR #20 (marker auto-refresh) and PR #21 (cross-lens reconciliation).
 

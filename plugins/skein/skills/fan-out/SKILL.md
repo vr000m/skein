@@ -244,7 +244,7 @@ After post-merge integration-seam verification finishes (option 1's final step a
 
 **Dispatch:** `review-gauntlet` is a conductor in its own right — its multi-spawn gates run at its own top level, in its own context (same reasoning as conduct's hook). Fan-out invokes it directly as a top-level skill against the merged branch, not as an `Agent`-tool subagent spawn, and not as a further fan-out tier (it does not count against the Delegation Depth one-level rule above). Await its terminal report before continuing to Phase 7.
 
-If `review-gauntlet` applies fixes, it lands them as its own single `review-gauntlet fixes` commit on the merged branch — never a follow-up PR, consistent with the same-PR invariant. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
+If `review-gauntlet` applies fixes, it lands them as one or more commits on the merged branch over the course of its loop — never a follow-up PR, consistent with the same-PR invariant. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
 
 ### Phase 7: Cleanup (on `/fan-out cleanup`)
 

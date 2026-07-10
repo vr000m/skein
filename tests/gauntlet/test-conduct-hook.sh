@@ -102,8 +102,8 @@ assert_grep "$SKILL_MD" '(absent|none)[^.\n]*(no gauntlet|unchanged|opt.in)|opt.
 assert_grep "$SKILL_MD" 'resume_base_sha' \
 	"SKILL.md's reconciliation prose references \`resume_base_sha\`"
 
-assert_grep "$SKILL_MD" 'review-gauntlet fixes' \
-	"SKILL.md documents the gauntlet landing its own \`review-gauntlet fixes\` commit"
+assert_grep "$SKILL_MD" 'one or more commits' \
+	"SKILL.md documents the gauntlet landing one or more commits (not a false single-commit claim)"
 
 assert_grep "$SKILL_MD" 'not.*rogue|rogue.*not' \
 	"SKILL.md states the gauntlet's own commit is not flagged as a rogue commit"
