@@ -22,13 +22,14 @@ BUNDLE_SHARED=(
 
 # Skills that receive a bundled pipeline.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
-BUNDLE_SKILLS=(deep-review review-plan)
+BUNDLE_SKILLS=(deep-review review-plan review-gauntlet)
 
 # Skill-specific applier basename. Returns non-zero for an unknown skill.
 bundle_applier_for() {
 	case "$1" in
 	deep-review) printf 'apply-auto-fix-code.sh\n' ;;
 	review-plan) printf 'apply-auto-fix-plan.sh\n' ;;
+	review-gauntlet) printf 'apply-auto-fix-code.sh\n' ;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2
 		return 1
@@ -49,6 +50,7 @@ bundle_extra_for() {
 		printf 'write-review-marker.py\n'
 		;;
 	deep-review) ;;
+	review-gauntlet) ;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2
 		return 1

@@ -33,6 +33,21 @@ parity-tests:
     bash tests/parity/test-spawn-tiers.sh
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
+# Run the review-gauntlet test suite (schema + injection coverage, plus the
+# skill-shape, convergence, reuse-wiring, marker, and hook tests).
+gauntlet-tests:
+    bash tests/gauntlet/test-goal-field-schema.sh
+    bash tests/gauntlet/test-goal-injection.sh
+    bash tests/gauntlet/test-goal-docs.sh
+    bash tests/gauntlet/test-gauntlet-skill-shape.sh
+    bash tests/gauntlet/test-convergence-ledger.sh
+    bash tests/gauntlet/test-run-gate.sh
+    bash tests/gauntlet/test-reuse-wiring.sh
+    bash tests/gauntlet/test-review-gates-marker.sh
+    bash tests/gauntlet/test-conduct-hook.sh
+    bash tests/gauntlet/test-fanout-hook.sh
+    bash tests/gauntlet/test-codex-capability-gap-unresolved.sh
+
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
     ./scripts/check-trunk-snippet-parity.sh

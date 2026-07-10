@@ -13,14 +13,47 @@ note() {
 	echo "NOTE: $*" >&2
 }
 
+# Map a runtime name to its current (post-plugins-migration) conduct tree.
+runtime_new_tree() {
+	case "$1" in
+	claude) echo "plugins/skein/skills/conduct" ;;
+	codex) echo "plugins/skein-codex/skills/conduct" ;;
+	*) fail "unknown runtime: $1" ;;
+	esac
+}
+
+# Immutable pre-migration history contains phase-boundary commits authored before
+# the one-mirror-per-boundary rule existed, which touched both mirror trees in a
+# single commit. They cannot be rewritten, so allowlist them by full SHA: the gate
+# skips them and still finds the clean single-mirror boundary for the phase.
+# Keep this list minimal and justified; new mixed-mirror commits must NOT be added.
+#   1b49fe8 — "conduct: phase 3 — /review-plan auto-fix applier" (auto-fix plan,
+#             not the conduct-dev plan this gate targets); touched 2 claude + 2 codex.
+LEGACY_MIXED_ALLOWLIST="1b49fe8eea27c58b56fdcc59eca9a145f76f450d"
+
+is_allowlisted() {
+	case " $LEGACY_MIXED_ALLOWLIST " in
+	*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
+# Conduct's mirror-development boundary commits predate the plugins/ migration
+# (07cda44 "Atomic move") and live under the legacy `.claude|.codex/skills/conduct`
+# trees; commits made after the migration live under `plugins/skein[-codex]/...`.
+# List both layouts so the handoff gate survives the reorg.
 commit_files() {
-	git -C "$REPO_ROOT" show --name-only --format= "$1" -- plugins/skein/skills/conduct plugins/skein-codex/skills/conduct
+	git -C "$REPO_ROOT" show --name-only --format= "$1" -- \
+		.claude/skills/conduct .codex/skills/conduct \
+		plugins/skein/skills/conduct plugins/skein-codex/skills/conduct
 }
 
 touches_runtime() {
 	local sha="$1"
 	local runtime="$2"
-	commit_files "$sha" | grep -q "^\\.$runtime/skills/conduct/"
+	local new_tree
+	new_tree="$(runtime_new_tree "$runtime")"
+	commit_files "$sha" | grep -qE "^(\\.$runtime/skills/conduct/|$new_tree/)"
 }
 
 touches_both_mirrors() {
@@ -42,7 +75,8 @@ phase_subject_matches() {
 find_strict_boundary() {
 	local runtime="$1"
 	local phase="$2"
-	local path=".$runtime/skills/conduct"
+	local new_tree
+	new_tree="$(runtime_new_tree "$runtime")"
 	local sha subject body
 	while IFS= read -r sha; do
 		subject="$(git -C "$REPO_ROOT" show -s --format=%s "$sha")"
@@ -51,18 +85,22 @@ find_strict_boundary() {
 		echo "$body" | grep -q "Conducted-By: $runtime" || continue
 		touches_runtime "$sha" "$runtime" || continue
 		if touches_both_mirrors "$sha"; then
+			# Allowlisted pre-migration mixed commits are immutable history; skip
+			# and keep looking for the clean single-mirror boundary for this phase.
+			is_allowlisted "$sha" && continue
 			fail "mixed-mirror-commit at $sha: phase-boundary commits must touch one mirror tree only"
 		fi
 		echo "$sha"
 		return 0
-	done < <(git -C "$REPO_ROOT" log --format=%H -- "$path")
+	done < <(git -C "$REPO_ROOT" log --format=%H -- ".$runtime/skills/conduct" "$new_tree")
 	return 1
 }
 
 find_legacy_boundary() {
 	local runtime="$1"
 	local phase="$2"
-	local path=".$runtime/skills/conduct"
+	local new_tree
+	new_tree="$(runtime_new_tree "$runtime")"
 	local sha subject
 	[[ "$runtime" == "codex" && "$phase" == "1" ]] || return 1
 	while IFS= read -r sha; do
@@ -77,7 +115,7 @@ find_legacy_boundary() {
 			return 0
 			;;
 		esac
-	done < <(git -C "$REPO_ROOT" log --format=%H -- "$path")
+	done < <(git -C "$REPO_ROOT" log --format=%H -- ".$runtime/skills/conduct" "$new_tree")
 	return 1
 }
 
@@ -112,7 +150,8 @@ has_test() {
 	local runtime="$1"
 	local file="$2"
 	local test_name="$3"
-	local path="$REPO_ROOT/.$runtime/skills/conduct/tests/$file"
+	local path="$REPO_ROOT/$(runtime_new_tree "$runtime")/tests/$file"
+	[[ -f "$path" ]] || path="$REPO_ROOT/.$runtime/skills/conduct/tests/$file"
 	[[ -f "$path" ]] || return 1
 	grep -q "^def $test_name\\b" "$path"
 }

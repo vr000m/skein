@@ -156,6 +156,7 @@ From the phase block, extract:
 - `**Test files:**` — comma-separated paths, globs allowed.
 - `` **Test command:** `<cmd>` `` — parsed with `^\*\*Test command:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
 - `` **Validation cmd:** `<cmd>` `` — optional, parsed with `^\*\*Validation cmd:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
+- `**Goal:**` — optional. A 1-2 line design-intent/invariant statement for the phase, sitting in the phase contract block alongside the slots above (above the review marker; editing it invalidates the marker like any other contract edit). Separator may be `:`, `—`, or `–`, matching the phase-heading tolerance. Captured verbatim (including embedded newlines for a 2-line goal) as `{{PHASE_GOAL}}`'s source text. Absent slot -> `{{PHASE_GOAL}}` substitutes to the empty string everywhere it is used (Step 3).
 
 Any slot may be absent; see Fallbacks below.
 
@@ -177,12 +178,15 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 | `{{PHASE_INDEX}}` | phase's 0-based position | substitute bare int (no quotes) |
 | `{{PHASE_LABEL}}` | verbatim heading label | substitute JSON-escaped string |
 | `{{PHASE_TITLE}}` | verbatim heading title | string (appears in prose, not JSON) |
+| `{{PHASE_GOAL}}` | formatted design-intent directive built from the phase's `**Goal:**` slot, else empty string | string (appears in prose, not JSON) |
 | `{{ITERATION}}` | current fix-loop iteration | substitute bare int (no quotes) |
 | `{{BASE_SHA}}` | `git rev-parse HEAD` at phase start | string |
 | `{{PRIOR_DIFF}}` | staged diff from previous attempt, else empty | string |
 | `{{TEST_FAILURES}}` | redacted failure summary from the test runner or pre-commit hook, else empty | string |
 
-Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
+`{{PHASE_GOAL}}` is substituted the same way on every implementer/test-writer spawn: first attempt (iteration 0) AND every fix-loop respawn (Step 6), since it is re-read from the same phase contract block on each respawn - it is not carried over from a prior iteration's prompt. When the phase's `**Goal:**` slot is present, substitute the directive text (see `implementer-prompt.md` / `test-writer-prompt.md` for the exact wording each template expects); when absent, substitute the empty string so the sentence the placeholder is appended to renders byte-identical to a plan with no `**Goal:**` slot.
+
+Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, phase goal, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
 Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
 
@@ -241,7 +245,7 @@ After tests pass (or were skipped with warning):
 1. **Rogue-commit check.** Compare `git rev-parse HEAD` to the phase-start baseline: `state.resume_base_sha` if this run started from `--resume`, otherwise `state.base_sha` (for phase 1) or the last completed phase's `commit_sha`. If HEAD advanced beyond the baseline _during this phase's subagent work_, a subagent committed despite the prompt directive. Do NOT stack another commit. Record `rogue_commit_sha` in the phase summary, set `state.status = "awaiting_user"` with a warning, handback. (User commits made during a previous handback are absorbed into `resume_base_sha` at preflight, so they do not trip this check.)
 2. Otherwise run `git commit -m "conduct: phase <label> — <phase title>"`. Commit author = current git user (no impersonation).
 3. If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). Only auto-restage when every modified tracked file is already in the original staged pathset for this phase; in that case, run `git add -u -- <staged-paths...>` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings and continue at step 4 as a normal success. If the hook modified tracked files outside the original staged pathset, hand back to the user instead of auto-staging unrelated edits. If the retry fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration. Do NOT use `--no-verify`.
-4. On success, record the new `HEAD` SHA in `state.completed_phases[*].commit_sha`.
+4. On success, record the new `HEAD` SHA in `state.completed_phases[*].commit_sha`. This field is immutable once written. If the user lands follow-up commits during handback, or the automated review-gauntlet auto-chain below lands one or more fix commits after the terminal phase boundary, the next `--resume` absorbs them into `resume_base_sha`; it does not rewrite the prior phase's `commit_sha`.
 
 Pre-commit hook scope: `scripts/check-prompt-parity.sh` is invoked from `justfile` recipes only, not from `.pre-commit-config.yaml` or the hook chain. Phase 3 Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
 
@@ -331,6 +335,34 @@ The missing counter resets to 0 on any non-absent outcome: consume, stale-ignore
 ### Test/Production Parity
 
 Tests may inject `opts.ci_parity_spawn`, which returns CI-parity JSON synchronously. Production uses the result-file handoff from direct main-runtime command execution. Both paths parse `schema.parse_report(..., "ci-parity")`, validate the report against the conductor request, and call `_consume_ci_parity_result`, so the state mutation path is shared.
+
+## Review Gauntlet Auto-Chain
+
+After the CI-parity gate resolves (or is skipped/not activated), at the point where conduct would otherwise set `status = complete`, read the plan's `**Review Gates:**` header field (values `none | quick | full`, default `none`) and decide whether to auto-chain `review-gauntlet`.
+
+### Activation
+
+- **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is unchanged for every plan that does not explicitly opt in.
+- **`quick` -> invoke `review-gauntlet --plan <this plan>` scoped to Codex gate 1 only**, a single native code-review pass with no convergence loop.
+- **`full` -> invoke `review-gauntlet --plan <this plan>` through the Codex gate matrix**, with native supported gates run and unsupported/gated slots reported explicitly as `deferred` or `skipped`; do not claim Claude command parity for missing `/security-review` or `/codex:adversarial-review` commands.
+
+### Trigger point
+
+- This is a single-exit hook, same shape as the CI-parity gate: it fires only on the healthy path where `conduct()` would otherwise return `status=complete` - after the CI-parity gate has passed, been skipped (`--skip-ci-parity`), or was never activated. It never fires on an intermediate `--resume`.
+- It does not fire on any hard-stop path or on `ci_failed`. If the CI-parity gate reports `failed`, `status` stays `ci_failed` and conduct hands back per the normal rules; `review-gauntlet` is not consulted.
+
+### Dispatch
+
+- `review-gauntlet` is a conductor in its own right. Its supported review gates run at its own top level, in its own context, and only its fixer batch uses a clean-context Codex subagent. Conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it. This is not a `spawn_agent` worker from Step 3/Step 7, and it is not routed through the CI-parity result-file dispatch protocol.
+- Codex's delegation-availability hard stop still applies. If the current runtime lacks `spawn_agent`, `wait_agent`, or `close_agent`, do not inline the gauntlet or its fixer in the main session; hard-stop with the delegation-unavailable message above and hand back.
+- If `review-gauntlet` itself hands back a non-clean terminal state (`success_with_quarantine`, loop cap, or non-convergence/design-conflict halt), conduct surfaces that as its own handback: `status = "awaiting_user"` with blocker text from the gauntlet terminal report. A non-clean gauntlet outcome is never silently folded into `complete`.
+
+### Commit ownership at the terminal seam
+
+`review-gauntlet` runs strictly after the final phase's boundary commit, which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as one or more commits on the working branch over the course of its loop — never a follow-up PR.
+
+- conduct treats those commits exactly as any other follow-up commits landed during handback: the next `--resume` preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
+- conduct does not rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does not treat the gauntlet's commits as rogue. The rogue-commit check only fires on HEAD movement observed during a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window.
 
 ## Fallbacks
 

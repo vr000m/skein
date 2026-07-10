@@ -40,6 +40,7 @@ MANAGED_SKILLS = [
     "dev-plan",
     "fan-out",
     "plan-view",
+    "review-gauntlet",
     "review-plan",
     "rfc-finder",
     "spec-compliance",

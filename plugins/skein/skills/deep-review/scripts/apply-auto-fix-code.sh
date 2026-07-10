@@ -301,6 +301,20 @@ fi
 while IFS= read -r finding; do
 	[[ -n "$finding" ]] || continue
 	kind="$(printf '%s' "$finding" | jq -r '.auto_fix.kind')"
+	# Reject a malformed auto_fix envelope whose before/after are not BOTH
+	# strings — matching the auditor's exact type check
+	# (audit-auto-fix-eligibility.sh rejects any non-string before/after as
+	# "malformed"), so this defence-in-depth re-validation is never laxer than
+	# the eligibility gate that runs before it. A legitimate deletion is an
+	# empty STRING `after` (type "string"), which passes; a null / absent /
+	# non-string `after` is malformed and dropped here. This also closes the
+	# original bug where `jq -r` rendered a JSON null `after` as the literal
+	# text "null" and wrote it into the source instead of rejecting it.
+	af_types="$(printf '%s' "$finding" | jq -r '(.auto_fix.before | type) + "/" + (.auto_fix.after | type)')"
+	if [[ "$af_types" != "string/string" ]]; then
+		af_manifest_record "$kind" "$(printf '%s' "$finding" | jq -r '.file // ""')" "$(printf '%s' "$finding" | jq -r '(.line // "") | tostring')" "rejected_malformed" "" ""
+		continue
+	fi
 	before="$(printf '%s' "$finding" | jq -r '.auto_fix.before')"
 	after="$(printf '%s' "$finding" | jq -r '.auto_fix.after')"
 	file="$(printf '%s' "$finding" | jq -r '.file // ""')"

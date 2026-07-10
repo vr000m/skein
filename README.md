@@ -17,6 +17,7 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
 | plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; renders Mermaid fences as live diagrams via the Mermaid CDN runtime; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
+| review-gauntlet | Yes | Yes (partial) | Chain the review gates (code-review, adversarial review, deep-review, security-review) into one convergence loop, with fixes applied by an isolated clean-context fixer subagent; opt-in per dev plan via `**Review Gates:** none \| quick \| full`, auto-chained from `conduct` and `fan-out`. On Codex, `security-review` is `deferred` (no primitive exists) and `deep-review` is gated pending nested-spawn confirmation — Codex `full` mode reports these slots explicitly rather than claiming they ran |
 
 Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`). Judgment lenses ("high-reasoning" above) vs. mechanical/factual work follow the two-tier model/effort policy in [AGENTS.md](AGENTS.md#modeleffort-policy-target-policy-not-yet-fully-enforced).
 
@@ -50,7 +51,7 @@ If you are migrating from the older flat layout (skills installed directly under
 
 skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-The first tagged release will be **v0.1.0**, cut from `main` immediately after the public-GitHub install switch merges. Until then, all install instructions above resolve against `main`. Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases).
+Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.3.0**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
 
 ## Setup (for contributors)
 

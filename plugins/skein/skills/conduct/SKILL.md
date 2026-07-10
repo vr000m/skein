@@ -137,6 +137,7 @@ From the phase block, extract:
 - `**Test files:**` — comma-separated paths, globs allowed.
 - `` **Test command:** `<cmd>` `` — parsed with `^\*\*Test command:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
 - `` **Validation cmd:** `<cmd>` `` — optional. Runs after tests pass, before the boundary commit. Same shell-trust boundary as `Test command:`. Failure triggers handback (status `awaiting_user`), NOT the fix loop — validation typically exercises live-data or external-service behaviour an implementer cannot auto-repair. See Step 5b below.
+- `**Goal:**` — optional. A 1–2 line design-intent/invariant statement for the phase, sitting in the phase contract block alongside the slots above (above the review marker; editing it invalidates the marker like any other contract edit). Separator may be `:`, `—`, or `–`, matching the phase-heading tolerance. Captured verbatim (including embedded newlines for a 2-line goal) as `{{PHASE_GOAL}}`'s source text. Absent slot → `{{PHASE_GOAL}}` substitutes to the empty string everywhere it is used (Step 3).
 
 Any slot may be absent; see Fallbacks below. If an entire run's unfinished phases declare zero slots, the conductor emits a one-shot warning on the first handback (degraded-mode notice: "fill slots in the plan to enable parallel spawn and real test runs").
 
@@ -158,12 +159,15 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 | `{{PHASE_INDEX}}` | phase's 0-based position | substitute bare int (no quotes) |
 | `{{PHASE_LABEL}}` | verbatim heading label | substitute JSON-escaped string |
 | `{{PHASE_TITLE}}` | verbatim heading title | string (appears in prose, not JSON) |
+| `{{PHASE_GOAL}}` | formatted design-intent directive built from the phase's `**Goal:**` slot, else empty string | string (appears in prose, not JSON) |
 | `{{ITERATION}}` | current fix-loop iteration | substitute bare int (no quotes) |
 | `{{BASE_SHA}}` | `git rev-parse HEAD` at phase start | string |
 | `{{PRIOR_DIFF}}` | staged diff from previous attempt, else empty | string |
 | `{{TEST_FAILURES}}` | test-runner or pre-commit hook output, else empty | string |
 
-Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
+`{{PHASE_GOAL}}` is substituted the same way on every implementer/test-writer spawn: first attempt (iteration 0) AND every fix-loop respawn (Step 6), since it is re-read from the same phase contract block on each respawn — it is not carried over from a prior iteration's prompt. When the phase's `**Goal:**` slot is present, substitute the directive text (see `implementer-prompt.md` / `test-writer-prompt.md` for the exact wording each template expects); when absent, substitute the empty string so the sentence the placeholder is appended to renders byte-identical to a plan with no `**Goal:**` slot.
+
+Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, phase goal, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
 Spawn via the `Agent` tool, `subagent_type: general-purpose`, with the filled template as the full prompt. Do not thread parent conversation context. In parallel mode, issue both Agent tool calls in a single message. Both the implementer and the test-writer are mechanical work (executing an already-reviewed plan, not judgment) → `model: sonnet, effort: medium`.
 
@@ -243,7 +247,7 @@ After tests pass (or were skipped with warning):
 2. **No-op branch.** If `git diff --cached` is empty (the phase resolved to a diagnostic-only or accepted-behaviour outcome with no code change), skip the commit: record the phase entry with `commit_sha` = current `HEAD` (unchanged), add `no_op: true`, emit warning `no staged changes; skipping commit`, and proceed to Step 9. Do NOT use `--allow-empty`.
 3. **Impl commit.** Run `git commit -m "conduct: phase <label> — <phase title>"`. Commit author = current git user (no impersonation).
 4. **Hook retry (one-shot formatter retry).** If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). If `git diff --name-only` is non-empty at this point, run `git add -u` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings. If the retry also fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration via `_check_iteration_bound`. Do NOT use `--no-verify`.
-5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback (for example after `/deep-review`), the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check — it does NOT rewrite the previous phase's `commit_sha`.
+5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback — including the operator manually running `/deep-review` on a plan that has no `**Review Gates:**` opt-in, or the automated review-gauntlet auto-chain (see "Review Gauntlet Auto-Chain" below) landing its own fix commit on a plan that opts in — the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check. It does NOT rewrite the previous phase's `commit_sha`.
 
 **Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
@@ -349,6 +353,33 @@ Between the conductor's lock release at `awaiting_ci_parity` and the orchestrato
 - `/conduct` invoked with `--resume <plan>` against `awaiting_ci_parity` state follows the five-sub-case flow (idempotent).
 - `/conduct` invoked with `<plan>` (no `--resume`) against `awaiting_ci_parity` state hard-fails preflight with `state shows awaiting_ci_parity; use --resume to consume the ci-parity result or --skip-ci-parity to abandon the gate`.
 - A separate `/conduct` invocation with `--resume <other-plan>` and a different `plan_id` is unaffected (different state file, different lock).
+
+## Review Gauntlet Auto-Chain
+
+After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | quick | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
+
+### Activation
+
+- **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
+- **`quick` → invoke `review-gauntlet --plan <this plan>` scoped to the code-review gate only**, single pass, no convergence loop.
+- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm.
+
+### Trigger point
+
+- This is a **single-exit** hook, same shape as the CI-parity gate: it fires only on the healthy path where `conduct()` would otherwise return `status=complete` — after the CI-parity gate has passed, been skipped (`--skip-ci-parity`), or was never activated. It never fires on an intermediate `--resume`.
+- It does NOT fire on any hard-stop path (Step 9b) or on `ci_failed`. If the CI-parity gate reports `failed`, `status` stays `ci_failed` and conduct hands back per the normal rules — `review-gauntlet` is not consulted.
+
+### Dispatch
+
+- `review-gauntlet` is a conductor in its own right: its multi-spawn gates (`/code-review`, `skein:deep-review`) run at **its own top level**, in its own context, because they fan out their own verifier/lens subagents and forbid nesting (`review-gauntlet`'s Delegation Pattern). conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it — this is **not** an `Agent`-tool subagent spawn like the implementer/test-writer/reviewer dispatches in Step 3/Step 7, and it is not routed through the CI-parity gate's result-file dispatch protocol either. conduct simply calls the skill and awaits its terminal report before finalizing `status = complete`.
+- If `review-gauntlet` itself hands back a non-clean terminal state (`success_with_quarantine`, hits its loop cap, or bails on non-convergence/design-conflict halt), conduct surfaces that as its own handback: `status = "awaiting_user"` with the blocker text taken from the gauntlet's terminal report, following the same Step 9b hard-stop shape as any other blocker. A non-clean gauntlet outcome is never silently folded into `complete`.
+
+### Commit ownership at the terminal seam
+
+`review-gauntlet` runs strictly **after** the final phase's boundary commit (Step 8), which has already frozen that phase's `commit_sha` as immutable. If the gauntlet applies fixes, it lands them as one or more commits on the working branch over the course of its loop — never a follow-up PR.
+
+- conduct treats those commits exactly as it already treats any other follow-up commits landed during handback (Step 8 item 5, Preflight item 4): the next `--resume`'s preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
+- conduct does **not** rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does **not** treat the gauntlet's commits as rogue. The rogue-commit check (Step 8 item 1) only fires on HEAD movement observed *during* a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window, so that check does not — and must not — flag them.
 
 ## Fallbacks
 

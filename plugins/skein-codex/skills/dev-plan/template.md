@@ -13,6 +13,7 @@ Use this template when creating new development plans.
 **Branch**: [branch-name]
 **Created**: YYYY-MM-DD
 **Completed**: YYYY-MM-DD (fill when done)
+**Review Gates**: none | quick | full (optional, default `none` - above-marker header field; `/conduct`/`/fan-out` read it to decide whether to auto-chain `review-gauntlet`. Changing it after `/review-plan` invalidates the marker hash, same as any other header-contract edit.)
 
 ## Objective
 
@@ -51,6 +52,7 @@ Each phase SHOULD include a short contract block directly under the heading. Fil
 - `**Test files:**` — comma-separated paths or globs the test-writer will create/modify
 - `**Test command:**` — the single canonical test invocation for this phase, in backticks (e.g., ``**Test command:** `pytest tests/test_foo.py -v` ``)
 - `**Validation cmd:**` *(optional)* — a post-test check that runs after tests pass, before the boundary commit, in backticks (e.g., ``**Validation cmd:** `python scripts/reprocess_and_diff.py --ids X,Y` ``). Failure hands back to the user rather than triggering a fix loop. Use for reprocess-and-diff against a live DB, staging API probes, or other behaviour an implementer cannot auto-repair.
+- `**Goal:**` *(optional)* — a 1-2 line statement of the phase's design intent, invariant, or quality bar, in plain prose (not backticked), e.g. `**Goal:** Marker hash must cover contract bytes only; workspace edits never invalidate it.` Sits above the review marker as part of the immutable contract — adding or editing it after `/review-plan` invalidates the marker hash and forces re-review, same as any other contract-slot edit. Absent `**Goal:**` is a no-op — the phase behaves exactly as today. `/conduct` injects it into the implementer and test-writer prompts as `{{PHASE_GOAL}}`, and `review-gauntlet`'s fixer reads it as the authoritative design intent for its quarantine-vs-fix decision.
 
 If `Impl files:` and `Test files:` overlap, `/conduct` falls back to sequential spawning for that phase. If any slot is absent, `/conduct` falls back to safe defaults (sequential spawn, resolve test command from repo defaults or `--test-cmd`). If *every* unfinished phase is missing every slot, `/conduct` emits a degraded-mode warning on the first handback.
 
@@ -62,6 +64,7 @@ Phase task descriptions are plain bullets, not checkboxes — completion lives i
 **Test files:** `tests/test_foo.ts`
 **Test command:** `npm test -- tests/test_foo.ts`
 **Validation cmd:** `npm run smoke -- --env staging`
+**Goal:** [Optional 1-2 line design intent / invariant this phase must hold]
 
 - Task 1
 - Task 2

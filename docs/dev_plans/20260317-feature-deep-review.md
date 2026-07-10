@@ -17,6 +17,8 @@ gstack (github.com/garrytan/gstack) demonstrates the value of cognitive mode sep
 
 **Key design principle:** `/deep-review` complements the built-in `/review` and `/security-review` — it does not wrap or replace them. Users can run either or both.
 
+**Related work:** `docs/dev_plans/20260707-feature-review-gauntlet-skill.md` chains this skill's 5-lens review, alongside `/code-review`, an adversarial Codex review, and `/security-review`, into one convergence loop. `skein:deep-review` runs at the gauntlet conductor's own top level (its Delegation Pattern forbids being invoked as a nested subagent), and the gauntlet's fixer reuses this skill's bundled auto-fix pipeline (`apply-auto-fix-code.sh`, `reconcile-findings.sh`) rather than forking a new allowlist.
+
 ## Requirements
 
 1. Spawn parallel subagents (clean context, no parent conversation history) for thorough review

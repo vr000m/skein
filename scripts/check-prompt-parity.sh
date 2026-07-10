@@ -97,6 +97,14 @@ done
 # MANAGED_SKILLS, diff each *-prompt.md file between
 # `plugins/skein/skills/<skill>/` and `plugins/skein-codex/skills/<skill>/`.
 #
+# Note (20260707-feature-conduct-phase-goal-field, Phase 3): the new
+# `{{PHASE_GOAL}}` placeholder added to conduct's implementer-prompt.md and
+# test-writer-prompt.md needs no dedicated assertion here — it is already
+# within scope of the wholesale per-skill diff below. Until the Codex mirror
+# phases (C1/C2) land, expect drift on conduct/implementer-prompt.md and
+# conduct/test-writer-prompt.md; set CONDUCT_LAGGING_MIRROR_OK to acknowledge
+# it during that lagging-mirror window.
+#
 # Lagging-mirror override: ``CONDUCT_LAGGING_MIRROR_OK`` is a comma- or
 # whitespace-separated list of ``<skill>/<prompt-file>`` paths whose drift is
 # known-in-flight (a mirror commit is expected to follow). When set:
@@ -165,9 +173,9 @@ normalize_fanout_prompt() {
 	sed \
 		-e 's/spawned Claude agent/spawned Codex agent/g' \
 		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
-		"$1" \
-		| perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' \
-		| sed \
+		"$1" |
+		perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' |
+		sed \
 			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
 			-e '/^\*\*Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
 			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
