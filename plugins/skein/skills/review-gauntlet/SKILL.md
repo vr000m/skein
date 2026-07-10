@@ -1,7 +1,7 @@
 ---
 name: review-gauntlet
 description: Chains the review gates (code-review, adversarial Codex review, deep-review, security-review) into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
-argument-hint: "[--plan <path>] [<branch> | --pr <N>]"
+argument-hint: "[--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]"
 ---
 
 # Review Gauntlet: Chained Convergence Loop Across Review Gates
@@ -18,13 +18,51 @@ This skill is a **conductor**, in the mold of `skein:conduct`, but with a delibe
 
 ## Invocation Modes
 
-Three modes, all opt-in — nothing here ever fires without an explicit trigger, so a 10-loop run is never a surprise spend.
+Three modes, all opt-in — nothing here ever fires without an explicit trigger, so a 10-loop run is never a surprise spend. `--resume` and `--fresh` modify only standalone/full loop startup; they do not make an absent `Review Gates` marker run.
 
-1. **Standalone**: `review-gauntlet [--plan <path>] [<branch> | --pr <N>]`. Resolves the diff target the same way `deep-review` does: an explicit branch/commit-range argument, or `--pr <N>` via `gh pr diff`, or (absent both) the current branch against its merge base. `--plan <path>` supplies the dev-plan used as Guardrail 1's design-intent source; without it, fixer dispatches carry no plan context and Guardrail 1 degrades to "no design-intent source available" (still enforced — a fixer with no plan context cannot claim a finding matches design intent, so ambiguous conflicts default to quarantine).
+1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolves the diff target the same way `deep-review` does: an explicit branch/commit-range argument, or `--pr <N>` via `gh pr diff`, or (absent both) the current branch against its merge base. `--plan <path>` supplies the dev-plan used as Guardrail 1's design-intent source; without it, fixer dispatches carry no plan context and Guardrail 1 degrades to "no design-intent source available" (still enforced — a fixer with no plan context cannot claim a finding matches design intent, so ambiguous conflicts default to quarantine). `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger.
 2. **dev-plan marker**: a plan's header carries `**Review Gates:** none | quick | full` (default `none`, an inline field above the `/review-plan` marker — plans have no YAML frontmatter). `conduct` and `fan-out` read this field and invoke `review-gauntlet --plan <plan-path>` only when it is `quick` or `full`.
 3. **conduct/fan-out auto-chain**: mechanical readers of mode 2; they add no new trigger surface, they just call this skill when the marker opts in.
 
 **`quick` runs gate 1 only, once, with no convergence loop.** It runs `/code-review` at medium effort, applies trivial/allowlisted fixes inline via the bundled applier and substantive fixes as direct edits, and returns. It never enters the up-to-10-loop cycle below. **`full` and standalone invocation are the only paths that can reach the convergence loop and its 10-loop cap.**
+
+### Target and Resume Ledger
+
+Before entering a standalone/full loop, derive one canonical target string and reuse it for every ledger command in the run:
+
+- `pr:<N>` for an invocation using `--pr <N>`
+- `branch:<name-or-range>` for an explicit branch/commit-range argument
+- `branch:<current-branch>` for the implicit current-branch-vs-merge-base mode
+
+`--plan <path>` is not part of the target string; it supplies design intent only. The scheme guarantees repeated invocations through the same surface resolve to the same ledger (`--pr 42` resumes `pr:42`), but it deliberately does not unify `--pr 42` with an equivalent branch-name invocation of that PR's head.
+
+`gc_ledger_path` is a shell function from this skill's authored helpers, so source it before using it in shell snippets:
+
+```bash
+. "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/gauntlet-common.sh
+canonical_target="<pr:N-or-branch:name>"
+ledger_path="$(gc_ledger_path "$canonical_target" claude)"
+```
+
+For a non-`--resume` loop, initialize once before round 1:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"
+```
+
+If that exits because the ledger already exists, stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --init --force --ledger "$ledger_path" --target "$canonical_target"
+```
+
+For `--resume`, never initialize. Run the read-only peek against the same target:
+
+```bash
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
+```
+
+If the ledger is missing, stop with a clear error instead of silently starting fresh.
 
 ## Delegation Pattern (Option A — split delegation)
 
@@ -65,6 +103,26 @@ After the fixer batch returns (see [Guardrails](#guardrails) below for what it f
 
 Report the terminal status, the gates passed, the findings fixed per round, and (for `success_with_quarantine` or `non-converge`) the full quarantine queue / non-convergence rationale.
 
+### Resume Decision Table
+
+`--resume` branches on `convergence-ledger.sh --last-decision`'s exit code first, then uses the printed token only inside the non-terminal branch:
+
+| `--last-decision` result | Resume action |
+|--------------------------|---------------|
+| exit 0 + `continue` | Start a fresh gate-1 full pass. |
+| exit 0 + `restart` | Start a fresh gate-1 full pass; the prior round landed a structural fix. |
+| exit 0 + `confirm` | Run the confirm-pass gate sequence before returning to the full loop. |
+| exit 0 + `no-rounds` | Treat the existing empty ledger as a fresh run and start at gate 1 without reinitializing it. |
+| exit 4 | Missing ledger: stop and tell the operator there is nothing to resume for the resolved target. |
+| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `cap`, or `non-converge`): refuse to resume and report the terminal token. |
+| any other non-zero exit | Stop and surface the script error; do not run gates against an ambiguous ledger. |
+
+### What Resume Cannot Restore
+
+- **Mid-round work**: findings collected earlier in an interrupted round, before the round append point, are not persisted. Resume restarts at a round boundary, never mid-gate or mid-fixer-dispatch.
+- **Cross-surface target unification**: `--pr <N>` and an equivalent branch-name invocation are separate ledgers by design.
+- **Worktree teardown**: a `fan-out` linked-worktree run writes under that worktree's repo root. If the worktree is deleted, its ledger is deleted too and cannot be resumed from the main checkout.
+
 ## Guardrails
 
 ### Guardrail 1 — design-conflict findings are never auto-fixed
@@ -102,6 +160,15 @@ The **only** quarantine trigger is a design/architecture conflict (Guardrail 1) 
   ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
   **Never pipe `route`'s raw stdout directly into the applier** — the applier reads a top-level `.findings[]` (see `apply-auto-fix-code.sh`), but route's raw output has no top-level `.findings` key (it's nested under `.trivial_envelope.findings`); doing so silently applies zero fixes every round (the applier reports "no would_apply findings" and exits 0), and every allowlisted trivial fix reappears next gate pass, stalling convergence exactly like the fixer-before-applier ordering bug above.
+
+- **Convergence decision**:
+  ```
+  . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/gauntlet-common.sh
+  canonical_target="<pr:N-or-branch:name>"
+  ledger_path="$(gc_ledger_path "$canonical_target" claude)"
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
+  ```
+  `gc_ledger_path` is a shell function, not an executable — every call site must source `gauntlet-common.sh` first, as shown above and in [Target and Resume Ledger](#target-and-resume-ledger).
 
 These bundled scripts and the convergence-decision helper are built in a later phase of this skill's dev plan; this file only documents how the conductor calls them once they exist.
 
