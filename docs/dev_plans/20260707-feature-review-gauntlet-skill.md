@@ -1,11 +1,12 @@
 # Task: review-gauntlet — chained review-gate conductor with convergence loop
 
-**Status**: In Progress
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude + Codex (dual-plugin)
 **Priority**: High
 **Branch**: feature/review-gauntlet-skill
 **Created**: 2026-07-07
+**Completed**: 2026-07-10
 
 ## Objective
 
@@ -388,12 +389,16 @@ The `review-gauntlet` skill is implemented in both plugins (`plugins/skein`, `pl
 - Two review rounds (Codex adversarial + Claude `/code-review`) against the completed Stage 4 branch surfaced and fixed 5 real defects (`92555bb`, `13d9055`, `318aef2`, `915cceb`, `135c790`), plus 2 post-merge fixes to the stall-streak epoch scoping (`74e4d9a`/`fd7bed8`, mirrored to `skein-codex`) and a skill-identity pin parity test (`0d5f4e1`).
 - Test suites green as of this writing: `gauntlet-tests` (15/15 core + 9/9 Codex capability-gap), `parity-tests` (14/14), `test-run-gate.sh` (17/17), `test-convergence-ledger.sh` (37/37), `test-applier-bundle-parity.sh` (48/48), `test-path-traversal.sh` (12/12).
 - Codex full mode honestly reports permanent capability gaps (gates 3/4) rather than faking parity — clean Codex passes can succeed with only documented gaps present, never silently degraded coverage.
+- A `/deep-review --continue` (fell back to `--full`, no prior state) 5-lens pass against the complete branch found 1 Important + 8 Minor findings. Fixed: the false "single commit" claim in `conduct`/`fan-out` (both mirrors, plus two older sibling plans repeating it) corrected to "one or more commits"; Guardrail 1 moved from convention to construction (`run-gate.sh route` now strips any cached `auto_fix` from architecture/design-category findings before the auditor sees them, forcing them to the fixer path regardless of proposed kind — mirrored byte-identically per `test-applier-bundle-parity.sh`'s gauntlet lib check); two missing shape tests added (gate-order, fixer-dispatch co-location); this plan's and the sibling goal-field plan's `Status` corrected from a premature `Complete`. One suggested security hardening (containment-guard the auditor's `resolve_path`) was reverted after it broke an intentionally-tested off-repo-fixture design in `test-renderer.sh` — recorded as a dated `won't-fix` in `AGENTS.md` instead. Commits: `97bf2d4`, `01581a3`, `d3e843b`, `155364d`, plus Codex-authored `88d8061`/`37fa0e1`.
+- Asking Codex to self-review its own mirror against the Claude-side fixes (rather than Claude hand-verifying prose it doesn't own) caught a second stale "own fix commit" reference in `conduct/SKILL.md:248` that the original deep-review pass's file:line citations hadn't covered — the mirror-owner is better positioned to sweep its own file for other instances of a fixed pattern than a reviewer working from specific citations.
 
 ### Learnings
 
 - **Bundle-parity forced a layout correction.** review-gauntlet was the first skill with both authored operative scripts and a bundled shared pipeline; the `BUNDLE_SKILLS`/`rsync --delete` invariant requires `scripts/` to hold *only* the bundled pipeline, so `run-gate.sh`, `convergence-ledger.sh`, and `gauntlet-common.sh` had to move to a flat `lib/` — a constraint not visible until Phase 2 collided with the bundling machinery built in earlier plans.
 - **Separator consistency across independently-written code is easy to miss.** `318aef2`'s collision-warning path joined signatures on `"|"` while the re-attach map it warns about joins on BEL (``); a `315cceb`-caught re-review found a literal `|` in a real value could make the warning diverge from the map's actual collapse. Both must use the same separator even when written in the same commit.
 - **Non-convergence detection must be epoch-aware.** A structural restart changes what the gate corpus even is (the diff being reviewed changes), so a running-minimum stall detector anchored across a restart boundary produces false non-convergence signals. This was caught post-merge, not during the original review — a reminder that convergence/termination logic deserves an explicit "what happens across a restart" test case up front.
+- **"Never auto-fixed" needs a structural gate, not just a documented convention.** Guardrail 1 read correctly in prose and every gate happened to behave as documented, but nothing in `route`'s code actually prevented an architecture/design-category finding from carrying an allowlisted trivial `auto_fix` kind straight into the plan-blind applier — the invariant held by luck of what the gates emit, not by construction. A `/deep-review` logic lens caught it; the fix is a five-line jq filter. Worth asking of any "X is never auto-applied" guardrail: what code actually enforces this, not just what's documented to enforce it.
+- **A security suggestion that breaks a tested design isn't automatically wrong to skip.** The auditor's lax `resolve_path` looked like a real hardening opportunity until applying it broke `test-renderer.sh`'s intentional off-repo-fixture support — and the lens's own severity assessment ("Minor... not blocking, write path already contained") gave permission to weigh the trade-off rather than blindly applying every suggestion. Recording the disposition as a dated `won't-fix` in `AGENTS.md` keeps the reasoning attached to the code instead of just skipped silently.
 
 ### Follow-up Work
 
