@@ -305,6 +305,263 @@ L="$(new_ledger)"
 tok="$(round "$L" 0 0 0 full 2 --unresolved 1)"
 assert_eq "$tok" "continue" "full pass count=0, quarantine>0, --unresolved 1 -> continue, NOT success_with_quarantine (errored gate outranks quarantine terminal)"
 
+# --- 13. --target: first-use records, mismatch/match/legacy behavior ----
+
+L="$(new_ledger)"
+tok="$("$LEDGER_SCRIPT" --ledger "$L" --target "branch:foo" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0)"
+assert_eq "$tok" "success" "--target first-use: records target on a fresh ledger, round still resolves normally"
+recorded_target="$(jq -r '.target' "$L")"
+assert_eq "$recorded_target" "branch:foo" "--target first-use: ledger persists the recorded target"
+
+set +e
+"$LEDGER_SCRIPT" --ledger "$L" --target "branch:bar" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+mismatch_exit=$?
+set -e
+rm -f "/tmp/gauntlet-ledger-test-out.$$"
+assert_eq "$mismatch_exit" "3" "--target mismatch on append exits 3 (distinct from usage-error exit 2)"
+
+L2="$(new_ledger)"
+"$LEDGER_SCRIPT" --ledger "$L2" --target "branch:foo" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+tok="$("$LEDGER_SCRIPT" --ledger "$L2" --target "branch:foo" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0)"
+assert_eq "$tok" "success" "--target matching value on a subsequent append succeeds"
+
+L3="$(new_ledger)"
+"$LEDGER_SCRIPT" --ledger "$L3" --target "branch:foo" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+tok="$("$LEDGER_SCRIPT" --ledger "$L3" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0)"
+assert_eq "$tok" "success" "omitted --target on a subsequent append skips the mismatch check entirely"
+
+# Legacy ledger: no "target" key at all (pre-upgrade shape) — first post-upgrade
+# --target call must not treat "field absent" as a mismatch.
+L4="$(new_ledger)"
+printf '{"loop_counter": 0, "rounds": []}\n' >"$L4"
+tok="$("$LEDGER_SCRIPT" --ledger "$L4" --target "branch:legacy" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0)"
+assert_eq "$tok" "success" "legacy (pre-target-field) ledger accepts any --target on first post-upgrade use"
+
+# --target mismatch check on the --last-decision peek path too, not just append.
+L5="$(new_ledger)"
+"$LEDGER_SCRIPT" --ledger "$L5" --target "branch:foo" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+set +e
+"$LEDGER_SCRIPT" --last-decision --ledger "$L5" --target "branch:bar" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+peek_mismatch_exit=$?
+set -e
+rm -f "/tmp/gauntlet-ledger-test-out.$$"
+assert_eq "$peek_mismatch_exit" "3" "--target mismatch on --last-decision peek path also exits 3"
+
+# --- 14. --last-decision: all seven tokens + no-rounds + not-found ------
+
+# Non-terminal tokens via --last-decision (exit 0), matching the append-path
+# token from section 1-5 above but read back via the read-only peek. The two
+# terminal tokens (success/success_with_quarantine) are covered separately
+# below alongside the other two terminal tokens (cap/non-converge).
+for spec in "0 0 0 confirm 0:continue" "5 0 3 full 0:confirm" "5 1 0 full 0:restart"; do
+	ledger="$(new_ledger)"
+	args="${spec%%:*}"
+	expected="${spec##*:}"
+	# shellcheck disable=SC2086
+	round "$ledger" $args >/dev/null
+	peek_tok=""
+	peek_exit=0
+	peek_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$ledger")" || peek_exit=$?
+	assert_eq "$peek_tok" "$expected" "--last-decision peek matches append-path token for '$args' -> $expected"
+	assert_eq "$peek_exit" "0" "--last-decision peek for non-terminal token '$expected' exits 0"
+done
+
+# All four terminal tokens exit 5, not just success.
+assert_terminal_peek() {
+	local ledger="$1" expected="$2" label="$3"
+	local tok exit_code
+	exit_code=0
+	tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$ledger")" || exit_code=$?
+	assert_eq "$tok" "$expected" "$label: token"
+	assert_eq "$exit_code" "5" "$label: exits 5 (terminal)"
+}
+
+L="$(new_ledger)"
+round "$L" 0 0 0 full 0 >/dev/null
+assert_terminal_peek "$L" "success" "--last-decision terminal: success"
+
+L="$(new_ledger)"
+round "$L" 0 0 0 full 2 >/dev/null
+assert_terminal_peek "$L" "success_with_quarantine" "--last-decision terminal: success_with_quarantine"
+
+L="$(new_ledger)"
+for c in 3 3 3; do round "$L" "$c" 0 1 confirm 0 >/dev/null; done
+assert_terminal_peek "$L" "non-converge" "--last-decision terminal: non-converge"
+
+L="$(new_ledger)"
+for c in 10 9 8 7 6 5 4 3 2 1; do round "$L" "$c" 1 0 full 0 >/dev/null; done
+assert_terminal_peek "$L" "cap" "--last-decision terminal: cap"
+
+# Zero-round ledger -> no-rounds, exit 0 (distinct from the not-found case).
+L="$(new_ledger)"
+printf '{"loop_counter": 0, "rounds": []}\n' >"$L"
+no_rounds_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L")"
+no_rounds_exit=0
+"$LEDGER_SCRIPT" --last-decision --ledger "$L" >/dev/null 2>&1 || no_rounds_exit=$?
+assert_eq "$no_rounds_tok" "no-rounds" "--last-decision on a zero-round ledger prints no-rounds"
+assert_eq "$no_rounds_exit" "0" "--last-decision on a zero-round ledger exits 0, not an error"
+
+# Nonexistent ledger file -> distinct not-found exit code (4), different from no-rounds.
+NONEXISTENT="$(mktemp -u)"
+set +e
+"$LEDGER_SCRIPT" --last-decision --ledger "$NONEXISTENT" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+not_found_exit=$?
+set -e
+rm -f "/tmp/gauntlet-ledger-test-out.$$"
+assert_eq "$not_found_exit" "4" "--last-decision on a genuinely nonexistent ledger file exits 4 (distinct from no-rounds/exit 0)"
+
+# --last-decision combined with a round-input flag is a usage error.
+L="$(new_ledger)"
+round "$L" 0 0 0 full 0 >/dev/null
+assert_nonzero_exit "--last-decision combined with --count is a usage error" \
+	"$LEDGER_SCRIPT" --last-decision --ledger "$L" --count 1
+
+# --last-decision must not mutate loop_counter/rounds (byte-identical file before/after).
+L="$(new_ledger)"
+round "$L" 5 0 1 confirm 0 >/dev/null
+before_hash="$(if command -v shasum >/dev/null 2>&1; then shasum "$L" | awk '{print $1}'; else sha1sum "$L" | awk '{print $1}'; fi)"
+"$LEDGER_SCRIPT" --last-decision --ledger "$L" >/dev/null
+after_hash="$(if command -v shasum >/dev/null 2>&1; then shasum "$L" | awk '{print $1}'; else sha1sum "$L" | awk '{print $1}'; fi)"
+assert_eq "$after_hash" "$before_hash" "--last-decision peek does not mutate the ledger file (byte-identical before/after)"
+
+# cap-boundary off-by-one: loop_counter == cap exactly reads back as cap, verbatim.
+L="$(new_ledger)"
+for c in 10 9 8 7 6 5 4 3 2 1; do round "$L" "$c" 1 0 full 0 >/dev/null; done
+lc="$(jq -r '.loop_counter' "$L")"
+assert_eq "$lc" "10" "cap-boundary: loop_counter reads back as exactly 10 (the default cap) after 10 structural rounds"
+assert_terminal_peek "$L" "cap" "cap-boundary: --last-decision at loop_counter==cap peeks as cap using the stored counter verbatim, no off-by-one"
+
+# --- 15. --init / --force ------------------------------------------------
+
+INIT_L="$(mktemp -u)"
+TMP_LEDGERS+=("$INIT_L")
+"$LEDGER_SCRIPT" --init --ledger "$INIT_L" --target "branch:init-fresh"
+if [[ -e "$INIT_L" ]]; then
+	pass "--init on an absent path creates a fresh ledger file"
+else
+	fail "--init on an absent path creates a fresh ledger file (file not created)"
+fi
+init_target="$(jq -r '.target' "$INIT_L")"
+init_counter="$(jq -r '.loop_counter' "$INIT_L")"
+init_rounds="$(jq -r '.rounds | length' "$INIT_L")"
+assert_eq "$init_target" "branch:init-fresh" "--init records the given --target"
+assert_eq "$init_counter" "0" "--init creates loop_counter == 0"
+assert_eq "$init_rounds" "0" "--init creates an empty rounds array"
+
+set +e
+"$LEDGER_SCRIPT" --init --ledger "$INIT_L" --target "branch:init-fresh" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+reinit_exit=$?
+set -e
+rm -f "/tmp/gauntlet-ledger-test-out.$$"
+assert_eq "$reinit_exit" "6" "--init on an existing path without --force refuses with exit 6"
+
+# Populate the existing ledger with a round + distinct target, then --force
+# reinitialize and confirm the old state is gone.
+"$LEDGER_SCRIPT" --ledger "$INIT_L" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+"$LEDGER_SCRIPT" --init --force --ledger "$INIT_L" --target "branch:init-forced"
+forced_target="$(jq -r '.target' "$INIT_L")"
+forced_counter="$(jq -r '.loop_counter' "$INIT_L")"
+forced_rounds="$(jq -r '.rounds | length' "$INIT_L")"
+assert_eq "$forced_target" "branch:init-forced" "--init --force truncates and reinitializes with the new target"
+assert_eq "$forced_counter" "0" "--init --force resets loop_counter back to 0"
+assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old rounds gone)"
+
+# --- 16. gc_ledger_path: sourced directly from gauntlet-common.sh (both mirrors) ---
+# This needs its own sourcing harness since the script is normally invoked as
+# a subprocess by convergence-ledger.sh, not sourced by tests.
+
+CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
+CODEX_COMMON="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh"
+
+assert_gc_ledger_path_for() {
+	local common_file="$1" mirror_label="$2"
+	if [[ ! -f "$common_file" ]]; then
+		fail "$mirror_label: gauntlet-common.sh missing: $common_file"
+		return
+	fi
+	(
+		# shellcheck source=/dev/null
+		. "$common_file"
+
+		local slug_path
+		slug_path="$(gc_ledger_path "feature/foo-bar" claude)"
+		local slug_basename
+		slug_basename="$(basename "$slug_path")"
+		if [[ "$slug_basename" != *"/"* && "$slug_basename" == *"feature-foo-bar"* ]]; then
+			pass "$mirror_label: gc_ledger_path slugifies a branch name containing '/' to a '/'-free, filesystem-safe basename"
+		else
+			fail "$mirror_label: gc_ledger_path slugifies a branch name containing '/' to a '/'-free, filesystem-safe basename (got '$slug_basename')"
+		fi
+
+		local p1 p2
+		p1="$(gc_ledger_path "branch:determinism-check" claude)"
+		p2="$(gc_ledger_path "branch:determinism-check" claude)"
+		if [[ "$p1" == "$p2" ]]; then
+			pass "$mirror_label: gc_ledger_path is deterministic (same target+author -> same path)"
+		else
+			fail "$mirror_label: gc_ledger_path is deterministic (same target+author -> same path) (got '$p1' vs '$p2')"
+		fi
+
+		local pa pb
+		pa="$(gc_ledger_path "branch:target-a" claude)"
+		pb="$(gc_ledger_path "branch:target-b" claude)"
+		if [[ "$pa" != "$pb" ]]; then
+			pass "$mirror_label: gc_ledger_path distinct targets produce distinct paths (collision-safety)"
+		else
+			fail "$mirror_label: gc_ledger_path distinct targets produce distinct paths (collision-safety) (got '$pa' == '$pb')"
+		fi
+
+		local expected_root anchored_path
+		expected_root="$(git rev-parse --show-toplevel)/.gauntlet/"
+		anchored_path="$(gc_ledger_path "branch:anchor-check" claude)"
+		if [[ "$anchored_path" == "$expected_root"* ]]; then
+			pass "$mirror_label: gc_ledger_path is rooted at \$(git rev-parse --show-toplevel)/.gauntlet/"
+		else
+			fail "$mirror_label: gc_ledger_path is rooted at \$(git rev-parse --show-toplevel)/.gauntlet/ (got '$anchored_path', expected prefix '$expected_root')"
+		fi
+
+		local bogus_path
+		bogus_path="$(CLAUDE_PLUGIN_ROOT="/bogus/plugin/root/that/does/not/exist" SKILL_DIR="/bogus/skill/dir/that/does/not/exist" gc_ledger_path "branch:anchor-check" claude)"
+		if [[ "$bogus_path" == "$anchored_path" ]]; then
+			pass "$mirror_label: gc_ledger_path's emitted path is unaffected by a bogus CLAUDE_PLUGIN_ROOT/SKILL_DIR (anchored at repo root, not the plugin anchor)"
+		else
+			fail "$mirror_label: gc_ledger_path's emitted path is unaffected by a bogus CLAUDE_PLUGIN_ROOT/SKILL_DIR (got '$bogus_path', expected '$anchored_path')"
+		fi
+	)
+}
+
+assert_gc_ledger_path_for "$CLAUDE_COMMON" "gc_ledger_path (Claude mirror)"
+assert_gc_ledger_path_for "$CODEX_COMMON" "gc_ledger_path (Codex mirror)"
+
+# Cross-mirror: gc_ledger_path's function body (not the whole file) is identical.
+extract_fn_body() {
+	local file="$1"
+	sed -n '/^gc_ledger_path()[[:space:]]*{/,/^}/p' "$file"
+}
+claude_fn_body="$(extract_fn_body "$CLAUDE_COMMON")"
+codex_fn_body="$(extract_fn_body "$CODEX_COMMON")"
+if [[ -n "$claude_fn_body" && "$claude_fn_body" == "$codex_fn_body" ]]; then
+	pass "gc_ledger_path function body is byte-identical across both mirrors"
+else
+	fail "gc_ledger_path function body is byte-identical across both mirrors"
+fi
+
+# --- 17. Cross-mirror byte-identity: convergence-ledger.sh (whole file) ---
+# gauntlet-common.sh is deliberately NOT held to whole-file identity (it
+# legitimately diverges at the ${CLAUDE_PLUGIN_ROOT}/$SKILL_DIR anchor lines
+# in gc_bundled_scripts_dir) — only gc_ledger_path's function body is checked
+# above (section 16). convergence-ledger.sh itself has no such divergence and
+# must stay byte-identical across mirrors per Requirements.
+
+CODEX_LEDGER_SCRIPT="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh"
+if [[ ! -f "$CODEX_LEDGER_SCRIPT" ]]; then
+	fail "Codex mirror convergence-ledger.sh missing: $CODEX_LEDGER_SCRIPT"
+elif diff -q "$LEDGER_SCRIPT" "$CODEX_LEDGER_SCRIPT" >/dev/null 2>&1; then
+	pass "convergence-ledger.sh is byte-identical across the Claude and Codex mirrors"
+else
+	fail "convergence-ledger.sh is byte-identical across the Claude and Codex mirrors"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 
