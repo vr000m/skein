@@ -237,12 +237,24 @@ Context lifecycle:
 
 ## Final Results
 
-[Fill this section when the work is complete]
-
 ### Summary
+
+An optional `**Goal:**` field is now part of the dev-plan phase schema, documented in `SKILL.md` and the plan template as dual-consumer design intent. `conduct` injects it as `{{PHASE_GOAL}}` into the implementer and test-writer prompts at every spawn and fix-loop respawn, with an absent goal producing a byte-identical prompt to today (no dangling label). Implemented in both plugins — Claude authored, Codex mirrored.
 
 ### Outcomes
 
+- All 5 phases (1–3 Claude, C1–C2 Codex mirror) shipped and committed; see Progress log above for SHAs.
+- Stage 1 (Claude, phases 1–3) ran autonomously via `conduct --max-phases 3`; stopped at the cap before the Codex phases per the dual-runtime split, all tests green, no rogue commits.
+- Mid-phase reviews caught and fixed two real gaps before merge: Phase 2's no-regression test only checked doc strings, not the byte-identity invariant (fixed by asserting `{{PHASE_GOAL}}` glues to the preceding sentence with no leading space); Phase 3 had a nested-bold CHANGELOG bullet (fixed).
+- Stage 2 (Codex mirror C1–C2) ran via `codex:rescue`; parity verified — `test_skill_md_presence` 11/0, `test-prompt-parity-extended` 13/0, `check-prompt-parity` PASS, `test-spawn-tiers` 57/0. No `${CLAUDE_PLUGIN_ROOT}` leaked into Codex files, `$SKILL_DIR` anchors preserved, Codex delegation hard-stop contract and `reasoning_effort=medium` intact.
+- The gauntlet plan's Guardrail 1 cross-references this field; sibling plans (gauntlet, conduct-skill) cross-linked, README/CHANGELOG/AGENTS.md updated.
+
 ### Learnings
 
+- **A trailing HTML comment on a `**Test command:**` line defeats conduct's strict parser regex** (it expects the line to end right after the closing backtick). Harmless here — the conductor resolved the command manually — but worth a future cleanup to move such comments off the slot line rather than relying on manual intervention every time it recurs.
+- **A pre-existing, unrelated test failure surfaced during this work and was worth root-causing rather than working around.** `check-mirror-handoff.sh` failed on this branch inspecting git history for old-layout conduct-skill mirror boundary commits; confirmed it failed identically on `main` (zero commits touch those paths on this branch), root-caused to a half-migrated script (`07cda44`: `commit_files` used new paths, `touches_runtime` still grepped old prefixes), and fixed separately in `338673d` with layout-agnostic history matching plus a SHA-allowlisted pre-migration commit. Treating a "not caused by this work" failure as still worth fixing avoided leaving a red gate for the next branch to inherit.
+
 ### Follow-up Work
+
+- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) is open, not yet merged to `main`.
+- Move the `**Test command:**` trailing HTML comment off the slot line in a future cleanup so conduct's regex doesn't need manual workarounds.

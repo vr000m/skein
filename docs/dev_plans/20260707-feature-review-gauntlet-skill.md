@@ -379,12 +379,24 @@ Context lifecycle — what enters context at each step, and whether it clears or
 
 ## Final Results
 
-[Fill this section when the work is complete]
-
 ### Summary
+
+The `review-gauntlet` skill is implemented in both plugins (`plugins/skein`, `plugins/skein-codex`): a conductor that drives the four review gates (code-review, deep-review, security-review, spec-compliance) in sequence, feeds findings through the existing deep-review reconciler/appliers, and enforces both guardrails (applier-before-fixer ordering, dev-plan-in-context at every fixer call) at each call site. A `**Review Gates:**` header marker auto-chains the gauntlet from `conduct` and `fan-out`, defaulting to a strict `none` no-op. The convergence loop terminates via one of three stop conditions (clean pass, quarantine, epoch-scoped non-convergence stall), with the stall detector correctly scoped to rounds since the last structural restart so pre-restart finding counts never anchor the running minimum for a fresh epoch.
 
 ### Outcomes
 
+- All 9 phases (1–6 Claude, C1–C3 Codex mirror) shipped and committed; see Progress log above for SHAs.
+- Two review rounds (Codex adversarial + Claude `/code-review`) against the completed Stage 4 branch surfaced and fixed 5 real defects (`92555bb`, `13d9055`, `318aef2`, `915cceb`, `135c790`), plus 2 post-merge fixes to the stall-streak epoch scoping (`74e4d9a`/`fd7bed8`, mirrored to `skein-codex`) and a skill-identity pin parity test (`0d5f4e1`).
+- Test suites green as of this writing: `gauntlet-tests` (15/15 core + 9/9 Codex capability-gap), `parity-tests` (14/14), `test-run-gate.sh` (17/17), `test-convergence-ledger.sh` (37/37), `test-applier-bundle-parity.sh` (48/48), `test-path-traversal.sh` (12/12).
+- Codex full mode honestly reports permanent capability gaps (gates 3/4) rather than faking parity — clean Codex passes can succeed with only documented gaps present, never silently degraded coverage.
+
 ### Learnings
 
+- **Bundle-parity forced a layout correction.** review-gauntlet was the first skill with both authored operative scripts and a bundled shared pipeline; the `BUNDLE_SKILLS`/`rsync --delete` invariant requires `scripts/` to hold *only* the bundled pipeline, so `run-gate.sh`, `convergence-ledger.sh`, and `gauntlet-common.sh` had to move to a flat `lib/` — a constraint not visible until Phase 2 collided with the bundling machinery built in earlier plans.
+- **Separator consistency across independently-written code is easy to miss.** `318aef2`'s collision-warning path joined signatures on `"|"` while the re-attach map it warns about joins on BEL (``); a `315cceb`-caught re-review found a literal `|` in a real value could make the warning diverge from the map's actual collapse. Both must use the same separator even when written in the same commit.
+- **Non-convergence detection must be epoch-aware.** A structural restart changes what the gate corpus even is (the diff being reviewed changes), so a running-minimum stall detector anchored across a restart boundary produces false non-convergence signals. This was caught post-merge, not during the original review — a reminder that convergence/termination logic deserves an explicit "what happens across a restart" test case up front.
+
 ### Follow-up Work
+
+- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) is open, not yet merged to `main`.
+- Codex gates 3 (deep-review) and 4 (security-review) remain permanently deferred pending real Codex nested-spawn primitives and topology confirmation — tracked as an honest capability gap, not a bug.
