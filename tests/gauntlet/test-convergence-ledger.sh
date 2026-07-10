@@ -25,6 +25,20 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh"
+CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
+
+# gc_hash FILE — hash via gauntlet-common.sh's own gc_sha1 helper (not a
+# hand-rolled shasum/sha1sum fallback) so this test never drifts from the
+# same hashing logic gc_ledger_path relies on. Run in a subshell so sourcing
+# gauntlet-common.sh here doesn't collide with its readonly GC_LIB_DIR when
+# other sections below source it again in their own subshells.
+gc_hash() {
+	(
+		# shellcheck source=plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh disable=SC1091
+		. "$CLAUDE_COMMON"
+		gc_sha1 <"$1"
+	)
+}
 
 pass_count=0
 fail_count=0
@@ -419,9 +433,9 @@ assert_nonzero_exit "--last-decision combined with --count is a usage error" \
 # --last-decision must not mutate loop_counter/rounds (byte-identical file before/after).
 L="$(new_ledger)"
 round "$L" 5 0 1 confirm 0 >/dev/null
-before_hash="$(if command -v shasum >/dev/null 2>&1; then shasum "$L" | awk '{print $1}'; else sha1sum "$L" | awk '{print $1}'; fi)"
+before_hash="$(gc_hash "$L")"
 "$LEDGER_SCRIPT" --last-decision --ledger "$L" >/dev/null
-after_hash="$(if command -v shasum >/dev/null 2>&1; then shasum "$L" | awk '{print $1}'; else sha1sum "$L" | awk '{print $1}'; fi)"
+after_hash="$(gc_hash "$L")"
 assert_eq "$after_hash" "$before_hash" "--last-decision peek does not mutate the ledger file (byte-identical before/after)"
 
 # cap-boundary off-by-one: loop_counter == cap exactly reads back as cap, verbatim.
@@ -468,9 +482,10 @@ assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old
 
 # --- 16. gc_ledger_path: sourced directly from gauntlet-common.sh (both mirrors) ---
 # This needs its own sourcing harness since the script is normally invoked as
-# a subprocess by convergence-ledger.sh, not sourced by tests.
+# a subprocess by convergence-ledger.sh, not sourced by tests. CLAUDE_COMMON
+# is already sourced at the top of this file (for gc_sha1); only the Codex
+# copy needs declaring here.
 
-CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
 CODEX_COMMON="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh"
 
 assert_gc_ledger_path_for() {
