@@ -266,7 +266,18 @@ cmd_route() {
 			| .findings |= map(
 				. as $f
 				| ($f | sig) as $s
-				| if ($by_sig[$s] // null) != null then . + {auto_fix: $by_sig[$s]} else . end
+				# Guardrail 1 (design-conflict findings are never auto-fixed) is a
+				# fixer-subagent judgment call, not something the trivial applier can
+				# make -- it only knows the mechanical allowlist, never the dev-plan
+				# design intent. So an architecture/design-relevant finding must never
+				# even reach the auditor with an auto_fix block attached, regardless
+				# of what kind the gate proposed: drop the cached proposal here, by
+				# construction, forcing it to substantive_findings (the fixer path,
+				# where the dev-plan is in context) instead of the trivial applier.
+				# This is a floor under Guardrail 1, not a replacement for it.
+				| if ($by_sig[$s] // null) != null and (($f.category // "") | ascii_downcase | test("architecture|design")) then .
+				elif ($by_sig[$s] // null) != null then . + {auto_fix: $by_sig[$s]}
+				else . end
 			)
 		'
 	)"

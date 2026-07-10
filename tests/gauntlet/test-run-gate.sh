@@ -154,6 +154,42 @@ else
 	fail "route did not warn on a colliding auto_fix signature"
 fi
 
+# --- 6. route: architecture-category finding never gets auto_fix re-attached
+# Guardrail 1 floor: even if a gate proposes an allowlisted auto_fix for a
+# finding it tagged "Architecture" (design-relevant), route must strip that
+# proposal before it ever reaches the auditor, so it cannot land in
+# trivial_envelope — it must fall through to substantive_findings, auto_fix-free.
+
+arch_raw="$WORKDIR/raw-arch.json"
+cat >"$arch_raw" <<'EOF'
+{
+  "gate": "deep-review",
+  "status": "approve",
+  "findings": [
+    {"file": "d.py", "line": 5, "category": "Architecture", "severity": "low",
+     "confidence": 0.4, "summary": "drops a plan-mandated re-export", "evidence": "unused_import",
+     "auto_fix": {"kind": "unused_import", "before": "import foo", "after": "",
+                  "scope": "5-5"}}
+  ],
+  "notes": null
+}
+EOF
+
+arch_cache="$WORKDIR/arch-cache.jsonl"
+arch_normalize_out="$WORKDIR/arch-normalize.out"
+"$RUN_GATE" normalize --gate deep-review --autofix-cache "$arch_cache" "$arch_raw" >"$arch_normalize_out" 2>/dev/null
+arch_reconciled="$WORKDIR/arch-reconciled.json"
+"$RUN_GATE" reconcile "$arch_normalize_out" >"$arch_reconciled" 2>/dev/null
+arch_route_out="$WORKDIR/arch-route.json"
+"$RUN_GATE" route --autofix-cache "$arch_cache" "$arch_reconciled" >"$arch_route_out" 2>/dev/null
+
+assert_eq "$(jq -r '.trivial_envelope.findings | map(select(.file == "d.py")) | length' "$arch_route_out")" "0" \
+	"route never places an architecture-category finding in trivial_envelope"
+assert_eq "$(jq -r '.substantive_findings | map(select(.file == "d.py")) | length' "$arch_route_out")" "1" \
+	"route sends the architecture-category finding to substantive_findings"
+assert_eq "$(jq -r '.substantive_findings[] | select(.file == "d.py") | has("auto_fix")' "$arch_route_out")" "false" \
+	"route strips the auto_fix proposal from the architecture-category finding entirely"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]
