@@ -1,79 +1,33 @@
 #!/usr/bin/env bash
-# convergence-ledger.sh — deterministic, pure convergence decision for the
-# review-gauntlet conductor loop.
+# convergence-ledger.sh - deterministic convergence decision and persistence
+# for the review-gauntlet conductor loop.
 #
 # Usage:
-#   convergence-ledger.sh --ledger <path> --count <N> --structural <N> \
-#       --local <N> --pass-type <full|confirm> --quarantine <N> \
-#       [--unresolved <N>] [--cap 10] [--k 2]
+#   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+#   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
+#       [--cap 10] [--k 2]
+#   convergence-ledger.sh --ledger <path> [--target <target>] --count <N> \
+#       --structural <N> --local <N> --pass-type <full|confirm> \
+#       --quarantine <N> [--unresolved <N>] [--cap 10] [--k 2]
 #
-# --unresolved <N> is the number of gates that returned a non-clean status
-# (error|skipped|deferred) this round — run-gate.sh signals each such gate by
-# exiting 4, and the conductor tallies them. A round with any unresolved gate
-# is NOT a clean pass even when the reconciled count reached 0, because a gate
-# that errored never actually reviewed the diff. Default 0.
+# Exit codes:
+#   0 - success / non-terminal decision
+#   2 - usage error or malformed ledger
+#   3 - target mismatch
+#   4 - --last-decision ledger not found
+#   5 - --last-decision reached a terminal decision
+#   6 - --init refused to overwrite an existing ledger
 #
-# Records exactly one round into the persistent JSON ledger at <path>
-# (created if absent: `{"loop_counter": 0, "rounds": []}`), appends the
-# round's fields to `rounds`, increments `loop_counter` by 1 (every round
-# increments, including gate-1 structural restarts — the counter never
-# resets), then prints exactly one decision token to stdout:
+# The append mode records exactly one round into the persistent JSON ledger at
+# <path>, increments loop_counter by 1, then prints exactly one decision token:
 #
 #   continue | restart | confirm | success | success_with_quarantine | cap | non-converge
 #
-# Decision precedence (first match wins):
-#   1. clean full pass      — pass_type=full && count=0 && unresolved=0
-#                              -> success_with_quarantine (quarantine>0) else success.
-#                              An unresolved gate (unresolved>0) blocks this
-#                              rule even at count=0 — the round falls through
-#                              to `continue` so the errored gate re-runs.
-#   2. cap                  — loop_counter >= cap (default 10)
-#   3. restart              — structural_tally > 0. Checked BEFORE
-#                              non-convergence: a structural fix changes the
-#                              diff a fresh gate-1 corpus will re-review, so a
-#                              stalled count in a structural round reflects a
-#                              corpus still being restructured, not a stuck
-#                              loop — Requirements makes this restart
-#                              unconditional on any structural fix landing.
-#   4. non-converge         — the reconciled count has failed to reach a new
-#                              running minimum for K (default 2) consecutive
-#                              rounds, SCOPED TO THE CURRENT EPOCH (the rounds
-#                              since the last structural restart, if any — a
-#                              restart changes the diff a fresh gate-1 corpus
-#                              reviews, so a count from before it is not
-#                              commensurate with counts after it and must not
-#                              anchor the running minimum). Per round in the
-#                              epoch, track the minimum count seen so far
-#                              within it; a round whose count is strictly
-#                              below that running minimum resets the stall
-#                              streak to 0, otherwise the streak increments. A
-#                              stall streak >= K fires non-converge. This
-#                              classifies a plateau (3,3,3) and a sustained
-#                              oscillation (5,3,5,3) as non-converge, but —
-#                              unlike a raw K-round window comparison — does
-#                              NOT bail on a genuinely converging run with a
-#                              transient blip (5,4,5,3,2,1: the running
-#                              minimum keeps improving, so the streak never
-#                              reaches K). Needs >= K+1 recorded rounds IN THE
-#                              CURRENT EPOCH before it can fire (the first
-#                              round of an epoch is always a new minimum) —
-#                              so a fresh post-restart epoch gets a full K+1
-#                              rounds of its own before non-convergence can
-#                              fire again, rather than inheriting a stale
-#                              pre-restart minimum. Trade-off: a sawtooth
-#                              whose minimum keeps improving at least once
-#                              every K rounds (e.g. 5,3,5,2,5,1) resets the
-#                              streak each time, so it is bounded by the cap
-#                              (rule 2), not this rule — the deliberate cost of
-#                              never false-bailing on genuine convergence.
-#   5. confirm              — count>0 && structural_tally=0 && local_tally>0
-#   6. clean confirm pass   — pass_type=confirm && count=0 -> continue (NOT
-#                              terminal; a clean confirm returns to the loop)
-#   7. otherwise            — continue
+# --last-decision is read-only. It recomputes the token implied by the current
+# on-disk ledger and exits 5 for terminal tokens so the conductor can refuse
+# resume deterministically.
 #
-# Same ledger + same inputs -> same token (pure function of ledger state).
-#
-# Dependencies: bash + jq.
+# Dependencies: bash + jq + shasum|sha1sum (via gauntlet-common.sh).
 
 set -euo pipefail
 
@@ -83,13 +37,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: convergence-ledger.sh --ledger <path> --count <N> --structural <N> \
-           --local <N> --pass-type <full|confirm> --quarantine <N> \
-           [--unresolved <N>] [--cap 10] [--k 2]
+usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+       convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
+       convergence-ledger.sh --ledger <path> [--target <target>] --count <N> --structural <N> \
+              --local <N> --pass-type <full|confirm> --quarantine <N> \
+              [--unresolved <N>] [--cap 10] [--k 2]
 EOF
 }
 
 LEDGER_PATH=""
+TARGET=""
 COUNT=""
 STRUCTURAL=""
 LOCAL=""
@@ -98,9 +55,21 @@ QUARANTINE=""
 UNRESOLVED=0
 CAP=10
 K=2
+MODE="append"
+FORCE=0
+ROUND_ARG_SEEN=0
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
+	--init)
+		MODE="init"
+		;;
+	--last-decision)
+		MODE="last-decision"
+		;;
+	--force)
+		FORCE=1
+		;;
 	--ledger)
 		shift
 		[[ $# -gt 0 ]] || {
@@ -109,6 +78,14 @@ while [[ $# -gt 0 ]]; do
 		}
 		LEDGER_PATH="$1"
 		;;
+	--target)
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		TARGET="$1"
+		;;
 	--count)
 		shift
 		[[ $# -gt 0 ]] || {
@@ -116,6 +93,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		COUNT="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--structural)
 		shift
@@ -124,6 +102,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		STRUCTURAL="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--local)
 		shift
@@ -132,6 +111,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		LOCAL="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--pass-type)
 		shift
@@ -140,6 +120,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		PASS_TYPE="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--quarantine)
 		shift
@@ -148,6 +129,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		QUARANTINE="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--unresolved)
 		shift
@@ -156,6 +138,7 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		UNRESOLVED="$1"
+		ROUND_ARG_SEEN=1
 		;;
 	--cap)
 		shift
@@ -190,168 +173,256 @@ is_nonneg_int() {
 	[[ "$1" =~ ^[0-9]+$ ]]
 }
 
-if [[ -z "$LEDGER_PATH" ]]; then
-	echo "convergence-ledger: --ledger <path> is required" >&2
-	exit 2
-fi
-if [[ -z "$COUNT" ]] || ! is_nonneg_int "$COUNT"; then
-	echo "convergence-ledger: --count must be a non-negative integer (got '${COUNT}')" >&2
-	exit 2
-fi
-if [[ -z "$STRUCTURAL" ]] || ! is_nonneg_int "$STRUCTURAL"; then
-	echo "convergence-ledger: --structural must be a non-negative integer (got '${STRUCTURAL}')" >&2
-	exit 2
-fi
-if [[ -z "$LOCAL" ]] || ! is_nonneg_int "$LOCAL"; then
-	echo "convergence-ledger: --local must be a non-negative integer (got '${LOCAL}')" >&2
-	exit 2
-fi
-if [[ "$PASS_TYPE" != "full" && "$PASS_TYPE" != "confirm" ]]; then
-	echo "convergence-ledger: --pass-type must be 'full' or 'confirm' (got '${PASS_TYPE}')" >&2
-	exit 2
-fi
-if [[ -z "$QUARANTINE" ]] || ! is_nonneg_int "$QUARANTINE"; then
-	echo "convergence-ledger: --quarantine must be a non-negative integer (got '${QUARANTINE}')" >&2
-	exit 2
-fi
-if [[ -z "$UNRESOLVED" ]] || ! is_nonneg_int "$UNRESOLVED"; then
-	echo "convergence-ledger: --unresolved must be a non-negative integer (got '${UNRESOLVED}')" >&2
-	exit 2
-fi
-if ! is_nonneg_int "$CAP" || [[ "$CAP" -eq 0 ]]; then
-	echo "convergence-ledger: --cap must be a positive integer (got '${CAP}')" >&2
-	exit 2
-fi
-if ! is_nonneg_int "$K" || [[ "$K" -eq 0 ]]; then
-	echo "convergence-ledger: --k must be a positive integer (got '${K}')" >&2
-	exit 2
-fi
-
-gc_have_jq
-
-if [[ -e "$LEDGER_PATH" ]]; then
-	if ! jq -e 'has("loop_counter") and has("rounds")' "$LEDGER_PATH" >/dev/null 2>&1; then
-		echo "convergence-ledger: ledger at $LEDGER_PATH is not a valid gauntlet ledger (expected {loop_counter, rounds})" >&2
+validate_common_args() {
+	if [[ -z "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: --ledger <path> is required" >&2
 		exit 2
 	fi
-else
-	mkdir -p "$(dirname "$LEDGER_PATH")"
-	printf '{"loop_counter": 0, "rounds": []}\n' >"$LEDGER_PATH"
-fi
+	if ! is_nonneg_int "$CAP" || [[ "$CAP" -eq 0 ]]; then
+		echo "convergence-ledger: --cap must be a positive integer (got '${CAP}')" >&2
+		exit 2
+	fi
+	if ! is_nonneg_int "$K" || [[ "$K" -eq 0 ]]; then
+		echo "convergence-ledger: --k must be a positive integer (got '${K}')" >&2
+		exit 2
+	fi
+}
 
-# Append this round and bump the monotonic loop counter. Every invocation
-# records exactly one round, including a gate-1 structural restart — the
-# counter never resets.
-tmp_ledger="$(mktemp)"
-# Remove the temp ledger if we abort before the mv (e.g. jq fails under
-# `set -e`); the successful mv renames it away so the rm is a no-op then.
-trap 'rm -f "$tmp_ledger"' EXIT
-jq \
-	--argjson count "$COUNT" \
-	--argjson structural "$STRUCTURAL" \
-	--argjson local "$LOCAL" \
-	--arg pass_type "$PASS_TYPE" \
-	--argjson quarantine "$QUARANTINE" \
-	--argjson unresolved "$UNRESOLVED" \
-	'.loop_counter += 1
-	 | .rounds += [{
-		 count: $count,
-		 structural_tally: $structural,
-		 local_tally: $local,
-		 pass_type: $pass_type,
-		 quarantine_size: $quarantine,
-		 unresolved_gates: $unresolved
-	 }]' \
-	"$LEDGER_PATH" >"$tmp_ledger"
-mv "$tmp_ledger" "$LEDGER_PATH"
+validate_append_args() {
+	if [[ -z "$COUNT" ]] || ! is_nonneg_int "$COUNT"; then
+		echo "convergence-ledger: --count must be a non-negative integer (got '${COUNT}')" >&2
+		exit 2
+	fi
+	if [[ -z "$STRUCTURAL" ]] || ! is_nonneg_int "$STRUCTURAL"; then
+		echo "convergence-ledger: --structural must be a non-negative integer (got '${STRUCTURAL}')" >&2
+		exit 2
+	fi
+	if [[ -z "$LOCAL" ]] || ! is_nonneg_int "$LOCAL"; then
+		echo "convergence-ledger: --local must be a non-negative integer (got '${LOCAL}')" >&2
+		exit 2
+	fi
+	if [[ "$PASS_TYPE" != "full" && "$PASS_TYPE" != "confirm" ]]; then
+		echo "convergence-ledger: --pass-type must be 'full' or 'confirm' (got '${PASS_TYPE}')" >&2
+		exit 2
+	fi
+	if [[ -z "$QUARANTINE" ]] || ! is_nonneg_int "$QUARANTINE"; then
+		echo "convergence-ledger: --quarantine must be a non-negative integer (got '${QUARANTINE}')" >&2
+		exit 2
+	fi
+	if [[ -z "$UNRESOLVED" ]] || ! is_nonneg_int "$UNRESOLVED"; then
+		echo "convergence-ledger: --unresolved must be a non-negative integer (got '${UNRESOLVED}')" >&2
+		exit 2
+	fi
+}
 
-loop_counter="$(jq -r '.loop_counter' "$LEDGER_PATH")"
+validate_ledger_shape() {
+	local ledger_path="$1"
+	if ! jq -e 'has("loop_counter") and (.loop_counter | type == "number") and has("rounds") and (.rounds | type == "array")' "$ledger_path" >/dev/null 2>&1; then
+		echo "convergence-ledger: ledger at $ledger_path is not a valid gauntlet ledger (expected {loop_counter, rounds})" >&2
+		exit 2
+	fi
+}
 
-# 1. Clean full pass -> success / success_with_quarantine. An unresolved gate
-# (error/skipped/deferred this round) blocks a clean pass even at count=0: the
-# gate never actually reviewed the diff, so the round falls through to
-# `continue` and the conductor re-runs it.
-if [[ "$PASS_TYPE" == "full" && "$COUNT" -eq 0 && "$UNRESOLVED" -eq 0 ]]; then
-	if [[ "$QUARANTINE" -gt 0 ]]; then
-		echo "success_with_quarantine"
+check_target_match() {
+	local ledger_path="$1"
+	local target="$2"
+	local existing
+	[[ -n "$target" ]] || return 0
+	existing="$(jq -r 'if has("target") and (.target != null) then .target else empty end' "$ledger_path")"
+	if [[ -n "$existing" && "$existing" != "$target" ]]; then
+		echo "convergence-ledger: target mismatch for $ledger_path (ledger has '$existing', got '$target')" >&2
+		exit 3
+	fi
+}
+
+write_fresh_ledger() {
+	local ledger_path="$1"
+	local target="$2"
+	mkdir -p "$(dirname "$ledger_path")"
+	jq -n --arg target "$target" '{target: $target, loop_counter: 0, rounds: []}' >"$ledger_path"
+}
+
+ensure_ledger_for_append() {
+	if [[ -e "$LEDGER_PATH" ]]; then
+		validate_ledger_shape "$LEDGER_PATH"
+		check_target_match "$LEDGER_PATH" "$TARGET"
 	else
-		echo "success"
+		mkdir -p "$(dirname "$LEDGER_PATH")"
+		if [[ -n "$TARGET" ]]; then
+			jq -n --arg target "$TARGET" '{target: $target, loop_counter: 0, rounds: []}' >"$LEDGER_PATH"
+		else
+			printf '{"loop_counter": 0, "rounds": []}\n' >"$LEDGER_PATH"
+		fi
 	fi
-	exit 0
-fi
+}
 
-# 2. Cap.
-if [[ "$loop_counter" -ge "$CAP" ]]; then
-	echo "cap"
-	exit 0
-fi
+last_round_field() {
+	local ledger_path="$1"
+	local field="$2"
+	jq -r --arg field "$field" '.rounds[-1][$field]' "$ledger_path"
+}
 
-# 3. Restart: any structural fix this round. Checked BEFORE non-convergence
-# (rule 4): a structural fix changes the diff a fresh gate-1 corpus will
-# re-review, so a stalled reconciled count in a structural round reflects a
-# corpus that's still being restructured, not a stuck loop. Requirements says
-# "any structural fix lands in a round -> restart" unconditionally; a
-# stalled-count round with a genuine structural fix must still restart, not
-# bail to non-converge. (Regression: a plan that structurally restarts every
-# round, per the existing cap test, relies on this precedence to keep
-# restarting all the way to the cap instead of non-converging early.)
-if [[ "$STRUCTURAL" -gt 0 ]]; then
-	echo "restart"
-	exit 0
-fi
+decision_from_ledger() {
+	local ledger_path="$1"
+	local cap="$2"
+	local k="$3"
+	local round_len loop_counter count structural local_tally pass_type quarantine unresolved
 
-# 4. Non-convergence: running-minimum stall, scoped to the current "epoch"
-# (the rounds since the last structural restart, if any). A structural fix
-# changes the diff a fresh gate-1 pass reviews, so a count from before that
-# restart is not commensurate with counts after it and must not anchor the
-# running minimum or contribute to the stall streak — otherwise a
-# genuinely re-converging post-restart corpus (e.g. epoch counts 5,4) can be
-# compared against a stale pre-restart minimum and bail to non-converge
-# before the new corpus has even had a fair chance to converge. Walk the
-# epoch's rounds tracking the minimum count seen so far within it; a round
-# whose count is strictly below that running minimum resets the stall
-# streak to 0, otherwise the streak increments. A trailing stall streak >= K
-# means the count has failed to reach a new best for K consecutive rounds
-# within the current epoch — a plateau or a sustained oscillation — without
-# false-positive-bailing on a converging run that has a transient blip (the
-# running minimum keeps improving). The first round of an epoch is always a
-# new minimum, so the streak can only reach K after >= K+1 rounds IN THAT
-# EPOCH (not >= K+1 rounds in the whole ledger history).
-epoch_stats="$(jq -c '
-	(.rounds | to_entries | map(select(.value.structural_tally > 0)) | last | .key) as $restart_idx
-	| (if $restart_idx == null then .rounds else .rounds[($restart_idx + 1):] end) as $epoch
-	| {
-		epoch_len: ($epoch | length),
-		streak: ($epoch
-			| reduce .[] as $round ({min: null, streak: 0};
-				if (.min == null) or ($round.count < .min)
-				then {min: $round.count, streak: 0}
-				else {min: .min, streak: (.streak + 1)}
-				end)
-			| .streak)
-	}
-' "$LEDGER_PATH")"
-epoch_len="$(printf '%s' "$epoch_stats" | jq -r '.epoch_len')"
-if [[ "$epoch_len" -ge $((K + 1)) ]]; then
-	stall_streak="$(printf '%s' "$epoch_stats" | jq -r '.streak')"
-	if [[ "$stall_streak" -ge "$K" ]]; then
-		echo "non-converge"
-		exit 0
+	round_len="$(jq -r '.rounds | length' "$ledger_path")"
+	if [[ "$round_len" -eq 0 ]]; then
+		echo "no-rounds"
+		return 0
 	fi
-fi
 
-# 5. Confirm: only-local round with remaining findings.
-if [[ "$COUNT" -gt 0 && "$STRUCTURAL" -eq 0 && "$LOCAL" -gt 0 ]]; then
-	echo "confirm"
-	exit 0
-fi
+	loop_counter="$(jq -r '.loop_counter' "$ledger_path")"
+	count="$(last_round_field "$ledger_path" count)"
+	structural="$(last_round_field "$ledger_path" structural_tally)"
+	local_tally="$(last_round_field "$ledger_path" local_tally)"
+	pass_type="$(last_round_field "$ledger_path" pass_type)"
+	quarantine="$(last_round_field "$ledger_path" quarantine_size)"
+	unresolved="$(jq -r '.rounds[-1].unresolved_gates // 0' "$ledger_path")"
 
-# 6. Clean confirm pass is NOT terminal — return to the loop for a fresh
-# full pass.
-if [[ "$PASS_TYPE" == "confirm" && "$COUNT" -eq 0 ]]; then
+	# 1. Clean full pass -> success / success_with_quarantine. An unresolved gate
+	# blocks a clean pass even at count=0 because the gate did not review.
+	if [[ "$pass_type" == "full" && "$count" -eq 0 && "$unresolved" -eq 0 ]]; then
+		if [[ "$quarantine" -gt 0 ]]; then
+			echo "success_with_quarantine"
+		else
+			echo "success"
+		fi
+		return 0
+	fi
+
+	# 2. Cap.
+	if [[ "$loop_counter" -ge "$cap" ]]; then
+		echo "cap"
+		return 0
+	fi
+
+	# 3. Restart: any structural fix this round. Checked before non-convergence.
+	if [[ "$structural" -gt 0 ]]; then
+		echo "restart"
+		return 0
+	fi
+
+	# 4. Non-convergence: running-minimum stall scoped to the current epoch.
+	epoch_stats="$(jq -c '
+		(.rounds | to_entries | map(select(.value.structural_tally > 0)) | last | .key) as $restart_idx
+		| (if $restart_idx == null then .rounds else .rounds[($restart_idx + 1):] end) as $epoch
+		| {
+			epoch_len: ($epoch | length),
+			streak: ($epoch
+				| reduce .[] as $round ({min: null, streak: 0};
+					if (.min == null) or ($round.count < .min)
+					then {min: $round.count, streak: 0}
+					else {min: .min, streak: (.streak + 1)}
+					end)
+				| .streak)
+		}
+	' "$ledger_path")"
+	epoch_len="$(printf '%s' "$epoch_stats" | jq -r '.epoch_len')"
+	if [[ "$epoch_len" -ge $((k + 1)) ]]; then
+		stall_streak="$(printf '%s' "$epoch_stats" | jq -r '.streak')"
+		if [[ "$stall_streak" -ge "$k" ]]; then
+			echo "non-converge"
+			return 0
+		fi
+	fi
+
+	# 5. Confirm: only-local round with remaining findings.
+	if [[ "$count" -gt 0 && "$structural" -eq 0 && "$local_tally" -gt 0 ]]; then
+		echo "confirm"
+		return 0
+	fi
+
+	# 6. Clean confirm pass is not terminal; return to the full loop.
+	if [[ "$pass_type" == "confirm" && "$count" -eq 0 ]]; then
+		echo "continue"
+		return 0
+	fi
+
+	# 7. Otherwise, continue.
 	echo "continue"
-	exit 0
-fi
+}
 
-# 7. Otherwise, continue.
-echo "continue"
+validate_common_args
+gc_have_jq
+
+case "$MODE" in
+init)
+	if [[ -z "$TARGET" ]]; then
+		echo "convergence-ledger: --init requires --target <target>" >&2
+		exit 2
+	fi
+	if [[ "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --init cannot be combined with round-input flags" >&2
+		exit 2
+	fi
+	if [[ -e "$LEDGER_PATH" && "$FORCE" -eq 0 ]]; then
+		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
+		exit 6
+	fi
+	write_fresh_ledger "$LEDGER_PATH" "$TARGET"
+	;;
+last-decision)
+	if [[ "$FORCE" -eq 1 ]]; then
+		echo "convergence-ledger: --force is only valid with --init" >&2
+		exit 2
+	fi
+	if [[ "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --last-decision cannot be combined with round-input flags" >&2
+		exit 2
+	fi
+	if [[ ! -e "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: ledger not found at $LEDGER_PATH" >&2
+		exit 4
+	fi
+	validate_ledger_shape "$LEDGER_PATH"
+	check_target_match "$LEDGER_PATH" "$TARGET"
+	decision="$(decision_from_ledger "$LEDGER_PATH" "$CAP" "$K")"
+	echo "$decision"
+	case "$decision" in
+	success | success_with_quarantine | cap | non-converge)
+		exit 5
+		;;
+	*)
+		exit 0
+		;;
+	esac
+	;;
+append)
+	if [[ "$FORCE" -eq 1 ]]; then
+		echo "convergence-ledger: --force is only valid with --init" >&2
+		exit 2
+	fi
+	validate_append_args
+	ensure_ledger_for_append
+
+	tmp_ledger="$(mktemp)"
+	trap 'rm -f "$tmp_ledger"' EXIT
+	jq \
+		--argjson count "$COUNT" \
+		--argjson structural "$STRUCTURAL" \
+		--argjson local "$LOCAL" \
+		--arg pass_type "$PASS_TYPE" \
+		--argjson quarantine "$QUARANTINE" \
+		--argjson unresolved "$UNRESOLVED" \
+		'.loop_counter += 1
+		 | .rounds += [{
+			 count: $count,
+			 structural_tally: $structural,
+			 local_tally: $local,
+			 pass_type: $pass_type,
+			 quarantine_size: $quarantine,
+			 unresolved_gates: $unresolved
+		 }]' \
+		"$LEDGER_PATH" >"$tmp_ledger"
+	mv "$tmp_ledger" "$LEDGER_PATH"
+
+	decision_from_ledger "$LEDGER_PATH" "$CAP" "$K"
+	;;
+*)
+	echo "convergence-ledger: internal mode error: $MODE" >&2
+	exit 2
+	;;
+esac
