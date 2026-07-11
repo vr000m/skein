@@ -16,7 +16,9 @@ parser can pick up the slug.
 
 ## Planned
 
-_(none)_
+| Date | Type | Name | Comp | PR | Branch | Plan |
+|------|------|------|------|----|--------|------|
+| 2026-07-11 | feature | review-plan-grill-step | review-skills | — | feature/review-plan-grill-step | [plan](20260711-feature-review-plan-grill-step.md) |
 
 ## Shipped
 
