@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-11
+
 ### Added
 - **Session-resume for `skein:review-gauntlet` (both Claude and Codex).** `convergence-ledger.sh` gains `--init`/`--force`, `--target`, and a read-only `--last-decision` peek mode so an interrupted run (API drop, spend cap, dropped Codex dispatch) can pick back up from the last recorded round instead of restarting the whole gate corpus. The ledger persists to a new `gc_ledger_path`-computed, target-keyed file under `.gauntlet/` (repo-root-anchored, gitignored, mirroring `skein:conduct`'s `.conduct/` state convention) and now also records the `cap`/`k` values in force so a peek always resolves against the same terminal-decision boundary the run itself used. `review-gauntlet --resume`/`--fresh` are new standalone flags; `conduct`/`fan-out` auto-chain invocations are self-resuming by construction (peek-first loop entry) with no changes needed to their own SKILL.md files. Full exit-code contract: `0`=success/non-terminal, `2`=usage/malformed ledger, `3`=target mismatch, `4`=missing ledger, `5`=terminal decision, `6`=`--init` refused an existing ledger.
 
