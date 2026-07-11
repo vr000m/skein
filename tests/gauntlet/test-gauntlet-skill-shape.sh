@@ -183,6 +183,18 @@ assert_grep_i "$SKILL_MD" 'regardless of confidence' \
 assert_grep_i "$SKILL_MD" 'only.*(quarantine trigger|trigger.*quarantine)|quarantine trigger.*only' \
 	"documents design conflict as the only quarantine trigger"
 
+assert_grep_i "$SKILL_MD" 'guardrail 3' \
+	"documents Guardrail 3 heading/label"
+
+assert_grep_i "$SKILL_MD" 'regression test' \
+	"documents the regression-test requirement for substantive fixes"
+
+assert_grep_i "$SKILL_MD" 'guardrail 4' \
+	"documents Guardrail 4 heading/label"
+
+assert_grep "$SKILL_MD" 'git status --short' \
+	"documents verifying the fixer's claims against live repo state"
+
 # --- Three invocation modes ------------------------------------------------
 
 assert_grep_i "$SKILL_MD" 'standalone' \

@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **`skein:review-gauntlet` Guardrails 3 and 4 (both Claude and Codex).** Guardrail 3 requires a substantive (non-trivial, non-style) fix to be backed by a regression test that reproduces the bug before the fix and passes after, or an explicit stated reason no test applies; the fixer must not report a substantive fix as applied without one or the other. Guardrail 4 requires the conductor to verify the fixer's per-round claims against live repo state (`git status --short` / `git diff --stat`) before folding the round into the convergence-ledger call or the operator-facing report, rather than trusting the fixer subagent's self-report text — mirroring the existing verify-don't-trust discipline already applied to gate output. Both are fixer-prompt requirements documented in SKILL.md, not mechanical gates. New shape assertions in `test-gauntlet-skill-shape.sh`.
+
 ## [0.4.1] - 2026-07-11
 
 ### Added

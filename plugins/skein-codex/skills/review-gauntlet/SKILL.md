@@ -184,6 +184,18 @@ The only quarantine trigger is a design/architecture conflict. Do not use confid
 
 **Ordering is not optional: run the trivial-fix applier before dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7) so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index. If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing next pass and stalling convergence. Within each round: reconcile -> route -> applier (trivial) + commit -> then fixer subagent (substantive).
 
+### Guardrail 3 - a substantive bug fix requires a regression test, not just a re-review
+
+A real functional/security bug is not fixed by an edit alone. When the fixer dispatches a direct edit for a substantive finding (Guardrail 2's second bullet), its prompt must also require a regression test that reproduces the bug before the fix, then passes after the fix. The fixer's per-finding report must state either the test file/case that now covers the fix, or a one-line reason no test applies (for example, a hardening change with no reproducible failure state, or an existing test already covers this path - name it).
+
+A substantive fix with neither a named test nor a stated reason is incomplete; the fixer must not report it as applied. This is a fixer-prompt requirement, not a mechanical gate. As with structural/local self-classification, there is no deterministic backstop, only the instruction.
+
+### Guardrail 4 - verify the fixer's claims against live repo state before reporting
+
+Do not report a round's outcome from the fixer subagent's return text alone. After each fixer dispatch, and after the trivial-fix applier's commit, run `git status --short` and `git diff --stat` against the pre-dispatch commit before folding the round into the convergence-ledger call or the operator-facing report.
+
+If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
