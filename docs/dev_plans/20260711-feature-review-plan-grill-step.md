@@ -1,12 +1,12 @@
 # Task: Standalone `skein:grill` skill + grill-mode decision interview for `/review-plan` Step 6.4
 
-**Status**: Completed
+**Status**: In Progress
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/review-plan-grill-step
 **Created**: 2026-07-11
-**Completed**: 2026-07-11
+**Completed**: (pending PR merge — all implementation, tests, and mirrors complete on this branch as of 2026-07-11; flip to Complete/fill this date once merged, matching the 20260710 sibling plan's convention)
 **Review Gates**: none
 
 ## Objective
@@ -233,7 +233,7 @@ Both paths execute `grill/SKILL.md` § Interview Mechanics identically; only § 
 - Tests passing (parity script + `test_skill_md_presence.py` + existing regression suites)
 - Documentation updated
 
-<!-- reviewed: 2026-07-11 @ 19c7a820e2ba42b7c0438d2d61a315cc5d968d72 -->
+<!-- reviewed: 2026-07-11 @ d15d5e5fe4143b0636efb33371c603e4c0d3cd8a -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -255,5 +255,7 @@ Both paths execute `grill/SKILL.md` § Interview Mechanics identically; only § 
 (none yet)
 
 ## Final Results
+
+Interim — implementation, tests, and both mirrors are complete on this branch; the PR has not yet been opened/merged, so this section will be finalized (and `**Status**`/`**Completed**` flipped) once that lands, matching how `20260710-feature-review-gauntlet-resume.md` is tracking the same pending-merge state.
 
 (fill when complete)

@@ -68,7 +68,7 @@ This section runs only for a standalone `/grill` invocation. `/review-plan` Step
 
 ### Step 2: Marker-refusal check (plan-file targets only)
 
-If the target is a `docs/dev_plans/*.md` file, check whether `/review-plan` has already written its review marker (`<!-- reviewed: YYYY-MM-DD @ <hash> --> `, per `plugins/skein-codex/skills/review-plan/SKILL.md`'s marker format) above the `## Progress` divider.
+If the target is a `docs/dev_plans/*.md` file, check whether `/review-plan` has already written its review marker (`<!-- reviewed: YYYY-MM-DD @ <hash> -->`, per `plugins/skein-codex/skills/review-plan/SKILL.md`'s marker format) above the `## Progress` divider.
 
 - **Marker present**: refuse to run the interview by default. Tell the user the plan has already been reviewed and accepted, and that grilling it now would silently reopen a contract that is already signed off. Require an explicit acknowledgement from the user (for example, "yes, re-open it anyway") before proceeding. This is a deliberate design choice for grill itself, not a mirror of any existing `/review-plan` refusal behavior — below-marker workspace edits (`## Progress`, `## Findings`) are always fine and never trigger this check; only above-marker contract content is guarded.
 - **No marker yet** (or a template placeholder divider with no marker): proceed directly to § Interview Mechanics, Step 1, using the plan's candidate list (Requirements, Technical Specifications, Architecture Decisions, or — for a fresh plan with no prior findings — topics the user names or that stand out on a read-through).
