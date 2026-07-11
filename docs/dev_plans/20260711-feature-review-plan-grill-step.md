@@ -239,10 +239,10 @@ Both paths execute `grill/SKILL.md` § Interview Mechanics identically; only § 
 
 ## Progress
 
-- [ ] Phase 1: Create standalone `skein:grill` skill (Claude)
-- [ ] Phase 2: Wire `/review-plan` Step 6.4 to delegate to `skein:grill`
-- [ ] Phase 3: Rubric criteria + Codex mirrors (both skills)
-- [ ] Phase 4: Version bump, changelog, and skill listings
+- [x] Phase 1: Create standalone `skein:grill` skill (Claude)
+- [x] Phase 2: Wire `/review-plan` Step 6.4 to delegate to `skein:grill`
+- [x] Phase 3: Rubric criteria + Codex mirrors (both skills)
+- [x] Phase 4: Version bump, changelog, and skill listings
 
 ## Findings
 
