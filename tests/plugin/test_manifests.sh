@@ -129,12 +129,12 @@ if [[ "$skills_value" != "./skills/" ]]; then
 fi
 echo "ok: $CODEX_PLUGIN .skills = ./skills/"
 
-# Skill-count invariant: both plugin halves must ship the same 12 managed
+# Skill-count invariant: both plugin halves must ship the same 13 managed
 # skills (one directory per skill under skills/). This is a structural
 # floor — it does not verify the plugin actually loads under the harness
 # (that's a manual smoke step), but it catches a missing or extra skill
 # dir at commit time.
-EXPECTED_SKILL_COUNT=12
+EXPECTED_SKILL_COUNT=13
 claude_skill_count=$(find "plugins/skein/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 codex_skill_count=$(find "plugins/skein-codex/skills" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
 if [[ "$claude_skill_count" != "$EXPECTED_SKILL_COUNT" ]]; then

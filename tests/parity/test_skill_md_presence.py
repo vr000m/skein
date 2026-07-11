@@ -39,6 +39,7 @@ MANAGED_SKILLS = [
     "deep-review",
     "dev-plan",
     "fan-out",
+    "grill",
     "plan-view",
     "review-gauntlet",
     "review-plan",
