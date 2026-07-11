@@ -1,12 +1,12 @@
 # Task: Standalone `skein:grill` skill + grill-mode decision interview for `/review-plan` Step 6.4
 
-**Status**: Not Started
+**Status**: Completed
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/review-plan-grill-step
 **Created**: 2026-07-11
-**Completed**: (fill when done)
+**Completed**: 2026-07-11
 **Review Gates**: none
 
 ## Objective
