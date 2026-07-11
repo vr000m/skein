@@ -4,6 +4,12 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-11
+
+### Added
+- **`skein:grill` (both Claude and Codex).** A new standalone, user-invocable skill that runs a relentless, one-question-at-a-time interview over any plan file or freeform idea. Every candidate topic is first classified as a **fact** (verifiable from the codebase — looked up, never asked) or a **decision** (a genuine judgment call, no single correct answer); each decision gets exactly one recommended resolution and blocks until the user accepts, proposes an alternative, or waives it — no batching, no undifferentiated option lists. The skill document splits into two independently-anchored sections: § Interview Mechanics (the reusable fact/decision protocol, referenced inline by other skills) and § Target Acquisition & Persistence (standalone-only: plan-file-vs-freeform target parsing, review-marker refusal check, and `/dev-plan update`-or-conversational-summary persistence).
+- **`/review-plan` Step 6.4 delegates grill-eligible findings to `skein:grill`.** Findings are classified grill-eligible by `category` (architecture/component-boundary, third-party integration, security, rate-limiting) — never by lens — with `Nonexistent Reference` findings explicitly excluded and a fixed topic-priority tiebreak (architecture/component-boundary > third-party integration > security > rate-limiting) for candidates spanning two eligible topics. Grill-eligible findings are presented one at a time via `grill/SKILL.md` § Interview Mechanics referenced inline, in-session (no skill activation or subagent spawn); resolved decisions are written above the plan's review marker via `/dev-plan update` prefixed `Decision (grilled):`, waived findings still route to `### Review Waivers`. Standard (non-grill-eligible) findings keep today's unmodified 2-3-option Clarify behavior; `--batch` still skips Step 6.4 entirely, including grill classification. `rubric.md` (both mirrors) gains a new "Grill Discipline" section documenting the classification rule and tiebreak, byte-identical across `.claude`/`.codex` per `scripts/check-prompt-parity.sh`. `grill` is added to the managed-skill inventory in `scripts/check-prompt-parity.sh` and `tests/parity/test_skill_md_presence.py`.
+
 ## [0.4.1] - 2026-07-11
 
 ### Added
@@ -106,7 +112,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/vr000m/skein/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/vr000m/skein/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vr000m/skein/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/vr000m/skein/compare/v0.2.3...v0.2.4
