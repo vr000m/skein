@@ -402,5 +402,6 @@ The `review-gauntlet` skill is implemented in both plugins (`plugins/skein`, `pl
 
 ### Follow-up Work
 
-- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) is open, not yet merged to `main`.
+- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) merged to `main` as commit `4e09055`, shipped in v0.4.0 (2026-07-10).
 - Codex gates 3 (deep-review) and 4 (security-review) remain permanently deferred pending real Codex nested-spawn primitives and topology confirmation — tracked as an honest capability gap, not a bug.
+- **Session-resume** was flagged as the top-priority gap in the 2026-07-06 Claude Code Insights report — the convergence ledger persisted `{loop_counter, rounds}` per round, but nothing read it back to resume an interrupted session after an API drop. Implemented in [`20260710-feature-review-gauntlet-resume.md`](20260710-feature-review-gauntlet-resume.md) (`--resume`/`--fresh`/`--init`/`--last-decision` on both mirrors, in progress on `feature/review-gauntlet-resume`, pending PR merge).

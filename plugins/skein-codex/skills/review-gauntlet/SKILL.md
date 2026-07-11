@@ -1,7 +1,7 @@
 ---
 name: review-gauntlet
 description: Chains the supported Codex review gates into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
-argument-hint: "[--plan <path>] [<branch> | --pr <N>]"
+argument-hint: "[--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]"
 ---
 
 # Review Gauntlet: Codex Convergence Loop Across Review Gates
@@ -18,13 +18,65 @@ This skill is a **conductor** in the mold of `skein:conduct`, with Option A spli
 
 ## Invocation Modes
 
-Three modes are opt-in; nothing here fires without an explicit trigger.
+Three modes are opt-in; nothing here fires without an explicit trigger. `--resume` and `--fresh` modify only standalone/full loop startup; they do not make absent `Review Gates` markers run.
 
-1. **Standalone**: `review-gauntlet [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source.
+1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source. `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
 **`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs native `codex exec review` in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+
+### Target and Resume Ledger
+
+Before entering a standalone/full loop, derive one canonical target string and reuse it for every ledger command in the run:
+
+- `pr:<N>` for an invocation using `--pr <N>`
+- `branch:<name-or-range>` for an explicit branch/commit-range argument
+- `branch:<current-branch>` for the implicit current-branch-vs-merge-base mode
+
+`--plan <path>` is not part of the target string; it supplies design intent only. The scheme guarantees repeated invocations through the same surface resolve to the same ledger (`--pr 42` resumes `pr:42`), but it deliberately does not unify `--pr 42` with an equivalent branch-name invocation of that PR's head.
+
+The ledger also persists the `--cap`/`--k` values in force when it was created (or first appended to), so a `--last-decision` peek is always resolved against the same cap/k the run itself used — never against whatever `--cap`/`--k` defaults the peek call happens to pass (or omits). Never pass `--cap`/`--k` on a `--last-decision` call expecting to override a ledger's stored values; they are ignored once the ledger has recorded its own.
+
+`gc_ledger_path` is a shell function from this skill's authored helpers, so source it before using it in shell snippets:
+
+```bash
+. "$SKILL_DIR"/lib/gauntlet-common.sh
+canonical_target="<pr:N-or-branch:name>"
+ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+```
+
+**Standalone loop entry** (mode 1 — an operator is present to supply `--resume`/`--fresh`): for a non-`--resume` loop, initialize once before round 1:
+
+```bash
+"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"
+```
+
+If that exits because the ledger already exists (exit 6), stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
+
+```bash
+"$SKILL_DIR"/lib/convergence-ledger.sh --init --force --ledger "$ledger_path" --target "$canonical_target"
+```
+
+For `--resume` alone, never initialize. Run the read-only peek against the same target:
+
+```bash
+"$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
+```
+
+If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
+
+**Auto-chain loop entry** (modes 2/3 — `conduct`/`fan-out` invoke this skill with no operator present to supply `--resume`/`--fresh`): never blind-`--init` first. A prior interrupted auto-chained run's ledger sitting at this target would make a bare `--init` refuse with exit 6, and there is no operator to answer "pass `--resume` or `--fresh`" — that would dead-end the auto-chain on every resume-after-interruption of a `full`-mode run. Instead, peek first, against the same target:
+
+```bash
+"$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
+```
+
+- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1.
+- **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
+- **Exit 5** (terminal — `success`/`success_with_quarantine`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
+
+This makes auto-chain invocations self-resuming by construction: they never pass `--resume`/`--fresh` explicitly, and the standalone path's exit-6 refusal never fires for them.
 
 ## Delegation Pattern (Option A - split delegation)
 
@@ -92,6 +144,26 @@ After the fixer batch returns:
 
 Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
 
+### Resume Decision Table
+
+`--resume` branches on `convergence-ledger.sh --last-decision`'s exit code first, then uses the printed token only inside the non-terminal branch:
+
+| `--last-decision` result | Resume action |
+|--------------------------|---------------|
+| exit 0 + `continue` | Start a fresh gate-1 full pass. |
+| exit 0 + `restart` | Start a fresh gate-1 full pass; the prior round landed a structural fix. |
+| exit 0 + `confirm` | Run the confirm-pass gate sequence before returning to the full loop. Preserve the Codex gate matrix: supported native gates run, gated/deferred permanent capability slots are still reported separately, and only transient unresolved outcomes count toward `--unresolved`. |
+| exit 0 + `no-rounds` | Treat the existing empty ledger as a fresh run and start at gate 1 without reinitializing it. |
+| exit 4 | Missing ledger: stop and tell the operator there is nothing to resume for the resolved target. |
+| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `cap`, or `non-converge`): refuse to resume and report the terminal token. |
+| any other non-zero exit | Stop and surface the script error; do not run gates against an ambiguous ledger. |
+
+### What Resume Cannot Restore
+
+- **Mid-round work**: findings collected earlier in an interrupted round, before the round append point, are not persisted. Resume restarts at a round boundary, never mid-gate or mid-fixer-dispatch.
+- **Cross-surface target unification**: `--pr <N>` and an equivalent branch-name invocation are separate ledgers by design.
+- **Worktree teardown**: a `fan-out` linked-worktree run writes under that worktree's repo root. If the worktree is deleted, its ledger is deleted too and cannot be resumed from the main checkout.
+
 ## Guardrails
 
 ### Guardrail 1 - design-conflict findings are never auto-fixed
@@ -111,6 +183,18 @@ The only quarantine trigger is a design/architecture conflict. Do not use confid
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
 
 **Ordering is not optional: run the trivial-fix applier before dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7) so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index. If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing next pass and stalling convergence. Within each round: reconcile -> route -> applier (trivial) + commit -> then fixer subagent (substantive).
+
+### Guardrail 3 - a substantive bug fix requires a regression test, not just a re-review
+
+A real functional/security bug is not fixed by an edit alone. When the fixer dispatches a direct edit for a substantive finding (Guardrail 2's second bullet), its prompt must also require a regression test that reproduces the bug before the fix, then passes after the fix. The fixer's per-finding report must state either the test file/case that now covers the fix, or a one-line reason no test applies (for example, a hardening change with no reproducible failure state, or an existing test already covers this path - name it).
+
+A substantive fix with neither a named test nor a stated reason is incomplete; the fixer must not report it as applied. This is a fixer-prompt requirement, not a mechanical gate. As with structural/local self-classification, there is no deterministic backstop, only the instruction.
+
+### Guardrail 4 - verify the fixer's claims against live repo state before reporting
+
+Do not report a round's outcome from the fixer subagent's return text alone. After each fixer dispatch, and after the trivial-fix applier's commit, run `git status --short` and `git diff --stat` against the pre-dispatch commit before folding the round into the convergence-ledger call or the operator-facing report.
+
+If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
@@ -137,7 +221,10 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   ```
 - **Convergence decision**:
   ```
-  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger <path> --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
+  . "$SKILL_DIR"/lib/gauntlet-common.sh
+  canonical_target="<pr:N-or-branch:name>"
+  ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
   ```
 
 `run-gate.sh reconcile` invokes this skill's bundled `reconcile-findings.sh` without `--skill`. Gate findings passed into reconcile must not carry `auto_fix` blocks.

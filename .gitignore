@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 .phase6-fixture
 .review-plan/
+.gauntlet/
 
 # Backups created before destructive global-skills cleanup (Phase 4)
 backups/

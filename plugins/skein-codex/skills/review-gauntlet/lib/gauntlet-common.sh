@@ -7,6 +7,8 @@
 #
 # Helpers provided:
 #   gc_have_jq                        — exit 2 if jq is missing.
+#   gc_have_sha                       — exit 2 if neither shasum nor sha1sum
+#                                        is available.
 #   gc_bundled_scripts_dir            — echo this skill's own bundled
 #                                        scripts/ dir, anchored via
 #                                        $SKILL_DIR when set, else
@@ -24,9 +26,12 @@
 #                                        (file, line, category, severity,
 #                                        confidence, summary, evidence),
 #                                        defaulting absent keys to null/"".
+#   gc_ledger_path <target> <author>  — echo a target-keyed ledger path under
+#                                        the current repo's .gauntlet/ dir.
 #
-# Dependencies: bash + jq. jq is required — the gauntlet's finding schema is
-# JSON throughout, matching the reconciler and appliers this skill bundles.
+# Dependencies: bash + jq + shasum|sha1sum. jq is required — the gauntlet's
+# finding schema is JSON throughout, matching the reconciler and appliers this
+# skill bundles.
 
 set -euo pipefail
 
@@ -34,6 +39,23 @@ gc_have_jq() {
 	if ! command -v jq >/dev/null 2>&1; then
 		echo "gauntlet: jq is required" >&2
 		exit 2
+	fi
+}
+
+gc_have_sha() {
+	if command -v shasum >/dev/null 2>&1 || command -v sha1sum >/dev/null 2>&1; then
+		return 0
+	fi
+	echo "gauntlet: shasum or sha1sum is required" >&2
+	exit 2
+}
+
+gc_sha1() {
+	gc_have_sha
+	if command -v shasum >/dev/null 2>&1; then
+		shasum | awk '{print $1}'
+	else
+		sha1sum | awk '{print $1}'
 	fi
 }
 
@@ -85,4 +107,30 @@ gc_normalize_finding() {
 		summary: (.summary // ""),
 		evidence: (.evidence // "")
 	}'
+}
+
+gc_ledger_path() {
+	local target="${1:-}"
+	local author="${2:-}"
+	local repo_root slug digest
+
+	if [[ -z "$target" ]]; then
+		echo "gauntlet: gc_ledger_path requires a target" >&2
+		return 2
+	fi
+	if [[ "$author" != "claude" && "$author" != "codex" ]]; then
+		echo "gauntlet: gc_ledger_path author must be 'claude' or 'codex' (got '$author')" >&2
+		return 2
+	fi
+	if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+		echo "gauntlet: gc_ledger_path must run inside a git worktree" >&2
+		return 3
+	fi
+
+	slug="$(printf '%s' "$target" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+	if [[ -z "$slug" ]]; then
+		slug="target"
+	fi
+	digest="$(printf '%s' "$target" | gc_sha1)"
+	printf '%s/.gauntlet/ledger-%s-%s-%s.json\n' "$repo_root" "$author" "$slug" "${digest:0:12}"
 }

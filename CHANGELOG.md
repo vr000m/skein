@@ -4,6 +4,14 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **`skein:review-gauntlet` Guardrails 3 and 4 (both Claude and Codex).** Guardrail 3 requires a substantive (non-trivial, non-style) fix to be backed by a regression test that reproduces the bug before the fix and passes after, or an explicit stated reason no test applies; the fixer must not report a substantive fix as applied without one or the other. Guardrail 4 requires the conductor to verify the fixer's per-round claims against live repo state (`git status --short` / `git diff --stat`) before folding the round into the convergence-ledger call or the operator-facing report, rather than trusting the fixer subagent's self-report text — mirroring the existing verify-don't-trust discipline already applied to gate output. Both are fixer-prompt requirements documented in SKILL.md, not mechanical gates. New shape assertions in `test-gauntlet-skill-shape.sh`.
+
+## [0.4.1] - 2026-07-11
+
+### Added
+- **Session-resume for `skein:review-gauntlet` (both Claude and Codex).** `convergence-ledger.sh` gains `--init`/`--force`, `--target`, and a read-only `--last-decision` peek mode so an interrupted run (API drop, spend cap, dropped Codex dispatch) can pick back up from the last recorded round instead of restarting the whole gate corpus. The ledger persists to a new `gc_ledger_path`-computed, target-keyed file under `.gauntlet/` (repo-root-anchored, gitignored, mirroring `skein:conduct`'s `.conduct/` state convention) and now also records the `cap`/`k` values in force so a peek always resolves against the same terminal-decision boundary the run itself used. `review-gauntlet --resume`/`--fresh` are new standalone flags; `conduct`/`fan-out` auto-chain invocations are self-resuming by construction (peek-first loop entry) with no changes needed to their own SKILL.md files. Full exit-code contract: `0`=success/non-terminal, `2`=usage/malformed ledger, `3`=target mismatch, `4`=missing ledger, `5`=terminal decision, `6`=`--init` refused an existing ledger.
+
 ## [0.4.0] - 2026-07-10
 
 ### Added

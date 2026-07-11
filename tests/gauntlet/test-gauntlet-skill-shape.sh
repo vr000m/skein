@@ -64,6 +64,16 @@ assert_grep_i() {
 	fi
 }
 
+# assert_grep_fixed FILE STRING LABEL — literal (non-regex) substring match.
+assert_grep_fixed() {
+	local file="$1" needle="$2" label="$3"
+	if grep -Fq -- "$needle" "$file"; then
+		pass "$label"
+	else
+		fail "$label (literal string not found: $needle in $file)"
+	fi
+}
+
 # assert_not_grep FILE PATTERN LABEL — asserts PATTERN is absent.
 assert_not_grep() {
 	local file="$1" pattern="$2" label="$3"
@@ -173,6 +183,18 @@ assert_grep_i "$SKILL_MD" 'regardless of confidence' \
 assert_grep_i "$SKILL_MD" 'only.*(quarantine trigger|trigger.*quarantine)|quarantine trigger.*only' \
 	"documents design conflict as the only quarantine trigger"
 
+assert_grep_i "$SKILL_MD" 'guardrail 3' \
+	"documents Guardrail 3 heading/label"
+
+assert_grep_i "$SKILL_MD" 'regression test' \
+	"documents the regression-test requirement for substantive fixes"
+
+assert_grep_i "$SKILL_MD" 'guardrail 4' \
+	"documents Guardrail 4 heading/label"
+
+assert_grep "$SKILL_MD" 'git status --short' \
+	"documents verifying the fixer's claims against live repo state"
+
 # --- Three invocation modes ------------------------------------------------
 
 assert_grep_i "$SKILL_MD" 'standalone' \
@@ -256,6 +278,86 @@ if [[ "$line_count" -ge 80 ]]; then
 else
 	fail "SKILL.md looks truncated (only $line_count lines, expected >= 80)"
 fi
+
+# --- Resume shape (Phase 3): both mirrors, not just Claude ----------------
+# Plan: docs/dev_plans/20260710-feature-review-gauntlet-resume.md, Phase 3.
+# Loops over both mirror SKILL.md files (the pre-existing checks above are
+# Claude-specific gate/label phrasing; this section is scoped to the
+# resume-specific contract, which both mirrors document identically).
+
+CODEX_SKILL_MD="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/SKILL.md"
+
+assert_resume_shape_for() {
+	local file="$1" label="$2" anchor_pattern="$3" ledger_invoke_prefix="$4"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	assert_grep "$file" '\-\-resume' \
+		"$label: documents \`--resume\`"
+
+	assert_grep "$file" '\-\-fresh' \
+		"$label: documents \`--fresh\`"
+
+	assert_grep "$file" 'pr:<N>' \
+		"$label: documents the canonical target scheme's \`pr:<N>\` form"
+
+	assert_grep "$file" 'branch:<' \
+		"$label: documents the canonical target scheme's \`branch:<...>\` form"
+
+	assert_grep_i "$file" 'does not unify|deliberately.*not.*unify|distinct scope' \
+		"$label: states the cross-surface (PR vs. branch) scoping limitation"
+
+	assert_grep_i "$file" 'resume decision table' \
+		"$label: has a Resume Decision Table section"
+
+	assert_grep "$file" 'exit 0.*continue|continue.*exit 0' \
+		"$label: decision table documents exit 0 -> continue (non-terminal)"
+
+	assert_grep "$file" 'exit 4' \
+		"$label: decision table documents exit 4 (missing ledger)"
+
+	assert_grep "$file" 'exit 5' \
+		"$label: decision table documents exit 5 (terminal)"
+
+	assert_grep "$file" 'success_with_quarantine.*cap.*non-converge|success.*success_with_quarantine.*cap.*non-converge' \
+		"$label: exit-5 terminal row names all four terminal tokens (success/success_with_quarantine/cap/non-converge), not just success"
+
+	assert_grep_i "$file" 'what resume cannot restore' \
+		"$label: has a \"What Resume Cannot Restore\" section"
+
+	assert_grep_i "$file" 'mid-round' \
+		"$label: \"What Resume Cannot Restore\" documents the mid-round-loss gap"
+
+	assert_grep_i "$file" 'worktree teardown|worktree.*not resumable|not resumable.*worktree' \
+		"$label: \"What Resume Cannot Restore\" documents the worktree-teardown gap"
+
+	assert_grep "$file" 'gc_ledger_path' \
+		"$label: references \`gc_ledger_path\`"
+
+	assert_grep_i "$file" 'source.*gauntlet-common\.sh|gauntlet-common\.sh.*source|^\. ".*gauntlet-common\.sh"|\. "\$' \
+		"$label: documents sourcing \`gauntlet-common.sh\` before calling \`gc_ledger_path\` (it is a shell function, not an executable)"
+
+	assert_grep "$file" "$anchor_pattern" \
+		"$label: uses its harness-specific plugin-root anchor ($anchor_pattern) for the sourcing prelude"
+
+	# Write-side wiring: the loop-entry --init call and the per-round append
+	# call must both bind gc_ledger_path's output via --ledger and pass
+	# --target — without this, --resume has nothing to read.
+	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --init --ledger \"\$ledger_path\" --target \"\$canonical_target\"" \
+		"$label: write-side wiring documents \`--init --ledger \$ledger_path --target \$canonical_target\` at loop entry"
+
+	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --init --force --ledger \"\$ledger_path\" --target \"\$canonical_target\"" \
+		"$label: write-side wiring documents \`--fresh\` mapping to \`--init --force\`"
+
+	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --ledger \"\$ledger_path\" --target \"\$canonical_target\" --count" \
+		"$label: write-side wiring documents the per-round append call binding \`--ledger \$ledger_path --target \$canonical_target\`"
+}
+
+assert_resume_shape_for "$SKILL_MD" "Claude mirror" '\$\{CLAUDE_PLUGIN_ROOT\}' '"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet'
+assert_resume_shape_for "$CODEX_SKILL_MD" "Codex mirror" '\$SKILL_DIR' '"$SKILL_DIR"'
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
