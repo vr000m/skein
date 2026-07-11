@@ -18,6 +18,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-07-11 | chore | skill-invocation-mode-audit | meta | — | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |
 
 ## Shipped
 
