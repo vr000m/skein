@@ -1,12 +1,12 @@
 # Task: Standalone `skein:grill` skill + grill-mode decision interview for `/review-plan` Step 6.4
 
-**Status**: In Progress
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/review-plan-grill-step
 **Created**: 2026-07-11
-**Completed**: (pending PR merge — all implementation, tests, and mirrors complete on this branch as of 2026-07-11; flip to Complete/fill this date once merged, matching the 20260710 sibling plan's convention)
+**Completed**: 2026-07-11
 **Review Gates**: none
 
 ## Objective
@@ -234,7 +234,7 @@ Both paths execute `grill/SKILL.md` § Interview Mechanics identically; only § 
 - Tests passing (parity script + `test_skill_md_presence.py` + existing regression suites)
 - Documentation updated
 
-<!-- reviewed: 2026-07-11 @ 36cf8f2a295b955dce0704968ab7308536d12d5c -->
+<!-- reviewed: 2026-07-11 @ 668b6aedf3b507e0440e6fddd93bbda7c523d006 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -257,6 +257,14 @@ Both paths execute `grill/SKILL.md` § Interview Mechanics identically; only § 
 
 ## Final Results
 
-Interim — implementation, tests, and both mirrors are complete on this branch; the PR has not yet been opened/merged, so this section will be finalized (and `**Status**`/`**Completed**` flipped) once that lands, matching how `20260710-feature-review-gauntlet-resume.md` is tracking the same pending-merge state.
+### Summary
 
-(fill when complete)
+`skein:grill` is implemented in both plugins (`plugins/skein`, `plugins/skein-codex`): a standalone, user-invocable relentless fact/decision interview skill, structured into § Interview Mechanics (reusable protocol) and § Target Acquisition & Persistence (standalone-only target parsing, marker-refusal check, persistence routing). `/review-plan` Step 6.4 delegates grill-eligible findings (category-keyed, `Nonexistent Reference` always excluded, fixed topic-priority tiebreak) to this protocol inline, in-session. Both `rubric.md` mirrors gained a byte-identical "Grill Discipline" section. Four rounds of review-gauntlet/manual fixes closed cross-reference drift, a marker refresh, a premature status flip, and (round 4) an undefined non-plan-file target branch plus a contradictory standalone-waive test line.
+
+### Outcomes
+
+- All 4 phases (Claude skill, Step 6.4 wiring, rubric/Codex mirrors, version bump + docs) shipped and merged via [PR #15](https://github.com/vr000m/skein/pull/15) (commit `701f996`, fast-forward merge to `main`).
+- Released as `v0.5.0` (tag `v0.5.0`, GitHub release published).
+- Automated tests passing: `scripts/check-prompt-parity.sh`, `tests/parity/test_skill_md_presence.py` (13/13), `tests/plugin/test_manifests.sh`.
+- Round-4 diff (post-gauntlet-convergence manual fixes) passed a targeted `/code-review` (2 finder angles: line-by-line prose/logic scan, cross-mirror parity check) with zero findings.
+- **Not exercised**: the interactive manual walkthroughs listed under Testing Notes (standalone `/grill` against a synthetic plan and against a non-plan file, `/review-plan` Step 6.4 delegation with a seeded finding mix, the write-then-hash check, and the borderline-topic tiebreak cases) were not run this session — the installed plugin cache predated this branch's `grill` skill, so it couldn't be invoked live before merge. These remain open follow-up verification once the released `v0.5.0` plugin is installed.
