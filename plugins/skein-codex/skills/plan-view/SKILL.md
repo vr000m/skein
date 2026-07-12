@@ -4,6 +4,8 @@ description: Generates a self-contained HTML dashboard and per-plan drill-down p
 argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich] [--rich-assemble]
 ---
 
+<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true) as of 2026-07-12's skill-invocation-mode audit. Codex CLI has no equivalent front-matter suppression as of this writing, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md. -->
+
 # Plan View — HTML Dashboard for Dev-Plan Corpora
 
 Distills a directory of markdown dev plans into a navigable HTML dashboard plus one drill-down page per plan. The artefact is a derived view: the markdown remains the source of truth. Inspired by the Anthropic blog post on the [unreasonable effectiveness of HTML in Claude Code](https://claude.com/blog/using-claude-code-the-unreasonable-effectiveness-of-html) — markdown can't render colour-coded status chips, typed cross-reference pills, or commit-history strips that make corpus-level drift visible at a glance.

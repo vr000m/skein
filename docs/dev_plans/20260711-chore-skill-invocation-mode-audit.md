@@ -173,12 +173,13 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
 - Phase 2's front-matter change is verified by direct `rg` diff per skill (not by `scripts/check-prompt-parity.sh`, which doesn't cover front-matter).
 - The skills architecture doc reflects the new classification so it doesn't silently rot on the next skill addition.
 
-<!-- reviewed: 2026-07-12 @ cc7b0491ec5ccc0b38b91fb3311015c06acfddf3 -->
+<!-- reviewed: 2026-07-12 @ cb9e3a1327eedc60755a82fa6fffb7d398623cc7 -->
 
 ## Progress
 
 - [x] Phase 0: Build the chaining map, then verify the three open questions before classifying anything
 - [x] Phase 1: Classify all 13 skills
+- [x] Phase 2: Apply front-matter changes to both mirrors
 
 ## Findings
 
@@ -189,3 +190,12 @@ Research phase, no code changes. Full findings recorded in Context item 4 above 
 ### Phase 1 (2026-07-12)
 
 Research/decision phase, no code changes. Full classification table recorded in Context item 5 above. Summary: only 1 of 13 skills (`plan-view`) clears both axes for `disable-model-invocation`. `conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review` are hard-excluded on Axis 1. The remaining 7 (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`) clear Axis 1 but are held to model-invoked by genuine Axis 2 content triggers, judged against the plan's own `rfc-finder` gold-standard calibration. This is a smaller yield than the plan's originally retracted 5-skill candidate list — a rigorous per-skill pass finds most of skein's skill descriptions already carry natural-language intent triggers, not just a bare command fallback.
+
+### Phase 2 (2026-07-12)
+
+Applied front-matter changes to both mirrors for the single user-invoked skill (`plan-view`):
+- **Claude** (`plugins/skein/skills/plan-view/SKILL.md`): added `disable-model-invocation: true`; trimmed the `description:` field, removing only the trailing `Use when the user says "plan view", "render dev plans", "render plan dashboard", "render rich plan view", "/plan-view", or asks for a visual index of dev_plans/.` clause (autonomous-trigger phrasing, now dead weight) — the identity/usage-hint sentences describing what the skill generates and its `--rich` mode were kept verbatim.
+- **Codex** (`plugins/skein-codex/skills/plan-view/SKILL.md`): no front-matter field added (none exists); added a one-line HTML comment documenting the permanent divergence, pointing back to this plan. Description left untouched — Codex still needs the trigger phrasing since it has no suppression mechanism.
+- Verified via `rg -n 'disable-model-invocation' plugins/skein/skills/plan-view/SKILL.md plugins/skein-codex/skills/plan-view/SKILL.md`: Claude mirror shows the field, Codex mirror shows the divergence comment (not the field) — see command output above.
+- Ran `scripts/check-prompt-parity.sh` as a supplementary check (not the front-matter verification): passed, no unrelated drift.
+- Confirmed the known tooling gap noted in Review Focus: `scripts/check-prompt-parity.sh`'s `MANAGED_SKILLS` default lists exactly 12 skills, omitting `review-gauntlet` (`conduct content-draft content-review deep-review dev-plan fan-out grill plan-view review-plan rfc-finder spec-compliance update-docs`). Since `review-gauntlet` is excluded from disabling (Axis 1), this doesn't block this plan — recorded here per the plan's own instruction, not silently ignored.
