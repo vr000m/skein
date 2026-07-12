@@ -45,6 +45,47 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
    - **Chaining-map correction from the same research pass**: `plugins/skein-codex/skills/review-plan/SKILL.md:529` explicitly annotates its `skein:grill` reference as "not a skill activation" — exclude that specific edge from the Codex-side chaining map. This is a Codex-mirror implementation detail (grill's logic may be inlined differently there); it does not by itself tell us whether the Claude-side `review-plan` → `skein:grill` delegation (AGENTS.md's Skill Workflow step 2: "delegated inline to `skein:grill`") is a real Axis-1 edge on the Claude mirror — Phase 0's chaining-map task (below) must check the Claude mirror's actual invocation mechanism independently, not assume the Codex annotation transfers.
    - `conduct`/`fan-out` → `review-gauntlet` is confirmed as a genuine dependency on both mirrors (`review-gauntlet/SKILL.md:25` calls it an "auto-chain" caller) — reinforces this plan's existing exclusion of `review-gauntlet` from disable candidacy.
 
+4. **Phase 0 findings — chaining map, chaining-survival test, context-load test. Recorded 2026-07-12.**
+
+   **Inbound-chaining map (manually verified, not just grepped).** A raw `rg` pass over both mirrors for `/name`/`skein:name`/bare-backticked-name references produced ~30 hits per mirror, but most were descriptive cross-references (shared file-format or workflow mentions), not real skill activations. Reading each hit's source context narrowed this to the **real** Axis-1 edges below — cases where a skill's own procedure autonomously/programmatically invokes another named skill as a mandatory step, not merely suggests it to the user:
+
+   | Caller | Callee | Mechanism | Evidence |
+   |---|---|---|---|
+   | `conduct` | `review-gauntlet` | Auto-chain at terminal seam (opt-in via plan's `**Review Gates:**` field) | `plugins/skein/skills/conduct/SKILL.md:359-375`; codex mirror `SKILL.md:341-356` |
+   | `fan-out` | `review-gauntlet` | Same auto-chain mechanism, post-merge | `plugins/skein/skills/fan-out/SKILL.md:235-247`; codex mirror `SKILL.md:231-243` |
+   | `review-gauntlet` | `deep-review` | Invokes `skein:deep-review` directly at its own top level (also `/code-review`, `/security-review`, both built-in commands, not skein skills) | `plugins/skein/skills/review-gauntlet/SKILL.md:83-98`; codex mirror `SKILL.md:83-104` |
+   | `review-plan` | `dev-plan` | Step 6.4's routing loop calls `/dev-plan update` as a mandatory action for every acted-on finding | `plugins/skein/skills/review-plan/SKILL.md:533,536,543` (both mirrors, equivalent lines) |
+   | `grill` | `dev-plan` | Standalone-invocation Step 4 calls `/dev-plan update` to persist accept/override outcomes | `plugins/skein/skills/grill/SKILL.md:84`; codex mirror `SKILL.md:82` |
+
+   **Probable-hard edge, not fully confirmed:** `fan-out` → `conduct` — `fan-out/SKILL.md:15`: "A fan-out-spawned Claude subprocess may invoke `/conduct` as its top-level skill." This is a scripted subprocess boundary (`fan-out.sh`), not literal same-session prose, so it wasn't verified with the same rigor as the table above — flagged for Phase 1 to treat as hard unless it can positively rule this out.
+
+   **Soft/suggested edges** — the caller *offers* the callee as a next-step option to the user rather than autonomously executing it; since firing only happens after the user accepts (a user-initiated invocation at that point), these do **not** create a hard Axis-1 dependency:
+   - `content-draft` → `content-review`: Phase 6 "Offer Next Steps" menu, option 2 ("Run /content-review") — `content-draft/SKILL.md:158`.
+   - `spec-compliance` → `rfc-finder`: error-recovery suggestion ("Offer to use `rfc-finder`") — `spec-compliance/SKILL.md:175` (Claude) / `:171` (Codex).
+
+   **Corrected: `review-plan` → `grill` is NOT a real Axis-1 edge.** Both mirrors explicitly annotate this reference as non-activation. Claude mirror, `review-plan/SKILL.md:530`: "This is an inline prose reference, not a skill activation and not a subagent spawn... § Interview Mechanics is the sole authoritative definition of that pacing/recommendation/outcome protocol; it is not restated here." This matches the Codex mirror's `SKILL.md:529` annotation. **The Phase 0 cross-check task is resolved — the two mirrors do not diverge here.** Both treat grill's SKILL.md as a shared prose module read inline in the same session, not a true skill-to-skill activation. This clears `grill` on Axis 1 (Axis 2 still pending, Phase 1).
+
+   **Corrected: the plan's own worked example was wrong.** This plan originally cited `plan-view` as "chained into by `dev-plan`/`update-docs`" as the subject for the chaining-survival test. That doesn't hold: every `dev-plan`/`update-docs` reference to `plan-view` (`dev-plan/SKILL.md:57,191`; `update-docs/SKILL.md:88,105`) describes shared grouping/rendering behavior (component grouping keys, Mermaid rendering) — none invoke `/plan-view` as a skill activation. `plan-view` has **zero** real inbound Axis-1 edges on either mirror. The chaining-survival test below was run against `dev-plan` instead (a confirmed real callee via `review-plan`/`grill` above).
+
+   **`deep-review`'s "spec compliance" is an inline lens, not a call to the standalone `spec-compliance` skill**, on both mirrors — each has its own self-contained lens prompt (`deep-review/SKILL.md:264-291` Claude; lens table `SKILL.md:92-97` Codex). The standalone `spec-compliance` skill therefore has **zero** real inbound Axis-1 edges on either mirror.
+
+   **Chained-into (hard Axis-1 exclusion, must stay model-invoked):** `review-gauntlet`, `deep-review`, `dev-plan`, and (unconfirmed-but-probable) `conduct`. `review-plan` was already excluded on separate grounds (its marker is the readiness gate every `conduct`/`fan-out` run depends on) and is independently confirmed here as itself a caller into `dev-plan`.
+
+   **Chaining-survival test (Axis 1).** Run in a throwaway worktree (`/tmp/conduct-phase0-scratch`, branch `scratch/phase0-chaining-test`, both deleted after observation — the main working tree was never touched). Set `disable-model-invocation: true` on `dev-plan`'s Claude `SKILL.md` (substituting for the plan's incorrect `plan-view` suggestion, corrected above). A live empirical fire was **not attempted** — see "Why this can't be empirically fired" below — findings instead come from official Claude Code documentation, retrieved via the `claude-code-guide` agent:
+   - **(a) Explicit `/dev-plan` still works** — confirmed by docs: "You can invoke the skill directly by typing `/skill-name` and it executes fully," regardless of `disable-model-invocation`.
+   - **(b) No longer offered for autonomous NL firing** — confirmed by docs: the skill is excluded from what Claude can autonomously select (frontmatter table: "Claude can invoke: No").
+   - **(c) Whether literal `/dev-plan update` text inside `review-plan`'s/`grill`'s own prose still succeeds once `dev-plan` is disabled — NO, it does not.** Per docs, `disable-model-invocation` blocks *all* Claude-initiated invocation paths, not just autonomous natural-language firing: "By default, Claude can invoke any skill that doesn't have `disable-model-invocation: true` set" applies uniformly, whether Claude is selecting the skill from a free-form request or following another skill's own prose instruction to run it.
+   
+   **This is Phase 0's single most important finding.** It means every hard Axis-1 edge in the table above would genuinely break if its callee were marked user-invoked — not a theoretical risk, a documented mechanism. It confirms, rather than assumes, why `review-gauntlet`, `deep-review`, `dev-plan` (and probably `conduct`) must stay model-invoked.
+
+   **Why this can't be empirically fired from within this session** (both reasons independently confirmed, not merely asserted):
+   1. **This session's live skill instance loads from the installed plugin cache, not this repo.** `conduct`'s own invocation header states its base directory as `/Users/vr000m/.claude/plugins/cache/skein/skein/0.4.1/skills/conduct`; that cache's `plugin.json` reports `"version": "0.4.1"`, while this repo's `plugins/skein/.claude-plugin/plugin.json` is at `"version": "0.5.0"` — the two have already diverged. The cache only updates on a release/reinstall cycle, so editing `plugins/skein/skills/*/SKILL.md` in this repo — on a real branch, not just the scratch worktree used here — has **zero live effect** on the currently-running session.
+   2. Spinning up a second, nested live Claude Code session to empirically observe autonomous-firing behavior is outside this session's tool surface, and would in any case require pointing a fresh install at a mutated plugin cache — risking the shared cache this very run depends on.
+
+   **Context-load test.** Confirmed via the `claude-code-guide` agent against official docs (`https://code.claude.com/docs/en/skills.md`, "Control who invokes a skill" section, frontmatter reference table): `disable-model-invocation: true` **does** remove the skill's `description` from per-turn context — the docs state the description is "not in context" when set, versus "Description always in context" by default. This is the plan's core cost-justification premise, and **it holds**: disabling a skill genuinely reduces per-turn token load, not merely gates autonomous firing. Confidence: high — directly stated in official documentation, not inferred from indirect behavior.
+
+   **Codex support** — already resolved in Context item 3, not re-opened here.
+
 ## Review Focus
 
 - Verify Phase 0's chaining test is run against a skill that is *actually* chained into by another skill's prose (e.g. `fan-out` or `plan-view`), not a skill nothing chains into — a passing test against an untouched skill proves nothing about chaining survival.
@@ -114,4 +155,10 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
 
 ## Progress
 
+- [x] Phase 0: Build the chaining map, then verify the three open questions before classifying anything
+
 ## Findings
+
+### Phase 0 (2026-07-12)
+
+Research phase, no code changes. Full findings recorded in Context item 4 above (per this phase's own instruction — findings belong in Context/Requirements, not here). Summary: verified inbound-chaining map is much smaller than the raw grep suggested (5 confirmed hard edges + 1 probable + 2 soft, out of ~30 raw hits); corrected two errors in the plan's own drafting (`plan-view` isn't actually chained into by anyone; `review-plan`→`grill` is explicitly not a skill activation on either mirror); confirmed via official docs that `disable-model-invocation` both removes per-turn context load and blocks all Claude-initiated invocation paths (not just autonomous NL firing) — meaning literal-text chaining edges break exactly like autonomous ones. Empirical live-fire testing was ruled out with evidence (this session's plugin loads from an installed cache pinned at v0.4.1, decoupled from this repo's v0.5.0).
