@@ -4,6 +4,14 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-12
+
+### Added
+- **Skill invocation-mode classification (docs, meta).** `docs/skills_architecture/20260522-design-claude-skills-architecture.md` gains an Invocation Mode column on the Skill Catalogue table (now covering all 13 skills, up from 11) and a new `## Invocation Mode` section documenting the `disable-model-invocation: true` mechanism and the two-axis (chained-into / independently content-triggered) classification discipline for future skills.
+
+### Changed
+- **`skein:plan-view` is now user-invoked-only on Claude.** `disable-model-invocation: true` added to the Claude `SKILL.md` front-matter — the only skill of 13 to clear both classification axes (see `docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`). The Codex mirror has no equivalent front-matter suppression, so it gets a one-line documented-divergence comment instead and remains autonomously invocable there.
+
 ## [0.5.0] - 2026-07-11
 
 ### Added

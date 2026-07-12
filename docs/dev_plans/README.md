@@ -14,16 +14,11 @@ parser can pick up the slug.
 | 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 
-## Planned
-
-| Date | Type | Name | Comp | PR | Branch | Plan |
-|------|------|------|------|----|--------|------|
-| 2026-07-11 | chore | skill-invocation-mode-audit | meta | — | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |
-
 ## Shipped
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-07-11 | chore | skill-invocation-mode-audit | meta | — | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |
 | 2026-07-11 | feature | review-plan-grill-step | review-skills | [#15](https://github.com/vr000m/skein/pull/15) | feature/review-plan-grill-step | [plan](20260711-feature-review-plan-grill-step.md) |
 | 2026-07-07 | feature | review-gauntlet-skill | review-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-review-gauntlet-skill.md) |
 | 2026-07-07 | feature | conduct-phase-goal-field | planning-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-conduct-phase-goal-field.md) |
