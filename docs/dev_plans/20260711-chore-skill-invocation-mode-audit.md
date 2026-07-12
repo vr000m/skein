@@ -6,7 +6,7 @@
 **Priority**: Low
 **Branch**: chore/skill-invocation-mode-audit
 **Created**: 2026-07-11
-**Completed**: 2026-07-12 (PR link pending — add once merged)
+**Completed**: 2026-07-12 (PR #16)
 
 ## Objective
 
@@ -208,4 +208,4 @@ Applied front-matter changes to both mirrors for the single user-invoked skill (
 - **Codex** (`plugins/skein-codex/skills/plan-view/SKILL.md`): no front-matter field added (none exists); added a one-line HTML comment documenting the permanent divergence, pointing back to this plan. Description left untouched — Codex still needs the trigger phrasing since it has no suppression mechanism.
 - Verified via `rg -n 'disable-model-invocation' plugins/skein/skills/plan-view/SKILL.md plugins/skein-codex/skills/plan-view/SKILL.md`: Claude mirror shows the field, Codex mirror shows the divergence comment (not the field) — see command output above.
 - Ran `scripts/check-prompt-parity.sh` as a supplementary check (not the front-matter verification): passed, no unrelated drift.
-- Confirmed the known tooling gap noted in Review Focus: `scripts/check-prompt-parity.sh`'s `MANAGED_SKILLS` default lists exactly 12 skills, omitting `review-gauntlet` (`conduct content-draft content-review deep-review dev-plan fan-out grill plan-view review-plan rfc-finder spec-compliance update-docs`). Since `review-gauntlet` is excluded from disabling (Axis 1), this doesn't block this plan — recorded here per the plan's own instruction, not silently ignored.
+- Confirmed the known tooling gap noted in Review Focus: `scripts/check-prompt-parity.sh`'s `MANAGED_SKILLS` default originally listed exactly 12 skills, omitting `review-gauntlet` (`conduct content-draft content-review deep-review dev-plan fan-out grill plan-view review-plan rfc-finder spec-compliance update-docs`). Since `review-gauntlet` is excluded from disabling (Axis 1), this didn't block this plan at the time — recorded here per the plan's own instruction, not silently ignored. **Closed in a post-merge follow-up (2026-07-12, commit `dc3759d`):** `review-gauntlet` was added to the default list, bringing it in sync with the already-13-skill list in `tests/parity/test_skill_md_presence.py`. A new drift-guard test (`tests/parity/test-managed-skills-parity.sh`) now asserts the two lists stay in sync going forward.
