@@ -18,6 +18,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-07-12 | feature | release-skill | meta | [#18](https://github.com/vr000m/skein/pull/18) | feature/skein-release-skill | [plan](20260712-feature-release-skill.md) |
 | 2026-07-11 | chore | skill-invocation-mode-audit | meta | [#16](https://github.com/vr000m/skein/pull/16) | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |
 | 2026-07-11 | feature | review-plan-grill-step | review-skills | [#15](https://github.com/vr000m/skein/pull/15) | feature/review-plan-grill-step | [plan](20260711-feature-review-plan-grill-step.md) |
 | 2026-07-07 | feature | review-gauntlet-skill | review-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-review-gauntlet-skill.md) |
