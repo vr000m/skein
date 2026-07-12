@@ -106,7 +106,20 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 
 ## Final Results
 
-(filled in on completion)
+Shipped in two passes on `feature/skein-release-skill`: the base skill (Single-Version Mode: cut or re-sync one named version) landed first, then a follow-on pass added Audit Mode (`/release audit` — scans all tags/CHANGELOG versions repo-wide for `missing-tag`/`missing-release`/`drifted`/`no-changelog-entry`, reports a punch list, fixes opt-in via Single-Version Mode per selected version) and a `## What's New` summary paragraph to the canonical body shape, both requested after reviewing release-note patterns from three external repos (`pipecat-ai/pipecat-context-hub`, `vr000m/pipecat-local-tts-server`, `vr000m/pipecat-local-stt-server` — read-only `gh release list`/`view` lookups only, no changes made to those repos). Those repos' own tags all had matching releases (no missed-release case to observe live), but their bodies confirmed the "intro paragraph + itemized sections" pattern was a real, generalizable convention worth adopting, not a one-off. The `What's New` paragraph — like `<highlight>` — is a fresh per-run judgment call with no persisted source of truth other than the release body itself, so Step 3 recovers it on re-sync the same way it recovers the highlight (read the existing release body's `## What's New` block first, propose reusing it).
+
+Not done in this plan: retrofitting the 11 already-canonicalized skein releases (v0.1.0–v0.5.1) to add a `## What's New` paragraph — those were fixed to the pre-What's-New canonical shape earlier in the same session, and adding a synthesis paragraph to each retroactively would be a separate, explicitly-scoped pass (out of this plan's acceptance criteria, which only covered the skill itself).
+
+### Code review round 2 (2026-07-12, Audit Mode addition, scaled Sonnet correctness pass)
+
+A second correctness pass targeting only the new Audit Mode section (Steps A1–A4) surfaced five real issues, three load-bearing (Audit Mode as originally drafted could not actually run), fixed in both mirrors:
+1. **Invalid `gh` syntax** — `gh release list --json ...,body,...` doesn't exist; `gh release list --json` has no `body` field (verified against the installed `gh` version's accepted field list). Fixed: Step A1's release inventory is list-only (`tagName,name,isDraft`); full title/body is fetched per-candidate in Step A2 via `gh release view` instead.
+2. **Undefined drift-comparison procedure** — Step A2 said releases must "match" the CHANGELOG without saying how, which in practice requires re-running Step 1's extraction logic and Step 3's What's-New-recovery logic per candidate. Fixed by spelling out the per-candidate procedure explicitly (one `gh release view` call, re-extract the CHANGELOG section, split the body, compare each part, including the compare-link's PREV).
+3. **Classification gap** — the original 4-status scheme silently folded "tag with neither release nor CHANGELOG entry" into `missing-release`, which Step A4 would then try to "fix" via Single-Version Mode — which dead-ends without a CHANGELOG section to resolve. Fixed by adding a 5th status, `untracked-tag`, explicitly excluded from Step A4's fixable set, plus an explicit 5-row (T,R,C)→status truth table replacing the prose-only enumeration.
+4. **Adjacent-release staling on batch fix** — fixing a `missing-tag` version inserts a tag that can change an already-`ok` neighboring release's correct PREV, silently staling that neighbor's compare link with no mechanism to catch it. Fixed by adding an explicit re-run-audit instruction to Step A4 whenever a batch includes a `missing-tag` fix.
+5. **Unstated platform invariant** — the classification table implicitly relied on "a release can't exist without its tag" (`release∃ ⇒ tag∃`) without stating it. Fixed by stating it explicitly ahead of the classification table, which also drops the truth table from 8 rows to the 5 that are actually reachable.
+
+Verified after fixes: mirrors remain structurally identical (`diff` on heading structure, exit 0); `just check-prompt-parity` and `uvx pytest tests/parity/test_skill_md_presence.py -q` (14/14) both pass.
 
 ## Progress
 
