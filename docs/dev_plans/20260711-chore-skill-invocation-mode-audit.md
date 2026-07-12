@@ -109,3 +109,9 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
 - Claude mirror gets `disable-model-invocation: true` on each user-invoked skill; the Codex mirror gets a documented-divergence comment on the same skills (never a fabricated Codex field) — this is the expected, permanent shape of "both mirrors reflect the decision" for this plan.
 - Phase 2's front-matter change is verified by direct `rg` diff per skill (not by `scripts/check-prompt-parity.sh`, which doesn't cover front-matter).
 - The skills architecture doc reflects the new classification so it doesn't silently rot on the next skill addition.
+
+<!-- reviewed: 2026-07-12 @ d932bfa7eb9e96a6fcc1302f6a833e1cc0a93e3f -->
+
+## Progress
+
+## Findings
