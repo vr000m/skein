@@ -18,21 +18,23 @@ A second motivation: testing `plan-view --rich` against non-plan content. The sk
 
 ## Skill Catalogue
 
-| Skill | Role | Cost per run |
-|---|---|---|
-| `dev-plan` | Plan author — writes structured markdown with phases, Review Focus, Acceptance Criteria. | 1 Sonnet on `create` only. |
-| `review-plan` | Pre-implementation auditor — 4 parallel lenses against a plan. | 3 Opus + 1 Haiku. |
-| `conduct` | Phase-by-phase implementer dispatcher. | 2–3 subagents per phase. |
-| `fan-out` | Parallel-task dispatcher across git worktrees. | 1 Opus per independent task (cap 5). |
-| `deep-review` | Code review with 5 parallel lenses. | 3 Opus + 1 Sonnet + 1 Haiku. |
-| `plan-view` | Dashboard + per-plan rich HTML renderer. | 0 for deterministic; 1 per plan or section for `--rich`. |
-| `update-docs` | Doc-vs-code drift auditor. | 1 Sonnet. |
-| `content-draft` | TIL/blog drafter from session context. | 1 Sonnet. |
-| `content-review` | Style/content reviewer for markdown. | 1 Sonnet. |
-| `spec-compliance` | RFC 2119 normative-requirement mapper. | 1 Opus. |
-| `rfc-finder` | RFC/draft locator with annotated links. | 1 Sonnet. |
+| Skill | Role | Cost per run | Invocation Mode |
+|---|---|---|---|
+| `dev-plan` | Plan author — writes structured markdown with phases, Review Focus, Acceptance Criteria. | 1 Sonnet on `create` only. | model-invoked |
+| `review-plan` | Pre-implementation auditor — 4 parallel lenses against a plan. | 3 Opus + 1 Haiku. | model-invoked |
+| `conduct` | Phase-by-phase implementer dispatcher. | 2–3 subagents per phase. | model-invoked |
+| `fan-out` | Parallel-task dispatcher across git worktrees. | 1 Opus per independent task (cap 5). | model-invoked |
+| `deep-review` | Code review with 5 parallel lenses. | 3 Opus + 1 Sonnet + 1 Haiku. | model-invoked |
+| `plan-view` | Dashboard + per-plan rich HTML renderer. | 0 for deterministic; 1 per plan or section for `--rich`. | **user-invoked** (`disable-model-invocation: true`, Claude only) |
+| `update-docs` | Doc-vs-code drift auditor. | 1 Sonnet. | model-invoked |
+| `content-draft` | TIL/blog drafter from session context. | 1 Sonnet. | model-invoked |
+| `content-review` | Style/content reviewer for markdown. | 1 Sonnet. | model-invoked |
+| `spec-compliance` | RFC 2119 normative-requirement mapper. | 1 Opus. | model-invoked |
+| `rfc-finder` | RFC/draft locator with annotated links. | 1 Sonnet. | model-invoked |
+| `grill` | One-question-at-a-time interview over a plan/design, splitting facts from decisions. | Same session, no subagent spawn (or one lens call if inlined by a caller). | model-invoked |
+| `review-gauntlet` | Chains code-review/deep-review/security-review gates into one convergence loop with fixer subagents. | Up to 10 loop iterations, each spawning its own gate subagents. | model-invoked |
 
-Each skill is a single `SKILL.md` plus optional helper scripts. Skills are loaded by the Claude Code harness on session start; trigger phrases in their `description:` front-matter drive automatic activation.
+Each skill is a single `SKILL.md` plus optional helper scripts. Skills are loaded by the Claude Code harness on session start; trigger phrases in their `description:` front-matter drive automatic activation — **unless** `disable-model-invocation: true` is set, in which case the skill is reachable only via explicit `/skill-name` invocation and its `description:` is excluded from per-turn context (see [Invocation Mode](#invocation-mode) below). This is a Claude-only mechanism; Codex CLI has no equivalent opt-out (see that section for the classification methodology and the one skill currently affected).
 
 ## Input Contracts
 
@@ -145,6 +147,17 @@ Triggers fall into three classes:
 - **Implicit keywords** — `"RFC"`, `"IETF"`, `"WebRTC"`, `"QUIC"` for `rfc-finder`; `"MUST"` / `"SHOULD"` / RFC 2119 vocabulary for `spec-compliance`. These prime activation but the user typically still has to express intent.
 
 Triggers are aggressive on purpose — a missed slash command costs a user a turn; a false-positive slash command is recoverable. `description:` strings explicitly enumerate the colloquial phrasings the author types, learned by iterating with real sessions.
+
+## Invocation Mode
+
+Every skill's `description:` is loaded into per-turn context by default so the harness can fire it autonomously (**model-invoked**). Claude Code's `disable-model-invocation: true` front-matter flag opts a skill out of that: its `description:` is excluded from per-turn context, and it becomes reachable only via explicit `/skill-name` invocation (**user-invoked**). This is a Claude-only mechanism — Codex CLI has no equivalent opt-out as of this writing; a skill marked user-invoked on Claude stays autonomously invocable on Codex regardless, documented as a permanent, harness-imposed divergence via a one-line comment on the Codex `SKILL.md`.
+
+**Classification discipline for new skills.** Before writing a new skill's `description:`, check it against two axes — a skill must stay model-invoked if *either* is true:
+
+- **Axis 1 — chained-into.** Does any other skill's `SKILL.md` invoke this one by literal `/name`, `skein:name`, or bare-backticked-name text as a mandatory, autonomous step in its own procedure (not merely a suggestion offered to the user)? If yes, disabling breaks that caller — this is a hard exclusion, not a judgment call.
+- **Axis 2 — independently content-triggered.** Does the skill's own `description:` fire on content the user didn't have to name the skill to produce (e.g. `rfc-finder`'s RFC/protocol keywords) — genuine natural-language intent, not command-name-adjacent phrasing only someone who already knows the skill would say?
+
+A skill is only a real `disable-model-invocation` candidate if it clears **both** axes. As of the 2026-07-12 audit (`docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`), 1 of 13 skills — `plan-view` — clears both; the other 12 are either chained into (`conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review`) or carry a genuine Axis 2 trigger (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`). Re-run this same two-axis check whenever a skill is added or its chaining relationships change — don't default to leaving new skills model-invoked out of habit; that's exactly the drift this audit corrected.
 
 ## Failure Modes
 
