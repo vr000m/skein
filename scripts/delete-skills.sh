@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# delete-skills.sh — surgically remove the 13 skein-managed skills from the
+# delete-skills.sh — surgically remove the 14 skein-managed skills from the
 # global Claude and Codex skill dirs. Use after `/plugin install skein@skein`
 # (Claude) and `codex plugin add skein@skein` (Codex) to close the duplicate-skill
 # window without touching unrelated skills (e.g. pipecat, cloudflare-deploy,
@@ -23,7 +23,7 @@ esac
 
 SKEIN=(
   conduct content-draft content-review deep-review dev-plan fan-out
-  grill plan-view release review-plan rfc-finder spec-compliance update-docs
+  grill plan-view release review-gauntlet review-plan rfc-finder spec-compliance update-docs
 )
 
 removed=0

@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Verify the managed-skills set stays in sync across its two hardcoded copies:
+# Verify the managed-skills set stays in sync across its three hardcoded copies:
 #   - scripts/check-prompt-parity.sh's MANAGED_SKILLS default (bash array)
 #   - tests/parity/test_skill_md_presence.py's MANAGED_SKILLS list (python)
+#   - scripts/delete-skills.sh's SKEIN array (bash array, surgical-uninstall list)
 #
-# The two lists are intentionally duplicated (test_skill_md_presence.py's own
-# docstring says so) rather than one sourcing the other, because one is a bash
-# default and the other a python literal with no shared runtime. That is a
-# real drift risk, not hypothetical: this test was added after `review-gauntlet`
-# was found present in the python list but missing from the bash default
-# (docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md, Phase 2
-# Findings) — the two copies had already diverged once.
+# The lists are intentionally duplicated (test_skill_md_presence.py's own
+# docstring says so) rather than one sourcing the other, because they're a bash
+# default, a python literal, and a second bash array with no shared runtime.
+# That is a real drift risk, not hypothetical: this test was added after
+# `review-gauntlet` was found present in the python list but missing from the
+# bash default (docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md,
+# Phase 2 Findings) — the two copies had already diverged once. The third
+# source (delete-skills.sh) was folded in after a deep-review architecture
+# lens found it had independently drifted the same way, undetected because
+# this test didn't cover it (docs/dev_plans/20260712-feature-release-skill.md).
 #
 # Exit codes: 0 clean, 1 drift / extraction failure.
 
@@ -19,6 +23,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 SHELL_SCRIPT="$ROOT_DIR/scripts/check-prompt-parity.sh"
 PYTHON_FILE="$ROOT_DIR/tests/parity/test_skill_md_presence.py"
+DELETE_SCRIPT="$ROOT_DIR/scripts/delete-skills.sh"
 
 pass_count=0
 fail_count=0
@@ -42,6 +47,13 @@ fi
 
 if [[ ! -f "$PYTHON_FILE" ]]; then
 	fail "missing $PYTHON_FILE"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+if [[ ! -f "$DELETE_SCRIPT" ]]; then
+	fail "missing $DELETE_SCRIPT"
 	echo ""
 	echo "Summary: $pass_count passed, $fail_count failed"
 	exit 1
@@ -91,8 +103,20 @@ PY
 	exit 1
 }
 
+# Extract delete-skills.sh's SKEIN=( ... ) array body (multi-line, unquoted
+# bare words — not a single default-value line like MANAGED_SKILLS, so this
+# uses a block extraction instead of the shell_line regex above).
+delete_list="$(sed -n '/^SKEIN=(/,/^)/p' "$DELETE_SCRIPT" | sed '1d;$d' | tr -s ' \t' '\n' | grep -v '^$' || true)"
+if [[ -z "$delete_list" ]]; then
+	fail "could not locate or parse SKEIN=( ... ) array in $DELETE_SCRIPT"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
 shell_sorted="$(echo "$shell_list" | tr ' ' '\n' | sort -u)"
 python_sorted="$(echo "$python_list" | sort -u)"
+delete_sorted="$(echo "$delete_list" | sort -u)"
 
 if [[ "$shell_sorted" == "$python_sorted" ]]; then
 	pass "MANAGED_SKILLS in sync: $(echo "$shell_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $PYTHON_FILE"
@@ -102,6 +126,16 @@ else
 	comm -23 <(echo "$shell_sorted") <(echo "$python_sorted") || true
 	echo "--- only in python list ---"
 	comm -13 <(echo "$shell_sorted") <(echo "$python_sorted") || true
+fi
+
+if [[ "$shell_sorted" == "$delete_sorted" ]]; then
+	pass "SKEIN in sync: $(echo "$delete_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $DELETE_SCRIPT"
+else
+	fail "SKEIN drift between $SHELL_SCRIPT and $DELETE_SCRIPT"
+	echo "--- only in shell default ---"
+	comm -23 <(echo "$shell_sorted") <(echo "$delete_sorted") || true
+	echo "--- only in delete-skills.sh SKEIN ---"
+	comm -13 <(echo "$shell_sorted") <(echo "$delete_sorted") || true
 fi
 
 echo ""
