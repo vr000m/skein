@@ -23,7 +23,7 @@ esac
 
 SKEIN=(
   conduct content-draft content-review deep-review dev-plan fan-out
-  grill plan-view review-plan rfc-finder spec-compliance update-docs
+  grill plan-view release review-plan rfc-finder spec-compliance update-docs
 )
 
 removed=0

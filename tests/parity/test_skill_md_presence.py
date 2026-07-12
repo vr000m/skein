@@ -41,6 +41,7 @@ MANAGED_SKILLS = [
     "fan-out",
     "grill",
     "plan-view",
+    "release",
     "review-gauntlet",
     "review-plan",
     "rfc-finder",

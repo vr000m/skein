@@ -33,6 +33,7 @@ A second motivation: testing `plan-view --rich` against non-plan content. The sk
 | `rfc-finder` | RFC/draft locator with annotated links. | 1 Sonnet. | model-invoked |
 | `grill` | One-question-at-a-time interview over a plan/design, splitting facts from decisions. | Same session, no subagent spawn (or one lens call if inlined by a caller). | model-invoked |
 | `review-gauntlet` | Chains code-review/deep-review/security-review gates into one convergence loop with fixer subagents. | Up to 10 loop iterations, each spawning its own gate subagents. | model-invoked |
+| `release` | Derives a GitHub release title+body from a `CHANGELOG.md` section and creates/re-syncs the git tag and release to match. | 0 subagent spawns — runs inline, no delegation (owns a user-confirmation gate before irreversible tag push / release publish). | **user-invoked** (`disable-model-invocation: true`, Claude only) |
 
 Each skill is a single `SKILL.md` plus optional helper scripts. Skills are loaded by the Claude Code harness on session start; trigger phrases in their `description:` front-matter drive automatic activation — **unless** `disable-model-invocation: true` is set, in which case the skill is reachable only via explicit `/skill-name` invocation and its `description:` is excluded from per-turn context (see [Invocation Mode](#invocation-mode) below). This is a Claude-only mechanism; Codex CLI has no equivalent opt-out (see that section for the classification methodology and the one skill currently affected).
 
@@ -55,7 +56,7 @@ Outputs partition by *persistence model*:
 - **HTML writes into a derived directory** — `plan-view` writes `docs/_plan_view/*.html` and `_fragments/*.html`. Drift-guarded by `plan-view-source-sha256` meta tags.
 - **State files under hidden dirs** — `.conduct/state-<plan-id>.json`, `.deep-review/latest-claude.json`, `.review-plan/*.json`, `.fan-out-state.json`, `_rich_manifest.json`. These are resume points and audit trails — not committed.
 - **Console-only reports** — `content-review`, `spec-compliance`, `rfc-finder` return structured findings to the conversation. No files written unless the user explicitly requests it.
-- **Git side effects** — `conduct` commits at phase boundaries (`conduct: phase <n> — <title>`); `fan-out` creates branches and worktrees, then merges; `update-docs` may commit when run with `--apply`.
+- **Git side effects** — `conduct` commits at phase boundaries (`conduct: phase <n> — <title>`); `fan-out` creates branches and worktrees, then merges; `update-docs` may commit when run with `--apply`; `release` pushes a git tag (`vX.Y.Z`) and creates/edits a GitHub release — the only skill that mutates state outside the repo itself.
 
 The **review marker** `<!-- reviewed: YYYY-MM-DD @ <sha1> -->` is the single most-load-bearing cross-skill artefact: written by `review-plan`, consumed by `conduct` (refuses to run if absent or stale), referenced by `update-docs` (flags plans where code changed after the marker SHA).
 
@@ -142,7 +143,7 @@ The pipeline cost is *not* additive: `review-plan` runs once before implementati
 
 Triggers fall into three classes:
 
-- **Slash commands** — `/dev-plan`, `/review-plan`, `/conduct`, `/fan-out`, `/deep-review`, `/plan-view`, `/update-docs`, `/content-draft`, `/content-review`, `/spec-compliance`, `/rfc-finder`. Exact, unambiguous.
+- **Slash commands** — `/dev-plan`, `/review-plan`, `/conduct`, `/fan-out`, `/deep-review`, `/plan-view`, `/update-docs`, `/content-draft`, `/content-review`, `/spec-compliance`, `/rfc-finder`, `/release`. Exact, unambiguous.
 - **Imperative phrases** — `"plan this"`, `"audit plan"`, `"thorough review"`, `"step through plan"`, `"fan out"`, `"render plan dashboard"`, `"draft a TIL"`, `"check compliance"`. Surface in the `description:` front-matter; the harness fuzz-matches.
 - **Implicit keywords** — `"RFC"`, `"IETF"`, `"WebRTC"`, `"QUIC"` for `rfc-finder`; `"MUST"` / `"SHOULD"` / RFC 2119 vocabulary for `spec-compliance`. These prime activation but the user typically still has to express intent.
 
@@ -158,6 +159,8 @@ Every skill's `description:` is loaded into per-turn context by default so the h
 - **Axis 2 — independently content-triggered.** Does the skill's own `description:` fire on content the user didn't have to name the skill to produce (e.g. `rfc-finder`'s RFC/protocol keywords) — genuine natural-language intent, not command-name-adjacent phrasing only someone who already knows the skill would say?
 
 A skill is only a real `disable-model-invocation` candidate if it clears **both** axes. As of the 2026-07-12 audit (`docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`), 1 of 13 skills — `plan-view` — clears both; the other 12 are either chained into (`conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review`) or carry a genuine Axis 2 trigger (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`). Re-run this same two-axis check whenever a skill is added or its chaining relationships change — don't default to leaving new skills model-invoked out of habit; that's exactly the drift this audit corrected.
+
+**`release` (added 2026-07-12, `docs/dev_plans/20260712-feature-release-skill.md`) is classified `user-invoked` at birth**, using the same two-axis test rather than defaulting to model-invoked: Axis 1 — nothing chains into it, no other `SKILL.md` invokes `/release` or `skein:release`; Axis 2 — its trigger phrases ("cut a release", "publish this release", "sync release notes") are command-name-adjacent, the kind of thing only someone who already knows a release-cutting tool exists would say, the same character as `plan-view`'s cleared Axis 2. It also mutates external, hard-to-reverse state (git tag push, public GitHub release) — an independent reason it must never fire off conversational context alone, reinforcing rather than substituting for the two-axis result. 2 of 14 skills now clear both axes.
 
 ## Failure Modes
 
