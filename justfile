@@ -31,6 +31,7 @@ parity-tests:
     bash tests/parity/test-conduct-marker-parity.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
+    bash tests/parity/test-managed-skills-parity.sh
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
 # Run the review-gauntlet test suite (schema + injection coverage, plus the

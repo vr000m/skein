@@ -16,6 +16,16 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-07-12 — `plan-view` invocation-mode divergence (permanent, harness-imposed — not deferred drift)
+
+Source: PR #16 (`chore/skill-invocation-mode-audit`), plus a same-day follow-up commit on `chore/skill-invocation-audit-followups`. Plan: `docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`.
+
+- **Claude file changed:** `plugins/skein/skills/plan-view/SKILL.md` — added `disable-model-invocation: true` to front-matter. `description:` left untouched.
+- **Codex file changed:** `plugins/skein-codex/skills/plan-view/SKILL.md` — no field added (Codex CLI 0.144.1 has no discoverable front-matter equivalent that suppresses autonomous natural-language invocation, per the plan's Phase 0 research pass). Instead carries a one-line HTML comment, placed after front-matter close and before the first heading, documenting the divergence and pointing back to the plan.
+- **Required result: permanent Codex-native adaptation, not byte-identical parity, and not resolvable by a future Codex-side change** — this is a harness capability gap (Codex plausibly has the same autonomous-firing context-load problem as Claude, but no documented opt-out exists today), unlike the other entries in this file which track *deferred* work expected to eventually reconcile. `plan-view` stays autonomously invocable on Codex indefinitely; only the Claude mirror can suppress it.
+- Gating check cleared: `rg -n 'disable-model-invocation' plugins/skein/skills/plan-view/SKILL.md plugins/skein-codex/skills/plan-view/SKILL.md` shows the flag on the Claude side only, and the divergence comment on the Codex side. `just check-prompt-parity` passes (front-matter is out of that script's scope by design; verified directly via the `rg` command instead).
+- No other skill of the 13 audited was classified user-invoked, so this is a single-skill, single-entry divergence — see the plan's Phase 1 classification table for why the other 12 stayed model-invoked.
+
 ### 2026-07-04 — R6 Claude gate CONFIRMED, topology flipped live (Claude only; Codex still gated)
 
 Supersedes the "Claude-track fallback" entry below for the Claude side. The R6
