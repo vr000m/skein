@@ -14,6 +14,7 @@
 
 ## Review Workflow
 - **Verify the invariant, not just the tests.** Before declaring a structural fix complete (hashing, dedup, parity, state-machine), state the invariant and show concrete evidence (assertion, diff, log) that it holds across all call sites. Tests passing ≠ fix correct.
+- **Sweep the blast radius before finalizing a fix for a reported finding.** Don't just patch the reported line — grep every other place in the touched file(s) that uses the same mechanism (command, flag, config key, shared state), and check whether the fix's mechanism conflicts with an invariant those other call sites depend on. State the old invariant and the new one side by side before committing, not just "does this fix the reported problem." Reason: two consecutive fixes in one session (2026-07-12, `skein:release` skill, PR #18) each broke a *different* code path that relied on the same mechanism the previous fix touched — a HEAD-equality tag check that broke re-sync, and a `--prune-tags` fetch fix that destroyed a documented local-only-tag recovery path — both would have been caught by this sweep before editing, not by a second adversarial-review round after the fact.
 - After applying review fixes, re-verify the review-marker / plan-file hash before delegating further phases.
 - Before running adversarial / Codex / multi-lens review, confirm the diff scope: print `git diff <base>...HEAD --stat` and confirm it matches the feature branch, not the local worktree diff.
 
