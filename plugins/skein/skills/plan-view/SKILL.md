@@ -2,6 +2,7 @@
 name: plan-view
 description: Generates a self-contained HTML dashboard and per-plan drill-down pages from a directory of markdown dev plans. Surfaces status, cross-references, and git-derived timeline so corpus-level drift is visible. Also produces opinionated LLM-rendered "rich" single-plan views via `--rich` (with parallel section-fanout for large plans). Use when the user says "plan view", "render dev plans", "render plan dashboard", "render rich plan view", "/plan-view", or asks for a visual index of dev_plans/.
 argument-hint: <plans-dir> [--out <dir>] [--force] [--stale-days N] [--gitignore] [--rich] [--rich-assemble]
+disable-model-invocation: true
 ---
 
 # Plan View — HTML Dashboard for Dev-Plan Corpora
