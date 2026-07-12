@@ -96,6 +96,28 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
 - Verify the chaining-inventory step (Phase 0) actually enumerates every inbound `/name`/`skein:name` reference across both mirrors before Phase 1 classifies anything — not reconstructed ad hoc per skill.
 - Confirm `scripts/check-prompt-parity.sh` does not currently inspect SKILL.md front-matter (it checks `rubric.md`/`*-prompt.md`/schema-block parity only) and that Phase 2's actual verification step is a direct front-matter diff, not a claim that this script covers it. Also confirm whether `scripts/check-prompt-parity.sh`'s `MANAGED_SKILLS` default (currently 12 skills) is reconciled with the real 13-skill set or the gap is explicitly documented.
 
+5. **Phase 1 findings — classification of all 13 skills. Recorded 2026-07-12.**
+
+   Calibration bar for Axis 2 (per Context item 4's gold-standard example): does the skill's own `Use when...` clause describe genuine user intent that plausibly arises in normal conversation *independent of already knowing the skill/command name* — the way `rfc-finder`'s "RFC", "IETF", "WebRTC", "QUIC" keywords do — or is the trigger phrase itself command-name-adjacent (only said by someone who already knows the specific tool exists)?
+
+   | Skill | Classification | Axis 1 (chaining) | Axis 2 (content trigger) |
+   |---|---|---|---|
+   | `conduct` | **model-invoked** | Hard-excluded — probable callee of `fan-out` ("fan-out-spawned Claude subprocess may invoke `/conduct` as its top-level skill", `fan-out/SKILL.md:15`) | not evaluated (Axis 1 alone decides) |
+   | `dev-plan` | **model-invoked** | Hard-excluded — confirmed callee of `review-plan` (Step 6.4's `/dev-plan update` calls) and `grill` (standalone Step 4's `/dev-plan update` calls) | not evaluated |
+   | `review-plan` | **model-invoked** | Hard-excluded — `conduct`'s marker precondition depends on it; independently confirmed as a caller into `dev-plan` | not evaluated |
+   | `review-gauntlet` | **model-invoked** | Hard-excluded — confirmed callee of `conduct` and `fan-out` (auto-chain at terminal seam) | not evaluated |
+   | `deep-review` | **model-invoked** | Hard-excluded — confirmed callee of `review-gauntlet` (`skein:deep-review` invoked directly at its own top level) | not evaluated |
+   | `content-draft` | **model-invoked** | Clear — zero inbound edges found on either mirror | Fires: `"write up what we just did"`, `"summarise this session as a TIL"` describe genuine session-recap intent a user expresses without naming the skill |
+   | `content-review` | **model-invoked** | Clear (Axis 1) — only a soft/suggested inbound edge from `content-draft`'s own next-step menu, not a hard dependency | Fires: `"proofread my content"`, `"check my TIL"` are natural asks independent of skill awareness |
+   | `fan-out` | **model-invoked** | Clear — no skill invokes it as a hard dependency (all references are descriptive workflow guidance, e.g. `dev-plan/SKILL.md:91`, `review-plan/SKILL.md:37`) | Fires: `"parallelize this"` is a plausible spontaneous phrase from a technical user unaware of the specific skill name |
+   | `grill` | **model-invoked** | Clear — `review-plan`'s reference is explicitly annotated "not a skill activation" on both mirrors (Context item 4); no other inbound edges | Fires: `"stress-test this plan"`, `"interview me on this design"` are natural technical idioms |
+   | `rfc-finder` | **model-invoked** | Clear (Axis 1) — only a soft/suggested inbound edge from `spec-compliance`'s error-recovery path, not a hard dependency | Fires strongly (gold-standard case): protocol/RFC keywords ("RFC", "IETF", "WebRTC", "QUIC", etc.) arise routinely in technical conversation with zero skill awareness required |
+   | `spec-compliance` | **model-invoked** | Clear — `deep-review`'s "spec compliance" is its own inline lens, not a call to this skill, on both mirrors; zero real inbound edges | Fires strongly: `"does this implement RFC X"`, `"check against W3C"` are natural compliance-review asks, same character as `rfc-finder`'s trigger |
+   | `update-docs` | **model-invoked** | Clear — `dev-plan`/`plan-view` references are descriptive (component-grouping key), not invocations | Fires: `"update docs"` is a common developer phrase, plus a situational timing trigger ("after finishing implementation work, before creating or merging a PR") worth keeping autonomous |
+   | `plan-view` | **user-invoked** (`disable-model-invocation: true`) | Clear — corrected from this plan's own wrong worked example; `dev-plan`/`update-docs` references are descriptive (grouping/rendering behavior only), not invocations; zero real inbound edges on either mirror | Does not fire: `"render dev plans"`, `"render plan dashboard"`, `"asks for a visual index of dev_plans/"` are command-name-adjacent phrasing — a user who says this already knows a specific reporting tool exists, unlike the natural-intent triggers above |
+
+   **Result: 1 of 13 skills clears both axes** — `plan-view`. This is a smaller yield than the plan's original (retracted) 5-skill candidate list, because rigorous per-skill Axis 2 reasoning shows most of skein's skills already carry genuine natural-language intent triggers in their descriptions (that's how their authors wrote them), not just a bare `/name` fallback. `fan-out`, `rfc-finder`, and `spec-compliance` — all on the original candidate list — are cleared on Axis 1 but held to model-invoked by Axis 2: `rfc-finder`/`spec-compliance` are the plan's own gold-standard case for a content-trigger that must survive, and `fan-out`'s "parallelize this" is judged to plausibly fire independent of skill awareness.
+
 ## Implementation Checklist
 
 ### Phase 0: Build the chaining map, then verify the three open questions before classifying anything
@@ -151,14 +173,19 @@ Axis 1 is a hard exclusion (chaining is a correctness question — get it wrong 
 - Phase 2's front-matter change is verified by direct `rg` diff per skill (not by `scripts/check-prompt-parity.sh`, which doesn't cover front-matter).
 - The skills architecture doc reflects the new classification so it doesn't silently rot on the next skill addition.
 
-<!-- reviewed: 2026-07-12 @ d932bfa7eb9e96a6fcc1302f6a833e1cc0a93e3f -->
+<!-- reviewed: 2026-07-12 @ cc7b0491ec5ccc0b38b91fb3311015c06acfddf3 -->
 
 ## Progress
 
 - [x] Phase 0: Build the chaining map, then verify the three open questions before classifying anything
+- [x] Phase 1: Classify all 13 skills
 
 ## Findings
 
 ### Phase 0 (2026-07-12)
 
 Research phase, no code changes. Full findings recorded in Context item 4 above (per this phase's own instruction — findings belong in Context/Requirements, not here). Summary: verified inbound-chaining map is much smaller than the raw grep suggested (5 confirmed hard edges + 1 probable + 2 soft, out of ~30 raw hits); corrected two errors in the plan's own drafting (`plan-view` isn't actually chained into by anyone; `review-plan`→`grill` is explicitly not a skill activation on either mirror); confirmed via official docs that `disable-model-invocation` both removes per-turn context load and blocks all Claude-initiated invocation paths (not just autonomous NL firing) — meaning literal-text chaining edges break exactly like autonomous ones. Empirical live-fire testing was ruled out with evidence (this session's plugin loads from an installed cache pinned at v0.4.1, decoupled from this repo's v0.5.0).
+
+### Phase 1 (2026-07-12)
+
+Research/decision phase, no code changes. Full classification table recorded in Context item 5 above. Summary: only 1 of 13 skills (`plan-view`) clears both axes for `disable-model-invocation`. `conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review` are hard-excluded on Axis 1. The remaining 7 (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`) clear Axis 1 but are held to model-invoked by genuine Axis 2 content triggers, judged against the plan's own `rfc-finder` gold-standard calibration. This is a smaller yield than the plan's originally retracted 5-skill candidate list — a rigorous per-skill pass finds most of skein's skill descriptions already carry natural-language intent triggers, not just a bare command fallback.
