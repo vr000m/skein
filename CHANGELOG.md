@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- **`skein:release` (both Claude and Codex).** A new user-invoked-only skill that derives a GitHub release's title and body from a `CHANGELOG.md` `## [X.Y.Z] - date` section (Keep a Changelog format) and creates or re-syncs the git tag and GitHub release to match, in one canonical shape: title `<repo> vX.Y.Z — <highlight>`, body = an optional `## What's New` summary paragraph + the section content with its header stripped + a trailing `**Full diff:**` compare link. `/release audit` scans every tag/CHANGELOG version repo-wide for missing tags, missing releases, or drifted title/body and reports a fix-opt-in punch list. Replaces skein's own ad hoc, hand-typed `gh release create`/`edit` calls, which had drifted into three visibly different release-note shapes across its first 11 releases (all retrofitted to the canonical shape in the same session). Before creating or reusing a tag, the skill now requires a clean worktree and verifies the target commit/tag SHA against what was confirmed with the user, and dedupes its `gh release view` calls across Single-Version and Audit Mode. See `docs/dev_plans/20260712-feature-release-skill.md`.
+
 ## [0.5.1] - 2026-07-12
 
 ### Added

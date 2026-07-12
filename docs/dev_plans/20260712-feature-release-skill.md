@@ -45,9 +45,9 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 **Test files:** none (doc-only skill, no bundled scripts)
 **Test command:** n/a
 
-- [ ] Write frontmatter: `name: release`, `description` describing the CHANGELOG→GitHub-release sync behavior with explicit trigger phrases ("cut a release", "publish this release", "sync release notes", "/release"), `argument-hint: "[version|latest|unreleased]"`, `disable-model-invocation: true`.
-- [ ] Write the workflow: parse CHANGELOG section (Requirement 1), determine PREV tag + compare link (Requirement 2), draft highlight (Requirement 3), confirm title+body+tag-push with the user before any git/gh mutation (Requirement 7 / repo CLAUDE.md), then tag+push if missing, then `gh release create` or `gh release edit` (Requirement 5).
-- [ ] Include the worked example from this session (v0.5.1's title/body) as a concrete illustration.
+- [x] Write frontmatter: `name: release`, `description` describing the CHANGELOG→GitHub-release sync behavior with explicit trigger phrases ("cut a release", "publish this release", "sync release notes", "/release"), `argument-hint: "[version|latest|unreleased]"`, `disable-model-invocation: true`.
+- [x] Write the workflow: parse CHANGELOG section (Requirement 1), determine PREV tag + compare link (Requirement 2), draft highlight (Requirement 3), confirm title+body+tag-push with the user before any git/gh mutation (Requirement 7 / repo CLAUDE.md), then tag+push if missing, then `gh release create` or `gh release edit` (Requirement 5).
+- [x] Include the worked example from this session (v0.5.1's title/body) as a concrete illustration.
 
 ### Phase 2: Author the Codex mirror SKILL.md
 
@@ -55,8 +55,8 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 **Test files:** none
 **Test command:** n/a
 
-- [ ] Mirror Phase 1's content with Codex's dispatch idiom and `$SKILL_DIR` path anchor (no bundled scripts, so this is mostly moot, but keep the anchor convention consistent with sibling skills for any future script needs).
-- [ ] No `disable-model-invocation` field (doesn't exist on Codex); add the one-line HTML-comment documenting the permanent Claude/Codex divergence, placed immediately after the frontmatter close.
+- [x] Mirror Phase 1's content with Codex's dispatch idiom and `$SKILL_DIR` path anchor (no bundled scripts, so this is mostly moot, but keep the anchor convention consistent with sibling skills for any future script needs).
+- [x] No `disable-model-invocation` field (doesn't exist on Codex); add the one-line HTML-comment documenting the permanent Claude/Codex divergence, placed immediately after the frontmatter close.
 
 ### Phase 3: Register in tracking lists and docs
 
@@ -64,12 +64,12 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 **Test files:** `tests/parity/test_skill_md_presence.py` (itself, once updated)
 **Test command:** `just check-prompt-parity && python3 -m pytest tests/parity/test_skill_md_presence.py -q`
 
-- [ ] Add `release` to `MANAGED_SKILLS` default in `scripts/check-prompt-parity.sh`.
-- [ ] Add `"release"` to the `MANAGED_SKILLS` list in `tests/parity/test_skill_md_presence.py`.
-- [ ] Add a row to `README.md`'s skill table.
-- [ ] Add a row to the Skill Catalogue table in `docs/skills_architecture/20260522-design-claude-skills-architecture.md`, with Invocation Mode `user-invoked` (Claude) and a note on the Codex divergence — following the same reasoning discipline as the skill-invocation-mode-audit plan (Axis 1: nothing chains into `release`; Axis 2: "cut a release"/"publish this release" are command-name-adjacent, someone who says this already knows a release-cutting tool exists, so `release` is a genuine `disable-model-invocation` candidate on the same grounds as `plan-view`).
-- [ ] Add `release` to the `SKEIN` array in `scripts/delete-skills.sh` (the surgical-uninstall helper) — leave its pre-existing `review-gauntlet` omission alone, that's a separate gap out of this plan's scope.
-- [ ] `.env.example`'s documented `MANAGED_SKILLS` override example is already stale (11 names, missing `grill`/`review-gauntlet`) — out of this plan's scope to fully reconcile, but do not add to the staleness: leave it as-is rather than adding a 12th/13th/14th name to an already-incomplete example.
+- [x] Add `release` to `MANAGED_SKILLS` default in `scripts/check-prompt-parity.sh`.
+- [x] Add `"release"` to the `MANAGED_SKILLS` list in `tests/parity/test_skill_md_presence.py`.
+- [x] Add a row to `README.md`'s skill table.
+- [x] Add a row to the Skill Catalogue table in `docs/skills_architecture/20260522-design-claude-skills-architecture.md`, with Invocation Mode `user-invoked` (Claude) and a note on the Codex divergence — following the same reasoning discipline as the skill-invocation-mode-audit plan (Axis 1: nothing chains into `release`; Axis 2: "cut a release"/"publish this release" are command-name-adjacent, someone who says this already knows a release-cutting tool exists, so `release` is a genuine `disable-model-invocation` candidate on the same grounds as `plan-view`).
+- [x] Add `release` to the `SKEIN` array in `scripts/delete-skills.sh` (the surgical-uninstall helper) — leave its pre-existing `review-gauntlet` omission alone, that's a separate gap out of this plan's scope.
+- [x] `.env.example`'s documented `MANAGED_SKILLS` override example is already stale (11 names, missing `grill`/`review-gauntlet`) — out of this plan's scope to fully reconcile, but do not add to the staleness: leave it as-is rather than adding a 12th/13th/14th name to an already-incomplete example.
 
 ## Technical Specifications
 
@@ -163,3 +163,15 @@ Verified after fixes: `just check-prompt-parity` and `uvx pytest tests/parity/te
 ### Phase 3 (2026-07-12)
 
 Registered `release` in `scripts/check-prompt-parity.sh` (`MANAGED_SKILLS` default), `tests/parity/test_skill_md_presence.py` (`MANAGED_SKILLS` list), `README.md` (skill table row), `scripts/delete-skills.sh` (`SKEIN` array), and `docs/skills_architecture/20260522-design-claude-skills-architecture.md` (Skill Catalogue row, Output Contracts git-side-effects note, Invocation Mode section's `release` classification rationale, Trigger Phrases slash-command list). Verified: `just check-prompt-parity` passes; `uvx pytest tests/parity/test_skill_md_presence.py -q` passes 14/14 (13 existing + `release`).
+
+### Third review: Codex adversarial review + `/code-review` (2026-07-12, dual-lens on the finished branch)
+
+Ran `/codex:adversarial-review` (challenge-framed, questioning design choices) and `/code-review` (medium effort, 8 finder angles + 1-vote verify) as parallel independent passes against the finished branch. Codex surfaced one no-ship-severity finding; `/code-review` surfaced three confirmed cleanup findings and one plausible-but-unactioned one. All confirmed findings fixed identically in both mirrors:
+
+1. **[Codex, high, no-ship] Release tag target was never validated.** Step 5 created `vX.Y.Z` at whatever `HEAD` happened to be, with no check that the worktree was clean or that `HEAD` was the commit the user actually intended to release — running `/release` from an unrelated checkout could permanently tag and publish the wrong commit. Fixed: Step 4 now runs `git status --porcelain` (stops on a dirty worktree) and records `git rev-parse HEAD` plus the current branch before asking for confirmation, and shows both to the user. Step 5's tag-reuse path (existing-tag-on-origin case) now dereferences the tag (`git rev-parse "vX.Y.Z^{commit}"`) and compares it against that recorded `HEAD` SHA before reusing it, refusing silently on any mismatch (ties into the pre-existing Edge Cases bullet on unexpected tag targets).
+2. **[/code-review, confirmed] Redundant `gh release view` in Step 3.1 → Step 6.** Step 3.1 already made the existence-check call (`--json name,body`) to recover title/body on re-sync; Step 6 re-ran an unqualified `gh release view` purely to decide create-vs-edit, against unchanged state. Fixed: Step 3.1 now records that outcome explicitly; Step 6 reuses it instead of re-querying.
+3. **[/code-review, confirmed] Redundant `gh release view` in Audit Mode's fix pass.** Step A2's per-candidate classification fetch (`ok`/`drifted`) and Step A4's subsequent Single-Version Mode fix pass (Step 3.1) both fetched the same release data for any `drifted` version selected to fix. Fixed: A4 now instructs feeding Step 3.1 the `name`/`body` A2 already fetched for `drifted` candidates (`missing-tag`/`missing-release` still need their own call — A2 never fetches content for those).
+4. **[/code-review, confirmed] Stale skill count in `scripts/delete-skills.sh`.** Header comment said "12 skein-managed skills"; the `SKEIN` array had grown to 13 with `release`'s addition. Fixed the count.
+5. **[/code-review, plausible, not fixed] Audit Mode's classification logic (Step A2's truth table, draft pre-check, ok/drifted comparison) is expressed as prose rather than a bundled script**, unlike `deep-review`/`review-plan`/`review-gauntlet`'s scripted classification. Verified as only a partial match to that convention — those scripts operate on already-structured JSON with mechanical dedup, a materially different task from Audit Mode's live-`gh`-call-plus-judgment comparison — and the cited risk (an agent skipping the draft pre-check) is a generic literalness concern with no reproduced incident. Left as prose; converting it would be a structural redesign disproportionate to a PLAUSIBLE-confidence finding.
+
+Verified after fixes: `bash scripts/check-prompt-parity.sh` passes; `diff` between the two mirrors shows only the pre-existing, documented harness-specific wording divergence (invocation-mode framing) — no new unintended drift introduced by these fixes.
