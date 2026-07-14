@@ -118,7 +118,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			(.lenses | join(",")),
 			.summary, .evidence, .suggestion, (.auto_fix_status // "")
-		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("")
+		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
 	')"
 
 	# Related cross-references. Columns: file  line  cat_a  cat_b
@@ -127,7 +127,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			.file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			.categories[0], .categories[1]
-		] | map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n")) | join("")
+		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
 	')"
 else
 	# Fallback: minimal awk JSON walker. Sufficient for the well-formed
@@ -482,15 +482,24 @@ emit_section() {
 		fi
 
 		if [[ "$compact" -eq 1 ]]; then
+			# Compact rendering is a promised single-line form. d_summary may
+			# carry embedded newlines round-tripped from an escaped
+			# multi-line summary (decode() applies uniformly to
+			# summary/evidence/suggestion with no single-line schema
+			# constraint on summary) — collapse them to spaces here so the
+			# compact bullet never splits across markdown lines. The
+			# full-detail branch below is untouched: its Evidence/Suggestion
+			# sub-bullets are allowed to be multi-line by design.
+			d_summary_compact="$(printf '%s' "$d_summary" | tr '\n' ' ')"
 			if [[ "$unanchored" -eq 1 ]]; then
-				printf -- '- **%s**%s: %s\n' "$r_cat" "$auto_fix_label" "$d_summary"
+				printf -- '- **%s**%s: %s\n' "$r_cat" "$auto_fix_label" "$d_summary_compact"
 			else
 				suffix=""
 				if [[ -n "$related_lines" ]]; then
 					other_cats="$(printf '%s\n' "$related_lines" | awk -F $'\037' '{ if (out != "") out = out ", "; out = out $1 } END { print out }')"
 					suffix=" — see also ${other_cats} at same location"
 				fi
-				printf -- '- **%s**%s: %s (%s:%s)%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line" "$suffix"
+				printf -- '- **%s**%s: %s (%s:%s)%s\n' "$r_cat" "$auto_fix_label" "$d_summary_compact" "$r_file" "$r_line" "$suffix"
 			fi
 		else
 			printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
