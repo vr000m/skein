@@ -470,8 +470,14 @@ emit_section() {
 		# Related-findings mechanism and never render a location segment,
 		# in either rendering mode for compact; full-detail's title line
 		# keeps today's unconditional "at file:line" for every severity.
+		# A finding is treated as unanchored for compact rendering
+		# whenever EITHER half of the location is missing (empty file OR
+		# the -1 line sentinel) — not only when both are missing. A
+		# partially-anchored finding (e.g. file set, line absent) has no
+		# usable location and must not leak the internal -1 sentinel or a
+		# bare `:line`/`file:` segment into the compact output.
 		unanchored=0
-		if [[ -z "$r_file" && "$r_line" == "-1" ]]; then
+		if [[ -z "$r_file" || "$r_line" == "-1" ]]; then
 			unanchored=1
 		fi
 

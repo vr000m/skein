@@ -29,6 +29,16 @@
 
 set -euo pipefail
 
+# `declare -A` (associative arrays, used below for VERBOSE_FIXTURES)
+# requires bash 4.0+. macOS ships /bin/bash 3.2 by default, which
+# silently mis-parses the associative-array literal and then crashes
+# later with a cryptic "unbound variable" error under `set -u`. Fail
+# fast with a clear message instead.
+if ((BASH_VERSINFO[0] < 4)); then
+	echo "test-renderer.sh requires bash 4.0+ (found ${BASH_VERSION}); on macOS install via 'brew install bash' and ensure it's first on PATH" >&2
+	exit 1
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RENDERER="$REPO_ROOT/scripts/render-reconciled-report.sh"
 EXPECTED_DIR="$REPO_ROOT/tests/reconciliation/expected"
