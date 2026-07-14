@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: "Run a multi-lens code review with fresh Codex subagents and strict triage/suppression rules. Use after implementation or when a plan's Review Focus needs targeted review."
-argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial]"
+argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial] [--verbose]"
 ---
 
 # Deep Review: Multi-Lens Code Review
@@ -34,6 +34,8 @@ to delegate further.
    diff against the merge base with
    the default branch.
 5. If no target can be resolved, ask the user for a plan path or PR reference.
+
+`--verbose` is a rendering-mode modifier, composable with any of the five resolution rules above — it does not change which diff range or target is resolved, only how the `## Output` section renders the resulting findings.
 
 Input resolution questions are part of setup. It is fine to ask the user which PR, commit range,
 plan, or branch diff to review when that target is ambiguous or missing.
@@ -283,6 +285,11 @@ incomplete run or review only commits added since the last completed review. Eac
 own state file (Claude uses `.deep-review/latest-claude.json`) so concurrent or interleaved runs
 don't clobber each other's resume target. The `.deep-review/` directory is gitignored as a whole.
 
+Any downstream consumer of this run's findings (for example, `skein:review-gauntlet`'s gate 3)
+MUST source them from this state file or the pre-render Step 3.5 reconciled data — never from the
+rendered `## Output` report, which intentionally omits Evidence/Suggestion for Minor findings under
+this plan's compact default.
+
 Suggested schema. For each lens `model`, record the concrete model the harness selected if it is
 observable at dispatch time; otherwise use the literal `harness-default`. Always keep
 `reasoning_effort` when a routing hint was requested, even when the concrete model is not
@@ -494,14 +501,23 @@ The consolidated report should include:
 - ...
 
 ### Minor
-- ...
+- **[Category]**: [one-line summary] (file:line)
 
 ---
+**Full findings JSON**: .deep-review/latest-codex.json
 **Next steps**: Review these findings and decide which ones to apply. Update the plan or code with
 the accepted changes, then rerun `/deep-review` if the snapshot changed.
 ```
 
-The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier. `scripts/render-reconciled-report.sh` is the reference renderer that encodes these rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the Step 5 template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
+
+**Default rendering (no `--verbose`): Minor findings are compact.** Critical and Important findings render exactly as shown above — full `Lenses:`/`Evidence:`/`Suggestion:`/optional `Related findings:` sub-bullets. Minor findings instead render as a single line: `- **[Category]**: [one-line summary] (file:line)` — the finding's existing `summary` field rendered unabridged (no hard truncation), with a parenthesized `(file:line)` instead of the Critical/Important convention, and no `Evidence:`/`Suggestion:`/`Lenses:` sub-bullets. When the Minor finding has a "Related findings" cross-reference, append a terse inline suffix instead of the full sub-bullet: `- **[Category]**: [summary] (file:line) — see also [Other Category] at same location`. When the Minor finding is unanchored (both `file` empty and `line` absent, per the GENERIC block), omit the location segment and the "see also" suffix entirely: `- **[Category]**: [one-line summary]`. The `[AUTO-FIXABLE]` marker is unaffected by this and still appears on the title line whenever `auto_fix_status` is `would_apply` — compact mode only omits `Evidence:`/`Suggestion:` prose, never the marker. This is a display-only switch: it does not drop any underlying data — every finding still carries all five fields (Severity, Category, Location, Evidence, Suggestion) in the reconciled JSON; only the *rendered* Minor tier omits Evidence/Suggestion prose from display.
+
+**`--verbose` (passed): every severity renders in full detail.** When `--verbose` is passed, Minor findings render identically to Critical/Important — full `Lenses:`/`Evidence:`/`Suggestion:`/`Related findings:` sub-bullets, i.e. today's unconditional behavior, restored for every severity.
+
+**JSON pointer footer (always present, both compact and verbose modes).** Every rendered report ends with a `**Full findings JSON**: .deep-review/latest-codex.json` line naming the per-harness state file path, immediately **before** the `**Next steps**:` line — a fixed position, not a per-mirror choice — so the user can inspect the full per-lens findings directly (for example, `jq '.lenses' .deep-review/latest-codex.json`) instead of asking for a re-summary. Best-effort write; if the state-file write fails, print a one-line warning in the report ("Could not persist findings JSON: <reason>") and render that run in full-verbose mode regardless of `--verbose`'s actual value.
+
+`scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the `## Output` template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
 
 If the review is clean, say so concisely and note any residual risks or lenses that were skipped.
 
@@ -527,12 +543,14 @@ report header must make the scope explicit and partition new findings from prior
 - ...
 
 #### Minor
-- ...
+- ... (same compact-by-default / `--verbose`-restores-full-detail rule as the main `## Output` template)
 
 ### Prior findings (from run `<run_id>`) - verify these are addressed
 - **[Category] [Severity]**: [Finding] at [file:line]
   - From the prior report; this run did not re-evaluate.
 ```
+
+The "New findings" `#### Minor` subsection **MUST** follow the same compact-by-default rule as the main `## Output` template — render each Minor finding as a single `- **[Category]**: [one-line summary] (file:line)` line by default, with `--verbose` restoring full `Lenses:`/`Evidence:`/`Suggestion:` detail. This is a firm requirement, not a "confirm if applicable" item. The "Prior findings" list (already one-line per finding) is unaffected and needs no change.
 
 Do not silently re-list prior findings as if they were freshly surfaced.
 
@@ -546,6 +564,7 @@ Do not silently re-list prior findings as if they were freshly surfaced.
   separately for reference.
 - If `--full` is requested, ignore prior run state and start fresh.
 - Findings must include severity, category, file:line, evidence, and a concrete suggestion.
+- Default rendering: Minor findings render compact (no Evidence/Suggestion); `--verbose` restores full detail for all severities. This is a display-only switch — it does not change lens dispatch, reconciliation, or suppression.
 
 ## Self-Check Rubric
 

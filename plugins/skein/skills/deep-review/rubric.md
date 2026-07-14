@@ -11,7 +11,8 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 
 ## Finding Quality
 
-- Each finding has all five fields: Severity, Category, Location (file:line), Evidence, Suggestion
+- Every reconciled finding carries all five fields in the underlying data: Severity, Category, Location (file:line), Evidence, Suggestion — this holds regardless of how the finding is rendered
+- Critical/Important findings render all five fields (Severity/Category/Location/Evidence/Suggestion); Minor findings render Category+Location+one-line summary by default (Evidence/Suggestion intentionally omitted from the default rendering, restored with `--verbose`)
 - Severity is one of Critical / Important / Minor — no other values
 - Category matches the lens that produced it (Logic, Security, Spec, Architecture, Documentation)
 - Evidence cites concrete code, diff hunk, or spec section — not a paraphrase
@@ -35,6 +36,8 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 - One-line overall summary at the top
 - Skipped or timed-out lenses are called out under "Residual Risks"
 - Markdown is well-formed and renders cleanly
+- Minor findings render compact by default (no Evidence/Suggestion sub-bullets); `--verbose` restores full detail for every severity
+- The report always ends with the per-harness JSON state file path (`.deep-review/latest-claude.json` / `.deep-review/latest-codex.json`)
 
 ## Reconciliation
 
