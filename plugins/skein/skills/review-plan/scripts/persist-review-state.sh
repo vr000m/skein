@@ -159,6 +159,24 @@ output="$(printf '%s' "$input" | jq \
 	exit 1
 }
 
+# Symlink guard (defense-in-depth): refuse to write through a pre-existing
+# symlink at either the target file or its parent directory. `.review-plan/`
+# is gitignored, but a *tracked* symlink at that exact path would still
+# materialize on checkout — without this guard a malicious clone could point
+# it outside the repo and have this script's write clobber an arbitrary
+# user-writable file. Proportionate, minimal check only — no atomic
+# temp-file/rename mechanics (see the plan's Requirement 8: those are
+# explicitly not required for this gitignored convenience file).
+if [[ -L "$OUT_DIR" ]]; then
+	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
+	exit 1
+fi
+
+if [[ -L "$OUT_PATH" ]]; then
+	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
+	exit 1
+fi
+
 # Best-effort write: direct write in place, no atomic-write/temp-file/rename
 # mechanics — proportionate to a local gitignored convenience file (grilled
 # decision, see the plan's Requirement 8).

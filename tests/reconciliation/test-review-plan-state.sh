@@ -38,6 +38,11 @@
 #       run_id) piped through scripts/render-reconciled-report.sh renders
 #       without error, confirming the renderer's forward-compat tolerance
 #       of unrecognized top-level keys.
+#   (e) a pre-existing symlink at the target file path (pointing outside the
+#       scratch repo) is refused rather than written through (defense-in-depth
+#       symlink hardening; skipped when running as root).
+#   (f) a pre-existing symlink at .review-plan/ itself (pointing outside the
+#       scratch repo) is refused the same way (skipped when running as root).
 #
 # Exit 0 on all-pass, 1 on any failure.
 
@@ -311,6 +316,83 @@ if bash "$RENDERER" <"$case_d_dir/superset-envelope.json" >"$case_d_dir/rendered
 else
 	fail "(d) renderer tolerates superset envelope (renderer exited non-zero)"
 	sed 's/^/    /' "$case_d_dir/stderr"
+fi
+
+# ---------------------------------------------------------------------------
+# (e) symlinked target file: refuse to write through it
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (e) refuses to write through a symlinked target file (running as root)"
+else
+	case_e_dir="$TMPDIR_ROOT/case-e"
+	make_scratch_repo "$case_e_dir"
+	sample_envelope >"$case_e_dir/envelope.json"
+	outside_target="$TMPDIR_ROOT/case-e-outside-target.json"
+	printf 'outside content\n' >"$outside_target"
+	mkdir -p "$case_e_dir/.review-plan"
+	ln -s "$outside_target" "$case_e_dir/.review-plan/latest-claude.json"
+
+	set +e
+	(
+		cd "$case_e_dir" && persist_state "$case_e_dir/envelope.json" \
+			"docs/dev_plans/example-plan.md" \
+			"deadbeefcafebabe0000000000000000000000" \
+			"20260714-000005" \
+			"claude"
+	) >"$case_e_dir/stdout" 2>"$case_e_dir/stderr"
+	e_exit=$?
+	set -e
+
+	if [[ $e_exit -eq 0 ]]; then
+		fail "(e) refuses to write through a symlinked target file (script exited 0)"
+		sed 's/^/    /' "$case_e_dir/stdout"
+	elif ! grep -Fq "Could not persist findings JSON:" "$case_e_dir/stderr"; then
+		fail "(e) refuses to write through a symlinked target file (missing documented stderr message)"
+		sed 's/^/    /' "$case_e_dir/stderr"
+	elif [[ "$(cat "$outside_target")" != "outside content" ]]; then
+		fail "(e) refuses to write through a symlinked target file (outside file was overwritten)"
+	else
+		pass "(e) refuses to write through a symlinked target file"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (f) symlinked .review-plan/ directory: refuse to write through it
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (f) refuses to write through a symlinked .review-plan/ directory (running as root)"
+else
+	case_f_dir="$TMPDIR_ROOT/case-f"
+	make_scratch_repo "$case_f_dir"
+	sample_envelope >"$case_f_dir/envelope.json"
+	outside_dir="$TMPDIR_ROOT/case-f-outside-dir"
+	mkdir -p "$outside_dir"
+	ln -s "$outside_dir" "$case_f_dir/.review-plan"
+
+	set +e
+	(
+		cd "$case_f_dir" && persist_state "$case_f_dir/envelope.json" \
+			"docs/dev_plans/example-plan.md" \
+			"deadbeefcafebabe0000000000000000000000" \
+			"20260714-000006" \
+			"claude"
+	) >"$case_f_dir/stdout" 2>"$case_f_dir/stderr"
+	f_exit=$?
+	set -e
+
+	if [[ $f_exit -eq 0 ]]; then
+		fail "(f) refuses to write through a symlinked .review-plan/ directory (script exited 0)"
+		sed 's/^/    /' "$case_f_dir/stdout"
+	elif ! grep -Fq "Could not persist findings JSON:" "$case_f_dir/stderr"; then
+		fail "(f) refuses to write through a symlinked .review-plan/ directory (missing documented stderr message)"
+		sed 's/^/    /' "$case_f_dir/stderr"
+	elif [[ -f "$outside_dir/latest-claude.json" ]]; then
+		fail "(f) refuses to write through a symlinked .review-plan/ directory (outside dir was written into)"
+	else
+		pass "(f) refuses to write through a symlinked .review-plan/ directory"
+	fi
 fi
 
 echo ""

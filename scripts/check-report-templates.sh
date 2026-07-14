@@ -135,6 +135,7 @@ for rubric_md in \
 	if ! require_file "$rubric_md"; then
 		continue
 	fi
+	# shellcheck disable=SC2016  # literal grep pattern, not meant to expand
 	require_pattern "$rubric_md" 'restored with `--verbose`' "the reworded 'restored with \`--verbose\`' Finding Quality criterion"
 done
 
