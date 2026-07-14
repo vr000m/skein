@@ -30,8 +30,8 @@ to delegate further.
    diff.
 3. If the first argument is `--continue`, follow the continuation rules in
    [Persisted Run State](#persisted-run-state); the diff range depends on prior state.
-4. If the first argument is `--full`, or no explicit argument is provided, review the current branch
-   diff against the merge base with
+4. If the first argument is `--full`, or no explicit argument is provided (or only `--verbose` is
+   provided), review the current branch diff against the merge base with
    the default branch.
 5. If no target can be resolved, ask the user for a plan path or PR reference.
 
