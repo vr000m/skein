@@ -38,7 +38,7 @@ A `/review-plan` run costs four high-reasoning, high-effort Opus lenses (`archit
 
 ## Path Resolution
 
-1. If a path argument is provided, use it directly
+1. If a path argument is provided (a value not starting with `--`), use it directly
 2. If no path is provided, scan `docs/dev_plans/` for the most recent `.md` file by modification time
 3. If triggered right after `/dev-plan`, the plan path is already in conversation context — use it
 4. If no plan is found, tell the user and ask for a path

@@ -49,7 +49,7 @@ A `/review-plan` run costs four high-reasoning judgment lenses (`architecture`, 
 
 ## Path Resolution
 
-1. If a path argument is provided, use it directly
+1. If a path argument is provided (a value not starting with `--`), use it directly
 2. If no path is provided, scan `docs/dev_plans/` for the most recent plan file by modification time. Match the naming convention `YYYYMMDD-type-name.md` and exclude helper files such as `README.md`
 3. If triggered right after `/dev-plan`, the plan path is already in conversation context - use it
 4. If no plan is found, tell the user and ask for a path
