@@ -316,10 +316,10 @@ Two independent single-component changes (prose-driven markdown skills, no cross
 
 ## Progress
 
-- [ ] Phase 1: `deep-review` Claude mirror SKILL.md report template + flag
-- [ ] Phase 2: `deep-review` Claude mirror rubric.md reconciliation
-- [ ] Phase 3: `deep-review` Codex mirror SKILL.md via codex:rescue + independent review
-- [ ] Phase 4: `deep-review` rubric.md parity
+- [x] Phase 1: `deep-review` Claude mirror SKILL.md report template + flag
+- [x] Phase 2: `deep-review` Claude mirror rubric.md reconciliation
+- [x] Phase 3: `deep-review` Codex mirror SKILL.md via codex:rescue + independent review
+- [x] Phase 4: `deep-review` rubric.md parity
 - [ ] Phase 5: `review-plan` Claude mirror SKILL.md report template + flag
 - [ ] Phase 6: `review-plan` Claude mirror rubric.md reconciliation
 - [ ] Phase 7: `review-plan` Codex mirror SKILL.md via codex:rescue + independent review
