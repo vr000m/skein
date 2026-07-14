@@ -1,6 +1,6 @@
 # Task: Compact default `/deep-review` and `/review-plan` reports — Minor findings collapse to one line, `--verbose` restores full detail
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
@@ -320,10 +320,10 @@ Two independent single-component changes (prose-driven markdown skills, no cross
 - [x] Phase 2: `deep-review` Claude mirror rubric.md reconciliation
 - [x] Phase 3: `deep-review` Codex mirror SKILL.md via codex:rescue + independent review
 - [x] Phase 4: `deep-review` rubric.md parity
-- [ ] Phase 5: `review-plan` Claude mirror SKILL.md report template + flag
-- [ ] Phase 6: `review-plan` Claude mirror rubric.md reconciliation
-- [ ] Phase 7: `review-plan` Codex mirror SKILL.md via codex:rescue + independent review
-- [ ] Phase 8: `review-plan` rubric.md parity + shared test-coverage decision + version/changelog
+- [x] Phase 5: `review-plan` Claude mirror SKILL.md report template + flag
+- [x] Phase 6: `review-plan` Claude mirror rubric.md reconciliation
+- [x] Phase 7: `review-plan` Codex mirror SKILL.md via codex:rescue + independent review
+- [x] Phase 8: `review-plan` rubric.md parity + shared test-coverage decision + version/changelog
 
 ## Findings
 
@@ -355,8 +355,18 @@ Two independent single-component changes (prose-driven markdown skills, no cross
 
 ## Issues & Solutions
 
-(none yet)
+- **Codex-mirror edits via `codex:rescue` hit a sandbox writable-root restriction** when the target repo was a sibling git worktree (`skein-deep-review-compact`) rather than the invoking session's own cwd (`skein`). Resolved by invoking `codex-companion.mjs task` directly with an explicit `--cwd <worktree-path>` flag instead of going through the `codex:rescue` forwarder subagent (which inherits the parent Bash tool's cwd and has no way to override it). All subsequent Codex dispatches (Phases 3 and 7, both authoring and independent-review passes) used this direct-invocation pattern. Follow-up status/result/cancel calls also needed the same `--cwd` flag, since job state is keyed per resolved workspace root.
+- **A backgrounded `codex:rescue` job appeared stalled** (no new log lines for ~25 minutes) during Phase 3's authoring pass and was cancelled; the cancellation raced a completed write, so the correct, complete diff was already on disk when checked — no rework needed, just verification before staging.
+- **Local `/bin/bash` (macOS default, 3.2) silently mis-executes `declare -A` under `set -u`** — Phase 8's implementer had to put Homebrew bash 5.3.15 first on `PATH` to run `tests/reconciliation/test-renderer.sh`'s new `VERBOSE_FIXTURES` associative-array lookup correctly. The conductor's own environment already had modern bash first on `PATH`, so this only affected the subagent's initial verification, not the final conductor-run test suite.
+- Two independent `codex:rescue` review passes (Phase 3, Phase 7) both ran cleanly: Phase 3's review caught one real defect (a duplicated `render-reconciled-report.sh` reference paragraph — the authoring pass edited the original sentence in place *and* appended a new one at the end) which was fixed directly by the conductor before staging; Phase 7's review returned a clean PASS on all six checks with no fixes needed.
+- No rogue commits, no schema errors, no stall-threshold or iteration-ceiling hits across any of the 8 phases.
 
 ## Final Results
 
-(pending)
+All 8 phases implemented and committed in 3 commits (phases bundled per the plan's explicit same-commit sequencing constraints for the two rubric.md-parity pairs):
+- `c4c49b0` — Phase 1 (`deep-review` Claude mirror SKILL.md)
+- `cd75f81` — Phases 2-4 (`deep-review` rubric.md reconciliation + Codex mirror SKILL.md via `codex:rescue` + rubric.md parity)
+- `58d0a30` — Phase 5 (`review-plan` Claude mirror SKILL.md + new `persist-review-state.sh` script + its test)
+- `dac1c8e` — Phases 6-8 (`review-plan` rubric.md reconciliation + Codex mirror SKILL.md via `codex:rescue` + rubric.md parity + shared renderer `--verbose` flag + 8 new fixture pairs + `check-report-templates.sh` lint + version bump to 0.5.1 + CHANGELOG)
+
+Final verification (full suite, modern bash on `PATH`): `check-prompt-parity` passes; `run-fixtures.sh` 23/23; `test-renderer.sh` 52/52; `just check-sync` passes; `check-report-templates.sh` passes; `just parity-tests` 58+14 passed; `just gauntlet-tests` all sub-suites passed; `just reconciliation-tests` 52+23+15+11 passed; version-parity validation command printed `1`. `just lint-scripts`' `shfmt` step flags a pre-existing, unrelated formatting drift in `scripts/delete-skills.sh` (confirmed identical before and after this branch's commits, on a file never touched by this plan) — not a regression from this work. No `just ci` entrypoint exists in this repo, so the CI-parity gate had nothing to dispatch; the broader `just` test recipes above stood in as the closest available substitute.
