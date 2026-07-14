@@ -1,0 +1,2 @@
+{"lens":"security","severity":"Critical","category":"authz","file":"src/api.py","line":42,"summary":"missing auth check","evidence":"endpoint reachable without token","suggestion":"add @require_auth"}
+{"lens":"logic","severity":"Important","category":"correctness","file":"src/util.py","line":18,"summary":"off-by-one in loop bound","evidence":"range(0, n) should be range(0, n+1)","suggestion":"fix loop bound"}

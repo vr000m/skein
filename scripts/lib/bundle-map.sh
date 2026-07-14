@@ -48,6 +48,7 @@ bundle_extra_for() {
 	review-plan)
 		printf 'marker.py\n'
 		printf 'write-review-marker.py\n'
+		printf 'persist-review-state.sh\n'
 		;;
 	deep-review) ;;
 	review-gauntlet) ;;

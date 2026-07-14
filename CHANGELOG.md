@@ -4,6 +4,14 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-14
+
+### Changed
+- **`/deep-review` and `/review-plan` default rendered reports are now compact for Minor findings (both Claude and Codex mirrors).** Critical and Important findings render unchanged (full `Lenses`/`Evidence`/`Suggestion` sub-bullets). Minor findings render as a single line by default — `- **[Category]**: [one-line summary] (file:line)`, with a terse `— see also [Other Category] at same location` suffix when a Related-findings cross-reference exists, and the location segment omitted entirely for unanchored findings. A new `--verbose` flag (composable with each skill's existing flags) restores today's full-detail rendering for every severity, including in each skill's continuation-mode "New findings" template. No underlying data is dropped — every finding still carries all five fields (Severity/Category/Location/Evidence/Suggestion); only the default *rendering* of the Minor tier changes. Both skills' `rubric.md` (mirrored byte-identically across `.claude`/`.codex`) reword the "all five fields" Finding Quality criterion to separate data-completeness from rendering-conditional display.
+- **`/review-plan` gains JSON persistence of its latest run's reconciled findings (both mirrors), matching `/deep-review`'s existing `.deep-review/latest-*.json`.** A new canonical script, `scripts/persist-review-state.sh`, writes the reconciled v2 envelope (extended with `plan_path`/`plan_hash`/`run_id`) to `.review-plan/latest-claude.json` / `.review-plan/latest-codex.json` (`.review-plan/` was already gitignored). Every rendered report — compact or verbose, either skill — now ends with a `**Full findings JSON**: <path>` footer line immediately before `**Next steps**:`, so the full underlying data can be inspected directly (`jq '.lenses' .deep-review/latest-*.json` / `jq '.findings' .review-plan/latest-*.json`) instead of re-summarizing. A failed persistence write surfaces a one-line warning in the report and forces that run into full-verbose rendering regardless of the `--verbose` flag's value.
+- `scripts/render-reconciled-report.sh` (the repo-only reference renderer shared by both skills) gains the same `--verbose` flag: its default now renders Minor findings compact, matching both skills' new SKILL.md default; `--verbose` restores full-detail rendering for every severity. New golden fixture pairs under `tests/reconciliation/fixtures/`/`expected/` cover both skills' compact-default, verbose, zero-Minor, and only-Minor cases (including a Minor finding with a Related cross-reference and an unanchored Minor finding). `tests/reconciliation/test-renderer.sh` gains a per-fixture `VERBOSE_FIXTURES` lookup so the five pre-existing fixtures whose goldens assert full-detail Minor rendering (auto-fix status handling, category cross-references — unrelated to this change) keep passing under the new default.
+- New required lint, `scripts/check-report-templates.sh`: greps all four SKILL.md files for the compact-Minor `(file:line)` grammar and the `**Full findings JSON**:` footer marker, all four `rubric.md` files for the reworded "restored with `--verbose`" criterion, and asserts each mirror's footer names its own harness path (never the other mirror's) and that review-plan's footer example uses the `.findings` jq key, never deep-review's `.lenses`.
+
 ## [0.5.1] - 2026-07-12
 
 ### Added
@@ -120,7 +128,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/vr000m/skein/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/vr000m/skein/compare/v0.4.1...v0.5.0
 [0.4.0]: https://github.com/vr000m/skein/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/vr000m/skein/compare/v0.2.4...v0.3.0

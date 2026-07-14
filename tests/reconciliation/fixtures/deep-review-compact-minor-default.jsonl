@@ -1,0 +1,5 @@
+{"lens":"security","severity":"Critical","category":"authz","file":"src/api.py","line":42,"summary":"missing auth check","evidence":"endpoint reachable without token","suggestion":"add @require_auth"}
+{"lens":"logic","severity":"Important","category":"correctness","file":"src/util.py","line":18,"summary":"off-by-one in loop bound","evidence":"range(0, n) should be range(0, n+1)","suggestion":"fix loop bound"}
+{"lens":"logic","severity":"Minor","category":"style","file":"src/util.py","line":30,"summary":"unused variable tmp","evidence":"tmp assigned but never read","suggestion":"remove unused variable"}
+{"lens":"docs","severity":"Minor","category":"docs","file":"src/util.py","line":30,"summary":"docstring references removed parameter","evidence":"docstring still mentions old_arg","suggestion":"update docstring"}
+{"lens":"architecture","severity":"Minor","category":"consistency","file":"","line":null,"summary":"inconsistent error-handling convention across the module","evidence":"some functions raise, others return None on failure","suggestion":"pick one convention module-wide"}

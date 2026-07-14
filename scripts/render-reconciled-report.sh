@@ -27,8 +27,36 @@
 # Dependencies: bash + awk. Uses `jq` when available for safer JSON
 # parsing; otherwise the same hand-written parser as
 # reconcile-findings.sh.
+#
+# Flags:
+#   (none)      Default. Minor findings render compact: a single
+#               `- **Category**: summary (file:line)` line, with a
+#               terse ` — see also Other at same location` suffix when
+#               a Related-findings cross-reference exists, and the
+#               location segment omitted entirely for unanchored
+#               findings (empty file, absent line). Critical/Important
+#               are unaffected. This matches both deep-review's and
+#               review-plan's SKILL.md default rendering.
+#   --verbose   Every severity (including Minor) renders in full
+#               detail — Lenses/Evidence/Suggestion sub-bullets and a
+#               `Related findings:` sub-bullet per cross-reference.
+#               This is today's original unconditional behavior,
+#               preserved as an explicit opt-in.
 
 set -euo pipefail
+
+COMPACT_MINOR=1
+for arg in "$@"; do
+	case "$arg" in
+	--verbose)
+		COMPACT_MINOR=0
+		;;
+	*)
+		echo "render-reconciled-report: unrecognized argument: $arg" >&2
+		exit 2
+		;;
+	esac
+done
 
 HAVE_JQ=0
 if command -v jq >/dev/null 2>&1; then
@@ -376,6 +404,12 @@ emit_section() {
 		return 0
 	fi
 	printf '\n### %s\n' "$sev"
+	# Minor findings render compact by default (Requirements 1/6); every
+	# other severity, and Minor under --verbose, renders full detail.
+	local compact=0
+	if [[ "$sev" == "Minor" && "$COMPACT_MINOR" -eq 1 ]]; then
+		compact=1
+	fi
 	# IFS=$'\x1f' (ASCII Unit Separator) — non-whitespace, so adjacent
 	# empties don't collapse the way IFS=$'\t' did (that pre-existing bug
 	# silently bled the next non-empty field into empty evidence/suggestion
@@ -400,15 +434,15 @@ emit_section() {
 		if [[ "$r_auto_fix_status" == "would_apply" ]]; then
 			auto_fix_label=" [AUTO-FIXABLE]"
 		fi
-		printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
-		printf -- '  - Lenses: [%s]\n' "$d_lenses"
-		printf -- '  - Evidence: %s\n' "$d_evidence"
-		printf -- '  - Suggestion: %s\n' "$d_suggestion"
+
 		# Related findings: any cross-reference that touches this finding's
 		# (file, line) where one of the two categories is r_cat. The other
-		# category's severity is looked up against the findings table.
+		# category's severity is looked up against the findings table. Both
+		# rendering modes need this lookup, in different output shapes, so
+		# it's computed once here.
+		related_lines=""
 		if [[ -s "$related_file" ]]; then
-			awk -F $'\037' \
+			related_lines="$(awk -F $'\037' \
 				-v rfile="$r_file" -v rline="$r_line" -v rcat="$r_cat" \
 				-v ffile="$findings_file" '
 				BEGIN {
@@ -426,9 +460,42 @@ emit_section() {
 					else next
 					sev = sev_of[other SUBSEP rfile SUBSEP rline]
 					if (sev == "") sev = "Unknown"
-					printf "  - Related findings: **%s** %s at same file:line\n", other, sev
+					printf "%s\037%s\n", other, sev
 				}
-			' "$related_file"
+			' "$related_file")"
+		fi
+
+		# Unanchored findings (empty file, absent line — line was already
+		# normalized to the -1 sentinel upstream) never participate in the
+		# Related-findings mechanism and never render a location segment,
+		# in either rendering mode for compact; full-detail's title line
+		# keeps today's unconditional "at file:line" for every severity.
+		unanchored=0
+		if [[ -z "$r_file" && "$r_line" == "-1" ]]; then
+			unanchored=1
+		fi
+
+		if [[ "$compact" -eq 1 ]]; then
+			if [[ "$unanchored" -eq 1 ]]; then
+				printf -- '- **%s**%s: %s\n' "$r_cat" "$auto_fix_label" "$d_summary"
+			else
+				suffix=""
+				if [[ -n "$related_lines" ]]; then
+					other_cats="$(printf '%s\n' "$related_lines" | awk -F $'\037' '{ if (out != "") out = out ", "; out = out $1 } END { print out }')"
+					suffix=" — see also ${other_cats} at same location"
+				fi
+				printf -- '- **%s**%s: %s (%s:%s)%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line" "$suffix"
+			fi
+		else
+			printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
+			printf -- '  - Lenses: [%s]\n' "$d_lenses"
+			printf -- '  - Evidence: %s\n' "$d_evidence"
+			printf -- '  - Suggestion: %s\n' "$d_suggestion"
+			if [[ -n "$related_lines" ]]; then
+				while IFS=$'\x1f' read -r other_cat other_sev; do
+					printf "  - Related findings: **%s** %s at same file:line\n" "$other_cat" "$other_sev"
+				done <<<"$related_lines"
+			fi
 		fi
 	done <<<"$rows"
 }

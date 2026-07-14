@@ -1,7 +1,7 @@
 ---
 name: review-plan
 description: "Reviews a development plan for gaps, undocumented assumptions, missing constraints, and architectural risks before implementation begins. Dispatches five Codex review lenses via parallel spawn_agent workers when available, with sequential in-session fallback. Cost: four high-reasoning judgment lenses plus one lower-effort factual lens per run. Use after a dev-plan is created, when the user says \"review plan\", \"audit plan\", \"check plan\", or \"/review-plan\", and proactively after the dev-plan skill produces a new plan file."
-argument-hint: "[path/to/plan.md] [--auto-fix=trivial] [--batch]"
+argument-hint: "[path/to/plan.md] [--auto-fix=trivial] [--batch] [--verbose]"
 ---
 
 # Review Plan: Independent Plan Audit
@@ -77,6 +77,17 @@ After input resolution is complete, print a single-line run summary before runni
 
 - Spawned path: say `Using parallel clean-context lens workers via spawn_agent` and list the routing hints (`architecture=high`, `sequencing=high`, `spec-and-testing=high`, `assumptions=high`, `codebase-claims=low`; model inherited from harness default).
 - Fallback path: say `Using sequential in-session lenses; context isolation is best-effort because spawn_agent is unavailable` and list the same routing hints.
+
+`--verbose` is a rendering-mode modifier, composable with `--auto-fix=trivial` and `--batch` in any order — it does not change lens dispatch (Step 2 still always runs all five lenses), the Step 3 reconciliation output, the Step 6.4 triage/clarify loop's finding set, or the Step 7 marker-write logic. It only changes how Step 5 renders the already-reconciled findings.
+
+## Review State
+
+- Persist the latest run's reconciled findings envelope to `.review-plan/latest-codex.json` (`.review-plan/` is already gitignored — used today for `--auto-fix=trivial` manifests, so no `.gitignore` change is needed).
+- The persisted file is **the exact v2 reconciled envelope** Step 3's `reconcile-findings.sh` already emits (`schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...merged], related: [...]`) — not a raw per-lens shape like deep-review's Review State. The footer's purpose is letting the user `jq` exactly what the rendered report was based on, so the persisted shape must match the render source.
+- The envelope is extended with exactly three additive top-level fields, no wrapper object and no second `schema_version`: `plan_path`, `plan_hash` (the `git hash-object` of the plan file **at Step 3/reconciliation time** — a snapshot of what was reviewed, never rewritten or re-hashed after Step 6.4/6.5 edits or before Step 7's marker write), and `run_id` (a timestamp).
+- The write happens after Step 3 (Reconcile Findings) and before Step 5 renders. This is a review-plan-specific design choice, not an inherited timing symmetry with deep-review — deep-review persists raw per-lens findings (ready after Step 2), while review-plan persists the post-reconciliation envelope (only available after Step 3).
+- The write is performed by the bundled script `"$SKILL_DIR"/scripts/persist-review-state.sh`, not by hand-written prose — see Step 5 for the invocation and its exit-code contract. If `"$SKILL_DIR"/scripts/persist-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand, mirroring the auto-fix applier's and marker entrypoint's abort-if-absent contract elsewhere in this file.
+- Any downstream consumer of this run's findings (e.g. a future `--continue`-style tool) MUST source them from this state file or the pre-render Step 3 reconciled data — never from Step 5's rendered report, which intentionally omits Evidence/Suggestion for Minor findings under the compact default.
 
 Do not ask for an additional confirmation after the run summary; proceed immediately unless the user interrupts.
 
@@ -472,6 +483,18 @@ Before presenting findings to the user, verify the merged report against [rubric
 
 ### Step 5: Present Findings
 
+**Persist the reconciled envelope before rendering.** Immediately before presenting findings, invoke the bundled persistence script on the Step 3 reconciled envelope:
+
+```
+"$SKILL_DIR"/scripts/persist-review-state.sh --harness codex --plan-path <reviewed-plan> --plan-hash <git hash-object of the plan at Step 3 time> --run-id <timestamp> <path to the Step 3 envelope, or pipe it on stdin>
+```
+
+Branch on the script's exit code:
+- **`0` (success)** — proceed to render normally (compact or `--verbose`, per the flag).
+- **non-zero (failure)** — the script printed `Could not persist findings JSON: <reason>` to stderr. Surface that exact warning line in the rendered report (immediately above the `**Full findings JSON**:` footer line below) and render **this run in full-verbose mode** — every severity gets full detail — regardless of whether `--verbose` was passed. This is a best-effort write; a failed persistence write should not also silently degrade the rendered detail.
+
+If `"$SKILL_DIR"/scripts/persist-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand or skipping persistence silently.
+
 Present the merged findings to the user. Format them clearly:
 
 ```markdown
@@ -494,14 +517,23 @@ Present the merged findings to the user. Format them clearly:
 - ...
 
 ### Minor
-- ...
+- **[Category]**: [one-line finding] (file:line)
 
 ---
+**Full findings JSON**: .review-plan/latest-codex.json
 **Next steps**: Review these findings and decide which ones to incorporate into the plan.
 Update the plan with `/dev-plan update` for any accepted changes.
 ```
 
-The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field replaces the prior `[Lens] / [Category]` prefix and uniformly handles ≥1 source lens — single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped. The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier. `scripts/render-reconciled-report.sh` is the reference renderer that encodes these rules and is exercised by `tests/reconciliation/test-renderer.sh`.
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field replaces the prior `[Lens] / [Category]` prefix and uniformly handles ≥1 source lens — single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped. The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
+
+**Default rendering (no `--verbose`): Minor findings are compact.** Critical and Important findings render exactly as shown above — full `Lenses:`/`Evidence:`/`Suggestion:`/optional `Related findings:` sub-bullets. Minor findings instead render as a single line: `- **[Category]**: [one-line finding] (file:line)` — the reconciled envelope's `summary` field (the GENERIC block's serialized field name; review-plan's lens *prompts* call this field `finding` pre-serialization, but Step 3 writes it into the envelope's `summary` key) rendered unabridged (no hard truncation, even at its up-to-two-sentence length), with a parenthesized `(file:line)` instead of the Critical/Important convention, and no `Evidence:`/`Suggestion:`/`Lenses:` sub-bullets. When the Minor finding has a "Related findings" cross-reference, append a terse inline suffix instead of the full sub-bullet: `- **[Category]**: [finding] (file:line) — see also [Other Category] at same location`. When the Minor finding is unanchored (both `file` empty and `line` absent, per the GENERIC block), omit the location segment and the "see also" suffix entirely: `- **[Category]**: [one-line finding]`. The `[AUTO-FIXABLE]` marker is unaffected by this and still appears on the title line whenever `auto_fix_status` is `would_apply` — compact mode only omits `Evidence:`/`Suggestion:` prose, never the marker. This is a display-only switch: it does not drop any underlying data — every finding still carries all five fields (Severity, Category, Location, Evidence, Suggestion) in the reconciled envelope; only the *rendered* Minor tier omits Evidence/Suggestion prose from display. The Codex-only `**Dispatch**:` line (when present) is unaffected by this rule — it is not part of per-finding rendering.
+
+**`--verbose` (passed): every severity renders in full detail.** When `--verbose` is passed, Minor findings render identically to Critical/Important — full `Lenses:`/`Evidence:`/`Suggestion:`/`Related findings:` sub-bullets, i.e. today's unconditional behavior, restored for every severity.
+
+**JSON pointer footer (always present, both compact and verbose modes).** Every rendered report ends with a `**Full findings JSON**: .review-plan/latest-codex.json` line naming the per-harness state file path, immediately **before** the `**Next steps**:` line — a fixed position, matching deep-review's Requirement 3 footer, not a per-mirror choice — so the user can inspect the full reconciled findings directly (e.g. `jq '.findings' .review-plan/latest-codex.json`) instead of asking for a re-summary. (Use `.findings`/`.summary`/`.related` keys here, not deep-review's `.lenses` — the two `latest-*.json` files share a naming pattern but deliberately different schemas.)
+
+`scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill; the running review renders by hand from this Step 5 template.
 
 If the merged review is clean (no Critical or Important findings), say so concisely and proceed.
 
@@ -522,7 +554,7 @@ Only after the user has reviewed and addressed the findings (or explicitly decid
 
 The loop has three interactive sub-steps, then hands off to the marker write:
 
-1. **Triage.** Present the reconciled findings as a numbered list using the Step 5 ordering. Ask which findings to address via a **free-form plain-text selection**, for example: `1,3,4`, `all`, `none`, or `critical+important`. Do **not** use a fixed 2-4-option picker: the finding count is unbounded and Codex has no AskUserQuestion-style fixed-option widget. Parse the free-form answer into the selected finding set.
+1. **Triage.** Present the reconciled findings as a numbered list using the Step 5 ordering. Ask which findings to address via a **free-form plain-text selection**, for example: `1,3,4`, `all`, `none`, or `critical+important`. Do **not** use a fixed 2-4-option picker: the finding count is unbounded and Codex has no AskUserQuestion-style fixed-option widget. Parse the free-form answer into the selected finding set. **This numbered list operates on the full reconciled finding set (the Step 3 envelope), regardless of how Step 5 rendered it (compact or `--verbose`).** Minor findings must present their full `Evidence:`/`Suggestion:` detail here even when Step 5's rendered report showed them compact — the compact default is a display-only choice for the rendered report and must not lose detail in this triage loop.
 2. **Clarify (per selected finding).** First classify each selected finding as **grill-eligible** or **standard**, then resolve it per its class.
    - **Classification.** A finding is **grill-eligible** if it is a genuine open decision about architecture/component-boundary, third-party integration, security, or rate-limiting topics. The exclusion is keyed on `category`, never on `lens`: any finding whose `category == 'Nonexistent Reference'` is always **standard**, regardless of which lens or lenses contributed to it. A merged finding's `Lenses:` list and its single `category` are not 1:1. Everything else that is not a named grill-eligible topic is **standard**.
    - **Borderline tiebreak.** Present a finding that plausibly spans two topics **once**: grill-eligible wins over standard. If it spans two grill-eligible topics, present it once under the fixed priority order **architecture/component-boundary > third-party integration > security > rate-limiting**. The category exclusion above is a hard gate applied first and is never overridden by this tiebreak: a `category == 'Nonexistent Reference'` finding stays standard even if its subject matter also reads as a grill-eligible topic.
@@ -629,3 +661,4 @@ The marker is idempotent: replacing an existing marker on otherwise unchanged co
 - Use the routing hints above: inherit the harness-selected model, request high reasoning for the four judgment lenses, and request low reasoning for `codebase-claims` when the runtime supports reasoning-effort hints.
 - This skill blocks - the user waits for all five lenses to return before findings are presented.
 - If the plan references external systems (APIs, services, databases), note that the review can only verify what is in the codebase, not external availability.
+- Default rendering: Minor findings render compact (no Evidence/Suggestion); `--verbose` restores full detail for all severities. This is a display-only switch — it does not change lens dispatch, reconciliation, the Step 6.4 triage loop's finding set, or the Step 7 marker write.

@@ -13,11 +13,17 @@
 #      `dropped=D` term appears iff D > 0.
 #   2. Findings render under per-severity headers in canonical order
 #      (Critical, Important, Minor, then any other severity alphabetically).
-#   3. Each finding renders Lenses, Evidence, Suggestion sub-bullets;
-#      Related findings sub-bullet appears only when the JSON envelope's
-#      `related` array references this (file, line, category).
-#   4. Renderer is deterministic: identical envelope -> byte-identical
-#      markdown body fragment.
+#   3. Critical/Important findings, and Minor findings when `--verbose` is
+#      passed, render Lenses, Evidence, Suggestion sub-bullets; a Related
+#      findings sub-bullet appears only when the JSON envelope's `related`
+#      array references this (file, line, category). By default (no flag),
+#      Minor findings render compact instead: a single
+#      `- **Category**: summary (file:line)` line, with a terse
+#      ` — see also Other at same location` suffix in place of the
+#      sub-bullet when related, and the location segment omitted for
+#      unanchored findings.
+#   4. Renderer is deterministic: identical envelope + identical flags ->
+#      byte-identical markdown body fragment.
 #
 # Exit 0 on all-pass, 1 on any mismatch.
 
@@ -26,6 +32,29 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RENDERER="$REPO_ROOT/scripts/render-reconciled-report.sh"
 EXPECTED_DIR="$REPO_ROOT/tests/reconciliation/expected"
+
+# Fixtures rendered with `--verbose` rather than the renderer's new
+# compact-Minor default. Two groups:
+#   - Five pre-existing fixtures whose golden `.rendered.md` asserts
+#     full-detail Minor rendering (auto-fix status handling, category
+#     cross-references — unrelated to severity-tier rendering); migrated
+#     here so they keep asserting full detail now that compact-Minor is
+#     the renderer's default, rather than silently failing.
+#   - The two new `*-compact-minor-verbose` fixtures (Open Question 1,
+#     option (b)), whose entire purpose is to exercise `--verbose`
+#     against the same underlying findings as their `*-compact-minor-default`
+#     counterpart.
+# Keyed by envelope basename (i.e. `expected/<name>.md` with the `.md`
+# stripped).
+declare -A VERBOSE_FIXTURES=(
+	["auto-fix-v2-docstring-typo"]=1
+	["auto-fix-v2-pass-through"]=1
+	["auto-fix-v2-reject-statuses"]=1
+	["same-category-different-line"]=1
+	["auto-fix-v2-empty-fields"]=1
+	["deep-review-compact-minor-verbose"]=1
+	["review-plan-compact-minor-verbose"]=1
+)
 
 TMPDIR_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
@@ -81,7 +110,12 @@ for envelope in "${inputs[@]}"; do
 	actual_file="$case_dir/actual.md"
 	diff_file="$case_dir/diff.txt"
 
-	if ! bash "$RENDERER" <"$envelope" >"$actual_file" 2>"$case_dir/stderr"; then
+	extra_flags=()
+	if [[ "${VERBOSE_FIXTURES[$name]:-0}" == "1" ]]; then
+		extra_flags+=(--verbose)
+	fi
+
+	if ! bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$actual_file" 2>"$case_dir/stderr"; then
 		echo "FAIL: $name (renderer exited non-zero)"
 		echo "  stderr: $(cat "$case_dir/stderr")"
 		fail_count=$((fail_count + 1))
@@ -121,8 +155,13 @@ if command -v jq >/dev/null 2>&1; then
 		awk_rendered="$case_dir/awk.md"
 		diff_file="$case_dir/diff.txt"
 
-		bash "$RENDERER" <"$envelope" >"$jq_rendered"
-		PATH="$no_jq_bin" bash "$RENDERER" <"$envelope" >"$awk_rendered"
+		extra_flags=()
+		if [[ "${VERBOSE_FIXTURES[$name]:-0}" == "1" ]]; then
+			extra_flags+=(--verbose)
+		fi
+
+		bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$jq_rendered"
+		PATH="$no_jq_bin" bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$awk_rendered"
 
 		if diff -u "$jq_rendered" "$awk_rendered" >"$diff_file"; then
 			echo "PASS: $name (jq and awk renderer paths byte-identical)"
