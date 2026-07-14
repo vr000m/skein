@@ -96,7 +96,13 @@ check_footer_path() {
 	local footer_line
 	footer_line="$(grep -m1 -E '^\*\*Full findings JSON\*\*: \.' "$skill_md" || true)"
 	if [[ -z "$footer_line" ]]; then
-		# Already reported by require_pattern above.
+		# NOT already caught by require_pattern above: require_pattern does an
+		# unanchored substring match for the `**Full findings JSON**:` marker,
+		# which is satisfied by prose that merely *mentions* the marker (e.g.
+		# "the `**Full findings JSON**:` footer line below") even when the
+		# real footer line is missing entirely. This check exists precisely
+		# to catch that case, so a missing footer line here is a real failure.
+		fail "$skill_md has no footer line matching '**Full findings JSON**: .<path>' (found no line starting with the literal marker followed by a dot-path)"
 		return 0
 	fi
 	if [[ "$footer_line" != *"$own_path"* ]]; then

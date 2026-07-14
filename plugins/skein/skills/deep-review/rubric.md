@@ -12,7 +12,7 @@ Gradeable criteria for evaluating a completed deep-review report. Doubles as a M
 ## Finding Quality
 
 - Every reconciled finding carries all five fields in the underlying data: Severity, Category, Location (file:line), Evidence, Suggestion — this holds regardless of how the finding is rendered
-- Critical/Important findings render all five fields (Severity/Category/Location/Evidence/Suggestion); Minor findings render Category+Location+one-line summary by default (Evidence/Suggestion intentionally omitted from the default rendering, restored with `--verbose`)
+- Critical/Important findings render all five fields (Severity/Category/Location/Evidence/Suggestion); Minor findings render Category+one-line summary by default, with a Location segment when the finding has a usable location (omitted entirely for unanchored/partially-anchored findings, per SKILL.md's rendering rule) (Evidence/Suggestion intentionally omitted from the default rendering, restored with `--verbose`)
 - Severity is one of Critical / Important / Minor — no other values
 - Category matches the lens that produced it (Logic, Security, Spec, Architecture, Documentation)
 - Evidence cites concrete code, diff hunk, or spec section — not a paraphrase

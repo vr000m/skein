@@ -32,9 +32,9 @@ to delegate further.
 3. If the arguments are `--continue`, optionally combined with `--verbose` in either position,
    follow the continuation rules in [Persisted Run State](#persisted-run-state); the diff range
    depends on prior state.
-4. If the first argument is `--full`, or no explicit argument is provided (or only `--verbose` is
-   provided), review the current branch diff against the merge base with
-   the default branch.
+4. If the arguments are `--full`, optionally combined with `--verbose` in either position, or no
+   explicit argument is provided (or only `--verbose` is provided), review the current branch diff
+   against the merge base with the default branch.
 5. If no target can be resolved, ask the user for a plan path or PR reference.
 
 `--verbose` is a rendering-mode modifier, composable with any of the five resolution rules above — it does not change which diff range or target is resolved, only how the `## Output` section renders the resulting findings.

@@ -58,6 +58,7 @@ reconciliation-tests:
     bash tests/reconciliation/test-reconciler-unit.sh
     bash tests/reconciliation/test-review-plan-state.sh
     ./scripts/check-report-templates.sh
+    bash tests/reconciliation/test-check-report-templates.sh
 
 lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh
