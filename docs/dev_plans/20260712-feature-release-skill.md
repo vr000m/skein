@@ -82,6 +82,11 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 - `tests/parity/test_skill_md_presence.py` — `MANAGED_SKILLS` list, add `"release"`.
 - `README.md` — skill table row.
 - `docs/skills_architecture/20260522-design-claude-skills-architecture.md` — Skill Catalogue row + Invocation Mode note.
+- `scripts/delete-skills.sh` — `SKEIN` array, add `release`; fix stale skein-managed-skills count in the header comment (added mid-implementation, Phase 3/Third review).
+- `tests/parity/test-managed-skills-parity.sh` — extended from a two-way to a three-way cross-check (`MANAGED_SKILLS` bash default, `MANAGED_SKILLS` python list, `SKEIN` bash array) to catch the `delete-skills.sh` drift the original two-way check missed (added mid-implementation, Fourth review finding #5).
+- `CHANGELOG.md` — `[Unreleased]` entry for the new skill.
+- `docs/dev_plans/README.md` — index row for this plan.
+- `.claude/CLAUDE.md` — Review Workflow blast-radius-sweep rule, added as a process learning from this plan's own review rounds (out of this plan's original feature scope, but shipped on the same branch).
 
 ### Integration Seams
 - No bundled `scripts/` subtree — `release` follows the `rfc-finder`/`update-docs` precedent of doc-only skills with no bundled scripts subtree (`check-sync.sh`/`bundle-map.sh` registration not needed). **Execution model differs from those two precedents**, though: `rfc-finder`/`update-docs` are read-only and delegate their fact-gathering to a subagent; `release` performs an irreversible external mutation (tag push, release publish) gated on explicit user confirmation, so it runs entirely inline in the main agent context — a subagent cannot hold that confirmation gate.
