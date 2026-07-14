@@ -20,7 +20,7 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 
 ## Finding Quality
 
-- Every reconciled finding carries all five fields in the underlying data: `category`, `severity`, `finding`, `evidence`, `suggestion` — this holds regardless of how the finding is rendered
+- Every reconciled finding carries all five fields in the underlying data: `category`, `severity`, `summary`, `evidence`, `suggestion` — this holds regardless of how the finding is rendered
 - Critical/Important findings render all five fields (`category`, `severity`, `finding`, `evidence`, `suggestion`); Minor findings render `category`+location+one-line `finding` by default (`evidence`/`suggestion` intentionally omitted from the default rendering, restored with `--verbose`)
 - `category ∈ {Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference}` — no other values; `Nonexistent Reference` is reserved for `codebase-claims` findings about paths/APIs/dependencies that do not exist or have moved
 - `severity ∈ {Critical, Important, Minor}` — no other values

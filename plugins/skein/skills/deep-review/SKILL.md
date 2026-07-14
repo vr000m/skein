@@ -17,7 +17,7 @@ Run a thorough review by splitting the work into independent lenses. Each lens g
 ## Input Resolution
 
 1. If the first argument is a readable plan file path, load it as the review brief and use its `## Review Focus` section to steer lens prompts.
-2. If the first argument is `--pr` with a number (or a PR URL), review that PR's diff via `gh pr diff`.
+2. If the arguments are `--pr` with a number (or a PR URL), optionally combined with `--verbose` in either position, review that PR's diff via `gh pr diff`.
 3. If the user provides another explicit target (file path, branch name, commit range), use it directly.
 4. If the arguments are exactly `--continue`, optionally combined with `--verbose`, follow the continuation rules in [Review State](#review-state) — the diff range depends on prior state.
 5. If the arguments are exactly `--full`, optionally combined with `--verbose`, or no argument is provided (or only `--verbose` is provided), review the current branch diff against the merge base.

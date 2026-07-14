@@ -24,12 +24,14 @@ to delegate further.
 
 ## Input Resolution
 
-1. If the first argument is a readable plan file path, load it as the review brief and use its
+1. If the first argument is a readable plan file path — or the first argument is `--verbose` and
+   the second argument is a readable plan file path — load it as the review brief and use its
    `## Review Focus` section to steer lens prompts.
-2. If the first argument is `--pr` with a number, or a PR URL/number directly, review that PR's
-   diff.
-3. If the first argument is `--continue`, follow the continuation rules in
-   [Persisted Run State](#persisted-run-state); the diff range depends on prior state.
+2. If the arguments are `--pr` with a number, or a PR URL/number directly, optionally combined
+   with `--verbose` in either position, review that PR's diff.
+3. If the arguments are `--continue`, optionally combined with `--verbose` in either position,
+   follow the continuation rules in [Persisted Run State](#persisted-run-state); the diff range
+   depends on prior state.
 4. If the first argument is `--full`, or no explicit argument is provided (or only `--verbose` is
    provided), review the current branch diff against the merge base with
    the default branch.
