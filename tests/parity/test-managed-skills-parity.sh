@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Verify the managed-skills set stays in sync across its three hardcoded copies:
+# Verify the managed-skills set stays in sync across its four hardcoded copies:
 #   - scripts/check-prompt-parity.sh's MANAGED_SKILLS default (bash array)
 #   - tests/parity/test_skill_md_presence.py's MANAGED_SKILLS list (python)
 #   - scripts/delete-skills.sh's SKEIN array (bash array, surgical-uninstall list)
+#   - .env.example's explicit MANAGED_SKILLS override
 #
 # The lists are intentionally duplicated (test_skill_md_presence.py's own
 # docstring says so) rather than one sourcing the other, because they're a bash
@@ -24,6 +25,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SHELL_SCRIPT="$ROOT_DIR/scripts/check-prompt-parity.sh"
 PYTHON_FILE="$ROOT_DIR/tests/parity/test_skill_md_presence.py"
 DELETE_SCRIPT="$ROOT_DIR/scripts/delete-skills.sh"
+ENV_EXAMPLE="$ROOT_DIR/.env.example"
 
 pass_count=0
 fail_count=0
@@ -54,6 +56,13 @@ fi
 
 if [[ ! -f "$DELETE_SCRIPT" ]]; then
 	fail "missing $DELETE_SCRIPT"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+if [[ ! -f "$ENV_EXAMPLE" ]]; then
+	fail "missing $ENV_EXAMPLE"
 	echo ""
 	echo "Summary: $pass_count passed, $fail_count failed"
 	exit 1
@@ -114,9 +123,20 @@ if [[ -z "$delete_list" ]]; then
 	exit 1
 fi
 
+env_line="$(grep -E '^MANAGED_SKILLS=' "$ENV_EXAMPLE" || true)"
+env_list="${env_line#MANAGED_SKILLS=\"}"
+env_list="${env_list%\"}"
+if [[ -z "$env_list" || "$env_list" == "$env_line" ]]; then
+	fail "could not parse MANAGED_SKILLS override out of $ENV_EXAMPLE"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
 shell_sorted="$(echo "$shell_list" | tr ' ' '\n' | sort -u)"
 python_sorted="$(echo "$python_list" | sort -u)"
 delete_sorted="$(echo "$delete_list" | sort -u)"
+env_sorted="$(echo "$env_list" | tr ' ' '\n' | sort -u)"
 
 if [[ "$shell_sorted" == "$python_sorted" ]]; then
 	pass "MANAGED_SKILLS in sync: $(echo "$shell_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $PYTHON_FILE"
@@ -136,6 +156,16 @@ else
 	comm -23 <(echo "$shell_sorted") <(echo "$delete_sorted") || true
 	echo "--- only in delete-skills.sh SKEIN ---"
 	comm -13 <(echo "$shell_sorted") <(echo "$delete_sorted") || true
+fi
+
+if [[ "$shell_sorted" == "$env_sorted" ]]; then
+	pass "MANAGED_SKILLS in sync: $(echo "$env_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $ENV_EXAMPLE"
+else
+	fail "MANAGED_SKILLS drift between $SHELL_SCRIPT and $ENV_EXAMPLE"
+	echo "--- only in shell default ---"
+	comm -23 <(echo "$shell_sorted") <(echo "$env_sorted") || true
+	echo "--- only in .env.example override ---"
+	comm -13 <(echo "$shell_sorted") <(echo "$env_sorted") || true
 fi
 
 echo ""
