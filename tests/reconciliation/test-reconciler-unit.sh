@@ -571,6 +571,95 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Case 10: real embedded newline recovers as a real newline, and a genuine
+# literal backslash in the original content survives intact (neither eaten
+# nor doubled), in the same finding.
+#
+# Regression for a write-side over-escaping bug (predates this branch):
+# parse_tsv's TSV encoding turns a real embedded newline/tab into the
+# literal two-character sequence \n / \t so TSV column/row splitting isn't
+# confused by them, but never escaped a pre-existing literal backslash
+# first. The final JSON-emission step's jesc() then escaped EVERY
+# backslash it saw -- including the backslash that is part of an
+# already-encoded \n token -- doubling it. A JSON parser decoding
+# "\\n" gets back the literal two-character text "\n" (a stray backslash
+# sitting where a real newline should render), not an actual newline.
+# Fixed by moving backslash-escaping to the encode step, in the correct
+# order (backslash first, then newline, then tab), so the encoded form is
+# already valid JSON-string-body content; emission then only adds
+# quote-escaping.
+# ---------------------------------------------------------------------------
+
+CASE10_INPUT='{"lens":"logic","severity":"Minor","category":"Logic","file":"src/a.py","line":5,"summary":"multi-line evidence and literal backslash","evidence":"line one\nline two","suggestion":"see C:\\Users\\test for repro"}
+'
+
+read -r -d '' CASE10_EXPECTED <<'JSON' || true
+{
+  "schema_version": 2,
+  "summary": {
+    "raw": 1,
+    "merged": 0,
+    "unique": 1,
+    "related": 0,
+    "dropped": 0
+  },
+  "findings": [
+    {
+      "severity": "Minor",
+      "category": "Logic",
+      "file": "src/a.py",
+      "line": 5,
+      "lenses": ["logic"],
+      "summary": "multi-line evidence and literal backslash",
+      "evidence": "line one\nline two",
+      "suggestion": "see C:\\Users\\test for repro"
+    }
+  ],
+  "related": []
+}
+JSON
+CASE10_EXPECTED="${CASE10_EXPECTED}"$'\n'
+
+run_case "embedded-newline-and-literal-backslash-round-trip" "$CASE10_INPUT" "$CASE10_EXPECTED"
+
+# ---------------------------------------------------------------------------
+# Case 11: Case 10's escaping fix holds identically on the awk fallback path
+# (same technique as Case 9 -- see its comment above for why command -v is
+# resolved this way, and why the check skips rather than fails when jq or a
+# needed coreutil is unavailable).
+# ---------------------------------------------------------------------------
+
+if ! command -v jq >/dev/null 2>&1; then
+	echo "SKIP: awk-fallback-parity-escaping (jq unavailable for baseline)"
+else
+	nojq_bin_escaping="$(mktemp -d "$TMPDIR_ROOT/nojqbin-escaping.XXXXXX")"
+	bash_bin="$(command -v bash)"
+	missing=""
+	for tool in awk sort grep cat head; do
+		tp="$(command -v "$tool" 2>/dev/null || true)"
+		if [[ -z "$tp" ]]; then
+			missing="$missing $tool"
+		else
+			ln -s "$tp" "$nojq_bin_escaping/$tool"
+		fi
+	done
+	if [[ -n "$missing" ]]; then
+		echo "SKIP: awk-fallback-parity-escaping (unresolved coreutils:$missing)"
+	else
+		out_jq="$(printf '%s' "$CASE10_INPUT" | bash "$SCRIPT" --skill deep-review 2>/dev/null)"
+		out_nojq="$(printf '%s' "$CASE10_INPUT" | PATH="$nojq_bin_escaping" "$bash_bin" "$SCRIPT" --skill deep-review 2>/dev/null)"
+		if [[ "$out_jq" == "$out_nojq" ]]; then
+			echo "PASS: awk-fallback-parity-escaping"
+			pass_count=$((pass_count + 1))
+		else
+			echo "FAIL: awk-fallback-parity-escaping (jq vs awk output differ)"
+			diff <(printf '%s' "$out_jq") <(printf '%s' "$out_nojq") | sed 's/^/    /'
+			fail_count=$((fail_count + 1))
+		fi
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # Final tally
 # ---------------------------------------------------------------------------
 

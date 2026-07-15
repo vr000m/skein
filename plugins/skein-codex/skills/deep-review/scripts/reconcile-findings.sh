@@ -235,7 +235,7 @@ parse_tsv() {
 				    and (((if (.line == null or .line == "") then -1 else .line end) | tostring) == "-1")
 				 then (input_line_number | tostring) else "" end)
 			]
-			| map(gsub("\t"; "\\\\t") | gsub("\n"; "\\\\n"))
+			| map(gsub("\\\\"; "\\\\") | gsub("\n"; "\\n") | gsub("\t"; "\\t"))
 			| join("\t")
 		'
 	else
@@ -313,7 +313,7 @@ parse_tsv() {
 				}
 				return ""
 			}
-			function esc(s) { gsub(/\t/, "\\t", s); gsub(/\n/, "\\n", s); return s }
+			function esc(s) { gsub(/\\/, "\\\\", s); gsub(/\n/, "\\n", s); gsub(/\t/, "\\t", s); return s }
 			/^[[:space:]]*$/ { next }
 			!/^[[:space:]]*\{/ { dropped++; next }
 			{
@@ -533,12 +533,15 @@ fi
 # build by hand with manual escape.
 json_escape() {
 	# stdin -> JSON-string-safe (no surrounding quotes)
+	# Callers pass fields already produced by parse_tsv's esc()/jq encode
+	# step, which escapes backslash/newline/tab into valid JSON-string-body
+	# form (backslash-first, so the result is already unambiguous). Only
+	# quote-escaping is needed here — re-escaping backslash or tab would
+	# double what parse_tsv already encoded.
 	awk 'BEGIN { ORS = "" }
 		{
 			s = $0
-			gsub(/\\/, "\\\\", s)
 			gsub(/"/, "\\\"", s)
-			gsub(/\t/, "\\t", s)
 			print s
 			# preserve no newline; consumed line-by-line anyway
 		}' <<<"$1"
@@ -553,7 +556,7 @@ emit_findings_pretty() {
 		return
 	fi
 	printf '%s\n' "$final_tsv" | awk -F '\t' '
-		function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+		function jesc(s) { gsub(/"/, "\\\"", s); return s }
 		BEGIN { first = 1; printf "[\n" }
 		{
 			if (!first) printf ",\n"
@@ -619,7 +622,7 @@ emit_related_pretty() {
 		return
 	fi
 	printf '%s\n' "$one_dir" | awk -F '\t' '
-		function jesc(s) { gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); return s }
+		function jesc(s) { gsub(/"/, "\\\"", s); return s }
 		BEGIN { first = 1; printf "[\n" }
 		{
 			if (!first) printf ",\n"
