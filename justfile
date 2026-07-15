@@ -57,6 +57,7 @@ reconciliation-tests:
     bash tests/reconciliation/test-determinism.sh
     bash tests/reconciliation/test-reconciler-unit.sh
     bash tests/reconciliation/test-review-plan-state.sh
+    bash tests/reconciliation/test-deep-review-state.sh
     ./scripts/check-report-templates.sh
     bash tests/reconciliation/test-check-report-templates.sh
 

@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- **`/deep-review` (Claude mirror) gains script-enforced persistence of its per-lens findings, closing an adversarial-review gap.** Previously `.deep-review/latest-claude.json` was described only in `SKILL.md` prose with no writer, no exit-code check, and no test coverage — a failed or skipped write could silently leave the compact-Minor footer pointing at stale or absent JSON. A new canonical script, `scripts/persist-deep-review-state.sh`, writes the raw per-lens status/findings object (a different schema from `/review-plan`'s reconciled envelope) to `.deep-review/latest-claude.json` / `.deep-review/latest-codex.json`, wrapped under a `lenses` key alongside `schema_version: 1` and the five run-metadata fields already documented in SKILL.md's Review State section. Same 0/1/2 exit-code contract as `/review-plan`'s `persist-review-state.sh`, but atomic (temp file + `mv -f`) from the outset. Step 5 now invokes the script and branches on its exit code exactly as `/review-plan`'s Step 5 already does: non-zero surfaces `Could not persist findings JSON: <reason>` in the rendered report and forces full-verbose rendering for that run regardless of `--verbose`. New `tests/reconciliation/test-deep-review-state.sh` (8 cases, including both symlink guards) wired into `just reconciliation-tests`. **Codex mirror not yet updated** — `plugins/skein-codex/skills/deep-review/SKILL.md` still documents this persistence as prose only; tracked as separate `codex:rescue`-driven follow-up work.
+
 ## [0.5.2] - 2026-07-14
 
 ### Changed
