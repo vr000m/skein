@@ -29,16 +29,6 @@
 
 set -euo pipefail
 
-# `declare -A` (associative arrays, used below for VERBOSE_FIXTURES)
-# requires bash 4.0+. macOS ships /bin/bash 3.2 by default, which
-# silently mis-parses the associative-array literal and then crashes
-# later with a cryptic "unbound variable" error under `set -u`. Fail
-# fast with a clear message instead.
-if ((BASH_VERSINFO[0] < 4)); then
-	echo "test-renderer.sh requires bash 4.0+ (found ${BASH_VERSION}); on macOS install via 'brew install bash' and ensure it's first on PATH" >&2
-	exit 1
-fi
-
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RENDERER="$REPO_ROOT/scripts/render-reconciled-report.sh"
 EXPECTED_DIR="$REPO_ROOT/tests/reconciliation/expected"
@@ -55,16 +45,19 @@ EXPECTED_DIR="$REPO_ROOT/tests/reconciliation/expected"
 #     against the same underlying findings as their `*-compact-minor-default`
 #     counterpart.
 # Keyed by envelope basename (i.e. `expected/<name>.md` with the `.md`
-# stripped).
-declare -A VERBOSE_FIXTURES=(
-	["auto-fix-v2-docstring-typo"]=1
-	["auto-fix-v2-pass-through"]=1
-	["auto-fix-v2-reject-statuses"]=1
-	["same-category-different-line"]=1
-	["auto-fix-v2-empty-fields"]=1
-	["deep-review-compact-minor-verbose"]=1
-	["review-plan-compact-minor-verbose"]=1
-)
+# stripped). Implemented as a case-pattern lookup (rather than an
+# associative array, a bash 4.0+ feature) so this script runs unmodified
+# under bash 3.2, which macOS ships as /bin/bash.
+is_verbose_fixture() {
+	case "$1" in
+	auto-fix-v2-docstring-typo | auto-fix-v2-pass-through | auto-fix-v2-reject-statuses | same-category-different-line | auto-fix-v2-empty-fields | deep-review-compact-minor-verbose | review-plan-compact-minor-verbose)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
 
 TMPDIR_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
@@ -92,7 +85,7 @@ shopt -u nullglob
 
 # Filter out the .rendered.md goldens so they aren't fed back as inputs.
 inputs=()
-for env in "${envelopes[@]}"; do
+for env in "${envelopes[@]+"${envelopes[@]}"}"; do
 	case "$env" in
 	*.rendered.md) continue ;;
 	*) inputs+=("$env") ;;
@@ -121,11 +114,11 @@ for envelope in "${inputs[@]}"; do
 	diff_file="$case_dir/diff.txt"
 
 	extra_flags=()
-	if [[ "${VERBOSE_FIXTURES[$name]:-0}" == "1" ]]; then
+	if is_verbose_fixture "$name"; then
 		extra_flags+=(--verbose)
 	fi
 
-	if ! bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$actual_file" 2>"$case_dir/stderr"; then
+	if ! bash "$RENDERER" "${extra_flags[@]+"${extra_flags[@]}"}" <"$envelope" >"$actual_file" 2>"$case_dir/stderr"; then
 		echo "FAIL: $name (renderer exited non-zero)"
 		echo "  stderr: $(cat "$case_dir/stderr")"
 		fail_count=$((fail_count + 1))
@@ -166,12 +159,12 @@ if command -v jq >/dev/null 2>&1; then
 		diff_file="$case_dir/diff.txt"
 
 		extra_flags=()
-		if [[ "${VERBOSE_FIXTURES[$name]:-0}" == "1" ]]; then
+		if is_verbose_fixture "$name"; then
 			extra_flags+=(--verbose)
 		fi
 
-		bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$jq_rendered"
-		PATH="$no_jq_bin" bash "$RENDERER" "${extra_flags[@]}" <"$envelope" >"$awk_rendered"
+		bash "$RENDERER" "${extra_flags[@]+"${extra_flags[@]}"}" <"$envelope" >"$jq_rendered"
+		PATH="$no_jq_bin" bash "$RENDERER" "${extra_flags[@]+"${extra_flags[@]}"}" <"$envelope" >"$awk_rendered"
 
 		if diff -u "$jq_rendered" "$awk_rendered" >"$diff_file"; then
 			echo "PASS: $name (jq and awk renderer paths byte-identical)"
