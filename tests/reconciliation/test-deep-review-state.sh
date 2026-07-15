@@ -37,6 +37,14 @@
 #       symlink hardening; skipped when running as root).
 #   (e) a pre-existing symlink at .deep-review/ itself (pointing outside the
 #       scratch repo) is refused the same way (skipped when running as root).
+#   (f) a pre-existing directory (not a symlink, not a regular file) at the
+#       target path is refused with a clear "Could not persist findings
+#       JSON: ..." message rather than the mv-into-directory false-success,
+#       and the pre-existing directory is left untouched (no stray temp file
+#       moved inside it).
+#   (g) a multi-document input ("{} {}", two concatenated JSON objects) is
+#       refused with exit 2 and a clear usage-error message, and no file is
+#       written at the target path.
 #
 # Exit 0 on all-pass, 1 on any failure.
 
@@ -353,6 +361,68 @@ else
 	else
 		pass "(e) refuses to write through a symlinked .deep-review/ directory"
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (f) pre-existing directory at the target path: refuse rather than mv-into
+# ---------------------------------------------------------------------------
+
+case_f_dir="$TMPDIR_ROOT/case-f"
+make_scratch_repo "$case_f_dir"
+sample_lenses >"$case_f_dir/lenses.json"
+mkdir -p "$case_f_dir/.deep-review/latest-claude.json"
+
+set +e
+(
+	cd "$case_f_dir" && persist_state "$case_f_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:06Z" "abc1234" "def5678" "sha256:deadbeef" "sha256:focus"
+) >"$case_f_dir/stdout" 2>"$case_f_dir/stderr"
+f_exit=$?
+set -e
+
+if [[ $f_exit -eq 0 ]]; then
+	fail "(f) refuses to write when the target path is a pre-existing directory (script exited 0)"
+	sed 's/^/    /' "$case_f_dir/stdout"
+elif ! grep -Fq "Could not persist findings JSON:" "$case_f_dir/stderr"; then
+	fail "(f) refuses to write when the target path is a pre-existing directory (missing documented stderr message)"
+	sed 's/^/    /' "$case_f_dir/stderr"
+elif [[ ! -d "$case_f_dir/.deep-review/latest-claude.json" ]]; then
+	fail "(f) refuses to write when the target path is a pre-existing directory (target directory no longer present)"
+elif [[ -n "$(find "$case_f_dir/.deep-review/latest-claude.json" -mindepth 1 2>/dev/null)" ]]; then
+	fail "(f) refuses to write when the target path is a pre-existing directory (a stray temp file was moved inside it)"
+	ls -la "$case_f_dir/.deep-review/latest-claude.json" | sed 's/^/    /'
+else
+	pass "(f) refuses to write when the target path is a pre-existing directory, and leaves it untouched"
+fi
+
+# ---------------------------------------------------------------------------
+# (g) multi-document input ("{} {}"): refuse rather than silently persisting
+#     a concatenated multi-document blob
+# ---------------------------------------------------------------------------
+
+case_g_dir="$TMPDIR_ROOT/case-g"
+make_scratch_repo "$case_g_dir"
+printf '{} {}' >"$case_g_dir/lenses.json"
+
+set +e
+(
+	cd "$case_g_dir" && persist_state "$case_g_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:07Z" "abc1234" "def5678" "sha256:deadbeef" "sha256:focus"
+) >"$case_g_dir/stdout" 2>"$case_g_dir/stderr"
+g_exit=$?
+set -e
+
+if [[ $g_exit -ne 2 ]]; then
+	fail "(g) refuses multi-document input (expected exit 2, got $g_exit)"
+	sed 's/^/    /' "$case_g_dir/stderr"
+elif ! grep -Fq "persist-deep-review-state:" "$case_g_dir/stderr"; then
+	fail "(g) refuses multi-document input (missing usage-error message)"
+	sed 's/^/    /' "$case_g_dir/stderr"
+elif [[ -e "$case_g_dir/.deep-review" ]]; then
+	fail "(g) refuses multi-document input (a file was written despite rejection)"
+	ls -la "$case_g_dir/.deep-review" | sed 's/^/    /'
+else
+	pass "(g) refuses multi-document input, writes nothing"
 fi
 
 echo ""

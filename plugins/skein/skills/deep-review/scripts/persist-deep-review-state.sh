@@ -205,6 +205,18 @@ if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
 	exit 2
 fi
 
+# jq without --slurp processes a stream of top-level JSON values, applying
+# the filter to each one independently — so "{} {}" (two concatenated JSON
+# documents) would pass the check above (its exit status reflects only the
+# last value) and then also pass through the extend step below, silently
+# producing multiple concatenated JSON objects as $output. Reject anything
+# but exactly one top-level document up front.
+doc_count="$(printf '%s' "$input" | jq -s 'length')"
+if [[ "$doc_count" != "1" ]]; then
+	echo "persist-deep-review-state: lenses input must be exactly one JSON document (got $doc_count)" >&2
+	exit 2
+fi
+
 if ! printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1; then
 	echo "persist-deep-review-state: lenses input must be a JSON object (one key per lens)" >&2
 	exit 2
@@ -255,6 +267,16 @@ fi
 
 if [[ -L "$OUT_PATH" ]]; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
+	exit 1
+fi
+
+# By this point $OUT_PATH is confirmed not to be a symlink (checked above).
+# If it still exists but is not a regular file (e.g. a directory), `mv -f`
+# below would silently succeed by moving the temp file *inside* it instead
+# of replacing it — a false success that leaves the advertised path
+# unusable. Reject that case up front instead of attempting the write.
+if [[ -e "$OUT_PATH" && ! -f "$OUT_PATH" ]]; then
+	echo "Could not persist findings JSON: refusing to overwrite non-regular-file target at $OUT_PATH" >&2
 	exit 1
 fi
 

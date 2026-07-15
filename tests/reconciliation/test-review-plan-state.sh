@@ -43,6 +43,20 @@
 #       symlink hardening; skipped when running as root).
 #   (f) a pre-existing symlink at .review-plan/ itself (pointing outside the
 #       scratch repo) is refused the same way (skipped when running as root).
+#   (g) crash-safety: an interrupted/failing second write must not destroy
+#       the previously-written valid file, and must not leave a stray temp
+#       file behind either way.
+#   (h) a pre-existing directory (not a symlink, not a regular file) at the
+#       target path is refused with a clear "Could not persist findings
+#       JSON: ..." message rather than the mv-into-directory false-success,
+#       and the pre-existing directory is left untouched (no stray temp file
+#       moved inside it).
+#   (i) a multi-document input ("{} {}", two concatenated JSON objects) is
+#       refused with exit 2 and a clear usage-error message, and no file is
+#       written at the target path.
+#   (j) a well-typed but incomplete envelope ({"schema_version": 2} with no
+#       summary/findings/related) is refused with exit 2 and a clear
+#       missing-keys message, and no file is written at the target path.
 #
 # Exit 0 on all-pass, 1 on any failure.
 
@@ -459,6 +473,107 @@ else
 			pass "(g) interrupted write preserves the previous valid file, and leaves no stray temp file"
 		fi
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (h) pre-existing directory at the target path: refuse rather than mv-into
+# ---------------------------------------------------------------------------
+
+case_h_dir="$TMPDIR_ROOT/case-h"
+make_scratch_repo "$case_h_dir"
+sample_envelope >"$case_h_dir/envelope.json"
+mkdir -p "$case_h_dir/.review-plan/latest-claude.json"
+
+set +e
+(
+	cd "$case_h_dir" && persist_state "$case_h_dir/envelope.json" \
+		"docs/dev_plans/example-plan.md" \
+		"deadbeefcafebabe0000000000000000000000" \
+		"20260714-000009" \
+		"claude"
+) >"$case_h_dir/stdout" 2>"$case_h_dir/stderr"
+h_exit=$?
+set -e
+
+if [[ $h_exit -eq 0 ]]; then
+	fail "(h) refuses to write when the target path is a pre-existing directory (script exited 0)"
+	sed 's/^/    /' "$case_h_dir/stdout"
+elif ! grep -Fq "Could not persist findings JSON:" "$case_h_dir/stderr"; then
+	fail "(h) refuses to write when the target path is a pre-existing directory (missing documented stderr message)"
+	sed 's/^/    /' "$case_h_dir/stderr"
+elif [[ ! -d "$case_h_dir/.review-plan/latest-claude.json" ]]; then
+	fail "(h) refuses to write when the target path is a pre-existing directory (target directory no longer present)"
+elif [[ -n "$(find "$case_h_dir/.review-plan/latest-claude.json" -mindepth 1 2>/dev/null)" ]]; then
+	fail "(h) refuses to write when the target path is a pre-existing directory (a stray temp file was moved inside it)"
+	ls -la "$case_h_dir/.review-plan/latest-claude.json" | sed 's/^/    /'
+else
+	pass "(h) refuses to write when the target path is a pre-existing directory, and leaves it untouched"
+fi
+
+# ---------------------------------------------------------------------------
+# (i) multi-document input ("{} {}"): refuse rather than silently persisting
+#     a concatenated multi-document blob
+# ---------------------------------------------------------------------------
+
+case_i_dir="$TMPDIR_ROOT/case-i"
+make_scratch_repo "$case_i_dir"
+printf '{} {}' >"$case_i_dir/envelope.json"
+
+set +e
+(
+	cd "$case_i_dir" && persist_state "$case_i_dir/envelope.json" \
+		"docs/dev_plans/example-plan.md" \
+		"deadbeefcafebabe0000000000000000000000" \
+		"20260714-000010" \
+		"claude"
+) >"$case_i_dir/stdout" 2>"$case_i_dir/stderr"
+i_exit=$?
+set -e
+
+if [[ $i_exit -ne 2 ]]; then
+	fail "(i) refuses multi-document input (expected exit 2, got $i_exit)"
+	sed 's/^/    /' "$case_i_dir/stderr"
+elif ! grep -Fq "persist-review-state:" "$case_i_dir/stderr"; then
+	fail "(i) refuses multi-document input (missing usage-error message)"
+	sed 's/^/    /' "$case_i_dir/stderr"
+elif [[ -e "$case_i_dir/.review-plan" ]]; then
+	fail "(i) refuses multi-document input (a file was written despite rejection)"
+	ls -la "$case_i_dir/.review-plan" | sed 's/^/    /'
+else
+	pass "(i) refuses multi-document input, writes nothing"
+fi
+
+# ---------------------------------------------------------------------------
+# (j) well-typed but incomplete envelope ({"schema_version": 2} only):
+#     refuse rather than silently persisting an unusable state file
+# ---------------------------------------------------------------------------
+
+case_j_dir="$TMPDIR_ROOT/case-j"
+make_scratch_repo "$case_j_dir"
+printf '{"schema_version": 2}' >"$case_j_dir/envelope.json"
+
+set +e
+(
+	cd "$case_j_dir" && persist_state "$case_j_dir/envelope.json" \
+		"docs/dev_plans/example-plan.md" \
+		"deadbeefcafebabe0000000000000000000000" \
+		"20260714-000011" \
+		"claude"
+) >"$case_j_dir/stdout" 2>"$case_j_dir/stderr"
+j_exit=$?
+set -e
+
+if [[ $j_exit -ne 2 ]]; then
+	fail "(j) refuses incomplete envelope missing summary/findings/related (expected exit 2, got $j_exit)"
+	sed 's/^/    /' "$case_j_dir/stderr"
+elif ! grep -Fq "missing required top-level keys" "$case_j_dir/stderr"; then
+	fail "(j) refuses incomplete envelope missing summary/findings/related (missing the documented missing-keys message)"
+	sed 's/^/    /' "$case_j_dir/stderr"
+elif [[ -e "$case_j_dir/.review-plan" ]]; then
+	fail "(j) refuses incomplete envelope missing summary/findings/related (a file was written despite rejection)"
+	ls -la "$case_j_dir/.review-plan" | sed 's/^/    /'
+else
+	pass "(j) refuses incomplete envelope missing summary/findings/related, writes nothing"
 fi
 
 echo ""
