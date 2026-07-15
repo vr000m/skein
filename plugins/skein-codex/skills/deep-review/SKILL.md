@@ -238,6 +238,8 @@ If the documentation is up to date, say so concisely.
 6. If subagent delegation is unavailable in the current Codex environment, run the same enabled
    lenses sequentially in the main session using the same prompt contract and findings format rather
    than failing the review.
+
+**Checkpoint incrementally as each lens resolves.** When a `spawn_agent` worker returns a result (or a sequential fallback lens completes), immediately invoke the bundled persistence script (`"$SKILL_DIR"/scripts/persist-deep-review-state.sh`, with the same invocation shown in [Output](#output)) with the per-lens object updated to include that lens's actual outcome (`completed` with its findings, `errored` with a reason, or `timed_out`). Do not wait for all remaining lenses to resolve before this first checkpoint — repeat it after each subsequent lens resolves, so the persisted state is never more than one lens-result stale during dispatch. Branch on the script's exit code exactly as the [Output](#output) persistence paragraph documents (a non-zero exit surfaces the diagnostic and forces full-verbose rendering for the eventual report). This is why the invocation immediately before `## Output` is not a special first write — it is simply the final incremental checkpoint, taken once all lenses (and reconciliation/auto-fix) have completed.
 7. Wait for every lens to finish, then run the reconciliation pass: collect lens output as JSON-Lines and pipe through `scripts/reconcile-findings.sh` (see [Reconcile Findings (Step 3.5)](#reconcile-findings-step-35)). No LLM call inside this step — matching is structural on `(file, line, category)` only.
 8. If delegation was used, close every completed or failed lens agent after its result has been
    captured. Keep an agent open only if the review is intentionally paused and you expect to resume
@@ -288,7 +290,8 @@ own state file (Claude uses `.deep-review/latest-claude.json`) so concurrent or 
 don't clobber each other's resume target. The `.deep-review/` directory is gitignored as a whole.
 
 - The write is performed by the bundled script `"$SKILL_DIR"/scripts/persist-deep-review-state.sh`, not by hand-written prose — see the persistence paragraph immediately before `## Output` for the invocation and its exit-code contract. If `"$SKILL_DIR"/scripts/persist-deep-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand, mirroring the auto-fix applier's and marker entrypoint's abort-if-absent contract elsewhere in this file.
-- The per-lens status/findings data this script persists is available after Step 2 (lens dispatch) completes. Invoke the script immediately before rendering over the raw per-lens data assembled after Step 2, not the Step 3.5 reconciled envelope.
+- The per-lens status/findings data this script persists is available after Step 2 (lens dispatch) completes. The script is invoked **incrementally**, once as each lens subagent's result becomes available — do not wait for all lenses to return before the first checkpoint (see [Orchestration](#orchestration) for the exact invocation points) — with the accumulating per-lens object growing by one key each time. The persistence invocation immediately before `## Output` is simply the FINAL of these incremental checkpoints (the one covering the complete final lens set, after reconciliation/auto-fix have run), not a special first-and-only write.
+- **Absent lens keys count as unresolved, not skipped.** A lens whose key is entirely absent from the persisted `.lenses` object — because the process terminated before that lens's incremental checkpoint ever ran — must be treated identically to `errored`/`timed_out` by `--continue`'s resume logic (mode 1, below): it needs to be (re-)run, not silently skipped. This closes the gap where a lens that had not yet resolved when the process died would otherwise fall through every explicit status check.
 
 Any downstream consumer of this run's findings (for example, `skein:review-gauntlet`'s gate 3)
 MUST source them from this state file or the pre-render Step 3.5 reconciled data — never from the
@@ -326,8 +329,9 @@ observable.
   back to `--full`
 - If `review_focus_hash` no longer matches, warn and fall back to `--full`
 - If stored `head_commit` equals current `HEAD`, resume the incomplete run: rerun only lenses with
-  status `timed_out` or `errored`, reuse completed lens findings, and keep the range
-  `base_commit..head_commit`
+  status `timed_out` or `errored`, OR whose key is entirely absent from the persisted `.lenses`
+  object (never resolved before the prior run terminated); reuse completed lens findings, and keep
+  the range `base_commit..head_commit`
 - If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review: rerun all
   lenses over only `<stored.head_commit>..HEAD`, and list prior findings separately for reference
 - If stored `head_commit` is not an ancestor of current `HEAD`, warn and fall back to `--full`
@@ -484,7 +488,7 @@ Deep review will run 4 lenses:
   Spec compliance: skipped (no specs in Review Focus)
 ```
 
-**Persist the per-lens findings before rendering.** Immediately before presenting findings, invoke the bundled persistence script on the per-lens status/findings data assembled after Step 2 (not the Step 3.5 reconciled envelope — the persisted run state keeps the raw per-lens data):
+**Persist the per-lens findings before rendering.** This is the FINAL incremental checkpoint (see [Orchestration](#orchestration), which invokes this same script after each lens resolves) — immediately before presenting findings, invoke the bundled persistence script one last time over the complete final per-lens data, to ensure the persisted state reflects any post-lens-dispatch changes (for example, reconciliation or auto-fix outcomes feeding back into lens findings, if applicable) before rendering. This is not the Step 3.5 reconciled envelope — the persisted run state keeps the raw per-lens data; see [Persisted Run State](#persisted-run-state):
 
 ```
 "$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id <run id> --base-commit <base commit sha> --head-commit <head commit sha> --diff-hash <diff hash> --review-focus-hash <review focus hash, or an empty string when no Review Focus section applies> <path to the per-lens JSON assembled after Step 2, or pipe it on stdin>
@@ -581,10 +585,10 @@ Do not silently re-list prior findings as if they were freshly surfaced.
 
 - Keep every lens independent.
 - Do not reuse the parent conversation as context for lens agents.
-- If `--continue` is requested, follow the two-mode rule in
-  [Persisted Run State](#persisted-run-state): resume only `timed_out` or `errored` lenses when
-  `HEAD` has not advanced; otherwise re-review the new commit range and list prior findings
-  separately for reference.
+- If `--continue` is requested, follow the three-mode rule in
+  [Persisted Run State](#persisted-run-state): when `HEAD` has not advanced, resume only lenses
+  with status `timed_out` or `errored`, or whose key is absent from the persisted `.lenses` object;
+  otherwise re-review the new commit range and list prior findings separately for reference.
 - If `--full` is requested, ignore prior run state and start fresh.
 - Findings must include severity, category, file:line, evidence, and a concrete suggestion.
 - Default rendering: Minor findings render compact (no Evidence/Suggestion); `--verbose` restores full detail for all severities. This is a display-only switch — it does not change lens dispatch, reconciliation, or suppression.
