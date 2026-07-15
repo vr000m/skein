@@ -287,6 +287,9 @@ incomplete run or review only commits added since the last completed review. Eac
 own state file (Claude uses `.deep-review/latest-claude.json`) so concurrent or interleaved runs
 don't clobber each other's resume target. The `.deep-review/` directory is gitignored as a whole.
 
+- The write is performed by the bundled script `"$SKILL_DIR"/scripts/persist-deep-review-state.sh`, not by hand-written prose — see the persistence paragraph immediately before `## Output` for the invocation and its exit-code contract. If `"$SKILL_DIR"/scripts/persist-deep-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand, mirroring the auto-fix applier's and marker entrypoint's abort-if-absent contract elsewhere in this file.
+- The per-lens status/findings data this script persists is available after Step 2 (lens dispatch) completes. Invoke the script immediately before rendering over the raw per-lens data assembled after Step 2, not the Step 3.5 reconciled envelope.
+
 Any downstream consumer of this run's findings (for example, `skein:review-gauntlet`'s gate 3)
 MUST source them from this state file or the pre-render Step 3.5 reconciled data — never from the
 rendered `## Output` report, which intentionally omits Evidence/Suggestion for Minor findings under
@@ -481,6 +484,19 @@ Deep review will run 4 lenses:
   Spec compliance: skipped (no specs in Review Focus)
 ```
 
+**Persist the per-lens findings before rendering.** Immediately before presenting findings, invoke the bundled persistence script on the per-lens status/findings data assembled after Step 2 (not the Step 3.5 reconciled envelope — the persisted run state keeps the raw per-lens data):
+
+```
+"$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id <run id> --base-commit <base commit sha> --head-commit <head commit sha> --diff-hash <diff hash> --review-focus-hash <review focus hash, or an empty string when no Review Focus section applies> <path to the per-lens JSON assembled after Step 2, or pipe it on stdin>
+```
+
+Branch on the script's exit code:
+- **`0` (success)** — proceed to render normally (compact or `--verbose`, per the flag).
+- **non-zero exit `1` (best-effort write failure)** — the script printed `Could not persist findings JSON: <reason>` to stderr. Surface that exact warning line in the rendered report (immediately above the `**Full findings JSON**:` footer line below) and render **this run in full-verbose mode** — every severity gets full detail — regardless of whether `--verbose` was passed. This is a best-effort write; a failed persistence write should not also silently degrade the rendered detail.
+- **non-zero exit `2` (usage/schema error)** — a contract violation (for example, a bad invocation or per-lens input that is not a valid JSON object), not a write failure; this should not happen in normal operation and points at a bundling or argument-passing bug rather than a disk/permissions problem. The script's diagnostic here is different — do not assume it says `Could not persist findings JSON:`. Handle it the same way as exit `1` (surface the diagnostic, render full-verbose), but treat it as a cue to double-check the invocation itself rather than a transient environment failure.
+
+If `"$SKILL_DIR"/scripts/persist-deep-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand or skipping persistence silently.
+
 ## Output
 
 The consolidated report should include:
@@ -517,7 +533,7 @@ The `Reconciliation:` summary line is always rendered (zeros for empty input). T
 
 **`--verbose` (passed): every severity renders in full detail.** When `--verbose` is passed, Minor findings render identically to Critical/Important — full `Lenses:`/`Evidence:`/`Suggestion:`/`Related findings:` sub-bullets, i.e. today's unconditional behavior, restored for every severity.
 
-**JSON pointer footer (always present, both compact and verbose modes).** Every rendered report ends with a `**Full findings JSON**: .deep-review/latest-codex.json` line naming the per-harness state file path, immediately **before** the `**Next steps**:` line — a fixed position, not a per-mirror choice — so the user can inspect the full per-lens findings directly (for example, `jq '.lenses' .deep-review/latest-codex.json`) instead of asking for a re-summary. Best-effort write; if the state-file write fails, print a one-line warning in the report ("Could not persist findings JSON: <reason>") and render that run in full-verbose mode regardless of `--verbose`'s actual value.
+**JSON pointer footer (always present, both compact and verbose modes).** Every rendered report ends with a `**Full findings JSON**: .deep-review/latest-codex.json` line naming the per-harness state file path, immediately **before** the `**Next steps**:` line — a fixed position, not a per-mirror choice — so the user can inspect the full per-lens findings directly (for example, `jq '.lenses' .deep-review/latest-codex.json`) instead of asking for a re-summary. See the persistence paragraph above for the exit-code branching that determines whether the write succeeded and whether this run renders in forced full-verbose mode.
 
 `scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the `## Output` template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
 
