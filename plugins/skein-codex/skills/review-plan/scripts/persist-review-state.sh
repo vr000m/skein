@@ -164,9 +164,8 @@ output="$(printf '%s' "$input" | jq \
 # is gitignored, but a *tracked* symlink at that exact path would still
 # materialize on checkout — without this guard a malicious clone could point
 # it outside the repo and have this script's write clobber an arbitrary
-# user-writable file. Proportionate, minimal check only — no atomic
-# temp-file/rename mechanics (see the plan's Requirement 8: those are
-# explicitly not required for this gitignored convenience file).
+# user-writable file. Must run before the temp-file write below so a
+# symlinked target is rejected before we ever stage a rename into it.
 if [[ -L "$OUT_DIR" ]]; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
 	exit 1
@@ -177,17 +176,44 @@ if [[ -L "$OUT_PATH" ]]; then
 	exit 1
 fi
 
-# Best-effort write: direct write in place, no atomic-write/temp-file/rename
-# mechanics — proportionate to a local gitignored convenience file (grilled
-# decision, see the plan's Requirement 8).
 if ! mkdir_err=$({ mkdir -p "$OUT_DIR"; } 2>&1); then
 	echo "Could not persist findings JSON: ${mkdir_err:-could not create $OUT_DIR}" >&2
 	exit 1
 fi
 
-if ! write_err=$({ printf '%s\n' "$output" >"$OUT_PATH"; } 2>&1); then
-	echo "Could not persist findings JSON: ${write_err:-could not write $OUT_PATH}" >&2
+# Atomic write: stage the output in a temp file created in the same directory
+# as $OUT_PATH (same filesystem, so the final `mv` is an atomic rename), then
+# rename it into place only after the write succeeds. This is what makes the
+# write atomic — the target path is never truncated or partially written, so
+# a killed/interrupted process leaves the previous good $OUT_PATH untouched.
+# This fixes crash/interrupt corruption only; "last writer wins" for two
+# concurrent runs targeting the same harness's latest file is an accepted,
+# unchanged characteristic (same as deep-review's `.deep-review/latest-*.json`)
+# — this does not add locking or per-run immutable snapshots.
+TMP_PATH=""
+cleanup_tmp() {
+	if [[ -n "$TMP_PATH" && -e "$TMP_PATH" ]]; then
+		rm -f "$TMP_PATH"
+	fi
+}
+trap cleanup_tmp EXIT
+
+if ! TMP_PATH=$(mktemp "$OUT_PATH.tmp.XXXXXX" 2>&1); then
+	tmp_err="$TMP_PATH"
+	TMP_PATH=""
+	echo "Could not persist findings JSON: ${tmp_err:-could not create temp file for $OUT_PATH}" >&2
 	exit 1
 fi
 
+if ! write_err=$({ printf '%s\n' "$output" >"$TMP_PATH"; } 2>&1); then
+	echo "Could not persist findings JSON: ${write_err:-could not write $TMP_PATH}" >&2
+	exit 1
+fi
+
+if ! mv_err=$({ mv -f "$TMP_PATH" "$OUT_PATH"; } 2>&1); then
+	echo "Could not persist findings JSON: ${mv_err:-could not rename $TMP_PATH to $OUT_PATH}" >&2
+	exit 1
+fi
+
+TMP_PATH=""
 printf '%s\n' "$OUT_PATH"

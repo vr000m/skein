@@ -395,6 +395,72 @@ else
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# (g) crash-safety: an interrupted/failing second write must not destroy the
+#     previously-written valid file (atomic temp-file + rename), and must not
+#     leave a stray temp file behind either way.
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (g) interrupted write preserves the previous valid file (running as root)"
+else
+	case_g_dir="$TMPDIR_ROOT/case-g"
+	make_scratch_repo "$case_g_dir"
+	sample_envelope >"$case_g_dir/envelope.json"
+
+	# First, a real successful run writes a valid latest-claude.json.
+	if ! (
+		cd "$case_g_dir" && persist_state "$case_g_dir/envelope.json" \
+			"docs/dev_plans/example-plan.md" \
+			"deadbeefcafebabe0000000000000000000000" \
+			"20260714-000007" \
+			"claude"
+	) >"$case_g_dir/stdout-1" 2>"$case_g_dir/stderr-1"; then
+		fail "(g) interrupted write preserves the previous valid file (setup: initial successful write failed)"
+		sed 's/^/    /' "$case_g_dir/stderr-1"
+	else
+		target="$case_g_dir/.review-plan/latest-claude.json"
+		cp "$target" "$case_g_dir/original-copy.json"
+
+		# Simulate an interrupted/failing second write the same way
+		# (c-supplementary) does: make .review-plan/ read-only so the
+		# temp-file create/rename cannot land, without relying on root-proof
+		# tricks. Any crash mid-write (OOM, Ctrl-C, disk full) should look
+		# the same to $OUT_PATH as this: the old file must survive untouched.
+		chmod 0555 "$case_g_dir/.review-plan"
+
+		set +e
+		(
+			cd "$case_g_dir" && persist_state "$case_g_dir/envelope.json" \
+				"docs/dev_plans/example-plan.md" \
+				"deadbeefcafebabe0000000000000000000000" \
+				"20260714-000008" \
+				"claude"
+		) >"$case_g_dir/stdout-2" 2>"$case_g_dir/stderr-2"
+		g_exit=$?
+		set -e
+		chmod 0755 "$case_g_dir/.review-plan"
+
+		if [[ $g_exit -eq 0 ]]; then
+			fail "(g) interrupted write preserves the previous valid file (second write unexpectedly exited 0)"
+			sed 's/^/    /' "$case_g_dir/stdout-2"
+		elif ! grep -Fq "Could not persist findings JSON:" "$case_g_dir/stderr-2"; then
+			fail "(g) interrupted write preserves the previous valid file (missing documented stderr message)"
+			sed 's/^/    /' "$case_g_dir/stderr-2"
+		elif [[ ! -f "$target" ]]; then
+			fail "(g) interrupted write preserves the previous valid file (old file is gone)"
+		elif ! cmp -s "$case_g_dir/original-copy.json" "$target"; then
+			fail "(g) interrupted write preserves the previous valid file (old file was truncated/corrupted)"
+			diff "$case_g_dir/original-copy.json" "$target" | sed 's/^/    /' || true
+		elif compgen -G "$case_g_dir/.review-plan/*.tmp.*" >/dev/null 2>&1; then
+			fail "(g) interrupted write preserves the previous valid file (stray .tmp.* file left behind)"
+			ls -la "$case_g_dir/.review-plan" | sed 's/^/    /'
+		else
+			pass "(g) interrupted write preserves the previous valid file, and leaves no stray temp file"
+		fi
+	fi
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 
