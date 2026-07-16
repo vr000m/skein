@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: "Run a multi-lens code review with fresh Codex subagents and strict triage/suppression rules. Use after implementation or when a plan's Review Focus needs targeted review."
-argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial]"
+argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial] [--verbose]"
 ---
 
 # Deep Review: Multi-Lens Code Review
@@ -24,16 +24,20 @@ to delegate further.
 
 ## Input Resolution
 
-1. If the first argument is a readable plan file path, load it as the review brief and use its
+1. If the first argument is a readable plan file path — or the first argument is `--verbose` and
+   the second argument is a readable plan file path — load it as the review brief and use its
    `## Review Focus` section to steer lens prompts.
-2. If the first argument is `--pr` with a number, or a PR URL/number directly, review that PR's
-   diff.
-3. If the first argument is `--continue`, follow the continuation rules in
-   [Persisted Run State](#persisted-run-state); the diff range depends on prior state.
-4. If the first argument is `--full`, or no explicit argument is provided, review the current branch
-   diff against the merge base with
-   the default branch.
+2. If the arguments are `--pr` with a number, or a PR URL/number directly, optionally combined
+   with `--verbose` in either position, review that PR's diff.
+3. If the arguments are `--continue`, optionally combined with `--verbose` in either position,
+   follow the continuation rules in [Persisted Run State](#persisted-run-state); the diff range
+   depends on prior state.
+4. If the arguments are `--full`, optionally combined with `--verbose` in either position, or no
+   explicit argument is provided (or only `--verbose` is provided), review the current branch diff
+   against the merge base with the default branch.
 5. If no target can be resolved, ask the user for a plan path or PR reference.
+
+`--verbose` is a rendering-mode modifier, composable with any of the five resolution rules above — it does not change which diff range or target is resolved, only how the `## Output` section renders the resulting findings.
 
 Input resolution questions are part of setup. It is fine to ask the user which PR, commit range,
 plan, or branch diff to review when that target is ambiguous or missing.
@@ -234,6 +238,8 @@ If the documentation is up to date, say so concisely.
 6. If subagent delegation is unavailable in the current Codex environment, run the same enabled
    lenses sequentially in the main session using the same prompt contract and findings format rather
    than failing the review.
+
+**Checkpoint incrementally as each lens resolves.** When a `spawn_agent` worker returns a result (or a sequential fallback lens completes), immediately invoke the bundled persistence script (`"$SKILL_DIR"/scripts/persist-deep-review-state.sh`, with the same invocation shown in [Output](#output)) with the per-lens object updated to include that lens's actual outcome (`completed` with its findings, `errored` with a reason, or `timed_out`). Do not wait for all remaining lenses to resolve before this first checkpoint — repeat it after each subsequent lens resolves, so the persisted state is never more than one lens-result stale during dispatch. Branch on the script's exit code exactly as the [Output](#output) persistence paragraph documents (a non-zero exit surfaces the diagnostic and forces full-verbose rendering for the eventual report). This is why the invocation immediately before `## Output` is not a special first write — it is simply the final incremental checkpoint, taken once all lenses (and reconciliation/auto-fix) have completed.
 7. Wait for every lens to finish, then run the reconciliation pass: collect lens output as JSON-Lines and pipe through `scripts/reconcile-findings.sh` (see [Reconcile Findings (Step 3.5)](#reconcile-findings-step-35)). No LLM call inside this step — matching is structural on `(file, line, category)` only.
 8. If delegation was used, close every completed or failed lens agent after its result has been
    captured. Keep an agent open only if the review is intentionally paused and you expect to resume
@@ -283,6 +289,15 @@ incomplete run or review only commits added since the last completed review. Eac
 own state file (Claude uses `.deep-review/latest-claude.json`) so concurrent or interleaved runs
 don't clobber each other's resume target. The `.deep-review/` directory is gitignored as a whole.
 
+- The write is performed by the bundled script `"$SKILL_DIR"/scripts/persist-deep-review-state.sh`, not by hand-written prose — see the persistence paragraph immediately before `## Output` for the invocation and its exit-code contract. If `"$SKILL_DIR"/scripts/persist-deep-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand, mirroring the auto-fix applier's and marker entrypoint's abort-if-absent contract elsewhere in this file.
+- The per-lens status/findings data this script persists is available after Step 2 (lens dispatch) completes. The script is invoked **incrementally**, once as each lens subagent's result becomes available — do not wait for all lenses to return before the first checkpoint (see [Orchestration](#orchestration) for the exact invocation points) — with the accumulating per-lens object growing by one key each time. The persistence invocation immediately before `## Output` is simply the FINAL of these incremental checkpoints (the one covering the complete final lens set, after reconciliation/auto-fix have run), not a special first-and-only write.
+- **Absent lens keys count as unresolved, not skipped.** A lens whose key is entirely absent from the persisted `.lenses` object — because the process terminated before that lens's incremental checkpoint ever ran — must be treated identically to `errored`/`timed_out` by `--continue`'s resume logic (mode 1, below): it needs to be (re-)run, not silently skipped. This closes the gap where a lens that had not yet resolved when the process died would otherwise fall through every explicit status check.
+
+Any downstream consumer of this run's findings (for example, `skein:review-gauntlet`'s gate 3)
+MUST source them from this state file or the pre-render Step 3.5 reconciled data — never from the
+rendered `## Output` report, which intentionally omits Evidence/Suggestion for Minor findings under
+this plan's compact default.
+
 Suggested schema. For each lens `model`, record the concrete model the harness selected if it is
 observable at dispatch time; otherwise use the literal `harness-default`. Always keep
 `reasoning_effort` when a routing hint was requested, even when the concrete model is not
@@ -314,8 +329,9 @@ observable.
   back to `--full`
 - If `review_focus_hash` no longer matches, warn and fall back to `--full`
 - If stored `head_commit` equals current `HEAD`, resume the incomplete run: rerun only lenses with
-  status `timed_out` or `errored`, reuse completed lens findings, and keep the range
-  `base_commit..head_commit`
+  status `timed_out` or `errored`, OR whose key is entirely absent from the persisted `.lenses`
+  object (never resolved before the prior run terminated); reuse completed lens findings, and keep
+  the range `base_commit..head_commit`
 - If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review: rerun all
   lenses over only `<stored.head_commit>..HEAD`, and list prior findings separately for reference
 - If stored `head_commit` is not an ancestor of current `HEAD`, warn and fall back to `--full`
@@ -472,6 +488,19 @@ Deep review will run 4 lenses:
   Spec compliance: skipped (no specs in Review Focus)
 ```
 
+**Persist the per-lens findings before rendering.** This is the FINAL incremental checkpoint (see [Orchestration](#orchestration), which invokes this same script after each lens resolves) — immediately before presenting findings, invoke the bundled persistence script one last time over the complete final per-lens data, to ensure the persisted state reflects any post-lens-dispatch changes (for example, reconciliation or auto-fix outcomes feeding back into lens findings, if applicable) before rendering. This is not the Step 3.5 reconciled envelope — the persisted run state keeps the raw per-lens data; see [Persisted Run State](#persisted-run-state):
+
+```
+"$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id <run id> --base-commit <base commit sha> --head-commit <head commit sha> --diff-hash <diff hash> --review-focus-hash <review focus hash, or an empty string when no Review Focus section applies> <path to the per-lens JSON assembled after Step 2, or pipe it on stdin>
+```
+
+Branch on the script's exit code:
+- **`0` (success)** — proceed to render normally (compact or `--verbose`, per the flag).
+- **non-zero exit `1` (best-effort write failure)** — the script printed `Could not persist findings JSON: <reason>` to stderr. Surface that exact warning line in the rendered report (immediately above the `**Full findings JSON**:` footer line below) and render **this run in full-verbose mode** — every severity gets full detail — regardless of whether `--verbose` was passed. This is a best-effort write; a failed persistence write should not also silently degrade the rendered detail.
+- **non-zero exit `2` (usage/schema error)** — a contract violation (for example, a bad invocation or per-lens input that is not a valid JSON object), not a write failure; this should not happen in normal operation and points at a bundling or argument-passing bug rather than a disk/permissions problem. The script's diagnostic here is different — do not assume it says `Could not persist findings JSON:`. Handle it the same way as exit `1` (surface the diagnostic, render full-verbose), but treat it as a cue to double-check the invocation itself rather than a transient environment failure.
+
+If `"$SKILL_DIR"/scripts/persist-deep-review-state.sh` is absent, **abort with a clear error** — never fall back to writing the file by hand or skipping persistence silently.
+
 ## Output
 
 The consolidated report should include:
@@ -494,14 +523,23 @@ The consolidated report should include:
 - ...
 
 ### Minor
-- ...
+- **[Category]**: [one-line summary] (file:line)
 
 ---
+**Full findings JSON**: .deep-review/latest-codex.json
 **Next steps**: Review these findings and decide which ones to apply. Update the plan or code with
 the accepted changes, then rerun `/deep-review` if the snapshot changed.
 ```
 
-The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier. `scripts/render-reconciled-report.sh` is the reference renderer that encodes these rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the Step 5 template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
+The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. The `Lenses:` field is always populated (single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped). The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
+
+**Default rendering (no `--verbose`): Minor findings are compact.** Critical and Important findings render exactly as shown above — full `Lenses:`/`Evidence:`/`Suggestion:`/optional `Related findings:` sub-bullets. Minor findings instead render as a single line: `- **[Category]**: [one-line summary] (file:line)` — the finding's existing `summary` field rendered unabridged (no hard truncation), with a parenthesized `(file:line)` instead of the Critical/Important convention, and no `Evidence:`/`Suggestion:`/`Lenses:` sub-bullets. When the Minor finding has a "Related findings" cross-reference, append a terse inline suffix instead of the full sub-bullet: `- **[Category]**: [summary] (file:line) — see also [Other Category] at same location`. When the Minor finding has no usable location (either `file` is empty or `line` is absent — a narrower, rendering-only test than the GENERIC block's fully-unanchored merge-signature definition; a partially-anchored finding, e.g. `file` set but `line` missing, still counts as unanchored *here*, even though it is NOT unanchored for merge/relate purposes), omit the location segment and the "see also" suffix entirely: `- **[Category]**: [one-line summary]`. The `[AUTO-FIXABLE]` marker is unaffected by this and still appears on the title line whenever `auto_fix_status` is `would_apply` — compact mode only omits `Evidence:`/`Suggestion:` prose, never the marker. This is a display-only switch: it does not drop any underlying data — every finding still carries all five fields (Severity, Category, Location, Evidence, Suggestion) in the reconciled JSON; only the *rendered* Minor tier omits Evidence/Suggestion prose from display. The compact line is always a single physical line even when the underlying `summary` field contains embedded newlines — embedded newlines are collapsed to spaces when rendering the compact form.
+
+**`--verbose` (passed): every severity renders in full detail.** When `--verbose` is passed, Minor findings render identically to Critical/Important — full `Lenses:`/`Evidence:`/`Suggestion:`/`Related findings:` sub-bullets, i.e. today's unconditional behavior, restored for every severity.
+
+**JSON pointer footer (always present, both compact and verbose modes).** Every rendered report ends with a `**Full findings JSON**: .deep-review/latest-codex.json` line naming the per-harness state file path, immediately **before** the `**Next steps**:` line — a fixed position, not a per-mirror choice — so the user can inspect the full per-lens findings directly (for example, `jq '.lenses' .deep-review/latest-codex.json`) instead of asking for a re-summary. See the persistence paragraph above for the exit-code branching that determines whether the write succeeded and whether this run renders in forced full-verbose mode.
+
+`scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the `## Output` template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
 
 If the review is clean, say so concisely and note any residual risks or lenses that were skipped.
 
@@ -527,12 +565,19 @@ report header must make the scope explicit and partition new findings from prior
 - ...
 
 #### Minor
-- ...
+- ... (same compact-by-default / `--verbose`-restores-full-detail rule as the main `## Output` template)
 
 ### Prior findings (from run `<run_id>`) - verify these are addressed
 - **[Category] [Severity]**: [Finding] at [file:line]
   - From the prior report; this run did not re-evaluate.
+
+---
+**Full findings JSON**: .deep-review/latest-codex.json
+**Next steps**: Review these findings and decide which ones to apply. Update the plan or code with
+the accepted changes, then rerun `/deep-review` if the snapshot changed.
 ```
+
+The "New findings" `#### Minor` subsection **MUST** follow the same compact-by-default rule as the main `## Output` template — render each Minor finding as a single `- **[Category]**: [one-line summary] (file:line)` line by default, with `--verbose` restoring full `Lenses:`/`Evidence:`/`Suggestion:` detail. This is a firm requirement, not a "confirm if applicable" item. The "Prior findings" list (already one-line per finding) is unaffected and needs no change. **The JSON pointer footer applies to every rendered report, including this continuation template** — the "every rendered report" rule stated earlier for the main `## Output` template is not restated per-template; this continuation template ends with the same `**Full findings JSON**:`/`**Next steps**:` pair, in the same fixed order, before the `--verbose`/footer/JSON-pointer rules recur below.
 
 Do not silently re-list prior findings as if they were freshly surfaced.
 
@@ -540,12 +585,13 @@ Do not silently re-list prior findings as if they were freshly surfaced.
 
 - Keep every lens independent.
 - Do not reuse the parent conversation as context for lens agents.
-- If `--continue` is requested, follow the two-mode rule in
-  [Persisted Run State](#persisted-run-state): resume only `timed_out` or `errored` lenses when
-  `HEAD` has not advanced; otherwise re-review the new commit range and list prior findings
-  separately for reference.
+- If `--continue` is requested, follow the three-mode rule in
+  [Persisted Run State](#persisted-run-state): when `HEAD` has not advanced, resume only lenses
+  with status `timed_out` or `errored`, or whose key is absent from the persisted `.lenses` object;
+  otherwise re-review the new commit range and list prior findings separately for reference.
 - If `--full` is requested, ignore prior run state and start fresh.
 - Findings must include severity, category, file:line, evidence, and a concrete suggestion.
+- Default rendering: Minor findings render compact (no Evidence/Suggestion); `--verbose` restores full detail for all severities. This is a display-only switch — it does not change lens dispatch, reconciliation, or suppression.
 
 ## Self-Check Rubric
 

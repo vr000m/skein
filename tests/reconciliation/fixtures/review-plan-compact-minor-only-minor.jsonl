@@ -1,0 +1,2 @@
+{"lens":"spec-and-testing","severity":"Minor","category":"testing","file":"docs/dev_plans/example.md","line":150,"summary":"phase has no explicit test command","evidence":"Test command field is blank","suggestion":"add a concrete test command"}
+{"lens":"codebase-claims","severity":"Minor","category":"factual","file":"docs/dev_plans/example.md","line":200,"summary":"plan claims a file exists that was not found","evidence":"referenced path does not exist in the repo","suggestion":"correct the path or remove the claim"}

@@ -42,14 +42,21 @@ bundle_applier_for() {
 # them into every auto-fix skill, breaking the "bundled == operative" invariant
 # documented above. review-plan's Step 7 invokes write-review-marker.py (which
 # imports the byte-faithful marker.py hashing authority), so both files ship
-# only into review-plan's mirrors. Returns 0 with no output for deep-review.
+# only into review-plan's mirrors. deep-review's Step 5 invokes
+# persist-deep-review-state.sh, its own Review State persistence script (a
+# different schema from review-plan's persist-review-state.sh — see each
+# script's header), so it ships only into deep-review's mirrors. Returns 0
+# with no output for review-gauntlet.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)
 		printf 'marker.py\n'
 		printf 'write-review-marker.py\n'
+		printf 'persist-review-state.sh\n'
 		;;
-	deep-review) ;;
+	deep-review)
+		printf 'persist-deep-review-state.sh\n'
+		;;
 	review-gauntlet) ;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2

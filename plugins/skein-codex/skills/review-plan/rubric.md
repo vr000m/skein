@@ -1,6 +1,6 @@
 # Review-Plan Output Rubric
 
-Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Mirrored byte-identically in `plugins/skein/skills/review-plan/rubric.md` and `plugins/skein-codex/skills/review-plan/rubric.md`.
+Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a Managed Agents outcome rubric (text mode) and a local self-check: the orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Mirrored byte-identically in `plugins/skein/skills/review-plan/rubric.md` and `plugins/skein-codex/skills/review-plan/rubric.md`.
 
 ## Coverage
 
@@ -20,7 +20,8 @@ Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrat
 
 ## Finding Quality
 
-- Each finding has all five fields: `category`, `severity`, `finding`, `evidence`, `suggestion`
+- Every reconciled finding carries all five fields in the underlying data: `category`, `severity`, `summary`, `evidence`, `suggestion` — this holds regardless of how the finding is rendered
+- Critical/Important findings render all five fields (`category`, `severity`, `finding` — the rendered text, i.e. the `summary` field from the bullet above — `evidence`, `suggestion`); Minor findings render `category`+one-line `finding` by default, with a location segment when the finding has a usable location (omitted entirely for unanchored/partially-anchored findings, per SKILL.md's rendering rule) (`evidence`/`suggestion` intentionally omitted from the default rendering, restored with `--verbose`)
 - `category ∈ {Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference}` — no other values; `Nonexistent Reference` is reserved for `codebase-claims` findings about paths/APIs/dependencies that do not exist or have moved
 - `severity ∈ {Critical, Important, Minor}` — no other values
 - `evidence` cites a concrete plan line, file path, API symbol, or spec section — not a paraphrase
@@ -43,6 +44,8 @@ Gradeable criteria for evaluating a completed `/review-plan` run. The orchestrat
 - Empty lenses are dropped from the output silently; if all five are empty the report says "No findings — plan looks ready" explicitly
 - One-line overall summary at the top
 - Markdown is well-formed and renders cleanly
+- Minor findings render compact by default (no Evidence/Suggestion sub-bullets); `--verbose` restores full detail for every severity
+- The report always ends with the per-harness JSON state file path (`.review-plan/latest-claude.json` / `.review-plan/latest-codex.json`)
 
 ## Reconciliation
 
