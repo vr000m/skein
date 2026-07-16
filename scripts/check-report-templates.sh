@@ -129,6 +129,17 @@ for review_plan_md in "$REVIEW_PLAN_CLAUDE" "$REVIEW_PLAN_CODEX"; do
 	reject_pattern "$review_plan_md" "jq '.lenses'" "a jq '.lenses' footer example (that key belongs to deep-review, not review-plan)"
 done
 
+# Mirror-image check: deep-review's footer example must use its own
+# `.lenses` jq key, never review-plan's `.findings` key. The loop above only
+# ever checked review-plan's files for the reverse mistake, leaving a
+# deep-review mirror that accidentally copy-pasted review-plan's `.findings`
+# key unguarded despite this script's own stated purpose (see header).
+for deep_review_md in "$DEEP_REVIEW_CLAUDE" "$DEEP_REVIEW_CODEX"; do
+	[[ -f "$deep_review_md" ]] || continue
+	require_pattern "$deep_review_md" "jq '.lenses'" "a jq '.lenses' footer example"
+	reject_pattern "$deep_review_md" "jq '.findings'" "a jq '.findings' footer example (that key belongs to review-plan, not deep-review)"
+done
+
 # ---------------------------------------------------------------------------
 # 2: rubric.md files
 # ---------------------------------------------------------------------------

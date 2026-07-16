@@ -117,6 +117,66 @@ else
 	echo "$mutated_output" >&2
 fi
 
+# --- (c) reproduce the mirror-image gap: deep-review naming review-plan's
+#         `.findings` jq key must now be caught -----------------------------
+
+# Bug (code-review, 2026-07-16): the jq-key cross-mirror guard only ever
+# checked review-plan's SKILL.md files for accidentally naming deep-review's
+# `.lenses` key -- it never checked deep-review's own SKILL.md files for the
+# reverse mistake (naming review-plan's `.findings` key instead of its own
+# `.lenses` key), despite this script's own header (see top of this file's
+# SCRIPT) stating that class of mistake is exactly what the check guards
+# against in either direction.
+
+SCRATCH2="$TMPDIR_ROOT/scratch-repo-2"
+mkdir -p "$SCRATCH2/plugins/skein/skills/deep-review" \
+	"$SCRATCH2/plugins/skein-codex/skills/deep-review" \
+	"$SCRATCH2/plugins/skein/skills/review-plan" \
+	"$SCRATCH2/plugins/skein-codex/skills/review-plan" \
+	"$SCRATCH2/scripts"
+
+cp "$REPO_ROOT/plugins/skein/skills/deep-review/SKILL.md" "$SCRATCH2/plugins/skein/skills/deep-review/SKILL.md"
+cp "$REPO_ROOT/plugins/skein-codex/skills/deep-review/SKILL.md" "$SCRATCH2/plugins/skein-codex/skills/deep-review/SKILL.md"
+cp "$REPO_ROOT/plugins/skein/skills/review-plan/SKILL.md" "$SCRATCH2/plugins/skein/skills/review-plan/SKILL.md"
+cp "$REPO_ROOT/plugins/skein-codex/skills/review-plan/SKILL.md" "$SCRATCH2/plugins/skein-codex/skills/review-plan/SKILL.md"
+cp "$REPO_ROOT/plugins/skein/skills/deep-review/rubric.md" "$SCRATCH2/plugins/skein/skills/deep-review/rubric.md"
+cp "$REPO_ROOT/plugins/skein-codex/skills/deep-review/rubric.md" "$SCRATCH2/plugins/skein-codex/skills/deep-review/rubric.md"
+cp "$REPO_ROOT/plugins/skein/skills/review-plan/rubric.md" "$SCRATCH2/plugins/skein/skills/review-plan/rubric.md"
+cp "$REPO_ROOT/plugins/skein-codex/skills/review-plan/rubric.md" "$SCRATCH2/plugins/skein-codex/skills/review-plan/rubric.md"
+cp "$SCRIPT" "$SCRATCH2/scripts/check-report-templates.sh"
+
+TARGET2="$SCRATCH2/plugins/skein/skills/deep-review/SKILL.md"
+
+# Mutate deep-review's real `jq '.lenses'` footer example into review-plan's
+# key, reproducing the exact mirror-image mistake the check was supposed to
+# catch but didn't.
+sed -i.bak "s/jq '.lenses'/jq '.findings'/" "$TARGET2"
+rm -f "$TARGET2.bak"
+
+if grep -qF "jq '.findings'" "$TARGET2"; then
+	pass "mutated deep-review file now names review-plan's '.findings' jq key (reproduces the mirror-image mistake)"
+else
+	fail "mutated deep-review file unexpectedly does not contain the '.findings' substitution -- test setup is wrong"
+fi
+
+set +e
+mutated_output2="$(cd "$SCRATCH2" && bash scripts/check-report-templates.sh 2>&1)"
+mutated_exit2=$?
+set -e
+
+if [[ "$mutated_exit2" -ne 0 ]]; then
+	pass "check-report-templates.sh now exits non-zero when deep-review names review-plan's '.findings' key (fix confirmed)"
+else
+	fail "check-report-templates.sh silently exited 0 despite deep-review naming review-plan's '.findings' key -- mirror-image gap still present"
+fi
+
+if echo "$mutated_output2" | grep -qF "jq '.findings'"; then
+	pass "failure message names the offending jq '.findings' footer example explicitly"
+else
+	fail "failure output did not mention the offending jq key:"
+	echo "$mutated_output2" >&2
+fi
+
 echo ""
 echo "test-check-report-templates: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]
