@@ -5,10 +5,11 @@ For every entry in ``MANAGED_SKILLS`` (mirrored from
 ``plugins/skein/skills/<skill>/SKILL.md`` AND
 ``plugins/skein-codex/skills/<skill>/SKILL.md`` exist on disk.
 
-This is intentionally a presence-only check. Content parity for SKILL.md
-prompt blocks is handled by ``scripts/check-prompt-parity.sh`` (the
-GENERIC FINDING SCHEMA AND MERGE block extraction). This test catches a
-distinct failure mode: a runtime-side SKILL.md being absent altogether
+This is intentionally a presence-only check. Content guards in
+``scripts/check-prompt-parity.sh`` cover ``rubric.md`` and ``*-prompt.md``
+files plus selected ``SKILL.md`` contracts, including the GENERIC FINDING
+SCHEMA AND MERGE block and normalized release workflows. This test catches
+a distinct failure mode: a runtime-side SKILL.md being absent altogether
 (e.g. accidental deletion or a new skill added on one side only).
 
 The repo root is detected by walking up from this file until a ``.git``
@@ -41,6 +42,7 @@ MANAGED_SKILLS = [
     "fan-out",
     "grill",
     "plan-view",
+    "release",
     "review-gauntlet",
     "review-plan",
     "rfc-finder",

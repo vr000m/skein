@@ -9,7 +9,8 @@ set dotenv-load := true
 check-sync:
     ./scripts/check-sync.sh
 
-# Verify rubric.md parity between the skein (Claude) and skein-codex mirrors
+# Verify rubric.md and *-prompt.md parity plus normalized release workflows
+# between the skein (Claude) and skein-codex mirrors.
 check-prompt-parity:
     ./scripts/check-prompt-parity.sh
 
@@ -21,17 +22,23 @@ check-trunk-snippet-parity:
 bundle-appliers:
     ./scripts/bundle-appliers.sh
 
-# Run every parity guard: bundle byte-identity, allowlist byte-identity, and
-# the auto-fix orchestration-contract literals.
+# Run every parity guard: bundle/allowlist byte-identity, prompt/release contracts,
+# auto-fix orchestration, marker parity, and managed-skill/cleanup regressions.
 parity-tests:
+    ./scripts/check-prompt-parity.sh
     bash tests/parity/test-applier-bundle-parity.sh
     bash tests/parity/test-allowlist-byte-identity.sh
     bash tests/parity/test-auto-fix-orchestration-contract.sh
+    bash tests/parity/test-handoff-ignores-auto-fix.sh
     bash tests/parity/test-no-manual-apply-fallback.sh
     bash tests/parity/test-conduct-marker-parity.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
     bash tests/parity/test-managed-skills-parity.sh
+    bash tests/parity/test-prompt-parity-extended.sh
+    uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
+    uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
+    uv run --with pytest python -m pytest tests/parity/test_delete_skills.py -q
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
 # Run the review-gauntlet test suite (schema + injection coverage, plus the

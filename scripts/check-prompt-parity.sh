@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # check-prompt-parity.sh
 #
-# Verify that prompt-contract artefacts (currently `rubric.md`) are
+# Verify that prompt-contract artefacts (`rubric.md`, `*-prompt.md`, and
+# selected normalized `SKILL.md` workflow contracts) are
 # byte-identical between `plugins/skein/skills/<skill>/` and
 # `plugins/skein-codex/skills/<skill>/` for every entry in MANAGED_SKILLS.
 #
-# Scope: rubric.md only. Lens prompt bodies and finding schema embedded
-# inside SKILL.md are not script-checkable and require manual review per
-# the dev plan's Phase 6 verification step.
+# Scope: mirrored prompt/rubric artefacts plus the release skill's normalized
+# workflow contract. Other prose and lens bodies embedded inside SKILL.md still
+# require manual review per the relevant dev plan verification step.
 #
 # Inputs:
 #   MANAGED_SKILLS  whitespace-separated list of skill names. Sourced
@@ -43,7 +44,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
 	fi
 fi
 
-MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out grill plan-view review-gauntlet review-plan rfc-finder spec-compliance update-docs}"
+MANAGED_SKILLS="${MANAGED_SKILLS:-conduct content-draft content-review deep-review dev-plan fan-out grill plan-view release review-gauntlet review-plan rfc-finder spec-compliance update-docs}"
 
 PARITY_DIFF=0
 
@@ -265,6 +266,201 @@ elif [[ ${#prompt_drift_expected_observed[@]} -gt 0 ]]; then
 	# do not flip PARITY_DIFF. Print a summary line for human consumers.
 	printf 'expected lagging-mirror drift: %s (CONDUCT_LAGGING_MIRROR_OK)\n' \
 		"$(printf '%s ' "${prompt_drift_expected_observed[@]}" | sed 's/ $//')" >&2
+fi
+
+# --- release SKILL.md workflow parity ----------------------------------
+#
+# release has no rubric.md or *-prompt.md pair, so those wholesale checks do
+# not cover its executable workflow. Compare the SKILL.md mirrors after
+# normalizing only the documented harness differences:
+#   - Claude's disable-model-invocation frontmatter versus Codex's explanatory
+#     invocation-mode comment;
+#   - the matching harness-specific invocation-safety paragraph; and
+#   - the Execution Model paragraph's Agent/spawn_agent terminology.
+# Trailing whitespace is ignored. Every sanctioned divergence is matched as one
+# exact line; the one blank line paired with the Codex-only comment is skipped
+# explicitly. Prefix matches and free-form substitutions are deliberately
+# forbidden here: extra text appended inside a divergence paragraph must remain
+# visible to diff and fail the gate.
+
+RELEASE_CLAUDE_DISABLE_MODEL_LINE='disable-model-invocation: true'
+RELEASE_CODEX_INVOCATION_DIVERGENCE='<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true) — it pushes a git tag and publishes a public GitHub release, an externally-visible, hard-to-reverse action that should not fire off conversational context alone. Codex CLI has no equivalent front-matter suppression as of this writing, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260712-feature-release-skill.md. -->'
+# Literal Markdown backticks are part of the exact paragraph contracts.
+# shellcheck disable=SC2016
+RELEASE_CLAUDE_INVOCATION_MODE='This skill is **user-invoked only** (`disable-model-invocation: true`): it pushes a git tag and publishes a public GitHub release — an externally-visible, hard-to-reverse action — and must never fire off conversational context alone.'
+# shellcheck disable=SC2016
+RELEASE_CODEX_INVOCATION_MODE='Tag pushes and release publishes are external, hard-to-reverse actions — always confirm the computed title and body with the user before running any mutating `git`/`gh` command, on both harnesses.'
+# shellcheck disable=SC2016
+RELEASE_CLAUDE_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, subagent-delegated fact-gathering), this skill runs entirely **inline in the main agent context** — no delegating subagent. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
+# shellcheck disable=SC2016
+RELEASE_CODEX_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
+
+count_release_contract_line() {
+	awk -v expected="$2" -v frontmatter_only="${3:-0}" '
+		{
+			line = $0
+			sub(/[[:space:]]+$/, "", line)
+			if (frontmatter_only) {
+				if (NR == 1 && line == "---") {
+					in_frontmatter = 1
+					next
+				}
+				if (in_frontmatter && line == "---") exit
+				if (in_frontmatter && line == expected) count++
+			} else if (line == expected) {
+				count++
+			}
+		}
+		END { print count + 0 }
+	' "$1"
+}
+
+count_release_frontmatter_line() {
+	count_release_contract_line "$1" "$2" 1
+}
+
+normalize_release_workflow() {
+	awk \
+		-v harness="$2" \
+		-v codex_invocation_divergence="$RELEASE_CODEX_INVOCATION_DIVERGENCE" \
+		-v claude_invocation_mode="$RELEASE_CLAUDE_INVOCATION_MODE" \
+		-v codex_invocation_mode="$RELEASE_CODEX_INVOCATION_MODE" \
+		-v claude_execution_model="$RELEASE_CLAUDE_EXECUTION_MODEL" \
+		-v codex_execution_model="$RELEASE_CODEX_EXECUTION_MODEL" '
+		function emit(line) {
+			print line
+		}
+		{
+			line = $0
+			sub(/[[:space:]]+$/, "", line)
+
+			if (NR == 1 && line == "---") {
+				in_frontmatter = 1
+				emit(line)
+				next
+			}
+			if (in_frontmatter && line == "---") {
+				in_frontmatter = 0
+				emit(line)
+				next
+			}
+			if (harness == "codex" && skip_codex_comment_blank) {
+				skip_codex_comment_blank = 0
+				if (line == "") next
+			}
+			if (harness == "claude" && in_frontmatter && line == "disable-model-invocation: true") next
+			if (harness == "codex" && line == codex_invocation_divergence) {
+				skip_codex_comment_blank = 1
+				next
+			}
+			if (harness == "claude" && line == claude_invocation_mode) {
+				emit("__HARNESS_INVOCATION_MODE__")
+				next
+			}
+			if (harness == "codex" && line == codex_invocation_mode) {
+				emit("__HARNESS_INVOCATION_MODE__")
+				next
+			}
+			if (harness == "claude" && line == claude_execution_model) {
+				emit("__HARNESS_EXECUTION_MODEL__")
+				next
+			}
+			if (harness == "codex" && line == codex_execution_model) {
+				emit("__HARNESS_EXECUTION_MODEL__")
+				next
+			}
+			emit(line)
+		}
+	' "$1"
+}
+
+release_is_managed=0
+for skill in "${managed_skills[@]}"; do
+	if [[ "$skill" == "release" ]]; then
+		release_is_managed=1
+		break
+	fi
+done
+
+if [[ "$release_is_managed" -eq 1 ]]; then
+	release_claude="$ROOT_DIR/plugins/skein/skills/release/SKILL.md"
+	release_codex="$ROOT_DIR/plugins/skein-codex/skills/release/SKILL.md"
+	if [[ ! -f "$release_claude" || ! -f "$release_codex" ]]; then
+		echo "drift: release SKILL.md missing from .claude or .codex mirror"
+		PARITY_DIFF=1
+	else
+		claude_disable_model_frontmatter_count="$(count_release_frontmatter_line \
+			"$release_claude" "$RELEASE_CLAUDE_DISABLE_MODEL_LINE")"
+		codex_disable_model_frontmatter_count="$(count_release_frontmatter_line \
+			"$release_codex" "$RELEASE_CLAUDE_DISABLE_MODEL_LINE")"
+		codex_divergence_count="$(count_release_contract_line \
+			"$release_codex" "$RELEASE_CODEX_INVOCATION_DIVERGENCE")"
+		claude_invocation_mode_count="$(count_release_contract_line \
+			"$release_claude" "$RELEASE_CLAUDE_INVOCATION_MODE")"
+		codex_invocation_mode_count="$(count_release_contract_line \
+			"$release_codex" "$RELEASE_CODEX_INVOCATION_MODE")"
+		claude_execution_model_count="$(count_release_contract_line \
+			"$release_claude" "$RELEASE_CLAUDE_EXECUTION_MODEL")"
+		codex_execution_model_count="$(count_release_contract_line \
+			"$release_codex" "$RELEASE_CODEX_EXECUTION_MODEL")"
+		release_divergence_contract_valid=1
+		if [[ "$claude_disable_model_frontmatter_count" -ne 1 ]]; then
+			echo "drift: release Claude frontmatter disable-model-invocation line count is $claude_disable_model_frontmatter_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$codex_disable_model_frontmatter_count" -ne 0 ]]; then
+			echo "drift: release Codex frontmatter disable-model-invocation line count is $codex_disable_model_frontmatter_count (expected 0)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$codex_divergence_count" -ne 1 ]]; then
+			echo "drift: release Codex documented invocation-mode divergence count is $codex_divergence_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$claude_invocation_mode_count" -ne 1 ]]; then
+			echo "drift: release Claude invocation-mode paragraph count is $claude_invocation_mode_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$codex_invocation_mode_count" -ne 1 ]]; then
+			echo "drift: release Codex invocation-mode paragraph count is $codex_invocation_mode_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$claude_execution_model_count" -ne 1 ]]; then
+			echo "drift: release Claude execution-model paragraph count is $claude_execution_model_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$codex_execution_model_count" -ne 1 ]]; then
+			echo "drift: release Codex execution-model paragraph count is $codex_execution_model_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+
+		# Only substitute the sanctioned harness placeholders after their
+		# one-to-one source lines have passed the cardinality contract above.
+		if [[ "$release_divergence_contract_valid" -eq 1 ]]; then
+			if diff_output=$(diff -u \
+				<(normalize_release_workflow "$release_claude" claude) \
+				<(normalize_release_workflow "$release_codex" codex) 2>&1); then
+				: # normalized workflows match
+			else
+				diff_rc=$?
+				if [[ $diff_rc -eq 1 ]]; then
+					echo "drift: release SKILL.md normalized workflow differs between .claude and .codex"
+				else
+					echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
+				fi
+				echo "$diff_output"
+				PARITY_DIFF=1
+			fi
+		else
+			echo "drift: release SKILL.md normalization skipped because the documented divergence contract is invalid"
+		fi
+	fi
 fi
 
 # --- GENERIC FINDING SCHEMA AND MERGE block parity ---------------------
