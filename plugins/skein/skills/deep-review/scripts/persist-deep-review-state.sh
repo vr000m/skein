@@ -53,11 +53,9 @@
 #
 # Writes atomically: the envelope is written to a temp file created via
 # `mktemp` in the same directory as the target, then renamed into place with
-# `mv -f`. This is a deliberate departure from persist-review-state.sh's
-# documented direct in-place write (that script's non-atomic write is a
-# separate, intentionally scoped decision under review elsewhere) — this new
-# script goes straight to atomic temp+rename semantics rather than repeat
-# the same gap.
+# `mv -f`. persist-review-state.sh uses the identical mktemp+`mv -f` pattern
+# (hardened non-atomic-write in review round 2, before this script existed);
+# this script follows that same precedent rather than introducing a new one.
 #
 # Writes to `.deep-review/latest-<harness>.json`, root-anchored via
 # `git rev-parse --show-toplevel` (falling back to the current working
@@ -81,6 +79,11 @@
 # Dependencies: git, jq.
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
@@ -259,13 +262,19 @@ output="$(printf '%s' "$input" | jq \
 # is gitignored, but a *tracked* symlink at that exact path would still
 # materialize on checkout — without this guard a malicious clone could point
 # it outside the repo and have this script's write clobber an arbitrary
-# user-writable file.
-if [[ -L "$OUT_DIR" ]]; then
+# user-writable file. Delegates to auto-fix-common.sh's af_assert_no_symlink,
+# which three other scripts in this directory already use — it walks the
+# full parent-directory chain (not just the immediate target), a broader
+# guard than a bare `-L` check on OUT_DIR/OUT_PATH alone. This script prints
+# its own "Could not persist findings JSON: ..." message (af_assert_no_symlink's
+# own stderr line also appears, non-fatally) to keep the documented stderr
+# contract this script's callers and tests key on.
+if ! af_assert_no_symlink "$OUT_DIR"; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
 	exit 1
 fi
 
-if [[ -L "$OUT_PATH" ]]; then
+if ! af_assert_no_symlink "$OUT_PATH"; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
 	exit 1
 fi

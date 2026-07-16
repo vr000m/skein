@@ -36,6 +36,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
+
 usage() {
 	cat >&2 <<'EOF'
 usage: scripts/persist-review-state.sh --harness claude|codex --plan-path <path> --plan-hash <sha1> --run-id <id> [envelope.json|-]
@@ -198,12 +203,19 @@ output="$(printf '%s' "$input" | jq \
 # it outside the repo and have this script's write clobber an arbitrary
 # user-writable file. Must run before the temp-file write below so a
 # symlinked target is rejected before we ever stage a rename into it.
-if [[ -L "$OUT_DIR" ]]; then
+# Delegates to auto-fix-common.sh's af_assert_no_symlink, which three other
+# scripts in this directory already use — it walks the full parent-directory
+# chain (not just the immediate target), a broader guard than a bare `-L`
+# check on OUT_DIR/OUT_PATH alone. This script prints its own
+# "Could not persist findings JSON: ..." message (af_assert_no_symlink's own
+# stderr line also appears, non-fatally) to keep the documented stderr
+# contract this script's callers and tests key on.
+if ! af_assert_no_symlink "$OUT_DIR"; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
 	exit 1
 fi
 
-if [[ -L "$OUT_PATH" ]]; then
+if ! af_assert_no_symlink "$OUT_PATH"; then
 	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
 	exit 1
 fi
