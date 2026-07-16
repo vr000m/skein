@@ -348,7 +348,11 @@ def test_completed_release_plan_records_the_shipped_contract() -> None:
     requirements = text[requirements_start:requirements_end]
 
     assert "untrusted data only" in requirements
-    assert "git ls-remote --tags origin" in requirements
+    requirement_2_start = requirements.index("2. Resolve and validate")
+    requirement_3_start = requirements.index("\n3. ", requirement_2_start)
+    requirement_2 = requirements[requirement_2_start:requirement_3_start]
+    assert 'git ls-remote --tags "$ORIGIN_FETCH_URL"' in requirement_2
+    assert "git ls-remote --tags origin" not in requirement_2
     assert "--json name,body,isDraft,isPrerelease" in requirements
     assert "local-only" in requirements
     assert "file-backed title argument transport" in requirements
@@ -377,7 +381,11 @@ def test_release_rejects_non_default_remote_ports_before_gh(
 
     assert port_stop < first_gh_call
     assert "stop before constructing `ORIGIN_REPO` or running any `gh` command" in text
-    assert "unsupported non-default remote port: <redacted-authority>" in text
+    assert (
+        "unsupported non-default remote port for <role> destination [#n]: "
+        "<validated-host>:<numeric-port>; gh --repo cannot preserve this endpoint"
+        in text
+    )
     assert "gh --repo cannot preserve this endpoint" in text
     assert "if an explicit port's scheme is missing or its default is unknown" in text
     assert "the unsupported non-default-port stop applied before any `gh` call" in text
@@ -666,7 +674,10 @@ def test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref(
     assert 'git rev-parse --verify --quiet "refs/tags/vX.Y.Z"' in contract
     assert "local ref no longer equals the confirmed push-source SHA" in contract
     assert "Checking only the peeled commit is insufficient" in contract
-    assert "git push origin <confirmed-push-source-sha>:refs/tags/vX.Y.Z" in contract
+    assert (
+        'git push "$ORIGIN_PUSH_URL" '
+        "<confirmed-push-source-sha>:refs/tags/vX.Y.Z" in contract
+    )
     assert "Never use `vX.Y.Z` as the refspec source" in contract
     assert (
         "A local-ref/confirmed-SHA mismatch must always abort before push" in contract
@@ -758,7 +769,8 @@ def test_release_title_uses_file_backed_argument_transport(skill_path: Path) -> 
 
     assert len(mutation_commands) == 6
     for command in mutation_commands:
-        assert "--title \"$(command cat -- '<title-path>')\"" in command
+        assert '--title "$TITLE_BYTES"' in command
+        assert '--notes "$NOTES_BYTES"' in command
         assert "rm -f '<title-path>' '<temp-path>'" in command
 
     assert "--title '<title>'" not in text
