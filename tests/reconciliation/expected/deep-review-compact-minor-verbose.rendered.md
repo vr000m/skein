@@ -13,7 +13,7 @@
   - Suggestion: fix loop bound
 
 ### Minor
-- **consistency**: inconsistent error-handling convention across the module at :-1
+- **consistency**: inconsistent error-handling convention across the module
   - Lenses: [architecture]
   - Evidence: some functions raise, others return None on failure
   - Suggestion: pick one convention module-wide

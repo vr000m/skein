@@ -18,7 +18,7 @@
   - Evidence: referenced path does not exist in the repo
   - Suggestion: correct the path or remove the claim
   - Related findings: **testing** Minor at same file:line
-- **scope**: plan does not state whether skein-codex is in scope for this change at :-1
+- **scope**: plan does not state whether skein-codex is in scope for this change
   - Lenses: [architecture]
   - Evidence: no mention of skein-codex anywhere in the plan
   - Suggestion: add an explicit scope statement

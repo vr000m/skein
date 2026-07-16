@@ -118,7 +118,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			(.lenses | join(",")),
 			.summary, .evidence, .suggestion, (.auto_fix_status // "")
-		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
+		] | map(gsub("\\\\"; "\\\\") | gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
 	')"
 
 	# Related cross-references. Columns: file  line  cat_a  cat_b
@@ -127,7 +127,7 @@ if [[ "$HAVE_JQ" -eq 1 ]]; then
 			.file,
 			((if (.line == null or .line == "") then -1 else .line end) | tostring),
 			.categories[0], .categories[1]
-		] | map(gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
+		] | map(gsub("\\\\"; "\\\\") | gsub("\t"; "\\t") | gsub("\n"; "\\n")) | join("")
 	')"
 else
 	# Fallback: minimal awk JSON walker. Sufficient for the well-formed
@@ -152,7 +152,7 @@ else
 			}
 			return out
 		}
-		function esc(s) { gsub(/\t/, "\\t", s); gsub(/\n/, "\\n", s); return s }
+		function esc(s) { gsub(/\\/, "\\\\", s); gsub(/\t/, "\\t", s); gsub(/\n/, "\\n", s); return s }
 		function read_string(buf, start,    i, n, c, raw) {
 			n = length(buf); raw = ""
 			for (i = start; i <= n; i++) {
@@ -415,10 +415,37 @@ emit_section() {
 	# silently bled the next non-empty field into empty evidence/suggestion
 	# slots and suppressed [AUTO-FIXABLE] for would_apply findings).
 	while IFS=$'\x1f' read -r _r_sev r_cat r_file r_line r_lenses r_summary r_evidence r_suggestion r_auto_fix_status; do
-		# Decode \t / \n that the parser escaped so multi-line evidence
-		# round-trips into rendered output.
-		decode() { printf '%s' "$1" | sed -e 's/\\t/	/g' -e 's/\\n/\
-/g'; }
+		# Decode \\ / \t / \n that the encoder escaped so multi-line
+		# evidence round-trips into rendered output. Must be a single
+		# left-to-right scan, not independent sed substitutions in
+		# sequence: the encoder escapes backslash first (so a literal
+		# input backslash becomes two backslashes), and two chained
+		# `s/\\t/<TAB>/` / `s/\\n/<NL>/` passes would misparse the
+		# second backslash of that pair as the start of a new \t/\n
+		# escape, corrupting literal `\t`/`\n` text (e.g. a Windows
+		# path) into a real tab/newline.
+		decode() {
+			printf '%s' "$1" | awk '
+				{
+					s = $0
+					n = length(s)
+					out = ""
+					for (i = 1; i <= n; i++) {
+						c = substr(s, i, 1)
+						if (c == "\\" && i < n) {
+							nx = substr(s, i + 1, 1)
+							if (nx == "\\") { out = out "\\"; i++ }
+							else if (nx == "t") { out = out "\t"; i++ }
+							else if (nx == "n") { out = out "\n"; i++ }
+							else { out = out c }
+						} else {
+							out = out c
+						}
+					}
+					printf "%s", out
+				}
+			'
+		}
 		d_summary="$(decode "$r_summary")"
 		d_evidence="$(decode "$r_evidence")"
 		d_suggestion="$(decode "$r_suggestion")"
@@ -491,18 +518,38 @@ emit_section() {
 			# full-detail branch below is untouched: its Evidence/Suggestion
 			# sub-bullets are allowed to be multi-line by design.
 			d_summary_compact="$(printf '%s' "$d_summary" | tr '\n' ' ')"
+			# The related-findings suffix is independent of whether a
+			# location segment can be shown: reconcile-findings.sh relates
+			# two findings whenever they're not BOTH unanchored (a
+			# partially-anchored pair — e.g. same file, no line — still
+			# relates). Gating this suffix on the stricter EITHER-missing
+			# `unanchored` test above would silently drop the "see also"
+			# indicator for exactly that partially-anchored case, even
+			# though the section header's `related=N` count still includes
+			# it. Compute the suffix first, then decide separately whether
+			# a location segment can be rendered alongside it.
+			suffix=""
+			if [[ -n "$related_lines" ]]; then
+				other_cats="$(printf '%s\n' "$related_lines" | awk -F $'\037' '{ if (out != "") out = out ", "; out = out $1 } END { print out }')"
+				suffix=" — see also ${other_cats} at same location"
+			fi
 			if [[ "$unanchored" -eq 1 ]]; then
-				printf -- '- **%s**%s: %s\n' "$r_cat" "$auto_fix_label" "$d_summary_compact"
+				printf -- '- **%s**%s: %s%s\n' "$r_cat" "$auto_fix_label" "$d_summary_compact" "$suffix"
 			else
-				suffix=""
-				if [[ -n "$related_lines" ]]; then
-					other_cats="$(printf '%s\n' "$related_lines" | awk -F $'\037' '{ if (out != "") out = out ", "; out = out $1 } END { print out }')"
-					suffix=" — see also ${other_cats} at same location"
-				fi
 				printf -- '- **%s**%s: %s (%s:%s)%s\n' "$r_cat" "$auto_fix_label" "$d_summary_compact" "$r_file" "$r_line" "$suffix"
 			fi
 		else
-			printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
+			# Full-detail rendering (Critical/Important always, Minor under
+			# --verbose) must not leak the internal -1 sentinel into the
+			# title line either — a finding can legitimately lack a line
+			# number at any severity (e.g. file-level/architectural
+			# findings), and the compact-Minor branch above already omits
+			# the location segment for the same `unanchored` condition.
+			if [[ "$unanchored" -eq 1 ]]; then
+				printf -- '- **%s**%s: %s\n' "$r_cat" "$auto_fix_label" "$d_summary"
+			else
+				printf -- '- **%s**%s: %s at %s:%s\n' "$r_cat" "$auto_fix_label" "$d_summary" "$r_file" "$r_line"
+			fi
 			printf -- '  - Lenses: [%s]\n' "$d_lenses"
 			printf -- '  - Evidence: %s\n' "$d_evidence"
 			printf -- '  - Suggestion: %s\n' "$d_suggestion"
