@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# Verify the managed-skills set stays in sync across its two hardcoded copies:
+# Verify the managed-skills set stays in sync across its hardcoded copies:
 #   - scripts/check-prompt-parity.sh's MANAGED_SKILLS default (bash array)
 #   - tests/parity/test_skill_md_presence.py's MANAGED_SKILLS list (python)
+#   - scripts/delete-skills.sh's SKEIN array (legacy flat-copy uninstall subset)
+#   - .env.example's explicit MANAGED_SKILLS override
 #
-# The two lists are intentionally duplicated (test_skill_md_presence.py's own
-# docstring says so) rather than one sourcing the other, because one is a bash
-# default and the other a python literal with no shared runtime. That is a
-# real drift risk, not hypothetical: this test was added after `review-gauntlet`
-# was found present in the python list but missing from the bash default
-# (docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md, Phase 2
-# Findings) — the two copies had already diverged once.
+# The lists are intentionally duplicated (test_skill_md_presence.py's own
+# docstring says so) rather than one sourcing the other, because they're a bash
+# default, a python literal, and a bash cleanup subset with no shared runtime.
+# That is a real drift risk, not hypothetical: this test was added after
+# `review-gauntlet` was found present in the python list but missing from the
+# bash default (docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md,
+# Phase 2 Findings) — the two copies had already diverged once. The third
+# cleanup source (delete-skills.sh) was folded in after a deep-review architecture
+# lens found it had independently drifted the same way, undetected because this
+# test did not cover it. Its list is deliberately frozen to the 11 skills that
+# existed at plugin migration: later plugin-only skills are not legacy flat
+# copies and must stay outside the destructive cleanup list.
 #
 # Exit codes: 0 clean, 1 drift / extraction failure.
 
@@ -19,6 +26,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 SHELL_SCRIPT="$ROOT_DIR/scripts/check-prompt-parity.sh"
 PYTHON_FILE="$ROOT_DIR/tests/parity/test_skill_md_presence.py"
+DELETE_SCRIPT="$ROOT_DIR/scripts/delete-skills.sh"
+ENV_EXAMPLE="$ROOT_DIR/.env.example"
 
 pass_count=0
 fail_count=0
@@ -42,6 +51,20 @@ fi
 
 if [[ ! -f "$PYTHON_FILE" ]]; then
 	fail "missing $PYTHON_FILE"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+if [[ ! -f "$DELETE_SCRIPT" ]]; then
+	fail "missing $DELETE_SCRIPT"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+if [[ ! -f "$ENV_EXAMPLE" ]]; then
+	fail "missing $ENV_EXAMPLE"
 	echo ""
 	echo "Summary: $pass_count passed, $fail_count failed"
 	exit 1
@@ -91,8 +114,34 @@ PY
 	exit 1
 }
 
+# Extract delete-skills.sh's SKEIN=( ... ) array body (multi-line, unquoted
+# bare words — not a single default-value line like MANAGED_SKILLS, so this
+# uses a block extraction instead of the shell_line regex above).
+delete_list="$(sed -n '/^SKEIN=(/,/^)/p' "$DELETE_SCRIPT" | sed '1d;$d' | tr -s ' \t' '\n' | grep -v '^$' || true)"
+if [[ -z "$delete_list" ]]; then
+	fail "could not locate or parse SKEIN=( ... ) array in $DELETE_SCRIPT"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+env_line="$(grep -E '^MANAGED_SKILLS=' "$ENV_EXAMPLE" || true)"
+env_list="${env_line#MANAGED_SKILLS=\"}"
+env_list="${env_list%\"}"
+if [[ -z "$env_list" || "$env_list" == "$env_line" ]]; then
+	fail "could not parse MANAGED_SKILLS override out of $ENV_EXAMPLE"
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
 shell_sorted="$(echo "$shell_list" | tr ' ' '\n' | sort -u)"
 python_sorted="$(echo "$python_list" | sort -u)"
+delete_sorted="$(echo "$delete_list" | sort -u)"
+env_sorted="$(echo "$env_list" | tr ' ' '\n' | sort -u)"
+legacy_cleanup_expected="$(printf '%s\n' \
+	conduct content-draft content-review deep-review dev-plan fan-out \
+	plan-view review-plan rfc-finder spec-compliance update-docs | sort -u)"
 
 if [[ "$shell_sorted" == "$python_sorted" ]]; then
 	pass "MANAGED_SKILLS in sync: $(echo "$shell_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $PYTHON_FILE"
@@ -102,6 +151,34 @@ else
 	comm -23 <(echo "$shell_sorted") <(echo "$python_sorted") || true
 	echo "--- only in python list ---"
 	comm -13 <(echo "$shell_sorted") <(echo "$python_sorted") || true
+fi
+
+if [[ "$legacy_cleanup_expected" == "$delete_sorted" ]]; then
+	pass "SKEIN legacy cleanup subset in sync: $(echo "$delete_sorted" | wc -l | tr -d ' ') pre-plugin skills in $DELETE_SCRIPT"
+else
+	fail "SKEIN legacy cleanup subset drift between $SHELL_SCRIPT and $DELETE_SCRIPT"
+	echo "--- expected legacy cleanup entries missing from delete-skills.sh ---"
+	comm -23 <(echo "$legacy_cleanup_expected") <(echo "$delete_sorted") || true
+	echo "--- only in delete-skills.sh SKEIN ---"
+	comm -13 <(echo "$legacy_cleanup_expected") <(echo "$delete_sorted") || true
+fi
+
+for post_migration_skill in grill release review-gauntlet; do
+	if echo "$delete_sorted" | grep -qx "$post_migration_skill"; then
+		fail "post-migration $post_migration_skill skill must not be recursively deleted as a legacy flat copy"
+	else
+		pass "post-migration $post_migration_skill skill excluded from destructive legacy cleanup"
+	fi
+done
+
+if [[ "$shell_sorted" == "$env_sorted" ]]; then
+	pass "MANAGED_SKILLS in sync: $(echo "$env_sorted" | wc -l | tr -d ' ') skills in both $SHELL_SCRIPT and $ENV_EXAMPLE"
+else
+	fail "MANAGED_SKILLS drift between $SHELL_SCRIPT and $ENV_EXAMPLE"
+	echo "--- only in shell default ---"
+	comm -23 <(echo "$shell_sorted") <(echo "$env_sorted") || true
+	echo "--- only in .env.example override ---"
+	comm -13 <(echo "$shell_sorted") <(echo "$env_sorted") || true
 fi
 
 echo ""
