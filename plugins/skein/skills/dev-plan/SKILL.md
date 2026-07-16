@@ -186,6 +186,8 @@ On `/dev-plan create`, after Explore returns and **before phases are written**, 
 2. A Mermaid `sequenceDiagram` — the **trigger order**, the sequence of calls across a single run.
 3. A markdown **context-lifecycle table** with these exact columns: `Step | Trigger | Enters context | Cleared/persisted | Turn boundary`.
 
+**Mermaid label escaping.** A node label that starts with `/` or `\` right after the opening bracket (e.g. `DPU[/dev-plan update]` for a node naming the `/dev-plan update` slash-command) is a Mermaid syntax error — the parser reads `[/` as the start of a parallelogram/trapezoid shape and fails when there's no matching closing `/]`. Since these diagrams frequently label nodes with slash-commands, wrap any label starting with `/` or `\` in quotes: `DPU["/dev-plan update"]`. Verify by checking the rendered diagram in `/plan-view` output, not just by eye.
+
 **Placement.** The section heading is `## Architecture & Call Flow`. It is placed **immediately after the `### Integration Seams` subsection (the last subsection of `## Technical Specifications`) and before `## Testing Notes`** — see `template.md`. Do NOT place it "before the marker": `## Testing Notes` and `## Acceptance Criteria` both sit between Technical Specifications and the marker, so "before the marker" would land it after Acceptance Criteria, away from the topology facts it belongs next to.
 
 **Immutability.** The section sits **above the review marker**, so it is part of the immutable contract. Editing it after `/review-plan` invalidates the marker hash and forces re-review — this is correct: a topology error is a plan error, not a runtime fixup. The Mermaid fences in this section render as live diagrams in `/plan-view` HTML output.

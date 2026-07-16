@@ -90,7 +90,7 @@ graph LR
     RP -->|dispatches| ARCH_LENS[architecture lens agent]
     ARCH_LENS -->|negative-space findings| RECONCILE[reconcile-findings.sh]
     RECONCILE -->|report| ELICIT[elicitation loop]
-    ELICIT -->|decisions| DPU[/dev-plan update]
+    ELICIT -->|decisions| DPU["/dev-plan update"]
     ELICIT -->|waived findings| MARKER[review marker]
 ```
 
