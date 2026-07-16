@@ -45,6 +45,9 @@
 #   (g) a multi-document input ("{} {}", two concatenated JSON objects) is
 #       refused with exit 2 and a clear usage-error message, and no file is
 #       written at the target path.
+#   (h) a real SIGTERM delivered mid-`mv` (via a deliberately slow `mv`
+#       shim) leaves no stray temp file behind -- regression coverage for
+#       persist_atomic_write's EXIT trap (skipped when running as root).
 #
 # Exit 0 on all-pass, 1 on any failure.
 
@@ -423,6 +426,62 @@ elif [[ -e "$case_g_dir/.deep-review" ]]; then
 	ls -la "$case_g_dir/.deep-review" | sed 's/^/    /'
 else
 	pass "(g) refuses multi-document input, writes nothing"
+fi
+
+# ---------------------------------------------------------------------------
+# (h) a real SIGTERM delivered mid-`mv` leaves no stray temp file
+#
+# Regression coverage for a code-review finding on the persist-common.sh
+# extraction: the original inline atomic-write code registered
+# `trap cleanup_tmp EXIT`, which fires on ANY process termination including
+# signals. The extracted persist_atomic_write initially only did explicit
+# `rm -f` on controlled failure returns (write/mv command itself failing),
+# dropping signal-interruption coverage -- fixed by registering an EXIT trap
+# once the temp file exists. Case (c)/(c-supplementary) above simulate a
+# *controlled* failure via a permission-bit trick, which already went
+# through the explicit-rm path even before that fix and would NOT have
+# caught this regression. This case instead sends a real SIGTERM while a
+# shimmed, deliberately slow `mv` is mid-flight, exercising the trap itself.
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (h) SIGTERM mid-mv leaves no stray temp file (running as root)"
+else
+	case_h_dir="$TMPDIR_ROOT/case-h"
+	make_scratch_repo "$case_h_dir"
+	sample_lenses >"$case_h_dir/lenses.json"
+
+	slow_bin="$case_h_dir/slow-bin"
+	mkdir -p "$slow_bin"
+	cat >"$slow_bin/mv" <<'EOF'
+#!/bin/sh
+sleep 2
+exec /bin/mv "$@"
+EOF
+	chmod +x "$slow_bin/mv"
+
+	set +e
+	(
+		cd "$case_h_dir" || exit 1
+		PATH="$slow_bin:$PATH" bash "$SCRIPT" --harness claude --run-id t \
+			--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" \
+			"$case_h_dir/lenses.json" >"$case_h_dir/stdout" 2>"$case_h_dir/stderr" &
+		h_pid=$!
+		sleep 0.5
+		kill -TERM "$h_pid" 2>/dev/null
+		wait "$h_pid"
+	)
+	h_exit=$?
+	set -e
+
+	stray="$(stray_temp_files "$case_h_dir")"
+	if [[ $h_exit -lt 128 ]]; then
+		fail "(h) SIGTERM mid-mv leaves no stray temp file (process did not appear to be signaled, exit=$h_exit -- mv shim may be too fast; not a real test of the trap)"
+	elif [[ -n "$stray" ]]; then
+		fail "(h) SIGTERM mid-mv leaves no stray temp file (found: $stray)"
+	else
+		pass "(h) SIGTERM mid-mv leaves no stray temp file"
+	fi
 fi
 
 echo ""

@@ -57,6 +57,9 @@
 #   (j) a well-typed but incomplete envelope ({"schema_version": 2} with no
 #       summary/findings/related) is refused with exit 2 and a clear
 #       missing-keys message, and no file is written at the target path.
+#   (k) a real SIGTERM delivered mid-`mv` (via a deliberately slow `mv`
+#       shim) leaves no stray temp file behind -- regression coverage for
+#       persist_atomic_write's EXIT trap (skipped when running as root).
 #
 # Exit 0 on all-pass, 1 on any failure.
 
@@ -574,6 +577,64 @@ elif [[ -e "$case_j_dir/.review-plan" ]]; then
 	ls -la "$case_j_dir/.review-plan" | sed 's/^/    /'
 else
 	pass "(j) refuses incomplete envelope missing summary/findings/related, writes nothing"
+fi
+
+# ---------------------------------------------------------------------------
+# (k) a real SIGTERM delivered mid-`mv` leaves no stray temp file
+#
+# Regression coverage for a code-review finding on the persist-common.sh
+# extraction: the original inline atomic-write code registered
+# `trap cleanup_tmp EXIT`, which fires on ANY process termination including
+# signals. The extracted persist_atomic_write initially only did explicit
+# `rm -f` on controlled failure returns (write/mv command itself failing),
+# dropping signal-interruption coverage -- fixed by registering an EXIT trap
+# once the temp file exists. Case (c)/(c-supplementary) above simulate a
+# *controlled* failure via a permission-bit trick, which already went
+# through the explicit-rm path even before that fix and would NOT have
+# caught this regression. This case instead sends a real SIGTERM while a
+# shimmed, deliberately slow `mv` is mid-flight, exercising the trap itself.
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (k) SIGTERM mid-mv leaves no stray temp file (running as root)"
+else
+	case_k_dir="$TMPDIR_ROOT/case-k"
+	make_scratch_repo "$case_k_dir"
+	sample_envelope >"$case_k_dir/envelope.json"
+
+	slow_bin="$case_k_dir/slow-bin"
+	mkdir -p "$slow_bin"
+	cat >"$slow_bin/mv" <<'EOF'
+#!/bin/sh
+sleep 2
+exec /bin/mv "$@"
+EOF
+	chmod +x "$slow_bin/mv"
+
+	set +e
+	(
+		cd "$case_k_dir" || exit 1
+		PATH="$slow_bin:$PATH" bash "$SCRIPT" --harness claude \
+			--plan-path "docs/dev_plans/example-plan.md" \
+			--plan-hash "deadbeefcafebabe0000000000000000000000" \
+			--run-id "20260716-000001" \
+			<"$case_k_dir/envelope.json" >"$case_k_dir/stdout" 2>"$case_k_dir/stderr" &
+		k_pid=$!
+		sleep 0.5
+		kill -TERM "$k_pid" 2>/dev/null
+		wait "$k_pid"
+	)
+	k_exit=$?
+	set -e
+
+	stray="$(compgen -G "$case_k_dir/.review-plan/*.tmp.*" 2>/dev/null || true)"
+	if [[ $k_exit -lt 128 ]]; then
+		fail "(k) SIGTERM mid-mv leaves no stray temp file (process did not appear to be signaled, exit=$k_exit -- mv shim may be too fast; not a real test of the trap)"
+	elif [[ -n "$stray" ]]; then
+		fail "(k) SIGTERM mid-mv leaves no stray temp file (found: $stray)"
+	else
+		pass "(k) SIGTERM mid-mv leaves no stray temp file"
+	fi
 fi
 
 echo ""

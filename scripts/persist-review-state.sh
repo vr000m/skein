@@ -126,31 +126,11 @@ else
 	input="$(cat "$ENVELOPE_PATH")"
 fi
 
-if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
-	echo "persist-review-state: envelope is not valid JSON" >&2
-	exit 2
-fi
-
-# jq without --slurp processes a stream of top-level JSON values, applying
-# the filter to each one independently — so "{} {}" (two concatenated JSON
-# documents) would pass the check above (its exit status reflects only the
-# last value) and then also pass through the extend step below, silently
-# producing multiple concatenated JSON objects as $output. Reject anything
-# but exactly one top-level document up front.
-doc_count="$(printf '%s' "$input" | jq -s 'length')"
-if [[ "$doc_count" != "1" ]]; then
-	echo "persist-review-state: envelope must be exactly one JSON document (got $doc_count)" >&2
-	exit 2
-fi
-
 # Must run before the schema_version lookup below: a non-object top-level
 # value (e.g. a JSON array) would otherwise make the `.schema_version` jq
 # lookup itself error out non-zero, crashing the script uninformatively
 # under `set -e` instead of failing with a clear usage message.
-if ! printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1; then
-	echo "persist-review-state: envelope must be a JSON object" >&2
-	exit 2
-fi
+persist_validate_json_shape "$input" "persist-review-state" "envelope" || exit 2
 
 schema_version="$(printf '%s' "$input" | jq -r '.schema_version // empty')"
 if [[ "$schema_version" != "2" ]]; then
