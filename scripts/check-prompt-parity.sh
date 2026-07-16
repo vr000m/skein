@@ -296,30 +296,27 @@ RELEASE_CLAUDE_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, su
 RELEASE_CODEX_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
 
 count_release_contract_line() {
-	awk -v expected="$2" '
+	awk -v expected="$2" -v frontmatter_only="${3:-0}" '
 		{
 			line = $0
 			sub(/[[:space:]]+$/, "", line)
-			if (line == expected) count++
+			if (frontmatter_only) {
+				if (NR == 1 && line == "---") {
+					in_frontmatter = 1
+					next
+				}
+				if (in_frontmatter && line == "---") exit
+				if (in_frontmatter && line == expected) count++
+			} else if (line == expected) {
+				count++
+			}
 		}
 		END { print count + 0 }
 	' "$1"
 }
 
 count_release_frontmatter_line() {
-	awk -v expected="$2" '
-		{
-			line = $0
-			sub(/[[:space:]]+$/, "", line)
-			if (NR == 1 && line == "---") {
-				in_frontmatter = 1
-				next
-			}
-			if (in_frontmatter && line == "---") exit
-			if (in_frontmatter && line == expected) count++
-		}
-		END { print count + 0 }
-	' "$1"
+	count_release_contract_line "$1" "$2" 1
 }
 
 normalize_release_workflow() {
