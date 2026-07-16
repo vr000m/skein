@@ -45,17 +45,22 @@ bundle_applier_for() {
 # only into review-plan's mirrors. deep-review's Step 5 invokes
 # persist-deep-review-state.sh, its own Review State persistence script (a
 # different schema from review-plan's persist-review-state.sh — see each
-# script's header), so it ships only into deep-review's mirrors. Returns 0
-# with no output for review-gauntlet.
+# script's header), so it ships only into deep-review's mirrors.
+# lib/persist-common.sh is sourced by both persist-*.sh scripts (root-anchor,
+# CLI required-value check, and guard+atomic-write helpers), so it ships
+# alongside each of them — never into review-gauntlet's mirrors, which bundle
+# neither persist script. Returns 0 with no output for review-gauntlet.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)
 		printf 'marker.py\n'
 		printf 'write-review-marker.py\n'
 		printf 'persist-review-state.sh\n'
+		printf 'lib/persist-common.sh\n'
 		;;
 	deep-review)
 		printf 'persist-deep-review-state.sh\n'
+		printf 'lib/persist-common.sh\n'
 		;;
 	review-gauntlet) ;;
 	*)

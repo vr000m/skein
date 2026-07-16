@@ -53,15 +53,14 @@
 #
 # Writes atomically: the envelope is written to a temp file created via
 # `mktemp` in the same directory as the target, then renamed into place with
-# `mv -f`. persist-review-state.sh uses the identical mktemp+`mv -f` pattern
-# (hardened non-atomic-write in review round 2, before this script existed);
-# this script follows that same precedent rather than introducing a new one.
+# `mv -f`. Root-anchoring, the CLI required-value check, and the guard +
+# atomic-write sequence are all shared with persist-review-state.sh via
+# `scripts/lib/persist-common.sh` — see that file for the guard/write
+# contract in detail.
 #
 # Writes to `.deep-review/latest-<harness>.json`, root-anchored via
 # `git rev-parse --show-toplevel` (falling back to the current working
-# directory when not inside a git worktree, matching
-# `scripts/apply-auto-fix-plan.sh`'s and `persist-review-state.sh`'s existing
-# precedent).
+# directory when not inside a git worktree).
 #
 # Exit codes:
 #   0  — wrote the state file. Prints the absolute path written to stdout.
@@ -84,6 +83,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
+# shellcheck source=scripts/lib/persist-common.sh disable=SC1091
+. "$SCRIPT_ROOT/scripts/lib/persist-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
@@ -104,50 +105,32 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--harness)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		HARNESS="$1"
 		;;
 	--run-id)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		RUN_ID="$1"
 		;;
 	--base-commit)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		BASE_COMMIT="$1"
 		;;
 	--head-commit)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		HEAD_COMMIT="$1"
 		;;
 	--diff-hash)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		DIFF_HASH="$1"
 		;;
 	--review-focus-hash)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		REVIEW_FOCUS_HASH="$1"
 		REVIEW_FOCUS_HASH_SET=1
 		;;
@@ -225,15 +208,7 @@ if ! printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1; then
 	exit 2
 fi
 
-# Root-anchor. Falls back to cwd when not inside a git worktree, matching
-# scripts/apply-auto-fix-plan.sh's and persist-review-state.sh's existing
-# WORKTREE_ROOT precedent.
-if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-	ROOT_DIR="$WORKTREE_ROOT"
-else
-	ROOT_DIR="$(pwd)"
-fi
-
+ROOT_DIR="$(persist_root_dir)"
 OUT_DIR="$ROOT_DIR/.deep-review"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 
@@ -257,69 +232,10 @@ output="$(printf '%s' "$input" | jq \
 	exit 1
 }
 
-# Symlink guards (defense-in-depth): refuse to write through a pre-existing
-# symlink at either the target file or its parent directory. `.deep-review/`
-# is gitignored, but a *tracked* symlink at that exact path would still
-# materialize on checkout — without this guard a malicious clone could point
-# it outside the repo and have this script's write clobber an arbitrary
-# user-writable file. Delegates to auto-fix-common.sh's af_assert_no_symlink,
-# which three other scripts in this directory already use — it walks the
-# full parent-directory chain (not just the immediate target), a broader
-# guard than a bare `-L` check on OUT_DIR/OUT_PATH alone. This script prints
-# its own "Could not persist findings JSON: ..." message (af_assert_no_symlink's
-# own stderr line also appears, non-fatally) to keep the documented stderr
-# contract this script's callers and tests key on.
-if ! af_assert_no_symlink "$OUT_DIR"; then
-	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
+# Guards + atomic temp-file-then-rename write, shared with
+# persist-review-state.sh via scripts/lib/persist-common.sh.
+if ! persist_atomic_write "$OUT_DIR" "$OUT_PATH" "$OUT_DIR/.latest-$HARNESS.json.XXXXXX" "$output"; then
 	exit 1
 fi
-
-if ! af_assert_no_symlink "$OUT_PATH"; then
-	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
-	exit 1
-fi
-
-# By this point $OUT_PATH is confirmed not to be a symlink (checked above).
-# If it still exists but is not a regular file (e.g. a directory), `mv -f`
-# below would silently succeed by moving the temp file *inside* it instead
-# of replacing it — a false success that leaves the advertised path
-# unusable. Reject that case up front instead of attempting the write.
-if [[ -e "$OUT_PATH" && ! -f "$OUT_PATH" ]]; then
-	echo "Could not persist findings JSON: refusing to overwrite non-regular-file target at $OUT_PATH" >&2
-	exit 1
-fi
-
-if ! mkdir_err=$({ mkdir -p "$OUT_DIR"; } 2>&1); then
-	echo "Could not persist findings JSON: ${mkdir_err:-could not create $OUT_DIR}" >&2
-	exit 1
-fi
-
-# Atomic write: temp file in the same directory, then rename into place.
-TMP_PATH=""
-cleanup_tmp() {
-	if [[ -n "$TMP_PATH" && -e "$TMP_PATH" ]]; then
-		rm -f "$TMP_PATH" 2>/dev/null || true
-	fi
-}
-trap cleanup_tmp EXIT
-
-if ! TMP_PATH="$(mktemp "$OUT_DIR/.latest-$HARNESS.json.XXXXXX" 2>&1)"; then
-	tmp_err="$TMP_PATH"
-	TMP_PATH=""
-	echo "Could not persist findings JSON: ${tmp_err:-could not create temp file in $OUT_DIR}" >&2
-	exit 1
-fi
-
-if ! write_err=$({ printf '%s\n' "$output" >"$TMP_PATH"; } 2>&1); then
-	echo "Could not persist findings JSON: ${write_err:-could not write $TMP_PATH}" >&2
-	exit 1
-fi
-
-if ! mv_err=$({ mv -f "$TMP_PATH" "$OUT_PATH"; } 2>&1); then
-	echo "Could not persist findings JSON: ${mv_err:-could not rename $TMP_PATH to $OUT_PATH}" >&2
-	exit 1
-fi
-
-trap - EXIT
 
 printf '%s\n' "$OUT_PATH"
