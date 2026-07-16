@@ -95,7 +95,7 @@ Every full/standalone round runs these four gates in this order. Findings from a
    ```json
    { "gate": "string", "status": "approve | needs-attention | skipped | deferred | error", "findings": [ { "file": "string", "line": "integer|null", "category": "string", "severity": "string", "confidence": "number|null", "summary": "string", "evidence": "string", "auto_fix": "object|null" } ], "notes": "string|null" }
    ```
-3. **`skein:deep-review` (5 lenses).** Invoke directly at conductor top level (not as a nested Agent). Same Delegation Pattern rationale as gate 1.
+3. **`skein:deep-review` (5 lenses).** Invoke as `skein:deep-review --verbose`, directly at conductor top level (not as a nested Agent). Same Delegation Pattern rationale as gate 1. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed — without it, gate 3's Minor findings would silently normalize with missing evidence.
 4. **Security-review gate.** `/security-review`.
 
 Findings from all four gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`; any `auto_fix` proposal a gate emits is **held aside** for the fixer's route logic (Guardrail 2) and stripped from the payload before dedup. Only the `auto_fix`-free findings are deduped on `(file, line, category, …)` by the bundled reconciler before the fixer sees them (see [Reuse](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) for the exact invocation and why the payload must be `auto_fix`-free).
