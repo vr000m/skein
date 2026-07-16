@@ -3,6 +3,7 @@
 ## Git
 - **Never squash merge PRs.** Use regular merge (`gh pr merge --merge --delete-branch`) to preserve individual commit history.
 - **Always work on feature branches** — never commit directly to main. Create branch, dev plan, update docs, then PR.
+- **Cut and re-sync releases through `skein:release`.** Use `/release X.Y.Z` after the release-bearing PR is merged and local `main` is current; do not hand-run the old `git tag` + `gh release create` procedure.
 
 ## Commit Hygiene
 - **Never use `git add -A`, `git add --all`, or `git add .`** — they sweep untracked scratch/dev-plan files into commits. A PreToolUse hook blocks these. Stage explicit paths.

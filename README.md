@@ -19,7 +19,7 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
 | plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; renders Mermaid fences as live diagrams via the Mermaid CDN runtime; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
 | review-gauntlet | Yes | Yes (partial) | Chain the review gates (code-review, adversarial review, deep-review, security-review) into one convergence loop, with fixes applied by an isolated clean-context fixer subagent; opt-in per dev plan via `**Review Gates:** none \| quick \| full`, auto-chained from `conduct` and `fan-out`. `--resume`/`--fresh` pick an interrupted standalone/full run back up from a target-keyed `.gauntlet/` ledger instead of restarting the gate corpus; auto-chained invocations are self-resuming with no extra flags. On Codex, `security-review` is `deferred` (no primitive exists) and `deep-review` is gated pending nested-spawn confirmation — Codex `full` mode reports these slots explicitly rather than claiming they ran |
-| release | Yes (user-invoked only) | Yes (autonomously invocable; explicit pre-mutation confirmation) | Cut or re-sync a GitHub release from a `CHANGELOG.md` section: title `<repo> vX.Y.Z — <highlight>`, body = an optional `## What's New` summary paragraph + the section content with its header stripped + a `**Full diff:**` compare link; an ordinary re-sync preserves the existing highlight and `## What's New` presence/content when recoverable, making repeated re-syncs byte-identical unless the user overrides them or malformed existing content requires repair. `/release audit` scans tags, GitHub releases, and CHANGELOG versions for missing artifacts, releases whose remote tag was deleted, or drifted title/body, then reports a punch list before fixing anything |
+| release | Yes (user-invoked only) | Yes (model-invocable; no documented opt-out found; explicit pre-mutation confirmation) | Cut or re-sync a GitHub release from a `CHANGELOG.md` section: title `<repo> vX.Y.Z — <highlight>`, body = an optional `## What's New` summary paragraph + the section content with its header stripped + a `**Full diff:**` compare link; an ordinary re-sync preserves the existing highlight and `## What's New` presence/content when recoverable, making repeated re-syncs byte-identical unless the user overrides them or malformed existing content requires repair. `/release audit` scans tags, GitHub releases, and CHANGELOG versions for missing artifacts, releases whose remote tag was deleted, or drifted title/body, then reports a punch list before fixing anything |
 
 Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`). Judgment lenses ("high-reasoning" above) vs. mechanical/factual work follow the two-tier model/effort policy in [AGENTS.md](AGENTS.md#modeleffort-policy-target-policy-not-yet-fully-enforced).
 
@@ -43,17 +43,19 @@ codex plugin add skein@skein
 
 The marketplace name `skein` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). To pick up upstream changes, re-add the marketplace (or `git pull` your clone if you installed from a local path) and re-run `/plugin install skein@skein` / `codex plugin add skein@skein` — there is no separate sync step.
 
-**Pinning to a release.** Once tagged releases exist (the first will be `v0.1.0`, cut after this install switch merges), prefer pinning over tracking `main`: pass `--ref v0.1.0` to `codex plugin marketplace add`, and check tagged releases on [the GitHub releases page](https://github.com/vr000m/skein/releases) for Claude Code (which resolves the marketplace at add time). Tracking `main` follows unreleased commits.
+**Pinning to an existing release.** Tagged releases already exist through `v0.5.1`. Prefer pinning over tracking `main`: for example, pass `--ref v0.5.1` to `codex plugin marketplace add`, and check tagged releases on [the GitHub releases page](https://github.com/vr000m/skein/releases) for Claude Code (which resolves the marketplace at add time). Tracking `main` follows unreleased commits.
 
 If you are developing against a local clone instead, swap the marketplace source for a path: `/plugin marketplace add /path/to/skein` (Claude) or `codex plugin marketplace add /path/to/skein` (Codex).
 
-If you are migrating from the older flat layout (skills installed directly under `~/.claude/skills/` and `~/.codex/skills/`), use `scripts/delete-skills.sh` to remove the pre-plugin copies after verifying the plugin install loads correctly.
+If you are migrating from the older flat layout (skills installed directly under `~/.claude/skills/` and `~/.codex/skills/`), use `scripts/delete-skills.sh` to remove the immutable 11-skill migration-era set after verifying the plugin install loads correctly. It deliberately preserves the post-migration `grill`, `release`, and `review-gauntlet` directories. The cleanup regression test is `uvx pytest tests/parity/test_delete_skills.py -q`.
 
 ## Releases
 
 skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.3.0**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
+Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.5.1**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
+
+After merging a release-bearing PR and updating local `main`, use `skein:release` (`/release X.Y.Z` on Claude) to create or re-sync the tag and GitHub release. The skill previews the exact target, title, and body for confirmation before mutating remote state; do not hand-compose the old `git tag` + `gh release create` sequence.
 
 ## Setup (for contributors)
 
@@ -69,7 +71,7 @@ brew install just jq shellcheck shfmt
 just check-sync                  # canonical scripts/ ↔ bundled skill scripts byte-identity
 just check-prompt-parity         # Claude vs Codex SKILL.md content parity for bundle skills
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
-just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + marker parity (conduct + canonical anchor + review-plan marker write)
+just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just reconciliation-tests        # reconciliation parity + fixture + renderer + determinism
 just bundle-appliers             # regenerate bundled auto-fix pipeline inside each skill
 ```

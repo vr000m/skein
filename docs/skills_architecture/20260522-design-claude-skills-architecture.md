@@ -21,7 +21,7 @@ A second motivation: testing `plan-view --rich` against non-plan content. The sk
 | Skill | Role | Cost per run | Invocation Mode |
 |---|---|---|---|
 | `dev-plan` | Plan author — writes structured markdown with phases, Review Focus, Acceptance Criteria. | 1 Sonnet on `create` only. | model-invoked |
-| `review-plan` | Pre-implementation auditor — 4 parallel lenses against a plan. | 3 Opus + 1 Haiku. | model-invoked |
+| `review-plan` | Pre-implementation auditor — 5 parallel fresh-context lenses against a plan. | Four high-reasoning judgment lenses plus one lower-effort factual lens. | model-invoked |
 | `conduct` | Phase-by-phase implementer dispatcher. | 2–3 subagents per phase. | model-invoked |
 | `fan-out` | Parallel-task dispatcher across git worktrees. | 1 Opus per independent task (cap 5). | model-invoked |
 | `deep-review` | Code review with 5 parallel lenses. | 3 Opus + 1 Sonnet + 1 Haiku. | model-invoked |
@@ -33,18 +33,19 @@ A second motivation: testing `plan-view --rich` against non-plan content. The sk
 | `rfc-finder` | RFC/draft locator with annotated links. | 1 Sonnet. | model-invoked |
 | `grill` | One-question-at-a-time interview over a plan/design, splitting facts from decisions. | Same session, no subagent spawn (or one lens call if inlined by a caller). | model-invoked |
 | `review-gauntlet` | Chains code-review/deep-review/security-review gates into one convergence loop with fixer subagents. | Up to 10 loop iterations, each spawning its own gate subagents. | model-invoked |
-| `release` | Derives a GitHub release title+body (with an optional `## What's New` summary paragraph) from a `CHANGELOG.md` section and creates/re-syncs the git tag and release to match; `audit` mode scans every tag/CHANGELOG version repo-wide for missing tags, missing releases, or drift before fixing anything. | 0 subagent spawns — runs inline, no delegation (owns a user-confirmation gate before irreversible tag push / release publish). | **user-invoked** (`disable-model-invocation: true`, Claude only) |
+| `release` | Derives a GitHub release title+body (with an optional `## What's New` summary paragraph) from a `CHANGELOG.md` section and creates/re-syncs the git tag and release to match; `audit` mode scans every tag/CHANGELOG version repo-wide for missing tags, missing releases, or drift before fixing anything. | 0 subagent spawns — runs inline, no delegation (owns a user-confirmation gate before irreversible tag push / release publish). | **Claude:** user-invoked (`disable-model-invocation: true`); **Codex:** model-invocable (no documented equivalent opt-out found; mutation still requires confirmation) |
 
-Each skill is a single `SKILL.md` plus optional helper scripts. Skills are loaded by the Claude Code harness on session start; trigger phrases in their `description:` front-matter drive automatic activation — **unless** `disable-model-invocation: true` is set, in which case the skill is reachable only via explicit `/skill-name` invocation and its `description:` is excluded from per-turn context (see [Invocation Mode](#invocation-mode) below). This is a Claude-only mechanism; Codex CLI has no equivalent opt-out (see that section for the classification methodology and the one skill currently affected).
+Each skill is a single `SKILL.md` plus optional helper scripts. Skills are loaded by the Claude Code harness on session start; trigger phrases in their `description:` front-matter drive automatic activation — **unless** `disable-model-invocation: true` is set, in which case the skill is reachable only via explicit `/skill-name` invocation and its `description:` is excluded from per-turn context (see [Invocation Mode](#invocation-mode) below). This is a Claude-only mechanism; no documented Codex equivalent opt-out was found in the inspected surfaces, so this repository treats the affected Codex mirrors as model-invocable and relies on their explicit mutation gates where applicable.
 
 ## Input Contracts
 
-Inputs partition cleanly into four shapes:
+Inputs partition cleanly into five shapes:
 
 - **Plan-file consumers** — `review-plan`, `conduct`, `fan-out`, `plan-view`, `update-docs` all take a markdown plan path (or a directory of them). Each reads the same `docs/dev_plans/yyyymmdd-type-name.md` schema produced by `dev-plan`.
 - **Code-file consumers** — `deep-review`, `spec-compliance`, `content-review` take a code file path (or PR number / branch). Output is independent of plan state.
 - **Session-context consumers** — `content-draft` reads the live conversation transcript. No file input.
 - **Free-text consumers** — `rfc-finder` takes a topic, RFC number, code snippet, or protocol family as a string.
+- **Release-state consumers** — `release` takes a strict SemVer target (or `latest`/`unreleased`/`audit`) and reads the Keep a Changelog section plus origin tags and GitHub release state before any confirmed mutation.
 
 Cross-cutting CLI patterns: `--apply` (commit edits automatically), `--dry-run` (show what would happen), `--auto-fix=trivial` (apply allowlisted mechanical edits — `review-plan` and `deep-review` only), `--continue` / `--resume` (recover from a prior partial run — `deep-review` and `conduct`).
 
@@ -62,12 +63,13 @@ The **review marker** `<!-- reviewed: YYYY-MM-DD @ <sha1> -->` is the single mos
 
 ## Subagent Topology
 
-Skills divide into four subagent-shape buckets:
+Skills divide into five subagent-shape buckets:
 
 - **Single Sonnet** — `dev-plan create`, `content-draft`, `content-review`, `update-docs`, `rfc-finder`. One call per invocation, mostly to gather facts (Explore) or draft prose.
 - **Single Opus** — `spec-compliance`. RFC 2119 mapping benefits from the harder model on a single shot.
 - **Parallel lens panel** — `review-plan` (5 lenses: architecture / sequencing / spec-and-testing / assumptions / codebase-claims), `deep-review` (5 lenses: logic / security / spec / architecture / documentation). Lenses run in fresh-context subagents and a reconciler folds duplicates.
 - **Iterative dispatcher** — `conduct` spawns 2–3 subagents *per phase* (implementer, test-writer, optional reviewer) and loops the phase until tests pass or `--max-iterations` is hit. `fan-out` spawns one subagent per *independent task* (cap `--max-agents`, default 5), each in its own git worktree.
+- **Inline main-context workflow** — `release` spawns no subagents because the main agent must present and retain the explicit confirmation gate before pushing a tag or creating/editing a GitHub release.
 
 `plan-view` is the outlier: deterministic Python by default (0 subagent calls), with an opt-in `--rich` workflow that emits a manifest the *parent* agent consumes — the skill itself does not dispatch. This is the contract being tested by this document.
 
@@ -105,6 +107,7 @@ dev-plan ──writes──▶ plan.md ──┬──▶ review-plan ──appe
 deep-review ──reads──▶ code + PR + optional plan Review Focus
 spec-compliance ──reads──▶ code + RFC section ◀──referenced by── rfc-finder
 content-draft ──reads──▶ session transcript ──suggests──▶ content-review
+CHANGELOG.md + origin tags + GitHub releases ──read by──▶ release ──confirmed mutation──▶ git tag + GitHub release
 ```
 
 Explicit composition handoffs:
@@ -115,10 +118,11 @@ Explicit composition handoffs:
 - `rfc-finder` → `spec-compliance`: discovery → conformance.
 - `content-draft` → `content-review`: draft → polish.
 - `dev-plan` ↔ `update-docs`: bidirectional — update-docs audits dev plans, dev-plan creates the plans it audits.
+- `update-docs` → `CHANGELOG.md` → `release`: a shared Keep a Changelog data contract, not a skill-chaining edge; `release` parses the dated section that `update-docs` maintains.
 
 ## Workflow Scenarios
 
-**Feature implementation (full pipeline).** `/dev-plan create feature X` → human edits → `/review-plan` (4 lenses, fix Critical/Important) → `/plan-view --rich` (verify shape) → `/conduct` (phase 1, phase 2, …) → `/deep-review --pr N` (5 lenses on the resulting diff) → `/update-docs --apply` → PR merge.
+**Feature implementation (full pipeline).** `/dev-plan create feature X` → human edits → `/review-plan` (5 lenses, fix Critical/Important) → `/plan-view --rich` (verify shape) → `/conduct` (phase 1, phase 2, …) → `/deep-review --pr N` (5 lenses on the resulting diff) → `/update-docs --apply` → PR merge.
 
 **Independent parallel work.** `/dev-plan create feature Y` (multiple disjoint checklist phases) → `/review-plan` → `/fan-out` (5 worktrees, 5 subagents) → `/fan-out merge` → `/deep-review` → `/update-docs`.
 
@@ -127,6 +131,8 @@ Explicit composition handoffs:
 **Spec work.** `/rfc-finder "WebRTC ICE restart"` → user picks RFC 8839 §4.4.1 → `/spec-compliance src/ice.ts RFC8839 4.4.1` → MUST/SHOULD/MAY mapping.
 
 **Writing about the work.** Mid-session, `/content-draft til` → drafted markdown → `/content-review` → polished TIL.
+
+**Publishing a release.** Merge the release-bearing PR → update local default branch → `/release X.Y.Z` → inspect and confirm the exact repository, tag target, title, and body → `release` pushes the tag and creates or re-syncs the GitHub release.
 
 ## Cost Model
 
@@ -137,30 +143,30 @@ Per-run subagent token spend, rough order of magnitude:
 - **Lens panel** (3–4 Opus + 1 Haiku/Sonnet in parallel): `review-plan`, `deep-review`. These are intentionally expensive — the value is catching things a single pass misses, and the lenses do not share context.
 - **Open-ended dispatch** (N parallel, N depends on plan shape): `conduct` (2–3 per phase × phases), `fan-out` (1 per independent task, cap 5 by default).
 
-The pipeline cost is *not* additive: `review-plan` runs once before implementation; `conduct` runs once during; `deep-review` runs once on the resulting PR. A feature with 5 phases ships for roughly: 1× `dev-plan` + 1× `review-plan` (~4 lenses) + 5× `conduct` phases (~3 subagents each) + 1× `deep-review` (~5 lenses) + 1× `update-docs` ≈ 27 subagent calls. Long-running implementation work amortises the planning cost across multiple phases.
+The pipeline cost is *not* additive: `review-plan` runs once before implementation; `conduct` runs once during; `deep-review` runs once on the resulting PR. A feature with 5 phases ships for roughly: 1× `dev-plan` + 1× `review-plan` (5 lenses) + 5× `conduct` phases (~3 subagents each) + 1× `deep-review` (~5 lenses) + 1× `update-docs` ≈ 28 subagent calls. Long-running implementation work amortises the planning cost across multiple phases.
 
 ## Trigger Phrases
 
 Triggers fall into three classes:
 
 - **Slash commands** — `/dev-plan`, `/review-plan`, `/conduct`, `/fan-out`, `/deep-review`, `/plan-view`, `/update-docs`, `/content-draft`, `/content-review`, `/spec-compliance`, `/rfc-finder`, `/release`. Exact, unambiguous.
-- **Imperative phrases** — `"plan this"`, `"audit plan"`, `"thorough review"`, `"step through plan"`, `"fan out"`, `"render plan dashboard"`, `"draft a TIL"`, `"check compliance"`. Surface in the `description:` front-matter; the harness fuzz-matches.
+- **Imperative phrases** — `"plan this"`, `"audit plan"`, `"thorough review"`, `"step through plan"`, `"fan out"`, `"render plan dashboard"`, `"draft a TIL"`, `"check compliance"`; `release` also declares `"cut a release"`, `"publish this release"`, and `"sync release notes"`, but Claude excludes that description from model-invocation context. Surface in the `description:` front-matter; an invocation-capable harness fuzz-matches.
 - **Implicit keywords** — `"RFC"`, `"IETF"`, `"WebRTC"`, `"QUIC"` for `rfc-finder`; `"MUST"` / `"SHOULD"` / RFC 2119 vocabulary for `spec-compliance`. These prime activation but the user typically still has to express intent.
 
 Triggers are aggressive on purpose — a missed slash command costs a user a turn; a false-positive slash command is recoverable. `description:` strings explicitly enumerate the colloquial phrasings the author types, learned by iterating with real sessions.
 
 ## Invocation Mode
 
-Every skill's `description:` is loaded into per-turn context by default so the harness can fire it autonomously (**model-invoked**). Claude Code's `disable-model-invocation: true` front-matter flag opts a skill out of that: its `description:` is excluded from per-turn context, and it becomes reachable only via explicit `/skill-name` invocation (**user-invoked**). This is a Claude-only mechanism — Codex CLI has no equivalent opt-out as of this writing; a skill marked user-invoked on Claude stays autonomously invocable on Codex regardless, documented as a permanent, harness-imposed divergence via a one-line comment on the Codex `SKILL.md`.
+Every skill's `description:` is loaded into per-turn context by default so the harness can fire it autonomously (**model-invoked**). Claude Code's `disable-model-invocation: true` front-matter flag opts a skill out of that: its `description:` is excluded from per-turn context, and it becomes reachable only via explicit `/skill-name` invocation (**user-invoked**). This suppression mechanism is verified for Claude. No documented Codex equivalent was found in the inspected documentation, help, schema, or mirror metadata as of 2026-07-15; that is evidence of an undocumented capability gap, not proof that an equivalent can never exist. The repository therefore models an affected Codex mirror as model-invocable and documents the current divergence in a one-line comment on its `SKILL.md`.
 
 **Classification discipline for new skills.** Before writing a new skill's `description:`, check it against two axes — a skill must stay model-invoked if *either* is true:
 
 - **Axis 1 — chained-into.** Does any other skill's `SKILL.md` invoke this one by literal `/name`, `skein:name`, or bare-backticked-name text as a mandatory, autonomous step in its own procedure (not merely a suggestion offered to the user)? If yes, disabling breaks that caller — this is a hard exclusion, not a judgment call.
 - **Axis 2 — independently content-triggered.** Does the skill's own `description:` fire on content the user didn't have to name the skill to produce (e.g. `rfc-finder`'s RFC/protocol keywords) — genuine natural-language intent, not command-name-adjacent phrasing only someone who already knows the skill would say?
 
-A skill is only a real `disable-model-invocation` candidate if it clears **both** axes. The 2026-07-12 baseline audit (`docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`) covered the 13-skill catalogue then present and found `plan-view`; after `release` was added later that day, 2 of 14 skills — `plan-view` and `release` — clear both. The other 12 are either chained into (`conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review`) or carry a genuine Axis 2 trigger (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`). Re-run this same two-axis check whenever a skill is added or its chaining relationships change — don't default to leaving new skills model-invoked out of habit; that's exactly the drift this audit corrected.
+A skill is only a real Claude `disable-model-invocation` candidate if it clears **both** axes. The 2026-07-12 baseline audit (`docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`) covered the 13-skill catalogue then present and found `plan-view`; after `release` was added later that day, 2 of 14 skills — `plan-view` and `release` — clear both. The other 12 are either chained into (`conduct`, `dev-plan`, `review-plan`, `review-gauntlet`, `deep-review`) or carry a genuine Axis 2 trigger (`content-draft`, `content-review`, `fan-out`, `grill`, `rfc-finder`, `spec-compliance`, `update-docs`). Re-run this same two-axis check whenever a skill is added or its chaining relationships change — don't default to leaving new skills model-invoked out of habit; that's exactly the drift this audit corrected.
 
-**`release` (added 2026-07-12, `docs/dev_plans/20260712-feature-release-skill.md`) is classified `user-invoked` at birth**, using the same two-axis test rather than defaulting to model-invoked: Axis 1 — nothing chains into it, no other `SKILL.md` invokes `/release` or `skein:release`; Axis 2 — its trigger phrases ("cut a release", "publish this release", "sync release notes") are command-name-adjacent, the kind of thing only someone who already knows a release-cutting tool exists would say, the same character as `plan-view`'s cleared Axis 2. It also mutates external, hard-to-reverse state (git tag push, public GitHub release) — an independent reason it must never fire off conversational context alone, reinforcing rather than substituting for the two-axis result. 2 of 14 skills now clear both axes.
+**`release` (added 2026-07-12, `docs/dev_plans/20260712-feature-release-skill.md`) is classified user-invoked on Claude**, using the same two-axis test rather than defaulting to model-invoked: Axis 1 — nothing chains into it, no other `SKILL.md` invokes `/release` or `skein:release`; Axis 2 — its trigger phrases ("cut a release", "publish this release", "sync release notes") are command-name-adjacent, the kind of thing only someone who already knows a release-cutting tool exists would say, the same character as `plan-view`'s cleared Axis 2. It also mutates external, hard-to-reverse state (git tag push, public GitHub release), reinforcing the Claude suppression decision. On Codex it remains model-invocable under the qualified capability-gap finding above, but the mandatory confirmation gate prevents model selection alone from authorizing any mutation. 2 of 14 skills clear both axes for Claude.
 
 ## Failure Modes
 
