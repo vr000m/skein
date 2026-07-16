@@ -149,8 +149,8 @@ Component graph:
 ```mermaid
 graph LR
     PLAN[dev-plan phase: **Goal:** slot] -->|parsed by| CDT[conduct substitution]
-    CDT -->|{{PHASE_GOAL}}| IMPL[implementer subagent]
-    CDT -->|{{PHASE_GOAL}}| TW[test-writer subagent]
+    CDT -->|"{{PHASE_GOAL}}"| IMPL[implementer subagent]
+    CDT -->|"{{PHASE_GOAL}}"| TW[test-writer subagent]
     PLAN -->|design intent| FIX[review-gauntlet fixer Guardrail 1]
 ```
 
