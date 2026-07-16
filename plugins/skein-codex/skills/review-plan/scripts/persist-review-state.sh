@@ -13,8 +13,11 @@
 # second `schema_version`. Writes the result to
 # `.review-plan/latest-<harness>.json`, root-anchored via
 # `git rev-parse --show-toplevel` (falling back to the current working
-# directory when not inside a git worktree, matching
-# `scripts/apply-auto-fix-plan.sh`'s existing precedent).
+# directory when not inside a git worktree). Root-anchoring, the CLI
+# required-value check, and the guard + atomic-write sequence are all
+# shared with persist-deep-review-state.sh via
+# `scripts/lib/persist-common.sh` — see that file for the guard/write
+# contract in detail.
 #
 # `plan_hash` is a snapshot of the plan at Step 3 (reconciliation) time — the
 # caller computes it (typically `git hash-object <plan>`) and passes it in;
@@ -40,6 +43,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_ROOT/scripts/lib/auto-fix-common.sh"
+# shellcheck source=scripts/lib/persist-common.sh disable=SC1091
+. "$SCRIPT_ROOT/scripts/lib/persist-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
@@ -57,34 +62,22 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--harness)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		HARNESS="$1"
 		;;
 	--plan-path)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		PLAN_PATH="$1"
 		;;
 	--plan-hash)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		PLAN_HASH="$1"
 		;;
 	--run-id)
 		shift
-		[[ $# -gt 0 ]] || {
-			usage
-			exit 2
-		}
+		persist_require_value "$@"
 		RUN_ID="$1"
 		;;
 	--help | -h)
@@ -133,31 +126,11 @@ else
 	input="$(cat "$ENVELOPE_PATH")"
 fi
 
-if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
-	echo "persist-review-state: envelope is not valid JSON" >&2
-	exit 2
-fi
-
-# jq without --slurp processes a stream of top-level JSON values, applying
-# the filter to each one independently — so "{} {}" (two concatenated JSON
-# documents) would pass the check above (its exit status reflects only the
-# last value) and then also pass through the extend step below, silently
-# producing multiple concatenated JSON objects as $output. Reject anything
-# but exactly one top-level document up front.
-doc_count="$(printf '%s' "$input" | jq -s 'length')"
-if [[ "$doc_count" != "1" ]]; then
-	echo "persist-review-state: envelope must be exactly one JSON document (got $doc_count)" >&2
-	exit 2
-fi
-
 # Must run before the schema_version lookup below: a non-object top-level
 # value (e.g. a JSON array) would otherwise make the `.schema_version` jq
 # lookup itself error out non-zero, crashing the script uninformatively
 # under `set -e` instead of failing with a clear usage message.
-if ! printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1; then
-	echo "persist-review-state: envelope must be a JSON object" >&2
-	exit 2
-fi
+persist_validate_json_shape "$input" "persist-review-state" "envelope" || exit 2
 
 schema_version="$(printf '%s' "$input" | jq -r '.schema_version // empty')"
 if [[ "$schema_version" != "2" ]]; then
@@ -176,14 +149,7 @@ if ! printf '%s' "$input" | jq -e 'has("summary") and has("findings") and has("r
 	exit 2
 fi
 
-# Root-anchor. Falls back to cwd when not inside a git worktree, matching
-# scripts/apply-auto-fix-plan.sh's existing WORKTREE_ROOT precedent.
-if WORKTREE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-	ROOT_DIR="$WORKTREE_ROOT"
-else
-	ROOT_DIR="$(pwd)"
-fi
-
+ROOT_DIR="$(persist_root_dir)"
 OUT_DIR="$ROOT_DIR/.review-plan"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 
@@ -196,78 +162,14 @@ output="$(printf '%s' "$input" | jq \
 	exit 1
 }
 
-# Symlink guard (defense-in-depth): refuse to write through a pre-existing
-# symlink at either the target file or its parent directory. `.review-plan/`
-# is gitignored, but a *tracked* symlink at that exact path would still
-# materialize on checkout — without this guard a malicious clone could point
-# it outside the repo and have this script's write clobber an arbitrary
-# user-writable file. Must run before the temp-file write below so a
-# symlinked target is rejected before we ever stage a rename into it.
-# Delegates to auto-fix-common.sh's af_assert_no_symlink, which three other
-# scripts in this directory already use — it walks the full parent-directory
-# chain (not just the immediate target), a broader guard than a bare `-L`
-# check on OUT_DIR/OUT_PATH alone. This script prints its own
-# "Could not persist findings JSON: ..." message (af_assert_no_symlink's own
-# stderr line also appears, non-fatally) to keep the documented stderr
-# contract this script's callers and tests key on.
-if ! af_assert_no_symlink "$OUT_DIR"; then
-	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_DIR" >&2
+# Guards + atomic temp-file-then-rename write, shared with
+# persist-deep-review-state.sh via scripts/lib/persist-common.sh. "Last
+# writer wins" for two concurrent runs targeting the same harness's latest
+# file is an accepted, unchanged characteristic (same as deep-review's
+# `.deep-review/latest-*.json`) — this does not add locking or per-run
+# immutable snapshots.
+if ! persist_atomic_write "$OUT_DIR" "$OUT_PATH" "$OUT_PATH.tmp.XXXXXX" "$output"; then
 	exit 1
 fi
 
-if ! af_assert_no_symlink "$OUT_PATH"; then
-	echo "Could not persist findings JSON: refusing to write through a symlink at $OUT_PATH" >&2
-	exit 1
-fi
-
-# By this point $OUT_PATH is confirmed not to be a symlink (checked above).
-# If it still exists but is not a regular file (e.g. a directory), `mv -f`
-# below would silently succeed by moving the temp file *inside* it instead
-# of replacing it — a false success that leaves the advertised path
-# unusable. Reject that case up front instead of attempting the write.
-if [[ -e "$OUT_PATH" && ! -f "$OUT_PATH" ]]; then
-	echo "Could not persist findings JSON: refusing to overwrite non-regular-file target at $OUT_PATH" >&2
-	exit 1
-fi
-
-if ! mkdir_err=$({ mkdir -p "$OUT_DIR"; } 2>&1); then
-	echo "Could not persist findings JSON: ${mkdir_err:-could not create $OUT_DIR}" >&2
-	exit 1
-fi
-
-# Atomic write: stage the output in a temp file created in the same directory
-# as $OUT_PATH (same filesystem, so the final `mv` is an atomic rename), then
-# rename it into place only after the write succeeds. This is what makes the
-# write atomic — the target path is never truncated or partially written, so
-# a killed/interrupted process leaves the previous good $OUT_PATH untouched.
-# This fixes crash/interrupt corruption only; "last writer wins" for two
-# concurrent runs targeting the same harness's latest file is an accepted,
-# unchanged characteristic (same as deep-review's `.deep-review/latest-*.json`)
-# — this does not add locking or per-run immutable snapshots.
-TMP_PATH=""
-cleanup_tmp() {
-	if [[ -n "$TMP_PATH" && -e "$TMP_PATH" ]]; then
-		rm -f "$TMP_PATH"
-	fi
-}
-trap cleanup_tmp EXIT
-
-if ! TMP_PATH=$(mktemp "$OUT_PATH.tmp.XXXXXX" 2>&1); then
-	tmp_err="$TMP_PATH"
-	TMP_PATH=""
-	echo "Could not persist findings JSON: ${tmp_err:-could not create temp file for $OUT_PATH}" >&2
-	exit 1
-fi
-
-if ! write_err=$({ printf '%s\n' "$output" >"$TMP_PATH"; } 2>&1); then
-	echo "Could not persist findings JSON: ${write_err:-could not write $TMP_PATH}" >&2
-	exit 1
-fi
-
-if ! mv_err=$({ mv -f "$TMP_PATH" "$OUT_PATH"; } 2>&1); then
-	echo "Could not persist findings JSON: ${mv_err:-could not rename $TMP_PATH to $OUT_PATH}" >&2
-	exit 1
-fi
-
-TMP_PATH=""
 printf '%s\n' "$OUT_PATH"
