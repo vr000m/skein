@@ -190,10 +190,10 @@ On `skein:dev-plan create`, after Explore returns and **before phases are writte
 3. A markdown context-lifecycle table with these exact columns: `Step | Trigger | Enters context | Cleared/persisted | Turn boundary`.
 
 **Mermaid label escaping.** Mermaid reads certain character sequences inside a label as shape delimiters, not literal text, and errors when the sequence is not a well-formed shape:
-- A node label that starts with `/` or `\` right after the opening bracket (e.g. `DPU[/dev-plan update]` for a node naming the `skein:dev-plan update` skill command) is read as the start of a parallelogram/trapezoid shape and fails when there is no matching closing `/]`.
+- A node label that starts with `/` or `\` right after the opening bracket (e.g. `DPU[/dev-plan update]` for a node naming the `/dev-plan update` command) is read as the start of a parallelogram/trapezoid shape and fails when there is no matching closing `/]`.
 - An edge label containing `{{...}}` (e.g. `-->|{{PHASE_GOAL}}|` for an edge naming a `{{PLACEHOLDER}}` template token) is read as the start of a hexagon shape and fails the same way.
 
-These diagrams frequently label nodes and edges with Codex skill commands and `{{PLACEHOLDER}}` tokens, so wrap any label containing `/`, `\`, or `{{...}}` in quotes: `DPU["/dev-plan update"]`, `-->|"{{PHASE_GOAL}}"|`. Verify by checking the rendered diagram in `skein:plan-view` output, not just by eye.
+These diagrams frequently label nodes and edges with commands and `{{PLACEHOLDER}}` tokens, so wrap any label containing `/`, `\`, or `{{...}}` in quotes: `DPU["/dev-plan update"]`, `-->|"{{PHASE_GOAL}}"|`. Verify by checking the rendered diagram in `/plan-view` output, not just by eye.
 
 **Placement.** The section heading is `## Architecture & Call Flow`. Place it **immediately after the `### Integration Seams` subsection (the last subsection of `## Technical Specifications`) and before `## Testing Notes`** — see `template.md`. Do NOT place it "before the marker": `## Testing Notes` and `## Acceptance Criteria` sit between Technical Specifications and the marker, so that placement would put topology details after Acceptance Criteria instead of beside the integration facts.
 
