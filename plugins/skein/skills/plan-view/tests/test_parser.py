@@ -306,6 +306,30 @@ def test_render_markdown_mermaid_fence_empty() -> None:
     assert '<pre class="mermaid"></pre>' in out
 
 
+def test_render_markdown_mermaid_fence_preserves_quoted_labels() -> None:
+    # Regression: dev plans quote Mermaid node/edge labels that start with
+    # `/`/`\` or contain `{{...}}` (docs/dev_plans/20260621-... and
+    # 20260707-...) because Mermaid reads those characters as shape
+    # delimiters and fails to parse otherwise. render_markdown must pass the
+    # literal double quotes through unescaped (html.escape(..., quote=False))
+    # so the browser's textContent handoff to mermaid.js still sees a quoted
+    # label — quote=True here would silently reintroduce the parse error by
+    # turning `"` into `&quot;` inside the fence.
+    src = (
+        "```mermaid\ngraph LR\n"
+        '    DPU["/dev-plan update"] --> X\n'
+        '    A -->|"{{PHASE_GOAL}}"| B\n'
+        "```\n"
+    )
+    out = G.render_markdown(src)
+    # html.escape(..., quote=False) escapes `>` to `&gt;` but leaves `"` alone —
+    # the browser decodes `&gt;` back to `>` when mermaid.js reads textContent,
+    # so this is the correct on-disk form, not a bug in the renderer.
+    assert 'DPU["/dev-plan update"]' in out
+    assert '--&gt;|"{{PHASE_GOAL}}"|' in out
+    assert "&quot;" not in out
+
+
 def test_templates_load_mermaid_runtime() -> None:
     from pathlib import Path as _P
 
