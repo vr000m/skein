@@ -188,7 +188,7 @@ On `/dev-plan create`, after Explore returns and **before phases are written**, 
 
 **Mermaid label escaping.** Mermaid reads certain character sequences inside a label as shape delimiters, not literal text, and errors when the sequence isn't a well-formed shape:
 - A node label starting with `/` or `\` right after the opening bracket (e.g. `DPU[/dev-plan update]` for a node naming the `/dev-plan update` slash-command) is read as the start of a parallelogram/trapezoid shape and fails with no matching closing `/]`.
-- An edge label containing `{{...}}` (e.g. `-->|{{PHASE_GOAL}}|` for a node naming a `{{PLACEHOLDER}}` template token) is read as the start of a hexagon shape and fails the same way.
+- An edge label containing `{{...}}` (e.g. `-->|{{PHASE_GOAL}}|` for an edge naming a `{{PLACEHOLDER}}` template token) is read as the start of a hexagon shape and fails the same way.
 
 These diagrams routinely label nodes and edges with slash-commands and `{{PLACEHOLDER}}` tokens, so quote any label containing `/`, `\`, or `{{`/`}}`: `DPU["/dev-plan update"]`, `-->|"{{PHASE_GOAL}}"|`. Verify by checking the rendered diagram in `/plan-view` output, not just by eye.
 

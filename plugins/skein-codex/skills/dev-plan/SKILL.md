@@ -191,7 +191,7 @@ On `skein:dev-plan create`, after Explore returns and **before phases are writte
 
 **Mermaid label escaping.** Mermaid reads certain character sequences inside a label as shape delimiters, not literal text, and errors when the sequence is not a well-formed shape:
 - A node label that starts with `/` or `\` right after the opening bracket (e.g. `DPU[/dev-plan update]` for a node naming the `skein:dev-plan update` skill command) is read as the start of a parallelogram/trapezoid shape and fails when there is no matching closing `/]`.
-- An edge label containing `{{...}}` (e.g. `-->|{{PHASE_GOAL}}|` for an edge naming a `{{PLACEHOLDER}}` template token) is read as the start of a hexagon shape and fails the same way; against `mermaid@11.16.0`, `mermaid.parse()` reports `Parse error ... got DIAMOND_START` for unquoted `-->|{{PHASE_GOAL}}|`, while quoted `-->|"{{PHASE_GOAL}}"|` parses fine.
+- An edge label containing `{{...}}` (e.g. `-->|{{PHASE_GOAL}}|` for an edge naming a `{{PLACEHOLDER}}` template token) is read as the start of a hexagon shape and fails the same way.
 
 These diagrams frequently label nodes and edges with Codex skill commands and `{{PLACEHOLDER}}` tokens, so wrap any label containing `/`, `\`, or `{{...}}` in quotes: `DPU["/dev-plan update"]`, `-->|"{{PHASE_GOAL}}"|`. Verify by checking the rendered diagram in `skein:plan-view` output, not just by eye.
 
