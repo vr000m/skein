@@ -205,7 +205,7 @@ Context lifecycle:
 - Sibling plans (gauntlet, conduct-skill) cross-linked; README/CHANGELOG/AGENTS.md updated.
 - Code reviewed and approved; tests passing; docs updated.
 
-<!-- reviewed: 2026-07-08 @ cab86cfc129c57cafeae8234ac743072fc5cde92 -->
+<!-- reviewed: 2026-07-17 @ c779f09367ed8dd3241a3dcdd21b7b18ecda6a44 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

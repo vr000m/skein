@@ -368,7 +368,7 @@ None.
 - `docs/skills_architecture/20260522-design-claude-skills-architecture.md` carries an up-to-date model/thinking-level routing table covering the touched skills, with a maintenance note.
 - Code reviewed, tests passing, documentation updated.
 
-<!-- reviewed: 2026-06-21 @ cd9ef23e74afdfe78e30868095d2266ff8bc4301 -->
+<!-- reviewed: 2026-07-17 @ b359b4fce33ed88afd0fdbf99fa7ffbfafaddde8 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
