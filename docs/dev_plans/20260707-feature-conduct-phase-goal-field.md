@@ -149,8 +149,8 @@ Component graph:
 ```mermaid
 graph LR
     PLAN[dev-plan phase: **Goal:** slot] -->|parsed by| CDT[conduct substitution]
-    CDT -->|{{PHASE_GOAL}}| IMPL[implementer subagent]
-    CDT -->|{{PHASE_GOAL}}| TW[test-writer subagent]
+    CDT -->|"{{PHASE_GOAL}}"| IMPL[implementer subagent]
+    CDT -->|"{{PHASE_GOAL}}"| TW[test-writer subagent]
     PLAN -->|design intent| FIX[review-gauntlet fixer Guardrail 1]
 ```
 
@@ -205,7 +205,7 @@ Context lifecycle:
 - Sibling plans (gauntlet, conduct-skill) cross-linked; README/CHANGELOG/AGENTS.md updated.
 - Code reviewed and approved; tests passing; docs updated.
 
-<!-- reviewed: 2026-07-08 @ cab86cfc129c57cafeae8234ac743072fc5cde92 -->
+<!-- reviewed: 2026-07-17 @ c779f09367ed8dd3241a3dcdd21b7b18ecda6a44 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

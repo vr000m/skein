@@ -4,6 +4,16 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-07-17
+
+### Fixed
+- **Two Mermaid parse errors in `docs/dev_plans/` Architecture & Call Flow diagrams, surfaced as "Syntax error in text" in `plan-view` output.** A node label starting with `/` right after the opening bracket (`DPU[/dev-plan update]`) is read by Mermaid as the start of a parallelogram/trapezoid shape; an edge label containing `{{...}}` (`-->|{{PHASE_GOAL}}|`) is read as the start of a hexagon shape — both fail to parse with no matching closing delimiter. Fixed by quoting the labels (`DPU["/dev-plan update"]`, `-->|"{{PHASE_GOAL}}"|`) in `20260621-feature-call-flow-diagrams-mermaid-review-loop.md` and `20260707-feature-conduct-phase-goal-field.md`. Confirmed via a live `mermaid@11.16.0` parser and by re-rendering the full `docs/dev_plans` corpus through `plan-view` (all 8 diagrams parse and render cleanly).
+- Refreshed the review-marker hash on both edited dev plans via `scripts/write-review-marker.py`, since the Architecture & Call Flow section sits above each plan's marker and editing it invalidates the hash by design.
+
+### Added
+- **"Mermaid label escaping" guardrail in `dev-plan` `SKILL.md` (both Claude and Codex mirrors).** Documents the two shape-delimiter gotchas above so future Architecture & Call Flow diagrams quote labels starting with `/`/`\` or containing `{{...}}` up front — these diagrams routinely name nodes/edges after slash-commands and `{{PLACEHOLDER}}` tokens, both of which trigger the bug.
+- A regression test (`plugins/skein/skills/plan-view/tests/test_parser.py::test_render_markdown_mermaid_fence_preserves_quoted_labels`) locking in that `render_markdown`'s `html.escape(quote=False)` call leaves quoted Mermaid labels intact through the HTML round-trip — the invariant this fix depends on.
+
 ## [0.5.2] - 2026-07-16
 
 ### Added
