@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- **`skein:review-plan`'s four judgment lenses (`architecture`, `sequencing`, `spec-and-testing`, `assumptions`) now dispatch at `model: fable` instead of `opus`**, with an automatic single-lens retry at `opus` if a fable dispatch errors out on a usage-limit/quota condition. Plan review is one of the highest-leverage judgment-tier tasks in the tree, so it's the first skill moved onto Fable now that it's more broadly available; other opus-pinned judgment spawns (`deep-review`, `spec-compliance`, `conduct`'s advisory reviewer) are unchanged pending their own evaluation. Updated `AGENTS.md`'s Model/Effort Policy and the `tests/parity/test-spawn-tiers.sh` pinned tier census to match (opus/high total 10 → 6, new fable/high total of 4).
+
 ## [0.5.3] - 2026-07-17
 
 ### Fixed

@@ -210,10 +210,17 @@ echo "=== R2 tier census: plugins/skein/skills/*/SKILL.md ==="
 echo
 
 # --- (1) Pinned total of opus/high why-comments across all skills ---
-# review-plan 4 + deep-review 4 (logic/security/spec/architecture) +
-# spec-compliance 1 + conduct 1 (reviewer) = 10
-assert_count_total "$SKILLS_DIR/*/SKILL.md" 'opus/high:' 10 \
+# deep-review 4 (logic/security/spec/architecture) + spec-compliance 1 +
+# conduct 1 (reviewer) = 6. review-plan's four judgment lenses moved to
+# fable/high (opus fallback) — see (1b) — so they no longer count here.
+assert_count_total "$SKILLS_DIR/*/SKILL.md" 'opus/high:' 6 \
 	"pinned total opus/high why-comments across plugins/skein/skills/*/SKILL.md"
+
+# --- (1b) Pinned total of fable/high why-comments (review-plan judgment lenses) ---
+assert_count "$SKILLS_DIR/review-plan/SKILL.md" 'fable/high:' 4 \
+	"review-plan fable/high why-comment count"
+assert_count_total "$SKILLS_DIR/*/SKILL.md" 'fable/high:' 4 \
+	"pinned total fable/high why-comments across plugins/skein/skills/*/SKILL.md"
 
 # --- (2) Per-skill expected effort:high counts (both quoting styles) ---
 # Trailing ([^/]|$) excludes prose like "effort: high/low" (a generic doc
