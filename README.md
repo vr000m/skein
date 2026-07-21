@@ -43,7 +43,7 @@ codex plugin add skein@skein
 
 The marketplace name `skein` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). To pick up upstream changes, re-add the marketplace (or `git pull` your clone if you installed from a local path) and re-run `/plugin install skein@skein` / `codex plugin add skein@skein` — there is no separate sync step.
 
-**Pinning to an existing release.** Tagged releases already exist through `v0.5.1`. Prefer pinning over tracking `main`: for example, pass `--ref v0.5.1` to `codex plugin marketplace add`, and check tagged releases on [the GitHub releases page](https://github.com/vr000m/skein/releases) for Claude Code (which resolves the marketplace at add time). Tracking `main` follows unreleased commits.
+**Pinning to an existing release.** Tagged releases already exist through `v0.5.3`. Prefer pinning over tracking `main`: for example, pass `--ref v0.5.3` to `codex plugin marketplace add`, and check tagged releases on [the GitHub releases page](https://github.com/vr000m/skein/releases) for Claude Code (which resolves the marketplace at add time). Tracking `main` follows unreleased commits.
 
 If you are developing against a local clone instead, swap the marketplace source for a path: `/plugin marketplace add /path/to/skein` (Claude) or `codex plugin marketplace add /path/to/skein` (Codex).
 
@@ -53,7 +53,7 @@ If you are migrating from the older flat layout (skills installed directly under
 
 skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); changes are recorded in [`CHANGELOG.md`](CHANGELOG.md) in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.5.1**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
+Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases); the latest is **v0.5.3**. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
 
 After merging a release-bearing PR and updating local `main`, use `skein:release` (`/release X.Y.Z` on Claude) to create or re-sync the tag and GitHub release. The skill previews the exact target, title, and body for confirmation before mutating remote state; do not hand-compose the old `git tag` + `gh release create` sequence.
 
