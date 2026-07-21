@@ -268,7 +268,7 @@ assert_present "$FANOUT_SH" '\-\-effort' "fan-out.sh --effort flag handling pres
 # The test-writer topology is currently gated (see CODEX_MIRROR_BACKLOG.md,
 # 2026-07-04 entry) but its intended tier must still be documented in
 # agent-prompt.md so the annotation survives once the gate is confirmed. This
-# does not change the pinned opus/high total above (10) — sonnet/medium is a
+# does not change the pinned opus/high total above (6) — sonnet/medium is a
 # mechanical tier, not a judgment tier.
 FANOUT_AGENT_PROMPT="$SKILLS_DIR/fan-out/agent-prompt.md"
 assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
