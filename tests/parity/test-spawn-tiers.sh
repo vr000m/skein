@@ -222,6 +222,15 @@ assert_count "$SKILLS_DIR/review-plan/SKILL.md" 'fable/high:' 4 \
 assert_count_total "$SKILLS_DIR/*/SKILL.md" 'fable/high:' 4 \
 	"pinned total fable/high why-comments across plugins/skein/skills/*/SKILL.md"
 
+# --- (1c) review-plan judgment-lens headers actually carry model: fable ---
+# The why-comment count above (1b) only pins the `<!-- fable/high: ... -->`
+# rationale marker, not the `#### <Lens> Lens (model: fable, ...)` header
+# itself — mirroring the explicit MODEL_HAIKU_RE check at (4), which does
+# the same for the haiku lens. Without this, a header left at `model: opus`
+# while its why-comment said `fable/high:` would slip past (1b) undetected.
+assert_count "$SKILLS_DIR/review-plan/SKILL.md" '^#### .* Lens \(model: fable,' 4 \
+	"review-plan judgment-lens headers carry model: fable"
+
 # --- (2) Per-skill expected effort:high counts (both quoting styles) ---
 # Trailing ([^/]|$) excludes prose like "effort: high/low" (a generic doc
 # sentence describing both tiers, not a per-lens annotation) from the count.
