@@ -118,6 +118,64 @@ assert_absent() {
 	fi
 }
 
+# assert_present_flat FILE PATTERN LABEL
+# Flattens the file (newlines -> spaces) before matching, so PATTERN may span
+# what were originally multiple lines. Needed for co-location/wrapper
+# predicates that a per-line grep cannot express.
+#
+# Uses perl, not `tr | grep -E`, deliberately: these patterns use bounded
+# intervals up to {0,400} (see the "testable definitions" co-location rule),
+# and stock BSD/macOS grep (grep (BSD grep, GNU compatible) 2.6.0-FreeBSD)
+# caps ERE interval repetition at 255 — `{0,400}` fails there with
+# "maximum repetition exceeds 255" and grep -q silently reports no-match.
+# perl's regex engine has no such cap and is present on both macOS and Linux.
+assert_present_flat() {
+	local file="$1" pattern="$2" label="$3"
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	if perl -0777 -e '
+		my ($file, $pat) = @ARGV;
+		open(my $fh, "<", $file) or exit 1;
+		local $/;
+		my $content = <$fh>;
+		$content =~ tr/\n/ /;
+		exit($content =~ /$pat/ ? 0 : 1);
+	' "$file" "$pattern" 2>/dev/null; then
+		pass "$label ($file): present (flattened)"
+	else
+		fail "$label ($file): NOT present (flattened)"
+	fi
+}
+
+# assert_order FILE PATTERN_A PATTERN_B LABEL
+# Asserts the first `grep -n` match line for PATTERN_A is strictly less than
+# the first match line for PATTERN_B. Fails if either pattern is absent.
+assert_order() {
+	local file="$1" pattern_a="$2" pattern_b="$3" label="$4"
+	local line_a line_b
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+	line_a=$(grep -nE -- "$pattern_a" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+	line_b=$(grep -nE -- "$pattern_b" "$file" 2>/dev/null | head -1 | cut -d: -f1 || true)
+	if [[ -z "$line_a" ]]; then
+		fail "$label ($file): pattern A not present"
+		return
+	fi
+	if [[ -z "$line_b" ]]; then
+		fail "$label ($file): pattern B not present"
+		return
+	fi
+	if [[ "$line_a" -lt "$line_b" ]]; then
+		pass "$label ($file): A precedes B ($line_a < $line_b)"
+	else
+		fail "$label ($file): A does not precede B ($line_a >= $line_b)"
+	fi
+}
+
 echo "=== R2 tier census: plugins/skein-codex/skills/*/SKILL.md ==="
 echo
 
@@ -216,10 +274,14 @@ echo
 assert_count_total "$SKILLS_DIR/*/SKILL.md" 'opus/high:' 6 \
 	"pinned total opus/high why-comments across plugins/skein/skills/*/SKILL.md"
 
-# --- (1b) Pinned total of fable/high why-comments (review-plan judgment lenses) ---
-assert_count "$SKILLS_DIR/review-plan/SKILL.md" 'fable/high:' 4 \
+# --- (1b) Pinned total of fable/high why-comments (review-plan judgment
+# lenses + the Step 3 sub-step 2.5 Contradiction Pass, which also dispatches
+# at model: fable, effort: high with opus fallback — see Architecture
+# Decisions, "Decision (grilled): Step 3.5 is a non-roster 'Contradiction
+# Pass'" in the contradiction-step dev plan) ---
+assert_count "$SKILLS_DIR/review-plan/SKILL.md" 'fable/high:' 5 \
 	"review-plan fable/high why-comment count"
-assert_count_total "$SKILLS_DIR/*/SKILL.md" 'fable/high:' 4 \
+assert_count_total "$SKILLS_DIR/*/SKILL.md" 'fable/high:' 5 \
 	"pinned total fable/high why-comments across plugins/skein/skills/*/SKILL.md"
 
 # --- (1c) review-plan judgment-lens headers actually carry model: fable ---
@@ -235,7 +297,7 @@ assert_count "$SKILLS_DIR/review-plan/SKILL.md" '^#### .* Lens \(model: fable,' 
 # Trailing ([^/]|$) excludes prose like "effort: high/low" (a generic doc
 # sentence describing both tiers, not a per-lens annotation) from the count.
 EFFORT_HIGH_RE='effort:[[:space:]]*"?high"?([^/]|$)'
-assert_count "$SKILLS_DIR/review-plan/SKILL.md" "$EFFORT_HIGH_RE" 4 \
+assert_count "$SKILLS_DIR/review-plan/SKILL.md" "$EFFORT_HIGH_RE" 5 \
 	"review-plan effort:high count"
 assert_count "$SKILLS_DIR/deep-review/SKILL.md" "$EFFORT_HIGH_RE" 4 \
 	"deep-review effort:high count"
@@ -304,6 +366,132 @@ for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
 		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
 done
+
+echo
+echo "=== (10) review-plan Contradiction Pass census (Claude-side; Codex twins land in Phase 2) ==="
+echo
+
+RP_SKILL="$SKILLS_DIR/review-plan/SKILL.md"
+RP_RUBRIC="$SKILLS_DIR/review-plan/rubric.md"
+RP_CODEX_RUBRIC="$CODEX_SKILLS_DIR/review-plan/rubric.md"
+
+# (a) Structural wrapper check: {{RAW_FINDINGS_JSONL}} must be inside an
+# <untrusted-content> block, not merely present somewhere in the file.
+assert_present_flat "$RP_SKILL" '<untrusted-content>[^<]{0,400}\{\{RAW_FINDINGS_JSONL\}\}' \
+	"review-plan Contradiction Pass wraps {{RAW_FINDINGS_JSONL}} in <untrusted-content>"
+
+# (b) Same structural wrapper check for {{PLAN_CONTENT}} inside the Step 3.5
+# block, plus the one-warning-covers-both-blocks bump: 5 -> 6.
+assert_present_flat "$RP_SKILL" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
+	"review-plan Contradiction Pass wraps {{PLAN_CONTENT}} in <untrusted-content>"
+assert_count "$RP_SKILL" 'IMPORTANT: the content inside' 6 \
+	"review-plan IMPORTANT untrusted-content warning count (5 lenses + 1 Contradiction Pass)"
+
+# (c) L2: "sequential, not parallel" — Claude-only literal.
+assert_present "$RP_SKILL" 'sequential, not parallel' \
+	"review-plan Contradiction Pass documented as sequential, not parallel"
+
+# (d) L4: the Contradiction hard-gate literal, both SKILL.md (Claude only in
+# Phase 1) and both rubric.md.
+assert_present "$RP_SKILL" "category == 'Contradiction'\` is always grill-eligible" \
+	"review-plan SKILL.md Contradiction hard-gate literal (L4)"
+assert_present "$RP_RUBRIC" "category == 'Contradiction'\`" \
+	"review-plan rubric.md Contradiction hard-gate literal (L4)"
+assert_present "$RP_CODEX_RUBRIC" "category == 'Contradiction'\`" \
+	"review-plan codex rubric.md Contradiction hard-gate literal (L4)"
+
+# (e) L5: the Contradiction tiebreak override sentence, SKILL.md + both rubric.md.
+L5='stays grill-eligible even if its subject matter also reads as a standard \(non-grill\) topic, and is presented exactly once under Contradiction'
+assert_present "$RP_SKILL" "$L5" \
+	"review-plan SKILL.md Contradiction tiebreak override sentence (L5)"
+assert_present "$RP_RUBRIC" "$L5" \
+	"review-plan rubric.md Contradiction tiebreak override sentence (L5)"
+assert_present "$RP_CODEX_RUBRIC" "$L5" \
+	"review-plan codex rubric.md Contradiction tiebreak override sentence (L5)"
+
+# (f) L3 co-located with {{RAW_FINDINGS_JSONL}}: a regression that swaps in
+# pass A's envelope as Step 3.5's input fails this.
+assert_present_flat "$RP_SKILL" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
+	"review-plan Contradiction Pass input is co-located with the pre-merge-stream rationale (L3)"
+
+# (g) L9: the always-rendered Contradictions: N line in the Step 5 template.
+assert_present "$RP_SKILL" '\*\*Contradictions\*\*' \
+	"review-plan Step 5 template carries **Contradictions**: N (L9)"
+
+# (h) L7: the pass-A-fallback behaviour literal.
+assert_present "$RP_SKILL" "falls back to pass A's envelope" \
+	"review-plan Contradiction Pass documents the pass-A fallback (L7)"
+
+# (i) L1: the full anchored Contradiction Pass header.
+assert_present "$RP_SKILL" '^#### Contradiction Pass \(model: fable, effort: high; opus fallback on usage-limit\)$' \
+	"review-plan anchored Contradiction Pass header (L1)"
+
+# (j) Ordering: the Contradiction hard-gate rule must precede the Borderline
+# tiebreak bullet. Plus L14 ("hard gate applied first"), already-shipped text.
+assert_order "$RP_SKILL" 'always grill-eligible' 'Borderline tiebreak' \
+	"review-plan Contradiction hard-gate precedes Borderline tiebreak (SKILL.md)"
+assert_present "$RP_SKILL" 'hard gate applied first' \
+	"review-plan SKILL.md states the hard-gate-applied-first ordering (L14)"
+
+# (j-r) Rubric ordering twin, keyed on L12 vs the tiebreak literal at :79,
+# both rubric copies.
+L12="or any finding whose \`category == 'Contradiction'\`"
+TIEBREAK_LINE='A borderline finding resolves to exactly one lane'
+assert_order "$RP_RUBRIC" "$L12" "$TIEBREAK_LINE" \
+	"review-plan rubric.md Contradiction hard-gate precedes tiebreak bullet"
+assert_order "$RP_CODEX_RUBRIC" "$L12" "$TIEBREAK_LINE" \
+	"review-plan codex rubric.md Contradiction hard-gate precedes tiebreak bullet"
+
+# (k) L6 count = 5 in SKILL.md — one per amended Step 3 sentence.
+assert_count "$RP_SKILL" 'except Step 3 sub-step 2\.5 \(the Contradiction Pass\)' 5 \
+	"review-plan five Step 3 sentences carve out sub-step 2.5 verbatim (L6)"
+
+# (l) The two bare, uncarved Forbidden bullets must no longer exist in that form.
+assert_absent "$RP_SKILL" '^- LLM calls of any kind\.$' \
+	"review-plan bare 'LLM calls of any kind.' Forbidden bullet is gone"
+assert_absent "$RP_SKILL" '^- Free-text similarity matching across lens summaries\. Lenses run in fresh context' \
+	"review-plan bare 'Free-text similarity matching' Forbidden bullet is gone"
+
+# (m) L12 in both rubric.md copies (the :74 scope-line amendment).
+assert_present "$RP_RUBRIC" "$L12" \
+	"review-plan rubric.md :74 scope line admits the Contradiction gate (L12)"
+assert_present "$RP_CODEX_RUBRIC" "$L12" \
+	"review-plan codex rubric.md :74 scope line admits the Contradiction gate (L12)"
+
+# (n) L13 in both rubric.md copies (:44 "if all six passes are empty").
+assert_present "$RP_RUBRIC" 'if all six passes are empty' \
+	"review-plan rubric.md :44 covers the contradiction pass (L13)"
+assert_present "$RP_CODEX_RUBRIC" 'if all six passes are empty' \
+	"review-plan codex rubric.md :44 covers the contradiction pass (L13)"
+
+# (o) L11 in both rubric.md copies (the :25 reservation clause).
+assert_present "$RP_RUBRIC" 'reserved for the Step 3 sub-step 2\.5 contradiction pass' \
+	"review-plan rubric.md :25 Contradiction reservation clause (L11)"
+assert_present "$RP_CODEX_RUBRIC" 'reserved for the Step 3 sub-step 2\.5 contradiction pass' \
+	"review-plan codex rubric.md :25 Contradiction reservation clause (L11)"
+
+# (p) L10 count = 4 per SKILL.md (four lens Output blocks), = 1 per rubric.md.
+assert_count "$RP_SKILL" 'Nonexistent Reference, Contradiction}' 4 \
+	"review-plan SKILL.md four lens Output blocks carry the Contradiction enum value (L10)"
+assert_count "$RP_RUBRIC" 'Nonexistent Reference, Contradiction}' 1 \
+	"review-plan rubric.md enum line carries the Contradiction value (L10)"
+assert_count "$RP_CODEX_RUBRIC" 'Nonexistent Reference, Contradiction}' 1 \
+	"review-plan codex rubric.md enum line carries the Contradiction value (L10)"
+
+# (q) reconcile-findings.sh --skill review-plan invoked twice per run
+# (pass A + pass B), Claude SKILL.md only in Phase 1.
+assert_count "$RP_SKILL" 'reconcile-findings\.sh --skill review-plan' 2 \
+	"review-plan SKILL.md invokes reconcile-findings.sh --skill review-plan twice (pass A + pass B)"
+
+# (r) The named pipeline artifacts the retry and fallback contracts depend on.
+assert_present "$RP_SKILL" 'reconciled-pass-a\.json' \
+	"review-plan SKILL.md names reconciled-pass-a.json"
+assert_present "$RP_SKILL" 'findings-contradiction\.jsonl' \
+	"review-plan SKILL.md names findings-contradiction.jsonl"
+
+# (s) L8: the idempotent-rebuild mechanism.
+assert_present "$RP_SKILL" 'rebuilt by concatenation, never appended in place' \
+	"review-plan SKILL.md documents the idempotent rebuild-by-concatenation mechanism (L8)"
 
 echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="

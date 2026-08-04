@@ -19,9 +19,11 @@
 # `scripts/lib/persist-common.sh` — see that file for the guard/write
 # contract in detail.
 #
-# `plan_hash` is a snapshot of the plan at Step 3 (reconciliation) time — the
-# caller computes it (typically `git hash-object <plan>`) and passes it in;
-# this script never re-derives or re-hashes it.
+# `plan_hash` is a snapshot of the plan taken immediately before Step 3
+# sub-step 2 (reconciliation pass A); with two reconciliation passes inside
+# Step 3 (review-plan's Contradiction Pass adds a pass B), this names the
+# earlier one. The caller computes it (typically `git hash-object <plan>`)
+# and passes it in; this script never re-derives or re-hashes it.
 #
 # Exit codes:
 #   0  — wrote the state file. Prints the absolute path written to stdout.
