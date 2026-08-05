@@ -356,13 +356,12 @@ Between the conductor's lock release at `awaiting_ci_parity` and the orchestrato
 
 ## Review Gauntlet Auto-Chain
 
-After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | quick | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
+After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
 
 ### Activation
 
 - **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
-- **`quick` → invoke `review-gauntlet --plan <this plan>` scoped to the code-review gate only**, single pass, no convergence loop.
-- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm.
+- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — `review-gauntlet` has no gate `/code-review` can run through anymore (see its SKILL.md); run `/code-review xhigh --fix` yourself when you want that fast pass.
 
 ### Trigger point
 

@@ -13,7 +13,7 @@ Use this template when creating new development plans.
 **Branch**: [branch-name]
 **Created**: YYYY-MM-DD
 **Completed**: YYYY-MM-DD (fill when done)
-**Review Gates**: none | quick | full (optional, default `none` — above-marker header field; `/conduct`/`/fan-out` read it to decide whether to auto-chain `review-gauntlet`. Changing it after `/review-plan` invalidates the marker hash, same as any other header-contract edit.)
+**Review Gates**: none | full (optional, default `none` — above-marker header field; `/conduct`/`/fan-out` read it to decide whether to auto-chain `review-gauntlet`. Changing it after `/review-plan` invalidates the marker hash, same as any other header-contract edit.)
 
 ## Objective
 
