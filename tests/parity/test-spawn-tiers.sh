@@ -176,6 +176,25 @@ assert_order() {
 	fi
 }
 
+# contradiction_pass_excerpt FILE
+# Extracts the Contradiction Pass section (from its h4 header to the next
+# "### " heading, inclusive) into a temp file and echoes its path. Some
+# wrapper/co-location assertions must be scoped to this excerpt rather than
+# the whole SKILL.md — the five roster lenses also wrap {{PLAN_CONTENT}} in
+# <untrusted-content>, so an unscoped check would still pass even if the
+# Contradiction Pass's own block never wrapped it at all.
+CONTRADICTION_EXCERPT_TMPFILES=()
+trap 'rm -f "${CONTRADICTION_EXCERPT_TMPFILES[@]}"' EXIT
+
+contradiction_pass_excerpt() {
+	local file="$1"
+	local tmp
+	tmp=$(mktemp)
+	CONTRADICTION_EXCERPT_TMPFILES+=("$tmp")
+	awk '/^#### Contradiction Pass/{p=1} p{print} p && /^### / && !/^#### Contradiction Pass/{exit}' "$file" >"$tmp"
+	echo "$tmp"
+}
+
 echo "=== R2 tier census: plugins/skein-codex/skills/*/SKILL.md ==="
 echo
 
@@ -383,8 +402,12 @@ assert_present_flat "$RP_SKILL" '<untrusted-content>[^<]{0,400}\{\{RAW_FINDINGS_
 	"review-plan Contradiction Pass wraps {{RAW_FINDINGS_JSONL}} in <untrusted-content>"
 
 # (b) Same structural wrapper check for {{PLAN_CONTENT}} inside the Step 3.5
-# block, plus the one-warning-covers-both-blocks bump: 5 -> 6.
-assert_present_flat "$RP_SKILL" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
+# block, plus the one-warning-covers-both-blocks bump: 5 -> 6. Scoped to the
+# Contradiction Pass excerpt — the five roster lenses also wrap {{PLAN_CONTENT}}
+# in <untrusted-content>, so an unscoped check would pass even on a Contradiction
+# Pass block that never wraps its own {{PLAN_CONTENT}}.
+RP_CONTRADICTION_EXCERPT=$(contradiction_pass_excerpt "$RP_SKILL")
+assert_present_flat "$RP_CONTRADICTION_EXCERPT" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
 	"review-plan Contradiction Pass wraps {{PLAN_CONTENT}} in <untrusted-content>"
 assert_count "$RP_SKILL" 'IMPORTANT: the content inside' 6 \
 	"review-plan IMPORTANT untrusted-content warning count (5 lenses + 1 Contradiction Pass)"
@@ -412,8 +435,10 @@ assert_present "$RP_CODEX_RUBRIC" "$L5" \
 	"review-plan codex rubric.md Contradiction tiebreak override sentence (L5)"
 
 # (f) L3 co-located with {{RAW_FINDINGS_JSONL}}: a regression that swaps in
-# pass A's envelope as Step 3.5's input fails this.
-assert_present_flat "$RP_SKILL" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
+# pass A's envelope as Step 3.5's input fails this. Scoped to the excerpt so
+# this can only match inside the Contradiction Pass's own section, not an
+# explanatory sentence elsewhere that happens to mention the same phrase.
+assert_present_flat "$RP_CONTRADICTION_EXCERPT" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
 	"review-plan Contradiction Pass input is co-located with the pre-merge-stream rationale (L3)"
 
 # (g) L9: the always-rendered Contradictions: N line in the Step 5 template.
@@ -506,7 +531,9 @@ assert_present_flat "$RP_CODEX_SKILL" '<untrusted-content>[^<]{0,400}\{\{RAW_FIN
 	"codex review-plan Contradiction Pass wraps {{RAW_FINDINGS_JSONL}} in <untrusted-content>"
 
 # (b) Codex twin: {{PLAN_CONTENT}} wrapper + one-warning-covers-both bump: 5 -> 6.
-assert_present_flat "$RP_CODEX_SKILL" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
+# Scoped to the Contradiction Pass excerpt for the same reason as the Claude twin.
+RP_CODEX_CONTRADICTION_EXCERPT=$(contradiction_pass_excerpt "$RP_CODEX_SKILL")
+assert_present_flat "$RP_CODEX_CONTRADICTION_EXCERPT" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
 	"codex review-plan Contradiction Pass wraps {{PLAN_CONTENT}} in <untrusted-content>"
 assert_count "$RP_CODEX_SKILL" 'IMPORTANT: the content inside' 6 \
 	"codex review-plan IMPORTANT untrusted-content warning count (5 lenses + 1 Contradiction Pass)"
@@ -524,8 +551,9 @@ assert_present "$RP_CODEX_SKILL" "category == 'Contradiction'\` is always grill-
 assert_present "$RP_CODEX_SKILL" "$L5" \
 	"codex review-plan SKILL.md Contradiction tiebreak override sentence (L5)"
 
-# (f) L3 co-located with {{RAW_FINDINGS_JSONL}}.
-assert_present_flat "$RP_CODEX_SKILL" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
+# (f) L3 co-located with {{RAW_FINDINGS_JSONL}}. Scoped to the excerpt so this
+# can only match inside the Contradiction Pass's own section.
+assert_present_flat "$RP_CODEX_CONTRADICTION_EXCERPT" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
 	"codex review-plan Contradiction Pass input is co-located with the pre-merge-stream rationale (L3)"
 
 # (g) L9 twin.

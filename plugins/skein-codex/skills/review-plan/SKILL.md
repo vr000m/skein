@@ -469,7 +469,9 @@ Inherit the harness-selected model; request `reasoning_effort=high` when support
    Return findings in the existing per-lens schema `{lens, severity, category, file, line, summary,
    evidence, suggestion}`, with `lens: "contradiction"` and `category: Contradiction`. The schema has
    only one file/line anchor, so `evidence` must name BOTH conflicting locations in prose (plan line +
-   plan line, or plan line + a specific other lens's finding).
+   plan line, or plan line + a specific other lens's finding). Do NOT include an `auto_fix` block —
+   Contradiction findings are never auto-fixable; a contradiction is a judgment call about which side
+   is correct, never a mechanical rewrite.
 
    Anchoring policy (apply this at emission time — do not rely on downstream cleanup): anchor each
    finding at the plan line of its first conflicting location. No two Contradiction findings in this
