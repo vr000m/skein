@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-08-05
+
 ### Added
 - **`skein:review-plan` gains a Contradiction Pass (Step 3 sub-step 2.5), both mirrors.** A single fresh-context agent runs after the five parallel lenses reconcile, fed the plan and the raw pre-merge findings stream, and flags plan-internal or cross-lens logical conflicts as a new `category: Contradiction` finding. Its output is re-reconciled through the existing `reconcile-findings.sh` (never hand-merged) and hard-routes to `skein:grill`'s interview protocol at Step 6.4 regardless of subject matter. Step 5's report template gains an always-rendered `**Contradictions**: N` line. Cost: one additional sequential `fable/high` call (opus fallback) per run, five total. See `docs/dev_plans/20260802-feature-review-plan-contradiction-step.md`.
 
