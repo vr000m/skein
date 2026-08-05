@@ -240,6 +240,7 @@ After post-merge integration-seam verification finishes (option 1's final step a
 
 - **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation, no additional dispatch. Current merge behavior is byte-unchanged on every plan that does not explicitly opt in.
 - **`full` → invoke `review-gauntlet` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — run `/code-review xhigh --fix` yourself when you want that fast pass.
+- **Any other value (including the retired `quick`, or a typo)**: treat exactly like `none` — no invocation — but surface a one-line warning naming the unrecognized value and the plan path, so a plan author who typed a stale `quick` is told their opt-in silently did not fire, instead of assuming it ran.
 
 **Dispatch:** `review-gauntlet` is a conductor in its own right — its multi-spawn gates run at its own top level, in its own context (same reasoning as conduct's hook). Fan-out invokes it directly as a top-level skill against the merged branch, not as an `Agent`-tool subagent spawn, and not as a further fan-out tier (it does not count against the Delegation Depth one-level rule above). Await its terminal report before continuing to Phase 7.
 

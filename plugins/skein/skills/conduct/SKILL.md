@@ -362,6 +362,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 - **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
 - **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — `review-gauntlet` has no gate `/code-review` can run through anymore (see its SKILL.md); run `/code-review xhigh --fix` yourself when you want that fast pass.
+- **Any other value (including the retired `quick`, or a typo)**: treat exactly like `none` — no invocation, no change to `status` — but surface a one-line warning to the operator naming the unrecognized value and the plan path, so a plan author who typed a stale `quick` (or a typo) is told their opt-in silently did not fire, instead of assuming it ran.
 
 ### Trigger point
 

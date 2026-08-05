@@ -101,6 +101,9 @@ assert_not_grep "$SKILL_MD" 'quick.*scoped to the code-review gate|code-review g
 assert_grep "$SKILL_MD" 'full.*(all|logical) gate slots' \
 	"SKILL.md documents \`full\` = all logical gate slots"
 
+assert_grep "$SKILL_MD" 'unrecognized value' \
+	"SKILL.md documents the unrecognized-value guard (retired \`quick\`/typo -> treated as \`none\`, with a warning)"
+
 # --- Criterion 3: strict opt-in -----------------------------------------
 
 assert_grep "$SKILL_MD" '(absent|none)[^.\n]*(no gauntlet|unchanged|opt.in)|opt.in[^.\n]*(absent|none)' \

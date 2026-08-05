@@ -124,6 +124,12 @@ else
 	fail "Phase 6 section does not document \`full\` = all (logical) gate slots"
 fi
 
+if echo "$phase6_to_7" | grep -Eqi -- 'unrecognized value'; then
+	pass "Phase 6 section documents the unrecognized-value guard (retired \`quick\`/typo -> treated as \`none\`, with a warning)"
+else
+	fail "Phase 6 section does not document the unrecognized-value guard"
+fi
+
 # --- Criterion 3: no-op on the PR-per-task exit path ---------------------
 
 if echo "$phase6_to_7" | grep -Eqi -- 'option 2|individual PRs|PR-per-task'; then
