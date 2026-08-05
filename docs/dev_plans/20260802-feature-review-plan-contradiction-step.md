@@ -1,12 +1,12 @@
 # Task: Add a Contradiction-Detection Step to `/review-plan`
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/review-plan-contradiction-step
 **Created**: 2026-08-02
-**Completed**:
+**Completed**: 2026-08-05
 **Review Gates**: none
 
 ## Objective
@@ -367,3 +367,9 @@ Ran the dogfood dispatch manually (Agent-tool orchestration mirroring Step 2 →
 - **2026-08-05 (fresh process) — blocker resolved; both Acceptance Criteria closed.** A genuinely new `claude` process (new terminal invocation, per the two prior entries' prescribed fix) resolved `skein@skein` to `gitCommitSha: 3f74b9f...` (this branch's HEAD, confirmed via `installed_plugins.json` before touching anything — no reinstall was even needed, since the local-source marketplace registration from the prior session was already durable across process restarts). Invoking `skein:review-plan` via the `Skill` tool against a scratch copy of this plan injected the full post-Phase-1/2 prose (`#### Contradiction Pass` header, `{{RAW_FINDINGS_JSONL}}`, two-pass reconciliation, `**Contradictions**: N` template line) — confirming the skill-registry cache is scoped to the OS process specifically, and a fresh process (not `/clear`, not a mid-session plugin reinstall) is the correct and sufficient fix. Manually orchestrated the dogfood dispatch (5 lens agents → `reconcile-findings.sh` pass A → Step 3.5 Contradiction Pass agent → concatenation rebuild → pass B → `audit-auto-fix-eligibility.sh`) since a full autonomous `/review-plan` run through this session's own Skill-tool invocation would itself dispatch nested agents this session cannot directly observe the transcript of; the manual orchestration reproduces every step in the injected prose exactly and gives direct transcript visibility into the Step 3.5 dispatch. Full results, including the separate Phase 3 synthetic-finding routing check with the plan's prescribed Variant 1/Variant 2 rows, are recorded verbatim in Test Results above. Both Acceptance Criteria ("demonstrably dispatches Step 3.5" and the Phase 3 synthetic-finding routing check) are now ticked. The two blocked-attempt entries above are left in place as the record of the root-cause investigation; they are not superseded, only resolved.
 
 ## Final Results
+
+Shipped a new Step 3.5 ("Detect Contradictions") sub-step inside `/review-plan`'s Step 3, in both Claude and Codex mirrors. A single fresh-context Contradiction Pass agent (`model: fable, effort: high`, opus fallback) runs after the five parallel lenses reconcile (pass A), fed the plan and the raw pre-merge `findings-lenses.jsonl` stream, and emits `category: Contradiction` findings for plan-internal and cross-lens logical conflicts. Its output is never hand-merged — it's written to `findings-contradiction.jsonl`, `findings.jsonl` is rebuilt by concatenation, and the combined stream is re-reconciled (pass B) through the existing `reconcile-findings.sh`, keeping that script the sole producer of `summary`, `Lenses:`, canonical sort, and `related` cross-references. `Contradiction` findings hard-route to `skein:grill`'s interview protocol at Step 6.4 regardless of subject matter, mirroring the existing `Nonexistent Reference → standard` hard gate. Step 5's report template gains an always-rendered `**Contradictions**: N` line (including N=0) so `--batch`/CI runs surface the signal even though they never grill anything.
+
+Zero changes to `reconcile-findings.sh`, `audit-auto-fix-eligibility.sh`, or `auto-fix-allowlist.json` — `category` was never enum-validated in code, so the new value round-trips through the existing pipeline unmodified. `Contradiction` findings are never auto-fixable.
+
+Both Acceptance Criteria that required a live run — "demonstrably dispatches Step 3.5" and the Phase 3 synthetic-finding routing check — were blocked twice by a process-scoped Claude Code skill-registry cache (a plugin reinstall or `/clear` mid-process does not hot-reload skill instruction text) and closed on the third attempt in a genuinely fresh OS process. All other Acceptance Criteria, the full `just parity-tests`/`just reconciliation-tests` suites, and `tests/auto-fix/test-review-plan-marker-write.sh` pass. See Test Results for the verbatim dogfood and routing-check evidence, and Issues & Solutions for the full blocker/resolution history.
