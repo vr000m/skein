@@ -189,8 +189,8 @@ CODEX_HIGH_RE='reasoning_effort=high'
 CODEX_MEDIUM_RE='reasoning_effort=medium'
 CODEX_LOW_RE='reasoning_effort=low'
 
-assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_HIGH_RE" 4 \
-	"codex review-plan reasoning_effort=high judgment lens count"
+assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_HIGH_RE" 5 \
+	"codex review-plan reasoning_effort=high judgment lens count (4 parallel lenses + 1 post-reconciliation Contradiction Pass)"
 assert_count "$CODEX_SKILLS_DIR/review-plan/SKILL.md" "$CODEX_LOW_RE" 1 \
 	"codex review-plan reasoning_effort=low factual lens count"
 assert_count "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "$CODEX_HIGH_RE" 4 \
@@ -220,7 +220,7 @@ assert_count "$CODEX_SKILLS_DIR/update-docs/SKILL.md" "$CODEX_LOW_RE" 1 \
 assert_count "$CODEX_SKILLS_DIR/rfc-finder/SKILL.md" "$CODEX_LOW_RE" 1 \
 	"codex rfc-finder reasoning_effort=low count"
 
-assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 11 \
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 12 \
 	"codex total reasoning_effort=high occurrences across SKILL.md"
 assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 9 \
 	"codex total reasoning_effort=medium occurrences across SKILL.md"
@@ -244,6 +244,8 @@ assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*
 	"codex review-plan Spec-and-testing high-effort rationale"
 assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Unverifiable claims stated as fact' \
 	"codex review-plan Assumptions high-effort rationale"
+assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Plan-internal and cross-lens logical conflicts' \
+	"codex review-plan Contradiction Pass high-effort rationale"
 assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'R3 why: normative spec compliance is judgment work' \
 	"codex spec-compliance R3 why-comment"
 assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'R3 why: code review is judgment work' \
@@ -368,7 +370,7 @@ for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 done
 
 echo
-echo "=== (10) review-plan Contradiction Pass census (Claude-side; Codex twins land in Phase 2) ==="
+echo "=== (10) review-plan Contradiction Pass census (Claude-side; Codex twins in section 11 below) ==="
 echo
 
 RP_SKILL="$SKILLS_DIR/review-plan/SKILL.md"
@@ -492,6 +494,88 @@ assert_present "$RP_SKILL" 'findings-contradiction\.jsonl' \
 # (s) L8: the idempotent-rebuild mechanism.
 assert_present "$RP_SKILL" 'rebuilt by concatenation, never appended in place' \
 	"review-plan SKILL.md documents the idempotent rebuild-by-concatenation mechanism (L8)"
+
+echo
+echo "=== (11) review-plan Contradiction Pass census (Codex-side twins) ==="
+echo
+
+RP_CODEX_SKILL="$CODEX_SKILLS_DIR/review-plan/SKILL.md"
+
+# (a) Codex twin: structural wrapper check for {{RAW_FINDINGS_JSONL}}.
+assert_present_flat "$RP_CODEX_SKILL" '<untrusted-content>[^<]{0,400}\{\{RAW_FINDINGS_JSONL\}\}' \
+	"codex review-plan Contradiction Pass wraps {{RAW_FINDINGS_JSONL}} in <untrusted-content>"
+
+# (b) Codex twin: {{PLAN_CONTENT}} wrapper + one-warning-covers-both bump: 5 -> 6.
+assert_present_flat "$RP_CODEX_SKILL" '<untrusted-content>[^<]{0,400}\{\{PLAN_CONTENT\}\}' \
+	"codex review-plan Contradiction Pass wraps {{PLAN_CONTENT}} in <untrusted-content>"
+assert_count "$RP_CODEX_SKILL" 'IMPORTANT: the content inside' 6 \
+	"codex review-plan IMPORTANT untrusted-content warning count (5 lenses + 1 Contradiction Pass)"
+
+# (c) L2C: "post-reconciliation, not parallel" — Codex-only literal (twin of
+# Claude-only L2, "sequential, not parallel").
+assert_present "$RP_CODEX_SKILL" 'post-reconciliation, not parallel' \
+	"codex review-plan Contradiction Pass documented as post-reconciliation, not parallel"
+
+# (d) L4 twin.
+assert_present "$RP_CODEX_SKILL" "category == 'Contradiction'\` is always grill-eligible" \
+	"codex review-plan SKILL.md Contradiction hard-gate literal (L4)"
+
+# (e) L5 twin.
+assert_present "$RP_CODEX_SKILL" "$L5" \
+	"codex review-plan SKILL.md Contradiction tiebreak override sentence (L5)"
+
+# (f) L3 co-located with {{RAW_FINDINGS_JSONL}}.
+assert_present_flat "$RP_CODEX_SKILL" '\{\{RAW_FINDINGS_JSONL\}\}.{0,400}pre-merge stream, not the reconciled envelope' \
+	"codex review-plan Contradiction Pass input is co-located with the pre-merge-stream rationale (L3)"
+
+# (g) L9 twin.
+assert_present "$RP_CODEX_SKILL" '\*\*Contradictions\*\*' \
+	"codex review-plan Step 5 template carries **Contradictions**: N (L9)"
+
+# (h) does not apply — the Codex mirror has no opus-fallback concept, so there
+# is no pass-A-fallback-behaviour literal (L7) to twin here.
+
+# (i) Codex twin of the anchored header assertion. Drops the `model: fable`
+# clause (no such concept on Codex) and keys on the Codex header text instead.
+assert_present "$RP_CODEX_SKILL" '^#### Contradiction Pass \(post-reconciliation, reasoning: high\)$' \
+	"codex review-plan anchored Contradiction Pass header"
+
+# (j) Ordering twin: hard-gate precedes Borderline tiebreak. Plus L14.
+assert_order "$RP_CODEX_SKILL" 'always grill-eligible' 'Borderline tiebreak' \
+	"codex review-plan Contradiction hard-gate precedes Borderline tiebreak (SKILL.md)"
+assert_present "$RP_CODEX_SKILL" 'hard gate applied first' \
+	"codex review-plan SKILL.md states the hard-gate-applied-first ordering (L14)"
+
+# (k) L6 count = 5 twin.
+assert_count "$RP_CODEX_SKILL" 'except Step 3 sub-step 2\.5 \(the Contradiction Pass\)' 5 \
+	"codex review-plan five Step 3 sentences carve out sub-step 2.5 verbatim (L6)"
+
+# (l) Twin: the two bare, uncarved Forbidden bullets must no longer exist.
+assert_absent "$RP_CODEX_SKILL" '^- LLM calls of any kind\.$' \
+	"codex review-plan bare 'LLM calls of any kind.' Forbidden bullet is gone"
+assert_absent "$RP_CODEX_SKILL" '^- Free-text similarity matching across lens summaries\. Lenses run in fresh context' \
+	"codex review-plan bare 'Free-text similarity matching' Forbidden bullet is gone"
+
+# (m)-(o) are rubric-only assertions (L11, L12, L13) — already covered above
+# against both rubric.md copies; no separate Codex SKILL.md twin applies.
+
+# (p) L10 count = 4 twin (four lens Output blocks in the Codex mirror).
+assert_count "$RP_CODEX_SKILL" 'Nonexistent Reference, Contradiction}' 4 \
+	"codex review-plan SKILL.md four lens Output blocks carry the Contradiction enum value (L10)"
+
+# (q) reconcile-findings.sh --skill review-plan invoked twice per run, Codex twin.
+assert_count "$RP_CODEX_SKILL" 'reconcile-findings\.sh --skill review-plan' 2 \
+	"codex review-plan SKILL.md invokes reconcile-findings.sh --skill review-plan twice (pass A + pass B)"
+
+# (r) Named pipeline artifacts, Codex twin.
+assert_present "$RP_CODEX_SKILL" 'reconciled-pass-a\.json' \
+	"codex review-plan SKILL.md names reconciled-pass-a.json"
+assert_present "$RP_CODEX_SKILL" 'findings-contradiction\.jsonl' \
+	"codex review-plan SKILL.md names findings-contradiction.jsonl"
+
+# (s) L8 twin.
+assert_present "$RP_CODEX_SKILL" 'rebuilt by concatenation, never appended in place' \
+	"codex review-plan SKILL.md documents the idempotent rebuild-by-concatenation mechanism (L8)"
 
 echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="
