@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-gauntlet-skill-shape.sh — Phase 1 acceptance: the Claude review-gauntlet
 # SKILL.md documents the conductor contract: frontmatter/trigger phrases, the
-# four gate slots, Option A split delegation, the convergence algorithm
+# three gate slots, Option A split delegation, the convergence algorithm
 # surface, both guardrails, the three invocation modes, <untrusted-content>
 # wrapping, and reuse of the bundled scripts (never a relative-path fork of
 # deep-review's).
@@ -120,7 +120,7 @@ assert_grep "$SKILL_MD" 'deep-review' \
 assert_grep "$SKILL_MD" '/security-review' \
 	"documents gate 3 (security-review, \`/security-review\`)"
 
-assert_grep "$SKILL_MD" 'not.*a gate|not a gate' \
+assert_grep "$SKILL_MD" '/code-review.*is not a gate|not a gate here' \
 	"documents that \`/code-review\` is not a gate here"
 
 # --- Option A / split delegation ----------------------------------------

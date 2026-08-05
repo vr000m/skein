@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # run-gate.sh — thin gate-output dispatcher for the review-gauntlet
 # conductor. This script does NOT review anything itself; the operative
-# review is done by the gates (adversarial Codex review, deep-review,
-# security-review) and by the fixer/conductor. This script
-# only:
+# review is done by the gates the conductor configures for the current
+# harness (see SKILL.md for the current gate list, which differs between
+# Claude and Codex) and by the fixer/conductor. This script only:
 #   1. normalizes one gate's raw JSON output into the common finding schema
 #      (file, line, category, severity, confidence, summary, evidence),
 #      stripping any `auto_fix` proposal aside into a side cache so the
