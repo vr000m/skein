@@ -6,10 +6,9 @@
 # "conduct terminal hook (Claude)". Acceptance criteria under test:
 #   1. After the CI-parity gate, when status would become `complete`,
 #      SKILL.md documents reading the plan's `**Review Gates:**` field and
-#      invoking `review-gauntlet --plan <plan>` when that field is
-#      `quick`/`full`.
-#   2. The gate-subset mapping is documented: `quick` = code-review gate
-#      only; `full` = all logical gate slots.
+#      invoking `review-gauntlet --plan <plan>` when that field is `full`.
+#   2. `full` = all logical gate slots; there is no Claude-side `quick`
+#      mode (the code-review gate was removed).
 #   3. Strict opt-in: absent field or `none` -> no gauntlet, current
 #      behaviour unchanged (documented explicitly, not just implied).
 #   4. Commit-ownership reconciliation: the gauntlet lands its own single
@@ -65,6 +64,16 @@ assert_grep() {
 	fi
 }
 
+# assert_not_grep FILE PATTERN LABEL — asserts PATTERN is absent.
+assert_not_grep() {
+	local file="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" "$file"; then
+		fail "$label (forbidden pattern found: $pattern in $file)"
+	else
+		pass "$label"
+	fi
+}
+
 require_file "$SKILL_MD" || exit 1
 
 # --- Criterion 1: terminal hook reads the marker and invokes the gauntlet
@@ -84,10 +93,10 @@ assert_grep "$SKILL_MD" 'CI.Parity Gate|CI.parity gate' \
 assert_grep "$SKILL_MD" 'complete' \
 	"SKILL.md still documents the \`complete\` status transition"
 
-# --- Criterion 2: gate-subset mapping -----------------------------------
+# --- Criterion 2: no quick mode; full = all gate slots -------------------
 
-assert_grep "$SKILL_MD" 'quick.*code-review|code-review.*quick' \
-	"SKILL.md documents \`quick\` = code-review gate only"
+assert_not_grep "$SKILL_MD" 'quick.*scoped to the code-review gate|code-review gate only' \
+	"SKILL.md does not document a \`quick\` = code-review gate mapping (removed)"
 
 assert_grep "$SKILL_MD" 'full.*(all|logical) gate slots' \
 	"SKILL.md documents \`full\` = all logical gate slots"
