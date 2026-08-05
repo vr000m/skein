@@ -1,5 +1,11 @@
 # Drop the code-review gate from review-gauntlet (Claude side)
 
+**Status**: Complete
+**Component**: review-skills
+**Branch**: feature/review-plan-contradiction-step
+**Created**: 2026-08-05
+**Completed**: 2026-08-05
+
 ## Why
 
 A Claude Code harness change (see changelog: "Claude no longer runs the
@@ -80,3 +86,41 @@ restriction. Codex mirror is left unchanged.
 Run `/code-review xhigh --fix` yourself, plus `/security-review` and
 `/deep-review`, before merge — the gauntlet itself is mid-refactor on this
 branch and shouldn't be used to review itself.
+
+## Final Results
+
+All "Files to change" items landed as planned, plus items surfaced during
+review that weren't anticipated up front:
+
+- **Unrecognized-value guard** (not in the original plan): `conduct`/`fan-out`
+  only branched on `none`/`full`, leaving a stale `quick` value or typo to
+  fall through undefined. Added an explicit "unrecognized value → treated as
+  `none`, with a warning naming the value and plan path" rule to both readers
+  and `dev-plan/SKILL.md`'s field description, plus test coverage.
+- **Codex-side dev-plan doc note** (not in the original "out of scope" list):
+  `**Review Gates:**` is a shared plan-file field, and its value domain is now
+  harness-dependent (`none|full` on Claude, `none|quick|full` on Codex). Added
+  one clarifying sentence to `plugins/skein-codex/skills/dev-plan/SKILL.md`
+  and `template.md` (via `codex:rescue`) noting `quick` is Codex-only.
+- **`test-codex-capability-gap-unresolved.sh`**: no change needed — it targets
+  the Codex-side SKILL.md only, which is correctly unchanged.
+- **`test-run-gate.sh`**: left as-is (optional item) — the `"code-review"`
+  fixture gate name is harmless, `run-gate.sh` treats gate names as opaque
+  strings.
+- **Self-inflicted regression, caught and fixed in-branch**: the `run-gate.sh`
+  doc-comment edit was Claude-only, breaking the enforced Claude/Codex
+  byte-identity parity test (`tests/parity/test-applier-bundle-parity.sh`).
+  Fixed by rewording the shared comment to be harness-neutral on both mirrors.
+- **`skein:deep-review` + `/security-review`** (scoped to this plan's commits
+  only) also caught a mode-count contradiction ("Two modes" vs. a 3-item
+  list), two dangling `/code-review`-era cross-references, and a vacuous test
+  assertion — all fixed. No security findings in either pass.
+- **Live verification**: temporarily repointed the installed `skein` plugin
+  marketplace at this local branch (`directory` source), confirmed a fresh
+  Claude Code session loaded the new 3-gate SKILL.md content with no
+  `/code-review` gate and no `quick` mode, then reverted the repoint back to
+  the GitHub source.
+
+Final state: 11/11 gauntlet test files, 3/3 parity checks green. PR #24
+description updated to cover this work alongside the Contradiction-Pass
+feature landed earlier on the same branch.
