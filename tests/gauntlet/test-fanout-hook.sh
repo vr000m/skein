@@ -6,10 +6,9 @@
 # "fan-out Phase 6 hook (Claude)". Acceptance criteria under test:
 #   1. At the end of `### Phase 6: Merge` (before `### Phase 7: Cleanup`),
 #      SKILL.md documents reading the plan's `**Review Gates:**` field and
-#      invoking `review-gauntlet` on the merged feature branch when
-#      `quick`/`full`.
-#   2. The gate-subset mapping is documented: `quick` = code-review gate
-#      only; `full` = all gate slots.
+#      invoking `review-gauntlet` on the merged feature branch when `full`.
+#   2. `full` = all gate slots; there is no Claude-side `quick` mode (the
+#      code-review gate was removed).
 #   3. No-op on the PR-per-task exit path: the hook runs only on the
 #      merged-branch path (`/fan-out merge`, option 1), and no-ops when
 #      tasks exit via individual PRs (option 2).
@@ -67,6 +66,16 @@ assert_grep() {
 	fi
 }
 
+# assert_not_grep FILE PATTERN LABEL — asserts PATTERN is absent.
+assert_not_grep() {
+	local file="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" "$file"; then
+		fail "$label (forbidden pattern found: $pattern in $file)"
+	else
+		pass "$label"
+	fi
+}
+
 require_file "$SKILL_MD" || exit 1
 
 # --- Criterion 1: hook location and invocation --------------------------
@@ -98,10 +107,10 @@ else
 	fail "Phase 6 section does not document running the gauntlet on the merged feature branch"
 fi
 
-# --- Criterion 2: gate-subset mapping ------------------------------------
+# --- Criterion 2: no quick mode; full = all gate slots -------------------
 
-assert_grep "$SKILL_MD" 'quick.*code-review|code-review.*quick' \
-	"SKILL.md documents \`quick\` = code-review gate only"
+assert_not_grep "$SKILL_MD" 'quick.*scoped to the code-review gate|code-review gate only' \
+	"SKILL.md does not document a \`quick\` = code-review gate mapping (removed)"
 
 if echo "$phase6_to_7" | grep -Eqi -- 'full.*gate slots?|gate slots?.*full'; then
 	pass "Phase 6 section documents \`full\` scoped to gate slots"
@@ -113,6 +122,12 @@ if echo "$phase6_to_7" | grep -Eqi -- 'all (logical )?gate slots?'; then
 	pass "Phase 6 section documents \`full\` = all (logical) gate slots"
 else
 	fail "Phase 6 section does not document \`full\` = all (logical) gate slots"
+fi
+
+if echo "$phase6_to_7" | grep -Eqi -- 'unrecognized value'; then
+	pass "Phase 6 section documents the unrecognized-value guard (retired \`quick\`/typo -> treated as \`none\`, with a warning)"
+else
+	fail "Phase 6 section does not document the unrecognized-value guard"
 fi
 
 # --- Criterion 3: no-op on the PR-per-task exit path ---------------------

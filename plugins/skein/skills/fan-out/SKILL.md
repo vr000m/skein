@@ -232,15 +232,15 @@ gh pr create --base <base-branch> --head <task-branch> \
 
 ### Review Gauntlet Auto-Chain
 
-After post-merge integration-seam verification finishes (option 1's final step above), read the plan's `**Review Gates:**` header field (the `/dev-plan` marker; values `none | quick | full`, default `none`) and decide whether to auto-chain `review-gauntlet` on the merged feature branch.
+After post-merge integration-seam verification finishes (option 1's final step above), read the plan's `**Review Gates:**` header field (the `/dev-plan` marker; values `none | full`, default `none`) and decide whether to auto-chain `review-gauntlet` on the merged feature branch.
 
 **Merged-branch path only.** This hook runs strictly on the option-1 exit from Phase 5/6 — `git merge --no-ff` of every successful task branch into the current branch. Option 2 ("Create individual PRs for each branch") produces no single merged branch on the working tree: each task's diff lives on its own unmerged branch/PR, so there is no unified diff to gate. The hook **no-ops** on the option-2 path, and on options 3/4 (review-first, keep-as-is) — none of those reach this point.
 
 **Activation**, identical opt-in shape to conduct's terminal hook:
 
 - **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation, no additional dispatch. Current merge behavior is byte-unchanged on every plan that does not explicitly opt in.
-- **`quick` → invoke `review-gauntlet` scoped to the code-review gate only**, single pass, no convergence loop.
-- **`full` → invoke `review-gauntlet` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm.
+- **`full` → invoke `review-gauntlet` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — run `/code-review xhigh --fix` yourself when you want that fast pass.
+- **Any other value (including the retired `quick`, or a typo)**: treat exactly like `none` — no invocation — but surface a one-line warning naming the unrecognized value and the plan path, so a plan author who typed a stale `quick` is told their opt-in silently did not fire, instead of assuming it ran.
 
 **Dispatch:** `review-gauntlet` is a conductor in its own right — its multi-spawn gates run at its own top level, in its own context (same reasoning as conduct's hook). Fan-out invokes it directly as a top-level skill against the merged branch, not as an `Agent`-tool subagent spawn, and not as a further fan-out tier (it does not count against the Delegation Depth one-level rule above). Await its terminal report before continuing to Phase 7.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-gauntlet-skill-shape.sh — Phase 1 acceptance: the Claude review-gauntlet
 # SKILL.md documents the conductor contract: frontmatter/trigger phrases, the
-# four gate slots, Option A split delegation, the convergence algorithm
+# three gate slots, Option A split delegation, the convergence algorithm
 # surface, both guardrails, the three invocation modes, <untrusted-content>
 # wrapping, and reuse of the bundled scripts (never a relative-path fork of
 # deep-review's).
@@ -109,19 +109,19 @@ assert_grep_i "$SKILL_MD" 'review loop until clean' \
 assert_grep "$SKILL_MD" '^argument-hint:' \
 	"frontmatter has an \`argument-hint\` field"
 
-# --- Four gate slots -----------------------------------------------------
-
-assert_grep "$SKILL_MD" '/code-review' \
-	"documents gate 1 (code-review, \`/code-review\`)"
+# --- Three gate slots -----------------------------------------------------
 
 assert_grep "$SKILL_MD" 'codex exec review' \
-	"documents gate 2 (adversarial Codex-review, \`codex exec review\`)"
+	"documents gate 1 (adversarial Codex-review, \`codex exec review\`)"
 
 assert_grep "$SKILL_MD" 'deep-review' \
-	"documents gate 3 (\`deep-review\`)"
+	"documents gate 2 (\`deep-review\`)"
 
 assert_grep "$SKILL_MD" '/security-review' \
-	"documents gate 4 (security-review, \`/security-review\`)"
+	"documents gate 3 (security-review, \`/security-review\`)"
+
+assert_grep "$SKILL_MD" '/code-review.*is not a gate|not a gate here' \
+	"documents that \`/code-review\` is not a gate here"
 
 # --- Option A / split delegation ----------------------------------------
 
@@ -195,19 +195,19 @@ assert_grep_i "$SKILL_MD" 'guardrail 4' \
 assert_grep "$SKILL_MD" 'git status --short' \
 	"documents verifying the fixer's claims against live repo state"
 
-# --- Three invocation modes ------------------------------------------------
+# --- Invocation modes ------------------------------------------------------
 
 assert_grep_i "$SKILL_MD" 'standalone' \
 	"documents the standalone invocation mode"
 
-assert_grep "$SKILL_MD" '\bquick\b' \
-	"documents the \`quick\` invocation mode"
+assert_not_grep "$SKILL_MD" 'quick.*(single.pass|no.loop|no convergence loop)|(single.pass|no.loop|no convergence loop).*quick' \
+	"does not document a Claude-side \`quick\` single-pass mode (removed with the code-review gate)"
 
 assert_grep "$SKILL_MD" '\bfull\b' \
 	"documents the \`full\` invocation mode"
 
-assert_grep_i "$SKILL_MD" 'quick.*(single.pass|no.loop|no convergence loop)|(single.pass|no.loop|no convergence loop).*quick' \
-	"documents \`quick\` as single-pass with no convergence loop"
+assert_grep_i "$SKILL_MD" 'no single-pass mode' \
+	"documents that there is no single-pass mode anymore"
 
 # --- <untrusted-content> wrapping ------------------------------------------
 
@@ -231,22 +231,20 @@ assert_grep "$SKILL_MD" '\$\{CLAUDE_PLUGIN_ROOT\}' \
 assert_not_grep "$SKILL_MD" '\.\./\.\./deep-review/scripts/' \
 	"does not reference \`../../deep-review/scripts/\` (relative-path fork)"
 
-# --- Gate order: the four gates must appear in the fixed sequence ---------
+# --- Gate order: the three gates must appear in the fixed sequence --------
 # Membership alone (each gate mentioned somewhere) does not prove the SKILL.md
-# documents the fixed run order (code-review -> adversarial -> deep-review ->
-# security-review). Pin the order by asserting each gate's line number is
-# strictly increasing.
+# documents the fixed run order (adversarial -> deep-review -> security-review).
+# Pin the order by asserting each gate's line number is strictly increasing.
 
-code_review_line="$(grep -n -m1 -E '\*\*Code-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
 adversarial_line="$(grep -n -m1 -E '\*\*Adversarial Codex-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
 deep_review_line="$(grep -n -m1 -E '\*\*.skein:deep-review.* \(5 lenses\)\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
 security_review_line="$(grep -n -m1 -E '\*\*Security-review gate\.\*\*' "$SKILL_MD" | cut -d: -f1 || true)"
 
-if [[ -n "$code_review_line" && -n "$adversarial_line" && -n "$deep_review_line" && -n "$security_review_line" ]] &&
-	((code_review_line < adversarial_line && adversarial_line < deep_review_line && deep_review_line < security_review_line)); then
-	pass "gate order is fixed: code-review ($code_review_line) < adversarial ($adversarial_line) < deep-review ($deep_review_line) < security-review ($security_review_line)"
+if [[ -n "$adversarial_line" && -n "$deep_review_line" && -n "$security_review_line" ]] &&
+	((adversarial_line < deep_review_line && deep_review_line < security_review_line)); then
+	pass "gate order is fixed: adversarial ($adversarial_line) < deep-review ($deep_review_line) < security-review ($security_review_line)"
 else
-	fail "gate order is not the fixed code-review -> adversarial -> deep-review -> security-review sequence (lines: $code_review_line, $adversarial_line, $deep_review_line, $security_review_line)"
+	fail "gate order is not the fixed adversarial -> deep-review -> security-review sequence (lines: $adversarial_line, $deep_review_line, $security_review_line)"
 fi
 
 # --- Fixer-dispatch co-location: <untrusted-content> and Goal/design-intent

@@ -7,15 +7,15 @@
 # Plan: docs/dev_plans/20260707-feature-review-gauntlet-skill.md, Phase 3
 # "dev-plan `**Review Gates:**` header marker field". Acceptance criteria
 # under test:
-#   1. SKILL.md documents `**Review Gates:**` with the three values
-#      `none | quick | full` and default `none`.
+#   1. SKILL.md documents `**Review Gates:**` with the two values
+#      `none | full` and default `none`.
 #   2. SKILL.md documents it as an above-marker contract field (plan
 #      Header / Required Sections item 1) and that changing it after
 #      `/review-plan` invalidates the marker hash (framed as correct /
 #      intended, not a bug).
 #   3. SKILL.md documents that `conduct` and `fan-out` read the field to
-#      auto-chain `review-gauntlet` (quick = code-review only; full = all
-#      gate slots).
+#      auto-chain `review-gauntlet` (full = all gate slots; there is no
+#      Claude-side `quick` value, the code-review gate was removed).
 #   4. template.md's header block contains a `**Review Gates**` line with
 #      a default of `none`.
 #   5. Coexistence guard (reciprocal ownership with the sibling Goal-field
@@ -69,6 +69,16 @@ assert_grep() {
 	fi
 }
 
+# assert_not_grep FILE PATTERN LABEL — asserts PATTERN is absent.
+assert_not_grep() {
+	local file="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" "$file"; then
+		fail "$label (forbidden pattern found: $pattern in $file)"
+	else
+		pass "$label"
+	fi
+}
+
 require_file "$SKILL_MD" || exit 1
 require_file "$TEMPLATE_MD" || exit 1
 
@@ -77,8 +87,8 @@ require_file "$TEMPLATE_MD" || exit 1
 assert_grep "$SKILL_MD" '\*\*Review Gates:\*\*' \
 	"SKILL.md documents \`**Review Gates:**\`"
 
-assert_grep "$SKILL_MD" 'none \| quick \| full' \
-	"SKILL.md documents the three values \`none | quick | full\`"
+assert_grep "$SKILL_MD" 'none \| full' \
+	"SKILL.md documents the two values \`none | full\`"
 
 assert_grep "$SKILL_MD" '\*\*Review Gates:\*\*[^.]*default `none`|default `none`[^.]*\*\*Review Gates:\*\*|`none`, default' \
 	"SKILL.md documents the \`none\` default"
@@ -98,16 +108,16 @@ assert_grep "$SKILL_MD" 'conduct.*fan-out|fan-out.*conduct' \
 assert_grep "$SKILL_MD" 'auto-chain' \
 	"SKILL.md documents the auto-chain behaviour into \`review-gauntlet\`"
 
-assert_grep "$SKILL_MD" 'quick.*code-review|code-review.*quick' \
-	"SKILL.md documents \`quick\` = code-review gate only"
+assert_not_grep "$SKILL_MD" 'quick.*runs the code-review gate only|code-review gate only' \
+	"SKILL.md does not document a \`quick\` = code-review gate mapping (removed)"
 
 assert_grep "$SKILL_MD" 'full.*(all|logical) gate slots' \
 	"SKILL.md documents \`full\` = all logical gate slots"
 
 # --- dev-plan/template.md: header block ---------------------------------
 
-assert_grep "$TEMPLATE_MD" '\*\*Review Gates\*\*:? none \| quick \| full' \
-	"template.md header block includes a \`**Review Gates**\` line with the three values"
+assert_grep "$TEMPLATE_MD" '\*\*Review Gates\*\*:? none \| full' \
+	"template.md header block includes a \`**Review Gates**\` line with the two values"
 
 assert_grep "$TEMPLATE_MD" '\*\*Review Gates\*\*[^.]*default `none`' \
 	"template.md documents the \`none\` default in the header block"

@@ -1,30 +1,32 @@
 ---
 name: review-gauntlet
-description: Chains the review gates (code-review, adversarial Codex review, deep-review, security-review) into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
+description: Chains the review gates (adversarial Codex review, deep-review, security-review) into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
 argument-hint: "[--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]"
 ---
 
 # Review Gauntlet: Chained Convergence Loop Across Review Gates
 
-Run the full manual review-and-fix cycle — code review, adversarial review, deep review, security review, fix, repeat — as one bounded, self-terminating loop instead of the operator hand-running 6–12 passes and clearing context between them.
+Run the full manual review-and-fix cycle — adversarial review, deep review, security review, fix, repeat — as one bounded, self-terminating loop instead of the operator hand-running 6–12 passes and clearing context between them.
 
 This skill is a **conductor**, in the mold of `skein:conduct`, but with a deliberate split (Option A, see [Delegation Pattern](#delegation-pattern-option-a-split-delegation)): the review gates run at the conductor's own top level; only the fixer runs as an isolated clean-context subagent.
+
+**`/code-review` is not a gate here.** The Claude Code harness blocks Claude from invoking `/code-review` on its own, independent of its `disable-model-invocation` frontmatter value — only a human-typed `/code-review` runs it. Run `/code-review xhigh --fix` yourself, outside this skill, when you want that pass; the gauntlet cannot orchestrate it. (The Codex-side mirror is unaffected — its code-review gate uses `native-codex-review` via `codex exec review`, a different invocation path with no such restriction.)
 
 ## When to Run
 
 - Standalone, whenever the operator wants a full multi-gate review-and-fix cycle on the current branch or a PR.
-- Auto-chained from `conduct`'s terminal step (after the CI-parity gate) when the plan's `**Review Gates:**` marker is `quick` or `full`.
+- Auto-chained from `conduct`'s terminal step (after the CI-parity gate) when the plan's `**Review Gates:**` marker is `full`.
 - Auto-chained from `fan-out`'s Phase 6 (post-merge), same marker contract, merged-branch path only.
 
 ## Invocation Modes
 
-Three modes, all opt-in — nothing here ever fires without an explicit trigger, so a 10-loop run is never a surprise spend. `--resume` and `--fresh` modify only standalone/full loop startup; they do not make an absent `Review Gates` marker run.
+Three modes, all opt-in — nothing here ever fires without an explicit trigger, so a 10-loop run is never a surprise spend. `--resume` and `--fresh` modify only loop startup; they do not make an absent `Review Gates` marker run.
 
 1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolves the diff target the same way `deep-review` does: an explicit branch/commit-range argument, or `--pr <N>` via `gh pr diff`, or (absent both) the current branch against its merge base. `--plan <path>` supplies the dev-plan used as Guardrail 1's design-intent source; without it, fixer dispatches carry no plan context and Guardrail 1 degrades to "no design-intent source available" (still enforced — a fixer with no plan context cannot claim a finding matches design intent, so ambiguous conflicts default to quarantine). `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
-2. **dev-plan marker**: a plan's header carries `**Review Gates:** none | quick | full` (default `none`, an inline field above the `/review-plan` marker — plans have no YAML frontmatter). `conduct` and `fan-out` read this field and invoke `review-gauntlet --plan <plan-path>` only when it is `quick` or `full`.
+2. **dev-plan marker**: a plan's header carries `**Review Gates:** none | full` (default `none`, an inline field above the `/review-plan` marker — plans have no YAML frontmatter). `conduct` and `fan-out` read this field and invoke `review-gauntlet --plan <plan-path>` only when it is `full`.
 3. **conduct/fan-out auto-chain**: mechanical readers of mode 2; they add no new trigger surface, they just call this skill when the marker opts in.
 
-**`quick` runs gate 1 only, once, with no convergence loop.** It runs `/code-review` at medium effort, applies trivial/allowlisted fixes inline via the bundled applier and substantive fixes as direct edits, and returns. It never enters the up-to-10-loop cycle below. **`full` and standalone invocation are the only paths that can reach the convergence loop and its 10-loop cap.**
+Both standalone and auto-chain invocation reach the convergence loop and its 10-loop cap — there is no single-pass mode anymore.
 
 ### Target and Resume Ledger
 
@@ -72,7 +74,7 @@ If the ledger is missing (exit 4), stop with a clear error instead of silently s
 "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
 ```
 
-- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1.
+- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1 (adversarial Codex review).
 - **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
 - **Exit 5** (terminal — `success`/`success_with_quarantine`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
 
@@ -80,34 +82,33 @@ This makes auto-chain invocations self-resuming by construction: they never pass
 
 ## Delegation Pattern (Option A — split delegation)
 
-The multi-spawn gates — `/code-review` (spawns its own verifier subagents) and `skein:deep-review` (spawns one subagent per lens) — **forbid being run as a nested subagent**: `deep-review/SKILL.md`'s Delegation Pattern says lenses do not call further subagents, and `conduct/implementer-prompt.md` Scope Rule 2 forbids a worker from spawning further agents. Dispatching either of them as a clean-context `Agent` call from inside this conductor would violate that one-level-of-delegation invariant.
+The multi-spawn gate — `skein:deep-review` (spawns one subagent per lens) — **forbids being run as a nested subagent**: `deep-review/SKILL.md`'s Delegation Pattern says lenses do not call further subagents, and `conduct/implementer-prompt.md` Scope Rule 2 forbids a worker from spawning further agents. Dispatching it as a clean-context `Agent` call from inside this conductor would violate that one-level-of-delegation invariant.
 
-So this conductor runs those gates **at its own top level, in its own context** — invoking `/code-review` and `skein:deep-review` directly as if the conductor itself were the user issuing the command, absorbing their structured findings into its own context. **Only the fixer batch runs as an isolated clean-context `Agent` subagent.** The fixer is the dominant, most-repeated context consumer across a 6–12-loop run (every round re-reads findings + diff + dev-plan), so isolating it — not the gates — is what keeps a multi-loop run sustainable without the operator manually clearing context. Gate output landing in the conductor's context is an accepted, deliberate trade-off, not an oversight.
+So this conductor runs that gate **at its own top level, in its own context** — invoking `skein:deep-review` directly as if the conductor itself were the user issuing the command, absorbing its structured findings into its own context. **Only the fixer batch runs as an isolated clean-context `Agent` subagent.** The fixer is the dominant, most-repeated context consumer across a 6–12-loop run (every round re-reads findings + diff + dev-plan), so isolating it — not the gates — is what keeps a multi-loop run sustainable without the operator manually clearing context. Gate output landing in the conductor's context is an accepted, deliberate trade-off, not an oversight.
 
-Do not attempt to "fix" this by wrapping `/code-review` or `skein:deep-review` in an `Agent` call — that produces a delegation-depth violation the moment either gate tries to spawn its own subagents.
+Do not attempt to "fix" this by wrapping `skein:deep-review` in an `Agent` call — that produces a delegation-depth violation the moment it tries to spawn its own subagents.
 
 ## Gate Sequence (fixed order)
 
-Every full/standalone round runs these four gates in this order. Findings from all four are pooled and reconciled before the fixer is dispatched.
+Every round runs these three gates in this order. Findings from all three are pooled and reconciled before the fixer is dispatched.
 
-1. **Code-review gate.** `/code-review` at **medium** effort. Spawns its own verifier subagents; runs at conductor top level per the Delegation Pattern above.
-2. **Adversarial Codex-review gate.** There is no `/codex:adversarial-review` command. Invoke the Codex CLI directly: `codex exec review --output-schema <schema> "<adversarial-review prompt>"`, targeting the same diff as gate 1 (`--base <base>` / `--uncommitted`). The gauntlet-owned schema is:
+1. **Adversarial Codex-review gate.** There is no `/codex:adversarial-review` command. Invoke the Codex CLI directly: `codex exec review --output-schema <schema> "<adversarial-review prompt>"`, targeting the resolved diff (`--base <base>` / `--uncommitted`). The gauntlet-owned schema is:
    ```json
    { "gate": "string", "status": "approve | needs-attention | skipped | deferred | error", "findings": [ { "file": "string", "line": "integer|null", "category": "string", "severity": "string", "confidence": "number|null", "summary": "string", "evidence": "string", "auto_fix": "object|null" } ], "notes": "string|null" }
    ```
-3. **`skein:deep-review` (5 lenses).** Invoke as `skein:deep-review --verbose`, directly at conductor top level (not as a nested Agent). Same Delegation Pattern rationale as gate 1. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed — without it, gate 3's Minor findings would silently normalize with missing evidence.
-4. **Security-review gate.** `/security-review`.
+2. **`skein:deep-review` (5 lenses).** Invoke as `skein:deep-review --verbose`, directly at conductor top level (not as a nested Agent), per the Delegation Pattern above. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed — without it, gate 2's Minor findings would silently normalize with missing evidence.
+3. **Security-review gate.** `/security-review`.
 
-Findings from all four gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`; any `auto_fix` proposal a gate emits is **held aside** for the fixer's route logic (Guardrail 2) and stripped from the payload before dedup. Only the `auto_fix`-free findings are deduped on `(file, line, category, …)` by the bundled reconciler before the fixer sees them (see [Reuse](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) for the exact invocation and why the payload must be `auto_fix`-free).
+Findings from all three gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`; any `auto_fix` proposal a gate emits is **held aside** for the fixer's route logic (Guardrail 2) and stripped from the payload before dedup. Only the `auto_fix`-free findings are deduped on `(file, line, category, …)` by the bundled reconciler before the fixer sees them (see [Reuse](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) for the exact invocation and why the payload must be `auto_fix`-free).
 
-**Codex gate matrix (high level; the Codex specifics live in the Codex mirror, not here).** Each of the four slots resolves on Codex to one of `native-codex-review` (gates 1–2, via `codex exec review`), `skein-deep-review-gated` (gate 3, gated on nested-spawn tier confirmation), or `deferred` (gate 4, no Codex security-review primitive exists yet). `quick` on Codex maps to gate 1 only; `full` on Codex runs only the supported native gates and must surface `deferred`/gated entries explicitly rather than silently skipping them. This file documents the Claude side; do not duplicate the Codex runner mechanics here.
+**Codex gate matrix (high level; the Codex specifics live in the Codex mirror, not here).** Codex has its own, unaffected gate structure — its code-review and adversarial slots both resolve to `native-codex-review` via `codex exec review`, `skein:deep-review` resolves to `skein-deep-review-gated` (gated on nested-spawn tier confirmation), and security-review resolves to `deferred` (no Codex security-review primitive exists yet). Codex's `quick`/`full` modes and gate count are unchanged by this file's Claude-side gate removal. This file documents the Claude side; do not duplicate the Codex runner mechanics here.
 
 ## Convergence Algorithm
 
 After the fixer batch returns (see [Guardrails](#guardrails) below for what it fixes and how):
 
 - The fixer **self-classifies** each applied fix's blast radius as `local` or `structural`. **Trust the LLM's classification — there is no mechanical/deterministic backstop.** Line-count or file-count heuristics cannot catch races, deadlocks, or protocol-state mismanagement; only judgment can.
-- **Any `structural` fix in the round → restart from gate 1**, full corpus. Code-review and the adversarial Codex pass overlap but are not identical; a structural change can reintroduce a class of bug only the earlier gate would catch.
+- **Any `structural` fix in the round → restart from gate 1**, full corpus. A structural change can reintroduce a class of bug any of the three gates would catch, not just the one that flagged it originally.
 - **Only `local` fixes in the round → run one confirming pass**, not a full restart. A confirming pass re-runs the gates but is tagged `pass_type: confirm`.
 - **Stop conditions** (exactly one of these ends the loop):
   1. **Success.** A pass tagged `pass_type: full` returns zero actionable findings **and every gate produced a clean review this round**. Tally the gates that returned a non-clean status (`error`/`skipped`/`deferred` — each surfaced by `run-gate.sh normalize` exiting 4) and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: a full pass at count 0 with any unresolved gate is **not** success — the ledger falls through to `continue` so the errored gate re-runs on the next pass. A clean `pass_type: confirm` pass is **not** terminal either — only a full pass proves global convergence, so a clean confirm pass returns to the loop (which will run a fresh full pass next, since there is nothing left to restart from a `local`-only round).

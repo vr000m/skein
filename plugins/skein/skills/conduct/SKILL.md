@@ -356,13 +356,13 @@ Between the conductor's lock release at `awaiting_ci_parity` and the orchestrato
 
 ## Review Gauntlet Auto-Chain
 
-After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | quick | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
+After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
 
 ### Activation
 
 - **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
-- **`quick` → invoke `review-gauntlet --plan <this plan>` scoped to the code-review gate only**, single pass, no convergence loop.
-- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm.
+- **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — `review-gauntlet` has no gate `/code-review` can run through anymore (see its SKILL.md); run `/code-review xhigh --fix` yourself when you want that fast pass.
+- **Any other value (including the retired `quick`, or a typo)**: treat exactly like `none` — no invocation, no change to `status` — but surface a one-line warning to the operator naming the unrecognized value and the plan path, so a plan author who typed a stale `quick` (or a typo) is told their opt-in silently did not fire, instead of assuming it ran.
 
 ### Trigger point
 
@@ -371,7 +371,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ### Dispatch
 
-- `review-gauntlet` is a conductor in its own right: its multi-spawn gates (`/code-review`, `skein:deep-review`) run at **its own top level**, in its own context, because they fan out their own verifier/lens subagents and forbid nesting (`review-gauntlet`'s Delegation Pattern). conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it — this is **not** an `Agent`-tool subagent spawn like the implementer/test-writer/reviewer dispatches in Step 3/Step 7, and it is not routed through the CI-parity gate's result-file dispatch protocol either. conduct simply calls the skill and awaits its terminal report before finalizing `status = complete`.
+- `review-gauntlet` is a conductor in its own right: its multi-spawn gate (`skein:deep-review`) runs at **its own top level**, in its own context, because it fans out its own lens subagents and forbids nesting (`review-gauntlet`'s Delegation Pattern). conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it — this is **not** an `Agent`-tool subagent spawn like the implementer/test-writer/reviewer dispatches in Step 3/Step 7, and it is not routed through the CI-parity gate's result-file dispatch protocol either. conduct simply calls the skill and awaits its terminal report before finalizing `status = complete`.
 - If `review-gauntlet` itself hands back a non-clean terminal state (`success_with_quarantine`, hits its loop cap, or bails on non-convergence/design-conflict halt), conduct surfaces that as its own handback: `status = "awaiting_user"` with the blocker text taken from the gauntlet's terminal report, following the same Step 9b hard-stop shape as any other blocker. A non-clean gauntlet outcome is never silently folded into `complete`.
 
 ### Commit ownership at the terminal seam
