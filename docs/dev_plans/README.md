@@ -18,6 +18,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-08-23 | feature | review-skills-resilience | review-skills | — | feature/review-skills-resilience | [plan](20260823-feature-review-skills-resilience.md) |
 
 ## Shipped
 
