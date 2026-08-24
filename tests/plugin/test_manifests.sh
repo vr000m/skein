@@ -145,4 +145,18 @@ if [[ "$codex_skill_count" != "$EXPECTED_SKILL_COUNT" ]]; then
 fi
 echo "ok: both plugin halves expose $EXPECTED_SKILL_COUNT skill directories"
 
+# --- 7. Both plugin manifests carry the same version string ----------------
+claude_version="$(jq -r '.version // ""' "$CLAUDE_PLUGIN")"
+codex_version="$(jq -r '.version // ""' "$CODEX_PLUGIN")"
+if [[ -z "$claude_version" ]]; then
+	fail "$CLAUDE_PLUGIN: .version is missing or empty"
+fi
+if [[ -z "$codex_version" ]]; then
+	fail "$CODEX_PLUGIN: .version is missing or empty"
+fi
+if [[ "$claude_version" != "$codex_version" ]]; then
+	fail "manifest version mismatch: $CLAUDE_PLUGIN=$claude_version vs $CODEX_PLUGIN=$codex_version"
+fi
+echo "ok: $CLAUDE_PLUGIN and $CODEX_PLUGIN both declare version=$claude_version"
+
 echo "test_manifests.sh: all assertions passed"
