@@ -114,6 +114,15 @@ Before relying on a cached read for a non-trivial decision (an Edit, a claim abo
 
 Rule of thumb: **read-then-edit in the same turn is safe; read-then-edit across a subagent call, hook fire, or user turn is not.**
 
+## Testing
+- Background the full test suite (`run_in_background` + Monitor) rather than running it in the foreground — a full run can exceed the foreground Bash timeout and abort mid-suite. Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.
+
+## Facts vs Inference
+- Never infer CI/approval-gate state (e.g. whether a manual-approval step still exists) from indirect signals like workflow run duration. Confirm from the primary source — `gh run view`, `gh api`, or the workflow YAML itself — before acting on it or writing it into a file. Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.
+
+## Security & Diff Reviews
+- Post a scope summary before diving in, cap orienting exploration at 3 calls, then stream findings severity-first as they're found rather than batching to the end. Reason: 2026-08-23 insights report, 3 security-review sessions were interrupted mid-exploration before any finding was delivered.
+
 ## Security
 - Before committing, check staged files for PII, private keys, secrets, and credentials. Never commit these.
 
