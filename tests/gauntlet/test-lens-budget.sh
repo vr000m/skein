@@ -139,6 +139,56 @@ else
 	fail "unrecognised --kind did not exit with a usage error (rc=$rc)"
 fi
 
+# --- override budget validation (finding 4a): reject a non-positive override
+# at the boundary — a budget below 1 second means opposite things per
+# execution path (GNU `timeout 0s` = unbounded; the shim expires instantly),
+# so it must be rejected here rather than passed through.
+
+rc=0
+out="$("$LENS_BUDGET" --kind codex --override 0 2>/dev/null)" || rc=$?
+if [[ "$rc" -ge 2 ]]; then
+	pass "codex: --override 0 exits with a usage error (rc=$rc)"
+else
+	fail "codex: --override 0 did not exit with a usage error (rc=$rc, stdout='$out')"
+fi
+
+stderr_out="$("$LENS_BUDGET" --kind codex --override 0 2>&1 >/dev/null)" || true
+stdout_out="$("$LENS_BUDGET" --kind codex --override 0 2>/dev/null)" || true
+if [[ -n "$stderr_out" ]]; then
+	pass "codex: --override 0 prints a message on stderr"
+else
+	fail "codex: --override 0 produced no stderr message"
+fi
+if [[ -z "$stdout_out" ]]; then
+	pass "codex: --override 0 prints nothing on stdout"
+else
+	fail "codex: --override 0 wrote to stdout (expected nothing): '$stdout_out'"
+fi
+
+rc=0
+"$LENS_BUDGET" --kind codex --gate-timeout 0 >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -ge 2 ]]; then
+	pass "codex: --gate-timeout 0 exits with a usage error (rc=$rc) — same rule, other flag spelling"
+else
+	fail "codex: --gate-timeout 0 did not exit with a usage error (rc=$rc)"
+fi
+
+rc=0
+"$LENS_BUDGET" --kind lens --override -5 >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -ge 2 ]]; then
+	pass "lens: --override -5 exits with a usage error (rc=$rc)"
+else
+	fail "lens: --override -5 did not exit with a usage error (rc=$rc)"
+fi
+
+budget="$("$LENS_BUDGET" --kind lens --override 1)"
+assert_eq "$budget" "1" "lens: --override 1 is accepted (boundary value; no over-clamp of an explicit operator override)"
+
+# Regression: the size inputs (--files/--lines/--sections) must still accept
+# 0 — the override validation change must not leak across to them.
+budget="$("$LENS_BUDGET" --kind lens --files 0 --lines 0)"
+assert_eq "$budget" "300" "lens: --files 0 --lines 0 still succeeds at the 300s floor (0 remains legal for size inputs)"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

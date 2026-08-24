@@ -94,20 +94,23 @@ Both native gates below cost at most their budget, enforced in shell, and never 
 ```
 . "$SKILL_DIR"/lib/gate-bounded.sh
 budget_s="$("$SKILL_DIR"/scripts/lens-budget.sh --kind codex [--files <N> --lines <N>] [--gate-timeout <seconds>])"
+gate_out_dir="$run_dir/round-$round_n"; mkdir -p "$gate_out_dir"
+envelope_codex_review="$gate_out_dir/codex-review.envelope.json"
+toolout_codex_review="$gate_out_dir/codex-review.tool-out.json"
+envelope_codex_adversarial="$gate_out_dir/codex-adversarial.envelope.json"
+toolout_codex_adversarial="$gate_out_dir/codex-adversarial.tool-out.json"
 ```
-`lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when supplied. `gate_run_bounded` (`lib/gate-bounded.sh`, byte-identical to the Claude mirror's copy) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. `"$SKILL_DIR"/lib/run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass.
+`lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when supplied. `gate_run_bounded` (`lib/gate-bounded.sh`, byte-identical to the Claude mirror's copy) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. `"$SKILL_DIR"/lib/run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass. Each gate gets its **own** envelope/tool-out pair, scoped to the round — never reuse a path across gates or rounds: `"$SKILL_DIR"/lib/run-gate.sh normalize` reads the envelope by path, so a reused path silently reports the previous gate's (or previous round's) result as this one's.
 
 1. **Code-review gate (`native-codex-review`).** Invoke native Codex review in machine mode through the bounded helper:
    ```
-   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
-     codex exec review --output-schema <schema> --base <branch>
-   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
-     codex exec review --output-schema <schema> --uncommitted
+   gate_run_bounded "$budget_s" "$envelope_codex_review" "$toolout_codex_review" -- \
+     codex exec review --output-schema <schema> <--base <branch> | --uncommitted>
    ```
    Use the same target for every native gate in the round. When launched as a subprocess, request medium reasoning with `-c model_reasoning_effort="medium"` when supported.
 2. **Adversarial Codex-review gate (`native-codex-review`).** Invoke native Codex review with an adversarial prompt and the same structured schema, through the same bounded helper:
    ```
-   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
+   gate_run_bounded "$budget_s" "$envelope_codex_adversarial" "$toolout_codex_adversarial" -- \
      codex exec review --output-schema <schema> "<adversarial-review prompt>"
    ```
    Target the same diff as gate 1 via `--base <branch>` or `--uncommitted`; request `-c model_reasoning_effort="medium"` when used from a CLI subprocess. **Flag combination: UNVERIFIED.** The 2026-08-23 insights report's `friction_detail` narrative names "an incompatible flag combination" behind an observed 90+ minute hang, but a direct probe of its facets schema (the underlying JSON) shows it records only narrative summaries, never exact CLI argv, so the specific flag combination cannot be recovered from available data; the wall-clock budget above is the sole defence against a repeat.

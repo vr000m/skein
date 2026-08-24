@@ -18,7 +18,10 @@
 #
 # --gate-timeout / --override (synonyms) short-circuit the formula
 # entirely: the given value is echoed back unchanged, no clamping applied
-# — an explicit operator override always beats the computed budget.
+# — an explicit operator override always beats the computed budget. Must
+# be a positive integer (>= 1); a budget below 1 second is rejected here
+# because GNU `timeout 0s` and the shim's `proc.wait(timeout=0.0)` mean
+# opposite things ("unbounded" vs. "instant expiry") for the same input.
 #
 # Output: the computed (or overridden) budget in seconds, on stdout, no
 # trailing text.
@@ -37,6 +40,10 @@ EOF
 
 is_nonneg_int() {
 	[[ "$1" =~ ^[0-9]+$ ]]
+}
+
+is_pos_int() {
+	[[ "$1" =~ ^[0-9]+$ ]] && ((10#$1 >= 1))
 }
 
 kind=""
@@ -101,8 +108,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -n "$override" ]]; then
-	if ! is_nonneg_int "$override"; then
-		echo "lens-budget: --gate-timeout/--override must be a non-negative integer number of seconds (got '$override')" >&2
+	if ! is_pos_int "$override"; then
+		echo "lens-budget: --gate-timeout/--override must be a positive integer number of seconds (>= 1); got '$override'" >&2
 		exit 2
 	fi
 	printf '%s\n' "$override"
