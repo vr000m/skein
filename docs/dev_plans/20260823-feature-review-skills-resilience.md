@@ -277,7 +277,7 @@ Context lifecycle:
 
 ## Progress
 
-- [ ] Phase 1: Bounded Codex gate + size-scaled budgets
+- [x] Phase 1: Bounded Codex gate + size-scaled budgets
 - [ ] Phase 2: Disk-first streamed lens results
 - [ ] Phase 3: Regression-loop stop + gate-status rows
 - [ ] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
@@ -295,6 +295,8 @@ Context lifecycle:
 | 2026-08-24 | `/review-plan` run 3: 32 raw findings reconciled to 31 (0 Critical, 16 Important, 15 Minor; 4 contradictions; codebase-claims clean 89/89). All 31 accepted; eleven grilled decisions applied: --continue writes attempt 3+ (one-respawn per invocation); orchestrator-emitted `skipped` done status; gate envelope on every exit (invalid JSON never clean); --from-collector persist seam + checkpoint rewire; process-group-escape ASSUMPTION + pgrep/pkill; global CLAUDE.md routed via skills.md; regression fires on both pass types; Phase 1/3 Validation cmds carry gauntlet-tests; R11 scoped to the wired-test invariant; Review Focus softened to verified-or-UNVERIFIED (identity AND causation); backlog entries land in-phase with shape-test exemption IDs read from the backlog. Note: this run itself hit the silent-lens failure mode again — codebase-claims and the contradiction pass both went idle without delivering and needed a mailbox nudge; further evidence for R3/R4. |
 
 ## Findings
+
+- **Phase 1 post-review fix (2026-08-24)**: mid-phase reviewer found 6 issues (1 Critical: exit-137 false-clean). All fixed via architect→fix→test→verify subagent chain and verified empirically. Deviation from contract prose: the R1/Phase-1 `pkill -f 'codex exec review'` belt-and-braces sweep was REPLACED by a pgid-scoped sweep (sidecar pgid file, pgrep -g, guards against pgid 0/1/self) — a host-wide pattern kill can hit concurrent sessions or the orchestrator's own wrapper. Expiry predicate is now measurement-backed: exit!=0 AND (exit==124 OR duration>=budget); shim emits GNU's 124/137 alphabet; budgets <1 rejected (lens-budget exit 2, gate_run_bounded rc 2, no stale envelope).
 
 - 2026-08-23 (source: insights report 2026-08-23): Codex gate 25/44/90+ min vs ~11.5 min baseline; lens mailbox silence + spawn cap; 2/5 review-plan lenses silent (memory item open); 3 security reviews interrupted mid-exploration; PyPI gate wrongly inferred from run duration; ruff hook stripped `# noqa`; full suite > 2-min foreground timeout.
 - 2026-08-23 (Explore): convergence cap/K logic already exists in `convergence-ledger.sh` — scope of item (3) narrowed to regression detection + affected-lens confirm + status table.
