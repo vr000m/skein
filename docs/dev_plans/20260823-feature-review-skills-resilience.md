@@ -280,7 +280,7 @@ Context lifecycle:
 - [x] Phase 1: Bounded Codex gate + size-scaled budgets
 - [x] Phase 2: Disk-first streamed lens results
 - [x] Phase 3: Regression-loop stop + gate-status rows
-- [ ] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
+- [x] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
 - [ ] Phase 5: Docs, manifests, backlog
 
 ## Status
@@ -295,6 +295,9 @@ Context lifecycle:
 | 2026-08-24 | `/review-plan` run 3: 32 raw findings reconciled to 31 (0 Critical, 16 Important, 15 Minor; 4 contradictions; codebase-claims clean 89/89). All 31 accepted; eleven grilled decisions applied: --continue writes attempt 3+ (one-respawn per invocation); orchestrator-emitted `skipped` done status; gate envelope on every exit (invalid JSON never clean); --from-collector persist seam + checkpoint rewire; process-group-escape ASSUMPTION + pgrep/pkill; global CLAUDE.md routed via skills.md; regression fires on both pass types; Phase 1/3 Validation cmds carry gauntlet-tests; R11 scoped to the wired-test invariant; Review Focus softened to verified-or-UNVERIFIED (identity AND causation); backlog entries land in-phase with shape-test exemption IDs read from the backlog. Note: this run itself hit the silent-lens failure mode again — codebase-claims and the contradiction pass both went idle without delivering and needed a mailbox nudge; further evidence for R3/R4. |
 
 ## Findings
+
+- **Phase 4 noqa reproduction (2026-08-24)**: `tests/plugin/noqa-probe.sh` run against the UNMODIFIED `~/.claude/hooks/format-on-edit.sh` (pristine copy): `STRIPPED: # noqa removed by hook run (ruff 0.16.4)`, exit 1 — mechanism-reproduced (RUF100 selected → `ruff check --fix` deletes the unused `# noqa`). The original incident's project config was NOT identified (incident-explained only by construction: the probe selects RUF100 itself). After `--ignore RUF100` on line 18: `SURVIVED`, exit 0 by the same probe. Deviation: probe defaults `HOOK_PATH` to `$HOME/.claude/hooks/format-on-edit.sh` when unset so the plan's bare Validation cmd is non-vacuous; explicit SKIP only when that is absent too.
+- **Phase 4 manual upstream step (pending)**: global `~/.claude/CLAUDE.md` is owned by the skills.md repo — the three sections (`## Testing`, `## Facts vs Inference`, `## Security & Diff Reviews`, same text as repo `.claude/CLAUDE.md`) must be added there and synced; until then `test-claude-md-hygiene.sh` SKIPs the global check. The hook edit lives outside the repo (not committed) — also upstream to skills.md.
 
 - **Phase 3 post-review fix (2026-08-24)**: 9 findings (Opus 1 Critical + 5, Codex 3) addressed via architect→fix(+codex:rescue)→test→verify chain; all VERIFIED FIXED end-to-end. Headline: same-round claimed→fixed promotion was unreachable in the real round ordering — restored the plan's deferred semantics (`pending_claims` recorded after evaluation, promoted only by a later COMPLETE full pass: pass_type==full ∧ unresolved==0 ∧ present_supplied); the three vacuous-promotion paths (same-round, degraded gate, absent --present-keys) are independently blocked. finding-key digest now length-prefixed (file verbatim, category folded) — key scheme changed pre-release, no migration needed. Deliberate deviation: fixer `{claimed:[...]}` carries finding OBJECTS (orchestrator derives keys via finding-key.sh), narrowing R5's `[key...]` wording. Residual: C1/C2 SKILL.md wiring verified by grep/shape-tests only; the applier-manifest→annotated-envelope jq join is unexercised by CI (runtime-only path) — the Phase 3 gauntlet dogfood should exercise it.
 
