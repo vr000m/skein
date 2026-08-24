@@ -279,7 +279,7 @@ Context lifecycle:
 
 - [x] Phase 1: Bounded Codex gate + size-scaled budgets
 - [x] Phase 2: Disk-first streamed lens results
-- [ ] Phase 3: Regression-loop stop + gate-status rows
+- [x] Phase 3: Regression-loop stop + gate-status rows
 - [ ] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
 - [ ] Phase 5: Docs, manifests, backlog
 
@@ -295,6 +295,10 @@ Context lifecycle:
 | 2026-08-24 | `/review-plan` run 3: 32 raw findings reconciled to 31 (0 Critical, 16 Important, 15 Minor; 4 contradictions; codebase-claims clean 89/89). All 31 accepted; eleven grilled decisions applied: --continue writes attempt 3+ (one-respawn per invocation); orchestrator-emitted `skipped` done status; gate envelope on every exit (invalid JSON never clean); --from-collector persist seam + checkpoint rewire; process-group-escape ASSUMPTION + pgrep/pkill; global CLAUDE.md routed via skills.md; regression fires on both pass types; Phase 1/3 Validation cmds carry gauntlet-tests; R11 scoped to the wired-test invariant; Review Focus softened to verified-or-UNVERIFIED (identity AND causation); backlog entries land in-phase with shape-test exemption IDs read from the backlog. Note: this run itself hit the silent-lens failure mode again — codebase-claims and the contradiction pass both went idle without delivering and needed a mailbox nudge; further evidence for R3/R4. |
 
 ## Findings
+
+- **Phase 3 post-review fix (2026-08-24)**: 9 findings (Opus 1 Critical + 5, Codex 3) addressed via architect→fix(+codex:rescue)→test→verify chain; all VERIFIED FIXED end-to-end. Headline: same-round claimed→fixed promotion was unreachable in the real round ordering — restored the plan's deferred semantics (`pending_claims` recorded after evaluation, promoted only by a later COMPLETE full pass: pass_type==full ∧ unresolved==0 ∧ present_supplied); the three vacuous-promotion paths (same-round, degraded gate, absent --present-keys) are independently blocked. finding-key digest now length-prefixed (file verbatim, category folded) — key scheme changed pre-release, no migration needed. Deliberate deviation: fixer `{claimed:[...]}` carries finding OBJECTS (orchestrator derives keys via finding-key.sh), narrowing R5's `[key...]` wording. Residual: C1/C2 SKILL.md wiring verified by grep/shape-tests only; the applier-manifest→annotated-envelope jq join is unexercised by CI (runtime-only path) — the Phase 3 gauntlet dogfood should exercise it.
+
+- **Phase 2 dogfood deferred (2026-08-24)**: operator resumed conduct without the claude-process restart the dogfood requires (skill-registry cache is process-scoped). Dogfood of /review-plan disk-first lenses to be run after this conduct session ends, alongside the Phase 3 gauntlet dogfood.
 
 - **Phase 2 post-review fix (2026-08-24)**: 14 findings (10 Opus, 4 Codex-mirror) addressed via architect→fix(+codex:rescue for Codex mirrors)→test→verify chain; 14/14 VERIFIED FIXED (O10's prose gap closed in a follow-up one-liner across all 4 mirrors). Headlines: persist/collect id validation (charset whitelist + root-bounded symlink guard) closes a path-traversal write; collector `--attempts <lens>:<n>` makes a spawned-but-silent attempt report `timed_out` (effective=max(spawned,files)); `--findings-jsonl` normalizer is now the single reconciliation input; per-lens-deadline respawn semantics (D3) replace blanket respawn; comma-bearing units rejected (D1). Known accepted: `--findings-jsonl` emits `line` as a string, reconcile coerces to number — flagged for a future strict consumer.
 
