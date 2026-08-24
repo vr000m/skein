@@ -124,6 +124,40 @@ run_collect() {
 	(cd "$repo_dir" && bash "$SCRIPT" --skill "$skill" --run-id "$run_id" "${expected_args[@]}")
 }
 
+# run_collect_attempts <repo_dir> <skill> <run_id> <expected_csv> <attempts_csv> [extra args...]
+# <expected_csv> and <attempts_csv> are space-separated lists of
+# "<lens>:<val>" entries (space-separated so callers can pass multiple
+# without nested-array plumbing); each becomes its own --expected/--attempts
+# flag. Extra trailing args (e.g. --findings-jsonl) are passed through
+# verbatim.
+run_collect_attempts() {
+	local repo_dir="$1" skill="$2" run_id="$3" expected_csv="$4" attempts_csv="$5"
+	shift 5
+	local args=(--skill "$skill" --run-id "$run_id")
+	for e in $expected_csv; do
+		args+=(--expected "$e")
+	done
+	for a in $attempts_csv; do
+		args+=(--attempts "$a")
+	done
+	args+=("$@")
+	(cd "$repo_dir" && bash "$SCRIPT" "${args[@]}")
+}
+
+# run_collect_jsonl <repo_dir> <skill> <run_id> <expected...> -- like
+# run_collect, but always appends --findings-jsonl at the end (kept
+# separate from run_collect's variadic --expected loop so the flag is never
+# mistaken for an --expected value).
+run_collect_jsonl() {
+	local repo_dir="$1" skill="$2" run_id="$3"
+	shift 3
+	local expected_args=()
+	for e in "$@"; do
+		expected_args+=(--expected "$e")
+	done
+	(cd "$repo_dir" && bash "$SCRIPT" --skill "$skill" --run-id "$run_id" "${expected_args[@]}" --findings-jsonl)
+}
+
 # ---------------------------------------------------------------------------
 # (a) done -> completed
 # ---------------------------------------------------------------------------
@@ -405,6 +439,355 @@ elif printf '%s' "$out_k" | jq -e '.logic.status == "partial" and .logic.reviewe
 else
 	fail "(k) truncated last line ignored"
 	echo "    stdout: $out_k"
+fi
+
+# ---------------------------------------------------------------------------
+# (l) F3/D2 -- truly-silent attempt 2: attempt-1 file with start + partial
+#     progress, NO attempt-2 file on disk, --attempts logic:2 -> timed_out,
+#     coverage merged from attempt 1 only.
+# ---------------------------------------------------------------------------
+
+dir_l="$TMPDIR_ROOT/case-l"
+make_scratch_repo "$dir_l"
+write_lens_file "$(lens_file "$dir_l" deep-review l-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"l-run","units":["u1","u2","u3"]}
+{"type":"progress","unit":"u1"}
+JSONL
+
+out_l="$(run_collect_attempts "$dir_l" deep-review l-run "logic:u1,u2,u3" "logic:2" 2>"$dir_l/stderr" || true)"
+if printf '%s' "$out_l" | jq -e '.logic.status == "timed_out" and .logic.reviewed == 1 and .logic.assigned == 3 and (.logic.unreviewed | sort) == (["u2","u3"] | sort)' >/dev/null 2>&1; then
+	pass "(l) truly-silent attempt 2 (--attempts logic:2, no attempt-2 file) -> timed_out, coverage merged from attempt 1"
+else
+	fail "(l) truly-silent attempt 2 -> timed_out with coverage from attempt 1"
+	echo "    stdout: $out_l"
+	sed 's/^/    /' "$dir_l/stderr" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# (m) --attempts logic:2 WITH an attempt-2 file present but no done ->
+#     timed_out (existing behaviour, now also flag-driven)
+# ---------------------------------------------------------------------------
+
+dir_m="$TMPDIR_ROOT/case-m"
+make_scratch_repo "$dir_m"
+write_lens_file "$(lens_file "$dir_m" deep-review m-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"m-run","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+JSONL
+write_lens_file "$(lens_file "$dir_m" deep-review m-run logic 2)" <<'JSONL'
+{"type":"start","run_id":"m-run","units":["u2"]}
+JSONL
+
+out_m="$(run_collect_attempts "$dir_m" deep-review m-run "logic:u1,u2" "logic:2" 2>"$dir_m/stderr" || true)"
+if printf '%s' "$out_m" | jq -e '.logic.status == "timed_out"' >/dev/null 2>&1; then
+	pass "(m) --attempts logic:2 with an attempt-2 file present, no done -> timed_out"
+else
+	fail "(m) --attempts logic:2 with attempt-2 file present, no done -> timed_out"
+	echo "    stdout: $out_m"
+fi
+
+# ---------------------------------------------------------------------------
+# (n) --attempts logic:1, one attempt file, no done -> partial (flag must
+#     not over-trigger timed_out)
+# ---------------------------------------------------------------------------
+
+dir_n="$TMPDIR_ROOT/case-n"
+make_scratch_repo "$dir_n"
+write_lens_file "$(lens_file "$dir_n" deep-review n-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"n-run","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+JSONL
+
+out_n="$(run_collect_attempts "$dir_n" deep-review n-run "logic:u1,u2" "logic:1" 2>"$dir_n/stderr" || true)"
+if printf '%s' "$out_n" | jq -e '.logic.status == "partial"' >/dev/null 2>&1; then
+	pass "(n) --attempts logic:1, one attempt file, no done -> partial (flag does not over-trigger)"
+else
+	fail "(n) --attempts logic:1 should still be partial"
+	echo "    stdout: $out_n"
+fi
+
+# ---------------------------------------------------------------------------
+# (o) --attempts logic:2, ZERO attempt files at all -> timed_out with
+#     assigned/unreviewed = full expected list
+# ---------------------------------------------------------------------------
+
+dir_o="$TMPDIR_ROOT/case-o"
+make_scratch_repo "$dir_o"
+# No lens files written at all for this run-id.
+
+out_o="$(run_collect_attempts "$dir_o" deep-review o-run "logic:u1,u2,u3" "logic:2" 2>"$dir_o/stderr" || true)"
+if printf '%s' "$out_o" | jq -e '.logic.status == "timed_out" and .logic.assigned == 3 and (.logic.unreviewed | sort) == (["u1","u2","u3"] | sort)' >/dev/null 2>&1; then
+	pass "(o) --attempts logic:2 with zero attempt files -> timed_out, assigned/unreviewed = full list"
+else
+	fail "(o) --attempts logic:2 with zero attempt files -> timed_out with full unreviewed list"
+	echo "    stdout: $out_o"
+	sed 's/^/    /' "$dir_o/stderr" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# (p) --attempts flag ABSENT -> unchanged (regression): re-run cases (d),
+#     (g), (i) with no --attempts and confirm identical results to today.
+# ---------------------------------------------------------------------------
+
+out_p_d="$(run_collect "$dir_d" deep-review d-run "architecture:u1,u2,u3,u4,u5" 2>/dev/null || true)"
+out_p_g="$(run_collect "$dir_g" deep-review g-run "architecture:u1,u2,u3,u4,u5" 2>/dev/null || true)"
+if printf '%s' "$out_p_d" | jq -e '.architecture.status == "partial"' >/dev/null 2>&1 \
+	&& printf '%s' "$out_p_g" | jq -e '.architecture.status == "timed_out"' >/dev/null 2>&1; then
+	pass "(p) --attempts absent -> unchanged behaviour on existing fixtures ((d) partial, (g) timed_out)"
+else
+	fail "(p) --attempts absent regression (d)/(g) changed status"
+fi
+
+# ---------------------------------------------------------------------------
+# (q) malformed --attempts entries -> exit 2
+# ---------------------------------------------------------------------------
+
+dir_q="$TMPDIR_ROOT/case-q"
+make_scratch_repo "$dir_q"
+
+for bad_attempts in "logic" "logic:0" "logic:x" "lo*c:1" "-x:1" "logic:-1"; do
+	set +e
+	out_q="$(
+		cd "$dir_q" && bash "$SCRIPT" --skill deep-review --run-id q-run \
+			--expected "logic:u1" --attempts "$bad_attempts" 2>"$dir_q/stderr"
+	)"
+	q_exit=$?
+	set -e
+	if [[ $q_exit -eq 2 ]]; then
+		pass "(q) malformed --attempts '$bad_attempts' -> exit 2"
+	else
+		fail "(q) malformed --attempts '$bad_attempts' should exit 2 (got $q_exit)"
+		sed 's/^/    /' "$dir_q/stderr" 2>/dev/null
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# (r) --attempts for a lens NOT in --expected -> ignored, exit 0
+# ---------------------------------------------------------------------------
+
+dir_r="$TMPDIR_ROOT/case-r"
+make_scratch_repo "$dir_r"
+write_lens_file "$(lens_file "$dir_r" deep-review r-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"r-run","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"done","status":"completed"}
+JSONL
+
+set +e
+out_r="$(run_collect_attempts "$dir_r" deep-review r-run "logic:u1" "security:2" 2>"$dir_r/stderr")"
+r_exit=$?
+set -e
+if [[ $r_exit -eq 0 ]] && printf '%s' "$out_r" | jq -e '.logic.status == "completed" and (has("security") | not)' >/dev/null 2>&1; then
+	pass "(r) --attempts for a lens not in --expected is ignored, exit 0"
+else
+	fail "(r) --attempts for an un-expected lens should be ignored (exit=$r_exit)"
+	echo "    stdout: $out_r"
+	sed 's/^/    /' "$dir_r/stderr" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# (s) F1 -- lens-name interpolation: an on-disk file for a DIFFERENT lens
+#     whose name is a prefix/superstring of the requested lens must not be
+#     picked up (exact basename-component match, not a glob match), and a
+#     glob-metacharacter --expected lens key is rejected outright.
+# ---------------------------------------------------------------------------
+
+dir_s="$TMPDIR_ROOT/case-s"
+make_scratch_repo "$dir_s"
+write_lens_file "$(lens_file "$dir_s" deep-review s-run logicX 1)" <<'JSONL'
+{"type":"start","run_id":"s-run","units":["ux1"]}
+{"type":"done","status":"completed"}
+JSONL
+write_lens_file "$(lens_file "$dir_s" deep-review s-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"s-run","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"done","status":"completed"}
+JSONL
+
+out_s="$(run_collect "$dir_s" deep-review s-run "logic:u1" 2>"$dir_s/stderr" || true)"
+if printf '%s' "$out_s" | jq -e '.logic.status == "completed" and .logic.reviewed == 1 and .logic.assigned == 1' >/dev/null 2>&1; then
+	pass "(s1) lens-name interpolation: only logic.1.jsonl is read, logicX.1.jsonl is excluded"
+else
+	fail "(s1) lens-name interpolation: exact match should exclude logicX's attempt file"
+	echo "    stdout: $out_s"
+fi
+
+set +e
+out_s2="$(cd "$dir_s" && bash "$SCRIPT" --skill deep-review --run-id s-run --expected 'lo*c:u1' 2>"$dir_s/stderr2")"
+s2_exit=$?
+set -e
+if [[ $s2_exit -eq 2 ]]; then
+	pass "(s2) --expected 'lo*c:u1' (glob metachar in lens key) -> exit 2"
+else
+	fail "(s2) --expected 'lo*c:u1' should be rejected with exit 2 (got $s2_exit)"
+	sed 's/^/    /' "$dir_s/stderr2" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# (t) F1 -- symlinked run dir is refused (exit 2), not silently followed
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (t) symlinked run dir refused (running as root)"
+else
+	dir_t="$TMPDIR_ROOT/case-t"
+	make_scratch_repo "$dir_t"
+	outside_t="$TMPDIR_ROOT/case-t-outside"
+	mkdir -p "$outside_t"
+	write_lens_file "$outside_t/logic.1.jsonl" <<'JSONL'
+{"type":"start","run_id":"t-run","units":["u1"]}
+{"type":"done","status":"completed"}
+JSONL
+	mkdir -p "$dir_t/.deep-review/lenses"
+	ln -s "$outside_t" "$dir_t/.deep-review/lenses/t-run"
+
+	set +e
+	out_t="$(run_collect "$dir_t" deep-review t-run "logic:u1" 2>"$dir_t/stderr")"
+	t_exit=$?
+	set -e
+
+	if [[ $t_exit -eq 2 ]]; then
+		pass "(t) symlinked run dir refused, exit 2"
+	else
+		fail "(t) symlinked run dir should be refused with exit 2 (got $t_exit)"
+		echo "    stdout: $out_t"
+		sed 's/^/    /' "$dir_t/stderr" 2>/dev/null
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (u) D-7/C3 -- --findings-jsonl: one JSON object per line, correct
+#     lens/file/line split (including a "last colon" location and an
+#     empty-evidence/suggestion default), findings from a partial/timed_out
+#     lens included, deterministic --expected order.
+# ---------------------------------------------------------------------------
+
+dir_u="$TMPDIR_ROOT/case-u"
+make_scratch_repo "$dir_u"
+write_lens_file "$(lens_file "$dir_u" deep-review u-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"u-run","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+{"type":"finding","severity":"Critical","category":"bug","location":"foo.py:10","summary":"first finding"}
+JSONL
+write_lens_file "$(lens_file "$dir_u" deep-review u-run security 1)" <<'JSONL'
+{"type":"start","run_id":"u-run","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"finding","severity":"Important","category":"style","location":"C:\\x\\a:b:12","summary":"windows-ish colon location","evidence":"ev","suggestion":"sg"}
+{"type":"done","status":"completed"}
+JSONL
+
+out_u="$(run_collect_jsonl "$dir_u" deep-review u-run "logic:u1,u2" "security:u1" 2>"$dir_u/stderr" || true)"
+line_count_u="$(printf '%s\n' "$out_u" | grep -c . || true)"
+
+if [[ "$line_count_u" != "2" ]]; then
+	fail "(u1) --findings-jsonl emits one line per finding across all reported lenses (expected 2 lines, got $line_count_u)"
+	echo "    stdout: $out_u"
+else
+	pass "(u1) --findings-jsonl emits one JSON-Lines object per finding (2 lines)"
+fi
+
+if printf '%s\n' "$out_u" | jq -e -c 'select(.lens == "logic")' | jq -e '.file == "foo.py" and .line == "10" and .summary == "first finding" and .evidence == "" and .suggestion == ""' >/dev/null 2>&1; then
+	pass "(u2) --findings-jsonl: logic finding has file/line split from location, empty defaults for absent evidence/suggestion"
+else
+	fail "(u2) --findings-jsonl: logic finding shape incorrect"
+	echo "    stdout: $out_u"
+fi
+
+if printf '%s\n' "$out_u" | jq -e -c 'select(.lens == "security")' | jq -e '.file == "C:\\x\\a:b" and .line == "12" and .evidence == "ev" and .suggestion == "sg"' >/dev/null 2>&1; then
+	pass "(u3) --findings-jsonl: location split on the LAST colon (C:\\x\\a:b:12 -> file=C:\\x\\a:b, line=12), findings from a completed lens included too"
+else
+	fail "(u3) --findings-jsonl: last-colon split incorrect for a multi-colon location"
+	echo "    stdout: $out_u"
+fi
+
+# A partial/timed_out lens's on-disk findings must still be emitted.
+dir_u2="$TMPDIR_ROOT/case-u2"
+make_scratch_repo "$dir_u2"
+write_lens_file "$(lens_file "$dir_u2" deep-review u2-run architecture 1)" <<'JSONL'
+{"type":"start","run_id":"u2-run","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+{"type":"finding","severity":"Minor","category":"style","location":"bar.py:5","summary":"finding from a partial lens"}
+JSONL
+out_u2="$(run_collect_jsonl "$dir_u2" deep-review u2-run "architecture:u1,u2" 2>"$dir_u2/stderr" || true)"
+if printf '%s\n' "$out_u2" | jq -e -c 'select(.lens == "architecture")' | jq -e '.file == "bar.py" and .line == "5"' >/dev/null 2>&1; then
+	pass "(u4) --findings-jsonl includes findings from a partial/timed_out lens, not just terminal ones"
+else
+	fail "(u4) --findings-jsonl should include a partial lens's on-disk findings"
+	echo "    stdout: $out_u2"
+fi
+
+# Empty input (no findings at all across any expected lens) -> zero lines, exit 0.
+dir_u3="$TMPDIR_ROOT/case-u3"
+make_scratch_repo "$dir_u3"
+set +e
+out_u3="$(run_collect_jsonl "$dir_u3" deep-review u3-run "logic:u1" 2>"$dir_u3/stderr")"
+u3_exit=$?
+set -e
+if [[ $u3_exit -eq 0 && -z "$out_u3" ]]; then
+	pass "(u5) --findings-jsonl with no findings anywhere -> zero lines, exit 0"
+else
+	fail "(u5) --findings-jsonl with no findings should be zero lines, exit 0 (exit=$u3_exit, output='$out_u3')"
+fi
+
+# ---------------------------------------------------------------------------
+# (v) F8 -- portability: mapfile (bash 4+) must not appear anywhere in
+#     scripts/ -- the repo floor is macOS bash 3.2.
+# ---------------------------------------------------------------------------
+
+if grep -rn 'mapfile' "$REPO_ROOT/scripts" 2>/dev/null | grep -q .; then
+	fail "(v) no 'mapfile' anywhere in scripts/ (bash 3.2 portability)"
+	grep -rn 'mapfile' "$REPO_ROOT/scripts" 2>/dev/null | sed 's/^/    /'
+else
+	pass "(v) no 'mapfile' anywhere in scripts/ (bash 3.2 portability)"
+fi
+
+# ---------------------------------------------------------------------------
+# (w) C3 close-out -- collect-lens-results.sh --findings-jsonl piped into
+#     reconcile-findings.sh end to end: reconciler exits 0, emits
+#     schema_version 2, findings attributed to the right lenses.
+# ---------------------------------------------------------------------------
+
+RECONCILE="$REPO_ROOT/scripts/reconcile-findings.sh"
+if [[ ! -x "$RECONCILE" ]]; then
+	fail "(w) preflight (scripts/reconcile-findings.sh not found/executable at $RECONCILE)"
+else
+	dir_w="$TMPDIR_ROOT/case-w"
+	make_scratch_repo "$dir_w"
+	write_lens_file "$(lens_file "$dir_w" deep-review w-run logic 1)" <<'JSONL'
+{"type":"start","run_id":"w-run","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"finding","severity":"Critical","category":"bug","location":"foo.py:10","summary":"logic sees a bug"}
+{"type":"done","status":"completed"}
+JSONL
+	write_lens_file "$(lens_file "$dir_w" deep-review w-run security 1)" <<'JSONL'
+{"type":"start","run_id":"w-run","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"finding","severity":"Important","category":"vuln","location":"baz.py:20","summary":"security sees a vuln"}
+{"type":"done","status":"completed"}
+JSONL
+
+	set +e
+	reconciled_w="$(
+		cd "$dir_w" && bash "$SCRIPT" --skill deep-review --run-id w-run \
+			--expected "logic:u1" --expected "security:u1" --findings-jsonl \
+			| bash "$RECONCILE" --skill deep-review
+	)"
+	w_exit=$?
+	set -e
+
+	if [[ $w_exit -ne 0 ]]; then
+		fail "(w) collect --findings-jsonl | reconcile-findings.sh exits 0 (got $w_exit)"
+	elif printf '%s' "$reconciled_w" | jq -e '
+			.schema_version == 2
+			and (.findings | length) == 2
+			and ([.findings[] | select(.file == "foo.py") | .lenses] | flatten | index("logic") != null)
+			and ([.findings[] | select(.file == "baz.py") | .lenses] | flatten | index("security") != null)
+		' >/dev/null 2>&1; then
+		pass "(w) collect-lens-results.sh --findings-jsonl | reconcile-findings.sh: schema_version 2, findings attributed to the right lenses"
+	else
+		fail "(w) collect --findings-jsonl | reconcile-findings.sh: unexpected shape"
+		echo "    reconciled: $reconciled_w"
+	fi
 fi
 
 finish

@@ -193,4 +193,45 @@ else
 	fail "(3) skipped lens excluded from --continue re-run set"
 fi
 
+# ---------------------------------------------------------------------------
+# (4) F3/D2 -- a --attempts-derived timed_out lens (spawned attempt 2 wrote
+#     no file at all) still ends up in the --continue re-run set once piped
+#     through persist-deep-review-state.sh --from-collector.
+# ---------------------------------------------------------------------------
+
+RUN_ID2="derived-2"
+write_lens_file "$(lens_file "$DIR" "$RUN_ID2" silent-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-2","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+JSONL
+# No attempt-2 file at all for silent-lens -- the orchestrator spawned a
+# respawn that never wrote anything (the "truly silent attempt 2" defect).
+
+collector_out2="$(
+	cd "$DIR" && bash "$COLLECT" --skill deep-review --run-id "$RUN_ID2" \
+		--expected "silent-lens:u1,u2" --attempts "silent-lens:2"
+)"
+
+if printf '%s' "$collector_out2" | jq -e '."silent-lens".status == "timed_out"' >/dev/null 2>&1; then
+	pass "(4a) collect-lens-results.sh --attempts silent-lens:2 (no attempt-2 file) -> timed_out"
+else
+	fail "(4a) --attempts-derived timed_out (collector output was: $collector_out2)"
+fi
+
+persisted2="$(
+	cd "$DIR" && printf '%s' "$collector_out2" | bash "$PERSIST" --harness claude --run-id "$RUN_ID2" \
+		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
+)"
+
+target2="$DIR/.deep-review/latest-claude.json"
+lenses_json2="$(jq -c '.lenses' "$target2")"
+actual_rerun2="$(rerun_set "$lenses_json2")"
+
+if printf '%s' "$actual_rerun2" | jq -e 'index("silent-lens") != null' >/dev/null 2>&1; then
+	pass "(4b) --attempts-derived timed_out lens is included in the --continue re-run set: $actual_rerun2"
+else
+	fail "(4b) --attempts-derived timed_out lens should be in the --continue re-run set (got $actual_rerun2)"
+	echo "    .lenses was: $lenses_json2"
+fi
+
 finish

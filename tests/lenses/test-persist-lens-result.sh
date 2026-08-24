@@ -63,6 +63,15 @@ finish() {
 	exit 0
 }
 
+# no_jsonl_anywhere <root> -- true (0) iff no .jsonl file exists anywhere
+# under <root>, including under a hidden dir (find's default already
+# recurses into dotdirs; -not -path excludes nothing here deliberately, we
+# want the strictest possible check for a traversal write).
+no_jsonl_anywhere() {
+	local root="$1"
+	! find "$root" -name '*.jsonl' 2>/dev/null | grep -q .
+}
+
 if [[ ! -f "$SCRIPT" ]]; then
 	fail "preflight (scripts/persist-lens-result.sh not found at $SCRIPT -- not implemented yet)"
 	finish
@@ -214,6 +223,179 @@ elif find "$case4_root" -name '*.jsonl' 2>/dev/null | grep -q .; then
 	fail "(4) unknown --type exits non-zero, no file written (a .jsonl file was written despite the unknown type)"
 else
 	pass "(4) unknown --type exits non-zero and writes no file"
+fi
+
+# ---------------------------------------------------------------------------
+# (5) F1 -- identifier validation: path traversal, glob metachars, leading
+#     dash in --lens/--run-id -> exit 2 (or non-zero), no file written
+#     ANYWHERE under root (not just at the naive expected path).
+# ---------------------------------------------------------------------------
+
+case5_root="$TMPDIR_ROOT/case-5"
+mkdir -p "$case5_root"
+
+# attempt_dir would be <case5_root>/.deep-review/lenses/run-5; the classic
+# reproduction ("../../pwned") resolves two levels up from there, i.e.
+# <case5_root>/.deep-review/pwned.1.jsonl.
+traversal_target="$case5_root/.deep-review/pwned.1.jsonl"
+
+set +e
+bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id run-5 \
+	--lens '../../pwned' --attempt 1 --type start --units u1 \
+	>"$case5_root/stdout-lens-traversal" 2>"$case5_root/stderr-lens-traversal"
+lens_traversal_exit=$?
+set -e
+
+if [[ $lens_traversal_exit -eq 0 ]]; then
+	fail "(5a) --lens '../../pwned' exits non-zero (script exited 0)"
+elif [[ -e "$traversal_target" ]]; then
+	fail "(5a) --lens '../../pwned' writes nothing (traversal target $traversal_target exists!)"
+elif ! no_jsonl_anywhere "$case5_root"; then
+	fail "(5a) --lens '../../pwned' writes nothing anywhere under root (found a stray .jsonl)"
+else
+	pass "(5a) --lens '../../pwned' rejected, no file written anywhere"
+fi
+
+for bad_lens in 'a*b' '-x' '.' '..' '' 'a/b' 'a b' 'a,b'; do
+	set +e
+	bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id "run-5-lens" \
+		--lens "$bad_lens" --attempt 1 --type start --units u1 \
+		>"$case5_root/stdout-bl" 2>"$case5_root/stderr-bl"
+	bl_exit=$?
+	set -e
+	if [[ $bl_exit -eq 0 ]]; then
+		fail "(5b) --lens '$bad_lens' exits non-zero (script exited 0)"
+	elif ! no_jsonl_anywhere "$case5_root"; then
+		fail "(5b) --lens '$bad_lens' writes no file (found one)"
+	else
+		pass "(5b) --lens '$bad_lens' rejected, no file written"
+	fi
+done
+
+for bad_run_id in '../x' '/etc/passwd' 'a*b' '-x' '.' 'a/b'; do
+	set +e
+	bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id "$bad_run_id" \
+		--lens logic --attempt 1 --type start --units u1 \
+		>"$case5_root/stdout-br" 2>"$case5_root/stderr-br"
+	br_exit=$?
+	set -e
+	if [[ $br_exit -eq 0 ]]; then
+		fail "(5c) --run-id '$bad_run_id' exits non-zero (script exited 0)"
+	elif ! no_jsonl_anywhere "$case5_root"; then
+		fail "(5c) --run-id '$bad_run_id' writes no file (found one)"
+	else
+		pass "(5c) --run-id '$bad_run_id' rejected, no file written"
+	fi
+done
+
+# Conforming values still succeed, including a colon in --run-id (ISO-8601
+# run-ids must keep working -- ':' is allowed for run-id, not for --lens).
+target5_ok="$(attempt_file "$case5_root" "deep-review" "2026-03-17T14:30:00Z" "logic" "1")"
+set +e
+bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id '2026-03-17T14:30:00Z' \
+	--lens logic --attempt 1 --type start --units u1 \
+	>"$case5_root/stdout-ok" 2>"$case5_root/stderr-ok"
+ok_exit=$?
+set -e
+if [[ $ok_exit -eq 0 && -f "$target5_ok" ]]; then
+	pass "(5d) --lens logic --run-id (ISO-8601, colon) exits 0, file written at expected path"
+else
+	fail "(5d) --lens logic --run-id (ISO-8601, colon) should succeed (exit=$ok_exit, file present=$([[ -f "$target5_ok" ]] && echo yes || echo no))"
+	sed 's/^/    /' "$case5_root/stderr-ok" 2>/dev/null
+fi
+
+# ---------------------------------------------------------------------------
+# (6) F1 -- symlinked lenses dir is refused, nothing written through it
+# ---------------------------------------------------------------------------
+
+if [[ "$(id -u)" -eq 0 ]]; then
+	echo "SKIP: (6) symlinked lenses dir refused (running as root)"
+else
+	case6_root="$TMPDIR_ROOT/case-6"
+	mkdir -p "$case6_root/.deep-review"
+	outside6="$TMPDIR_ROOT/case-6-outside"
+	mkdir -p "$outside6"
+	ln -s "$outside6" "$case6_root/.deep-review/lenses"
+
+	set +e
+	bash "$SCRIPT" --root "$case6_root" --skill deep-review --run-id run-6 \
+		--lens logic --attempt 1 --type start --units u1 \
+		>"$case6_root/stdout" 2>"$case6_root/stderr"
+	case6_exit=$?
+	set -e
+
+	if [[ $case6_exit -eq 0 ]]; then
+		fail "(6) symlinked lenses dir is refused (script exited 0)"
+		sed 's/^/    /' "$case6_root/stdout"
+	elif find "$outside6" -name '*.jsonl' 2>/dev/null | grep -q .; then
+		fail "(6) symlinked lenses dir is refused (a file was written through the symlink into $outside6)"
+	else
+		pass "(6) symlinked lenses dir is refused, nothing written through the link (exit=$case6_exit)"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (7) F9 -- leading-zero --attempt normalises to the same file as the
+#     non-padded spelling; JSON `attempt` field is 7 in both cases.
+# ---------------------------------------------------------------------------
+
+case7_root="$TMPDIR_ROOT/case-7"
+mkdir -p "$case7_root"
+target7="$(attempt_file "$case7_root" "deep-review" "run-7" "logic" "7")"
+target7_padded="$(attempt_file "$case7_root" "deep-review" "run-7" "logic" "007")"
+
+set +e
+bash "$SCRIPT" --root "$case7_root" --skill deep-review --run-id run-7 \
+	--lens logic --attempt 007 --type start --units u1 \
+	>"$case7_root/stdout1" 2>"$case7_root/stderr1"
+c7a_exit=$?
+bash "$SCRIPT" --root "$case7_root" --skill deep-review --run-id run-7 \
+	--lens logic --attempt 7 --type progress --unit u1 \
+	>"$case7_root/stdout2" 2>"$case7_root/stderr2"
+c7b_exit=$?
+set -e
+
+if [[ $c7a_exit -ne 0 || $c7b_exit -ne 0 ]]; then
+	fail "(7) --attempt 007 and --attempt 7 both succeed (exit1=$c7a_exit exit2=$c7b_exit)"
+	sed 's/^/    /' "$case7_root/stderr1" "$case7_root/stderr2" 2>/dev/null
+elif [[ -e "$target7_padded" ]]; then
+	fail "(7) --attempt 007 normalises to the unpadded filename (a separate $target7_padded was created -- duplicate writer)"
+elif [[ ! -f "$target7" ]]; then
+	fail "(7) --attempt 007 and --attempt 7 write to $target7 (file not found)"
+else
+	line_count7="$(wc -l <"$target7" | tr -d ' ')"
+	attempt_fields="$(jq -r '.attempt' "$target7" | sort -u | tr '\n' ' ')"
+	if [[ "$line_count7" == "2" && "$attempt_fields" == "7 " ]]; then
+		pass "(7) --attempt 007 and --attempt 7 write to one file (logic.7.jsonl), attempt=7 in both lines, no duplicate writer"
+	else
+		fail "(7) --attempt 007/--attempt 7 normalisation (lines=$line_count7, attempt fields='$attempt_fields')"
+		sed 's/^/    /' "$target7"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (8) F10/D1 -- a --unit containing a comma is rejected, exit 2, no file
+# ---------------------------------------------------------------------------
+
+case8_root="$TMPDIR_ROOT/case-8"
+mkdir -p "$case8_root"
+
+set +e
+bash "$SCRIPT" --root "$case8_root" --skill deep-review --run-id run-8 \
+	--lens logic --attempt 1 --type progress --unit 'a,b' \
+	>"$case8_root/stdout" 2>"$case8_root/stderr"
+case8_exit=$?
+set -e
+
+if [[ $case8_exit -eq 2 ]]; then
+	if no_jsonl_anywhere "$case8_root"; then
+		pass "(8) --unit 'a,b' (comma) rejected with exit 2, no file written"
+	else
+		fail "(8) --unit 'a,b' rejected but a file was written anyway"
+	fi
+else
+	fail "(8) --unit 'a,b' (comma) must exit 2 (got $case8_exit)"
+	sed 's/^/    /' "$case8_root/stderr"
 fi
 
 finish

@@ -11,7 +11,35 @@
 #
 # Usage:
 #   scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
-#       --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...]
+#       --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
+#       [--attempts <lens>:<n>] [--attempts ...] [--findings-jsonl]
+#
+# --attempts <lens>:<n> (repeatable, at most one *effective* entry per lens
+# -- duplicates for the same lens: last wins) records the highest attempt
+# number the orchestrator SPAWNED for that lens, whether or not that attempt
+# ever wrote a file. Absent for a lens (or absent entirely) -> spawned=0,
+# which makes status derivation collapse exactly to today's file-count-only
+# behaviour (backward compatible). An --attempts entry naming a lens with no
+# --expected entry is accepted and ignored. See "Status derivation" below
+# for how `effective = max(spawned, files)` feeds the timed_out/partial
+# split -- this is what makes a spawned-but-silent attempt (no file at all)
+# report timed_out instead of missing/partial.
+#
+# --findings-jsonl (boolean, mutually exclusive with the default summary
+# object; changes stdout only) emits one JSON object per line instead of the
+# per-lens summary:
+#   {"lens":"<lens key>","severity":…,"category":…,"file":…,"line":…,
+#    "summary":…,"evidence":…,"suggestion":…}
+# in --expected order per lens, findings in collected (dedup-preserved)
+# order. `file`/`line` are derived exactly as the dedup key does: explicit
+# .file/.line if present, else `location` split on the LAST ":" (no ":" ->
+# file = location, line = ""). Absent fields default to "". Emitted for
+# every reported lens, including partial/timed_out ones -- on-disk findings
+# from a still-running or silent lens are real findings; the lens's
+# non-terminal status is tracked separately by the default summary output,
+# not by this stream. Never hand-assemble this shape from raw lens
+# replies -- this is the only place that owns the location-split and the
+# lens key.
 #
 # --root is OPTIONAL (unlike persist-lens-result.sh's explicit-always
 # --root): when omitted this script root-anchors the same way
@@ -45,10 +73,12 @@
 # the only per-unit array, since that is what a respawn actually consumes.
 #
 # Status derivation, per lens, across ALL attempt files
-# (<state-dir>/lenses/<run-id>/<lens>.<N>.jsonl, N ascending):
-#   - No run-id directory, or no attempt file at all for this lens
-#     -> "missing"; unreviewed := the full --expected unit list (or [] if
-#     none was given).
+# (<state-dir>/lenses/<run-id>/<lens>.<N>.jsonl, N ascending), with
+# `files` = number of that lens's attempt files on disk, `spawned` = its
+# --attempts value or 0 when absent, and `effective = max(spawned, files)`:
+#   - No `done` line anywhere, files == 0, and effective <= 1 (i.e.
+#     spawned <= 1) -> "missing"; unreviewed := the full --expected unit
+#     list (or [] if none was given).
 #   - Otherwise, take the `done` line (if any) from the HIGHEST-numbered
 #     attempt file that has one:
 #       done.status == "completed" -> "completed"
@@ -56,11 +86,15 @@
 #       done.status == "skipped"   -> "skipped" (orchestrator-emitted, on a
 #         deliberately-skipped lens's behalf; terminal for --continue)
 #   - No `done` line found in any attempt:
-#       exactly 1 attempt file observed -> "partial" (still mid-run; a
-#         respawn on `unreviewed` is expected to follow)
-#       2+ attempt files observed -> "timed_out" (a respawn already
-#         happened and still produced no completion signal; one-respawn
-#         means this is terminal for the current orchestrator invocation)
+#       effective >= 2 -> "timed_out" (a respawn already happened -- whether
+#         or not that respawned attempt ever wrote a file -- and still
+#         produced no completion signal; one-respawn means this is terminal
+#         for the current orchestrator invocation)
+#       effective == 1 -> "partial" (still mid-run; a respawn on
+#         `unreviewed` is expected to follow)
+# With --attempts absent, spawned == 0 always, so effective == files and
+# this collapses exactly to the file-count-only table every existing test
+# already asserts on.
 #
 # `reviewed` is the union, across every attempt, of `--unit` values from
 # `progress` lines, intersected with `assigned` (so a stray progress line
@@ -85,32 +119,52 @@
 # (never crashes the collector), but a truncated *trailing* line is the
 # documented, tested case.
 #
+# --run-id/each --expected and --attempts lens key are validated against the
+# same charset whitelist persist-lens-result.sh uses (see
+# scripts/lib/persist-common.sh's persist_validate_id): a lens name must
+# match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no ':', no '/', no glob
+# metachars) and --run-id additionally allows ':'. This closes the same
+# glob/path-interpolation vector from the reader side that
+# persist-lens-result.sh closes from the writer side. Unit names must not
+# contain commas — unit lists are comma-joined and unescaped end-to-end
+# (writer --units, collector --expected); a comma-bearing unit is rejected
+# at the writer boundary rather than silently split (see
+# persist-lens-result.sh).
+#
 # Exit codes:
 #   0 — always, once flags validate (a stale/unknown run-id or empty
 #       --expected list is a normal "missing" result, not an error).
-#   2 — usage error (missing --skill/--run-id, unknown --skill, or a
-#       malformed --expected entry).
+#   2 — usage error (missing --skill/--run-id, unknown --skill, a malformed
+#       --expected/--attempts entry, a --run-id/lens name outside its
+#       charset, or a symlinked run directory at
+#       <state-dir>/lenses/<run-id>).
 #
 # Dependencies: jq.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$SCRIPT_DIR/lib/auto-fix-common.sh"
 # shellcheck source=scripts/lib/persist-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/persist-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
 usage: scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
-    --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...]
+    --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
+    [--attempts <lens>:<n>] [--attempts ...] [--findings-jsonl]
 EOF
 }
 
 ROOT=""
 SKILL=""
 RUN_ID=""
+FINDINGS_JSONL=0
 declare -a EXPECTED_LENSES=()
 declare -a EXPECTED_UNITS_CSV=()
+declare -a ATTEMPTS_LENSES=()
+declare -a ATTEMPTS_N=()
 
 require_value() {
 	if [[ $# -lt 1 ]]; then
@@ -145,8 +199,33 @@ while [[ $# -gt 0 ]]; do
 			usage
 			exit 2
 		fi
-		EXPECTED_LENSES+=("${entry%%:*}")
+		expected_lens_name="${entry%%:*}"
+		persist_validate_id "$expected_lens_name" collect-lens-results name || exit 2
+		EXPECTED_LENSES+=("$expected_lens_name")
 		EXPECTED_UNITS_CSV+=("${entry#*:}")
+		;;
+	--attempts)
+		shift
+		require_value "$@"
+		entry="$1"
+		if [[ "$entry" != *:* ]]; then
+			echo "collect-lens-results: --attempts entries must be <lens>:<n> (got '$entry')" >&2
+			usage
+			exit 2
+		fi
+		attempts_lens_name="${entry%%:*}"
+		attempts_n_raw="${entry#*:}"
+		persist_validate_id "$attempts_lens_name" collect-lens-results name || exit 2
+		if [[ ! "$attempts_n_raw" =~ ^[0-9]+$ ]] || ((10#$attempts_n_raw < 1)); then
+			echo "collect-lens-results: --attempts entries must be <lens>:<n> (got '$entry')" >&2
+			usage
+			exit 2
+		fi
+		ATTEMPTS_LENSES+=("$attempts_lens_name")
+		ATTEMPTS_N+=("$((10#$attempts_n_raw))")
+		;;
+	--findings-jsonl)
+		FINDINGS_JSONL=1
 		;;
 	--help | -h)
 		usage
@@ -180,6 +259,8 @@ if [[ -z "$RUN_ID" ]]; then
 	exit 2
 fi
 
+persist_validate_id "$RUN_ID" collect-lens-results run-id || exit 2
+
 if ! command -v jq >/dev/null 2>&1; then
 	echo "collect-lens-results: jq is required" >&2
 	exit 2
@@ -187,6 +268,30 @@ fi
 
 lenses_dir="$(persist_lens_state_dir "$ROOT" "$SKILL")" || exit 2
 run_dir="$lenses_dir/$RUN_ID"
+
+if [[ -d "$run_dir" ]]; then
+	if ! af_assert_no_symlink "$run_dir" "$ROOT"; then
+		echo "collect-lens-results: refusing to read through a symlink at $run_dir" >&2
+		exit 2
+	fi
+fi
+
+# spawned_attempts_for <lens> -- the --attempts value for <lens>, or 0 when
+# absent. Duplicate entries for one lens: last wins (documented in the
+# header), matching the "highest attempt the orchestrator spawned"
+# semantics.
+spawned_attempts_for() {
+	local want="$1" result=0
+	local j="${#ATTEMPTS_LENSES[@]}"
+	local idx=0
+	while [[ "$idx" -lt "$j" ]]; do
+		if [[ "${ATTEMPTS_LENSES[$idx]}" == "$want" ]]; then
+			result="${ATTEMPTS_N[$idx]}"
+		fi
+		idx=$((idx + 1))
+	done
+	printf '%s' "$result"
+}
 
 units_json_for() {
 	# $1 = comma-separated unit list (may be empty)
@@ -224,36 +329,51 @@ parse_attempt_file() {
 }
 
 output="{}"
+findings_jsonl_accum=""
 
 n="${#EXPECTED_LENSES[@]}"
 i=0
 while [[ "$i" -lt "$n" ]]; do
 	lens="${EXPECTED_LENSES[$i]}"
 	assigned_json="$(units_json_for "${EXPECTED_UNITS_CSV[$i]}")"
+	spawned="$(spawned_attempts_for "$lens")"
 	i=$((i + 1))
 
-	if [[ ! -d "$run_dir" ]]; then
-		lens_obj="$(jq -n -c --argjson assigned "$assigned_json" \
-			'{status: "missing", assigned: ($assigned | length), reviewed: 0, unreviewed: $assigned, findings: []}')"
-		output="$(printf '%s' "$output" | jq -c --arg lens "$lens" --argjson obj "$lens_obj" '. + {($lens): $obj}')"
-		continue
+	# Collect this lens's attempt files, sorted by attempt number ascending.
+	# Exact basename match (no glob, no awk field-splitting): a basename's
+	# lens component must be byte-equal to $lens and its attempt component
+	# must be a decimal integer. `find` runs unconditionally (2>/dev/null
+	# already swallows a missing $run_dir) -- no separate -d guard needed
+	# here.
+	attempt_files=()
+	while IFS= read -r fpath; do
+		attempt_files+=("$fpath")
+	done < <(
+		find "$run_dir" -maxdepth 1 -type f -name '*.jsonl' 2>/dev/null |
+			while IFS= read -r fpath; do
+				bn="${fpath##*/}"
+				[[ "$bn" == *.jsonl ]] || continue
+				rest="${bn%.jsonl}" # <lens>.<attempt>
+				attempt_num="${rest##*.}"
+				name="${rest%.*}"
+				[[ "$name" == "$lens" ]] || continue          # exact string equality
+				[[ "$attempt_num" =~ ^[0-9]+$ ]] || continue
+				printf '%s %s\n' "$((10#$attempt_num))" "$fpath"
+			done | sort -n -k1,1 | cut -d' ' -f2-
+	)
+
+	files="${#attempt_files[@]}"
+	effective="$spawned"
+	if ((files > effective)); then
+		effective="$files"
 	fi
 
-	# Collect this lens's attempt files, sorted by attempt number ascending.
-	# Sort key is derived from the basename only (not the full path) --
-	# --root may itself contain dots (e.g. a mktemp path like
-	# /tmp/tmp.XXXXXXXXXX on Linux), which would otherwise throw off the
-	# "second-to-last dot field" split.
-	mapfile -t attempt_files < <(find "$run_dir" -maxdepth 1 -type f -name "$lens.*.jsonl" 2>/dev/null |
-		while IFS= read -r fpath; do
-			bn="$(basename "$fpath")"
-			# basename: <lens>.<attempt>.jsonl -- attempt is the second-to-last dot field
-			n_fields=$(awk -F'.' '{print NF}' <<<"$bn")
-			attempt_num=$(awk -F'.' -v nf="$n_fields" '{print $(nf-1)}' <<<"$bn")
-			printf '%s %s\n' "$attempt_num" "$fpath"
-		done | sort -n -k1,1 | cut -d' ' -f2-)
-
-	if [[ "${#attempt_files[@]}" -eq 0 ]]; then
+	# Decision table (D2): no done line found (checked below via
+	# .done_status) AND files==0 AND effective<=1 (i.e. spawned<=1, since
+	# effective==files==0 when spawned==0) -> missing. Everything else
+	# (files>0, or spawned>=2) falls through to the merge/jq block so a
+	# spawned-but-fileless attempt still reports timed_out via $effective.
+	if [[ "$files" -eq 0 && "$effective" -le 1 ]]; then
 		lens_obj="$(jq -n -c --argjson assigned "$assigned_json" \
 			'{status: "missing", assigned: ($assigned | length), reviewed: 0, unreviewed: $assigned, findings: []}')"
 		output="$(printf '%s' "$output" | jq -c --arg lens "$lens" --argjson obj "$lens_obj" '. + {($lens): $obj}')"
@@ -270,11 +390,10 @@ while [[ "$i" -lt "$n" ]]; do
 		')"
 	done
 
-	attempt_count="${#attempt_files[@]}"
-
-	lens_obj="$(printf '%s' "$merged" | jq -c \
+	lens_full="$(printf '%s' "$merged" | jq -c \
 		--argjson assigned "$assigned_json" \
-		--argjson attempt_count "$attempt_count" \
+		--argjson effective "$effective" \
+		--arg lens "$lens" \
 		'
 		# file/line for the dedup key: prefer explicit .file/.line, else
 		# split a combined "file:line" .location (persist-lens-result.sh
@@ -298,25 +417,52 @@ while [[ "$i" -lt "$n" ]]; do
 		| ([$assigned[] | select(. as $u | $reviewed_raw | index($u) == null)]) as $unreviewed
 		| (
 			reduce .findings[] as $f ([];
-				(($f | key_file) | ascii_downcase) as $file
+				(($f | key_file)) as $file
 				| (($f | key_line)) as $line
 				| (($f.category // "") | ascii_downcase) as $cat
-				| ($file + "|" + $line + "|" + $cat) as $key
-				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key}] end
-			) | map(del(._key))
-		) as $dedup_findings
+				| (($file | ascii_downcase) + "|" + $line + "|" + $cat) as $key
+				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key, _file: $file, _line: $line}] end
+			)
+		) as $dedup_raw
+		| ($dedup_raw | map(del(._key, ._file, ._line))) as $dedup_findings
+		| ($dedup_raw | map({
+			lens: $lens,
+			severity: (.severity // ""),
+			category: (.category // ""),
+			file: ._file,
+			line: ._line,
+			summary: (.summary // ""),
+			evidence: (.evidence // ""),
+			suggestion: (.suggestion // "")
+		})) as $findings_jsonl
 		| (
 			if .done_status == "completed" then "completed"
 			elif .done_status == "errored" then "errored"
 			elif .done_status == "skipped" then "skipped"
-			elif $attempt_count >= 2 then "timed_out"
+			elif $effective >= 2 then "timed_out"
 			else "partial"
 			end
 		) as $status
-		| {status: $status, assigned: ($assigned | length), reviewed: ($reviewed_list | length), unreviewed: $unreviewed, findings: $dedup_findings}
+		| {
+			lens_obj: {status: $status, assigned: ($assigned | length), reviewed: ($reviewed_list | length), unreviewed: $unreviewed, findings: $dedup_findings},
+			findings_jsonl: $findings_jsonl
+		}
 		')"
 
+	lens_obj="$(printf '%s' "$lens_full" | jq -c '.lens_obj')"
 	output="$(printf '%s' "$output" | jq -c --arg lens "$lens" --argjson obj "$lens_obj" '. + {($lens): $obj}')"
+
+	if [[ "$FINDINGS_JSONL" -eq 1 ]]; then
+		lens_findings_lines="$(printf '%s' "$lens_full" | jq -c '.findings_jsonl[]')"
+		if [[ -n "$lens_findings_lines" ]]; then
+			findings_jsonl_accum="${findings_jsonl_accum}${lens_findings_lines}"$'\n'
+		fi
+	fi
 done
 
-printf '%s\n' "$output"
+if [[ "$FINDINGS_JSONL" -eq 1 ]]; then
+	printf '%s' "$findings_jsonl_accum"
+else
+	printf '%s\n' "$output"
+fi
+

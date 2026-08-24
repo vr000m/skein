@@ -45,6 +45,12 @@
 #                                scripts derive the same per-run-id attempt-file
 #                                directory from an explicit --root (never cwd).
 #                                Returns 1 with no output for an unknown skill.
+#   persist_validate_id <value> <label> <kind>
+#                              — validate <value> against a charset
+#                                whitelist (kind = name|run-id). Prints
+#                                "<label>: invalid ..." to stderr and
+#                                returns 2 on failure. See persist_validate_id
+#                                itself for the exact charsets and rationale.
 #   persist_jsonl_append <path> <json_line>
 #                              — append one line to <path>, creating parent
 #                                directories as needed. Deliberately a plain
@@ -215,6 +221,45 @@ persist_lens_state_dir() {
 		return 1
 		;;
 	esac
+}
+
+# persist_validate_id <value> <label> <kind>
+#   kind = name   : lens names, attempt-file basename component and an
+#                   `--expected <lens>:<units>` key -> ':' MUST be excluded
+#                   (it is the --expected/--attempts field separator).
+#   kind = run-id : path segment only -> ':' allowed so an ISO-8601 run-id
+#                   ("2026-03-17T14:30:00Z", as both deep-review mirrors'
+#                   Suggested schema shows) keeps working.
+#
+# Charset is a whitelist, not a metachar blacklist -- a blacklist has to
+# enumerate `* ? [ ] { } \ ~ ! space newline` and still misses locale/shell
+# surprises. The leading-char class rejects `..`, `.`, any dotfile, and any
+# leading `-` (flag-injection into the very scripts that consume the value)
+# without a second special-case check. `/` and glob metachars are outside
+# both classes, so path traversal, absolute paths, and glob-pattern
+# interpolation are structurally impossible. 64-char cap keeps
+# `<lens>.<attempt>.jsonl` inside every filesystem's NAME_MAX.
+# Uses `[[ =~ ]]` only -- bash 3.2 safe.
+persist_validate_id() {
+	local value="$1" label="$2" kind="$3"
+	local pattern
+	case "$kind" in
+	name) pattern='^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' ;;
+	run-id) pattern='^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$' ;;
+	*)
+		echo "$label: persist_validate_id: unknown kind '$kind'" >&2
+		return 2
+		;;
+	esac
+	if [[ ! "$value" =~ $pattern ]]; then
+		if [[ "$kind" == "run-id" ]]; then
+			echo "$label: invalid run-id '$value' (allowed: letters, digits, '.', '_', '-', ':', first char alphanumeric, max 64)" >&2
+		else
+			echo "$label: invalid name '$value' (allowed: letters, digits, '.', '_', '-', first char alphanumeric, max 64)" >&2
+		fi
+		return 2
+	fi
+	return 0
 }
 
 persist_jsonl_append() {

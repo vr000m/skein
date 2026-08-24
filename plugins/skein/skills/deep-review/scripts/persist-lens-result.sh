@@ -52,18 +52,37 @@
 # (number), and `ts` (unix epoch seconds) so a line is self-describing even
 # read in isolation from its filename.
 #
+# --run-id/--lens charset: both are validated against a whitelist (see
+# scripts/lib/persist-common.sh's persist_validate_id) before any path is
+# built. --lens (and every other name-shaped component) must match
+# `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no ':', no '/', no glob metachars,
+# max 64 chars). --run-id additionally allows ':' (kind "run-id") so an
+# ISO-8601 run-id like "2026-03-17T14:30:00Z" keeps working. A value
+# outside its charset is rejected before any directory is created or byte
+# written.
+#
+# Unit names must not contain commas — unit lists are comma-joined and
+# unescaped end-to-end (writer --units, collector --expected). A
+# comma-bearing --unit is rejected at the boundary rather than silently
+# split; --units is a CSV itself so its comma is the separator, not a
+# rejected character.
+#
 # Exit codes:
 #   0 — line appended.
 #   2 — usage error (missing/unknown --skill, --type, or --status; a
-#       required --type-specific flag missing; non-positive --attempt).
+#       required --type-specific flag missing; non-positive --attempt;
+#       --run-id/--lens outside its charset; a comma in --unit).
 #       No file is written.
-#   1 — best-effort append failed (permissions, disk full, etc).
+#   1 — append refused or failed (symlink guard, permissions, disk full);
+#       no line written.
 #
 # Dependencies: jq.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$SCRIPT_DIR/lib/auto-fix-common.sh"
 # shellcheck source=scripts/lib/persist-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/persist-common.sh"
 
@@ -213,11 +232,18 @@ if [[ -z "$RUN_ID" || -z "$LENS" ]]; then
 	exit 2
 fi
 
+persist_validate_id "$RUN_ID" persist-lens-result run-id || exit 2
+persist_validate_id "$LENS" persist-lens-result name || exit 2
+
 if [[ ! "$ATTEMPT" =~ ^[0-9]+$ ]] || ((10#$ATTEMPT < 1)); then
 	echo "persist-lens-result: --attempt must be a positive integer (got '${ATTEMPT:-<missing>}')" >&2
 	usage
 	exit 2
 fi
+# Normalise so "007" and "7" resolve to the same file and the same JSON
+# `attempt` value (finding 9) -- one writer per file must hold for every
+# spelling of the same number.
+ATTEMPT=$((10#$ATTEMPT))
 
 case "$TYPE" in
 start | progress | finding | done) ;;
@@ -244,6 +270,11 @@ start)
 progress)
 	if [[ -z "$UNIT" ]]; then
 		echo "persist-lens-result: --type progress requires --unit" >&2
+		usage
+		exit 2
+	fi
+	if [[ "$UNIT" == *,* ]]; then
+		echo "persist-lens-result: --unit must not contain a comma (unit lists are comma-joined and unescaped: '$UNIT')" >&2
 		usage
 		exit 2
 	fi
@@ -310,6 +341,11 @@ line="$(jq -n -c \
 lenses_dir="$(persist_lens_state_dir "$ROOT" "$SKILL")" || exit 2
 attempt_dir="$lenses_dir/$RUN_ID"
 attempt_file="$attempt_dir/$LENS.$ATTEMPT.jsonl"
+
+if ! af_assert_no_symlink "$attempt_file" "$ROOT"; then
+	echo "persist-lens-result: refusing to write through a symlink at $attempt_file" >&2
+	exit 1
+fi
 
 if ! persist_jsonl_append "$attempt_file" "$line"; then
 	exit 1

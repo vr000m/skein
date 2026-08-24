@@ -67,10 +67,10 @@ for skill_md in "${SKILLS[@]}"; do
 	assert_grep "$skill_md" 'persist-lens-result\.sh' \
 		"references persist-lens-result.sh"
 
-	assert_grep "$skill_md" -- '--type[[:space:]]+start' \
+	assert_grep "$skill_md" '--type[[:space:]]+start' \
 		"references --type start"
 
-	assert_grep "$skill_md" -- '--attempt[[:space:]]+2' \
+	assert_grep "$skill_md" '--attempt[[:space:]]+2' \
 		"references --attempt 2 (the respawn variant)"
 
 	assert_grep "$skill_md" 'collect-lens-results\.sh' \
@@ -100,6 +100,68 @@ for skill_md in "${SKILLS[@]}"; do
 		pass "documents the Codex sequential-mode clause ($skill_md)"
 	else
 		fail "documents the Codex sequential-mode clause ($skill_md)"
+	fi
+
+	# --- Phase 2 fix-spec additions (finding 3/5/6/C1/C2/C3 prose) ---
+
+	assert_grep "$skill_md" '\-\-attempts' \
+		"references --attempts (respawn-count flag)"
+
+	assert_grep "$skill_md" '\-\-findings-jsonl' \
+		"references --findings-jsonl (D-7/C3 collector normalizer flag)"
+
+	# D-2 (finding 5): attempt-3+ on --continue must be documented -- reusing
+	# --attempt 2 forever would put two writers on one file. Checked loosely
+	# (either phrasing the fix-spec's clause text uses).
+	if grep -Fq "attempt 3" "$skill_md" || grep -Eiq 'next unused attempt' "$skill_md"; then
+		pass "documents the attempt-3+ --continue re-run clause ($skill_md)"
+	else
+		fail "documents the attempt-3+ --continue re-run clause ($skill_md)"
+	fi
+
+	# D-6 (C2/D3): per-lens deadlines, not one global wake.
+	if grep -Eiq 'own deadline' "$skill_md" || grep -Eiq 'per-lens deadline' "$skill_md"; then
+		pass "documents the per-lens-deadline wake clause ($skill_md)"
+	else
+		fail "documents the per-lens-deadline wake clause ($skill_md)"
+	fi
+
+	# D-5 (C1): every generic persistence-contract value placeholder is
+	# quoted so a multi-word value doesn't split across argv.
+	if grep -Fq -- '--severity "' "$skill_md" && grep -Fq -- '--category "' "$skill_md"; then
+		pass "quotes --severity/--category value placeholders ($skill_md)"
+	else
+		fail "quotes --severity/--category value placeholders ($skill_md)"
+	fi
+done
+
+# D-1/D-3/D-4 (finding 4==C4, finding 6, finding 7): deep-review-only prose
+# -- the final persist step must pipe collect | persist --from-collector
+# (never the hand-assembled positional lenses.json), and the orchestrator
+# must document writing `done --status skipped` on a deliberately-skipped
+# lens's behalf.
+DEEP_REVIEW_SKILLS=(
+	"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
+)
+for skill_md in "${DEEP_REVIEW_SKILLS[@]}"; do
+	if ! require_file "$skill_md"; then
+		continue
+	fi
+
+	assert_grep "$skill_md" '\-\-from-collector' \
+		"final persist block uses --from-collector ($skill_md)"
+
+	assert_grep "$skill_md" '\-\-status[[:space:]]+skipped' \
+		"documents the orchestrator-emitted 'done --status skipped' clause ($skill_md)"
+
+	# No positional lenses.json placeholder left in the final-persist prose
+	# -- the fix-spec explicitly says to delete this wording when switching
+	# to the collector pipe.
+	if grep -Fq "assembled after Step 2" "$skill_md" || grep -Fq "assembled by hand" "$skill_md"; then
+		fail "final persist block has no leftover hand-assembled-JSON wording ($skill_md)"
+	else
+		pass "final persist block has no leftover hand-assembled-JSON wording ($skill_md)"
 	fi
 done
 
