@@ -2,9 +2,9 @@
 # lens-budget.sh — one size-scaled budget formula for every bounded
 # reviewer this repo spawns: the review-gauntlet Codex gate, and (from
 # Phase 2 onward) deep-review/review-plan lens subagents. Canonical
-# source lives here; it is bundled into review-gauntlet's mirrors via
-# `bundle_extra_for review-gauntlet` (see scripts/lib/bundle-map.sh) and
-# promoted to BUNDLE_SHARED once deep-review/review-plan start invoking it.
+# source lives here; it is BUNDLE_SHARED (see scripts/lib/bundle-map.sh),
+# promoted from a review-gauntlet-only `bundle_extra_for` entry once
+# deep-review/review-plan began invoking it for their own per-lens budgets.
 #
 # Usage:
 #   lens-budget.sh --kind lens|plan-lens|codex [--files N] [--lines N]

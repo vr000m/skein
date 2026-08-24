@@ -4,9 +4,9 @@
 #
 #  1. Repo .claude/CLAUDE.md unconditionally carries the three H2 headings:
 #     ## Testing, ## Facts vs Inference, ## Security & Diff Reviews.
-#  2. The global ~/.claude/CLAUDE.md (owned by the skills.md repo, not
+#  2. The global ~/.claude/CLAUDE.md (owned by the sync-computer repo, not
 #     skein) is checked only via GLOBAL_CLAUDE_MD: unset/absent -> explicit
-#     SKIP (the norm until the skills.md sync lands); set+present -> same
+#     SKIP (the norm when the operator has not synced the global file); set+present -> same
 #     three headings asserted there too.
 #  3. The ruff format-on-edit hook fix is checked only when reachable via
 #     HOOK_PATH (or the default $HOME/.claude/hooks/format-on-edit.sh):
@@ -68,7 +68,7 @@ fi
 
 # --- 2. Global ~/.claude/CLAUDE.md: gated on GLOBAL_CLAUDE_MD ---------------
 if [[ -z "${GLOBAL_CLAUDE_MD:-}" ]]; then
-	skip "GLOBAL_CLAUDE_MD not set — global CLAUDE.md hygiene check skipped (norm until skills.md sync lands)"
+	skip "GLOBAL_CLAUDE_MD not set — global CLAUDE.md hygiene check skipped (norm when the global file is not synced)"
 elif [[ ! -f "$GLOBAL_CLAUDE_MD" ]]; then
 	skip "GLOBAL_CLAUDE_MD set to '$GLOBAL_CLAUDE_MD' but file does not exist — skipped"
 else
