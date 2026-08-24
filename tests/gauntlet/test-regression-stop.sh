@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 # test-regression-stop.sh — Phase 3 acceptance: convergence-ledger.sh's
-# ledger-owned regression stop condition.
+# ledger-owned regression stop condition, with DEFERRED (next-full-pass)
+# promotion semantics (F1/F2/F3 fix spec, .conduct/phase3-fix-spec.md).
 #
 # Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
 # R5. Interface: `--present-keys <file>` / `--claimed-keys <file>`, newline-
-# delimited key lists (empty file == no keys), per convergence-ledger.sh's
-# own header comment. Promotion: a THIS-ROUND claimed key that is ALSO
-# absent from THIS SAME ROUND's `--present-keys`, on a `pass_type: full`
-# round, is promoted immediately into the cumulative `fixed_keys` set (a
-# round already bundles "the gates re-ran after the fix" together with "the
-# fixer's claim", so there is nothing to defer to a later round — see the
-# script's own comment above its promotion block). Promotion is full-pass-
-# only: a `pass_type: confirm` round never promotes, and there is no retry
-# queue — a claimed key still present this same round, or claimed only
-# during a confirm round, is simply dropped; the fixer must claim it again on
-# a later round that actually shows it gone. `regression = present_keys ∩
-# fixed_keys`, computed internally, slotted in the decision-priority chain
-# AFTER success/success_with_quarantine and BEFORE cap, and fires on BOTH
-# pass types (a reappearance is a reappearance, confirm or full).
-# `fixed_keys` persists across structural restarts.
+# delimited key lists. `--present-keys`, if given, MUST be an existing
+# readable regular file (an empty file is legitimate evidence; a
+# missing/unreadable one is a hard usage error, exit 2). `--claimed-keys`
+# requires `--present-keys` to also be supplied (exit 2 otherwise); a
+# missing/unreadable `--claimed-keys` file degrades tolerantly to an empty
+# claim list.
+#
+# Promotion is DEFERRED, not same-round: a claimed key is recorded into a
+# cumulative `pending_claims` set (never evaluated by the very round that
+# made the claim), and is only EVALUATED — promoted into `fixed_keys` if
+# absent, or dropped if still present — on a LATER round that is a COMPLETE
+# FULL PASS WITH EVIDENCE (`pass_type == full AND unresolved == 0 AND
+# --present-keys was supplied on that invocation`). A confirm pass, a
+# degraded full pass (`unresolved > 0`), or a full pass that itself omits
+# `--present-keys` neither promotes nor drops pending claims.
+#
+# `regression = present_keys ∩ fixed_keys`, computed internally, slotted in
+# the decision-priority chain AFTER success/success_with_quarantine and
+# BEFORE cap, and fires on BOTH pass types (a reappearance is a reappearance,
+# confirm or full). `fixed_keys` and `pending_claims` both persist across
+# structural restarts.
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
@@ -116,58 +123,89 @@ fixed_keys_of() {
 	jq -r '(.fixed_keys // []) | sort | join(",")' "$1"
 }
 
+pending_claims_of() {
+	jq -r '(.pending_claims // []) | sort | join(",")' "$1"
+}
+
 empty_keys="$(keyfile)"
 
 # =========================================================================
-# 1. Basic promotion: claimed key absent from THIS round's present_keys, on
-#    a full pass -> promoted into fixed_keys by the ledger.
+# 1. Real round ordering: claim -> next full pass promotes -> reappearance
+#    regresses. This is the critical assertion the pre-fix tests never
+#    made: A is claimed and present IN THE SAME ROUND (the normal case —
+#    the conductor's --claimed-keys is always a subset of that same round's
+#    --present-keys, since the claim is for a finding the gates just saw),
+#    and that claim must NOT promote until a LATER round shows A absent.
 # =========================================================================
 
 L="$(new_ledger)"
 present_A="$(keyfile A)"
 
-# Round 1: full pass, A present, not yet claimed -> findings remain.
+# Round 1: full pass, A present, not yet claimed -> findings remain, confirm.
 tok1="$(roundk "$L" 1 0 1 full 0 --present-keys "$present_A" --claimed-keys "$empty_keys")"
-assert_eq "$tok1" "confirm" "promotion round 1 (A present, unclaimed, local findings remain) -> confirm"
-assert_eq "$(fixed_keys_of "$L")" "" "promotion round 1: fixed_keys still empty (A not claimed)"
+assert_eq "$tok1" "confirm" "round ordering round 1 (A present, unclaimed, local findings remain) -> confirm"
+assert_eq "$(fixed_keys_of "$L")" "" "round ordering round 1: fixed_keys still empty"
+assert_eq "$(pending_claims_of "$L")" "" "round ordering round 1: pending_claims still empty (nothing claimed yet)"
 
-# Round 2: fixer claims A; this same full-pass round shows A absent from
-# present_keys -> the ledger promotes A into fixed_keys.
+# Round 2 (= round N): fixer claims A, but A is STILL PRESENT this same
+# round (the real ordering: the fixer claims a finding the gates just
+# reported, before the next pass has re-run against the fix). This must
+# NOT promote — it only records the claim as pending.
 claimed_A="$(keyfile A)"
-tok2="$(roundk "$L" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_A")"
-assert_eq "$tok2" "success" "promotion round 2 (claimed A, present_keys empty, count=0) -> success"
-assert_eq "$(fixed_keys_of "$L")" "A" "promotion round 2: ledger promotes claimed-and-absent key A into fixed_keys"
+tok2="$(roundk "$L" 1 0 1 full 0 --present-keys "$present_A" --claimed-keys "$claimed_A")"
+assert_eq "$tok2" "confirm" "round ordering round 2 (A claimed AND present in the SAME round -> the normal case) -> confirm, not success"
+assert_eq "$(fixed_keys_of "$L")" "" "round ordering round 2: A NOT promoted same-round (deferred promotion)"
+assert_eq "$(pending_claims_of "$L")" "A" "round ordering round 2: A recorded into pending_claims"
+
+# Round 3 (= round N+1): next full pass, A genuinely absent from
+# present_keys, no new claim -> the ledger evaluates the pending claim and
+# promotes A into fixed_keys.
+tok3="$(roundk "$L" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$tok3" "success" "round ordering round 3 (next full pass, A absent) -> success"
+assert_eq "$(fixed_keys_of "$L")" "A" "round ordering round 3: deferred promotion — A promoted into fixed_keys on the NEXT full pass"
+assert_eq "$(pending_claims_of "$L")" "" "round ordering round 3: pending_claims cleared after evaluation"
+
+# Round 4 (= round N+2): A reappears in present_keys on a full pass ->
+# regression (terminal, overrides confirm).
+tok4="$(roundk "$L" 1 0 1 full 0 --present-keys "$present_A" --claimed-keys "$empty_keys")"
+assert_eq "$tok4" "regression" "round ordering round 4: fixed key A reappears in present_keys on a full pass -> regression"
+assert_eq "$(fixed_keys_of "$L")" "A" "round ordering round 4: fixed_keys unchanged by the regression"
 
 # =========================================================================
-# 2. Reappearance of a fixed key on a later full pass -> regression.
-# =========================================================================
-
-tok3="$(roundk "$L" 1 0 1 full 0 --present-keys "$present_A" --claimed-keys "$empty_keys")"
-assert_eq "$tok3" "regression" "round 3: fixed key A reappears in present_keys on a full pass -> regression (terminal, overrides confirm)"
-
-# =========================================================================
-# 3. Regression survives a structural restart.
+# 2. Pending claim survives a structural restart, then promotes, then
+#    later regresses.
 # =========================================================================
 
 L2="$(new_ledger)"
 claimed_B="$(keyfile B)"
 present_B="$(keyfile B)"
 
-tokp1="$(roundk "$L2" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_B")"
-assert_eq "$tokp1" "success" "restart-survival setup: claim B on a clean full pass -> success"
-assert_eq "$(fixed_keys_of "$L2")" "B" "restart-survival setup: B promoted to fixed_keys"
+tokb1="$(roundk "$L2" 1 0 1 full 0 --present-keys "$present_B" --claimed-keys "$claimed_B")"
+assert_eq "$tokb1" "confirm" "restart-survival round 1: claim B while B is still present -> confirm"
+assert_eq "$(fixed_keys_of "$L2")" "" "restart-survival round 1: B not yet promoted"
+assert_eq "$(pending_claims_of "$L2")" "B" "restart-survival round 1: B recorded as pending"
 
-tok_restart="$(roundk "$L2" 3 1 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
-assert_eq "$tok_restart" "restart" "restart round: structural fix present -> restart (fixed_keys must survive this)"
-assert_eq "$(fixed_keys_of "$L2")" "B" "fixed_keys persists across the structural restart"
+# Restart round: structural fix present, no --present-keys/--claimed-keys
+# supplied at all (present_supplied=false) -> neither evaluates nor drops
+# the pending claim; it must survive untouched.
+tok_restart="$(roundk "$L2" 3 1 0 full 0)"
+assert_eq "$tok_restart" "restart" "restart-survival round 2: structural fix present -> restart"
+assert_eq "$(fixed_keys_of "$L2")" "" "restart-survival round 2: fixed_keys unaffected by the restart round"
+assert_eq "$(pending_claims_of "$L2")" "B" "restart-survival round 2: pending_claims (B) survives the structural restart untouched"
+
+# Evaluation round: a genuine full pass with evidence, B absent -> B
+# promotes.
+tok_eval="$(roundk "$L2" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$tok_eval" "success" "restart-survival round 3 (post-restart evaluation pass, B absent) -> success"
+assert_eq "$(fixed_keys_of "$L2")" "B" "restart-survival round 3: B promoted into fixed_keys, carried across the earlier restart"
+assert_eq "$(pending_claims_of "$L2")" "" "restart-survival round 3: pending_claims cleared"
 
 tok_after_restart="$(roundk "$L2" 1 0 1 full 0 --present-keys "$present_B" --claimed-keys "$empty_keys")"
-assert_eq "$tok_after_restart" "regression" "post-restart round: B reappears in present_keys -> regression (fixed_keys carried across the restart)"
+assert_eq "$tok_after_restart" "regression" "restart-survival round 4: B reappears in present_keys -> regression (fixed_keys carried across the restart)"
 
 # =========================================================================
-# 4. Claimed-but-still-present key never enters fixed_keys, and never later
-#    fires regression (there is no retry queue: still-present at claim time
-#    means the claim is simply dropped).
+# 3. Claimed-but-still-present key: dropped on the next full pass, never
+#    promoted, never later fires regression (there is no retry queue).
 # =========================================================================
 
 L3="$(new_ledger)"
@@ -175,38 +213,65 @@ claimed_C="$(keyfile C)"
 present_C="$(keyfile C)"
 
 tokc1="$(roundk "$L3" 1 0 1 full 0 --present-keys "$present_C" --claimed-keys "$claimed_C")"
-assert_eq "$tokc1" "confirm" "claimed-but-still-present round 1: C claimed but still present -> confirm (not success)"
-assert_eq "$(fixed_keys_of "$L3")" "" "claimed-but-still-present round 1: C never enters fixed_keys (it was never actually absent)"
+assert_eq "$tokc1" "confirm" "claimed-but-still-present round 1: C claimed while present -> confirm"
+assert_eq "$(pending_claims_of "$L3")" "C" "claimed-but-still-present round 1: C recorded as pending"
 
+# Next full pass: C is STILL present, no new claim -> the ledger evaluates
+# the pending claim, finds C still present, and DROPS it (never promoted).
 tokc2="$(roundk "$L3" 1 0 1 full 0 --present-keys "$present_C" --claimed-keys "$empty_keys")"
-assert_ne "$tokc2" "regression" "claimed-but-still-present round 2: C reappearing later must NOT fire regression (never promoted)"
-assert_eq "$(fixed_keys_of "$L3")" "" "claimed-but-still-present round 2: fixed_keys still empty"
+assert_eq "$tokc2" "confirm" "claimed-but-still-present round 2 (next full pass, C still present) -> confirm"
+assert_eq "$(fixed_keys_of "$L3")" "" "claimed-but-still-present round 2: C never enters fixed_keys (still present at evaluation time)"
+assert_eq "$(pending_claims_of "$L3")" "" "claimed-but-still-present round 2: the still-present claim is DROPPED (pending_claims cleared, not carried forward)"
+
+# Later reappearance (really: continued presence) of C must NOT fire
+# regression -- it was never promoted.
+tokc3="$(roundk "$L3" 1 0 1 full 0 --present-keys "$present_C" --claimed-keys "$empty_keys")"
+assert_ne "$tokc3" "regression" "claimed-but-still-present round 3: C reappearing later must NOT fire regression (never promoted)"
+assert_eq "$(fixed_keys_of "$L3")" "" "claimed-but-still-present round 3: fixed_keys still empty"
 
 # =========================================================================
-# 5. A key present only in a pass_type: confirm pass never promotes
-#    (promotion is full-pass-only).
+# 4. A confirm pass neither promotes nor drops pending claims; promotion
+#    requires a full pass with evidence, and may need one extra round to
+#    actually land (deferred, never same-round -- even the round that
+#    finally sees the claimed key absent on a genuine full pass cannot
+#    promote it in that same call; the NEXT full-pass-with-evidence round
+#    does).
 # =========================================================================
 
 L4="$(new_ledger)"
 claimed_D="$(keyfile D)"
 
-# Confirm pass, D claimed and absent from present_keys -- promotion must NOT
-# fire here; it is scoped to full passes only.
+# Confirm pass, D claimed, absent from present_keys -- promotion must NOT
+# fire (full-pass-only), but the claim IS still recorded as pending (RECORD
+# is unconditional; only EVALUATE is full-pass-gated).
 tokd1="$(roundk "$L4" 0 0 0 confirm 0 --present-keys "$empty_keys" --claimed-keys "$claimed_D")"
-assert_eq "$tokd1" "continue" "confirm-pass-absence round 1: clean confirm pass -> continue (non-terminal), even with D claimed+absent"
-assert_eq "$(fixed_keys_of "$L4")" "" "confirm-pass-absence round 1: D NOT promoted merely by being absent during a confirm pass"
+assert_eq "$tokd1" "continue" "confirm-pass round 1: clean confirm pass -> continue (non-terminal), even with D claimed+absent"
+assert_eq "$(fixed_keys_of "$L4")" "" "confirm-pass round 1: D NOT promoted merely by being absent during a confirm pass"
+assert_eq "$(pending_claims_of "$L4")" "D" "confirm-pass round 1: D IS still recorded as a pending claim (recording is unconditional)"
 
+# Full pass, D reappears in present_keys (still present) -- must NOT fire
+# regression (never promoted), and the pending claim is evaluated+dropped
+# (still present at evaluation time).
 present_D="$(keyfile D)"
 tokd2="$(roundk "$L4" 1 0 1 full 0 --present-keys "$present_D" --claimed-keys "$empty_keys")"
-assert_ne "$tokd2" "regression" "confirm-pass-absence round 2: D reappearing on a full pass must NOT fire regression (never promoted)"
+assert_ne "$tokd2" "regression" "confirm-pass round 2: D reappearing on a full pass must NOT fire regression (never promoted)"
+assert_eq "$(pending_claims_of "$L4")" "" "confirm-pass round 2: the still-present pending claim D is dropped on evaluation"
 
-# But a genuine full-pass claim+absence still promotes it.
+# Full pass, D claimed again, absent this round -- records as pending
+# again, does NOT promote same-round.
 tokd3="$(roundk "$L4" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_D")"
-assert_eq "$tokd3" "success" "confirm-pass-absence round 3: D claimed again, absent on a FULL pass -> success"
-assert_eq "$(fixed_keys_of "$L4")" "D" "confirm-pass-absence round 3: D promoted once a genuine full-pass claim+absence occurs"
+assert_eq "$tokd3" "success" "confirm-pass round 3: D claimed again, absent on a full pass -> success (this round's own claim is not yet promoted)"
+assert_eq "$(fixed_keys_of "$L4")" "" "confirm-pass round 3: D still NOT promoted -- this round's own claim can never be evaluated by this same round"
+assert_eq "$(pending_claims_of "$L4")" "D" "confirm-pass round 3: D recorded as pending"
+
+# Round 4: the NEXT full pass with evidence -- D still absent -> NOW it
+# promotes.
+tokd4="$(roundk "$L4" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$tokd4" "success" "confirm-pass round 4: next full pass, D still absent -> success"
+assert_eq "$(fixed_keys_of "$L4")" "D" "confirm-pass round 4: D promoted once a LATER full-pass-with-evidence round confirms its continued absence"
 
 # =========================================================================
-# 6. Deferred key (never claimed at all) never promotes, regardless of how
+# 5. Deferred key (never claimed at all) never promotes, regardless of how
 #    its presence fluctuates across rounds.
 # =========================================================================
 
@@ -224,7 +289,7 @@ tok_e3="$(roundk "$L5" 1 0 1 full 0 --present-keys "$present_E" --claimed-keys "
 assert_ne "$tok_e3" "regression" "deferred-key round 3: E reappearing must NOT fire regression (it was never promoted)"
 
 # =========================================================================
-# 7. Quarantined key never promotes.
+# 6. Quarantined key never promotes.
 # =========================================================================
 
 L6="$(new_ledger)"
@@ -238,23 +303,30 @@ tok_q2="$(roundk "$L6" 0 0 0 full 1 --present-keys "$present_Q" --claimed-keys "
 assert_ne "$tok_q2" "regression" "quarantined-key round 2: Q still present across rounds must NOT fire regression (never promoted)"
 
 # =========================================================================
-# 8. A fixed key reappearing in a `confirm` pass DOES fire regression
-#    (regression fires on BOTH pass types; only promotion is full-pass-only).
+# 7. A fixed key reappearing in a `confirm` pass DOES fire regression
+#    (regression fires on BOTH pass types; only promotion is full-pass-only
+#    and evidence-gated). Setup: claim F while present (confirm), then a
+#    genuine evaluation full pass promotes F, then a confirm pass sees F
+#    reappear.
 # =========================================================================
 
 L7="$(new_ledger)"
 claimed_F="$(keyfile F)"
 present_F="$(keyfile F)"
 
-tok_f1="$(roundk "$L7" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_F")"
-assert_eq "$tok_f1" "success" "confirm-regression setup: claim F on a clean full pass -> success"
-assert_eq "$(fixed_keys_of "$L7")" "F" "confirm-regression setup: F promoted to fixed_keys"
+tok_f1="$(roundk "$L7" 1 0 1 full 0 --present-keys "$present_F" --claimed-keys "$claimed_F")"
+assert_eq "$tok_f1" "confirm" "confirm-regression setup round 1: claim F while F is still present -> confirm"
+assert_eq "$(pending_claims_of "$L7")" "F" "confirm-regression setup round 1: F recorded as pending"
+
+tok_f_eval="$(roundk "$L7" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$tok_f_eval" "success" "confirm-regression setup round 2 (evaluation pass, F absent) -> success"
+assert_eq "$(fixed_keys_of "$L7")" "F" "confirm-regression setup round 2: F promoted to fixed_keys"
 
 tok_f2="$(roundk "$L7" 1 0 1 confirm 0 --present-keys "$present_F" --claimed-keys "$empty_keys")"
-assert_eq "$tok_f2" "regression" "confirm-regression round 2: F (fixed) reappears during a CONFIRM pass -> regression fires on both pass types"
+assert_eq "$tok_f2" "regression" "confirm-regression round 3: F (fixed) reappears during a CONFIRM pass -> regression fires on both pass types"
 
 # =========================================================================
-# 9. --last-decision on a regression ledger exits terminal (5).
+# 8. --last-decision on a regression ledger exits terminal (5).
 # =========================================================================
 
 set +e
@@ -265,8 +337,8 @@ assert_eq "$peek_out" "regression" "--last-decision on a regression ledger reads
 assert_eq "$peek_exit" "5" "--last-decision on a regression ledger exits 5 (terminal)"
 
 # =========================================================================
-# 10. Golden: append decision == subsequent --last-decision token; peek does
-#     not re-promote (fixed_keys count + ledger bytes unchanged across peeks).
+# 9. Golden: append decision == subsequent --last-decision token; peek does
+#    not re-promote (fixed_keys count + ledger bytes unchanged across peeks).
 # =========================================================================
 
 fk_before_peek="$(fixed_keys_of "$L7")"
@@ -279,53 +351,123 @@ assert_eq "$fk_after_peek" "$fk_before_peek" "repeated --last-decision peeks do 
 assert_eq "$hash_after_peek" "$hash_before_peek" "repeated --last-decision peeks leave the ledger file byte-identical (no re-promotion side effect)"
 
 # =========================================================================
-# 11. Malformed/missing --claimed-keys file -> defined non-crash behaviour
-#     (either a documented usage error, or treated as an empty key set --
-#     never an uncaught jq/bash crash).
+# 10. F2: key-file argument validation.
 # =========================================================================
 
+# 10a. --claimed-keys without --present-keys -> exit 2, 'convergence-ledger:'
+# prefixed message.
 L8="$(new_ledger)"
-NONEXISTENT_KEYS="$(mktemp -u)"
+claimed_only="$(keyfile Z)"
+claimed_only_stderr="$(mktemp)"
+TMP_FILES+=("$claimed_only_stderr")
+set +e
+"$LEDGER_SCRIPT" --ledger "$L8" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--claimed-keys "$claimed_only" >/dev/null 2>"$claimed_only_stderr"
+claimed_only_exit=$?
+set -e
+assert_eq "$claimed_only_exit" "2" "F2: --claimed-keys without --present-keys exits 2"
+if grep -q 'convergence-ledger:.*--claimed-keys requires --present-keys' "$claimed_only_stderr"; then
+	pass "F2: --claimed-keys-without-present-keys error message follows the documented convergence-ledger: prefix and wording"
+else
+	fail "F2: --claimed-keys-without-present-keys error message missing expected text (got: $(cat "$claimed_only_stderr"))"
+fi
+
+# 10b. Missing/nonexistent --present-keys file -> exit 2, ledger file NOT
+# written/modified, 'convergence-ledger:' prefixed message.
+L9="$(new_ledger)"
+NONEXISTENT_PRESENT="$(mktemp -u)"
+missing_present_stderr="$(mktemp)"
+TMP_FILES+=("$missing_present_stderr")
+set +e
+"$LEDGER_SCRIPT" --ledger "$L9" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--present-keys "$NONEXISTENT_PRESENT" >/dev/null 2>"$missing_present_stderr"
+missing_present_exit=$?
+set -e
+assert_eq "$missing_present_exit" "2" "F2: missing/nonexistent --present-keys file exits 2"
+if grep -q 'convergence-ledger:.*--present-keys file not found or unreadable' "$missing_present_stderr"; then
+	pass "F2: missing --present-keys error message follows the documented convergence-ledger: prefix and wording"
+else
+	fail "F2: missing --present-keys error message missing expected text (got: $(cat "$missing_present_stderr"))"
+fi
+if [[ ! -e "$L9" ]]; then
+	pass "F2: missing --present-keys file -- the ledger was NOT created/written"
+else
+	fail "F2: missing --present-keys file -- the ledger file was written despite the exit-2 validation failure"
+fi
+
+# 10c. Empty (zero-byte) --present-keys file IS accepted as evidence (not
+# an error) -- exit 0, decision computed normally.
+L10a="$(new_ledger)"
+zero_byte_present="$(keyfile)"
+set +e
+zero_byte_tok="$("$LEDGER_SCRIPT" --ledger "$L10a" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--present-keys "$zero_byte_present" 2>/dev/null)"
+zero_byte_exit=$?
+set -e
+assert_eq "$zero_byte_exit" "0" "F2: a zero-byte --present-keys file is accepted as legitimate evidence, exit 0"
+assert_eq "$zero_byte_tok" "success" "F2: a zero-byte --present-keys file on a clean full pass computes 'success' normally"
+
+# 10d. Missing --claimed-keys file (with a VALID --present-keys supplied)
+# keeps the tolerant behaviour: warn on stderr, treat as [], exit 0 exactly
+# (narrowed from the old "0 or 2" tolerance).
+L11="$(new_ledger)"
+NONEXISTENT_CLAIMED="$(mktemp -u)"
 malformed_stderr="$(mktemp)"
 TMP_FILES+=("$malformed_stderr")
 set +e
-malformed_tok="$(roundk "$L8" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$NONEXISTENT_KEYS" 2>"$malformed_stderr")"
+malformed_tok="$(roundk "$L11" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$NONEXISTENT_CLAIMED" 2>"$malformed_stderr")"
 malformed_exit=$?
 set -e
-if [[ "$malformed_exit" -eq 0 || "$malformed_exit" -eq 2 ]]; then
-	pass "missing --claimed-keys file: defined exit code ($malformed_exit), not an uncontrolled crash"
-else
-	fail "missing --claimed-keys file: expected exit 0 (treated as empty) or 2 (usage error), got $malformed_exit"
-fi
+assert_eq "$malformed_exit" "0" "F2: missing --claimed-keys file (with a valid --present-keys) exits 0 exactly (tolerant path)"
+assert_eq "$malformed_tok" "success" "F2: missing --claimed-keys file still computes the decision normally (treated as an empty claim set)"
 if grep -qi 'jq: error\|Traceback\|core dumped' "$malformed_stderr"; then
-	fail "missing --claimed-keys file: stderr shows a raw jq/interpreter crash, not a controlled error message"
+	fail "F2: missing --claimed-keys file: stderr shows a raw jq/interpreter crash, not a controlled warning"
 else
-	pass "missing --claimed-keys file: no raw jq/interpreter crash on stderr"
-fi
-if [[ "$malformed_exit" -eq 2 ]]; then
-	if grep -q 'convergence-ledger:' "$malformed_stderr"; then
-		pass "missing --claimed-keys file (usage-error path): error message follows this script's own 'convergence-ledger:' prefix convention"
-	else
-		fail "missing --claimed-keys file (usage-error path): error message does not follow the 'convergence-ledger:' prefix convention"
-	fi
+	pass "F2: missing --claimed-keys file: no raw jq/interpreter crash on stderr"
 fi
 
-# A claimed-keys file that exists but is garbage (blank lines / stray
-# whitespace, not JSON) must also not crash -- keys files are plain
-# newline-delimited lists, not JSON.
-L9="$(new_ledger)"
+# 10e. A --claimed-keys file that exists but is garbage (blank lines /
+# stray whitespace, not JSON) must also not crash -- keys files are plain
+# newline-delimited lists, not JSON. Whitespace-only lines are trimmed, not
+# merely non-empty-checked.
+L12="$(new_ledger)"
 garbage_keys="$(mktemp)"
 TMP_FILES+=("$garbage_keys")
 printf '\n   \n\t\nA\n\n' >"$garbage_keys"
 set +e
-garbage_tok="$(roundk "$L9" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$garbage_keys" 2>/dev/null)"
+garbage_tok="$(roundk "$L12" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$garbage_keys" 2>/dev/null)"
 garbage_exit=$?
 set -e
-if [[ "$garbage_exit" -eq 0 ]]; then
-	pass "garbage/blank-line --claimed-keys file: tolerated, decision computed (got '$garbage_tok')"
-else
-	fail "garbage/blank-line --claimed-keys file: expected exit 0 (blank lines tolerated as no-op entries), got $garbage_exit"
-fi
+assert_eq "$garbage_exit" "0" "F2: garbage/blank-line --claimed-keys file is tolerated, decision computed"
+assert_eq "$garbage_tok" "success" "F2: garbage/blank-line --claimed-keys file still resolves the decision correctly"
+
+# =========================================================================
+# 11. F3: promotion requires unresolved == 0 -- a degraded full pass
+#    (unresolved > 0) neither promotes NOR drops a pending claim.
+# =========================================================================
+
+L13="$(new_ledger)"
+claimed_I="$(keyfile I)"
+present_I="$(keyfile I)"
+
+toki1="$(roundk "$L13" 1 0 1 full 0 --present-keys "$present_I" --claimed-keys "$claimed_I")"
+assert_eq "$toki1" "confirm" "F3 round 1: claim I while present -> confirm"
+assert_eq "$(pending_claims_of "$L13")" "I" "F3 round 1: I recorded as pending"
+
+# A DEGRADED full pass (unresolved=1): the gate that would have
+# re-reported I never ran, so its silence is not evidence in either
+# direction -- I must remain pending, untouched.
+toki2="$("$LEDGER_SCRIPT" --ledger "$L13" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--unresolved 1 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$toki2" "continue" "F3 round 2: degraded full pass (unresolved=1), I absent -> continue (not success)"
+assert_eq "$(fixed_keys_of "$L13")" "" "F3 round 2: I NOT promoted on a degraded (unresolved>0) full pass, despite being absent"
+assert_eq "$(pending_claims_of "$L13")" "I" "F3 round 2: pending claim I is NOT dropped either -- an unresolved gate blocks both promotion and drop"
+
+# A genuine (unresolved=0) full pass, I still absent -> now it promotes.
+toki3="$("$LEDGER_SCRIPT" --ledger "$L13" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--unresolved 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$toki3" "success" "F3 round 3: unresolved=0, I absent -> success"
+assert_eq "$(fixed_keys_of "$L13")" "I" "F3 round 3: I promoted once a genuine (unresolved=0) full pass confirms its continued absence"
 
 # =========================================================================
 # 12. Decision-priority: success beats regression.
@@ -335,34 +477,43 @@ fi
 # previously-fixed key (eligible for `regression`), success must win --
 # regression is slotted strictly AFTER success in the priority chain.
 
-L10="$(new_ledger)"
+L14="$(new_ledger)"
 claimed_G="$(keyfile G)"
 present_G="$(keyfile G)"
 
-tok_g1="$(roundk "$L10" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_G")"
-assert_eq "$tok_g1" "success" "priority setup: claim G on a clean full pass -> success"
-assert_eq "$(fixed_keys_of "$L10")" "G" "priority setup: G promoted to fixed_keys"
+tok_g1="$(roundk "$L14" 1 0 1 full 0 --present-keys "$present_G" --claimed-keys "$claimed_G")"
+assert_eq "$tok_g1" "confirm" "priority setup round 1: claim G while present -> confirm"
 
-tok_g2="$(roundk "$L10" 0 0 0 full 0 --present-keys "$present_G" --claimed-keys "$empty_keys")"
+tok_g_eval="$(roundk "$L14" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys")"
+assert_eq "$tok_g_eval" "success" "priority setup round 2 (evaluation pass, G absent) -> success"
+assert_eq "$(fixed_keys_of "$L14")" "G" "priority setup round 2: G promoted to fixed_keys"
+
+tok_g2="$(roundk "$L14" 0 0 0 full 0 --present-keys "$present_G" --claimed-keys "$empty_keys")"
 assert_eq "$tok_g2" "success" "priority: success beats regression (count=0/unresolved=0/quarantine=0 wins even though G, a fixed key, is present)"
 
 # =========================================================================
 # 13. Decision-priority: regression beats cap.
 # =========================================================================
-# Use a small --cap so the boundary is reachable quickly. Claim+promote H on
-# round 1 (loop_counter=1); round 2 both reaches loop_counter==cap AND
-# re-presents the fixed key H -- regression must win over cap.
+# Use a small --cap so the boundary is reachable quickly. Claim+promote H
+# across two setup rounds (loop_counter=1 confirm, loop_counter=2
+# evaluation/promotion); round 3 both reaches loop_counter==cap AND
+# re-presents the fixed key H -- regression must win over cap. --cap bumped
+# from 2 to 3 (per the fix spec's blast-radius note) because the setup now
+# spans one extra round.
 
-L11="$(new_ledger)"
+L15="$(new_ledger)"
 claimed_H="$(keyfile H)"
 present_H="$(keyfile H)"
 
-tok_h1="$(roundk "$L11" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$claimed_H" --cap 2)"
-assert_eq "$tok_h1" "success" "cap-priority setup: claim H on a clean full pass -> success (loop_counter=1)"
-assert_eq "$(fixed_keys_of "$L11")" "H" "cap-priority setup: H promoted to fixed_keys"
+tok_h1="$(roundk "$L15" 1 0 1 full 0 --present-keys "$present_H" --claimed-keys "$claimed_H" --cap 3)"
+assert_eq "$tok_h1" "confirm" "cap-priority setup round 1: claim H while present -> confirm (loop_counter=1)"
 
-tok_h2="$(roundk "$L11" 1 0 1 full 0 --present-keys "$present_H" --claimed-keys "$empty_keys" --cap 2)"
-assert_eq "$tok_h2" "regression" "priority: regression beats cap (loop_counter reaches cap=2 on this round, but H, a fixed key, reappears -> regression wins)"
+tok_h_eval="$(roundk "$L15" 0 0 0 full 0 --present-keys "$empty_keys" --claimed-keys "$empty_keys" --cap 3)"
+assert_eq "$tok_h_eval" "success" "cap-priority setup round 2 (evaluation pass, H absent) -> success (loop_counter=2)"
+assert_eq "$(fixed_keys_of "$L15")" "H" "cap-priority setup round 2: H promoted to fixed_keys"
+
+tok_h2="$(roundk "$L15" 1 0 1 full 0 --present-keys "$present_H" --claimed-keys "$empty_keys" --cap 3)"
+assert_eq "$tok_h2" "regression" "priority: regression beats cap (loop_counter reaches cap=3 on this round, but H, a fixed key, reappears -> regression wins)"
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

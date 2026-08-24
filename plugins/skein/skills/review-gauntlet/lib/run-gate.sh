@@ -38,7 +38,7 @@
 #       reconcile-findings.sh, called without --skill. Emits the reconciled
 #       v2 envelope JSON on stdout.
 #
-#   run-gate.sh status-row [<envelope.json>|-]
+#   run-gate.sh status-row [--gate <name>] [<envelope.json>|-]
 #       Reads one gate's ENVELOPE (the object `gate_run_bounded`/lib/
 #       gate-bounded.sh writes on every exit path: {status, notes, findings,
 #       gate, duration_s, degraded_reason} — NOT the raw tool-out) and emits
@@ -49,6 +49,14 @@
 #       the raw JSON token `null`, never empty. This is the ONLY thing that
 #       builds a gate-status row (SKILL.md only says where to print rows it
 #       gets by calling this — see R7 in the dev plan).
+#
+#       A zero-byte, missing, unreadable, or non-object envelope payload
+#       (e.g. `[]`) does NOT abort or emit nothing: it emits one all-`-` row
+#       with `status` = `error` and exits 0, so the gate still accounts for
+#       itself in the operator's table (row-count == slot-count is a
+#       SKILL.md-asserted invariant this subcommand exists to guarantee).
+#       Optional `--gate <name>` replaces column 1 on BOTH the normal and the
+#       fallback row, so even a zero-byte envelope can still name its slot.
 #
 #   run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
 #       Re-attaches any cached auto_fix proposal to each reconciled finding
@@ -89,7 +97,7 @@ usage() {
 usage: run-gate.sh normalize --gate <name> --autofix-cache <path> [<raw.json>|-]
        run-gate.sh reconcile [<pooled-findings.jsonl>|-]
        run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
-       run-gate.sh status-row [<envelope.json>|-]
+       run-gate.sh status-row [--gate <name>] [<envelope.json>|-]
 EOF
 }
 
@@ -322,9 +330,17 @@ cmd_route() {
 }
 
 cmd_status_row() {
-	local input_path="-"
+	local input_path="-" gate=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
+		--gate)
+			shift
+			[[ $# -gt 0 ]] || {
+				usage
+				exit 2
+			}
+			gate="$1"
+			;;
 		--help | -h)
 			usage
 			exit 0
@@ -338,15 +354,28 @@ cmd_status_row() {
 	gc_have_jq
 
 	local envelope
-	envelope="$(read_input "$input_path")"
+	envelope="$(read_input "$input_path" 2>/dev/null || true)"
+
+	# F4: a zero-byte, missing/unreadable, or non-object envelope (including
+	# valid-but-wrong-shape JSON like `[]`) must still produce exactly one
+	# row — never nothing, never a non-zero exit — so the gate never
+	# vanishes from the operator's table. `--gate <name>`, when supplied,
+	# names the slot even on this fallback row.
+	if [[ -z "$envelope" ]] || ! printf '%s' "$envelope" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		local gate_col="${gate:--}"
+		printf '%s\t%s\t%s\t%s\t%s\n' "$gate_col" "error" "-" "-" "envelope missing or unreadable"
+		return 0
+	fi
 
 	# `//"-"` covers both an absent key and an explicit JSON null — the one
 	# rendering rule this subcommand exists to guarantee: the raw token
 	# "null" must never appear in a printed row, and neither may an empty
-	# field silently stand in for "no value here".
-	printf '%s' "$envelope" | jq -r '
+	# field silently stand in for "no value here". `--gate <name>`, when
+	# supplied, overrides column 1 (the orchestrator is authoritative on
+	# slot identity — same argument as gate_run_bounded's --gate).
+	printf '%s' "$envelope" | jq -r --arg gate_override "$gate" '
 		[
-			(.gate // "-"),
+			(if ($gate_override | length) > 0 then $gate_override else (.gate // "-") end),
 			(.status // "-"),
 			((.duration_s // "-") | tostring),
 			(if (.findings | type) == "array" then (.findings | length | tostring) else "-" end),

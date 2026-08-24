@@ -13,7 +13,7 @@
 # shell.
 #
 # Provides:
-#   gate_run_bounded <budget-seconds> <envelope-out> <tool-out> -- <cmd...>
+#   gate_run_bounded [--gate <name>] <budget-seconds> <envelope-out> <tool-out> -- <cmd...>
 #     Runs <cmd...> synchronously with its stdout captured into <tool-out>
 #     (stderr into <tool-out>.stderr), enforced against a <budget-seconds>
 #     wall-clock budget (must be a positive integer, >= 1; see Returns
@@ -47,9 +47,19 @@
 #     contract: `run-gate.sh normalize` reads ONLY the envelope, never
 #     <tool-out> directly, so a half-written or truncated <tool-out> can
 #     never be mistaken for a clean pass.
+#
+#     Optional leading `--gate <name>`: when supplied, `.gate` is set to
+#     `<name>` on ALL THREE write paths below, overriding whatever the tool
+#     itself may have self-reported in its own JSON — the orchestrator is
+#     authoritative on slot identity, since it (not the tool) knows which
+#     gate slot this invocation fills, including on the expiry/error paths
+#     where the tool never got a chance to self-report at all. When omitted,
+#     behaviour is byte-identical to before this flag existed: the clean
+#     path passes through whatever `.gate` the tool's own JSON carried (or
+#     omits it), and the expiry/error paths stamp `gate: null` same as always.
 #       - expiry: <tool-out> (and its .stderr sibling) is removed; envelope
 #         is {"status":"skipped","notes":"DEGRADED: timeout after <budget>s",
-#         "findings":[],"gate":null,"duration_s":<measured>,
+#         "findings":[],"gate":<name-or-null>,"duration_s":<measured>,
 #         "degraded_reason":"DEGRADED: timeout after <budget>s"}. `<budget>`
 #         (not the measured duration) is embedded in the note text so two
 #         runs against the same budget produce a structurally identical
@@ -64,11 +74,13 @@
 #         (e.g. `[1,2]`), an object with no `.status`, and an object whose
 #         `.status` is `null`/non-string all fall through to the error
 #         envelope below instead of passing through as a zero-byte or
-#         unreadable envelope.
+#         unreadable envelope. When `--gate <name>` is supplied, `.gate` is
+#         overwritten with `<name>` even on this clean path, superseding
+#         whatever the tool itself reported.
 #       - any other exit, <tool-out> missing/empty/not a JSON object with a
 #         string `.status` (the tool crashed mid-write inside budget, or
 #         emitted a shape normalize can't read): envelope is
-#         {"status":"error","notes":"...","findings":[],"gate":null,
+#         {"status":"error","notes":"...","findings":[],"gate":<name-or-null>,
 #         "duration_s":<measured>,"degraded_reason":null} — never a
 #         clean-looking envelope. <tool-out> itself is retained on this
 #         branch as the only debugging artefact for a mid-write crash.
@@ -119,8 +131,18 @@ _gate_sweep_pgid() {
 }
 
 gate_run_bounded() {
+	local gate_name=""
+	if [[ "${1:-}" == "--gate" ]]; then
+		if [[ $# -lt 2 ]]; then
+			echo "gate_run_bounded: --gate requires a <name> argument" >&2
+			return 2
+		fi
+		gate_name="$2"
+		shift 2
+	fi
+
 	if [[ $# -lt 5 ]]; then
-		echo "gate_run_bounded: usage: gate_run_bounded <seconds> <envelope-out> <tool-out> -- <cmd...>" >&2
+		echo "gate_run_bounded: usage: gate_run_bounded [--gate <name>] <seconds> <envelope-out> <tool-out> -- <cmd...>" >&2
 		return 2
 	fi
 	local seconds="$1" envelope_out="$2" tool_out="$3"
@@ -272,7 +294,8 @@ PYSHIM
 		jq -n \
 			--arg reason "$reason" \
 			--argjson duration_s "$duration_s" \
-			'{status: "skipped", notes: $reason, findings: [], gate: null, duration_s: $duration_s, degraded_reason: $reason}' \
+			--arg gate_name "$gate_name" \
+			'{status: "skipped", notes: $reason, findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: $reason}' \
 			>"$envelope_out"
 		return 0
 	fi
@@ -282,12 +305,14 @@ PYSHIM
 	if [[ -s "$tool_out" ]] && jq -e 'type == "object" and (.status | type) == "string"' \
 		>/dev/null 2>&1 <"$tool_out"; then
 		jq --argjson duration_s "$duration_s" \
-			'. + {duration_s: $duration_s, degraded_reason: null}' \
+			--arg gate_name "$gate_name" \
+			'. + {duration_s: $duration_s, degraded_reason: null} + (if ($gate_name | length) > 0 then {gate: $gate_name} else {} end)' \
 			"$tool_out" >"$envelope_out"
 	else
 		jq -n \
 			--argjson duration_s "$duration_s" \
-			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status)", findings: [], gate: null, duration_s: $duration_s, degraded_reason: null}' \
+			--arg gate_name "$gate_name" \
+			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status)", findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: null}' \
 			>"$envelope_out"
 	fi
 	return 0

@@ -73,6 +73,15 @@ assert_not_contains() {
 	fi
 }
 
+assert_eq() {
+	local actual="$1" expected="$2" label="$3"
+	if [[ "$actual" == "$expected" ]]; then
+		pass "$label"
+	else
+		fail "$label (expected '$expected', got '$actual')"
+	fi
+}
+
 # --- 1. Clean envelope: populated duration_s, `-` degraded_reason --------
 
 clean_envelope="$WORKDIR/clean.json"
@@ -203,6 +212,80 @@ if [[ "$nullfields_row_text" == *"-"* ]]; then
 else
 	fail "null-fields row: renders '-' for null duration_s and/or degraded_reason (got: $nullfields_row_text)"
 fi
+
+# --- 4. F4: zero-byte / missing / non-object envelope -> one all-'-' row,
+#        status=error, exit 0. The row must always be emitted (row-count ==
+#        slot-count invariant) -- never nothing, never a non-zero exit. -----
+
+assert_error_fallback_row() {
+	local label="$1" invoke_desc="$2"
+	shift 2
+	local row_file="$WORKDIR/$label-row.out"
+	local rc=0
+	"$@" >"$row_file" 2>/dev/null || rc=$?
+	local row_text
+	row_text="$(cat "$row_file")"
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$label ($invoke_desc): exits 0"
+	else
+		fail "$label ($invoke_desc): exits 0 (got $rc)"
+	fi
+
+	local line_count
+	line_count="$(grep -c '^' "$row_file" 2>/dev/null || echo 0)"
+	if [[ "$line_count" -eq 1 ]]; then
+		pass "$label ($invoke_desc): emits exactly one row"
+	else
+		fail "$label ($invoke_desc): emits exactly one row (got $line_count lines: $row_text)"
+	fi
+
+	local col_count
+	col_count="$(awk -F'\t' '{print NF}' "$row_file" 2>/dev/null | head -1)"
+	if [[ "$col_count" -eq 5 ]]; then
+		pass "$label ($invoke_desc): row has 5 tab-separated columns"
+	else
+		fail "$label ($invoke_desc): row has 5 tab-separated columns (got $col_count: $row_text)"
+	fi
+
+	local status_col
+	status_col="$(awk -F'\t' '{print $2}' "$row_file" 2>/dev/null)"
+	assert_eq "$status_col" "error" "$label ($invoke_desc): status column is 'error'"
+}
+
+# 4a. Zero-byte envelope file.
+zero_byte_envelope="$WORKDIR/zero-byte.json"
+: >"$zero_byte_envelope"
+assert_error_fallback_row "zero-byte-envelope" "on-disk empty file" \
+	"$RUN_GATE" status-row "$zero_byte_envelope"
+
+zero_byte_row="$WORKDIR/zero-byte-envelope-row.out"
+"$RUN_GATE" status-row "$zero_byte_envelope" >"$zero_byte_row" 2>/dev/null || true
+zero_byte_row_text="$(cat "$zero_byte_row")"
+assert_contains "$zero_byte_row_text" "envelope missing or unreadable" \
+	"zero-byte envelope row: degraded_reason column explains the fallback"
+all_dash_count="$(awk -F'\t' '{n=0; for(i=1;i<=NF;i++) if ($i=="-") n++; print n}' "$zero_byte_row")"
+assert_eq "$all_dash_count" "3" "zero-byte envelope row: gate/duration_s/findings render '-' (status is 'error', degraded_reason carries the explanatory text)"
+
+# 4b. Non-existent path.
+nonexistent_envelope="$WORKDIR/does-not-exist.json"
+rm -f "$nonexistent_envelope"
+assert_error_fallback_row "nonexistent-path" "path does not exist on disk" \
+	"$RUN_GATE" status-row "$nonexistent_envelope"
+
+# 4c. Non-object payload ([]).
+nonobject_envelope="$WORKDIR/nonobject.json"
+printf '[]' >"$nonobject_envelope"
+assert_error_fallback_row "non-object-payload" "valid JSON but not an object ([])" \
+	"$RUN_GATE" status-row "$nonobject_envelope"
+
+# 4d. --gate <name> populates column 1 on the fallback row.
+gate_flag_row="$WORKDIR/gate-flag-row.out"
+"$RUN_GATE" status-row --gate codex-adversarial "$zero_byte_envelope" >"$gate_flag_row" 2>/dev/null || true
+gate_flag_row_text="$(cat "$gate_flag_row")"
+gate_col="$(awk -F'\t' '{print $1}' "$gate_flag_row")"
+assert_eq "$gate_col" "codex-adversarial" "F5: --gate codex-adversarial populates column 1 (gate) on the fallback row"
+assert_contains "$gate_flag_row_text" "error" "F5: --gate on a fallback row still reports status=error"
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

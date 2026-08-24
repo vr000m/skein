@@ -29,37 +29,62 @@
 # on-disk ledger and exits 5 for terminal tokens so the conductor can refuse
 # resume deterministically.
 #
-# --present-keys <file> and --claimed-keys <file> (both optional; a missing or
-# malformed file is treated as an empty key list, never a crash — see
-# read_keys_file below) feed the regression-loop stop condition:
+# --present-keys <file> and --claimed-keys <file> (both optional) feed the
+# regression-loop stop condition with DEFERRED (next-full-pass) promotion
+# semantics:
 #
 #   --present-keys <file>  newline-separated regression keys (from the
 #                           bundled scripts/finding-key.sh) observed in THIS
-#                           round's reconciled findings. Persisted verbatim
+#                           round's reconciled findings. The path, if given,
+#                           MUST be an existing readable regular file — an
+#                           empty file is legitimate evidence (a genuinely
+#                           clean pass), but a missing/unreadable one is a
+#                           wiring bug and is a hard error (exit 2), never a
+#                           silent empty-list fallback. Persisted verbatim
 #                           onto this round (`rounds[-1].present_keys`) so a
 #                           later --last-decision peek can recompute the same
 #                           regression check without re-deriving it.
 #   --claimed-keys <file>  newline-separated regression keys the fixer
 #                           subagent claims to have fixed THIS round (schema
-#                           `{claimed:[key...]}` on the SKILL.md side; the
-#                           caller extracts the array before writing the
-#                           file). The ledger — never the caller — decides
-#                           when a claimed key is actually promoted to
-#                           `fixed_keys`: only when it is ALSO absent from
-#                           THIS SAME round's `--present-keys`, on a
-#                           `pass_type: full` round (a round already bundles
-#                           "the gates re-ran after the fix" together with
-#                           "the fixer's claim", so there is nothing to defer
-#                           to a later round). A `pass_type: confirm` round
-#                           never promotes, and a claimed key still present
-#                           this same round is simply dropped — it never
-#                           enters `fixed_keys` and there is no retry queue;
-#                           the fixer must claim it again on a later round
-#                           that actually shows it gone. `fixed_keys` is a
-#                           cumulative, top-level, monotonically-growing set
-#                           that survives a structural restart (nothing in
-#                           this script ever removes from it short of
-#                           `--init --force` starting a brand new ledger).
+#                           `{claimed:[finding...]}` on the SKILL.md side; the
+#                           caller derives the keys via finding-key.sh and
+#                           writes them to the file). Requires --present-keys
+#                           to also be supplied (a claim is only meaningful
+#                           against an observed round) — omitting
+#                           --present-keys while passing --claimed-keys is a
+#                           usage error (exit 2). A missing/unreadable
+#                           --claimed-keys file, by contrast, degrades to an
+#                           empty claim list with a warning: a claimless
+#                           fixer round is normal.
+#
+# Promotion is DEFERRED, not same-round: a claimed key never proves itself
+# fixed against the very round that produced the claim (in the real
+# conductor ordering, --present-keys IS that round's reconciled findings, so
+# a claimed key is by construction still present that round — same-round
+# promotion is unreachable in practice). Instead:
+#
+#   - every claimed key (this round's --claimed-keys, minus anything already
+#     in `fixed_keys`) is added to a cumulative `pending_claims` set;
+#   - a pending claim is only EVALUATED on a later round that is a COMPLETE
+#     FULL PASS WITH EVIDENCE (`pass_type == full AND unresolved == 0 AND
+#     --present-keys was supplied on that invocation`): any pending claim
+#     absent from that round's `present_keys` is promoted into the
+#     cumulative `fixed_keys` set; every pending claim (promoted or not) is
+#     then cleared — a still-present claim is DROPPED, never promoted, and
+#     never retried automatically; the fixer must claim it again on some
+#     later round that actually shows it gone;
+#   - a `pass_type: confirm` round, or a full round with `unresolved > 0`, or
+#     a full round that itself omits --present-keys, neither evaluates nor
+#     drops pending claims — it can only add to them (via its own
+#     --claimed-keys, if any);
+#   - evaluation of THIS round's pending claims always happens BEFORE this
+#     round's own --claimed-keys are recorded into `pending_claims`, so a
+#     claim can never be evaluated by the very round that made it.
+#
+# `fixed_keys` and `pending_claims` are both cumulative, top-level sets that
+# survive a structural restart (nothing in this script ever removes from
+# either short of `--init --force` starting a brand new ledger, or step 2's
+# ordinary pending-claim clear above).
 #
 # `regression` fires whenever THIS round's `--present-keys` intersects the
 # ledger's cumulative `fixed_keys` — on BOTH pass types (a previously-fixed
@@ -249,26 +274,47 @@ is_nonneg_int() {
 	[[ "$1" =~ ^[0-9]+$ ]]
 }
 
-# read_keys_file <path> — echo a JSON array of newline-separated keys read
-# from <path>. An empty/unset <path>, a missing file, or any unreadable/
+# read_claimed_keys_file <path> — echo a JSON array of newline-separated keys
+# read from <path>. An empty/unset <path>, a missing file, or any unreadable/
 # non-utf8 content all degrade to an empty array rather than a crash: this is
 # the "malformed/missing --claimed-keys file -> defined behaviour, never a
-# crash" contract. `jq -R -s` on raw text can only fail to produce the
-# structure we want (never fails to parse — it treats its input as raw
-# text), so the fallback branch below only guards the pathological case of
-# `jq` itself being unable to run against the file (e.g. a directory path).
-read_keys_file() {
+# crash" contract (F2 keeps this tolerant path for --claimed-keys only — see
+# validate_append_args for the --present-keys hard-error path). `jq -R -s` on
+# raw text can only fail to produce the structure we want (never fails to
+# parse — it treats its input as raw text), so the fallback branch below
+# only guards the pathological case of `jq` itself being unable to run
+# against the file (e.g. a directory path). Blank/whitespace-only lines are
+# trimmed (`test("\\S")`), not merely non-empty-checked, so a stray line of
+# spaces can never become a key.
+read_claimed_keys_file() {
 	local path="$1"
 	if [[ -z "$path" ]]; then
 		printf '[]'
 		return 0
 	fi
 	if [[ ! -f "$path" ]]; then
-		echo "convergence-ledger: keys file not found: $path (treating as empty)" >&2
+		echo "convergence-ledger: --claimed-keys file not found: $path (treating as empty)" >&2
 		printf '[]'
 		return 0
 	fi
-	jq -R -s 'split("\n") | map(select(length > 0))' "$path" 2>/dev/null || printf '[]'
+	jq -R -s 'split("\n") | map(select(test("\\S")))' "$path" 2>/dev/null || printf '[]'
+}
+
+# read_present_keys_file <path> — echo a JSON array of newline-separated keys
+# read from <path>. Unlike read_claimed_keys_file, this has NO tolerant
+# fallback: by the time this is called, validate_append_args has already
+# guaranteed <path> is either empty/unset or an existing readable regular
+# file (F2) — a missing/unreadable --present-keys file is a hard error
+# (exit 2) raised before this function is ever reached, never a silent
+# empty-list degrade. Blank/whitespace-only lines are trimmed, same as
+# read_claimed_keys_file.
+read_present_keys_file() {
+	local path="$1"
+	if [[ -z "$path" ]]; then
+		printf '[]'
+		return 0
+	fi
+	jq -R -s 'split("\n") | map(select(test("\\S")))' "$path"
 }
 
 validate_common_args() {
@@ -310,6 +356,22 @@ validate_append_args() {
 	if [[ -z "$UNRESOLVED" ]] || ! is_nonneg_int "$UNRESOLVED"; then
 		echo "convergence-ledger: --unresolved must be a non-negative integer (got '${UNRESOLVED}')" >&2
 		exit 2
+	fi
+	# F2: a claim is only evaluated against observed findings, so
+	# --claimed-keys without --present-keys is a usage error, not a
+	# degraded-to-empty tolerance.
+	if [[ -n "$CLAIMED_KEYS_FILE" && -z "$PRESENT_KEYS_FILE" ]]; then
+		echo "convergence-ledger: --claimed-keys requires --present-keys (a claim is only evaluated against observed findings)" >&2
+		exit 2
+	fi
+	# F2: an empty --present-keys FILE is legitimate evidence (a genuinely
+	# clean full pass); a missing/unreadable one is always a wiring bug —
+	# no empty-list fallback, checked before any ledger mutation.
+	if [[ -n "$PRESENT_KEYS_FILE" ]]; then
+		if [[ ! -f "$PRESENT_KEYS_FILE" || ! -r "$PRESENT_KEYS_FILE" ]]; then
+			echo "convergence-ledger: --present-keys file not found or unreadable: $PRESENT_KEYS_FILE" >&2
+			exit 2
+		fi
 	fi
 }
 
@@ -574,19 +636,30 @@ append)
 	validate_append_args
 	ensure_ledger_for_append
 
-	present_keys_json="$(read_keys_file "$PRESENT_KEYS_FILE")"
-	claimed_keys_json="$(read_keys_file "$CLAIMED_KEYS_FILE")"
+	present_keys_json="$(read_present_keys_file "$PRESENT_KEYS_FILE")"
+	claimed_keys_json="$(read_claimed_keys_file "$CLAIMED_KEYS_FILE")"
+
+	# present_supplied is true iff --present-keys was passed on THIS
+	# invocation — NOT whether the file was non-empty. An empty file is
+	# legitimate evidence (a genuinely clean full pass); an absent flag is
+	# not, and must never be treated as vacuous "present_keys == []"
+	# evidence, or a full round that omits --present-keys entirely (ledger
+	# already keys_active via fixed_keys on disk) would promote every
+	# pending claim against nothing (see F1/F2 in the dev-plan fix spec).
+	present_supplied="false"
+	[[ -n "$PRESENT_KEYS_FILE" ]] && present_supplied="true"
 
 	# keys_active gates EVERY bit of the regression-key machinery below,
-	# including whether a round even GAINS a `present_keys` field: a ledger
-	# that has never once seen --present-keys/--claimed-keys (this round OR
-	# any prior round already on disk) must come out of this append
-	# byte-for-byte identical to the pre-Phase-3 shape — no `fixed_keys`,
-	# no `present_keys` anywhere. Once either flag is used for the first
-	# time, the ledger switches into key-tracking mode for good (fixed_keys
-	# persists across every later round, structural restarts included),
-	# which is why "already has fixed_keys on disk" also counts as active
-	# even on a round that itself supplies neither flag.
+	# including whether a round even GAINS a `present_keys`/`claimed_keys`
+	# field: a ledger that has never once seen --present-keys/--claimed-keys
+	# (this round OR any prior round already on disk) must come out of this
+	# append byte-for-byte identical to the pre-Phase-3 shape — no
+	# `fixed_keys`, no `pending_claims`, no `present_keys` anywhere. Once
+	# either flag is used for the first time, the ledger switches into
+	# key-tracking mode for good (fixed_keys/pending_claims persist across
+	# every later round, structural restarts included), which is why
+	# "already has fixed_keys on disk" also counts as active even on a round
+	# that itself supplies neither flag.
 	keys_active="false"
 	if [[ -n "$PRESENT_KEYS_FILE" || -n "$CLAIMED_KEYS_FILE" ]]; then
 		keys_active="true"
@@ -608,29 +681,36 @@ append)
 		--argjson present_keys "$present_keys_json" \
 		--argjson claimed_keys "$claimed_keys_json" \
 		--argjson keys_active "$keys_active" \
+		--argjson present_supplied "$present_supplied" \
 		'.loop_counter += 1
 		 | (if has("cap") then . else .cap = $cap end)
 		 | (if has("k") then . else .k = $k end)
 		 | (if $keys_active then
 		      (if has("fixed_keys") then . else .fixed_keys = [] end)
-		      # Promotion: a THIS-ROUND claimed key that is ALSO absent
-		      # from THIS ROUND'"'"'S OWN present_keys, on a full pass,
-		      # is proven fixed and promoted into the cumulative
-		      # fixed_keys set right away — a round bundles "the gates
-		      # ran again after the fix" and "the fixer'"'"'s claim" as
-		      # one unit, so there is nothing to defer to a later round.
-		      # Promotion is full-pass-only: a confirm-pass round never
-		      # promotes (a clean confirm pass does not prove global
-		      # convergence any more than it does for the plain
-		      # success/cap/restart decisions above). A claimed key that
-		      # is STILL present this round is simply dropped — it never
-		      # enters fixed_keys and there is no retry queue; the fixer
-		      # must claim it again on a later round that actually shows
-		      # it gone.
-		      | (if $pass_type == "full" then
-		           ($claimed_keys - $present_keys) as $promoted
+		      | (if has("pending_claims") then . else .pending_claims = [] end)
+		      # Step 2 — EVALUATE pending claims, only on a COMPLETE FULL
+		      # PASS WITH EVIDENCE (pass_type == full AND unresolved == 0
+		      # AND present_supplied). A pending claim absent from THIS
+		      # round'"'"'s present_keys is proven fixed and promoted into
+		      # the cumulative fixed_keys set; every pending claim
+		      # (promoted or not) is then cleared — a still-present claim
+		      # is DROPPED, never promoted, and never retried
+		      # automatically (the fixer must claim it again on some
+		      # later round that actually shows it gone). A confirm pass,
+		      # a degraded full pass (unresolved > 0), or a full pass that
+		      # itself omits --present-keys neither promotes nor drops —
+		      # pending_claims is left exactly as it was.
+		      | (if ($pass_type == "full" and $unresolved == 0 and $present_supplied) then
+		           (.pending_claims - $present_keys) as $promoted
 		           | .fixed_keys = ((.fixed_keys + $promoted) | unique)
+		           | .pending_claims = []
 		         else . end)
+		      # Step 3 — RECORD this round'"'"'s claims, strictly AFTER
+		      # step 2 evaluated, so a claim made this round can never be
+		      # evaluated by the round that made it. Anything already in
+		      # fixed_keys (post-step-2) is not re-added as a pending
+		      # claim.
+		      | .pending_claims = ((.pending_claims + ($claimed_keys - .fixed_keys)) | unique)
 		    else . end)
 		 | .rounds += [
 		     (if $keys_active then
@@ -641,7 +721,8 @@ append)
 		          pass_type: $pass_type,
 		          quarantine_size: $quarantine,
 		          unresolved_gates: $unresolved,
-		          present_keys: $present_keys
+		          present_keys: $present_keys,
+		          claimed_keys: $claimed_keys
 		        }
 		      else
 		        {

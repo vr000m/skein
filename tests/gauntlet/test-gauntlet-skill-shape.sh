@@ -350,8 +350,17 @@ assert_resume_shape_for() {
 	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --init --force --ledger \"\$ledger_path\" --target \"\$canonical_target\"" \
 		"$label: write-side wiring documents \`--fresh\` mapping to \`--init --force\`"
 
-	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --ledger \"\$ledger_path\" --target \"\$canonical_target\" --count" \
-		"$label: write-side wiring documents the per-round append call binding \`--ledger \$ledger_path --target \$canonical_target\`"
+	# The per-round append call binds --ledger/--target either as a direct
+	# literal invocation (Claude mirror) or, since the Phase 3 C1/C2 wiring
+	# needs to conditionally append --claimed-keys, via a `ledger_args=(...)`
+	# array built up before a single `convergence-ledger.sh "${ledger_args[@]}"`
+	# call (Codex mirror) -- accept either form, not just the literal one.
+	if grep -Fq "${ledger_invoke_prefix}/lib/convergence-ledger.sh --ledger \"\$ledger_path\" --target \"\$canonical_target\" --count" "$file" ||
+		grep -Fq "ledger_args=(--ledger \"\$ledger_path\" --target \"\$canonical_target\" --count" "$file"; then
+		pass "$label: write-side wiring documents the per-round append call binding \`--ledger \$ledger_path --target \$canonical_target\` (direct call or ledger_args array)"
+	else
+		fail "$label: write-side wiring documents the per-round append call binding \`--ledger \$ledger_path --target \$canonical_target\` (direct call or ledger_args array) (neither form found)"
+	fi
 }
 
 assert_resume_shape_for "$SKILL_MD" "Claude mirror" '\$\{CLAUDE_PLUGIN_ROOT\}' '"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet'
@@ -512,6 +521,123 @@ assert_status_row_before_decision_for() {
 
 assert_status_row_before_decision_for "$SKILL_MD" "Claude mirror"
 assert_status_row_before_decision_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# --- Phase 3 fix spec (F1-F6, C1-C3): row-count-per-mirror, envelope-
+# variable-assigned, deferred-promotion prose, and --gate stamping ---------
+# Plan: .conduct/phase3-fix-spec.md. These are the assertions that would
+# have caught F5/C1 (undeclared envelope_* variables) and C3 (only 2 of 4
+# Codex slots emitted a row) directly, rather than by grepping for
+# membership of individual phrases.
+
+# assert_status_row_line_count FILE EXPECTED_COUNT LABEL — exactly N lines
+# invoking `run-gate.sh status-row` (the per-gate-slot table row call, not
+# any other mention of the string "status-row" in prose).
+assert_status_row_line_count() {
+	local file="$1" expected="$2" label="$3"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	# Match only actual invocation lines (a leading path segment before
+	# run-gate.sh, e.g. "${CLAUDE_PLUGIN_ROOT}/.../lib/run-gate.sh
+	# status-row" or "\"$SKILL_DIR\"/lib/run-gate.sh status-row"), never a
+	# backtick-quoted bare mention in prose ("run `run-gate.sh status-row`
+	# and print the row it emits").
+	local actual
+	actual="$(grep -c '/run-gate\.sh status-row' "$file" 2>/dev/null || echo 0)"
+	if [[ "$actual" -eq "$expected" ]]; then
+		pass "$label: exactly $expected \`run-gate.sh status-row\` invocation line(s) (one per gate slot)"
+	else
+		fail "$label: expected exactly $expected \`run-gate.sh status-row\` invocation line(s), found $actual"
+	fi
+}
+
+assert_status_row_line_count "$SKILL_MD" 3 "Claude mirror"
+assert_status_row_line_count "$CODEX_SKILL_MD" 4 "Codex mirror"
+
+# assert_envelope_vars_assigned_for FILE LABEL — every envelope_* variable
+# dereferenced on a `status-row` invocation line is also assigned (via a
+# bare `envelope_x=...` or `> "$envelope_x"` construction-target) somewhere
+# earlier in the same file. This is the assertion that would have caught
+# F5/C1 directly: SKILL.md referencing $envelope_deep_review/
+# $envelope_security_review in the status-row block when nothing upstream
+# ever assigned them.
+assert_envelope_vars_assigned_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	local status_row_lines var_names var missing=0 checked=0
+	status_row_lines="$(grep 'run-gate\.sh status-row' "$file" 2>/dev/null || true)"
+	if [[ -z "$status_row_lines" ]]; then
+		fail "$label: no \`run-gate.sh status-row\` invocation lines found, cannot verify envelope-variable assignment"
+		return
+	fi
+
+	var_names="$(printf '%s\n' "$status_row_lines" | grep -oE '\$envelope_[A-Za-z0-9_]+' | tr -d '$' | sort -u)"
+	if [[ -z "$var_names" ]]; then
+		fail "$label: no \$envelope_* variables referenced on any status-row line -- cannot verify"
+		return
+	fi
+
+	while IFS= read -r var; do
+		[[ -n "$var" ]] || continue
+		checked=$((checked + 1))
+		# An "assignment" is either a bare shell assignment (envelope_x=...)
+		# or the variable appearing as a redirection target
+		# (> "$envelope_x" / >"$envelope_x") -- both patterns used in these
+		# SKILL.md files' fenced code blocks.
+		if grep -qE "^${var}=" "$file" || grep -qE ">\\s*\"?\\\$${var}\"?" "$file"; then
+			:
+		else
+			missing=$((missing + 1))
+			fail "$label: \$${var} is referenced on a status-row line but never assigned anywhere earlier in the file"
+		fi
+	done <<<"$var_names"
+
+	if [[ "$missing" -eq 0 && "$checked" -gt 0 ]]; then
+		pass "$label: every \$envelope_* variable referenced on a status-row line ($checked checked) is assigned earlier in the file"
+	fi
+}
+
+assert_envelope_vars_assigned_for "$SKILL_MD" "Claude mirror"
+assert_envelope_vars_assigned_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# assert_phase3_deferred_and_gate_stamp_for FILE LABEL — F1 deferred-
+# promotion prose (pending/next-full-pass language, never same-round) and
+# F5 --gate stamping prose (gate_run_bounded's --gate flag documented as
+# overriding/authoritative on gate identity across all exit paths).
+assert_phase3_deferred_and_gate_stamp_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	assert_grep_i "$file" 'pending' \
+		"$label: documents pending claims (deferred promotion state)"
+
+	assert_grep_i "$file" 'next|later|subsequent' \
+		"$label: documents promotion as deferred to a NEXT/LATER round, not the same round"
+
+	assert_grep_fixed "$file" '--gate' \
+		"$label: documents the \`--gate <name>\` flag"
+
+	assert_grep_i "$file" 'gate_run_bounded' \
+		"$label: documents \`gate_run_bounded\` (the shell helper that stamps gate identity)"
+
+	assert_grep_i "$file" '(all three|every).*(exit path|path)|(exit path|path).*(all three|every)' \
+		"$label: documents --gate stamping identity across ALL exit paths (clean, timeout, error) -- not just the clean path"
+}
+
+assert_phase3_deferred_and_gate_stamp_for "$SKILL_MD" "Claude mirror"
+assert_phase3_deferred_and_gate_stamp_for "$CODEX_SKILL_MD" "Codex mirror"
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

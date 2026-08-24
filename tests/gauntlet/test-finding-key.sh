@@ -142,6 +142,34 @@ else
 	fail "output shape: key is a 40-character lowercase hex sha1 digest (got '$k_line10')"
 fi
 
+# --- 9. F6(a): file path is case-SENSITIVE (verbatim), unlike category ----
+# Foo.md and foo.md are two genuinely different files on a case-sensitive
+# filesystem / in the git index and must NOT collide into one regression key.
+
+f_file_upper="$(finding "file-case-upper" "SQL injection risk in query builder" "security" 10 "src/Foo.md")"
+f_file_lower="$(finding "file-case-lower" "SQL injection risk in query builder" "security" 10 "src/foo.md")"
+k_file_upper="$(key_of "$f_file_upper")"
+k_file_lower="$(key_of "$f_file_lower")"
+assert_ne "$k_file_upper" "$k_file_lower" "F6(a): file path is case-sensitive -- Foo.md and foo.md produce DISTINCT keys"
+
+# --- 10. Category remains case-INSENSITIVE (unlike file) -----------------
+
+f_cat_upper="$(finding "cat-case-upper" "SQL injection risk in query builder" "Security" 10)"
+f_cat_lower="$(finding "cat-case-lower" "SQL injection risk in query builder" "security" 10)"
+k_cat_upper="$(key_of "$f_cat_upper")"
+k_cat_lower="$(key_of "$f_cat_lower")"
+assert_eq "$k_cat_upper" "$k_cat_lower" "F6(a): category stays case-insensitive -- 'Security' and 'security' produce the SAME key"
+
+# --- 11. F6(b): length-prefixed digest is injective -- a '|' or record-
+# separator character inside a field cannot be made to collide with a
+# differently-split neighbour by shifting a field boundary.
+
+f_split_a="$(finding "split-a" "b|c" "cat" 1 "a")"
+f_split_b="$(finding "split-b" "c" "cat" 1 "a|b")"
+k_split_a="$(key_of "$f_split_a")"
+k_split_b="$(key_of "$f_split_b")"
+assert_ne "$k_split_a" "$k_split_b" "F6(b): length-prefixed encoding -- file=\"a\",summary=\"b|c\" vs file=\"a|b\",summary=\"c\" do NOT collide"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

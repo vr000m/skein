@@ -654,6 +654,37 @@ else
 fi
 assert_ne "$precompat_resume_tok" "regression" "backward compat: a present key never previously claimed on the pre-Phase-3 ledger must not spuriously fire regression (absent fixed_keys treated as empty, not as 'everything is fixed')"
 
+# =========================================================================
+# I7 byte-parity guard: a ledger built with NEITHER --present-keys NOR
+# --claimed-keys ever supplied, across every round, must carry NEITHER
+# `fixed_keys` NOR `pending_claims` at all -- the whole regression-key
+# machinery (F1's deferred-promotion state) is additive and must not
+# pollute a flags-absent ledger's shape.
+# =========================================================================
+
+FLAGS_ABSENT_LEDGER="$(new_ledger)"
+"$LEDGER_SCRIPT" --ledger "$FLAGS_ABSENT_LEDGER" --count 3 --structural 0 --local 3 --pass-type full --quarantine 0 >/dev/null
+"$LEDGER_SCRIPT" --ledger "$FLAGS_ABSENT_LEDGER" --count 0 --structural 1 --local 0 --pass-type full --quarantine 0 >/dev/null
+"$LEDGER_SCRIPT" --ledger "$FLAGS_ABSENT_LEDGER" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 >/dev/null
+
+if jq -e 'has("fixed_keys")' "$FLAGS_ABSENT_LEDGER" >/dev/null 2>&1; then
+	fail "I7: a flags-absent ledger (never saw --present-keys/--claimed-keys) must NOT have a fixed_keys field"
+else
+	pass "I7: a flags-absent ledger has no fixed_keys field"
+fi
+
+if jq -e 'has("pending_claims")' "$FLAGS_ABSENT_LEDGER" >/dev/null 2>&1; then
+	fail "I7: a flags-absent ledger (never saw --present-keys/--claimed-keys) must NOT have a pending_claims field"
+else
+	pass "I7: a flags-absent ledger has no pending_claims field"
+fi
+
+if jq -e '.rounds | map(has("present_keys") or has("claimed_keys")) | any' "$FLAGS_ABSENT_LEDGER" >/dev/null 2>&1; then
+	fail "I7: a flags-absent ledger must not carry present_keys/claimed_keys on ANY round"
+else
+	pass "I7: a flags-absent ledger carries no present_keys/claimed_keys on any round"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

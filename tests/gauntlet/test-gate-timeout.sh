@@ -609,6 +609,90 @@ STUB
 
 run_success_case "default-path" "$PATH"
 
+# --- Case 6 (F5): optional leading `--gate <name>` stamps `.gate` on the
+# envelope on ALL THREE exit paths (clean, error, timeout) -- the
+# orchestrator is authoritative on slot identity, overriding whatever the
+# tool self-reported (or the null gate-bounded.sh writes on its own error/
+# timeout paths). Omitting --gate must remain byte-identical to today
+# (already covered by the un-flagged cases above).
+
+run_gate_flag_clean_case() {
+	local stub="$WORKDIR/stub-gateflag-clean.sh"
+	local envelope="$WORKDIR/envelope-gateflag-clean.json"
+	local toolout="$WORKDIR/toolout-gateflag-clean.json"
+
+	cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+echo '{"status":"approve","findings":[]}'
+STUB
+	chmod +x "$stub"
+	rm -f "$envelope" "$toolout"
+
+	"$RUNNER" --gate my-clean-gate 30 "$envelope" "$toolout" -- "$stub" >/dev/null 2>&1 || true
+
+	if [[ ! -f "$envelope" ]]; then
+		fail "--gate (clean path): no envelope written"
+		return
+	fi
+	assert_eq "$(jq -r '.gate' "$envelope")" "my-clean-gate" \
+		"--gate (clean path): stamps .gate = my-clean-gate, overriding the tool's own status"
+	assert_eq "$(jq -r '.status' "$envelope")" "approve" \
+		"--gate (clean path): .status still passes through the tool's own value unchanged"
+}
+
+run_gate_flag_error_case() {
+	local stub="$WORKDIR/stub-gateflag-error.sh"
+	local envelope="$WORKDIR/envelope-gateflag-error.json"
+	local toolout="$WORKDIR/toolout-gateflag-error.json"
+
+	cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+printf 'not json at all'
+STUB
+	chmod +x "$stub"
+	rm -f "$envelope" "$toolout"
+
+	"$RUNNER" --gate my-error-gate 30 "$envelope" "$toolout" -- "$stub" >/dev/null 2>&1 || true
+
+	if [[ ! -f "$envelope" ]]; then
+		fail "--gate (error path): no envelope written"
+		return
+	fi
+	assert_eq "$(jq -r '.status' "$envelope")" "error" \
+		"--gate (error path): invalid tool-out still yields status='error'"
+	assert_eq "$(jq -r '.gate' "$envelope")" "my-error-gate" \
+		"--gate (error path): stamps .gate = my-error-gate (never the hardcoded null gate-bounded.sh writes without --gate)"
+}
+
+run_gate_flag_timeout_case() {
+	local stub="$WORKDIR/stub-gateflag-timeout.sh"
+	local envelope="$WORKDIR/envelope-gateflag-timeout.json"
+	local toolout="$WORKDIR/toolout-gateflag-timeout.json"
+
+	cat >"$stub" <<'STUB'
+#!/usr/bin/env bash
+echo '{"status":"ok","findings":[]}'
+sleep 5
+STUB
+	chmod +x "$stub"
+	rm -f "$envelope" "$toolout"
+
+	"$RUNNER" --gate my-timeout-gate 2 "$envelope" "$toolout" -- "$stub" >/dev/null 2>&1 || true
+
+	if [[ ! -f "$envelope" ]]; then
+		fail "--gate (timeout path): no envelope written"
+		return
+	fi
+	assert_eq "$(jq -r '.status' "$envelope")" "skipped" \
+		"--gate (timeout path): expiry still yields status='skipped'"
+	assert_eq "$(jq -r '.gate' "$envelope")" "my-timeout-gate" \
+		"--gate (timeout path): stamps .gate = my-timeout-gate (never the hardcoded null gate-bounded.sh writes without --gate)"
+}
+
+run_gate_flag_clean_case
+run_gate_flag_error_case
+run_gate_flag_timeout_case
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]
