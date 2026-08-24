@@ -278,7 +278,7 @@ Context lifecycle:
 ## Progress
 
 - [x] Phase 1: Bounded Codex gate + size-scaled budgets
-- [ ] Phase 2: Disk-first streamed lens results
+- [x] Phase 2: Disk-first streamed lens results
 - [ ] Phase 3: Regression-loop stop + gate-status rows
 - [ ] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
 - [ ] Phase 5: Docs, manifests, backlog
@@ -295,6 +295,10 @@ Context lifecycle:
 | 2026-08-24 | `/review-plan` run 3: 32 raw findings reconciled to 31 (0 Critical, 16 Important, 15 Minor; 4 contradictions; codebase-claims clean 89/89). All 31 accepted; eleven grilled decisions applied: --continue writes attempt 3+ (one-respawn per invocation); orchestrator-emitted `skipped` done status; gate envelope on every exit (invalid JSON never clean); --from-collector persist seam + checkpoint rewire; process-group-escape ASSUMPTION + pgrep/pkill; global CLAUDE.md routed via skills.md; regression fires on both pass types; Phase 1/3 Validation cmds carry gauntlet-tests; R11 scoped to the wired-test invariant; Review Focus softened to verified-or-UNVERIFIED (identity AND causation); backlog entries land in-phase with shape-test exemption IDs read from the backlog. Note: this run itself hit the silent-lens failure mode again — codebase-claims and the contradiction pass both went idle without delivering and needed a mailbox nudge; further evidence for R3/R4. |
 
 ## Findings
+
+- **Phase 2 post-review fix (2026-08-24)**: 14 findings (10 Opus, 4 Codex-mirror) addressed via architect→fix(+codex:rescue for Codex mirrors)→test→verify chain; 14/14 VERIFIED FIXED (O10's prose gap closed in a follow-up one-liner across all 4 mirrors). Headlines: persist/collect id validation (charset whitelist + root-bounded symlink guard) closes a path-traversal write; collector `--attempts <lens>:<n>` makes a spawned-but-silent attempt report `timed_out` (effective=max(spawned,files)); `--findings-jsonl` normalizer is now the single reconciliation input; per-lens-deadline respawn semantics (D3) replace blanket respawn; comma-bearing units rejected (D1). Known accepted: `--findings-jsonl` emits `line` as a string, reconcile coerces to number — flagged for a future strict consumer.
+
+- **Phase 2 spike (2026-08-24, budget-wake ASSUMPTION → VERIFIED)**: mechanism is a `Bash(run_in_background)` sleep timer, not Monitor. Evidence from live session: (a) a deliberately silent stub lens (Haiku, wrote no files) returned in ~2.5s with no disk record — the orchestrator can detect the empty state dir and owns writing the `done` record for a parseable-return-no-done lens (no respawn, per plan); (b) an independent background `sleep 45` timer re-invoked the orchestrator on expiry while the session idled, proving the orchestrator wakes at budget even when a lens is still pending, and can run collect + respawn at that point. Monitor remains a Claude-only advisory alternative; the timer is harness-portable for the Claude side. Codex sequential mode unaffected (no concurrent spawn there).
 
 - **Phase 1 post-review fix (2026-08-24)**: mid-phase reviewer found 6 issues (1 Critical: exit-137 false-clean). All fixed via architect→fix→test→verify subagent chain and verified empirically. Deviation from contract prose: the R1/Phase-1 `pkill -f 'codex exec review'` belt-and-braces sweep was REPLACED by a pgid-scoped sweep (sidecar pgid file, pgrep -g, guards against pgid 0/1/self) — a host-wide pattern kill can hit concurrent sessions or the orchestrator's own wrapper. Expiry predicate is now measurement-backed: exit!=0 AND (exit==124 OR duration>=budget); shim emits GNU's 124/137 alphabet; budgets <1 rejected (lens-budget exit 2, gate_run_bounded rc 2, no stale envelope).
 
