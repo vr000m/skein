@@ -152,6 +152,16 @@ if ! printf '%s' "$input" | jq -e 'has("summary") and has("findings") and has("r
 fi
 
 ROOT_DIR="$(persist_root_dir)"
+# SKILL->STATE-DIR MAPPING (4 sites). The same skill -> state-directory mapping
+# (.deep-review for deep-review, .review-plan for review-plan) is spelled out in
+# FOUR places, deliberately NOT consolidated: they differ in root source
+# ($AF_COMMON_ROOT vs an explicit argument) and in failure exit code (2 vs
+# 1), so merging them would be a behaviour change at four call sites for no
+# functional gain. A NEW SKILL must therefore be registered in all four:
+#   scripts/lib/persist-common.sh      persist_lens_state_dir  (per-run lens attempt dirs)
+#   scripts/lib/auto-fix-common.sh     af_manifest_dir         (auto-fix manifests)
+#   scripts/persist-deep-review-state.sh  OUT_DIR
+#   scripts/persist-review-state.sh       OUT_DIR
 OUT_DIR="$ROOT_DIR/.review-plan"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 

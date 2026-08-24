@@ -5,7 +5,9 @@
 # Usage:
 #   scripts/finding-key.sh [<findings.jsonl>|-]
 #
-# Stdin/file: JSON-Lines findings, one object per line, each with at least
+# Stdin/file: JSON-Lines findings, EXACTLY one object per physical line
+# (enforced -- a line holding zero, two, or a non-object document is skipped
+# with a stderr warning, never combined into a key), each with at least
 # {file, category, summary}. Blank lines and lines that fail to parse as a
 # JSON object are skipped silently (same tolerance as reconcile-findings.sh).
 #
@@ -112,12 +114,34 @@ normalise_summary() {
 # collect-lens-results.sh's attempt-file reader.
 read_input | while IFS= read -r line || [[ -n "$line" ]]; do
 	[[ -n "$line" ]] || continue
-	if ! printf '%s' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
+	# --slurp, then require EXACTLY one document. Without --slurp, jq applies
+	# the filter to each top-level document independently and its exit status
+	# reflects only the LAST one, so `{...} {...}` on one physical line passed
+	# a bare `type == "object"` gate; each field read below then emitted two
+	# lines that `$( )` joined with a newline into one key matching NEITHER
+	# finding. These keys are the regression identity consumed by
+	# convergence-ledger.sh --present-keys/--claimed-keys: skipping a line
+	# loses a key (at worst a missed regression), combining two fabricates one
+	# (a terminal false stop). Skip, and say so on stderr -- the same
+	# tolerance the non-object case already gets, plus a warning.
+	if ! printf '%s' "$line" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
+		printf 'finding-key: skipping line that is not exactly one JSON object\n' >&2
 		continue
 	fi
-	file="$(printf '%s' "$line" | jq -r '.file // ""')"
-	category="$(printf '%s' "$line" | jq -r '.category // ""')"
-	summary="$(printf '%s' "$line" | jq -r '.summary // ""')"
+	# ONE jq invocation reading all three fields off `.[0]`, NUL-delimited, so
+	# adding a field later cannot reintroduce the newline-join bug: the
+	# delimiter is \0, which no bash string can hold, rather than the newline
+	# that a per-field `$( )` capture used to collapse on. A summary
+	# containing a literal newline therefore survives intact (it is collapsed
+	# later, deliberately, by normalise_summary).
+	fk_fields=()
+	while IFS= read -r -d '' fk_field; do
+		fk_fields+=("$fk_field")
+	done < <(printf '%s' "$line" |
+		jq -j -s '.[0] | [(.file // ""), (.category // ""), (.summary // "")] | map(. + "\u0000") | join("")')
+	file="${fk_fields[0]-}"
+	category="${fk_fields[1]-}"
+	summary="${fk_fields[2]-}"
 
 	file_norm="$file"
 	category_norm="$(printf '%s' "$category" | tr '[:upper:]' '[:lower:]')"

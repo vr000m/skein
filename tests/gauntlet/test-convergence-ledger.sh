@@ -862,6 +862,87 @@ EOF
 nu_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_no_unresolved" 2>/dev/null || true)"
 assert_eq "$nu_tok" "success" "G7(g): a ledger with no unresolved_gates key still decodes (defaults to 0)"
 
+
+# --- G8. The ledger write must be a same-filesystem rename ---------------
+#
+# r2 finding #18: both write paths (`write_fresh_ledger` and the round-append
+# handler) used a bare `mktemp`, which lands in $TMPDIR, then `mv` to
+# $LEDGER_PATH. The header asserts the write cannot leave a truncated file if
+# killed mid-write — true only for a same-filesystem `rename(2)`. `mv` across
+# filesystems is a copy-then-unlink, which has no such guarantee (macOS
+# happens to put /tmp on the same device; Linux CI commonly puts it on tmpfs).
+#
+# Invariant, old -> new: "atomic replace" held only when $TMPDIR happened to
+# share a device with the ledger's directory -> it holds unconditionally,
+# because the temp file is created IN THE LEDGER'S OWN DIRECTORY (the
+# in-directory template `persist_atomic_write` already uses).
+#
+# Two observable consequences are asserted, since the rename itself is not
+# directly observable: (a) the temp file is a sibling of the ledger, so no
+# `.ledger.*` residue may survive a successful write; (b) the write no longer
+# depends on $TMPDIR at all, so an unusable $TMPDIR must not break it.
+
+g8_dir="$(mktemp -d)"
+g8_ledger="$g8_dir/sub/gauntlet-ledger.json"
+
+# (a) fresh-ledger write (--init path) then an append round, both clean.
+g8_tok_init="$(round "$g8_ledger" 1 0 1 full 0 --target "branch:g8" || true)"
+g8_tok_append="$(round "$g8_ledger" 0 0 0 full 0 || true)"
+if [[ ! -f "$g8_ledger" ]]; then
+	fail "G8(a): no ledger written at $g8_ledger (tokens: '$g8_tok_init'/'$g8_tok_append')"
+elif [[ -n "$(find "$g8_dir" -name '.ledger.*' -print -quit)" ]]; then
+	fail "G8(a): temp-file residue left beside the ledger: $(find "$g8_dir" -name '.ledger.*')"
+elif ! jq -e . "$g8_ledger" >/dev/null 2>&1; then
+	fail "G8(a): ledger is not valid JSON after two writes"
+else
+	pass "G8(a): both write paths leave a valid ledger and no .ledger.* residue"
+fi
+
+# (b) an unusable $TMPDIR must not break either write path. A bare `mktemp`
+# fails outright here; an in-directory template never consults $TMPDIR.
+g8_dir2="$(mktemp -d)"
+g8_ledger2="$g8_dir2/sub/gauntlet-ledger.json"
+g8_rc=0
+TMPDIR=/nonexistent-skein-r2 "$LEDGER_SCRIPT" --ledger "$g8_ledger2" \
+	--target "branch:g8b" --count 1 --structural 0 --local 1 \
+	--pass-type full --quarantine 0 >"$g8_dir2/tok" 2>"$g8_dir2/err" || g8_rc=$?
+if [[ $g8_rc -ne 0 ]]; then
+	fail "G8(b): fresh-ledger write failed under an unusable \$TMPDIR (rc=$g8_rc; $(tr '\n' ' ' <"$g8_dir2/err"))"
+elif [[ ! -f "$g8_ledger2" ]]; then
+	fail "G8(b): no ledger written under an unusable \$TMPDIR"
+else
+	g8_rc2=0
+	TMPDIR=/nonexistent-skein-r2 "$LEDGER_SCRIPT" --ledger "$g8_ledger2" \
+		--count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+		>"$g8_dir2/tok2" 2>"$g8_dir2/err2" || g8_rc2=$?
+	if [[ $g8_rc2 -ne 0 ]]; then
+		fail "G8(b): append round failed under an unusable \$TMPDIR (rc=$g8_rc2; $(tr '\n' ' ' <"$g8_dir2/err2"))"
+	elif [[ "$(jq -r '.loop_counter' "$g8_ledger2")" != "2" ]]; then
+		fail "G8(b): append round under an unusable \$TMPDIR did not record the round (loop_counter=$(jq -r '.loop_counter' "$g8_ledger2"))"
+	else
+		pass "G8(b): both write paths are independent of \$TMPDIR"
+	fi
+fi
+
+# (c) The rename's atomicity is NOT directly observable from a test: `mv`
+# across filesystems still succeeds (it degrades to copy-then-unlink), and on
+# macOS a bare `mktemp` ignores $TMPDIR entirely, so (b) above cannot go RED
+# on this host even though it is the real Linux-CI regression. Assert the
+# mechanism structurally as well: every `mktemp` in the ledger must be given
+# an IN-DIRECTORY template derived from the ledger's own path, so the
+# subsequent `mv` is always a same-filesystem rename(2).
+g8_bare="$(awk '
+	{ line = $0; sub(/^[[:space:]]+/, "", line) }
+	line ~ /^#/ { next }
+	/mktemp/ && !/dirname/ { printf "%d:%s\n", NR, line }
+' "$LEDGER_SCRIPT")"
+if [[ -n "$g8_bare" ]]; then
+	fail "G8(c): convergence-ledger.sh has a mktemp with no in-directory template (mv would be cross-filesystem): $g8_bare"
+else
+	pass "G8(c): every mktemp in convergence-ledger.sh uses an in-directory template"
+fi
+rm -rf "$g8_dir" "$g8_dir2"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

@@ -139,6 +139,29 @@ for f in "${GAUNTLET_LIB_PARITY_FILES[@]}"; do
 	fi
 done
 
+# ENUMERATION HALF (r2 finding #17). GAUNTLET_LIB_PARITY_FILES above is
+# hand-maintained, so the byte-identity loop only covers files someone
+# remembered to register: a future lib/*.sh would be exempt from mirror
+# parity forever, silently. Walk the canonical lib/ and fail on any basename
+# outside the declared set. `gauntlet-common.sh` is the one documented
+# exclusion — it carries the harness-divergent path anchor
+# (${CLAUDE_PLUGIN_ROOT} vs $SKILL_DIR), so it is deliberately NOT
+# byte-identical across mirrors. Mirrors scripts/check-sync.sh's own
+# stale-leftover guard in check_bundle_dir.
+GAUNTLET_LIB_ANCHOR_DIVERGENT=(gauntlet-common.sh)
+while IFS= read -r lib_path; do
+	lib_base="$(basename "$lib_path")"
+	declared=0
+	for d in "${GAUNTLET_LIB_PARITY_FILES[@]}" "${GAUNTLET_LIB_ANCHOR_DIVERGENT[@]}"; do
+		[[ "$lib_base" == "$d" ]] && declared=1 && break
+	done
+	if [[ "$declared" -eq 0 ]]; then
+		fail "gauntlet lib enumeration: $lib_base is not in GAUNTLET_LIB_PARITY_FILES (nor the documented anchor-divergent exclusion) -- register it or its mirror parity is never checked"
+	else
+		pass "gauntlet lib enumeration: $lib_base is registered"
+	fi
+done < <(find "$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | sort)
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 # Non-vacuous-pass guard: if the bundle glob matched zero files we would exit 0

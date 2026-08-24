@@ -256,6 +256,31 @@ else
 	fail "G12d: --override must be rejected (rc=$alias_rc, stdout='$alias_out')"
 fi
 
+# --- A16: --kind is required and validated on EVERY path ------------------
+# The --gate-timeout override used to `exit 0` before both the `-z "$kind"`
+# check and the validating `case`, so `--gate-timeout 5` with no --kind, and
+# `--kind unknown --gate-timeout 5`, each printed `5` and exited 0 while the
+# header documents exit 2. Validation is now hoisted above the override.
+
+a16_rc=0
+a16_out="$("$LENS_BUDGET" --gate-timeout 5 2>/dev/null)" || a16_rc=$?
+if [[ "$a16_rc" -eq 2 && -z "$a16_out" ]]; then
+	pass "A16: --gate-timeout with NO --kind exits 2 (rc=$a16_rc)"
+else
+	fail "A16: --gate-timeout with no --kind must exit 2 (rc=$a16_rc, stdout='$a16_out')"
+fi
+
+a16b_rc=0
+a16b_out="$("$LENS_BUDGET" --kind unknown --gate-timeout 5 2>/dev/null)" || a16b_rc=$?
+if [[ "$a16b_rc" -eq 2 && -z "$a16b_out" ]]; then
+	pass "A16(b): --kind unknown --gate-timeout exits 2 (rc=$a16b_rc)"
+else
+	fail "A16(b): an unknown --kind must exit 2 even with an override (rc=$a16b_rc, stdout='$a16b_out')"
+fi
+
+a16c_out="$("$LENS_BUDGET" --kind lens --gate-timeout 5)"
+assert_eq "$a16c_out" "5" "A16(c): a VALID --kind with --gate-timeout still prints the override"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

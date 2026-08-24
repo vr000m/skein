@@ -116,30 +116,36 @@
 # survivor in process group <pgid>, except this shell's own pid. Called
 # only from the expiry branch of gate_run_bounded, never elsewhere.
 #
-# Four independent guards narrow a wrong kill to a residual race that is
-# NOT closable in portable shell (see the last paragraph) — the earlier
-# claim that a wrong kill is "structurally impossible" over-stated it:
+# OLD RULE (removed): "signal only a group whose recorded LEADER still leads
+# it" — `pgrep -g <pgid>` had to list <pgid> itself. That proved no pgid
+# recycling, but at the cost of never signalling on the common path: on the
+# primary `timeout(1)` path the recorded pgid IS timeout's own pid, and
+# `wait` has already reaped it before the expiry branch runs, so the guard
+# failed on EVERY expiry and no SIGKILL ever reached a `trap "" TERM`
+# descendant.
+#
+# NEW RULE: signal only a group with at least ONE LIVE MEMBER. This is
+# equally sound against recycling: a pid that is in use as a non-empty
+# process group's pgid is not reallocated (Linux pins the `struct pid` via
+# PIDTYPE_PGID for as long as the group is non-empty; darwin holds a `pgrp`
+# reference), so a non-empty `pgrep -g <pgid>` cannot be a recycled group.
+# An empty group is already a no-op via the `[[ -n "$survivors" ]]` return.
+#
+# The three remaining guards are unchanged:
 #   - <pgid> must be numeric and > 1 (never "my group", never init);
 #   - <pgid> must differ from this shell's own process group (the exact
 #     hazard a background job inherits the caller's pgid);
-#   - the group LEADER must still be alive and still be the recorded pid —
-#     i.e. `pgrep -g <pgid>` must list <pgid> itself. `wait` reaps the
-#     timeout/shim child before the expiry branch runs, so without this
-#     guard the recorded pgid is a freed pid that the OS may already have
-#     reassigned;
 #   - this shell's own pid is filtered out of whatever `pgrep -g` returns.
 #
-# If the recorded pgid is empty, not a real group leader (e.g. `timeout`
-# were ever run with `--foreground`, or a non-GNU `timeout` failed to
-# create a group), the leader is already gone (the common post-
-# `--kill-after` case), or any probe command fails, this is a silent no-op
-# — it degrades to silence, never to a wrong kill and never to an aborted
-# expiry branch.
+# If the recorded pgid is empty, the group has no surviving members, or any
+# probe command fails, this is a silent no-op — it degrades to silence,
+# never to a wrong kill and never to an aborted expiry branch.
 #
-# RESIDUAL RACE (not closable here): between the leader-liveness probe and
-# the `kill`, the OS could in principle recycle <pgid> onto an unrelated
-# new group leader. Closing that would need a pidfd/process-handle API that
-# portable bash does not have. It is documented rather than claimed away.
+# RESIDUAL RACE (unchanged in kind, not closable here): between the
+# membership probe and the `kill`, the last member could exit and the OS
+# could in principle recycle <pgid>. Closing that would need a
+# pidfd/process-handle API that portable bash does not have. It is
+# documented rather than claimed away.
 _gate_sweep_pgid() {
 	local pgid="$1" self_pgid survivors
 	[[ "$pgid" =~ ^[0-9]+$ ]] || return 0
@@ -152,8 +158,6 @@ _gate_sweep_pgid() {
 	# proceed", so this is semantically a no-op that removes the abort.
 	self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)"
 	[[ -n "$self_pgid" && "$pgid" == "$self_pgid" ]] && return 0
-	# Fourth guard: the recorded pid must still BE the live group leader.
-	pgrep -g "$pgid" 2>/dev/null | grep -qx "$pgid" || return 0
 	survivors="$(pgrep -g "$pgid" 2>/dev/null | grep -vx "$$" || true)"
 	[[ -n "$survivors" ]] || return 0
 	# shellcheck disable=SC2086
@@ -215,11 +219,39 @@ gate_run_bounded() {
 	# python3 shim path — same promise, same timing, both paths.
 	local kill_after_s=10
 
-	local pgid_file state_file
+	local pgid_file state_file rc_file
 	pgid_file="$(mktemp)"
 	# The runner's OWN record of why the run ended. Only the python3 shim's
 	# TimeoutExpired path writes to it; everything else leaves it empty.
 	state_file="$(mktemp)"
+	# The COMMAND's own record that it chose its exit status. Written by the
+	# `bash -c` frame below, immediately after the reviewed command returns.
+	# A non-empty rc_file proves the command exited on its own; an
+	# absent/empty one proves it did not (it was signalled). This replaces
+	# the `duration_s >= seconds` INFERENCE for the non-shim paths: `date
+	# +%s` is integer-second, so a command exiting on its own at true
+	# elapsed 0.7s under a 1s budget measured 1 whenever those 0.7s
+	# straddled a second boundary, and had its VALID tool-out deleted and
+	# replaced with a degraded `skipped` envelope. Bash 3.2 (the declared
+	# floor) has no $EPOCHREALTIME and `date +%s%N` is GNU-only, so the
+	# inference is removed rather than sharpened.
+	rc_file="$(mktemp)"
+
+	# The reviewed command, wrapped so it records its own $? before exiting
+	# with it. The extra frame sits UNDER `timeout`/the shim, so the
+	# recorded pgid -- and therefore _gate_sweep_pgid -- is unaffected: the
+	# wrapper is a member of the same group, not a new one. `bash -c` starts
+	# without `set -e`, so a non-zero command status is captured, not fatal.
+	local -a bounded_cmd
+	# shellcheck disable=SC2016  # intentional: this is the inner shell's script, not this shell's
+	bounded_cmd=(bash -c '
+		gate_rc_file="$1"
+		shift
+		rc=0
+		"$@" || rc=$?
+		printf "%s" "$rc" >"$gate_rc_file" 2>/dev/null || true
+		exit "$rc"
+	' _ "$rc_file" "$@")
 
 	local start_ts end_ts duration_s exit_code=0
 	start_ts="$(date +%s)"
@@ -229,22 +261,22 @@ gate_run_bounded() {
 		# `timeout` without `--foreground` calls setpgid(0,0) on itself,
 		# so its own pid *is* the child process-group id. `wait`
 		# propagates its exit status unchanged.
-		timeout --kill-after="${kill_after_s}s" "${seconds}s" "$@" >"$tool_out" 2>"${tool_out}.stderr" &
+		timeout --kill-after="${kill_after_s}s" "${seconds}s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" &
 		local gate_pid=$!
 		printf '%s' "$gate_pid" >"$pgid_file"
 		wait "$gate_pid" || exit_code=$?
 	elif command -v gtimeout >/dev/null 2>&1; then
-		gtimeout --kill-after="${kill_after_s}s" "${seconds}s" "$@" >"$tool_out" 2>"${tool_out}.stderr" &
+		gtimeout --kill-after="${kill_after_s}s" "${seconds}s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" &
 		local gate_pid=$!
 		printf '%s' "$gate_pid" >"$pgid_file"
 		wait "$gate_pid" || exit_code=$?
 	else
 		if ! command -v python3 >/dev/null 2>&1; then
-			rm -f "$pgid_file" "$state_file"
+			rm -f "$pgid_file" "$state_file" "$rc_file"
 			echo "gate_run_bounded: none of timeout, gtimeout, or python3 is available" >&2
 			return 2
 		fi
-		python3 - "$pgid_file" "$state_file" "$seconds" "$kill_after_s" "$@" >"$tool_out" 2>"${tool_out}.stderr" <<'PYSHIM' || exit_code=$?
+		python3 - "$pgid_file" "$state_file" "$seconds" "$kill_after_s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" <<'PYSHIM' || exit_code=$?
 import os
 import signal
 import subprocess
@@ -261,6 +293,9 @@ cmd = sys.argv[5:]
 # is done in-process) so killpg below reaches every descendant, not just
 # the immediate child.
 proc = subprocess.Popen(cmd, preexec_fn=os.setsid)
+# `pgid` stays None only if the child was reaped before we could read its
+# group; every later use is guarded on that.
+pgid = None
 try:
     pgid = os.getpgid(proc.pid)
     with open(pgid_file, "w") as f:
@@ -289,7 +324,15 @@ except subprocess.TimeoutExpired:
     # unnecessary wall-clock time on top of the budget. Mirrors GNU
     # `timeout --kill-after`'s exit-code alphabet: 124 if the child died
     # during the grace window, 137 if the group had to be SIGKILLed.
+    #
+    # `escalated` is about the LEADER (it decides the 124/137 exit alphabet
+    # and nothing else); `swept` is about the GROUP. They are separate
+    # because the leader reaping does NOT mean the group is empty: a
+    # `trap "" TERM` descendant survives the SIGTERM above and the `break`
+    # below used to leave it running forever. On a leader reap, probe the
+    # group with killpg(pgid, 0) and SIGKILL it if anything is still there.
     escalated = False
+    swept = False
     grace_deadline = time.monotonic() + kill_after
     while time.monotonic() < grace_deadline:
         try:
@@ -308,6 +351,21 @@ except subprocess.TimeoutExpired:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
+    if not escalated and pgid is not None:
+        # Leader reaped inside the grace window. `pgid` was captured while
+        # the child was still alive, so it still names the group the child
+        # was put in; a signal-0 killpg tells us whether any member outlived
+        # the leader.
+        try:
+            os.killpg(pgid, 0)
+            os.killpg(pgid, signal.SIGKILL)
+            swept = True
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    # Exit alphabet is keyed on the LEADER only, so a sweep does not turn a
+    # 124 into a 137: `run-gate.sh` reads the envelope, not this code, and
+    # the envelope must not claim the gate had to be force-killed when it
+    # did not. `swept` is therefore recorded, not signalled.
     sys.exit(137 if escalated else 124)
 PYSHIM
 	fi
@@ -333,9 +391,15 @@ PYSHIM
 	# `10#` on both operands: `seconds` is only validated as `^[0-9]+$`, so
 	# a zero-padded budget like `060` would otherwise be an octal parse
 	# error inside `(( ))` (same hazard as lens-budget.sh's).
-	local expired=0 runner_state=""
+	local expired=0 runner_state="" self_exited=0
 	[[ -s "$state_file" ]] && runner_state="$(cat "$state_file" 2>/dev/null || true)"
-	if [[ "$exit_code" -ne 0 ]] && { [[ "$runner_state" == "TIMEOUT" ]] || ((10#$duration_s >= 10#$seconds)); }; then
+	# A11: an rc_file with content is the command saying "I chose this exit
+	# status". It outranks the clock: only a command that did NOT exit on
+	# its own can have been killed by the budget.
+	[[ -s "$rc_file" ]] && self_exited=1
+	if [[ "$exit_code" -ne 0 ]] &&
+		{ [[ "$runner_state" == "TIMEOUT" ]] ||
+			{ [[ "$self_exited" -eq 0 ]] && ((10#$duration_s >= 10#$seconds)); }; }; then
 		expired=1
 	fi
 
@@ -344,7 +408,7 @@ PYSHIM
 		local pgid=""
 		[[ -s "$pgid_file" ]] && pgid="$(cat "$pgid_file")"
 		_gate_sweep_pgid "$pgid"
-		rm -f "$pgid_file" "$state_file"
+		rm -f "$pgid_file" "$state_file" "$rc_file"
 		local reason="DEGRADED: timeout after ${seconds}s"
 		jq -n \
 			--arg reason "$reason" \
@@ -355,22 +419,30 @@ PYSHIM
 		return 0
 	fi
 
-	rm -f "$pgid_file" "$state_file"
+	rm -f "$pgid_file" "$state_file" "$rc_file"
 
 	# G3: `.findings` must be a real array, not merely present-and-ignorable.
 	# `run-gate.sh normalize` reads `.findings[]?`; the `?` swallows a
 	# null/non-array field, so a malformed gate used to report as clean.
-	if [[ -s "$tool_out" ]] && jq -e 'type == "object" and (.status | type) == "string" and (.findings | type) == "array"' \
+	#
+	# A12: --slurp on BOTH the gate and the pass-through. Without it, `jq -e`
+	# applies the filter to each top-level document independently and its
+	# exit status reflects only the LAST one, while the pass-through MAPS
+	# over all of them -- so a gate printing two envelopes had TWO stamped
+	# objects written into the envelope file. The invariant "the envelope
+	# holds one JSON object" was always the contract; it is now enforced,
+	# and a multi-document tool-out falls to the `error` envelope below.
+	if [[ -s "$tool_out" ]] && jq -e -s 'length == 1 and (.[0] | type == "object") and ((.[0].status | type) == "string") and ((.[0].findings | type) == "array")' \
 		>/dev/null 2>&1 <"$tool_out"; then
-		jq --argjson duration_s "$duration_s" \
+		jq -s --argjson duration_s "$duration_s" \
 			--arg gate_name "$gate_name" \
-			'. + {duration_s: $duration_s, degraded_reason: null} + (if ($gate_name | length) > 0 then {gate: $gate_name} else {} end)' \
+			'.[0] + {duration_s: $duration_s, degraded_reason: null} + (if ($gate_name | length) > 0 then {gate: $gate_name} else {} end)' \
 			"$tool_out" >"$envelope_out"
 	else
 		jq -n \
 			--argjson duration_s "$duration_s" \
 			--arg gate_name "$gate_name" \
-			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status and an array .findings)", findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: null}' \
+			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status and an array .findings), or emitted more than one JSON document", findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: null}' \
 			>"$envelope_out"
 	fi
 	return 0

@@ -850,6 +850,177 @@ chmod +x "$wellformed_stub"
 assert_eq "$(jq -r '.status' "$wellformed_env")" "approve" \
 	"well-formed findings array: the tightened gate does not regress the clean path"
 
+# --- A5: the sweep must fire when the LEADER dies on TERM -----------------
+# Codex addendum A5. Distinct from Case 3: there the gate itself ignores
+# TERM, so `timeout --kill-after` escalates to SIGKILL on the whole group and
+# the descendant dies as a side effect. Here the gate leader dies on the
+# FIRST TERM, so nothing ever escalates -- the shim broke out of its grace
+# loop with `escalated` false, and on the timeout(1) path the recorded pgid
+# is timeout's own pid, already reaped by `wait`, so the old leader-liveness
+# guard in _gate_sweep_pgid returned early on EVERY expiry. Either way no
+# SIGKILL reached a `trap "" TERM` descendant.
+
+run_leader_dies_sweep_case() {
+	local label="$1" test_path="$2"
+	local stub="$WORKDIR/stub-sweep-$label.sh"
+	local envelope="$WORKDIR/envelope-sweep-$label.json"
+	local toolout="$WORKDIR/toolout-sweep-$label.json"
+	local pidfile="$WORKDIR/sweep-child-pid-$label.txt"
+	rm -f "$pidfile" "$envelope" "$toolout"
+
+	# The stub does NOT trap TERM: it dies on the first signal. Its
+	# descendant does, and must still be swept.
+	cat >"$stub" <<STUB
+#!/usr/bin/env bash
+echo '{"status":"ok","findings":[]}'
+( trap '' TERM; sleep 300 ) &
+echo \$! >"$pidfile"
+sleep 300
+STUB
+	chmod +x "$stub"
+
+	PATH="$test_path" "$RUNNER" 1 "$envelope" "$toolout" -- "$stub" >/dev/null 2>&1 || true
+
+	if [[ ! -s "$pidfile" ]]; then
+		fail "$label: sweep stub never recorded its descendant pid"
+		return
+	fi
+	local child_pid
+	child_pid="$(cat "$pidfile")"
+
+	local alive=1 i
+	for i in $(seq 1 25); do
+		if ! kill -0 "$child_pid" 2>/dev/null; then
+			alive=0
+			break
+		fi
+		sleep 1
+	done
+
+	if [[ "$alive" -eq 0 ]]; then
+		pass "A5/$label: a TERM-ignoring descendant is swept even though the gate leader died on TERM"
+	else
+		fail "A5/$label: TERM-ignoring descendant (pid $child_pid) SURVIVED the expiry sweep"
+		kill -9 "$child_pid" 2>/dev/null || true
+	fi
+
+	assert_eq "$(jq -r '.status' "$envelope")" "skipped" \
+		"A5/$label: the swept expiry still writes a skipped envelope"
+}
+
+run_leader_dies_sweep_case "gnu-timeout" "$PATH"
+run_leader_dies_sweep_case "shim" "$HIDDEN_TIMEOUT_PATH"
+
+# --- A11: a real non-zero exit inside budget is never misread as expiry ----
+# `duration_s >= seconds` is an integer-second INFERENCE over `date +%s`. A
+# command that exits on its own at true elapsed 0.7s under a 1s budget
+# measures duration_s == 1 whenever those 0.7s straddle an epoch-second
+# boundary -- and was then reclassified as a timeout: its VALID tool-out was
+# deleted and a degraded `skipped` envelope replaced its real result. Bash
+# 3.2 has no $EPOCHREALTIME and `date +%s%N` is GNU-only, so the fix removes
+# the inference rather than sharpening the clock: the command records its own
+# $? to an rc_file, and an absent/empty rc_file -- not the clock -- is what
+# proves it never exited on its own.
+#
+# The stub sleeps 0.7s (comfortably inside the 1s budget, so it is never
+# genuinely killed) and exits 3 with a VALID envelope. Across 50 runs the
+# boundary is straddled roughly 70% of the time, so pre-fix this reports
+# `skipped` on most iterations and post-fix on none.
+
+a11_stub="$WORKDIR/stub-a11.sh"
+cat >"$a11_stub" <<'EOF'
+#!/usr/bin/env bash
+printf '{"status":"reject","findings":[]}'
+sleep 0.7
+exit 3
+EOF
+chmod +x "$a11_stub"
+
+a11_tmp="$WORKDIR/a11-tmp"
+mkdir -p "$a11_tmp"
+a11_before="$(find "$a11_tmp" -type f 2>/dev/null | wc -l | tr -d ' ')"
+a11_skipped=0
+a11_straddled=0
+a11_env="$WORKDIR/a11-env.json"
+a11_out="$WORKDIR/a11-out.json"
+for i in $(seq 1 50); do
+	rm -f "$a11_env" "$a11_out"
+	TMPDIR="$a11_tmp" "$RUNNER" 1 "$a11_env" "$a11_out" -- "$a11_stub" >/dev/null 2>&1 || true
+	a11_status="$(jq -r '.status // "MISSING"' "$a11_env" 2>/dev/null || echo PARSE_ERROR)"
+	a11_dur="$(jq -r '.duration_s // -1' "$a11_env" 2>/dev/null || echo -1)"
+	[[ "$a11_dur" -ge 1 ]] && a11_straddled=$((a11_straddled + 1))
+	[[ "$a11_status" == "skipped" ]] && a11_skipped=$((a11_skipped + 1))
+done
+
+# Non-vacuity: if no iteration ever measured duration_s >= budget, the case
+# never exercised the misreading and proves nothing.
+if [[ "$a11_straddled" -gt 0 ]]; then
+	pass "A11: non-vacuous -- $a11_straddled/50 runs measured duration_s >= the 1s budget while exiting on their own"
+else
+	fail "A11: vacuous -- no run straddled the epoch-second boundary, the misreading was never exercised"
+fi
+
+if [[ "$a11_skipped" -eq 0 ]]; then
+	pass "A11: 50x a self-exiting 'exit 3' under a 1s budget is never clock-inferred as 'skipped'"
+else
+	fail "A11: $a11_skipped/50 runs deleted a valid tool-out and wrote a degraded 'skipped' envelope for an in-budget exit"
+fi
+
+# The tool's own result survives: `reject`, stamped, with its tool-out kept.
+if [[ "$(jq -r '.status' "$a11_env" 2>/dev/null)" == "reject" ]]; then
+	pass "A11: the self-exiting gate's own status reaches the envelope"
+else
+	fail "A11: the self-exiting gate's status was not passed through (got '$(jq -r '.status' "$a11_env" 2>/dev/null)')"
+fi
+
+# Temp-file lifecycle. BSD `mktemp` ignores \$TMPDIR when given no template,
+# so the count below is only discriminating where it is honoured; the
+# structural assertion that follows is the portable one -- a new temp file
+# that is not removed on EVERY exit path leaks one file per gate invocation.
+a11_after="$(find "$a11_tmp" -type f 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$a11_after" == "$a11_before" ]]; then
+	pass "A11: no temp-file residue under \$TMPDIR across 50 bounded runs"
+else
+	fail "A11: temp-file leak -- \$TMPDIR went from $a11_before to $a11_after files across 50 runs"
+fi
+
+a11_pgid_rm="$(grep -c 'rm -f "\$pgid_file"' "$GATE_BOUNDED" || true)"
+a11_rc_rm="$(grep -c 'rm -f "\$pgid_file" "\$state_file" "\$rc_file"' "$GATE_BOUNDED" || true)"
+if [[ "$a11_pgid_rm" -gt 0 && "$a11_rc_rm" == "$a11_pgid_rm" ]]; then
+	pass "A11: rc_file is removed on every path that removes pgid_file ($a11_rc_rm/$a11_pgid_rm)"
+else
+	fail "A11: rc_file is missing from $((a11_pgid_rm - a11_rc_rm)) of the $a11_pgid_rm pgid_file cleanup paths"
+fi
+
+# --- A12: the envelope holds exactly ONE JSON object ----------------------
+# `jq -e` without --slurp reports only the LAST document of a stream and the
+# pass-through filter maps over ALL of them, so a gate printing two envelopes
+# wrote TWO stamped objects into the envelope file. The invariant ("the
+# envelope holds one JSON object") was always the contract; it is now
+# enforced, and a multi-document tool-out falls to the `error` envelope.
+
+a12_stub="$WORKDIR/stub-a12.sh"
+cat >"$a12_stub" <<'EOF'
+#!/usr/bin/env bash
+printf '{"status":"approve","findings":[]}
+{"status":"reject","findings":[]}
+'
+EOF
+chmod +x "$a12_stub"
+a12_env="$WORKDIR/a12-env.json"
+a12_out="$WORKDIR/a12-out.json"
+"$RUNNER" 60 "$a12_env" "$a12_out" -- "$a12_stub" >/dev/null 2>&1 || true
+a12_doc_count="$(jq -s 'length' "$a12_env" 2>/dev/null || echo PARSE_ERROR)"
+assert_eq "$a12_doc_count" "1" "A12: a two-document tool-out yields exactly one envelope document"
+assert_eq "$(jq -r -s '.[0].status' "$a12_env" 2>/dev/null || echo PARSE_ERROR)" "error" \
+	"A12: a two-document tool-out is rejected to the 'error' envelope, not passed through"
+a12_note="$(jq -r -s '.[0].notes // ""' "$a12_env" 2>/dev/null || echo "")"
+if [[ "$a12_note" == *"more than one JSON document"* ]]; then
+	pass "A12: the error envelope names the multi-document cause"
+else
+	fail "A12: the error envelope note does not name the multi-document cause (got '$a12_note')"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

@@ -114,6 +114,31 @@ while [[ $# -gt 0 ]]; do
 	shift
 done
 
+# `--kind` is required and validated on EVERY path, the --gate-timeout
+# override included. It used to be checked only below the override's early
+# `exit 0` and again in the dispatching `case`, so `--gate-timeout 5` with no
+# --kind (and `--kind unknown --gate-timeout 5`) printed a budget and exited
+# 0 while the header documents exit 2 -- a typo'd kind silently took the
+# operator's override instead of failing loudly. Hoisted here, above the
+# override; the dispatch `case` below keeps its arms and no longer needs an
+# error arm.
+validate_kind() {
+	if [[ -z "$kind" ]]; then
+		echo "lens-budget: --kind is required" >&2
+		usage
+		exit 2
+	fi
+	case "$kind" in
+	lens | plan-lens | codex) ;;
+	*)
+		echo "lens-budget: unknown --kind '$kind' (expected lens|plan-lens|codex)" >&2
+		exit 2
+		;;
+	esac
+}
+
+validate_kind
+
 if [[ -n "$override" ]]; then
 	if ! is_pos_int "$override"; then
 		echo "lens-budget: --gate-timeout must be a positive integer number of seconds (>= 1); got '$override'" >&2
@@ -121,12 +146,6 @@ if [[ -n "$override" ]]; then
 	fi
 	printf '%s\n' "$override"
 	exit 0
-fi
-
-if [[ -z "$kind" ]]; then
-	echo "lens-budget: --kind is required" >&2
-	usage
-	exit 2
 fi
 
 for v in "$files" "$lines" "$sections"; do
@@ -179,12 +198,10 @@ codex_seconds() {
 	clamp "$raw" 1200 2700
 }
 
+# Every arm here is already proven reachable by validate_kind above, which
+# rejects an unknown --kind before the override; this `case` dispatches only.
 case "$kind" in
 lens) lens_seconds "$files" "$lines" ;;
 plan-lens) plan_lens_seconds "$sections" ;;
 codex) codex_seconds "$files" "$lines" ;;
-*)
-	echo "lens-budget: unknown --kind '$kind' (expected lens|plan-lens|codex)" >&2
-	exit 2
-	;;
 esac

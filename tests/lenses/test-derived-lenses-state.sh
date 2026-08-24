@@ -234,4 +234,59 @@ else
 	echo "    .lenses was: $lenses_json2"
 fi
 
+
+# ---------------------------------------------------------------------------
+# (C13) The skill -> state-dir mapping lives in FOUR places; each must
+# cross-reference the others.
+#
+# r2 finding #13: `persist_lens_state_dir` duplicates `af_manifest_dir`'s
+# mapping. Consolidation was QUARANTINED on purpose -- they differ in root
+# source ($AF_COMMON_ROOT vs an argument) and in failure exit code (2 vs 1),
+# so merging them is a behaviour change at four call sites for no functional
+# gain. The residual risk is silent divergence: someone adding a third skill
+# updates one arm and not the others. Guard the discoverability instead --
+# every site names the shared marker and carries BOTH arms.
+# ---------------------------------------------------------------------------
+
+C13_MARKER='SKILL->STATE-DIR MAPPING (4 sites)'
+c13_sites=(
+	"$REPO_ROOT/scripts/lib/persist-common.sh"
+	"$REPO_ROOT/scripts/lib/auto-fix-common.sh"
+	"$REPO_ROOT/scripts/persist-deep-review-state.sh"
+	"$REPO_ROOT/scripts/persist-review-state.sh"
+)
+for c13_site in "${c13_sites[@]}"; do
+	c13_name="${c13_site#"$REPO_ROOT/"}"
+	if [[ ! -f "$c13_site" ]]; then
+		fail "(C13) mapping site missing: $c13_name"
+		continue
+	fi
+	if ! grep -qF "$C13_MARKER" "$c13_site"; then
+		fail "(C13) $c13_name does not carry the shared mapping marker '$C13_MARKER'"
+	elif ! grep -q '\.deep-review' "$c13_site" || ! grep -q '\.review-plan' "$c13_site"; then
+		fail "(C13) $c13_name is missing one arm of the mapping (.deep-review / .review-plan)"
+	else
+		pass "(C13) $c13_name cross-references the mapping and carries both arms"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# (C14) persist-common.sh's header must state the REAL --root asymmetry.
+#
+# r2 finding #14: the header claimed both Phase-2 consumers take an explicit
+# --root and so this helper never falls back to cwd. True of the WRITER
+# (persist-lens-result.sh hard-errors without --root); FALSE of the READER
+# (collect-lens-results.sh makes --root optional and falls back to
+# persist_root_dir when cwd is inside a worktree).
+# ---------------------------------------------------------------------------
+
+c14_file="$REPO_ROOT/scripts/lib/persist-common.sh"
+if grep -q 'Neither script derives a root from cwd' "$c14_file"; then
+	fail "(C14) persist-common.sh still claims neither Phase-2 consumer derives a root from cwd"
+elif grep -qi 'asymmetr' "$c14_file" && grep -q 'collect-lens-results.sh' "$c14_file"; then
+	pass "(C14) persist-common.sh documents the writer/reader --root asymmetry"
+else
+	fail "(C14) persist-common.sh does not document the writer/reader --root asymmetry"
+fi
+
 finish

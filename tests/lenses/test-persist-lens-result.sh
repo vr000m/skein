@@ -565,4 +565,201 @@ else
 	fi
 fi
 
+
+# ---------------------------------------------------------------------------
+# (A1-A10) --json-stdin decoder must never let a payload byte reach a shell.
+#
+# r2 finding #1/#2/#3 (Critical): the decoder built shell assignments with
+# jq's `@sh` and ran `eval`. `@sh` errors only on OBJECTS -- an ARRAY renders
+# as space-separated shell-quoted words, so `TYPE='start' 'sh' '-c' 'cmd'`
+# parsed as an assignment followed by a COMMAND, executed before the exit-2
+# rejection. r2 finding #10: the shape check was un-slurped, so jq's exit
+# status reflected only the LAST of several concatenated documents.
+#
+# Invariant under test: no payload byte ever reaches a shell (there is no
+# `eval` in the script); stdin must be exactly one document; that document an
+# object; every recognised scalar key absent, null, or a string. Anything
+# else exits 2 before a directory is created or a byte written.
+# ---------------------------------------------------------------------------
+
+# reject_payload <label> <root-name> <payload> -- assert the payload exits 2
+# and writes no JSONL anywhere under its own root.
+reject_payload() {
+	local label="$1" name="$2" payload="$3"
+	local root="$TMPDIR_ROOT/$name"
+	mkdir -p "$root"
+	local rc=0
+	set +e
+	printf '%s' "$payload" |
+		bash "$SCRIPT" --root "$root" --skill deep-review --run-id run-a \
+			--lens logic --attempt 1 --json-stdin >/dev/null 2>"$root/stderr"
+	rc=$?
+	set -e
+	if [[ $rc -ne 2 ]]; then
+		fail "$label must exit 2 (got $rc)"
+		sed 's/^/    /' "$root/stderr"
+		return
+	fi
+	if ! no_jsonl_anywhere "$root"; then
+		fail "$label exited 2 but a JSONL file was written under $root"
+		return
+	fi
+	pass "$label"
+}
+
+# --- A1: an array-valued `type` must not execute --------------------------
+a1_root="$TMPDIR_ROOT/case-a1"
+mkdir -p "$a1_root"
+a1_probe="$a1_root/EXEC_PROBE"
+set +e
+printf '%s' "{\"type\":[\"start\",\"/bin/sh\",\"-c\",\"echo pwned > $a1_probe\"],\"units\":[]}" |
+	bash "$SCRIPT" --root "$a1_root" --skill deep-review --run-id run-a1 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a1_root/stderr"
+a1_exit=$?
+set -e
+if [[ -e "$a1_probe" ]]; then
+	fail "(A1) array-valued 'type' EXECUTED the payload -- probe $a1_probe exists"
+elif [[ $a1_exit -ne 2 ]]; then
+	fail "(A1) array-valued 'type' must exit 2 (got $a1_exit)"
+elif ! no_jsonl_anywhere "$a1_root"; then
+	fail "(A1) array-valued 'type' exited 2 but wrote a JSONL file"
+else
+	pass "(A1) array-valued 'type' exits 2, executes nothing, writes nothing"
+fi
+
+# --- A2: an array-valued `summary` on an otherwise valid finding ----------
+a2_root="$TMPDIR_ROOT/case-a2"
+mkdir -p "$a2_root"
+a2_probe="$a2_root/EXEC_PROBE"
+set +e
+printf '%s' "{\"type\":\"finding\",\"severity\":\"Critical\",\"category\":\"Logic\",\"location\":\"a.sh:1\",\"summary\":[\"x\",\"/bin/sh\",\"-c\",\"echo pwned > $a2_probe\"]}" |
+	bash "$SCRIPT" --root "$a2_root" --skill deep-review --run-id run-a2 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a2_root/stderr"
+a2_exit=$?
+set -e
+if [[ -e "$a2_probe" ]]; then
+	fail "(A2) array-valued 'summary' EXECUTED the payload -- probe $a2_probe exists"
+elif [[ $a2_exit -ne 2 ]]; then
+	fail "(A2) array-valued 'summary' must exit 2 (got $a2_exit)"
+elif ! no_jsonl_anywhere "$a2_root"; then
+	fail "(A2) array-valued 'summary' exited 2 but wrote a JSONL file"
+else
+	pass "(A2) array-valued 'summary' exits 2, executes nothing, writes nothing"
+fi
+
+# --- A3/A4: object- and number-valued scalar keys -------------------------
+reject_payload "(A3) object-valued 'category' exits 2, nothing written" case-a3 \
+	'{"type":"finding","severity":"Critical","category":{"a":1},"location":"a.sh:1","summary":"s"}'
+reject_payload "(A4) number-valued 'severity' exits 2, nothing written" case-a4 \
+	'{"type":"finding","severity":3,"category":"Logic","location":"a.sh:1","summary":"s"}'
+
+# --- A5: an explicit null is accepted and serialised as "" ----------------
+a5_root="$TMPDIR_ROOT/case-a5"
+mkdir -p "$a5_root"
+set +e
+printf '%s' '{"type":"finding","severity":"Critical","category":"Logic","location":"a.sh:1","summary":"s","evidence":null,"suggestion":null}' |
+	bash "$SCRIPT" --root "$a5_root" --skill deep-review --run-id run-a5 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a5_root/stderr"
+a5_exit=$?
+set -e
+a5_target="$a5_root/.deep-review/lenses/run-a5/logic.1.jsonl"
+if [[ $a5_exit -ne 0 ]]; then
+	fail "(A5) null-valued 'evidence'/'suggestion' must be accepted (exit $a5_exit)"
+	sed 's/^/    /' "$a5_root/stderr"
+elif [[ ! -f "$a5_target" ]]; then
+	fail "(A5) no line written at $a5_target"
+elif [[ "$(jq -r '[.evidence, .suggestion] | join("|")' "$a5_target")" == "|" ]]; then
+	pass "(A5) explicit JSON null serialises as the empty string"
+else
+	fail "(A5) null did not serialise as \"\": $(jq -c '[.evidence,.suggestion]' "$a5_target")"
+fi
+
+# --- A6: two concatenated documents -- neither may be written -------------
+reject_payload "(A6) two concatenated JSON documents exit 2, nothing written" case-a6 \
+	'{"type":"done","status":"errored"} {"type":"done","status":"completed"}'
+
+# --- A7: empty stdin ------------------------------------------------------
+reject_payload "(A7) empty stdin exits 2, nothing written" case-a7 ''
+
+# --- A8: non-object top-level values --------------------------------------
+reject_payload "(A8a) top-level array exits 2, nothing written" case-a8a '[]'
+reject_payload "(A8b) top-level string exits 2, nothing written" case-a8b '"x"'
+reject_payload "(A8c) top-level number exits 2, nothing written" case-a8c '3'
+
+# --- A9: byte-exact fidelity of a hostile-looking but valid string --------
+a9_root="$TMPDIR_ROOT/case-a9"
+mkdir -p "$a9_root"
+a9_probe="$a9_root/EXEC_PROBE"
+a9_expected="$a9_root/expected.txt"
+printf 'x $(touch %s) `touch %s` "dq" '"'"'sq'"'"' \\ ${HOME} line1\nline2\n' \
+	"$a9_probe" "$a9_probe" >"$a9_expected"
+a9_payload="$(jq -n --rawfile s "$a9_expected" \
+	'{type:"finding",severity:"Critical",category:"Logic",location:"a.sh:1",summary:$s}')"
+set +e
+printf '%s' "$a9_payload" |
+	bash "$SCRIPT" --root "$a9_root" --skill deep-review --run-id run-a9 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a9_root/stderr"
+a9_exit=$?
+set -e
+a9_target="$a9_root/.deep-review/lenses/run-a9/logic.1.jsonl"
+if [[ -e "$a9_probe" ]]; then
+	fail "(A9) a valid string payload was shell-expanded -- probe $a9_probe exists"
+elif [[ $a9_exit -ne 0 ]]; then
+	fail "(A9) valid string payload must exit 0 (got $a9_exit)"
+	sed 's/^/    /' "$a9_root/stderr"
+elif [[ ! -f "$a9_target" ]]; then
+	fail "(A9) no line written at $a9_target"
+elif jq -e --rawfile want "$a9_expected" '.summary == $want' "$a9_target" >/dev/null; then
+	pass "(A9) \$(...), backticks, quotes and embedded/trailing newlines stored byte-identically"
+else
+	fail "(A9) round-trip is not byte-identical: $(jq -c '.summary' "$a9_target")"
+fi
+
+# --- A10: `units` stays array-of-strings (exempt from the scalar rule) ----
+a10_root="$TMPDIR_ROOT/case-a10"
+mkdir -p "$a10_root"
+set +e
+printf '%s' '{"type":"start","units":["a b","c"]}' |
+	bash "$SCRIPT" --root "$a10_root" --skill deep-review --run-id run-a10 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a10_root/stderr"
+a10_exit=$?
+set -e
+a10_target="$a10_root/.deep-review/lenses/run-a10/logic.1.jsonl"
+if [[ $a10_exit -ne 0 ]]; then
+	fail "(A10) 'units' array-of-strings must be accepted (exit $a10_exit)"
+	sed 's/^/    /' "$a10_root/stderr"
+elif [[ "$(jq -c '.units' "$a10_target" 2>/dev/null)" != '["a b","c"]' ]]; then
+	fail "(A10) 'units' array not preserved: $(jq -c '.units' "$a10_target" 2>/dev/null)"
+else
+	pass "(A10) 'units' array-of-strings is accepted verbatim"
+fi
+reject_payload "(A10b) 'units' with a non-string element exits 2, nothing written" case-a10b \
+	'{"type":"start","units":["a",1]}'
+
+# --- A11: a comma-bearing unit name is rejected at the boundary -----------
+# Expected units reach the collector as a CSV (`--expected lens:a,b`), so a
+# unit whose own name holds a comma is re-split downstream and its progress
+# can never match -- the lens could never reach `completed`. Reject it here.
+reject_payload "(A11) a comma-bearing 'units' element exits 2, nothing written" case-a11 \
+	'{"type":"start","units":["a,b"]}'
+# Positive control: the CSV spelling keeps its comma as the SEPARATOR, so
+# `"a,b"` is two comma-free units and stays accepted.
+a11b_root="$TMPDIR_ROOT/case-a11b"
+mkdir -p "$a11b_root"
+set +e
+printf '%s' '{"type":"start","units":"a,b"}' |
+	bash "$SCRIPT" --root "$a11b_root" --skill deep-review --run-id run-a11b \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a11b_root/stderr"
+a11b_exit=$?
+set -e
+a11b_target="$a11b_root/.deep-review/lenses/run-a11b/logic.1.jsonl"
+if [[ $a11b_exit -ne 0 ]]; then
+	fail "(A11b) CSV 'units' string must still be accepted (exit $a11b_exit)"
+	sed 's/^/    /' "$a11b_root/stderr"
+elif [[ "$(jq -c '.units' "$a11b_target" 2>/dev/null)" != '["a","b"]' ]]; then
+	fail "(A11b) CSV 'units' not split into two units: $(jq -c '.units' "$a11b_target" 2>/dev/null)"
+else
+	pass "(A11b) CSV 'units' comma is the separator, not a rejected character"
+fi
+
 finish

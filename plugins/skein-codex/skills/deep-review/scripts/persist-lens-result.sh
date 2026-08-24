@@ -8,7 +8,16 @@
 # partial record on disk that `collect-lens-results.sh` can read and the
 # orchestrator can respawn against.
 #
-# Usage:
+# Usage (stdin mode -- THE form a lens is ever given):
+#
+#   scripts/persist-lens-result.sh --root <repo-root> --skill <s> --run-id <id> \
+#       --lens <name> --attempt <n> --json-stdin <<'SKEIN_JSON'
+#   {"type":"finding","severity":"Critical","category":"Logic", ...}
+#   SKEIN_JSON
+#
+# or, flag mode -- BACK-COMPAT/TEST ONLY, never from a lens prompt (see the
+# six content flags' annotation below):
+#
 #   scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|review-plan \
 #       --run-id <id> --lens <name> --attempt <n> --type start|progress|finding|done \
 #       [--units <comma,separated,list>] [--unit <name>] \
@@ -17,12 +26,12 @@
 #       [--location <file:line>] [--summary <text>] [--evidence <text>] \
 #       [--suggestion <text>]
 #
-# or, preferred for any payload derived from reviewed code (stdin mode):
-#
-#   scripts/persist-lens-result.sh --root <repo-root> --skill <s> --run-id <id> \
-#       --lens <name> --attempt <n> --json-stdin <<'SKEIN_JSON'
-#   {"type":"finding","severity":"Critical","category":"Logic", ...}
-#   SKEIN_JSON
+# The six content flags --severity/--category/--location/--summary/
+# --evidence/--suggestion are back-compat/test only -- never from a lens
+# prompt. Reviewed text on argv is expanded by the lens's own shell (its
+# `$(...)`, backticks and quotes) BEFORE this script is entered, so a lens
+# quoting reviewed code into them re-opens exactly the hole --json-stdin
+# exists to close. Every SKILL.md mirror instructs --json-stdin only.
 #
 # WHY STDIN MODE EXISTS. The lens-persistence prompt contract is a shell
 # command template, and a lens is instructed to quote the code it is
@@ -34,9 +43,25 @@
 # parsed by jq, never by a shell.
 #
 # --json-stdin semantics:
-#   * Reads exactly one JSON object from stdin. `type == "object"` is
-#     checked first; invalid JSON or a non-object exits 2 with NO directory
-#     created and NO byte written.
+#   * Stdin must be EXACTLY ONE JSON document and that document an object.
+#     The check is slurped (`jq -s`) on purpose: without --slurp jq applies
+#     its filter to each top-level document independently and reports only
+#     the LAST one's status, so two concatenated objects would pass and the
+#     first would be silently dropped. Invalid JSON, empty stdin, more than
+#     one document, or a non-object exits 2 with NO directory created and
+#     NO byte written.
+#   * Every recognised scalar key (type, unit, status, severity, category,
+#     location, summary, evidence, suggestion) must be absent, `null`, or a
+#     STRING containing no NUL. An array, object, number or boolean for any
+#     of them exits 2, nothing written. (`units` is exempt and validated
+#     separately as an array-of-strings or a CSV string.)
+#   * There is NO `eval` in this script and no shell-quoting round-trip:
+#     the payload is decoded by jq into a NUL-delimited key/value stream
+#     that `read -d ''` consumes verbatim. No payload byte is ever parsed
+#     by a shell. (An earlier revision built `@sh`-quoted assignments and
+#     `eval`ed them, on the false premise that `@sh` rejects non-scalars;
+#     `@sh` errors only on objects, and rendered an ARRAY as several
+#     shell-quoted WORDS -- an assignment followed by a command.)
 #   * Mutually exclusive with the payload flags --type/--units/--unit/
 #     --status/--severity/--category/--location/--summary/--evidence/
 #     --suggestion. Passing both exits 2, nothing written.
@@ -99,16 +124,21 @@
 # Unit names must not contain commas — unit lists are comma-joined and
 # unescaped end-to-end (writer --units, collector --expected). A
 # comma-bearing --unit is rejected at the boundary rather than silently
-# split; --units is a CSV itself so its comma is the separator, not a
-# rejected character.
+# split; --units (and the --json-stdin `units` CSV *string* spelling) is a
+# CSV itself, so its comma is the separator, not a rejected character. The
+# --json-stdin `units` ARRAY spelling has no separator to hide behind: a
+# comma inside an element is rejected with exit 2, because --expected
+# transports the collector's expected units as a CSV and would re-split it
+# into units no lens ever reports.
 #
 # Exit codes:
 #   0 — line appended.
 #   2 — usage error (missing/unknown --skill, --type, or --status; a
 #       required --type-specific flag missing; non-positive --attempt;
 #       --run-id/--lens outside its charset; a comma in --unit;
-#       --json-stdin combined with a payload flag; stdin that is not one
-#       JSON object). No file is written.
+#       --json-stdin combined with a payload flag; stdin that is not
+#       exactly one JSON object; a --json-stdin payload key whose value is
+#       neither absent, null, nor a NUL-free string). No file is written.
 #   1 — append refused or failed (symlink guard, permissions, disk full);
 #       no line written.
 #
@@ -125,17 +155,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
 	cat >&2 <<'EOF'
 usage: scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|review-plan \
+    --run-id <id> --lens <name> --attempt <n> --json-stdin  < one-JSON-object
+   or: scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|review-plan \
     --run-id <id> --lens <name> --attempt <n> --type start|progress|finding|done \
     [--units <csv>] [--unit <name>] [--status completed|errored|skipped] \
     [--severity <s>] [--category <c>] [--location <file:line>] \
     [--summary <text>] [--evidence <text>] [--suggestion <text>]
-   or: scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|review-plan \
-    --run-id <id> --lens <name> --attempt <n> --json-stdin  < one-JSON-object
 
---json-stdin reads the payload as one JSON object on stdin instead of on
-argv, so reviewed code never reaches a shell. It is mutually exclusive with
+--json-stdin is the form every lens is given: it reads the payload as one
+JSON object on stdin instead of on argv, so reviewed code never reaches a
+shell. It is mutually exclusive with
 --type/--units/--unit/--status/--severity/--category/--location/--summary/
 --evidence/--suggestion.
+
+The six content flags --severity/--category/--location/--summary/--evidence/
+--suggestion are back-compat/test only -- never from a lens prompt: reviewed
+text on argv is expanded by the lens's own shell before this script runs.
 EOF
 }
 
@@ -164,98 +199,91 @@ note_payload_flag() {
 	PAYLOAD_FLAGS="${PAYLOAD_FLAGS:+$PAYLOAD_FLAGS }$1"
 }
 
-require_value() {
-	if [[ $# -lt 1 ]]; then
-		usage
-		exit 2
-	fi
-}
-
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--root)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		ROOT="$1"
 		;;
 	--skill)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		SKILL="$1"
 		;;
 	--run-id)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		RUN_ID="$1"
 		;;
 	--lens)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		LENS="$1"
 		;;
 	--attempt)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		ATTEMPT="$1"
 		;;
 	--type)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		TYPE="$1"
 		note_payload_flag --type
 		;;
 	--units)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		UNITS="$1"
 		UNITS_SET=1
 		note_payload_flag --units
 		;;
 	--unit)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		UNIT="$1"
 		note_payload_flag --unit
 		;;
 	--status)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		STATUS="$1"
 		note_payload_flag --status
 		;;
 	--severity)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		SEVERITY="$1"
 		note_payload_flag --severity
 		;;
 	--category)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		CATEGORY="$1"
 		note_payload_flag --category
 		;;
 	--location)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		LOCATION="$1"
 		note_payload_flag --location
 		;;
 	--summary)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		SUMMARY="$1"
 		note_payload_flag --summary
 		;;
 	--evidence)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		EVIDENCE="$1"
 		note_payload_flag --evidence
 		;;
 	--suggestion)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		SUGGESTION="$1"
 		note_payload_flag --suggestion
 		;;
@@ -331,35 +359,79 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		exit 2
 	}
 
-	if ! printf '%s' "$STDIN_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+	# Shape gate. jq WITHOUT --slurp applies the filter to each top-level
+	# document independently and its exit status reflects only the LAST one,
+	# so `{"a":1} {"b":2}` would pass a bare `type == "object"` check and the
+	# first document would be silently dropped. Slurp first, then require
+	# exactly one document and that document an object. Empty stdin slurps to
+	# `[]` -> length 0 -> exit 2.
+	if ! printf '%s' "$STDIN_JSON" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
 		echo "persist-lens-result: --json-stdin requires exactly one JSON object on stdin" >&2
 		exit 2
 	fi
 
-	# @sh-quoted assignments: jq owns the shell quoting, so no payload byte is
-	# ever re-parsed as shell syntax. A non-scalar value for any of these keys
-	# makes jq fail, which is a clean exit 2 with nothing written.
-	json_assignments="$(printf '%s' "$STDIN_JSON" | jq -r '
-		@sh "TYPE=\(.type // "") UNIT=\(.unit // "") STATUS=\(.status // "") SEVERITY=\(.severity // "") CATEGORY=\(.category // "") LOCATION=\(.location // "") SUMMARY=\(.summary // "") EVIDENCE=\(.evidence // "") SUGGESTION=\(.suggestion // "")"
-	')" || {
-		echo "persist-lens-result: --json-stdin payload fields must be scalars" >&2
+	# Type gate for the nine recognised scalar keys: each must be absent,
+	# `null`, or a string, and no string may contain a NUL -- NUL is the
+	# extractor's delimiter below, and a bash variable cannot hold one anyway.
+	# `units` is deliberately NOT in this list: it has its own
+	# array-of-strings/CSV filter below and reaches the serializer via
+	# --argjson, never a shell.
+	if ! printf '%s' "$STDIN_JSON" | jq -e -s '
+		.[0] as $o
+		| ["type","unit","status","severity","category","location","summary","evidence","suggestion"]
+		| all($o[.] as $v
+			| ($v == null)
+			  or (($v | type) == "string" and ($v | contains("\u0000") | not)))
+	' >/dev/null 2>&1; then
+		echo "persist-lens-result: --json-stdin payload fields must be strings or null" >&2
 		exit 2
-	}
-	# shellcheck disable=SC2086 # jq's @sh output is already shell-quoted
-	eval "$json_assignments"
+	fi
+
+	# Extract into the SAME internal variables flag mode fills. There is no
+	# `eval` here and no shell-quoting round-trip: jq emits a NUL-delimited
+	# key/value stream and `read -d ''` consumes it verbatim, so no payload
+	# byte is ever parsed as shell syntax. NUL (rather than newline) is the
+	# delimiter because a value may contain embedded AND trailing newlines,
+	# which nine separate `jq -r` command substitutions would strip.
+	while IFS= read -r -d '' k && IFS= read -r -d '' v; do
+		case "$k" in
+		type) TYPE="$v" ;;
+		unit) UNIT="$v" ;;
+		status) STATUS="$v" ;;
+		severity) SEVERITY="$v" ;;
+		category) CATEGORY="$v" ;;
+		location) LOCATION="$v" ;;
+		summary) SUMMARY="$v" ;;
+		evidence) EVIDENCE="$v" ;;
+		suggestion) SUGGESTION="$v" ;;
+		esac
+	done < <(printf '%s' "$STDIN_JSON" | jq -j -s '
+		.[0] as $o
+		| ["type","unit","status","severity","category","location","summary","evidence","suggestion"][]
+		| ., "\u0000", (($o[.] // "")), "\u0000"
+	')
 
 	# `units` may be a JSON array (preferred -- no comma-separator restriction)
 	# or a CSV string (flag-mode spelling). Absent => --units was not passed.
+	# The trailing comma gate applies to BOTH spellings. In the CSV spelling
+	# the comma is the separator, so `split(",")` can never yield a
+	# comma-bearing element and the gate is a no-op there; in the array
+	# spelling it is the only thing standing between a unit named "a,b" and a
+	# collector that re-splits it into two units the lens will never report,
+	# leaving that lens permanently short of `completed`.
 	STDIN_UNITS_JSON="$(printf '%s' "$STDIN_JSON" | jq -c '
-		if has("units") | not then null
-		elif (.units | type) == "array" then
+		(if has("units") | not then null
+		 elif (.units | type) == "array" then
 			(if (.units | all(type == "string")) then .units
 			 else error("units array must contain only strings") end)
-		elif (.units | type) == "string" then
+		 elif (.units | type) == "string" then
 			(if .units == "" then [] else (.units | split(",")) end)
-		else error("units must be an array or a CSV string") end
+		 else error("units must be an array or a CSV string") end)
+		| if . != null and any(.[]; contains(","))
+		  then error("unit names must not contain a comma")
+		  else . end
 	')" || {
-		echo "persist-lens-result: --json-stdin 'units' must be an array of strings or a CSV string" >&2
+		echo "persist-lens-result: --json-stdin 'units' must be an array of comma-free strings or a CSV string" >&2
 		exit 2
 	}
 	if [[ "$STDIN_UNITS_JSON" != "null" ]]; then
@@ -424,7 +496,18 @@ if [[ "$TYPE" == "start" ]]; then
 	elif [[ -z "$UNITS" ]]; then
 		units_json="[]"
 	else
-		units_json="$(printf '%s' "$UNITS" | jq -R -c 'split(",")')"
+		# Comma is the separator here, so every element is comma-free by
+		# construction; the gate is stated for symmetry with the --json-stdin
+		# array spelling above, which has no such guarantee.
+		units_json="$(printf '%s' "$UNITS" | jq -R -c '
+			split(",")
+			| if any(.[]; contains(",")) then
+				error("unit names must not contain a comma")
+			  else . end
+		')" || {
+			echo "persist-lens-result: --units elements must not contain a comma" >&2
+			exit 2
+		}
 	fi
 fi
 

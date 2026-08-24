@@ -23,8 +23,9 @@
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
 #
 # SINGLE-WRITER BY CONTRACT. The append path is an unlocked
-# read-modify-write (read the ledger, build a new one into a mktemp, `mv`
-# over the original). That is safe because there is exactly one conductor
+# read-modify-write (read the ledger, build a new one into an IN-DIRECTORY
+# mktemp — a sibling of the ledger, so the `mv` is a same-filesystem
+# rename(2) — then `mv` over the original). That is safe because there is exactly one conductor
 # per gauntlet run and exactly one `--append` per round — no documented
 # flow has a second concurrent writer. Concurrent `--append` against one
 # ledger is UNSUPPORTED and will lose a round: the later `mv` wins whole.
@@ -453,7 +454,12 @@ write_fresh_ledger() {
 	local k="$4"
 	local tmp
 	mkdir -p "$(dirname "$ledger_path")"
-	tmp="$(mktemp)"
+	# In-directory template, not a bare `mktemp`: the atomicity this write
+	# path asserts comes from `mv` being a same-filesystem rename(2). A bare
+	# `mktemp` lands in $TMPDIR, which is commonly a different filesystem
+	# (tmpfs on Linux CI), making the `mv` a copy-then-unlink with no such
+	# guarantee. Same template shape `persist_atomic_write` already uses.
+	tmp="$(mktemp "$(dirname "$ledger_path")/.ledger.XXXXXX")"
 	# fixed_keys/pending_claimed are deliberately NOT written here: a ledger
 	# that never sees --present-keys/--claimed-keys must stay byte-for-byte
 	# identical to the pre-Phase-3 shape (no key-tracking pollution). Both
@@ -698,7 +704,9 @@ append)
 		keys_active="true"
 	fi
 
-	tmp_ledger="$(mktemp)"
+	# In-directory template — see write_fresh_ledger above for why a bare
+	# `mktemp` would break the atomic-replace guarantee this path relies on.
+	tmp_ledger="$(mktemp "$(dirname "$LEDGER_PATH")/.ledger.XXXXXX")"
 	trap 'rm -f "$tmp_ledger"' EXIT
 	jq \
 		--argjson count "$COUNT" \

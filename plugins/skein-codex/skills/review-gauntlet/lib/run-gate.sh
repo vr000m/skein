@@ -370,16 +370,32 @@ cmd_status_row() {
 	# `//"-"` covers both an absent key and an explicit JSON null — the one
 	# rendering rule this subcommand exists to guarantee: the raw token
 	# "null" must never appear in a printed row, and neither may an empty
-	# field silently stand in for "no value here". `--gate <name>`, when
-	# supplied, overrides column 1 (the orchestrator is authoritative on
+	# field silently stand in for "no value here". `scalar_or` extends the
+	# same guarantee to a non-scalar value (see F6 below). `--gate <name>`,
+	# when supplied, overrides column 1 (the orchestrator is authoritative on
 	# slot identity — same argument as gate_run_bounded's --gate).
 	printf '%s' "$envelope" | jq -r --arg gate_override "$gate" '
-		[
-			(if ($gate_override | length) > 0 then $gate_override else (.gate // "-") end),
-			(.status // "-"),
-			((.duration_s // "-") | tostring),
+		# F6: @tsv ERRORS on a non-scalar column, and under `set -euo
+		# pipefail` that error killed the subcommand -- rc != 0 and NO ROW,
+		# the exact disappearance the F4 fallback above exists to prevent.
+		# An envelope may be an object and still carry a non-scalar field
+		# (SKILL.md has the conductor hand-build the gate-2/gate-3
+		# envelopes), so every column is rendered total: a non-scalar value
+		# degrades to the column default instead of aborting the row.
+		def scalar_or($d):
+			if type == "string" or type == "number" or type == "boolean"
+			then tostring
+			else $d
+			end;
+		((.status // "-") | scalar_or(null)) as $status
+		| [
+			(if ($gate_override | length) > 0 then $gate_override
+			 else ((.gate // "-") | scalar_or("-")) end),
+			($status // "error"),
+			((.duration_s // "-") | scalar_or("-")),
 			(if (.findings | type) == "array" then (.findings | length | tostring) else "-" end),
-			(.degraded_reason // "-")
+			(if $status == null then "malformed envelope: non-scalar status"
+			 else ((.degraded_reason // "-") | scalar_or("-")) end)
 		] | @tsv
 	'
 }

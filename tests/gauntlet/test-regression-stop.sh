@@ -515,6 +515,170 @@ assert_eq "$(fixed_keys_of "$L15")" "H" "cap-priority setup round 2: H promoted 
 tok_h2="$(roundk "$L15" 1 0 1 full 0 --present-keys "$present_H" --claimed-keys "$empty_keys" --cap 3)"
 assert_eq "$tok_h2" "regression" "priority: regression beats cap (loop_counter reaches cap=3 on this round, but H, a fixed key, reappears -> regression wins)"
 
+
+# ---------------------------------------------------------------------------
+# (B9) SKILL.md Step 2a's applier join must be EXACT on (file, line).
+#
+# r2 finding #9: the join used `[{file,line}] | inside($ok)`, and jq's
+# `inside`/`contains` compare STRINGS BY SUBSTRING. A manifest holding only
+# `vendor/src/a.js:10` therefore "matched" a finding at `src/a.js:10`,
+# fabricating a claimed key for a fix that never happened — which the ledger
+# promotes into fixed_keys on the next clean full pass and then reports as a
+# terminal `regression` when the finding legitimately reappears.
+#
+# Invariant: join on (file, line) by EXACT EQUALITY of the pair, never by
+# substring. Asserted against the jq filter as it is actually written in each
+# mirror's SKILL.md, extracted verbatim.
+# ---------------------------------------------------------------------------
+
+# extract_step2a_filter <skill-md> -- print the Step 2a jq program body
+# exactly as the SKILL.md prose spells it (between the `jq -c --slurpfile m`
+# invocation line and the line closing the quoted program).
+extract_step2a_filter() {
+	awk '
+		/jq -c --slurpfile m "\$auto_fix_manifest"/ { inblock = 1; next }
+		inblock && /^[[:space:]]*'"'"'[[:space:]]*annotated-envelope\.json/ { exit }
+		inblock { print }
+	' "$1"
+}
+
+b9_dir="$(mktemp -d)"
+cat >"$b9_dir/manifest.json" <<'B9M'
+[{"kind":"typo","file":"vendor/src/a.js","line":10,"status":"applied"}]
+B9M
+cat >"$b9_dir/annotated-envelope.json" <<'B9E'
+{"findings":[
+  {"file":"src/a.js","line":10,"category":"Logic","summary":"never fixed"},
+  {"file":"other.js","line":10,"category":"Logic","summary":"also never fixed"}
+]}
+B9E
+
+for b9_mirror in skein skein-codex; do
+	b9_skill="$ROOT_DIR/plugins/$b9_mirror/skills/review-gauntlet/SKILL.md"
+	b9_filter="$(extract_step2a_filter "$b9_skill")"
+	if [[ -z "$b9_filter" ]]; then
+		fail "(B9/$b9_mirror) could not extract the Step 2a join filter from $b9_skill"
+		continue
+	fi
+	b9_out="$(jq -c --slurpfile m "$b9_dir/manifest.json" "$b9_filter" \
+		"$b9_dir/annotated-envelope.json" 2>"$b9_dir/err" || true)"
+	if [[ -n "$b9_out" ]]; then
+		fail "(B9/$b9_mirror) Step 2a join claimed an unfixed finding via substring match: $b9_out"
+	else
+		pass "(B9/$b9_mirror) Step 2a join is exact on (file, line): vendor/src/a.js:10 does not claim src/a.js:10"
+	fi
+done
+
+# Positive control: an exact (file, line) hit must still be claimed, so the
+# fix cannot pass by matching nothing at all.
+cat >"$b9_dir/manifest-exact.json" <<'B9MX'
+[{"kind":"typo","file":"src/a.js","line":10,"status":"applied"}]
+B9MX
+for b9_mirror in skein skein-codex; do
+	b9_skill="$ROOT_DIR/plugins/$b9_mirror/skills/review-gauntlet/SKILL.md"
+	b9_filter="$(extract_step2a_filter "$b9_skill")"
+	b9_hit="$(jq -c --slurpfile m "$b9_dir/manifest-exact.json" "$b9_filter" \
+		"$b9_dir/annotated-envelope.json" 2>/dev/null | jq -r -s 'map(.file) | join(",")')"
+	if [[ "$b9_hit" == "src/a.js" ]]; then
+		pass "(B9/$b9_mirror) positive control: an exact (file, line) match is still claimed"
+	else
+		fail "(B9/$b9_mirror) positive control failed -- claimed files were '$b9_hit' (expected src/a.js)"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# (A6) Step 2a may only claim a finding that is UNIQUE at its (file, line).
+#
+# Codex addendum A6. The manifest records (kind, file, line, status, ...) and
+# `kind` is the auto-fix KIND, not a review category, so the join key cannot
+# be tightened with a category -- there is nothing on the manifest side to
+# match one against. The consequence must be fixed instead: two envelope
+# findings sharing one (file, line) in different categories were BOTH claimed
+# by a single applied fix, and a false claim is promoted into `fixed_keys` and
+# fires the TERMINAL `regression` stop when the unfixed finding reappears.
+# Asymmetry: under-claiming loses one key; over-claiming is a false stop.
+# ---------------------------------------------------------------------------
+
+a6_dir="$(mktemp -d)"
+cat >"$a6_dir/manifest.json" <<'A6M'
+[{"kind":"typo","file":"src/a.js","line":10,"status":"applied"},
+ {"kind":"typo","file":"src/b.js","line":4,"status":"applied"}]
+A6M
+cat >"$a6_dir/annotated-envelope.json" <<'A6E'
+{"findings":[
+  {"file":"src/a.js","line":10,"category":"logic","summary":"ambiguous one"},
+  {"file":"src/a.js","line":10,"category":"security","summary":"ambiguous two"},
+  {"file":"src/b.js","line":4,"category":"logic","summary":"unambiguous"}
+]}
+A6E
+
+for a6_mirror in skein skein-codex; do
+	a6_skill="$ROOT_DIR/plugins/$a6_mirror/skills/review-gauntlet/SKILL.md"
+	a6_filter="$(extract_step2a_filter "$a6_skill")"
+	if [[ -z "$a6_filter" ]]; then
+		fail "(A6/$a6_mirror) could not extract the Step 2a join filter from $a6_skill"
+		continue
+	fi
+	a6_hit="$(jq -c --slurpfile m "$a6_dir/manifest.json" "$a6_filter" \
+		"$a6_dir/annotated-envelope.json" 2>/dev/null | jq -r -s 'map(.file + ":" + (.line|tostring)) | sort | join(",")')"
+	if [[ "$a6_hit" == "src/b.js:4" ]]; then
+		pass "(A6/$a6_mirror) only the UNIQUE (file, line) finding is claimed; the ambiguous pair is not"
+	else
+		fail "(A6/$a6_mirror) Step 2a over-claimed at an ambiguous (file, line) -- claimed '$a6_hit' (expected src/b.js:4)"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# (A7) A CLEAN round has neither claim artifact, and must not abort.
+#
+# Codex addendum A7. `jq -c '.claimed[]' fixer-report.json` was
+# unconditional, and no fixer runs on a clean round -- jq exits 2 and aborts
+# convergence exactly when it would have succeeded. Step 2a has the SAME hole:
+# `--slurpfile m "$auto_fix_manifest"` also fails when no applier ran. Rule:
+# each source contributes an EMPTY list when its artifact is absent, and an
+# empty $claimed_findings_file is legitimate.
+# ---------------------------------------------------------------------------
+
+a7_dir="$(mktemp -d)"
+: >"$a7_dir/empty-manifest.json"
+cp "$a6_dir/annotated-envelope.json" "$a7_dir/annotated-envelope.json"
+
+for a7_mirror in skein skein-codex; do
+	a7_skill="$ROOT_DIR/plugins/$a7_mirror/skills/review-gauntlet/SKILL.md"
+
+	# 2a totality: an EMPTY manifest slurps to [null]; `$m[0] // []` must
+	# absorb it rather than erroring on `null | map(...)`.
+	a7_filter="$(extract_step2a_filter "$a7_skill")"
+	a7_rc=0
+	a7_out="$(jq -c --slurpfile m "$a7_dir/empty-manifest.json" "$a7_filter" \
+		"$a7_dir/annotated-envelope.json" 2>/dev/null)" || a7_rc=$?
+	if [[ "$a7_rc" -eq 0 && -z "$a7_out" ]]; then
+		pass "(A7/$a7_mirror) Step 2a with an empty manifest exits 0 and claims nothing"
+	else
+		fail "(A7/$a7_mirror) Step 2a aborted on an empty manifest (rc=$a7_rc, out='$a7_out')"
+	fi
+
+	# Both extractions must be guarded on the artifact existing at all, and
+	# both must be total: `.claimed[]?` and `($m[0] // [])`.
+	if grep -q 'if \[\[ -s "\$auto_fix_manifest" \]\]' "$a7_skill"; then
+		pass "(A7/$a7_mirror) Step 2a is guarded on the manifest existing"
+	else
+		fail "(A7/$a7_mirror) Step 2a runs unconditionally -- a clean round with no applier aborts convergence"
+	fi
+	if grep -q 'jq -c .\.claimed\[\]?.' "$a7_skill"; then
+		pass "(A7/$a7_mirror) Step 2b uses the total \`.claimed[]?\` extraction"
+	else
+		fail "(A7/$a7_mirror) Step 2b still uses the non-total \`.claimed[]\` extraction"
+	fi
+	if grep -q -- '-s fixer-report.json' "$a7_skill"; then
+		pass "(A7/$a7_mirror) Step 2b is guarded on the fixer report existing"
+	else
+		fail "(A7/$a7_mirror) Step 2b runs unconditionally -- a clean round runs no fixer and jq exits 2"
+	fi
+done
+rm -rf "$a6_dir" "$a7_dir"
+rm -rf "$b9_dir"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

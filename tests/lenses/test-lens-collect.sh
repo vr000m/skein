@@ -936,4 +936,263 @@ else
 	fail "(x6b) G12c: explicit --root outside a worktree failed (status='$x6_root_status')"
 fi
 
+
+# ---------------------------------------------------------------------------
+# (C5) attempt-merge dedup must not fold path case.
+#
+# r2 finding #5: the dedup key was
+# `($file|ascii_downcase) + "|" + $line + "|" + $cat`. Lowercasing the FILE
+# is exactly the decision `finding-key.sh` rejects in writing (paths are
+# case-sensitive on the filesystems this runs on; the reconciler folds no
+# case at all), so the collector carried a THIRD, contradictory
+# finding-identity policy. Consequence inside its own scope: one lens
+# reporting `Foo.md:10` and `foo.md:10` in one category silently lost a
+# finding before reconciliation ever saw it.
+#
+# Invariant: dedup identity matches finding-key.sh verbatim -- `file` is
+# compared case-SENSITIVELY, `category` case-INSENSITIVELY.
+# ---------------------------------------------------------------------------
+
+c5_root="$TMPDIR_ROOT/case-c5"
+c5_dir="$c5_root/.deep-review/lenses/c5-run"
+mkdir -p "$c5_dir"
+{
+	printf '%s\n' '{"type":"start","run_id":"c5-run","lens":"logic","attempt":1,"ts":1,"units":["u1"]}'
+	printf '%s\n' '{"type":"progress","run_id":"c5-run","lens":"logic","attempt":1,"ts":2,"unit":"u1"}'
+	printf '%s\n' '{"type":"finding","run_id":"c5-run","lens":"logic","attempt":1,"ts":3,"severity":"Minor","category":"Logic","location":"Foo.md:10","summary":"upper","evidence":"","suggestion":""}'
+	printf '%s\n' '{"type":"finding","run_id":"c5-run","lens":"logic","attempt":1,"ts":4,"severity":"Minor","category":"Logic","location":"foo.md:10","summary":"lower","evidence":"","suggestion":""}'
+	printf '%s\n' '{"type":"done","run_id":"c5-run","lens":"logic","attempt":1,"ts":5,"status":"completed"}'
+} >"$c5_dir/logic.1.jsonl"
+
+c5_out="$(bash "$SCRIPT" --root "$c5_root" --skill deep-review --run-id c5-run \
+	--expected "logic:u1" 2>"$TMPDIR_ROOT/c5.err")"
+c5_count="$(printf '%s' "$c5_out" | jq -r '.logic.findings | length')"
+if [[ "$c5_count" == "2" ]]; then
+	pass "(C5) Foo.md:10 and foo.md:10 are two findings -- dedup does not fold path case"
+else
+	fail "(C5) case-only path difference was deduped away (findings=$c5_count, expected 2)"
+	sed 's/^/    /' "$TMPDIR_ROOT/c5.err"
+fi
+
+# Control: category case IS folded (finding-key.sh's documented split), so a
+# same-path/same-line pair differing only in category case stays ONE finding.
+c5b_root="$TMPDIR_ROOT/case-c5b"
+c5b_dir="$c5b_root/.deep-review/lenses/c5-run"
+mkdir -p "$c5b_dir"
+{
+	printf '%s\n' '{"type":"start","run_id":"c5-run","lens":"logic","attempt":1,"ts":1,"units":["u1"]}'
+	printf '%s\n' '{"type":"finding","run_id":"c5-run","lens":"logic","attempt":1,"ts":3,"severity":"Minor","category":"Logic","location":"foo.md:10","summary":"a","evidence":"","suggestion":""}'
+	printf '%s\n' '{"type":"finding","run_id":"c5-run","lens":"logic","attempt":1,"ts":4,"severity":"Minor","category":"logic","location":"foo.md:10","summary":"b","evidence":"","suggestion":""}'
+	printf '%s\n' '{"type":"done","run_id":"c5-run","lens":"logic","attempt":1,"ts":5,"status":"completed"}'
+} >"$c5b_dir/logic.1.jsonl"
+c5b_count="$(bash "$SCRIPT" --root "$c5b_root" --skill deep-review --run-id c5-run \
+	--expected "logic:u1" 2>/dev/null | jq -r '.logic.findings | length')"
+if [[ "$c5b_count" == "1" ]]; then
+	pass "(C5b) control: category case IS folded, matching finding-key.sh"
+else
+	fail "(C5b) category case is no longer folded (findings=$c5b_count, expected 1)"
+fi
+
+# ---------------------------------------------------------------------------
+# (C19) --running is a FLOOR, not an override: a recorded terminal `done`
+# status wins over it.
+#
+# r2 finding #19: the header claimed "a lens named by --running is never
+# reported terminal: its status floor is `partial`" -- absolute, and false.
+# The derivation checks `done_status` FIRST and only then reaches the
+# `elif $running > 0` leg, so a --running lens whose attempt file already
+# carries a `done` line reports that terminal status. The BEHAVIOUR is
+# right (the record on disk is evidence the attempt finished); the stated
+# invariant was wrong. This case locks the real contract.
+# ---------------------------------------------------------------------------
+
+c19_root="$TMPDIR_ROOT/case-c19"
+c19_dir="$c19_root/.deep-review/lenses/c19-run"
+mkdir -p "$c19_dir"
+{
+	printf '%s\n' '{"type":"start","run_id":"c19-run","lens":"logic","attempt":2,"ts":1,"units":["u1"]}'
+	printf '%s\n' '{"type":"progress","run_id":"c19-run","lens":"logic","attempt":2,"ts":2,"unit":"u1"}'
+	printf '%s\n' '{"type":"done","run_id":"c19-run","lens":"logic","attempt":2,"ts":3,"status":"completed"}'
+} >"$c19_dir/logic.2.jsonl"
+
+c19_status="$(bash "$SCRIPT" --root "$c19_root" --skill deep-review --run-id c19-run \
+	--expected "logic:u1" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$c19_status" == "completed" ]]; then
+	pass "(C19) --running logic:2 with a recorded done/completed reports completed, not partial"
+else
+	fail "(C19) --running did not defer to the recorded terminal status (status='$c19_status')"
+fi
+
+# Control: the same --running declaration with NO done line still floors at
+# partial (the reason --running exists).
+c19b_root="$TMPDIR_ROOT/case-c19b"
+c19b_dir="$c19b_root/.deep-review/lenses/c19-run"
+mkdir -p "$c19b_dir"
+{
+	printf '%s\n' '{"type":"start","run_id":"c19-run","lens":"logic","attempt":2,"ts":1,"units":["u1"]}'
+} >"$c19b_dir/logic.2.jsonl"
+c19b_status="$(bash "$SCRIPT" --root "$c19b_root" --skill deep-review --run-id c19-run \
+	--expected "logic:u1" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$c19b_status" == "partial" ]]; then
+	pass "(C19b) control: --running with no done line still floors at partial"
+else
+	fail "(C19b) --running floor broke (status='$c19b_status', expected partial)"
+fi
+
+# ---------------------------------------------------------------------------
+# (C19c) The header prose must state the RECONCILED rule (A8), not an
+# absolute floor and not an unqualified "a done line always wins".
+# ---------------------------------------------------------------------------
+if grep -q 'is never reported terminal' "$SCRIPT"; then
+	fail "(C19c) collect-lens-results.sh still claims a --running lens 'is never reported terminal'"
+elif grep -q 'only when its attempt is >= the running attempt' "$SCRIPT"; then
+	pass "(C19c) the --running header states the attempt-ordered exception to the partial floor"
+else
+	fail "(C19c) the --running header does not state the attempt-ordered exception"
+fi
+
+# ---------------------------------------------------------------------------
+# (A8) A STALE terminal status must not beat a LIVE retry.
+#
+# Codex addendum A8: the merge takes done_status from the latest attempt
+# FILE PRESENT, not the latest attempt SPAWNED, and the status ladder tests
+# it before the `elif $running > 0` leg. So attempt 1 finishing `completed`
+# and attempt 2 being spawned-but-silent reported `completed`, retiring a
+# lens whose retry had not returned. This does NOT contradict (C19): there,
+# the done line belongs to the RUNNING attempt itself. Reconciled rule: a
+# terminal status wins over --running only when its attempt >= the running
+# attempt number; otherwise the `partial` floor applies.
+# ---------------------------------------------------------------------------
+
+a8_root="$TMPDIR_ROOT/case-a8"
+a8_dir="$a8_root/.deep-review/lenses/a8-run"
+mkdir -p "$a8_dir"
+{
+	printf '%s\n' '{"type":"start","run_id":"a8-run","lens":"logic","attempt":1,"ts":1,"units":["u1"]}'
+	printf '%s\n' '{"type":"progress","run_id":"a8-run","lens":"logic","attempt":1,"ts":2,"unit":"u1"}'
+	printf '%s\n' '{"type":"done","run_id":"a8-run","lens":"logic","attempt":1,"ts":3,"status":"completed"}'
+} >"$a8_dir/logic.1.jsonl"
+
+a8_status="$(bash "$SCRIPT" --root "$a8_root" --skill deep-review --run-id a8-run \
+	--expected "logic:u1" --attempts "logic:2" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a8_status" == "partial" ]]; then
+	pass "(A8) attempt 1 completed + attempt 2 spawned-and-silent reports partial, not completed"
+else
+	fail "(A8) a stale attempt-1 terminal status beat the live attempt-2 retry (status='$a8_status')"
+fi
+
+# (A8b) The same stale done line with NO --running still reports the
+# terminal status -- the guard keys on the running attempt, not on the mere
+# existence of a later attempt index.
+a8b_status="$(bash "$SCRIPT" --root "$a8_root" --skill deep-review --run-id a8-run \
+	--expected "logic:u1" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a8b_status" == "completed" ]]; then
+	pass "(A8b) control: with no --running, the recorded terminal status still wins"
+else
+	fail "(A8b) the A8 guard fired without --running (status='$a8b_status', expected completed)"
+fi
+
+# ---------------------------------------------------------------------------
+# (A4) `effective` is an attempt INDEX, not a file COUNT.
+#
+# Codex addendum A4, step 3: `effective="$files"` used the NUMBER of attempt
+# files, so `logic.1` + `logic.3` (attempt 2 crashed before writing a byte)
+# gave effective 2 and the ladder read it as "one respawn happened". With
+# three attempts on the clock and no done line, the honest status is
+# `timed_out`; the count only reaches 3 if every attempt file exists.
+# ---------------------------------------------------------------------------
+
+# A LONE `logic.2.jsonl` (attempt 1 crashed before writing a byte) is the
+# discriminating shape: the file COUNT is 1 -> `partial`, while the max
+# attempt INDEX is 2 -> `timed_out`, which is the honest answer since a
+# respawn demonstrably happened.
+a4_root="$TMPDIR_ROOT/case-a4"
+a4_dir="$a4_root/.deep-review/lenses/a4-run"
+mkdir -p "$a4_dir"
+printf '%s\n' '{"type":"start","run_id":"a4-run","lens":"logic","attempt":2,"ts":2,"units":["u1"]}' >"$a4_dir/logic.2.jsonl"
+
+a4_status="$(bash "$SCRIPT" --root "$a4_root" --skill deep-review --run-id a4-run \
+	--expected "logic:u1" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a4_status" == "timed_out" ]]; then
+	pass "(A4) a lone attempt-2 file derives effective 2 from the max INDEX -> timed_out"
+else
+	fail "(A4) effective was derived from the file COUNT, not the max index (status='$a4_status', expected timed_out)"
+fi
+
+# Control: a single attempt-1 file with no done line is still `partial` --
+# the max index is 1, so nothing was ever respawned.
+a4b_root="$TMPDIR_ROOT/case-a4b"
+a4b_dir="$a4b_root/.deep-review/lenses/a4-run"
+mkdir -p "$a4b_dir"
+printf '%s\n' '{"type":"start","run_id":"a4-run","lens":"logic","attempt":1,"ts":1,"units":["u1"]}' >"$a4b_dir/logic.1.jsonl"
+a4b_status="$(bash "$SCRIPT" --root "$a4b_root" --skill deep-review --run-id a4-run \
+	--expected "logic:u1" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a4b_status" == "partial" ]]; then
+	pass "(A4b) control: a lone attempt-1 file is still partial (max index 1)"
+else
+	fail "(A4b) the A4 change altered the single-attempt baseline (status='$a4b_status', expected partial)"
+fi
+
+# ---------------------------------------------------------------------------
+# (A3) Salvage semantics: a salvaged `done` is only believed when it is
+# written to the attempt whose reply is being salvaged.
+#
+# Codex addendum A3. The SKILL.md mirrors used to hardwire salvage to
+# `--attempt 1`. Applied to attempt 2's return that is either a no-op or --
+# when attempt 2 is fileless -- reports `completed` while the retry is still
+# unresolved. These two cases lock the collector semantics the corrected
+# prose depends on.
+# ---------------------------------------------------------------------------
+
+a3_mk() {
+	local root="$1"
+	mkdir -p "$root/.deep-review/lenses/a3-run"
+	printf '%s\n' '{"type":"start","run_id":"a3-run","lens":"logic","attempt":1,"ts":1,"units":["u1"]}' \
+		'{"type":"progress","run_id":"a3-run","lens":"logic","attempt":1,"ts":2,"unit":"u1"}' \
+		>"$root/.deep-review/lenses/a3-run/logic.1.jsonl"
+}
+
+# Salvaged into attempt 1 while attempt 2 is the declared in-flight retry.
+a3a_root="$TMPDIR_ROOT/case-a3a"
+a3_mk "$a3a_root"
+printf '%s\n' '{"type":"done","run_id":"a3-run","lens":"logic","attempt":1,"ts":3,"status":"completed"}' \
+	>>"$a3a_root/.deep-review/lenses/a3-run/logic.1.jsonl"
+a3a_status="$(bash "$SCRIPT" --root "$a3a_root" --skill deep-review --run-id a3-run \
+	--expected "logic:u1" --attempts "logic:2" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a3a_status" == "partial" ]]; then
+	pass "(A3) a done salvaged into attempt 1 does not retire an in-flight attempt 2 (partial)"
+else
+	fail "(A3) salvaging into the wrong attempt retired the lens (status='$a3a_status', expected partial)"
+fi
+
+# Salvaged into attempt 2 -- the attempt whose reply is actually being salvaged.
+a3b_root="$TMPDIR_ROOT/case-a3b"
+a3_mk "$a3b_root"
+printf '%s\n' '{"type":"done","run_id":"a3-run","lens":"logic","attempt":2,"ts":3,"status":"completed"}' \
+	>"$a3b_root/.deep-review/lenses/a3-run/logic.2.jsonl"
+a3b_status="$(bash "$SCRIPT" --root "$a3b_root" --skill deep-review --run-id a3-run \
+	--expected "logic:u1" --attempts "logic:2" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a3b_status" == "completed" ]]; then
+	pass "(A3b) a done salvaged into attempt 2 is believed and reports completed"
+else
+	fail "(A3b) salvaging into the correct attempt was not believed (status='$a3b_status', expected completed)"
+fi
+
+# ---------------------------------------------------------------------------
+# (A2) A respawned attempt must be declared BOTH spawned and running.
+# --attempts alone declares the retry exhausted while it is still in flight.
+# ---------------------------------------------------------------------------
+a2_root="$TMPDIR_ROOT/case-a2"
+a3_mk "$a2_root"
+mv "$a2_root/.deep-review/lenses/a3-run" "$a2_root/.deep-review/lenses/a2-run"
+a2_attempts_only="$(bash "$SCRIPT" --root "$a2_root" --skill deep-review --run-id a2-run \
+	--expected "logic:u1" --attempts "logic:2" 2>/dev/null | jq -r '.logic.status')"
+a2_both="$(bash "$SCRIPT" --root "$a2_root" --skill deep-review --run-id a2-run \
+	--expected "logic:u1" --attempts "logic:2" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$a2_attempts_only" == "timed_out" && "$a2_both" == "partial" ]]; then
+	pass "(A2) --attempts alone reports timed_out; adding --running reports partial"
+else
+	fail "(A2) attempts-only='$a2_attempts_only' (expected timed_out), both='$a2_both' (expected partial)"
+fi
+
 finish

@@ -39,9 +39,17 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 		cp "$SRC/$f" "$stage/$f"
 	done
 	cp "$SRC/$applier" "$stage/$applier"
-	# Per-skill extras (e.g. review-plan's marker.py + write-review-marker.py).
-	# Staged here so they fan out byte-identically into both mirrors alongside
-	# the shared pipeline; deep-review has none (bundle_extra_for prints nothing).
+	# Per-skill extras: everything `bundle_extra_for <skill>` prints, staged
+	# here so it fans out byte-identically into both mirrors alongside the
+	# shared pipeline. EVERY bundled skill has extras today -- review-plan
+	# (marker.py, write-review-marker.py, persist-review-state.sh,
+	# lib/persist-common.sh, persist-lens-result.sh, collect-lens-results.sh),
+	# deep-review (persist-deep-review-state.sh plus the same three lens/lib
+	# files), and review-gauntlet (finding-key.sh). Do not re-enumerate that
+	# list here: `scripts/lib/bundle-map.sh` is the single source of truth,
+	# and a canonical script absent from BUNDLE_SHARED or from its skill's
+	# `bundle_extra_for` arm never reaches any mirror no matter how often
+	# this script runs.
 	while IFS= read -r extra; do
 		[[ -n "$extra" ]] || continue
 		cp "$SRC/$extra" "$stage/$extra"

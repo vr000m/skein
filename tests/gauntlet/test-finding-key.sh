@@ -182,6 +182,42 @@ assert_eq "$no_nl_count" "2" "G6: two JSON objects with NO trailing newline yiel
 with_nl_keys="$(printf '%s\n' "$no_nl_stream" | bash "$FINDING_KEY_SCRIPT" -)"
 assert_eq "$no_nl_keys" "$with_nl_keys" "G6: newline-terminated and unterminated input produce identical keys"
 
+# --- 13. A15: two JSON documents on ONE physical line yield NO key --------
+# `jq -e 'type == "object"'` without --slurp reports only the LAST document's
+# exit status, so a two-object line passed the shape gate and the three field
+# reads each emitted TWO lines, which `$( )` joined with a newline into a
+# single fabricated key matching neither finding. These keys feed
+# convergence-ledger.sh --present-keys/--claimed-keys, so a fabricated key
+# corrupts regression identity. Skipping loses a key (a missed regression);
+# combining fabricates one (a false terminal stop) -- skip, and warn.
+
+a15_two_on_one_line='{"file":"a.md","line":1,"category":"Logic","summary":"first"} {"file":"b.md","line":2,"category":"Logic","summary":"second"}'
+a15_err="$(mktemp)"
+set +e
+a15_out="$(printf '%s\n' "$a15_two_on_one_line" | bash "$FINDING_KEY_SCRIPT" - 2>"$a15_err")"
+a15_rc=$?
+set -e
+a15_count="$(printf '%s' "$a15_out" | grep -c . || true)"
+assert_eq "$a15_count" "0" "A15: a two-document physical line yields no key (no fabricated key)"
+assert_eq "$a15_rc" "0" "A15: a two-document physical line is skipped, not fatal (exit 0)"
+if grep -q . "$a15_err"; then
+	pass "A15: the skipped line is reported on stderr"
+else
+	fail "A15: the skipped line must be reported on stderr (stderr was empty)"
+fi
+rm -f "$a15_err"
+
+# Control: the SAME two objects on two physical lines still yield two keys.
+a15_split_keys="$(printf '%s\n%s\n' \
+	'{"file":"a.md","line":1,"category":"Logic","summary":"first"}' \
+	'{"file":"b.md","line":2,"category":"Logic","summary":"second"}' |
+	bash "$FINDING_KEY_SCRIPT" -)"
+a15_split_count="$(printf '%s\n' "$a15_split_keys" | grep -c .)"
+assert_eq "$a15_split_count" "2" "A15(b): the same two objects on two lines still yield 2 keys"
+a15_k1="$(printf '%s\n' "$a15_split_keys" | sed -n 1p)"
+a15_k2="$(printf '%s\n' "$a15_split_keys" | sed -n 2p)"
+assert_ne "$a15_k1" "$a15_k2" "A15(b): the two per-line keys are distinct"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

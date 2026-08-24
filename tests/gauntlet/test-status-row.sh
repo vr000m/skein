@@ -287,6 +287,89 @@ gate_col="$(awk -F'\t' '{print $1}' "$gate_flag_row")"
 assert_eq "$gate_col" "codex-adversarial" "F5: --gate codex-adversarial populates column 1 (gate) on the fallback row"
 assert_contains "$gate_flag_row_text" "error" "F5: --gate on a fallback row still reports status=error"
 
+
+# --- 5. Non-scalar field values still yield exactly one row, rc=0 --------
+#
+# r2 finding #8: the F4 fallback guards only `type == "object"`, so an
+# OBJECT envelope carrying a non-scalar `.status` / `.degraded_reason` /
+# `.gate` fell through to `@tsv`, which errors on a non-scalar column. Under
+# `set -euo pipefail` that killed the subcommand: rc != 0 and NO ROW — the
+# gate silently vanished from the operator's table, which is exactly what the
+# F4 fallback exists to prevent.
+#
+# Invariant, old -> new: "exactly one row, exit 0" held only for
+# scalar-valued envelopes; it must hold for ANY JSON object.
+
+# run_status_row <label> <envelope> -- run the subcommand, assert rc=0 and
+# exactly one row, and leave that row in the global NONSCALAR_ROW. Output is
+# NOT captured by the caller (pass/fail must run in this shell so the
+# counters survive).
+NONSCALAR_ROW=""
+run_status_row() {
+	local label="$1" envelope_path="$2"
+	local out_file="$WORKDIR/nonscalar-$label.out"
+	local err_file="$WORKDIR/nonscalar-$label.err"
+	local rc=0
+	"$RUN_GATE" status-row "$envelope_path" >"$out_file" 2>"$err_file" || rc=$?
+	local row_count
+	row_count="$(wc -l <"$out_file" | tr -d ' ')"
+	NONSCALAR_ROW="$(head -1 "$out_file")"
+	if [[ $rc -ne 0 ]]; then
+		fail "F6: non-scalar $label must not exit non-zero (got rc=$rc; stderr: $(tr '\n' ' ' <"$err_file"))"
+	elif [[ "$row_count" != "1" ]]; then
+		fail "F6: non-scalar $label must emit exactly one row (got $row_count)"
+	else
+		pass "F6: non-scalar $label emits exactly one row and exits 0"
+	fi
+}
+
+# col <n> -- print field <n> of NONSCALAR_ROW
+col() { printf '%s' "$NONSCALAR_ROW" | awk -F'\t' -v n="$1" '{print $n}'; }
+
+nonscalar_status="$WORKDIR/nonscalar-status.json"
+cat >"$nonscalar_status" <<'EOF'
+{"gate":"deep-review","status":{"a":1},"findings":[],"notes":null,
+ "duration_s":7,"degraded_reason":null}
+EOF
+run_status_row status "$nonscalar_status"
+assert_eq "$(col 2)" "error" "F6: a non-scalar status renders column 2 as 'error'"
+assert_contains "$(col 5)" "malformed envelope" \
+	"F6: a non-scalar status names itself in the degraded_reason column"
+
+nonscalar_reason="$WORKDIR/nonscalar-reason.json"
+cat >"$nonscalar_reason" <<'EOF'
+{"gate":"security-review","status":"degraded","findings":[],"notes":null,
+ "duration_s":3,"degraded_reason":["timeout","killed"]}
+EOF
+run_status_row degraded_reason "$nonscalar_reason"
+assert_eq "$(col 2)" "degraded" \
+	"F6: a scalar status survives even when degraded_reason is non-scalar"
+assert_eq "$(col 5)" "-" \
+	"F6: a non-scalar degraded_reason renders column 5 as '-', never a raw token"
+
+nonscalar_gate="$WORKDIR/nonscalar-gate.json"
+cat >"$nonscalar_gate" <<'EOF'
+{"gate":{"name":"x"},"status":"approve","findings":[],"notes":null,
+ "duration_s":1,"degraded_reason":null}
+EOF
+run_status_row gate "$nonscalar_gate"
+assert_eq "$(col 1)" "-" "F6: a non-scalar gate renders column 1 as '-'"
+
+nonscalar_duration="$WORKDIR/nonscalar-duration.json"
+cat >"$nonscalar_duration" <<'EOF'
+{"gate":"deep-review","status":"approve","findings":[],"notes":null,
+ "duration_s":{"s":9},"degraded_reason":null}
+EOF
+run_status_row duration_s "$nonscalar_duration"
+assert_eq "$(col 3)" "-" "F6: a non-scalar duration_s renders column 3 as '-'"
+# A13 (Codex addendum): scalar_or($d) is applied PER COLUMN, so a non-scalar
+# duration_s must degrade only its own column -- the surrounding scalar
+# columns still render their real values and the row is still a status row.
+assert_eq "$(col 1)" "deep-review" \
+	"A13: a non-scalar duration_s leaves the gate column intact (per-column degradation)"
+assert_eq "$(col 2)" "approve" \
+	"A13: a non-scalar duration_s leaves the status column intact (per-column degradation)"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

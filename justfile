@@ -83,9 +83,16 @@ reconciliation-tests:
     ./scripts/check-report-templates.sh
     bash tests/reconciliation/test-check-report-templates.sh
 
+# shellcheck + shfmt over the canonical scripts/ tree AND review-gauntlet's
+# hand-authored lib/. The lib/ files have no canonical counterpart under
+# scripts/ (they are not bundled by bundle-appliers.sh), so without this line
+# ~1400 lines of signal handling, pgid kills and `# shellcheck disable`
+# directives would be linted by nothing. Only the Claude copy is listed: the
+# Codex copy is held byte-identical to it by
+# tests/parity/test-applier-bundle-parity.sh.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
 
 # Plugin-level guards: CLAUDE.md hygiene rules, the `# noqa` stripping probe,
 # and the manifest checks. (tests/plugin/test_history_and_assets.sh is

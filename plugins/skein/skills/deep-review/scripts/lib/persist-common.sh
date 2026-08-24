@@ -208,9 +208,32 @@ persist_atomic_write() {
 
 # Phase 2 (disk-first streamed lens results): shared path/append helpers for
 # scripts/persist-lens-result.sh (writer) and scripts/collect-lens-results.sh
-# (reader). Neither script derives a root from cwd — both take an explicit
-# --root — so this helper never falls back to `pwd` the way persist_root_dir
-# does for the two harness-invoked persist-*-state.sh scripts above.
+# (reader). The two consumers are ASYMMETRIC about --root, on purpose:
+#   * the WRITER hard-errors without --root (`persist-lens-result: --root is
+#     required`). A lens subagent's cwd at spawn time is not guaranteed to be
+#     the repo root, so the orchestrator must resolve the root once and bake
+#     it into the command it hands the lens -- a cwd fallback there would
+#     scatter attempt files under whatever directory the lens happened to
+#     start in.
+#   * the READER makes --root OPTIONAL and falls back to persist_root_dir
+#     when cwd is inside a git worktree, because the collector is invoked by
+#     the orchestrator itself, from the repo. Outside a worktree it refuses
+#     rather than falling back to `pwd`, since reading a different
+#     `.deep-review/lenses` than the one written to would report every lens
+#     `missing` (see collect-lens-results.sh's G12c note).
+# This helper itself never consults cwd: it takes <root> as an argument, so
+# the fallback policy stays with each consumer.
+#
+# SKILL->STATE-DIR MAPPING (4 sites). The same skill -> state-directory mapping
+# (.deep-review for deep-review, .review-plan for review-plan) is spelled out in
+# FOUR places, deliberately NOT consolidated: they differ in root source
+# ($AF_COMMON_ROOT vs an explicit argument) and in failure exit code (2 vs
+# 1), so merging them would be a behaviour change at four call sites for no
+# functional gain. A NEW SKILL must therefore be registered in all four:
+#   scripts/lib/persist-common.sh      persist_lens_state_dir  (per-run lens attempt dirs)
+#   scripts/lib/auto-fix-common.sh     af_manifest_dir         (auto-fix manifests)
+#   scripts/persist-deep-review-state.sh  OUT_DIR
+#   scripts/persist-review-state.sh       OUT_DIR
 persist_lens_state_dir() {
 	local root="$1" skill="$2"
 	case "$skill" in

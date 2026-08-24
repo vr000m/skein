@@ -95,28 +95,38 @@ wake, run the collector over **all** expected lenses:
 "$SKILL_DIR"/scripts/collect-lens-results.sh --root "<repo-root>" --skill review-plan --run-id "<run_id>" --expected "<lens>:<sections>,..." [--expected "..."] --attempts "<lens>:<n>" ... [--running "<lens>:<n>" ...]
 ```
 Pass the highest attempt number you spawned for each lens (`<lens>:2` after a respawn) so a
-spawned-but-silent attempt is reported `timed_out` rather than `partial`. Also pass `--running "<lens>:<n>"` for every lens whose attempt `<n>` is still in flight (each lens you have just respawned on a `--continue`) — a lens declared in-flight is never reported terminal; its status floor is `partial`. Collecting all expected
+spawned-but-silent attempt is reported `timed_out` rather than `partial`. **While a respawned attempt 2 is in flight, every collect must carry BOTH `--attempts <lens>:2 --running <lens>:2`** — not `--attempts` alone. `--attempts` on its own declares the retry *exhausted*: with attempt 1 holding a `start` and `progress` but no `done`, `--attempts <lens>:2` alone collects as `timed_out`, and adding `--running <lens>:2` collects as `partial`. Drop `--running` only once that attempt returns or its own deadline passes. Also pass `--running "<lens>:<n>"` for every lens whose attempt `<n>` is still in flight (each lens you have just respawned on a `--continue`) — `--running` is a status floor, not an override: the collector reports `partial` instead of the terminal `timed_out`, **unless a `done` line has been recorded by attempt `<n>` itself (or by a later attempt)**, in which case that terminal status (`completed`/`errored`/`skipped`) wins; a `done` line from an *earlier* attempt is stale and the `partial` floor still applies. Collecting all expected
 lenses is always safe, but respawn **only** a lens whose *own* deadline has passed and whose
 collected status is non-terminal (`partial`/`missing`; `completed`/`skipped`/`errored`/`timed_out`
 are terminal). Never respawn a lens before its own deadline, however long another lens has overrun.
 The respawn-exactly-once-per-invocation cap is unchanged.
 
 For each lens, branch on the collector's reported status:
-- **Parseable return, but no `done` line on disk** — write the `done` line (and any `finding` lines that never made it to disk) yourself, via `persist-lens-result.sh --attempt 1` on the lens's behalf. This salvages returned work without a respawn — attempt stays 1.
+- **Parseable return, but no `done` line on disk** — write the `done` line (and any `finding` lines that never made it to disk) yourself, via `persist-lens-result.sh --attempt <n>` on the lens's behalf, where `<n>` is **the attempt whose reply is being salvaged** — never a hardwired `1`. `done_status` is latest-attempt-scoped, so salvaging a reply from attempt 2 into attempt 1 is either a no-op (attempt 2 has its own file, whose null status wins) or, when attempt 2 is fileless, reports `completed` while the retry is still unresolved. This salvages returned work without a respawn.
 - **`partial` or `missing`** — respawn that lens **once**: same prompt template, `{{UNITS}}` narrowed to the collector's `unreviewed` list, `--attempt 2`. Re-run `collect-lens-results.sh` after the respawn to fold in the attempt-2 results.
 - **A second failure** (still no `done` after the respawn) — persists as `timed_out` with whatever coverage the collector reports; do not respawn a third time in this invocation.
 - **`completed` / `skipped` / `errored`** — terminal for this run; no respawn.
 
-**`--continue` re-run clause.** If a later invocation asks to continue a prior run, re-run only the
-lenses whose last collector-derived status was `timed_out`, `errored`, `partial`, or absent from the
-prior run's record; reuse the completed/skipped lenses' findings as-is, sourced from their disk
-attempt files.
+**`--continue` re-run clause.** If a later invocation asks to continue a prior run, re-run **every
+lens whose last collector-derived status is not `completed` and not `skipped`, plus every lens
+absent from the prior run's record**; reuse the completed/skipped lenses' findings as-is, sourced
+from their disk attempt files. This is a **complement** rule on purpose, not a list of non-terminal
+statuses: an allowlist is not total. The collector also emits `missing`, so under the old
+`timed_out`/`errored`/`partial` list the key was *present* carrying a status in neither arm, and
+`--continue` silently skipped a lens that never ran. An absent key and the `missing` status are
+**different things** and both resume.
 
-**`--continue` re-run attempts.** A `--continue` invocation reuses the prior run's `run_id` and
-writes to the **next unused attempt number** (3, then 4, …) — never `--attempt 2` again. One writer
-per attempt file is what makes this safe; reusing an attempt number would put two writers on one
-file. The "respawn exactly once" cap is scoped to a single orchestrator invocation, not to the
-run-id's lifetime.
+**`--continue` re-run attempts.** A `--continue` invocation reuses the prior run's `run_id`. The
+next attempt number is **derived, never guessed**: it is **1 + the highest on-disk attempt index**
+for that lens (and never below the highest `--attempts <lens>:<n>` this invocation has passed). Do
+not assume the prior invocation reached attempt 2 — persisted state carries no spawn counter, so a
+crash *before* dispatch leaves attempt 2 free and unused (guessing 3 skips it), while a
+silently-spawned attempt 2 is still holding attempt 2 (guessing 2 puts two writers on one file). To
+make the on-disk index authoritative, **before dispatching any attempt N ≥ 2 the orchestrator
+writes that attempt's `start` record on the lens's behalf** via `persist-lens-result.sh --attempt
+<N> --type start --units ...`, and the respawn prompt template must therefore NOT write its own
+`start` One writer per attempt file is what makes this safe. The "respawn exactly
+once" cap is scoped to a single orchestrator invocation, not to the run-id's lifetime.
 
 **Codex sequential-mode clause.** On the fallback path (`spawn_agent` unavailable), lenses run one at a time in the main session instead of as spawned subagents. The orchestrator itself emits the `start`/`progress`/`finding`/`done` lines via `persist-lens-result.sh` on each lens's behalf while working through them, since there is no separate subagent process to shell out on its own. `collect-lens-results.sh` still runs afterward to produce the merged per-lens summary for Step 3 — only the respawn step is skipped, since nothing is left running to time out.
 

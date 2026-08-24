@@ -27,8 +27,16 @@
 # instead of missing/partial.
 #
 # --running <lens>:<n> (repeatable, last wins per lens) is the orchestrator
-# declaring "attempt <n> of this lens is STILL IN FLIGHT". A lens named by
-# --running is never reported terminal: its status floor is `partial`. This
+# declaring "attempt <n> of this lens is STILL IN FLIGHT". --running is a
+# status FLOOR, not an override: the derived status is `partial` rather than
+# the terminal `timed_out`. A recorded terminal status (completed/errored/
+# skipped) outranks that floor
+# only when its attempt is >= the running attempt number
+# -- a `done` line written BY the attempt still declared in
+# flight is evidence that attempt actually finished, whereas a `done` line
+# from an EARLIER attempt is stale and says nothing about the retry: letting
+# it through retired a lens whose attempt 2 had been spawned and had not yet
+# written a byte. This
 # exists so the collector never has to INFER liveness from an attempt index
 # -- an index is not a count, and inferring liveness from it is what made a
 # healthy in-flight attempt 3 on --continue report the terminal `timed_out`
@@ -196,33 +204,26 @@ declare -a ATTEMPTS_N=()
 declare -a RUNNING_LENSES=()
 declare -a RUNNING_N=()
 
-require_value() {
-	if [[ $# -lt 1 ]]; then
-		usage
-		exit 2
-	fi
-}
-
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--root)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		ROOT="$1"
 		;;
 	--skill)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		SKILL="$1"
 		;;
 	--run-id)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		RUN_ID="$1"
 		;;
 	--expected)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		entry="$1"
 		if [[ "$entry" != *:* ]]; then
 			echo "collect-lens-results: --expected entries must be <lens>:<unit1,unit2,...> (got '$entry')" >&2
@@ -236,7 +237,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--attempts)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		entry="$1"
 		if [[ "$entry" != *:* ]]; then
 			echo "collect-lens-results: --attempts entries must be <lens>:<n> (got '$entry')" >&2
@@ -256,7 +257,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--running)
 		shift
-		require_value "$@"
+		persist_require_value "$@"
 		entry="$1"
 		if [[ "$entry" != *:* ]]; then
 			echo "collect-lens-results: --running entries must be <lens>:<n> (got '$entry')" >&2
@@ -463,16 +464,34 @@ while [[ "$i" -lt "$n" ]]; do
 	)
 
 	files="${#attempt_files[@]}"
-	if [[ "$(has_attempts_entry_for "$lens")" == "1" ]]; then
+
+	# A4: `effective` is the highest attempt INDEX in play, never a file
+	# COUNT. attempt_files is sorted ascending, so the last basename carries
+	# the max on-disk index. A count is wrong whenever an attempt crashed
+	# before writing a byte: a lone `logic.2.jsonl` counts 1 (read as "no
+	# respawn happened", `partial`) while the index says 2 (a respawn
+	# demonstrably happened, `timed_out`). It is the max of the on-disk index
+	# and any `--attempts` the orchestrator declared, because either alone
+	# can be the larger: a spawned-but-fileless attempt is only visible in
+	# `--attempts`, and an attempt written by a PREVIOUS invocation is only
+	# visible on disk.
+	max_on_disk=0
+	if ((files > 0)); then
+		max_bn="${attempt_files[$((files - 1))]##*/}"
+		max_rest="${max_bn%.jsonl}"
+		max_on_disk="$((10#${max_rest##*.}))"
+	fi
+	if [[ "$(has_attempts_entry_for "$lens")" == "1" ]] && ((10#$spawned > max_on_disk)); then
 		effective="$spawned"
 	else
-		effective="$files"
+		effective="$max_on_disk"
 	fi
 	running="$(running_attempt_for "$lens")"
 
 	# Decision table (D2): no done line found (checked below via
-	# .done_status) AND files==0 AND effective<=1 (i.e. spawned<=1, since
-	# effective==files==0 when spawned==0) -> missing. Everything else
+	# .done_status) AND files==0 AND effective<=1 -> missing. With files==0
+	# the max on-disk index is 0, so effective is exactly the declared
+	# `--attempts` value (0 when none was declared). Everything else
 	# (files>0, or spawned>=2) falls through to the merge/jq block so a
 	# spawned-but-fileless attempt still reports timed_out via $effective.
 	if [[ "$files" -eq 0 && "$effective" -le 1 ]]; then
@@ -496,14 +515,25 @@ while [[ "$i" -lt "$n" ]]; do
 	# still merge across every attempt: recovering on-disk work from earlier
 	# attempts is the whole point of the disk-first design (R3/R4); only
 	# STATUS is latest-attempt-scoped.
-	merged="$(jq -n -c '{progress: [], findings: [], done_status: null}')"
+	# A8: `done_attempt` is the attempt INDEX that `done_status` came from.
+	# Without it the ladder below could not tell a terminal status belonging
+	# to the attempt --running names (evidence the retry finished) from one
+	# belonging to an EARLIER attempt (stale, and no evidence at all about
+	# the retry still in flight). attempt_files is sorted ascending, so the
+	# final iteration's pair wins, matching G4's latest-attempt scoping.
+	merged="$(jq -n -c '{progress: [], findings: [], done_status: null, done_attempt: 0}')"
 	if ((files > 0)); then
 		for f in "${attempt_files[@]}"; do
 			parsed="$(parse_attempt_file "$f")"
-			merged="$(printf '%s' "$merged" | jq -c --argjson p "$parsed" '
+			# Same exact parse the find loop above uses: <lens>.<attempt>.jsonl.
+			f_bn="${f##*/}"
+			f_rest="${f_bn%.jsonl}"
+			f_attempt="$((10#${f_rest##*.}))"
+			merged="$(printf '%s' "$merged" | jq -c --argjson p "$parsed" --argjson n "$f_attempt" '
 				.progress += $p.progress
 				| .findings += $p.findings
 				| .done_status = $p.done_status
+				| .done_attempt = $n
 			')"
 		done
 	fi
@@ -539,7 +569,15 @@ while [[ "$i" -lt "$n" ]]; do
 				(($f | key_file)) as $file
 				| (($f | key_line)) as $line
 				| (($f.category // "") | ascii_downcase) as $cat
-				| (($file | ascii_downcase) + "|" + $line + "|" + $cat) as $key
+				# Identity policy authority: the header of finding-key.sh.
+				# It case-folds `category` (a free-text label whose casing
+				# carries no meaning) and deliberately does NOT case-fold
+				# `file` (paths are case-sensitive on the filesystems this
+				# runs on, and the reconciler folds no case either).
+				# Folding the path here made this collector a third,
+				# contradictory identity policy that silently dropped a
+				# Foo.md:10 / foo.md:10 pair down to one finding.
+				| ($file + "|" + $line + "|" + $cat) as $key
 				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key, _file: $file, _line: $line}] end
 			)
 		) as $dedup_raw
@@ -554,10 +592,18 @@ while [[ "$i" -lt "$n" ]]; do
 			evidence: (.evidence // ""),
 			suggestion: (.suggestion // "")
 		})) as $findings_jsonl
+		| (.done_attempt // 0) as $done_attempt
+		# A8 reconciled rule: a terminal status wins over --running ONLY when
+		# the attempt that recorded it is >= the running attempt number.
+		# A `done completed` from attempt 1 says nothing about a silent
+		# attempt 2, so it must not retire the lens; a `done` line written BY
+		# attempt 2 is direct evidence the retry finished and still wins
+		# (C19).
+		| (($running == 0) or ($done_attempt >= $running)) as $done_is_current
 		| (
-			if .done_status == "completed" then "completed"
-			elif .done_status == "errored" then "errored"
-			elif .done_status == "skipped" then "skipped"
+			if $done_is_current and .done_status == "completed" then "completed"
+			elif $done_is_current and .done_status == "errored" then "errored"
+			elif $done_is_current and .done_status == "skipped" then "skipped"
 			# $running > 0 means the orchestrator declared this lens still
 			# in flight, so a non-terminal `partial` is the honest answer --
 			# `timed_out` would make --continue stop waiting on a healthy

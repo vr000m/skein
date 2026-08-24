@@ -301,13 +301,39 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   #    fixes, appended into ONE JSONL file
   : > "$claimed_findings_file"
   #   2a. applier: join the auto-fix manifest's status=="applied" entries back to
-  #       the trivial envelope on (file, line) to recover category/summary
+  #       the trivial envelope on (file, line) to recover category/summary.
+  #       The key CANNOT be tightened with a category: the manifest's `kind` is
+  #       the auto-fix kind, not a review category (apply-auto-fix-code.sh), so
+  #       there is nothing on the manifest side to match one against. So claim a
+  #       finding only when it is the UNIQUE envelope finding at its (file, line);
+  #       two findings sharing one (file, line) in different categories are both
+  #       dropped. The asymmetry that decides this: under-claiming loses ONE key
+  #       (at worst a real fix is re-reported next round), while over-claiming
+  #       promotes a finding nobody fixed into fixed_keys, and its legitimate
+  #       reappearance then fires the TERMINAL `regression` stop — the exact false
+  #       positive finding-key.sh's identity design is biased against.
+  #       Both claim sources are OPTIONAL: a clean round runs no fixer and may
+  #       apply no auto-fix, so each contributes an EMPTY list when its artifact
+  #       is absent, and an empty $claimed_findings_file is legitimate. Guard on
+  #       the artifact AND keep each extraction total (`($m[0] // [])`,
+  #       `.claimed[]?`) — an unconditional jq exits 2 and aborts convergence on
+  #       exactly the clean round that would have succeeded.
+  if [[ -s "$auto_fix_manifest" ]]; then
   jq -c --slurpfile m "$auto_fix_manifest" '
-        ($m[0] | map(select(.status == "applied")) | map({file, line})) as $ok
-        | .findings[] | select([{file: .file, line: .line}] | inside($ok))
+        (($m[0] // []) | map(select(.status == "applied"))
+               | map((.file|tostring) + "\u0000" + (.line|tostring))) as $ok
+        | ([.findings[]?]
+           | group_by((.file|tostring) + "\u0000" + (.line|tostring))
+           | map(select(length == 1))
+           | add // []) as $unique
+        | $unique[]
+        | select(((.file|tostring) + "\u0000" + (.line|tostring)) as $k | $ok | index($k))
       ' annotated-envelope.json >> "$claimed_findings_file"
+  fi
   #   2b. fixer: its report's {claimed:[...]} array, one object per line
-  jq -c '.claimed[]' fixer-report.json >> "$claimed_findings_file"
+  if [[ -s fixer-report.json ]]; then
+    jq -c '.claimed[]?' fixer-report.json >> "$claimed_findings_file"
+  fi
 
   # 3. one key list from both sources
   "$SKILL_DIR"/scripts/finding-key.sh "$claimed_findings_file" \

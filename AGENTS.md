@@ -12,7 +12,7 @@ just bundle-appliers             # Regenerate the bundled auto-fix pipeline insi
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
-just lint-scripts                # shellcheck + shfmt on scripts/
+just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/
 just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + `# noqa` probe + manifest checks
 ```
 
