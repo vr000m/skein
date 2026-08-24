@@ -693,6 +693,163 @@ run_gate_flag_clean_case
 run_gate_flag_error_case
 run_gate_flag_timeout_case
 
+# --- Case 7 (G2, finding 5): a bare exit 124 INSIDE budget is not expiry ---
+# The old predicate was `exit_code != 0 && (exit_code == 124 || duration >=
+# budget)`, so an in-budget command that itself exits 124 was misclassified
+# as expired: its perfectly valid tool-out was deleted and a degraded
+# `skipped` envelope was emitted. Expiry must come from the runner's own
+# recorded state, not from a code the reviewed command can choose.
+
+bare124_case() {
+	local label="$1" runpath="$2" envelope="$3" toolout="$4"
+	local stub="$WORKDIR/stub-bare124.sh"
+	cat >"$stub" <<'EOF'
+#!/usr/bin/env bash
+printf '{"status":"approve","findings":[]}'
+exit 124
+EOF
+	chmod +x "$stub"
+
+	local rc=0
+	PATH="$runpath" "$RUNNER" 60 "$envelope" "$toolout" -- "$stub" || rc=$?
+	assert_eq "$rc" "0" "$label: gate_run_bounded returns 0 on a completed (non-expiry) run"
+	if [[ ! -s "$envelope" ]]; then
+		fail "$label: no envelope written"
+		return
+	fi
+	assert_eq "$(jq -r '.status' "$envelope")" "approve" \
+		"$label: an in-budget exit 124 with valid tool-out passes through as 'approve', not 'skipped'"
+	assert_eq "$(jq -r '.degraded_reason' "$envelope")" "null" \
+		"$label: an in-budget exit 124 is not marked DEGRADED"
+	if [[ -s "$toolout" ]]; then
+		pass "$label: tool-out is RETAINED on an in-budget exit 124 (not deleted as an expiry artefact)"
+	else
+		fail "$label: tool-out was deleted — the run was misclassified as expiry"
+	fi
+}
+
+env_bare124_gnu="$WORKDIR/env-bare124-gnu.json"
+env_bare124_shim="$WORKDIR/env-bare124-shim.json"
+bare124_case "bare-124 (GNU timeout path)" "$PATH" "$env_bare124_gnu" "$WORKDIR/tool-bare124-gnu.json"
+bare124_case "bare-124 (shim path)" "$HIDDEN_TIMEOUT_PATH" "$env_bare124_shim" "$WORKDIR/tool-bare124-shim.json"
+assert_envelope_parity "$env_bare124_gnu" "$env_bare124_shim" "bare-124 case"
+
+# --- Case 8 (G2, finding 4): a failing `ps` must not abort the expiry branch
+# `self_pgid="$(ps ... | tr ...)"` is a pipeline; under the caller's
+# `set -euo pipefail` a `ps` EPERM (macOS sandbox) made the assignment
+# non-zero and `set -e` aborted _gate_sweep_pgid — and with it the whole
+# expiry branch, BEFORE the `skipped` envelope was ever written.
+
+ps_stub_dir="$WORKDIR/ps-stub-bin"
+mkdir -p "$ps_stub_dir"
+cat >"$ps_stub_dir/ps" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$ps_stub_dir/ps"
+
+hang_stub="$WORKDIR/stub-hang-ps.sh"
+cat >"$hang_stub" <<'EOF'
+#!/usr/bin/env bash
+printf '{"status":"approve","findings":[]}'
+sleep 30
+EOF
+chmod +x "$hang_stub"
+
+env_ps="$WORKDIR/env-ps-fail.json"
+tool_ps="$WORKDIR/tool-ps-fail.json"
+ps_rc=0
+PATH="$ps_stub_dir:$HIDDEN_TIMEOUT_PATH" "$RUNNER" 1 "$env_ps" "$tool_ps" -- "$hang_stub" || ps_rc=$?
+assert_eq "$ps_rc" "0" "failing-ps: gate_run_bounded still returns 0 when \`ps\` fails during the expiry sweep"
+if [[ -s "$env_ps" ]]; then
+	assert_eq "$(jq -r '.status' "$env_ps")" "skipped" \
+		"failing-ps: the DEGRADED 'skipped' envelope is still written when \`ps\` fails"
+else
+	fail "failing-ps: expiry branch aborted before writing the envelope (the exact set -e hazard)"
+fi
+
+# --- Case 9 (G2, finding 24): a recorded pgid naming a DEAD leader is a
+# silent no-op, and the envelope is still written. `wait` reaps the
+# timeout/shim child before the expiry branch runs, so the recorded pgid is
+# free for PID reuse; the sweep must confirm the group leader is still the
+# recorded pid before signalling anything.
+
+dead_leader_check() {
+	# Source the lib directly so _gate_sweep_pgid can be called in isolation
+	# against a pgid whose leader is certainly gone.
+	local probe="$WORKDIR/probe-dead-leader.sh"
+	cat >"$probe" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=/dev/null
+. "$GATE_BOUNDED"
+sleep 30 &
+victim=\$!
+kill -KILL "\$victim" 2>/dev/null || true
+wait "\$victim" 2>/dev/null || true
+_gate_sweep_pgid "\$victim"
+echo SWEEP_RETURNED
+EOF
+	chmod +x "$probe"
+	local out rc=0
+	out="$(bash "$probe" 2>&1)" || rc=$?
+	if [[ $rc -eq 0 && "$out" == *SWEEP_RETURNED* ]]; then
+		pass "dead-leader sweep: _gate_sweep_pgid on a reaped pid returns cleanly (silent no-op)"
+	else
+		fail "dead-leader sweep: _gate_sweep_pgid on a reaped pid failed (rc=$rc, out='$out')"
+	fi
+}
+dead_leader_check
+
+# --- Case 10 (G3, finding 6): `.findings` must be a real array to pass ----
+# The old acceptance gate checked only `.status | type == "string"`.
+# `run-gate.sh normalize` then reads `.findings[]?`, and the `?` swallows a
+# null/non-array field — so a malformed gate reported as CLEAN.
+
+findings_shape_case() {
+	local label="$1" payload="$2" envelope="$3" toolout="$4"
+	local stub="$WORKDIR/stub-findings-shape.sh"
+	cat >"$stub" <<EOF
+#!/usr/bin/env bash
+printf '%s' '$payload'
+exit 0
+EOF
+	chmod +x "$stub"
+	local rc=0
+	"$RUNNER" 60 "$envelope" "$toolout" -- "$stub" || rc=$?
+	assert_eq "$rc" "0" "$label: gate_run_bounded returns 0"
+	if [[ ! -s "$envelope" ]]; then
+		fail "$label: no envelope written"
+		return
+	fi
+	assert_eq "$(jq -r '.status' "$envelope")" "error" \
+		"$label: falls through to the 'error' envelope rather than passing through as clean"
+	if [[ "$(jq -r '.notes' "$envelope")" == *"object"* ]]; then
+		pass "$label: the error envelope's notes name the shape failure"
+	else
+		fail "$label: the error envelope's notes do not name the shape failure"
+	fi
+}
+
+findings_shape_case "null-findings" '{"status":"approve","findings":null}' \
+	"$WORKDIR/env-findings-null.json" "$WORKDIR/tool-findings-null.json"
+findings_shape_case "missing-findings" '{"status":"approve"}' \
+	"$WORKDIR/env-findings-missing.json" "$WORKDIR/tool-findings-missing.json"
+findings_shape_case "object-findings" '{"status":"approve","findings":{"a":1}}' \
+	"$WORKDIR/env-findings-object.json" "$WORKDIR/tool-findings-object.json"
+
+# A well-formed envelope with a real (even empty) findings array still passes.
+wellformed_env="$WORKDIR/env-findings-ok.json"
+wellformed_stub="$WORKDIR/stub-findings-ok.sh"
+cat >"$wellformed_stub" <<'EOF'
+#!/usr/bin/env bash
+printf '{"status":"approve","findings":[]}'
+EOF
+chmod +x "$wellformed_stub"
+"$RUNNER" 60 "$wellformed_env" "$WORKDIR/tool-findings-ok.json" -- "$wellformed_stub"
+assert_eq "$(jq -r '.status' "$wellformed_env")" "approve" \
+	"well-formed findings array: the tightened gate does not regress the clean path"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

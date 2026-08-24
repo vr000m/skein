@@ -67,8 +67,33 @@ for skill_md in "${SKILLS[@]}"; do
 	assert_grep "$skill_md" 'persist-lens-result\.sh' \
 		"references persist-lens-result.sh"
 
-	assert_grep "$skill_md" '--type[[:space:]]+start' \
-		"references --type start"
+	# G1: the lens-facing contract moved to --json-stdin, so `--type start`
+	# survives only in the orchestrator-authored (closed-enum) invocations.
+	# Either spelling of "there is a start record" satisfies this leg.
+	if grep -Eq -- '--type[[:space:]]+start' "$skill_md" ||
+		grep -Eq -- '"type"[[:space:]]*:[[:space:]]*"start"' "$skill_md"; then
+		pass "references a start record ($skill_md)"
+	else
+		fail "references a start record ($skill_md)"
+	fi
+
+	# --- G1 (findings 1/3): untrusted text must not reach the lens's argv ---
+
+	assert_grep "$skill_md" '\-\-json-stdin' \
+		"references --json-stdin (payload off argv)"
+
+	assert_grep "$skill_md" "<<'SKEIN_JSON'" \
+		"uses the quoted heredoc delimiter <<'SKEIN_JSON' (no shell expansion)"
+
+	# NEGATIVE assertion: the old argv-carrying template must be GONE, not
+	# merely supplemented. `--evidence "` is the exact shape that let a lens's
+	# own shell expand $(...)/backticks out of reviewed code.
+	if grep -Eq -- '\-\-evidence[[:space:]]*"' "$skill_md"; then
+		fail "no --evidence \"...\" on a command line (old injectable template still present) ($skill_md)"
+		grep -nE -- '\-\-evidence[[:space:]]*"' "$skill_md" | sed 's/^/    /'
+	else
+		pass "no --evidence \"...\" on a command line ($skill_md)"
+	fi
 
 	assert_grep "$skill_md" '--attempt[[:space:]]+2' \
 		"references --attempt 2 (the respawn variant)"
@@ -127,11 +152,15 @@ for skill_md in "${SKILLS[@]}"; do
 	fi
 
 	# D-5 (C1): every generic persistence-contract value placeholder is
-	# quoted so a multi-word value doesn't split across argv.
-	if grep -Fq -- '--severity "' "$skill_md" && grep -Fq -- '--category "' "$skill_md"; then
-		pass "quotes --severity/--category value placeholders ($skill_md)"
+	# delimited so a multi-word value cannot split. Under G1's --json-stdin
+	# contract the argv-splitting hazard is structurally gone, so the JSON
+	# spelling (`"severity":"<...>"`) satisfies this leg as well as the old
+	# quoted-flag spelling.
+	if (grep -Fq -- '--severity "' "$skill_md" && grep -Fq -- '--category "' "$skill_md") ||
+		(grep -Fq -- '"severity":"' "$skill_md" && grep -Fq -- '"category":"' "$skill_md"); then
+		pass "delimits severity/category value placeholders ($skill_md)"
 	else
-		fail "quotes --severity/--category value placeholders ($skill_md)"
+		fail "delimits severity/category value placeholders ($skill_md)"
 	fi
 done
 

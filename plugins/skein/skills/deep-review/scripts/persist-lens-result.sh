@@ -17,6 +17,41 @@
 #       [--location <file:line>] [--summary <text>] [--evidence <text>] \
 #       [--suggestion <text>]
 #
+# or, preferred for any payload derived from reviewed code (stdin mode):
+#
+#   scripts/persist-lens-result.sh --root <repo-root> --skill <s> --run-id <id> \
+#       --lens <name> --attempt <n> --json-stdin <<'SKEIN_JSON'
+#   {"type":"finding","severity":"Critical","category":"Logic", ...}
+#   SKEIN_JSON
+#
+# WHY STDIN MODE EXISTS. The lens-persistence prompt contract is a shell
+# command template, and a lens is instructed to quote the code it is
+# reviewing into the payload. In flag mode that reviewed text lands on the
+# lens's own argv, where `$(...)`, backticks and `"` are expanded by the
+# lens's shell BEFORE this script ever runs. `--json-stdin` moves the
+# payload off argv entirely: it crosses the process boundary as heredoc
+# stdin under a quoted delimiter (`<<'SKEIN_JSON'`, no expansion) and is
+# parsed by jq, never by a shell.
+#
+# --json-stdin semantics:
+#   * Reads exactly one JSON object from stdin. `type == "object"` is
+#     checked first; invalid JSON or a non-object exits 2 with NO directory
+#     created and NO byte written.
+#   * Mutually exclusive with the payload flags --type/--units/--unit/
+#     --status/--severity/--category/--location/--summary/--evidence/
+#     --suggestion. Passing both exits 2, nothing written.
+#   * Recognised body keys: type, units (JSON array, or a CSV string),
+#     unit, status, severity, category, location, summary, evidence,
+#     suggestion. They populate the SAME internal variables flag mode uses
+#     and then fall through to the SAME per-`--type` required-field
+#     validation and the SAME jq serializer -- one encoder, one validator,
+#     and an on-disk line byte-identical to flag mode's.
+#   * --root/--skill/--run-id/--lens/--attempt stay flags: they are
+#     orchestrator-resolved, never lens-authored. If any of those keys
+#     appears in the JSON body it is IGNORED -- a lens must not be able to
+#     redirect its own write path.
+#   * Flag mode is retained unchanged for backward compatibility.
+#
 # Appends exactly one JSON line to:
 #   <root>/<state-dir>/lenses/<run-id>/<lens>.<attempt>.jsonl
 # where <state-dir> is `.deep-review` for --skill deep-review and
@@ -71,8 +106,9 @@
 #   0 — line appended.
 #   2 — usage error (missing/unknown --skill, --type, or --status; a
 #       required --type-specific flag missing; non-positive --attempt;
-#       --run-id/--lens outside its charset; a comma in --unit).
-#       No file is written.
+#       --run-id/--lens outside its charset; a comma in --unit;
+#       --json-stdin combined with a payload flag; stdin that is not one
+#       JSON object). No file is written.
 #   1 — append refused or failed (symlink guard, permissions, disk full);
 #       no line written.
 #
@@ -93,6 +129,13 @@ usage: scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|rev
     [--units <csv>] [--unit <name>] [--status completed|errored|skipped] \
     [--severity <s>] [--category <c>] [--location <file:line>] \
     [--summary <text>] [--evidence <text>] [--suggestion <text>]
+   or: scripts/persist-lens-result.sh --root <repo-root> --skill deep-review|review-plan \
+    --run-id <id> --lens <name> --attempt <n> --json-stdin  < one-JSON-object
+
+--json-stdin reads the payload as one JSON object on stdin instead of on
+argv, so reviewed code never reaches a shell. It is mutually exclusive with
+--type/--units/--unit/--status/--severity/--category/--location/--summary/
+--evidence/--suggestion.
 EOF
 }
 
@@ -112,6 +155,14 @@ LOCATION=""
 SUMMARY=""
 EVIDENCE=""
 SUGGESTION=""
+JSON_STDIN=0
+PAYLOAD_FLAGS=""
+
+# note_payload_flag <flag> -- record that a flag-mode payload flag was used
+# so --json-stdin can refuse the ambiguous mixed invocation.
+note_payload_flag() {
+	PAYLOAD_FLAGS="${PAYLOAD_FLAGS:+$PAYLOAD_FLAGS }$1"
+}
 
 require_value() {
 	if [[ $# -lt 1 ]]; then
@@ -151,52 +202,65 @@ while [[ $# -gt 0 ]]; do
 		shift
 		require_value "$@"
 		TYPE="$1"
+		note_payload_flag --type
 		;;
 	--units)
 		shift
 		require_value "$@"
 		UNITS="$1"
 		UNITS_SET=1
+		note_payload_flag --units
 		;;
 	--unit)
 		shift
 		require_value "$@"
 		UNIT="$1"
+		note_payload_flag --unit
 		;;
 	--status)
 		shift
 		require_value "$@"
 		STATUS="$1"
+		note_payload_flag --status
 		;;
 	--severity)
 		shift
 		require_value "$@"
 		SEVERITY="$1"
+		note_payload_flag --severity
 		;;
 	--category)
 		shift
 		require_value "$@"
 		CATEGORY="$1"
+		note_payload_flag --category
 		;;
 	--location)
 		shift
 		require_value "$@"
 		LOCATION="$1"
+		note_payload_flag --location
 		;;
 	--summary)
 		shift
 		require_value "$@"
 		SUMMARY="$1"
+		note_payload_flag --summary
 		;;
 	--evidence)
 		shift
 		require_value "$@"
 		EVIDENCE="$1"
+		note_payload_flag --evidence
 		;;
 	--suggestion)
 		shift
 		require_value "$@"
 		SUGGESTION="$1"
+		note_payload_flag --suggestion
+		;;
+	--json-stdin)
+		JSON_STDIN=1
 		;;
 	--help | -h)
 		usage
@@ -245,6 +309,64 @@ fi
 # spelling of the same number.
 ATTEMPT=$((10#$ATTEMPT))
 
+if ! command -v jq >/dev/null 2>&1; then
+	echo "persist-lens-result: jq is required" >&2
+	exit 2
+fi
+
+# --- stdin payload mode -----------------------------------------------------
+# Decode the JSON object on stdin into the SAME internal variables flag mode
+# fills, then fall through to the shared per-`--type` validation and the
+# shared jq serializer below. Nothing here builds a path or writes a byte:
+# every rejection is exit 2 before persist_lens_state_dir is ever called.
+if [[ "$JSON_STDIN" -eq 1 ]]; then
+	if [[ -n "$PAYLOAD_FLAGS" ]]; then
+		echo "persist-lens-result: --json-stdin is mutually exclusive with payload flags (got: $PAYLOAD_FLAGS)" >&2
+		usage
+		exit 2
+	fi
+
+	STDIN_JSON="$(cat)" || {
+		echo "persist-lens-result: failed to read --json-stdin payload" >&2
+		exit 2
+	}
+
+	if ! printf '%s' "$STDIN_JSON" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		echo "persist-lens-result: --json-stdin requires exactly one JSON object on stdin" >&2
+		exit 2
+	fi
+
+	# @sh-quoted assignments: jq owns the shell quoting, so no payload byte is
+	# ever re-parsed as shell syntax. A non-scalar value for any of these keys
+	# makes jq fail, which is a clean exit 2 with nothing written.
+	json_assignments="$(printf '%s' "$STDIN_JSON" | jq -r '
+		@sh "TYPE=\(.type // "") UNIT=\(.unit // "") STATUS=\(.status // "") SEVERITY=\(.severity // "") CATEGORY=\(.category // "") LOCATION=\(.location // "") SUMMARY=\(.summary // "") EVIDENCE=\(.evidence // "") SUGGESTION=\(.suggestion // "")"
+	')" || {
+		echo "persist-lens-result: --json-stdin payload fields must be scalars" >&2
+		exit 2
+	}
+	# shellcheck disable=SC2086 # jq's @sh output is already shell-quoted
+	eval "$json_assignments"
+
+	# `units` may be a JSON array (preferred -- no comma-separator restriction)
+	# or a CSV string (flag-mode spelling). Absent => --units was not passed.
+	STDIN_UNITS_JSON="$(printf '%s' "$STDIN_JSON" | jq -c '
+		if has("units") | not then null
+		elif (.units | type) == "array" then
+			(if (.units | all(type == "string")) then .units
+			 else error("units array must contain only strings") end)
+		elif (.units | type) == "string" then
+			(if .units == "" then [] else (.units | split(",")) end)
+		else error("units must be an array or a CSV string") end
+	')" || {
+		echo "persist-lens-result: --json-stdin 'units' must be an array of strings or a CSV string" >&2
+		exit 2
+	}
+	if [[ "$STDIN_UNITS_JSON" != "null" ]]; then
+		UNITS_SET=1
+	fi
+fi
+
 case "$TYPE" in
 start | progress | finding | done) ;;
 *)
@@ -253,11 +375,6 @@ start | progress | finding | done) ;;
 	exit 2
 	;;
 esac
-
-if ! command -v jq >/dev/null 2>&1; then
-	echo "persist-lens-result: jq is required" >&2
-	exit 2
-fi
 
 case "$TYPE" in
 start)
@@ -302,7 +419,9 @@ ts="$(date +%s)"
 
 units_json="[]"
 if [[ "$TYPE" == "start" ]]; then
-	if [[ -z "$UNITS" ]]; then
+	if [[ "$JSON_STDIN" -eq 1 ]]; then
+		units_json="${STDIN_UNITS_JSON:-[]}"
+	elif [[ -z "$UNITS" ]]; then
 		units_json="[]"
 	else
 		units_json="$(printf '%s' "$UNITS" | jq -R -c 'split(",")')"

@@ -12,7 +12,8 @@
 # Usage:
 #   scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
 #       --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
-#       [--attempts <lens>:<n>] [--attempts ...] [--findings-jsonl]
+#       [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
+#       [--running ...] [--findings-jsonl]
 #
 # --attempts <lens>:<n> (repeatable, at most one *effective* entry per lens
 # -- duplicates for the same lens: last wins) records the highest attempt
@@ -21,9 +22,18 @@
 # which makes status derivation collapse exactly to today's file-count-only
 # behaviour (backward compatible). An --attempts entry naming a lens with no
 # --expected entry is accepted and ignored. See "Status derivation" below
-# for how `effective = max(spawned, files)` feeds the timed_out/partial
-# split -- this is what makes a spawned-but-silent attempt (no file at all)
-# report timed_out instead of missing/partial.
+# for how `effective` feeds the timed_out/partial split -- this is what
+# makes a spawned-but-silent attempt (no file at all) report timed_out
+# instead of missing/partial.
+#
+# --running <lens>:<n> (repeatable, last wins per lens) is the orchestrator
+# declaring "attempt <n> of this lens is STILL IN FLIGHT". A lens named by
+# --running is never reported terminal: its status floor is `partial`. This
+# exists so the collector never has to INFER liveness from an attempt index
+# -- an index is not a count, and inferring liveness from it is what made a
+# healthy in-flight attempt 3 on --continue report the terminal `timed_out`
+# and stop the orchestrator waiting. --continue passes
+# `--running <lens>:<next-attempt>` for each lens it has just respawned.
 #
 # --findings-jsonl (boolean, mutually exclusive with the default summary
 # object; changes stdout only) emits one JSON object per line instead of the
@@ -49,7 +59,11 @@
 # only --skill/--run-id/--expected; this script accepts an explicit --root
 # too when a caller already has it resolved (e.g. the same orchestrator
 # invocation that resolved it for persist-lens-result.sh), but does not
-# require it.
+# require it. When --root is omitted AND cwd is not inside a git worktree
+# the script REFUSES (exit 2) instead of falling back to cwd: the writer
+# always takes an explicit --root, so a cwd fallback outside a worktree
+# would silently read a different `<state-dir>/lenses` than the one written
+# to and report every lens `missing`.
 #
 # --expected is repeatable, one per lens the orchestrator assigned work to.
 # The orchestrator OWNS the assigned-units list (R4) — this script never
@@ -75,17 +89,30 @@
 # Status derivation, per lens, across ALL attempt files
 # (<state-dir>/lenses/<run-id>/<lens>.<N>.jsonl, N ascending), with
 # `files` = number of that lens's attempt files on disk, `spawned` = its
-# --attempts value or 0 when absent, and `effective = max(spawned, files)`:
+# --attempts value or 0 when absent, and `effective` = `spawned` when
+# --attempts named this lens, else `files`. It is deliberately NOT
+# max(spawned, files): `files` is a COUNT and `spawned` is an INDEX, and
+# conflating the two misread two recovered attempt files plus an in-flight
+# attempt 3 as two exhausted attempts. The orchestrator owns the attempt
+# count (R4); this script only counts files when it was not told.
 #   - No `done` line anywhere, files == 0, and effective <= 1 (i.e.
 #     spawned <= 1) -> "missing"; unreviewed := the full --expected unit
 #     list (or [] if none was given).
-#   - Otherwise, take the `done` line (if any) from the HIGHEST-numbered
-#     attempt file that has one:
+#   - Otherwise, take the `done` line (if any) from the LATEST (highest-
+#     numbered) attempt file -- whether or not that file has one. A
+#     completed attempt 1 does NOT supply the status for a start-only
+#     attempt 2: status describes the latest attempt's own terminal state.
+#     (`progress` and `findings` still merge across every attempt --
+#     recovering earlier on-disk work is the point of the disk-first
+#     design; only STATUS is latest-attempt-scoped.)
 #       done.status == "completed" -> "completed"
 #       done.status == "errored"   -> "errored"
 #       done.status == "skipped"   -> "skipped" (orchestrator-emitted, on a
 #         deliberately-skipped lens's behalf; terminal for --continue)
-#   - No `done` line found in any attempt:
+#   - No `done` line on the latest attempt:
+#       --running names this lens -> "partial", unconditionally (the
+#         orchestrator says it is still working; terminal would stop the
+#         wait on a healthy attempt)
 #       effective >= 2 -> "timed_out" (a respawn already happened -- whether
 #         or not that respawned attempt ever wrote a file -- and still
 #         produced no completion signal; one-respawn means this is terminal
@@ -119,7 +146,7 @@
 # (never crashes the collector), but a truncated *trailing* line is the
 # documented, tested case.
 #
-# --run-id/each --expected and --attempts lens key are validated against the
+# --run-id/each --expected, --attempts, and --running lens key are validated against the
 # same charset whitelist persist-lens-result.sh uses (see
 # scripts/lib/persist-common.sh's persist_validate_id): a lens name must
 # match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no ':', no '/', no glob
@@ -135,9 +162,9 @@
 #   0 — always, once flags validate (a stale/unknown run-id or empty
 #       --expected list is a normal "missing" result, not an error).
 #   2 — usage error (missing --skill/--run-id, unknown --skill, a malformed
-#       --expected/--attempts entry, a --run-id/lens name outside its
-#       charset, or a symlinked run directory at
-#       <state-dir>/lenses/<run-id>).
+#       --expected/--attempts/--running entry, a --run-id/lens name outside
+#       its charset, --root omitted while cwd is not inside a git worktree,
+#       or a symlinked run directory at <state-dir>/lenses/<run-id>).
 #
 # Dependencies: jq.
 
@@ -153,7 +180,8 @@ usage() {
 	cat >&2 <<'EOF'
 usage: scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
     --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
-    [--attempts <lens>:<n>] [--attempts ...] [--findings-jsonl]
+    [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
+    [--running ...] [--findings-jsonl]
 EOF
 }
 
@@ -165,6 +193,8 @@ declare -a EXPECTED_LENSES=()
 declare -a EXPECTED_UNITS_CSV=()
 declare -a ATTEMPTS_LENSES=()
 declare -a ATTEMPTS_N=()
+declare -a RUNNING_LENSES=()
+declare -a RUNNING_N=()
 
 require_value() {
 	if [[ $# -lt 1 ]]; then
@@ -224,6 +254,26 @@ while [[ $# -gt 0 ]]; do
 		ATTEMPTS_LENSES+=("$attempts_lens_name")
 		ATTEMPTS_N+=("$((10#$attempts_n_raw))")
 		;;
+	--running)
+		shift
+		require_value "$@"
+		entry="$1"
+		if [[ "$entry" != *:* ]]; then
+			echo "collect-lens-results: --running entries must be <lens>:<n> (got '$entry')" >&2
+			usage
+			exit 2
+		fi
+		running_lens_name="${entry%%:*}"
+		running_n_raw="${entry#*:}"
+		persist_validate_id "$running_lens_name" collect-lens-results name || exit 2
+		if [[ ! "$running_n_raw" =~ ^[0-9]+$ ]] || ((10#$running_n_raw < 1)); then
+			echo "collect-lens-results: --running entries must be <lens>:<n> (got '$entry')" >&2
+			usage
+			exit 2
+		fi
+		RUNNING_LENSES+=("$running_lens_name")
+		RUNNING_N+=("$((10#$running_n_raw))")
+		;;
 	--findings-jsonl)
 		FINDINGS_JSONL=1
 		;;
@@ -241,6 +291,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$ROOT" ]]; then
+	# G12c: persist_root_dir falls back to cwd when cwd is not inside a git
+	# worktree. That fallback is a silent-divergence hazard here: the WRITER
+	# (persist-lens-result.sh) always takes an explicit --root, so an
+	# unrooted collector outside a worktree would read a different
+	# `.deep-review/lenses` than the one that was written to, and report
+	# every lens `missing`. Refuse instead. --root stays OPTIONAL for the
+	# documented happy path (a caller inside the worktree).
+	if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+		echo "collect-lens-results: --root omitted and cwd is not a git worktree; pass --root explicitly" >&2
+		exit 2
+	fi
 	ROOT="$(persist_root_dir)"
 fi
 
@@ -328,6 +389,45 @@ parse_attempt_file() {
 	)'
 }
 
+# running_attempt_for <lens> -- the --running value for <lens>, or 0 when
+# the orchestrator did not declare an in-flight attempt for it. A non-zero
+# value means "this lens is still working"; the collector must then never
+# report a terminal status for it, because terminal is what makes
+# --continue stop waiting.
+running_attempt_for() {
+	local want="$1"
+	local result=0
+	local j="${#RUNNING_LENSES[@]}"
+	local idx=0
+	while [[ "$idx" -lt "$j" ]]; do
+		if [[ "${RUNNING_LENSES[$idx]}" == "$want" ]]; then
+			result="${RUNNING_N[$idx]}"
+		fi
+		idx=$((idx + 1))
+	done
+	printf '%s' "$result"
+}
+
+# has_attempts_entry_for <lens> -- 1 iff --attempts named this lens.
+# `effective` is the orchestrator's attempt count when it declared one
+# (R4: the orchestrator OWNS the attempt count) and the on-disk file count
+# otherwise. It is never max(spawned, files): a file count is a COUNT and
+# an --attempts value is an INDEX, and conflating them made a healthy
+# in-flight attempt 3 look like two exhausted attempts.
+has_attempts_entry_for() {
+	local want="$1"
+	local j="${#ATTEMPTS_LENSES[@]}"
+	local idx=0
+	while [[ "$idx" -lt "$j" ]]; do
+		if [[ "${ATTEMPTS_LENSES[$idx]}" == "$want" ]]; then
+			printf '1'
+			return 0
+		fi
+		idx=$((idx + 1))
+	done
+	printf '0'
+}
+
 output="{}"
 findings_jsonl_accum=""
 
@@ -356,17 +456,19 @@ while [[ "$i" -lt "$n" ]]; do
 				rest="${bn%.jsonl}" # <lens>.<attempt>
 				attempt_num="${rest##*.}"
 				name="${rest%.*}"
-				[[ "$name" == "$lens" ]] || continue          # exact string equality
+				[[ "$name" == "$lens" ]] || continue # exact string equality
 				[[ "$attempt_num" =~ ^[0-9]+$ ]] || continue
 				printf '%s %s\n' "$((10#$attempt_num))" "$fpath"
 			done | sort -n -k1,1 | cut -d' ' -f2-
 	)
 
 	files="${#attempt_files[@]}"
-	effective="$spawned"
-	if ((files > effective)); then
+	if [[ "$(has_attempts_entry_for "$lens")" == "1" ]]; then
+		effective="$spawned"
+	else
 		effective="$files"
 	fi
+	running="$(running_attempt_for "$lens")"
 
 	# Decision table (D2): no done line found (checked below via
 	# .done_status) AND files==0 AND effective<=1 (i.e. spawned<=1, since
@@ -380,19 +482,36 @@ while [[ "$i" -lt "$n" ]]; do
 		continue
 	fi
 
+	# G5: `attempt_files` is empty exactly in the spawned-but-silent case the
+	# `missing` shortcut above deliberately falls through (files==0,
+	# effective>=2). Under `set -u`, bash 3.2 -- the repo's declared floor --
+	# treats `"${empty[@]}"` as an unbound variable and aborts with no JSON on
+	# stdout. The `merged` seed already yields the correct zero-attempt
+	# result, so the loop simply must not run.
+	#
+	# G4: `done_status` is the LATEST attempt's own terminal state, not "last
+	# non-null across all attempts". attempt_files is sorted ascending, so the
+	# final iteration's value wins whether or not it is null -- a completed
+	# attempt 1 no longer masks a start-only attempt 2. progress and findings
+	# still merge across every attempt: recovering on-disk work from earlier
+	# attempts is the whole point of the disk-first design (R3/R4); only
+	# STATUS is latest-attempt-scoped.
 	merged="$(jq -n -c '{progress: [], findings: [], done_status: null}')"
-	for f in "${attempt_files[@]}"; do
-		parsed="$(parse_attempt_file "$f")"
-		merged="$(printf '%s' "$merged" | jq -c --argjson p "$parsed" '
-			.progress += $p.progress
-			| .findings += $p.findings
-			| .done_status = (if $p.done_status != null then $p.done_status else .done_status end)
-		')"
-	done
+	if ((files > 0)); then
+		for f in "${attempt_files[@]}"; do
+			parsed="$(parse_attempt_file "$f")"
+			merged="$(printf '%s' "$merged" | jq -c --argjson p "$parsed" '
+				.progress += $p.progress
+				| .findings += $p.findings
+				| .done_status = $p.done_status
+			')"
+		done
+	fi
 
 	lens_full="$(printf '%s' "$merged" | jq -c \
 		--argjson assigned "$assigned_json" \
 		--argjson effective "$effective" \
+		--argjson running "$running" \
 		--arg lens "$lens" \
 		'
 		# file/line for the dedup key: prefer explicit .file/.line, else
@@ -439,6 +558,11 @@ while [[ "$i" -lt "$n" ]]; do
 			if .done_status == "completed" then "completed"
 			elif .done_status == "errored" then "errored"
 			elif .done_status == "skipped" then "skipped"
+			# $running > 0 means the orchestrator declared this lens still
+			# in flight, so a non-terminal `partial` is the honest answer --
+			# `timed_out` would make --continue stop waiting on a healthy
+			# attempt.
+			elif $running > 0 then "partial"
 			elif $effective >= 2 then "timed_out"
 			else "partial"
 			end
@@ -465,4 +589,3 @@ if [[ "$FINDINGS_JSONL" -eq 1 ]]; then
 else
 	printf '%s\n' "$output"
 fi
-

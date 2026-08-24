@@ -86,3 +86,13 @@ reconciliation-tests:
 lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh
     shfmt -d scripts/*.sh scripts/lib/*.sh
+
+# Plugin-level guards: CLAUDE.md hygiene rules, the `# noqa` stripping probe,
+# and the manifest checks. (tests/plugin/test_history_and_assets.sh is
+# deliberately NOT listed: it is a one-off migration-commit assertion that
+# only holds against the specific commit it was written for, not a suite
+# member that can run against arbitrary HEAD.)
+plugin-tests:
+    bash tests/plugin/test-claude-md-hygiene.sh
+    bash tests/plugin/noqa-probe.sh
+    bash tests/plugin/test_manifests.sh

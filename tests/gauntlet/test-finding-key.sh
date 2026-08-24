@@ -170,6 +170,18 @@ k_split_a="$(key_of "$f_split_a")"
 k_split_b="$(key_of "$f_split_b")"
 assert_ne "$k_split_a" "$k_split_b" "F6(b): length-prefixed encoding -- file=\"a\",summary=\"b|c\" vs file=\"a|b\",summary=\"c\" do NOT collide"
 
+# --- 12. G6: a final line WITHOUT a trailing newline still yields a key ---
+# The keys feed convergence-ledger.sh --present-keys/--claimed-keys; a
+# dropped last line silently loses a regression or a claimed fix.
+
+no_nl_stream="$(printf '{"file":"a.md","line":1,"category":"Logic","summary":"first"}\n{"file":"b.md","line":2,"category":"Logic","summary":"second"}')"
+no_nl_keys="$(printf '%s' "$no_nl_stream" | bash "$FINDING_KEY_SCRIPT" -)"
+no_nl_count="$(printf '%s\n' "$no_nl_keys" | grep -c .)"
+assert_eq "$no_nl_count" "2" "G6: two JSON objects with NO trailing newline yield 2 keys (last line not dropped)"
+
+with_nl_keys="$(printf '%s\n' "$no_nl_stream" | bash "$FINDING_KEY_SCRIPT" -)"
+assert_eq "$no_nl_keys" "$with_nl_keys" "G6: newline-terminated and unterminated input produce identical keys"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

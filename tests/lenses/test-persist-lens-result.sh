@@ -398,4 +398,171 @@ else
 	sed 's/^/    /' "$case8_root/stderr"
 fi
 
+# ---------------------------------------------------------------------------
+# (9) G1 -- --json-stdin carries untrusted text without shell expansion
+# ---------------------------------------------------------------------------
+
+case9_root="$TMPDIR_ROOT/case-9"
+mkdir -p "$case9_root"
+case9_canary="$case9_root/pwned"
+
+case9_evidence='literal $(touch "'"$case9_canary"'") and `touch '"$case9_canary"'` and a " quote'
+case9_json="$(jq -n -c --arg ev "$case9_evidence" '{
+	type: "finding", severity: "Critical", category: "Logic",
+	location: "a.md:1", summary: "untrusted text round-trip",
+	evidence: $ev, suggestion: "none"
+}')"
+
+set +e
+printf '%s' "$case9_json" | bash "$SCRIPT" --root "$case9_root" --skill deep-review \
+	--run-id run-9 --lens logic --attempt 1 --json-stdin \
+	>"$case9_root/stdout" 2>"$case9_root/stderr"
+case9_exit=$?
+set -e
+
+case9_target="$case9_root/.deep-review/lenses/run-9/logic.1.jsonl"
+if [[ $case9_exit -ne 0 ]]; then
+	fail "(9) --json-stdin finding must exit 0 (got $case9_exit)"
+	sed 's/^/    /' "$case9_root/stderr"
+elif [[ -e "$case9_canary" ]]; then
+	fail "(9) --json-stdin evidence was shell-expanded -- canary $case9_canary exists"
+elif [[ ! -f "$case9_target" ]]; then
+	fail "(9) --json-stdin wrote no line at $case9_target"
+else
+	case9_got="$(jq -r '.evidence' "$case9_target")"
+	case9_type="$(jq -r '.type' "$case9_target")"
+	case9_attempt="$(jq -r '.attempt' "$case9_target")"
+	case9_lens="$(jq -r '.lens' "$case9_target")"
+	if [[ "$case9_got" == "$case9_evidence" && "$case9_type" == "finding" && "$case9_attempt" == "1" && "$case9_lens" == "logic" ]]; then
+		pass "(9) --json-stdin persists untrusted evidence literally, no shell expansion"
+	else
+		fail "(9) --json-stdin round-trip mismatch (type=$case9_type lens=$case9_lens attempt=$case9_attempt evidence='$case9_got')"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (9b) G1 -- --json-stdin line is byte-identical to the flag-mode line
+# ---------------------------------------------------------------------------
+
+case9b_root="$TMPDIR_ROOT/case-9b"
+mkdir -p "$case9b_root"
+
+set +e
+bash "$SCRIPT" --root "$case9b_root" --skill deep-review --run-id run-9b \
+	--lens logic --attempt 1 --type finding --severity Important \
+	--category Logic --location 'a.md:2' --summary 'flag mode' \
+	--evidence 'ev' --suggestion 'sg' >/dev/null 2>"$case9b_root/stderr"
+case9b_flag_exit=$?
+printf '%s' '{"type":"finding","severity":"Important","category":"Logic","location":"a.md:2","summary":"flag mode","evidence":"ev","suggestion":"sg"}' |
+	bash "$SCRIPT" --root "$case9b_root" --skill deep-review --run-id run-9b \
+		--lens logic --attempt 2 --json-stdin >/dev/null 2>>"$case9b_root/stderr"
+case9b_json_exit=$?
+set -e
+
+case9b_a="$case9b_root/.deep-review/lenses/run-9b/logic.1.jsonl"
+case9b_b="$case9b_root/.deep-review/lenses/run-9b/logic.2.jsonl"
+if [[ $case9b_flag_exit -ne 0 || $case9b_json_exit -ne 0 ]]; then
+	fail "(9b) flag/json parity setup failed (flag=$case9b_flag_exit json=$case9b_json_exit)"
+	sed 's/^/    /' "$case9b_root/stderr"
+elif [[ ! -f "$case9b_a" || ! -f "$case9b_b" ]]; then
+	fail "(9b) flag/json parity: one of the attempt files is missing"
+else
+	case9b_norm_a="$(jq -c 'del(.ts) | .attempt = 0' "$case9b_a")"
+	case9b_norm_b="$(jq -c 'del(.ts) | .attempt = 0' "$case9b_b")"
+	if [[ "$case9b_norm_a" == "$case9b_norm_b" ]]; then
+		pass "(9b) --json-stdin produces the same line shape as flag mode (one encoder)"
+	else
+		fail "(9b) flag/json line shapes diverge: '$case9b_norm_a' vs '$case9b_norm_b'"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (10) G1 -- malformed / non-object stdin exits 2 and writes nothing
+# ---------------------------------------------------------------------------
+
+case10_root="$TMPDIR_ROOT/case-10"
+mkdir -p "$case10_root"
+
+set +e
+printf '%s' '{"type":"finding",' | bash "$SCRIPT" --root "$case10_root" \
+	--skill deep-review --run-id run-10 --lens logic --attempt 1 --json-stdin \
+	>"$case10_root/stdout" 2>"$case10_root/stderr"
+case10_exit=$?
+printf '%s' '["not","an","object"]' | bash "$SCRIPT" --root "$case10_root" \
+	--skill deep-review --run-id run-10 --lens logic --attempt 1 --json-stdin \
+	>>"$case10_root/stdout" 2>>"$case10_root/stderr"
+case10_arr_exit=$?
+set -e
+
+if [[ $case10_exit -eq 2 && $case10_arr_exit -eq 2 ]]; then
+	if no_jsonl_anywhere "$case10_root"; then
+		pass "(10) malformed JSON and non-object stdin both exit 2, nothing written"
+	else
+		fail "(10) malformed --json-stdin exited 2 but a file was written anyway"
+	fi
+else
+	fail "(10) malformed/non-object --json-stdin must exit 2 (got $case10_exit / $case10_arr_exit)"
+	sed 's/^/    /' "$case10_root/stderr"
+fi
+
+# ---------------------------------------------------------------------------
+# (11) G1 -- --json-stdin is mutually exclusive with the payload flags
+# ---------------------------------------------------------------------------
+
+case11_root="$TMPDIR_ROOT/case-11"
+mkdir -p "$case11_root"
+
+set +e
+printf '%s' '{"type":"finding","severity":"Minor","category":"Logic","location":"a.md:1","summary":"s"}' |
+	bash "$SCRIPT" --root "$case11_root" --skill deep-review --run-id run-11 \
+		--lens logic --attempt 1 --json-stdin --type finding \
+		>"$case11_root/stdout" 2>"$case11_root/stderr"
+case11_exit=$?
+printf '%s' '{"type":"finding","severity":"Minor","category":"Logic","location":"a.md:1","summary":"s"}' |
+	bash "$SCRIPT" --root "$case11_root" --skill deep-review --run-id run-11 \
+		--lens logic --attempt 1 --json-stdin --evidence 'x' \
+		>>"$case11_root/stdout" 2>>"$case11_root/stderr"
+case11_ev_exit=$?
+set -e
+
+if [[ $case11_exit -eq 2 && $case11_ev_exit -eq 2 ]]; then
+	if no_jsonl_anywhere "$case11_root"; then
+		pass "(11) --json-stdin with --type/--evidence exits 2, nothing written"
+	else
+		fail "(11) --json-stdin + payload flag exited 2 but a file was written anyway"
+	fi
+else
+	fail "(11) --json-stdin + payload flag must exit 2 (got $case11_exit / $case11_ev_exit)"
+	sed 's/^/    /' "$case11_root/stderr"
+fi
+
+# ---------------------------------------------------------------------------
+# (12) G1 -- path-controlling keys inside the JSON body are ignored
+# ---------------------------------------------------------------------------
+
+case12_root="$TMPDIR_ROOT/case-12"
+mkdir -p "$case12_root"
+
+set +e
+printf '%s' '{"type":"done","status":"completed","lens":"evil","attempt":99,"run_id":"other","skill":"review-plan","root":"/tmp/evil"}' |
+	bash "$SCRIPT" --root "$case12_root" --skill deep-review --run-id run-12 \
+		--lens logic --attempt 1 --json-stdin >"$case12_root/stdout" 2>"$case12_root/stderr"
+case12_exit=$?
+set -e
+
+case12_target="$case12_root/.deep-review/lenses/run-12/logic.1.jsonl"
+if [[ $case12_exit -ne 0 ]]; then
+	fail "(12) --json-stdin done must exit 0 (got $case12_exit)"
+	sed 's/^/    /' "$case12_root/stderr"
+elif [[ ! -f "$case12_target" ]]; then
+	fail "(12) body-supplied lens/attempt redirected the write path (expected $case12_target)"
+else
+	case12_fields="$(jq -r '[.lens, (.attempt|tostring), .run_id, .status] | join(" ")' "$case12_target")"
+	if [[ "$case12_fields" == "logic 1 run-12 completed" ]]; then
+		pass "(12) orchestrator-owned keys in the JSON body are ignored"
+	else
+		fail "(12) orchestrator-owned keys leaked from the body: '$case12_fields'"
+	fi
+fi
+
 finish

@@ -13,6 +13,7 @@ just parity-tests                # Bundle + allowlist + orchestration-contract +
 just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
 just lint-scripts                # shellcheck + shfmt on scripts/
+just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + `# noqa` probe + manifest checks
 ```
 
 Requires: `brew install just jq shellcheck shfmt`

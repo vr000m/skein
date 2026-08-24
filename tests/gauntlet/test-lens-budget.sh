@@ -14,17 +14,11 @@
 # wins over the computed value — "budgets are one formula, bundled,
 # overridable in seconds" (Phase 1 Goal).
 #
-# NOTE (assumption, flagged for the implementer): the plan's R1 prose names
-# the override flag `--gate-timeout <seconds>` only in the context of the
-# Codex gate invocation; the Phase 1 checklist separately lists "override
-# beats computed" as a generic lens-budget.sh test case. This suite tests
-# the override under the flag name `--override <seconds>`, since the Goal
-# line frames overridability as a property of the one shared formula, not
-# just the codex kind. If the implementation instead lands `--gate-timeout`
-# as the sole override flag name (kind-specific or global), this suite's
-# override assertions will need the flag name updated to match — a one-line
-# fix, not a design change. This is the single interface ambiguity in an
-# otherwise fully-specified formula.
+# The override flag is `--gate-timeout <seconds>` — the one name every
+# production caller (both review-gauntlet SKILL.md mirrors) already uses.
+# An earlier revision of this suite guessed at a second spelling
+# (`--gate-timeout`); that alias was removed so there is one name and one
+# behaviour for a script bundled into three skills (G12d).
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
@@ -112,14 +106,13 @@ else
 fi
 
 # --- override beats computed ----------------------------------------------
-# See NOTE above on the flag-name assumption (--override).
 
 override_val=777
-budget="$("$LENS_BUDGET" --kind lens --files 122 --override "$override_val")"
-assert_eq "$budget" "$override_val" "lens: an explicit --override wins over the computed (would-be-capped) value"
+budget="$("$LENS_BUDGET" --kind lens --files 122 --gate-timeout "$override_val")"
+assert_eq "$budget" "$override_val" "lens: an explicit --gate-timeout wins over the computed (would-be-capped) value"
 
-budget="$("$LENS_BUDGET" --kind codex --files 0 --lines 0 --override "$override_val")"
-assert_eq "$budget" "$override_val" "codex: an explicit --override wins over the computed (would-be-floored) value"
+budget="$("$LENS_BUDGET" --kind codex --files 0 --lines 0 --gate-timeout "$override_val")"
+assert_eq "$budget" "$override_val" "codex: an explicit --gate-timeout wins over the computed (would-be-floored) value"
 
 # --- missing/invalid --kind is a usage error, not a silent default --------
 
@@ -145,49 +138,123 @@ fi
 # so it must be rejected here rather than passed through.
 
 rc=0
-out="$("$LENS_BUDGET" --kind codex --override 0 2>/dev/null)" || rc=$?
+out="$("$LENS_BUDGET" --kind codex --gate-timeout 0 2>/dev/null)" || rc=$?
 if [[ "$rc" -ge 2 ]]; then
-	pass "codex: --override 0 exits with a usage error (rc=$rc)"
+	pass "codex: --gate-timeout 0 exits with a usage error (rc=$rc)"
 else
-	fail "codex: --override 0 did not exit with a usage error (rc=$rc, stdout='$out')"
+	fail "codex: --gate-timeout 0 did not exit with a usage error (rc=$rc, stdout='$out')"
 fi
 
-stderr_out="$("$LENS_BUDGET" --kind codex --override 0 2>&1 >/dev/null)" || true
-stdout_out="$("$LENS_BUDGET" --kind codex --override 0 2>/dev/null)" || true
+stderr_out="$("$LENS_BUDGET" --kind codex --gate-timeout 0 2>&1 >/dev/null)" || true
+stdout_out="$("$LENS_BUDGET" --kind codex --gate-timeout 0 2>/dev/null)" || true
 if [[ -n "$stderr_out" ]]; then
-	pass "codex: --override 0 prints a message on stderr"
+	pass "codex: --gate-timeout 0 prints a message on stderr"
 else
-	fail "codex: --override 0 produced no stderr message"
+	fail "codex: --gate-timeout 0 produced no stderr message"
 fi
 if [[ -z "$stdout_out" ]]; then
-	pass "codex: --override 0 prints nothing on stdout"
+	pass "codex: --gate-timeout 0 prints nothing on stdout"
 else
-	fail "codex: --override 0 wrote to stdout (expected nothing): '$stdout_out'"
+	fail "codex: --gate-timeout 0 wrote to stdout (expected nothing): '$stdout_out'"
 fi
 
 rc=0
 "$LENS_BUDGET" --kind codex --gate-timeout 0 >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ge 2 ]]; then
-	pass "codex: --gate-timeout 0 exits with a usage error (rc=$rc) — same rule, other flag spelling"
+	pass "codex: --gate-timeout 0 exits with a usage error (rc=$rc) — repeated for the second call site"
 else
 	fail "codex: --gate-timeout 0 did not exit with a usage error (rc=$rc)"
 fi
 
 rc=0
-"$LENS_BUDGET" --kind lens --override -5 >/dev/null 2>&1 || rc=$?
+"$LENS_BUDGET" --kind lens --gate-timeout -5 >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ge 2 ]]; then
-	pass "lens: --override -5 exits with a usage error (rc=$rc)"
+	pass "lens: --gate-timeout -5 exits with a usage error (rc=$rc)"
 else
-	fail "lens: --override -5 did not exit with a usage error (rc=$rc)"
+	fail "lens: --gate-timeout -5 did not exit with a usage error (rc=$rc)"
 fi
 
-budget="$("$LENS_BUDGET" --kind lens --override 1)"
-assert_eq "$budget" "1" "lens: --override 1 is accepted (boundary value; no over-clamp of an explicit operator override)"
+budget="$("$LENS_BUDGET" --kind lens --gate-timeout 1)"
+assert_eq "$budget" "1" "lens: --gate-timeout 1 is accepted (boundary value; no over-clamp of an explicit operator override)"
 
 # Regression: the size inputs (--files/--lines/--sections) must still accept
 # 0 — the override validation change must not leak across to them.
 budget="$("$LENS_BUDGET" --kind lens --files 0 --lines 0)"
 assert_eq "$budget" "300" "lens: --files 0 --lines 0 still succeeds at the 300s floor (0 remains legal for size inputs)"
+
+# --- G9 (findings 16/23): zero-padded size inputs and the never-silent rule
+# is_nonneg_int accepts "08", but bash's default-base arithmetic reads it as
+# octal and errors. `local raw=$((...))` then swallowed that failure in
+# `local`'s own return status, so the script printed an error to stderr,
+# nothing usable to stdout, and exited 0 — a caller doing
+# `budget=$(lens-budget.sh ...)` got an empty budget with success status.
+
+pad_rc=0
+pad_out="$("$LENS_BUDGET" --kind lens --files 08 --lines 0 2>/dev/null)" || pad_rc=$?
+plain_out="$("$LENS_BUDGET" --kind lens --files 8 --lines 0)"
+if [[ "$pad_rc" -eq 0 && "$pad_out" == "$plain_out" ]]; then
+	pass "lens: --files 08 is base-10 (same result as --files 8: $plain_out)"
+else
+	fail "lens: --files 08 must equal --files 8 (rc=$pad_rc, got '$pad_out', want '$plain_out')"
+fi
+
+pad_rc=0
+pad_out="$("$LENS_BUDGET" --kind lens --files 0 --lines 0900 2>/dev/null)" || pad_rc=$?
+plain_out="$("$LENS_BUDGET" --kind lens --files 0 --lines 900)"
+if [[ "$pad_rc" -eq 0 && "$pad_out" == "$plain_out" ]]; then
+	pass "lens: --lines 0900 is base-10 (same result as --lines 900: $plain_out)"
+else
+	fail "lens: --lines 0900 must equal --lines 900 (rc=$pad_rc, got '$pad_out', want '$plain_out')"
+fi
+
+pad_rc=0
+pad_out="$("$LENS_BUDGET" --kind plan-lens --sections 09 2>/dev/null)" || pad_rc=$?
+plain_out="$("$LENS_BUDGET" --kind plan-lens --sections 9)"
+if [[ "$pad_rc" -eq 0 && "$pad_out" == "$plain_out" ]]; then
+	pass "plan-lens: --sections 09 is base-10 (same result as --sections 9: $plain_out)"
+else
+	fail "plan-lens: --sections 09 must equal --sections 9 (rc=$pad_rc, got '$pad_out', want '$plain_out')"
+fi
+
+pad_rc=0
+pad_out="$("$LENS_BUDGET" --kind codex --files 08 --lines 08 2>/dev/null)" || pad_rc=$?
+plain_out="$("$LENS_BUDGET" --kind codex --files 8 --lines 8)"
+if [[ "$pad_rc" -eq 0 && "$pad_out" == "$plain_out" ]]; then
+	pass "codex: zero-padded --files/--lines are base-10 (same result: $plain_out)"
+else
+	fail "codex: zero-padded --files/--lines must match unpadded (rc=$pad_rc, got '$pad_out', want '$plain_out')"
+fi
+
+# The invariant behind all four: exit 0 always implies a usable budget on
+# stdout. Never "empty stdout, exit 0".
+never_silent_ok=1
+for probe in "--kind lens --files 08 --lines 0" \
+	"--kind lens --files 0 --lines 0900" \
+	"--kind plan-lens --sections 09" \
+	"--kind codex --files 08 --lines 08" \
+	"--kind lens --files 0 --lines 0" \
+	"--kind codex --gate-timeout 900"; do
+	probe_rc=0
+	# shellcheck disable=SC2086 # probe is a deliberate flag list
+	probe_out="$("$LENS_BUDGET" $probe 2>/dev/null)" || probe_rc=$?
+	if [[ "$probe_rc" -eq 0 ]] && ! [[ "$probe_out" =~ ^[0-9]+$ ]]; then
+		fail "never-silent: '$probe' exited 0 with unusable stdout '$probe_out'"
+		never_silent_ok=0
+	fi
+done
+if [[ "$never_silent_ok" -eq 1 ]]; then
+	pass "never-silent: exit 0 always implies a bare-integer budget on stdout"
+fi
+
+# --- G12d: the --override alias is gone; one name, one behaviour ----------
+
+alias_rc=0
+alias_out="$("$LENS_BUDGET" --kind lens --override 777 2>/dev/null)" || alias_rc=$?
+if [[ "$alias_rc" -ge 2 && -z "$alias_out" ]]; then
+	pass "G12d: the --override alias is rejected as an unrecognised argument (rc=$alias_rc)"
+else
+	fail "G12d: --override must be rejected (rc=$alias_rc, stdout='$alias_out')"
+fi
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

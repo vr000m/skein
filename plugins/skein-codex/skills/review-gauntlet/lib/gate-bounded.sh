@@ -27,11 +27,17 @@
 #     both report the same exit-code alphabet for the two ways a bounded
 #     run can end: 124 if the child exited during the grace window after
 #     SIGTERM, 137 if the grace window expired and the group had to be
-#     SIGKILLed. Expiry is inferred from that alphabet plus measured wall
-#     clock (see the `expired` predicate below), not from a single
-#     sentinel exit code — a killed child can never exit 0, so a
-#     legitimately successful run that happens to finish exactly at the
-#     budget boundary is never misclassified.
+#     SIGKILLed. Expiry is NOT inferred from that alphabet: an exit code is
+#     something the reviewed command itself can choose, and a gate that
+#     merely exits 124 inside its budget is a normal completed run whose
+#     tool-out must be kept. Expiry comes from the RUNNER's own recorded
+#     state instead — the python3 shim writes `TIMEOUT` into a sidecar
+#     state file on its `TimeoutExpired` path only — falling back to
+#     measured wall clock (`duration_s >= seconds`) for the GNU/Homebrew
+#     `timeout` path, where a real timeout always consumed the budget. A
+#     killed child can never exit 0, so the `exit_code != 0` guard still
+#     protects a legitimately successful run that finishes exactly at the
+#     budget boundary (integer `date +%s` truncation) from misclassification.
 #
 #     On expiry, a pgid-scoped sweep (`_gate_sweep_pgid`, below) TERMs then
 #     KILLs any survivor left in the child's own process group — recorded
@@ -65,7 +71,8 @@
 #         runs against the same budget produce a structurally identical
 #         envelope modulo `duration_s` itself.
 #       - any other exit, <tool-out> holds a JSON object with a string
-#         `.status`: envelope is that JSON's own object, with
+#         `.status` AND an array `.findings`: envelope is that JSON's own
+#         object, with
 #         {"duration_s":<measured>,"degraded_reason":null} merged in — a
 #         tool-reported "approve"/"needs-attention"/"error" status passes
 #         through unchanged. This is exactly `run-gate.sh normalize`'s own
@@ -74,12 +81,19 @@
 #         (e.g. `[1,2]`), an object with no `.status`, and an object whose
 #         `.status` is `null`/non-string all fall through to the error
 #         envelope below instead of passing through as a zero-byte or
-#         unreadable envelope. When `--gate <name>` is supplied, `.gate` is
-#         overwritten with `<name>` even on this clean path, superseding
-#         whatever the tool itself reported.
+#         unreadable envelope. `.findings` must additionally be a real
+#         array: `normalize` reads `.findings[]?`, and the `?` silently
+#         swallows a null/non-array field, so without this leg a malformed
+#         gate reported as CLEAN ("zero findings") rather than as an error.
+#         Accepted therefore means: normalize can read `.status` AND "zero
+#         findings" means zero findings rather than an unreadable field.
+#         When `--gate <name>` is supplied, `.gate` is overwritten with
+#         `<name>` even on this clean path, superseding whatever the tool
+#         itself reported.
 #       - any other exit, <tool-out> missing/empty/not a JSON object with a
-#         string `.status` (the tool crashed mid-write inside budget, or
-#         emitted a shape normalize can't read): envelope is
+#         string `.status` and an array `.findings` (the tool crashed
+#         mid-write inside budget, or emitted a shape normalize can't
+#         read): envelope is
 #         {"status":"error","notes":"...","findings":[],"gate":<name-or-null>,
 #         "duration_s":<measured>,"degraded_reason":null} — never a
 #         clean-looking envelope. <tool-out> itself is retained on this
@@ -100,22 +114,46 @@
 
 # _gate_sweep_pgid <pgid> — TERM then (after a 5s grace, polled) KILL every
 # survivor in process group <pgid>, except this shell's own pid. Called
-# only from the expiry branch of gate_run_bounded, never elsewhere. Three
-# independent guards make a wrong kill structurally impossible:
+# only from the expiry branch of gate_run_bounded, never elsewhere.
+#
+# Four independent guards narrow a wrong kill to a residual race that is
+# NOT closable in portable shell (see the last paragraph) — the earlier
+# claim that a wrong kill is "structurally impossible" over-stated it:
 #   - <pgid> must be numeric and > 1 (never "my group", never init);
 #   - <pgid> must differ from this shell's own process group (the exact
 #     hazard a background job inherits the caller's pgid);
+#   - the group LEADER must still be alive and still be the recorded pid —
+#     i.e. `pgrep -g <pgid>` must list <pgid> itself. `wait` reaps the
+#     timeout/shim child before the expiry branch runs, so without this
+#     guard the recorded pgid is a freed pid that the OS may already have
+#     reassigned;
 #   - this shell's own pid is filtered out of whatever `pgrep -g` returns.
+#
 # If the recorded pgid is empty, not a real group leader (e.g. `timeout`
 # were ever run with `--foreground`, or a non-GNU `timeout` failed to
-# create a group), or the group is already gone, this is a silent no-op —
-# it degrades to silence, never to a wrong kill.
+# create a group), the leader is already gone (the common post-
+# `--kill-after` case), or any probe command fails, this is a silent no-op
+# — it degrades to silence, never to a wrong kill and never to an aborted
+# expiry branch.
+#
+# RESIDUAL RACE (not closable here): between the leader-liveness probe and
+# the `kill`, the OS could in principle recycle <pgid> onto an unrelated
+# new group leader. Closing that would need a pidfd/process-handle API that
+# portable bash does not have. It is documented rather than claimed away.
 _gate_sweep_pgid() {
 	local pgid="$1" self_pgid survivors
 	[[ "$pgid" =~ ^[0-9]+$ ]] || return 0
 	((pgid > 1)) || return 0
-	self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
+	# `|| true`: this is a PIPELINE, and the function runs under the
+	# caller's `set -euo pipefail`. A `ps` EPERM (macOS sandbox) would make
+	# the assignment non-zero and `set -e` would abort this function — and
+	# with it the whole expiry branch, BEFORE the `skipped` envelope was
+	# written. The next line already treats an empty value as "unknown,
+	# proceed", so this is semantically a no-op that removes the abort.
+	self_pgid="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ' || true)"
 	[[ -n "$self_pgid" && "$pgid" == "$self_pgid" ]] && return 0
+	# Fourth guard: the recorded pid must still BE the live group leader.
+	pgrep -g "$pgid" 2>/dev/null | grep -qx "$pgid" || return 0
 	survivors="$(pgrep -g "$pgid" 2>/dev/null | grep -vx "$$" || true)"
 	[[ -n "$survivors" ]] || return 0
 	# shellcheck disable=SC2086
@@ -177,8 +215,11 @@ gate_run_bounded() {
 	# python3 shim path — same promise, same timing, both paths.
 	local kill_after_s=10
 
-	local pgid_file
+	local pgid_file state_file
 	pgid_file="$(mktemp)"
+	# The runner's OWN record of why the run ended. Only the python3 shim's
+	# TimeoutExpired path writes to it; everything else leaves it empty.
+	state_file="$(mktemp)"
 
 	local start_ts end_ts duration_s exit_code=0
 	start_ts="$(date +%s)"
@@ -199,11 +240,11 @@ gate_run_bounded() {
 		wait "$gate_pid" || exit_code=$?
 	else
 		if ! command -v python3 >/dev/null 2>&1; then
-			rm -f "$pgid_file"
+			rm -f "$pgid_file" "$state_file"
 			echo "gate_run_bounded: none of timeout, gtimeout, or python3 is available" >&2
 			return 2
 		fi
-		python3 - "$pgid_file" "$seconds" "$kill_after_s" "$@" >"$tool_out" 2>"${tool_out}.stderr" <<'PYSHIM' || exit_code=$?
+		python3 - "$pgid_file" "$state_file" "$seconds" "$kill_after_s" "$@" >"$tool_out" 2>"${tool_out}.stderr" <<'PYSHIM' || exit_code=$?
 import os
 import signal
 import subprocess
@@ -211,9 +252,10 @@ import sys
 import time
 
 pgid_file = sys.argv[1]
-budget = float(sys.argv[2])
-kill_after = float(sys.argv[3])
-cmd = sys.argv[4:]
+state_file = sys.argv[2]
+budget = float(sys.argv[3])
+kill_after = float(sys.argv[4])
+cmd = sys.argv[5:]
 
 # New session + process group (setsid(1) is absent on this host, so this
 # is done in-process) so killpg below reaches every descendant, not just
@@ -230,6 +272,13 @@ try:
     proc.wait(timeout=budget)
     sys.exit(proc.returncode)
 except subprocess.TimeoutExpired:
+    # The runner's own record that THIS is a budget expiry. bash reads it
+    # instead of guessing from an exit code the child could have chosen.
+    try:
+        with open(state_file, "w") as f:
+            f.write("TIMEOUT")
+    except OSError:
+        pass
     try:
         pgid = os.getpgid(proc.pid)
         os.killpg(pgid, signal.SIGTERM)
@@ -266,21 +315,27 @@ PYSHIM
 	end_ts="$(date +%s)"
 	duration_s=$((end_ts - start_ts))
 
-	# Expiry predicate. `expired` iff the command exited non-zero AND
-	# either the runner reported the canonical timeout code, or the
-	# measured wall clock reached the budget (which is what 137 from
-	# `timeout --kill-after` always means when it isn't the exit-code
-	# check above, and what any future runner's signal-death code would
-	# mean too). A killed child can never exit 0, so the `exit_code -ne 0`
-	# guard costs nothing on the expiry side while protecting a
-	# legitimately successful run that happens to finish exactly at the
-	# budget boundary (integer `date +%s` truncation) from being
-	# misclassified. 137 is deliberately not in the literal-code set: it
-	# is also what an in-budget OOM kill of the child looks like, and the
-	# duration clause below correctly classifies that as `error`, not
-	# expiry.
-	local expired=0
-	if [[ "$exit_code" -ne 0 ]] && { [[ "$exit_code" -eq 124 ]] || [[ "$duration_s" -ge "$seconds" ]]; }; then
+	# Expiry predicate. `expired` iff the command exited non-zero AND either
+	# the RUNNER recorded a timeout (the python3 shim's TimeoutExpired path
+	# is the only writer of `$state_file`) or the measured wall clock
+	# reached the budget.
+	#
+	# The old predicate also treated a bare `exit_code == 124` as expiry.
+	# That is wrong: 124 is a value the reviewed command itself can return,
+	# so an in-budget gate exiting 124 had its valid tool-out deleted and a
+	# degraded `skipped` envelope emitted in place of its real result.
+	# Dropping that clause loses nothing on the GNU/Homebrew `timeout` path,
+	# where a genuine timeout always satisfies `duration_s >= seconds`; a
+	# fast `exit 124` no longer can. Neither is 137 in any literal-code set:
+	# it is also what an in-budget OOM kill looks like, and the duration
+	# clause correctly classifies that as `error`.
+	#
+	# `10#` on both operands: `seconds` is only validated as `^[0-9]+$`, so
+	# a zero-padded budget like `060` would otherwise be an octal parse
+	# error inside `(( ))` (same hazard as lens-budget.sh's).
+	local expired=0 runner_state=""
+	[[ -s "$state_file" ]] && runner_state="$(cat "$state_file" 2>/dev/null || true)"
+	if [[ "$exit_code" -ne 0 ]] && { [[ "$runner_state" == "TIMEOUT" ]] || ((10#$duration_s >= 10#$seconds)); }; then
 		expired=1
 	fi
 
@@ -289,7 +344,7 @@ PYSHIM
 		local pgid=""
 		[[ -s "$pgid_file" ]] && pgid="$(cat "$pgid_file")"
 		_gate_sweep_pgid "$pgid"
-		rm -f "$pgid_file"
+		rm -f "$pgid_file" "$state_file"
 		local reason="DEGRADED: timeout after ${seconds}s"
 		jq -n \
 			--arg reason "$reason" \
@@ -300,9 +355,12 @@ PYSHIM
 		return 0
 	fi
 
-	rm -f "$pgid_file"
+	rm -f "$pgid_file" "$state_file"
 
-	if [[ -s "$tool_out" ]] && jq -e 'type == "object" and (.status | type) == "string"' \
+	# G3: `.findings` must be a real array, not merely present-and-ignorable.
+	# `run-gate.sh normalize` reads `.findings[]?`; the `?` swallows a
+	# null/non-array field, so a malformed gate used to report as clean.
+	if [[ -s "$tool_out" ]] && jq -e 'type == "object" and (.status | type) == "string" and (.findings | type) == "array"' \
 		>/dev/null 2>&1 <"$tool_out"; then
 		jq --argjson duration_s "$duration_s" \
 			--arg gate_name "$gate_name" \
@@ -312,7 +370,7 @@ PYSHIM
 		jq -n \
 			--argjson duration_s "$duration_s" \
 			--arg gate_name "$gate_name" \
-			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status)", findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: null}' \
+			'{status: "error", notes: "gate command exited without a valid JSON object tool-out (expected an object with a string .status and an array .findings)", findings: [], gate: (if ($gate_name | length) > 0 then $gate_name else null end), duration_s: $duration_s, degraded_reason: null}' \
 			>"$envelope_out"
 	fi
 	return 0

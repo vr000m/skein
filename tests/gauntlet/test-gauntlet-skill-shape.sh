@@ -500,6 +500,35 @@ assert_phase3_regression_status_shape_for "$CODEX_SKILL_MD" "Codex mirror"
 # round -- membership alone (both phrases appear somewhere) does not prove
 # the ordering, so pin it the same way the gate-order check above does.
 
+# G11: this assertion used to compute `decision_line` and never read it, so
+# it passed for ANY file containing both phrases in any order -- including
+# the exact reordering it claims to forbid. It now compares both numbers.
+#
+# DEVIATION FROM THE r1 FIX DESIGN (deliberate, recorded): the design said
+# to compare the FIRST `status-row` mention against the FIRST
+# `convergence-ledger.sh` mention. That rule is wrong against the real
+# files and would fail BOTH mirrors. Their first `convergence-ledger.sh`
+# references are the `--init`/`--last-decision` setup calls (Claude :54,
+# Codex :52), which legitimately precede the whole per-round runbook. The
+# ordering this test is actually about is "print the gate-status rows
+# BEFORE recording the round and taking its decision", so the anchors are:
+#   - status row = the FIRST `/run-gate.sh status-row` INVOCATION line
+#     (path-prefixed, so a prose mention never anchors it);
+#   - decision   = the LAST path-prefixed `convergence-ledger.sh`
+#     invocation line -- the round-recording call (Claude's `--count ...`
+#     at :252, Codex's `"${ledger_args[@]}"` at :325).
+# Both anchors must exist, and the row must come strictly first.
+status_row_before_decision_lines() {
+	# Echoes "<status_row_line> <decision_line>"; either may be empty.
+	local file="$1"
+	local srl dl
+	srl="$(grep -n '/run-gate\.sh status-row' "$file" | head -1 | cut -d: -f1 || true)"
+	dl="$(grep -n '/convergence-ledger\.sh' "$file" | tail -1 | cut -d: -f1 || true)"
+	# Trailing newline matters: `read` returns non-zero on EOF-without-
+	# delimiter, which `set -e` would turn into an abort.
+	printf '%s %s\n' "$srl" "$dl"
+}
+
 assert_status_row_before_decision_for() {
 	local file="$1" label="$2"
 
@@ -509,18 +538,51 @@ assert_status_row_before_decision_for() {
 	fi
 
 	local status_row_line decision_line
-	status_row_line="$(grep -n -m1 -i 'status-row' "$file" | cut -d: -f1 || true)"
-	decision_line="$(grep -n -m1 -iE 'convergence-ledger\.sh' "$file" | tail -1 | cut -d: -f1 || true)"
+	read -r status_row_line decision_line < <(status_row_before_decision_lines "$file") || true
 
-	if [[ -n "$status_row_line" ]]; then
-		pass "$label: status-row is referenced (line $status_row_line) so an ordering check is possible"
+	if [[ -z "$status_row_line" ]]; then
+		fail "$label: no \`run-gate.sh status-row\` invocation line found, cannot verify print-before-decision ordering"
+		return
+	fi
+	if [[ -z "$decision_line" ]]; then
+		fail "$label: no \`convergence-ledger.sh\` invocation line found, cannot verify print-before-decision ordering"
+		return
+	fi
+	if ((status_row_line < decision_line)); then
+		pass "$label: status-row invocation (line $status_row_line) precedes the ledger decision call (line $decision_line)"
 	else
-		fail "$label: status-row is never referenced, cannot verify print-before-decision ordering"
+		fail "$label: status-row invocation (line $status_row_line) must PRECEDE the ledger decision call (line $decision_line)"
 	fi
 }
 
 assert_status_row_before_decision_for "$SKILL_MD" "Claude mirror"
 assert_status_row_before_decision_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# NEGATIVE CONTROL -- the assertion must BITE on the ordering it forbids.
+# Truncating the Claude mirror just after its first status-row invocation
+# drops the round-recording ledger call, leaving the setup-section ledger
+# invocations as the LAST ones: decision_line then precedes status_row_line,
+# which is exactly the reordering this test claims to forbid. Without this
+# control a future refactor could silently neuter the assertion again the
+# way G11 found it.
+negative_control_ordering() {
+	local srl tmp rsrl rdl
+	srl="$(grep -n '/run-gate\.sh status-row' "$SKILL_MD" | head -1 | cut -d: -f1 || true)"
+	if [[ -z "$srl" ]]; then
+		fail "negative control: no status-row invocation line to build a reordered fixture from"
+		return
+	fi
+	tmp="$(mktemp)"
+	head -n "$srl" "$SKILL_MD" >"$tmp"
+	read -r rsrl rdl < <(status_row_before_decision_lines "$tmp") || true
+	if [[ -n "$rsrl" && -n "$rdl" ]] && ((rsrl >= rdl)); then
+		pass "negative control: the ordering assertion reports a violation when the ledger decision precedes the status row (row=$rsrl decision=$rdl)"
+	else
+		fail "negative control: the ordering assertion did NOT bite on a reordered fixture (row='$rsrl' decision='$rdl')"
+	fi
+	rm -f "$tmp"
+}
+negative_control_ordering
 
 # --- Phase 3 fix spec (F1-F6, C1-C3): row-count-per-mirror, envelope-
 # variable-assigned, deferred-promotion prose, and --gate stamping ---------

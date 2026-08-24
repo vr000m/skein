@@ -105,7 +105,12 @@ normalise_summary() {
 	printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -s '[:space:]' ' ' | sed -E 's/^ +//; s/ +$//'
 }
 
-read_input | while IFS= read -r line; do
+# `|| [[ -n "$line" ]]` keeps a final object that lacks a trailing newline:
+# without it the last key is silently dropped, and the keys feed
+# convergence-ledger.sh --present-keys/--claimed-keys, so a reappearing fixed
+# finding on the last line would never fire `regression`. Same idiom as
+# collect-lens-results.sh's attempt-file reader.
+read_input | while IFS= read -r line || [[ -n "$line" ]]; do
 	[[ -n "$line" ]] || continue
 	if ! printf '%s' "$line" | jq -e 'type == "object"' >/dev/null 2>&1; then
 		continue

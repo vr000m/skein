@@ -8,7 +8,7 @@
 #
 # Usage:
 #   lens-budget.sh --kind lens|plan-lens|codex [--files N] [--lines N]
-#                   [--sections N] [--gate-timeout SECONDS | --override SECONDS]
+#                   [--sections N] [--gate-timeout SECONDS]
 #
 # Formula (seconds, coefficients are untuned guesses — Codex ~0.5m/file
 # from an observed ~11.5-minute baseline):
@@ -16,25 +16,32 @@
 #   plan-lens = clamp(120 + 20*sections,                floor=300,  cap=1800)
 #   codex     = clamp(2 * lens(files, lines),            floor=1200, cap=2700)
 #
-# --gate-timeout / --override (synonyms) short-circuit the formula
-# entirely: the given value is echoed back unchanged, no clamping applied
-# — an explicit operator override always beats the computed budget. Must
-# be a positive integer (>= 1); a budget below 1 second is rejected here
+# --gate-timeout short-circuits the formula entirely: the given value is
+# echoed back unchanged, no clamping applied — an explicit operator
+# override always beats the computed budget. It is the ONE override flag
+# name (an earlier `--override` alias was removed: one name, one behaviour,
+# in a script bundled into three skills). Must be a positive integer
+# (>= 1); a budget below 1 second is rejected here
 # because GNU `timeout 0s` and the shim's `proc.wait(timeout=0.0)` mean
 # opposite things ("unbounded" vs. "instant expiry") for the same input.
 #
 # Output: the computed (or overridden) budget in seconds, on stdout, no
-# trailing text.
+# trailing text. Numeric inputs are evaluated with an explicit `10#` base
+# prefix, so a zero-padded value like `08` is eight, not an octal parse
+# error. stdout is either a complete budget line or nothing at all: a
+# caller doing `budget="$(lens-budget.sh ...)"` never sees an empty budget
+# alongside exit 0.
 #
 # Exit codes: 0 success. 2 usage/validation error (missing/unknown --kind,
-# non-numeric input).
+# non-numeric input). Non-zero (and empty stdout) if the arithmetic itself
+# fails.
 
 set -euo pipefail
 
 usage() {
 	cat >&2 <<'EOF'
 usage: lens-budget.sh --kind lens|plan-lens|codex [--files N] [--lines N]
-                       [--sections N] [--gate-timeout SECONDS | --override SECONDS]
+                       [--sections N] [--gate-timeout SECONDS]
 EOF
 }
 
@@ -86,7 +93,7 @@ while [[ $# -gt 0 ]]; do
 		}
 		sections="$1"
 		;;
-	--gate-timeout | --override)
+	--gate-timeout)
 		shift
 		[[ $# -gt 0 ]] || {
 			usage
@@ -109,7 +116,7 @@ done
 
 if [[ -n "$override" ]]; then
 	if ! is_pos_int "$override"; then
-		echo "lens-budget: --gate-timeout/--override must be a positive integer number of seconds (>= 1); got '$override'" >&2
+		echo "lens-budget: --gate-timeout must be a positive integer number of seconds (>= 1); got '$override'" >&2
 		exit 2
 	fi
 	printf '%s\n' "$override"
@@ -129,25 +136,37 @@ for v in "$files" "$lines" "$sections"; do
 	}
 done
 
+# Every operand below is forced to base 10 with `10#`. is_nonneg_int admits
+# a zero-padded value like "08", and bash's default base would read that as
+# octal and fail the whole expression.
+#
+# Every arithmetic assignment is also SPLIT from its `local` declaration.
+# `local raw=$((...))` reports `local`'s exit status, not the arithmetic's,
+# so a failed expression was invisible to `set -e` — the function returned
+# 0, the trailing bare `echo` supplied a newline, and the script exited 0
+# having printed no budget. Declaring first makes the assignment its own
+# command, so `set -e` sees the failure.
 clamp() {
 	local value="$1" floor="$2" cap="$3"
-	if ((value < floor)); then
+	if ((10#$value < 10#$floor)); then
 		value="$floor"
-	elif ((value > cap)); then
+	elif ((10#$value > 10#$cap)); then
 		value="$cap"
 	fi
-	printf '%s' "$value"
+	printf '%s\n' "$value"
 }
 
 lens_seconds() {
 	local f="$1" l="$2"
-	local raw=$((120 + 45 * f + (10 * l) / 100))
+	local raw
+	raw=$((120 + 45 * 10#$f + (10 * 10#$l) / 100))
 	clamp "$raw" 300 1800
 }
 
 plan_lens_seconds() {
 	local s="$1"
-	local raw=$((120 + 20 * s))
+	local raw
+	raw=$((120 + 20 * 10#$s))
 	clamp "$raw" 300 1800
 }
 
@@ -155,7 +174,8 @@ codex_seconds() {
 	local f="$1" l="$2"
 	local lens_s
 	lens_s="$(lens_seconds "$f" "$l")"
-	local raw=$((2 * lens_s))
+	local raw
+	raw=$((2 * 10#$lens_s))
 	clamp "$raw" 1200 2700
 }
 
@@ -168,4 +188,3 @@ codex) codex_seconds "$files" "$lines" ;;
 	exit 2
 	;;
 esac
-echo

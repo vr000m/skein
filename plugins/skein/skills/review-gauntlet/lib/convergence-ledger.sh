@@ -22,6 +22,17 @@
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
 #
+# SINGLE-WRITER BY CONTRACT. The append path is an unlocked
+# read-modify-write (read the ledger, build a new one into a mktemp, `mv`
+# over the original). That is safe because there is exactly one conductor
+# per gauntlet run and exactly one `--append` per round — no documented
+# flow has a second concurrent writer. Concurrent `--append` against one
+# ledger is UNSUPPORTED and will lose a round: the later `mv` wins whole.
+# Adding a portable lock would mean a hand-rolled lock-file lifecycle
+# (`flock` is not available on macOS) for a hazard no current flow can
+# reach, so this is documented rather than defended. Revisit only if a
+# parallel-gauntlet mode is ever designed.
+#
 #   continue | restart | confirm | success | success_with_quarantine
 #       | regression | cap | non-converge
 #
@@ -388,22 +399,30 @@ validate_ledger_shape() {
 # reads back arbitrary, possibly stale ledger state from a prior/interrupted
 # session, a plugin upgrade, or a hand-edited file — validate_ledger_shape
 # alone only checks the top-level {loop_counter, rounds} shape, not that the
-# LAST round actually has numeric count/structural_tally/local_tally/
-# quarantine_size or a valid pass_type. Without this check a null/missing
+# LAST round actually has INTEGER count/structural_tally/local_tally/
+# quarantine_size/unresolved_gates or a valid pass_type. Without this check a null/missing
 # field becomes the literal string "null", and bash's arithmetic evaluator
 # aborts with an "unbound variable" crash instead of the documented exit-code
 # contract. Only called once round_len > 0 is already established.
 validate_last_round_fields() {
 	local ledger_path="$1"
+	# Every one of these five values enters bash arithmetic below, so
+	# `type == "number"` is not enough: it admits 1.5, which crashes
+	# `[[ "$x" -eq N ]]`. Require an INTEGER. `unresolved_gates` is checked
+	# here too — it was previously unvalidated and reached the arithmetic
+	# unguarded — but it stays OPTIONAL (absent defaults to 0, per the
+	# decoder's `// 0`), so only a PRESENT non-integral value is rejected.
 	if ! jq -e '
+		def is_int: type == "number" and (. | floor) == .;
 		.rounds[-1] as $r
-		| ($r.count | type == "number")
-		and ($r.structural_tally | type == "number")
-		and ($r.local_tally | type == "number")
-		and ($r.quarantine_size | type == "number")
+		| ($r.count | is_int)
+		and ($r.structural_tally | is_int)
+		and ($r.local_tally | is_int)
+		and ($r.quarantine_size | is_int)
+		and (($r | has("unresolved_gates") | not) or ($r.unresolved_gates | is_int))
 		and ($r.pass_type == "full" or $r.pass_type == "confirm")
 	' "$ledger_path" >/dev/null 2>&1; then
-		echo "convergence-ledger: ledger at $ledger_path has a malformed last round (missing/invalid count, structural_tally, local_tally, quarantine_size, or pass_type)" >&2
+		echo "convergence-ledger: ledger at $ledger_path has a malformed last round (missing/invalid count, structural_tally, local_tally, quarantine_size, unresolved_gates, or pass_type -- the five numeric fields must be integers)" >&2
 		exit 2
 	fi
 }
@@ -483,19 +502,31 @@ decision_from_ledger() {
 
 	# One combined jq call for loop_counter, ledger-persisted cap/k, and every
 	# field of the last round, instead of one jq subprocess per field.
-	IFS=$'\t' read -r loop_counter cap k count structural local_tally pass_type quarantine unresolved < <(
+	# Separator is \x1f (US), NOT tab. Tab is IFS-whitespace, so
+	# `IFS=$'\t' read` COLLAPSES runs of tabs and empty fields vanish,
+	# shifting every subsequent field: on a ledger without persisted cap/k
+	# the decision chain read `pass_type` as `0` (so a clean full pass could
+	# never fire `success`) and `structural` as `full`. \x1f is not
+	# IFS-whitespace, so an empty field survives as an empty field and the
+	# nine positions are stable.
+	#
+	# `(.cap // "" | tostring)` rather than `has("cap")`: an EXPLICIT
+	# `"cap": null` emitted the literal string "null" under the old guard.
+	# `//` treats null and absent alike, and the `cap="${cap:-$cli_cap}"`
+	# fallback below already handles an empty string correctly.
+	IFS=$'\x1f' read -r loop_counter cap k count structural local_tally pass_type quarantine unresolved < <(
 		jq -r '
 			[
-				.loop_counter,
-				(if has("cap") then .cap else "" end),
-				(if has("k") then .k else "" end),
-				.rounds[-1].count,
-				.rounds[-1].structural_tally,
-				.rounds[-1].local_tally,
-				.rounds[-1].pass_type,
-				.rounds[-1].quarantine_size,
-				(.rounds[-1].unresolved_gates // 0)
-			] | @tsv
+				(.loop_counter | tostring),
+				(.cap // "" | tostring),
+				(.k // "" | tostring),
+				(.rounds[-1].count | tostring),
+				(.rounds[-1].structural_tally | tostring),
+				(.rounds[-1].local_tally | tostring),
+				(.rounds[-1].pass_type | tostring),
+				(.rounds[-1].quarantine_size | tostring),
+				((.rounds[-1].unresolved_gates // 0) | tostring)
+			] | join("\u001f")
 		' "$ledger_path"
 	)
 	cap="${cap:-$cli_cap}"

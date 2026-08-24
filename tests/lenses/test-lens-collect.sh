@@ -790,4 +790,150 @@ JSONL
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# (x) G4/G5/G12c -- status derivation, empty-array expansion, --root guard
+# ---------------------------------------------------------------------------
+
+# --- (x1) G4 finding 7: status comes from the LATEST attempt, not from
+#     "last non-null across all attempts". A completed attempt 1 must not
+#     mask a start-only attempt 2.
+
+x1_dir="$TMPDIR_ROOT/x1"
+make_scratch_repo "$x1_dir"
+write_lens_file "$(lens_file "$x1_dir" deep-review x-run logic 1)" <<'EOF'
+{"type":"start","run_id":"x-run","lens":"logic","attempt":1,"ts":1,"units":["u1","u2"]}
+{"type":"progress","run_id":"x-run","lens":"logic","attempt":1,"ts":2,"unit":"u1"}
+{"type":"done","run_id":"x-run","lens":"logic","attempt":1,"ts":3,"status":"completed"}
+EOF
+write_lens_file "$(lens_file "$x1_dir" deep-review x-run logic 2)" <<'EOF'
+{"type":"start","run_id":"x-run","lens":"logic","attempt":2,"ts":4,"units":["u2"]}
+EOF
+
+x1_out="$(cd "$x1_dir" && bash "$SCRIPT" --skill deep-review --run-id x-run \
+	--expected "logic:u1,u2" --attempts "logic:2")"
+x1_status="$(printf '%s' "$x1_out" | jq -r '.logic.status')"
+if [[ "$x1_status" == "timed_out" ]]; then
+	pass "(x1) G4: a start-only attempt 2 is not masked by attempt 1's done line (status=timed_out)"
+else
+	fail "(x1) G4: expected timed_out from the latest attempt, got '$x1_status'"
+fi
+
+# Earlier attempts' findings/progress must still merge -- disk-first recovery
+# is the whole point; only STATUS is latest-attempt-scoped.
+x1_reviewed="$(printf '%s' "$x1_out" | jq -r '.logic.reviewed')"
+if [[ "$x1_reviewed" == "1" ]]; then
+	pass "(x1b) G4: attempt 1's progress still merges into reviewed (=1)"
+else
+	fail "(x1b) G4: attempt-1 progress must still merge (reviewed='$x1_reviewed')"
+fi
+
+# --- (x2) G4 finding 12: --running <lens>:<n> means "still in flight", so
+#     the collector must not report a terminal timed_out for it.
+
+x2_status="$(cd "$x1_dir" && bash "$SCRIPT" --skill deep-review --run-id x-run \
+	--expected "logic:u1,u2" --attempts "logic:2" --running "logic:2" |
+	jq -r '.logic.status')"
+if [[ "$x2_status" == "partial" ]]; then
+	pass "(x2) G4: --running logic:2 downgrades timed_out to partial"
+else
+	fail "(x2) G4: --running logic:2 must yield partial, got '$x2_status'"
+fi
+
+# --- (x3) G4: on --continue, attempt files 1 and 2 exist and attempt 3 is
+#     in flight. `effective` must come from --attempts, never from
+#     max(index, count), and --running must keep it non-terminal.
+
+x3_dir="$TMPDIR_ROOT/x3"
+make_scratch_repo "$x3_dir"
+write_lens_file "$(lens_file "$x3_dir" deep-review x3-run logic 1)" <<'EOF'
+{"type":"start","run_id":"x3-run","lens":"logic","attempt":1,"ts":1,"units":["u1","u2"]}
+EOF
+write_lens_file "$(lens_file "$x3_dir" deep-review x3-run logic 2)" <<'EOF'
+{"type":"start","run_id":"x3-run","lens":"logic","attempt":2,"ts":2,"units":["u1","u2"]}
+EOF
+
+x3_status="$(cd "$x3_dir" && bash "$SCRIPT" --skill deep-review --run-id x3-run \
+	--expected "logic:u1,u2" --attempts "logic:3" --running "logic:3" |
+	jq -r '.logic.status')"
+if [[ "$x3_status" == "partial" ]]; then
+	pass "(x3) G4: a healthy in-flight attempt 3 reports partial, not terminal timed_out"
+else
+	fail "(x3) G4: in-flight attempt 3 must report partial, got '$x3_status'"
+fi
+
+# Without --running, the same fixture is terminal.
+x3_term="$(cd "$x3_dir" && bash "$SCRIPT" --skill deep-review --run-id x3-run \
+	--expected "logic:u1,u2" --attempts "logic:3" | jq -r '.logic.status')"
+if [[ "$x3_term" == "timed_out" ]]; then
+	pass "(x3b) G4: without --running the same fixture is terminal (timed_out)"
+else
+	fail "(x3b) G4: without --running expected timed_out, got '$x3_term'"
+fi
+
+# --- (x4) G4: the `missing` shortcut must survive the `max` removal --
+#     --attempts logic:2 with zero files on disk is still not `missing`.
+
+x4_dir="$TMPDIR_ROOT/x4"
+make_scratch_repo "$x4_dir"
+mkdir -p "$x4_dir/.deep-review/lenses/x4-run"
+x4_status="$(cd "$x4_dir" && bash "$SCRIPT" --skill deep-review --run-id x4-run \
+	--expected "logic:u1,u2" --attempts "logic:2" | jq -r '.logic.status')"
+if [[ "$x4_status" == "timed_out" ]]; then
+	pass "(x4) G4: spawned-but-fileless attempt 2 is timed_out, not missing"
+else
+	fail "(x4) G4: spawned-but-fileless attempt 2 expected timed_out, got '$x4_status'"
+fi
+
+# A lens with neither files nor an --attempts entry is still `missing`.
+x4_missing="$(cd "$x4_dir" && bash "$SCRIPT" --skill deep-review --run-id x4-run \
+	--expected "logic:u1,u2" | jq -r '.logic.status')"
+if [[ "$x4_missing" == "missing" ]]; then
+	pass "(x4b) G4: no files and no --attempts entry is still missing"
+else
+	fail "(x4b) G4: expected missing, got '$x4_missing'"
+fi
+
+# --- (x5) G5 finding 11: files==0 && effective>=2 must not expand an empty
+#     array under `set -u` (bash 3.2 aborts with no JSON on stdout).
+
+set +e
+x5_out="$(cd "$x4_dir" && /bin/bash "$SCRIPT" --skill deep-review --run-id x4-run \
+	--expected "logic:u1,u2" --attempts "logic:2" 2>"$TMPDIR_ROOT/x5.err")"
+x5_exit=$?
+set -e
+if [[ $x5_exit -eq 0 ]] && printf '%s' "$x5_out" | jq -e '.logic.status == "timed_out"' >/dev/null 2>&1; then
+	pass "(x5) G5: zero attempt files with --attempts logic:2 emits valid JSON under /bin/bash, exit 0"
+else
+	fail "(x5) G5: empty-array expansion under set -u (exit=$x5_exit, stdout='$x5_out')"
+	sed 's/^/    /' "$TMPDIR_ROOT/x5.err"
+fi
+
+# --- (x6) G12c finding 19: --root omitted AND cwd outside a git worktree
+#     is a refusal, not a silent read of a different directory than the
+#     writer wrote to.
+
+x6_dir="$TMPDIR_ROOT/x6-not-a-repo"
+mkdir -p "$x6_dir"
+set +e
+x6_out="$(cd "$x6_dir" && bash "$SCRIPT" --skill deep-review --run-id x6-run \
+	--expected "logic:u1" 2>"$TMPDIR_ROOT/x6.err")"
+x6_exit=$?
+set -e
+if [[ $x6_exit -eq 2 && -z "$x6_out" ]]; then
+	pass "(x6) G12c: --root omitted outside a git worktree exits 2 with empty stdout"
+else
+	fail "(x6) G12c: expected exit 2 + empty stdout (exit=$x6_exit, stdout='$x6_out')"
+	sed 's/^/    /' "$TMPDIR_ROOT/x6.err"
+fi
+
+# An explicit --root from the same non-worktree cwd still works.
+mkdir -p "$x6_dir/state/.deep-review/lenses/x6-run"
+x6_root_status="$(cd "$x6_dir" && bash "$SCRIPT" --root "$x6_dir/state" \
+	--skill deep-review --run-id x6-run --expected "logic:u1" | jq -r '.logic.status')"
+if [[ "$x6_root_status" == "missing" ]]; then
+	pass "(x6b) G12c: an explicit --root outside a git worktree still works"
+else
+	fail "(x6b) G12c: explicit --root outside a worktree failed (status='$x6_root_status')"
+fi
+
 finish

@@ -685,6 +685,183 @@ else
 	pass "I7: a flags-absent ledger carries no present_keys/claimed_keys on any round"
 fi
 
+# --- G7 (finding 10): @tsv + IFS=$'\t' collapses EMPTY fields -------------
+# Tab is IFS-whitespace, so bash collapses runs of tabs and empty fields
+# vanish, shifting every later field. On a ledger written before `cap`/`k`
+# were persisted (or one carrying an explicit `"cap": null`), the decision
+# chain read shifted values: `pass_type` became `0`, so a clean full pass
+# could never fire `success`, and --last-decision silently degraded to
+# `continue`.
+
+handmade_ledger() {
+	local f
+	f="$(mktemp)"
+	TMP_LEDGERS+=("$f")
+	cat >"$f"
+	printf '%s\n' "$f"
+}
+
+# (a) A pre-cap/k ledger: neither key present at all.
+L_precap="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+precap_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_precap" 2>/dev/null || true)"
+assert_eq "$precap_tok" "success" "G7(a): a pre-cap/k ledger's clean full pass still decodes to success (no field shift)"
+
+# (b) An explicit "cap": null / "k": null must behave like absent, not like
+# the literal string "null".
+L_nullcap="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "cap": null,
+  "k": null,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 2,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+nullcap_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_nullcap" 2>/dev/null || true)"
+assert_eq "$nullcap_tok" "success_with_quarantine" "G7(b): an explicit \"cap\": null decodes as absent, not as the string \"null\""
+
+# (c) A round whose pass_type is 'confirm' with findings must still decode
+# positionally even with cap/k absent.
+L_confirm="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 2,
+  "rounds": [
+    {
+      "count": 4,
+      "structural_tally": 2,
+      "local_tally": 2,
+      "pass_type": "confirm",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+confirm_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_confirm" 2>/dev/null || true)"
+assert_eq "$confirm_tok" "restart" "G7(c): structural_tally decodes in the right position with cap/k absent (-> restart)"
+
+# --- G7 (finding 14): unresolved_gates and non-integral numbers ------------
+# validate_last_round_fields never checked unresolved_gates, and `number`
+# admits 1.5. Both reached bash arithmetic and crashed outside the
+# documented exit-code contract.
+
+L_bad_unresolved="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": "oops"
+    }
+  ]
+}
+EOF
+)"
+bu_rc=0
+bu_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_bad_unresolved" 2>/dev/null)" || bu_rc=$?
+if [[ "$bu_rc" -eq 2 && -z "$bu_out" ]]; then
+	pass "G7(d): a non-numeric unresolved_gates exits 2 (invalid ledger), not an arithmetic crash"
+else
+	fail "G7(d): non-numeric unresolved_gates should exit 2 with empty stdout (rc=$bu_rc, out='$bu_out')"
+fi
+
+L_frac="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 1.5
+    }
+  ]
+}
+EOF
+)"
+fr_rc=0
+fr_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_frac" 2>/dev/null)" || fr_rc=$?
+if [[ "$fr_rc" -eq 2 && -z "$fr_out" ]]; then
+	pass "G7(e): a non-integral unresolved_gates (1.5) exits 2, not an arithmetic crash"
+else
+	fail "G7(e): non-integral unresolved_gates should exit 2 with empty stdout (rc=$fr_rc, out='$fr_out')"
+fi
+
+L_frac_count="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "rounds": [
+    {
+      "count": 1.5,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+fc_rc=0
+fc_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_frac_count" 2>/dev/null)" || fc_rc=$?
+if [[ "$fc_rc" -eq 2 && -z "$fc_out" ]]; then
+	pass "G7(f): a non-integral count (1.5) exits 2, not an arithmetic crash"
+else
+	fail "G7(f): non-integral count should exit 2 with empty stdout (rc=$fc_rc, out='$fc_out')"
+fi
+
+# A missing unresolved_gates stays legal (it defaults to 0) — the tightened
+# validator must not break the documented backward-compatible ledger shape.
+L_no_unresolved="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0
+    }
+  ]
+}
+EOF
+)"
+nu_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_no_unresolved" 2>/dev/null || true)"
+assert_eq "$nu_tok" "success" "G7(g): a ledger with no unresolved_gates key still decodes (defaults to 0)"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 
