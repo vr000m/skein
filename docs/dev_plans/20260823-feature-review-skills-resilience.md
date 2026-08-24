@@ -281,7 +281,7 @@ Context lifecycle:
 - [x] Phase 2: Disk-first streamed lens results
 - [x] Phase 3: Regression-loop stop + gate-status rows
 - [x] Phase 4: Hygiene — CLAUDE.md rules + ruff hook
-- [ ] Phase 5: Docs, manifests, backlog
+- [x] Phase 5: Docs, manifests, backlog
 
 ## Status
 
