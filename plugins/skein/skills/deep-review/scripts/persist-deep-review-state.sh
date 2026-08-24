@@ -4,7 +4,7 @@
 # Usage:
 #   scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> \
 #       --base-commit <sha> --head-commit <sha> --diff-hash <sha> \
-#       --review-focus-hash <sha-or-empty> [lenses.json|-]
+#       --review-focus-hash <sha-or-empty> [--from-collector] [lenses.json|-]
 #
 # Reads the per-lens status/findings data the orchestrator assembles after
 # Step 2 completes (before Step 3.5's reconciliation) from the positional
@@ -19,6 +19,25 @@
 # persists that post-audit *reconciled* envelope; this script persists
 # pre-reconciliation per-lens data. Do not conflate the two schemas or their
 # scripts.
+#
+# --from-collector (Phase 2, disk-first streamed lens results): the
+# OPERATIVE input path. The orchestrator pipes `collect-lens-results.sh`
+# stdout directly into this script's stdin (positional argument, if any, is
+# ignored — --from-collector always reads stdin). This is a single
+# derivation path: disk attempt files -> collect-lens-results.sh ->
+# persist-deep-review-state.sh --from-collector -> `.lenses`, with no
+# second writer of the summary. Beyond the generic object-shape check
+# already performed below, --from-collector additionally requires every
+# top-level value to itself be an object carrying a `status` string field
+# (the collector's per-lens contract) — a clearer, earlier error than
+# discovering a malformed collector shape only when `--continue` later
+# tries to read `.lenses.<lens>.status`.
+#
+# The positional `lenses.json`/stdin input (no `--from-collector`) is
+# retained TEST-ONLY: existing tests construct the raw per-lens shape by
+# hand without running the collector. New callers should use
+# --from-collector; this script does not otherwise distinguish the two
+# input shapes beyond the extra check above.
 #
 # The only structural validation performed on the input is that it is valid
 # JSON and its top level is a JSON object (`type == "object"`). This script
@@ -100,6 +119,7 @@ DIFF_HASH=""
 REVIEW_FOCUS_HASH=""
 REVIEW_FOCUS_HASH_SET=0
 LENSES_PATH="-"
+FROM_COLLECTOR=0
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -133,6 +153,9 @@ while [[ $# -gt 0 ]]; do
 		persist_require_value "$@"
 		REVIEW_FOCUS_HASH="$1"
 		REVIEW_FOCUS_HASH_SET=1
+		;;
+	--from-collector)
+		FROM_COLLECTOR=1
 		;;
 	--help | -h)
 		usage
@@ -176,17 +199,35 @@ if ! command -v jq >/dev/null 2>&1; then
 	exit 2
 fi
 
-if [[ "$LENSES_PATH" == "-" ]]; then
+if [[ "$FROM_COLLECTOR" -eq 1 ]]; then
+	# --from-collector always reads stdin; a positional lenses.json is the
+	# test-only path and is ignored here (never silently mixed with a
+	# collector pipe).
 	input="$(cat)"
 else
-	if [[ ! -f "$LENSES_PATH" ]]; then
-		echo "persist-deep-review-state: lenses path '$LENSES_PATH' does not exist" >&2
-		exit 2
+	if [[ "$LENSES_PATH" == "-" ]]; then
+		input="$(cat)"
+	else
+		if [[ ! -f "$LENSES_PATH" ]]; then
+			echo "persist-deep-review-state: lenses path '$LENSES_PATH' does not exist" >&2
+			exit 2
+		fi
+		input="$(cat "$LENSES_PATH")"
 	fi
-	input="$(cat "$LENSES_PATH")"
 fi
 
 persist_validate_json_shape "$input" "persist-deep-review-state" "lenses input" " (one key per lens)" || exit 2
+
+if [[ "$FROM_COLLECTOR" -eq 1 ]]; then
+	# Collector contract: every top-level value must itself be an object
+	# carrying a "status" string field. This is a clearer, earlier error
+	# than discovering a malformed collector shape only when --continue
+	# later tries to read `.lenses.<lens>.status`.
+	if ! printf '%s' "$input" | jq -e 'all(.[]; type == "object" and (has("status")) and (.status | type == "string"))' >/dev/null 2>&1; then
+		echo "persist-deep-review-state: --from-collector input must have one object per lens, each with a string 'status' field (collector contract)" >&2
+		exit 2
+	fi
+fi
 
 ROOT_DIR="$(persist_root_dir)"
 OUT_DIR="$ROOT_DIR/.deep-review"

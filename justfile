@@ -58,6 +58,16 @@ gauntlet-tests:
     bash tests/gauntlet/test-gate-timeout.sh
     bash tests/gauntlet/test-lens-budget.sh
 
+# Phase 2 disk-first streamed lens results: persist-lens-result.sh (writer),
+# collect-lens-results.sh (reader/merge), persist-deep-review-state.sh's
+# --from-collector derivation, and the deep-review/review-plan SKILL.md
+# shape assertions (both mirrors).
+lens-tests:
+    bash tests/lenses/test-persist-lens-result.sh
+    bash tests/lenses/test-lens-collect.sh
+    bash tests/lenses/test-derived-lenses-state.sh
+    bash tests/lenses/test-lens-skill-shape.sh
+
 reconciliation-tests:
     ./scripts/check-prompt-parity.sh
     ./scripts/check-trunk-snippet-parity.sh

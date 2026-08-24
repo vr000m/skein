@@ -36,6 +36,26 @@
 #                                JSON: <reason>" stderr message on any
 #                                failure; the caller is responsible for
 #                                `exit 1` on a non-zero return.
+#   persist_lens_state_dir <root> <skill>
+#                              — print `<root>/.deep-review/lenses` for
+#                                --skill deep-review or `<root>/.review-plan/lenses`
+#                                for --skill review-plan. Used by
+#                                `persist-lens-result.sh` and
+#                                `collect-lens-results.sh` (Phase 2) so both
+#                                scripts derive the same per-run-id attempt-file
+#                                directory from an explicit --root (never cwd).
+#                                Returns 1 with no output for an unknown skill.
+#   persist_jsonl_append <path> <json_line>
+#                              — append one line to <path>, creating parent
+#                                directories as needed. Deliberately a plain
+#                                `>>` append, not `persist_atomic_write`'s
+#                                temp-file-then-rename: the lens attempt-file
+#                                contract is one writer per file (no `flock`,
+#                                no cross-writer atomicity assumption), so
+#                                atomic replace-in-place would be the wrong
+#                                primitive here — every call must add a line,
+#                                never replace the file's prior contents.
+#                                Returns 1 on any mkdir/write failure.
 
 # Root-anchor. Falls back to cwd when not inside a git worktree, matching
 # scripts/apply-auto-fix-plan.sh's pre-existing WORKTREE_ROOT precedent.
@@ -177,5 +197,37 @@ persist_atomic_write() {
 		return 1
 	fi
 
+	return 0
+}
+
+# Phase 2 (disk-first streamed lens results): shared path/append helpers for
+# scripts/persist-lens-result.sh (writer) and scripts/collect-lens-results.sh
+# (reader). Neither script derives a root from cwd — both take an explicit
+# --root — so this helper never falls back to `pwd` the way persist_root_dir
+# does for the two harness-invoked persist-*-state.sh scripts above.
+persist_lens_state_dir() {
+	local root="$1" skill="$2"
+	case "$skill" in
+	deep-review) printf '%s/.deep-review/lenses\n' "$root" ;;
+	review-plan) printf '%s/.review-plan/lenses\n' "$root" ;;
+	*)
+		echo "persist-common: unknown --skill '$skill' (expected deep-review or review-plan)" >&2
+		return 1
+		;;
+	esac
+}
+
+persist_jsonl_append() {
+	local path="$1" line="$2"
+	local dir
+	dir="$(dirname "$path")"
+	if ! mkdir -p "$dir" 2>/dev/null; then
+		echo "persist-common: could not create $dir" >&2
+		return 1
+	fi
+	if ! printf '%s\n' "$line" >>"$path"; then
+		echo "persist-common: could not append to $path" >&2
+		return 1
+	fi
 	return 0
 }

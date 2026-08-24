@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# test-derived-lenses-state.sh — Phase 2 acceptance for the `--continue`
+# re-run set as derived from a persisted `.lenses` object.
+#
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, R4
+# ("`--continue` re-runs `timed_out|errored|partial|absent` (`skipped` is
+# terminal)") and the Phase 2 checklist ("Derived-state test asserts the
+# `--continue` re-run set derived from `.lenses`").
+#
+# There is no separate script that computes the re-run set -- per the
+# plan's Decision Log and Data Flow table, `--continue`'s re-run set is a
+# derivation the deep-review orchestrator itself makes by reading the
+# `.lenses` object persist-deep-review-state.sh's `--from-collector` flag
+# produces (docs/dev_plans/20260823-feature-review-skills-resilience.md,
+# Phase 2, "Derived lens summary" data-flow row). This suite exercises the
+# real chain end to end:
+#
+#   scripts/collect-lens-results.sh (builds per-lens status from JSONL
+#   fixtures) | scripts/persist-deep-review-state.sh --from-collector
+#   (persists it to .lenses) -> jq reads back .lenses and applies the
+#   documented filter (re-run iff status in {timed_out, errored, partial}
+#   or the lens key is absent; NOT skipped or completed).
+#
+# This is intentionally the one test in the Phase 2 suite that depends on
+# BOTH scripts.collect-lens-results.sh AND persist-deep-review-state.sh
+# --from-collector existing -- if either is missing, this suite reports a
+# clean preflight FAIL rather than a raw bash error.
+#
+# Exit codes: 0 all assertions pass, 1 any assertion fails.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+COLLECT="$REPO_ROOT/scripts/collect-lens-results.sh"
+PERSIST="$REPO_ROOT/scripts/persist-deep-review-state.sh"
+
+TMPDIR_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_ROOT"' EXIT
+
+pass_count=0
+fail_count=0
+pass() {
+	echo "PASS: $*"
+	pass_count=$((pass_count + 1))
+}
+fail() {
+	echo "FAIL: $*" >&2
+	fail_count=$((fail_count + 1))
+}
+
+finish() {
+	echo ""
+	echo "Summary: $pass_count passed, $fail_count failed"
+	if [[ $fail_count -ne 0 ]]; then
+		exit 1
+	fi
+	exit 0
+}
+
+missing=0
+if [[ ! -x "$COLLECT" ]]; then
+	fail "preflight (scripts/collect-lens-results.sh not found/executable at $COLLECT -- not implemented yet)"
+	missing=1
+fi
+if [[ ! -x "$PERSIST" ]]; then
+	fail "preflight (scripts/persist-deep-review-state.sh not found/executable at $PERSIST)"
+	missing=1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+	fail "preflight (jq required by this test harness, not found on PATH)"
+	missing=1
+fi
+if [[ "$missing" -ne 0 ]]; then
+	finish
+fi
+
+make_scratch_repo() {
+	local dir="$1"
+	mkdir -p "$dir"
+	(
+		cd "$dir"
+		git init -q
+		git config user.email "test@example.com"
+		git config user.name "Test"
+		echo "placeholder" >README.md
+		git add README.md
+		git commit -q -m "init"
+	)
+}
+
+lens_file() {
+	local dir="$1" run_id="$2" lens="$3" attempt="$4"
+	printf '%s/.deep-review/lenses/%s/%s.%s.jsonl' "$dir" "$run_id" "$lens" "$attempt"
+}
+
+write_lens_file() {
+	local path="$1"
+	mkdir -p "$(dirname "$path")"
+	cat >"$path"
+}
+
+# The documented re-run filter, applied here (in the test, not in
+# implementation code) exactly as R4 states it: re-run iff status is
+# timed_out, errored, or partial, OR the lens key is absent from .lenses
+# entirely ("absent"). completed and skipped are both terminal.
+rerun_set() {
+	local lenses_json="$1"
+	printf '%s' "$lenses_json" | jq -c '
+		[to_entries[] | select(.value.status == "timed_out" or .value.status == "errored" or .value.status == "partial" or .value.status == "missing") | .key] | sort
+	'
+}
+
+DIR="$TMPDIR_ROOT/scratch"
+make_scratch_repo "$DIR"
+RUN_ID="derived-1"
+
+# Five lenses, one per status this test needs to distinguish, plus one
+# lens entirely absent from --expected's own bookkeeping is not
+# representable here (collect-lens-results.sh always reports every
+# --expected lens, using "missing" rather than omitting the key -- see
+# test-lens-collect.sh cases (i)/(j)), so "absent" is exercised as the
+# collector's "missing" status value, per R4's own parenthetical
+# ("absent = missing").
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" completed-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u1"]}
+{"type":"progress","unit":"u1"}
+{"type":"done","status":"completed"}
+JSONL
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" skipped-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u1"]}
+{"type":"done","status":"skipped"}
+JSONL
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" errored-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u1"]}
+{"type":"done","status":"errored"}
+JSONL
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" partial-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+JSONL
+# timed_out-lens: two attempts, neither reaches done.
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" timedout-lens 1)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+JSONL
+write_lens_file "$(lens_file "$DIR" "$RUN_ID" timedout-lens 2)" <<'JSONL'
+{"type":"start","run_id":"derived-1","units":["u2"]}
+JSONL
+# missing-lens: no attempt file at all.
+
+collector_out="$(
+	cd "$DIR" && bash "$COLLECT" --skill deep-review --run-id "$RUN_ID" \
+		--expected "completed-lens:u1" \
+		--expected "skipped-lens:u1" \
+		--expected "errored-lens:u1" \
+		--expected "partial-lens:u1,u2" \
+		--expected "timedout-lens:u1,u2" \
+		--expected "missing-lens:u1"
+)"
+
+persisted="$(
+	cd "$DIR" && printf '%s' "$collector_out" | bash "$PERSIST" --harness claude --run-id "$RUN_ID" \
+		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
+)"
+
+target="$DIR/.deep-review/latest-claude.json"
+if [[ ! -f "$target" ]]; then
+	fail "(setup) --from-collector persisted a .lenses object to disk (no file at $target)"
+	finish
+fi
+
+lenses_json="$(jq -c '.lenses' "$target")"
+
+expected_rerun='["errored-lens","missing-lens","partial-lens","timedout-lens"]'
+actual_rerun="$(rerun_set "$lenses_json")"
+
+if [[ "$actual_rerun" == "$expected_rerun" ]]; then
+	pass "(1) --continue re-run set = {errored, missing/absent, partial, timed_out}, sorted: $actual_rerun"
+else
+	fail "(1) --continue re-run set derived from .lenses (expected $expected_rerun, got $actual_rerun)"
+	echo "    .lenses was: $lenses_json"
+fi
+
+if printf '%s' "$actual_rerun" | jq -e 'index("completed-lens") == null' >/dev/null 2>&1; then
+	pass "(2) completed lens excluded from --continue re-run set"
+else
+	fail "(2) completed lens excluded from --continue re-run set"
+fi
+
+if printf '%s' "$actual_rerun" | jq -e 'index("skipped-lens") == null' >/dev/null 2>&1; then
+	pass "(3) skipped lens excluded from --continue re-run set (terminal per R4)"
+else
+	fail "(3) skipped lens excluded from --continue re-run set"
+fi
+
+finish

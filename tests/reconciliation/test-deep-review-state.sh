@@ -484,6 +484,91 @@ EOF
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# (i)/(j) Phase 2 extension: --from-collector
+#
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 2
+# ("`persist-deep-review-state.sh`: new `--from-collector` flag... persist
+# maps the collector shape to `.lenses`... existing positional `lenses.json`
+# input retained test-only"). New flag; ASSUMPTION (not yet implemented at
+# the time this suite was written, per the Phase 2 test-writer's scope):
+# `--from-collector` reads `scripts/collect-lens-results.sh`'s per-lens
+# object straight off stdin (no positional path allowed alongside it) and
+# writes it into the `lenses` key of the persisted envelope exactly as
+# received (the same wrap-and-stamp shape as positional input, i.e. schema
+# metadata added, `lenses` key populated verbatim from the collector JSON).
+# If the real flag's semantics differ, this case's assertions are the
+# concrete thing to revisit — the case is intentionally isolated so a
+# semantic mismatch fails only (i)/(j), not (a)-(h).
+# ---------------------------------------------------------------------------
+
+# Synthetic collect-lens-results.sh-shaped payload: object keyed by lens,
+# each value {status, reviewed, assigned, unreviewed[], findings[]} per the
+# plan's R4 collector contract.
+sample_collector_output() {
+	cat <<'JSON'
+{
+  "logic": {
+    "status": "completed",
+    "reviewed": 3,
+    "assigned": 3,
+    "unreviewed": [],
+    "findings": []
+  },
+  "security": {
+    "status": "partial",
+    "reviewed": 2,
+    "assigned": 5,
+    "unreviewed": ["u3", "u4", "u5"],
+    "findings": []
+  }
+}
+JSON
+}
+
+case_i_dir="$TMPDIR_ROOT/case-i"
+make_scratch_repo "$case_i_dir"
+
+if (
+	cd "$case_i_dir" && sample_collector_output | bash "$SCRIPT" --harness claude --run-id "cont-1" \
+		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
+) >"$case_i_dir/stdout" 2>"$case_i_dir/stderr"; then
+	target="$case_i_dir/.deep-review/latest-claude.json"
+	if [[ ! -f "$target" ]]; then
+		fail "(i) --from-collector writes a state file with the collector shape under .lenses (no file at $target)"
+	elif jq -e '.lenses.logic.status == "completed" and .lenses.security.status == "partial" and (.lenses.security.unreviewed | length) == 3' "$target" >/dev/null 2>&1; then
+		pass "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim"
+	else
+		fail "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim (unexpected shape)"
+		sed 's/^/    /' "$target"
+	fi
+else
+	fail "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim (script exited non-zero -- --from-collector may not be implemented yet)"
+	sed 's/^/    /' "$case_i_dir/stderr"
+fi
+
+# (j) regression: the pre-existing positional lenses.json path (no
+# --from-collector) must still work unchanged -- it is retained test-only
+# per the plan, but must not have been removed or broken by adding the flag.
+case_j_dir="$TMPDIR_ROOT/case-j"
+make_scratch_repo "$case_j_dir"
+sample_lenses >"$case_j_dir/lenses.json"
+
+if (
+	cd "$case_j_dir" && persist_state "$case_j_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:08Z" "abc1234" "def5678" "sha256:deadbeef" ""
+) >"$case_j_dir/stdout" 2>"$case_j_dir/stderr"; then
+	target="$case_j_dir/.deep-review/latest-claude.json"
+	if [[ -f "$target" ]] && jq -e '.lenses.logic.status == "completed"' "$target" >/dev/null 2>&1; then
+		pass "(j) positional lenses.json input still works after --from-collector is added (regression)"
+	else
+		fail "(j) positional lenses.json input still works after --from-collector is added (regression) (unexpected shape at $target)"
+	fi
+else
+	fail "(j) positional lenses.json input still works after --from-collector is added (regression) (script exited non-zero)"
+	sed 's/^/    /' "$case_j_dir/stderr"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 
