@@ -357,6 +357,76 @@ assert_resume_shape_for() {
 assert_resume_shape_for "$SKILL_MD" "Claude mirror" '\$\{CLAUDE_PLUGIN_ROOT\}' '"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet'
 assert_resume_shape_for "$CODEX_SKILL_MD" "Codex mirror" '\$SKILL_DIR' '"$SKILL_DIR"'
 
+# --- Phase 1: bounded Codex gate + size-scaled budgets ---------------------
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 1
+# R1/R2. Gate 1's invocation must go through the shell-enforced budget
+# wrapper (never a Claude-side-only mechanism), sized via lens-budget.sh
+# --kind codex, on BOTH mirrors (R10: every skill change is mirrored in the
+# same phase). Monitor is documented as advisory/non-load-bearing and
+# Claude-only, so it is asserted only on the Claude mirror.
+
+assert_phase1_gate_bound_shape_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	assert_grep_i "$file" 'gate_run_bounded|gate-bounded\.sh' \
+		"$label: gate 1 invocation goes through the gate_run_bounded helper (lib/gate-bounded.sh), not a bare \`codex exec review\` call"
+
+	assert_grep_fixed "$file" 'lens-budget.sh' \
+		"$label: gate 1's budget is sourced from lens-budget.sh, not a hardcoded number"
+
+	assert_grep_fixed "$file" '--kind codex' \
+		"$label: gate 1 requests the codex kind from lens-budget.sh (20m floor / 45m cap)"
+
+	assert_grep_i "$file" 'skipped|DEGRADED' \
+		"$label: documents the on-expiry outcome as skipped/DEGRADED, never silently clean"
+}
+
+assert_phase1_gate_bound_shape_for "$SKILL_MD" "Claude mirror"
+assert_phase1_gate_bound_shape_for "$CODEX_SKILL_MD" "Codex mirror"
+
+assert_grep_i "$SKILL_MD" 'monitor' \
+	"Claude mirror: documents Monitor as the (advisory) Claude-side UX layer over the shell-enforced budget"
+
+assert_grep_i "$SKILL_MD" 'monitor.*(non-load-bearing|not load-bearing|advisory|optional)|(non-load-bearing|not load-bearing|advisory|optional).*monitor' \
+	"Claude mirror: states Monitor is non-load-bearing/advisory — the shell timeout is what actually bounds the gate"
+
+# R2: the flag combination behind the 90+ minute Codex hang is either named
+# outright ("Forbidden flags:") or explicitly marked UNVERIFIED with the
+# budget documented as the sole defence — never shipped as an unconfirmed
+# fact with no marker at all, and never claimed as fact without verification.
+# Acceptance: "test-gauntlet-skill-shape.sh accepts exactly one of the two
+# forms" — so this must be an XOR, not an OR.
+
+assert_r2_forbidden_flags_xor_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	local has_forbidden=0 has_unverified=0
+	grep -Fq 'Forbidden flags:' "$file" && has_forbidden=1
+	if grep -Eqi 'UNVERIFIED' "$file" && grep -Eqi 'budget' "$file" &&
+		grep -Eqi '(sole|only) (defen[cs]e)' "$file"; then
+		has_unverified=1
+	fi
+
+	if [[ $((has_forbidden + has_unverified)) -eq 1 ]]; then
+		pass "$label: R2 carries exactly one of {'Forbidden flags:' line, UNVERIFIED-marker-with-budget-as-sole-defence} (forbidden=$has_forbidden, unverified=$has_unverified)"
+	else
+		fail "$label: R2 must carry EXACTLY ONE of {'Forbidden flags:' line, UNVERIFIED-marker-with-budget-as-sole-defence}, found forbidden=$has_forbidden unverified=$has_unverified (never both, never neither — an unconfirmed fact must not ship unmarked)"
+	fi
+}
+
+assert_r2_forbidden_flags_xor_for "$SKILL_MD" "Claude mirror"
+assert_r2_forbidden_flags_xor_for "$CODEX_SKILL_MD" "Codex mirror"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

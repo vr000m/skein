@@ -90,17 +90,27 @@ If `spawn_agent`, `wait_agent`, or `close_agent` are unavailable, hard-stop befo
 
 Every `full`/standalone round evaluates the same four logical slots in order. Codex runs only real supported gates and records capability gaps as structured outcomes.
 
-1. **Code-review gate (`native-codex-review`).** Invoke native Codex review in machine mode:
+Both native gates below cost at most their budget, enforced in shell, and never block the round — **never invoke `codex exec review` unwrapped.** Source the harness-neutral bounded helper once per round and reuse the computed budget for both native gates:
+```
+. "$SKILL_DIR"/lib/gate-bounded.sh
+budget_s="$("$SKILL_DIR"/scripts/lens-budget.sh --kind codex [--files <N> --lines <N>] [--gate-timeout <seconds>])"
+```
+`lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when supplied. `gate_run_bounded` (`lib/gate-bounded.sh`, byte-identical to the Claude mirror's copy) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. `"$SKILL_DIR"/lib/run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass.
+
+1. **Code-review gate (`native-codex-review`).** Invoke native Codex review in machine mode through the bounded helper:
    ```
-   codex exec review --output-schema <schema> --base <branch>
-   codex exec review --output-schema <schema> --uncommitted
+   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
+     codex exec review --output-schema <schema> --base <branch>
+   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
+     codex exec review --output-schema <schema> --uncommitted
    ```
    Use the same target for every native gate in the round. When launched as a subprocess, request medium reasoning with `-c model_reasoning_effort="medium"` when supported.
-2. **Adversarial Codex-review gate (`native-codex-review`).** Invoke native Codex review with an adversarial prompt and the same structured schema:
+2. **Adversarial Codex-review gate (`native-codex-review`).** Invoke native Codex review with an adversarial prompt and the same structured schema, through the same bounded helper:
    ```
-   codex exec review --output-schema <schema> "<adversarial-review prompt>"
+   gate_run_bounded "$budget_s" "$envelope_path" "$tool_out_path" -- \
+     codex exec review --output-schema <schema> "<adversarial-review prompt>"
    ```
-   Target the same diff as gate 1 via `--base <branch>` or `--uncommitted`; request `-c model_reasoning_effort="medium"` when used from a CLI subprocess.
+   Target the same diff as gate 1 via `--base <branch>` or `--uncommitted`; request `-c model_reasoning_effort="medium"` when used from a CLI subprocess. **Flag combination: UNVERIFIED.** The 2026-08-23 insights report's `friction_detail` narrative names "an incompatible flag combination" behind an observed 90+ minute hang, but a direct probe of its facets schema (the underlying JSON) shows it records only narrative summaries, never exact CLI argv, so the specific flag combination cannot be recovered from available data; the wall-clock budget above is the sole defence against a repeat.
 3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
 4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` with notes explaining that this is a permanent capability gap (or `skipped` when explicitly configured off); never pretend this gate ran.
 

@@ -49,7 +49,12 @@ bundle_applier_for() {
 # lib/persist-common.sh is sourced by both persist-*.sh scripts (root-anchor,
 # CLI required-value check, and guard+atomic-write helpers), so it ships
 # alongside each of them — never into review-gauntlet's mirrors, which bundle
-# neither persist script. Returns 0 with no output for review-gauntlet.
+# neither persist script. review-gauntlet's gate 1 (Codex) invocation is
+# wrapped in `lens-budget.sh --kind codex` for its wall-clock budget (see
+# lib/gate-bounded.sh, an authored — not bundled — harness-neutral helper);
+# lens-budget.sh itself is canonical and ships only into review-gauntlet's
+# mirrors until Phase 2 promotes it to BUNDLE_SHARED for deep-review/
+# review-plan's lens budgets too.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)
@@ -62,7 +67,9 @@ bundle_extra_for() {
 		printf 'persist-deep-review-state.sh\n'
 		printf 'lib/persist-common.sh\n'
 		;;
-	review-gauntlet) ;;
+	review-gauntlet)
+		printf 'lens-budget.sh\n'
+		;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2
 		return 1

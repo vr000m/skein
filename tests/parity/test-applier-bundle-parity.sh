@@ -119,12 +119,14 @@ fi
 
 # --- 6. Authored-lib mirror parity: review-gauntlet's lib/ scripts are hand- --
 # maintained in both plugins (not canonical-bundled from scripts/), so byte-
-# identity has to be checked mirror-to-mirror directly. run-gate.sh and
-# convergence-ledger.sh are documented as byte-identical across runtimes;
+# identity has to be checked mirror-to-mirror directly. run-gate.sh,
+# convergence-ledger.sh, and gate-bounded.sh are documented as byte-identical
+# across runtimes (gate-bounded.sh is harness-neutral: it has no
+# runtime-specific anchor to resolve, so both copies are the same file);
 # gauntlet-common.sh legitimately diverges (it resolves a runtime-specific
 # anchor: ${CLAUDE_PLUGIN_ROOT} on Claude, $SKILL_DIR on Codex) so it is
 # intentionally excluded from this check.
-GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh)
+GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh)
 for f in "${GAUNTLET_LIB_PARITY_FILES[@]}"; do
 	claude_f="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/$f"
 	codex_f="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/$f"

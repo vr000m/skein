@@ -127,13 +127,20 @@ cmd_normalize() {
 	fi
 	gc_have_jq
 
-	local raw status
+	local raw status duration_s degraded_reason
 	raw="$(read_input "$input_path")"
 	status="$(printf '%s' "$raw" | jq -r '.status // empty')"
 	if [[ -z "$status" ]]; then
 		echo "run-gate normalize: gate '$gate' raw output missing .status" >&2
 		exit 2
 	fi
+	# gate_run_bounded (lib/gate-bounded.sh) stamps every envelope it
+	# writes with optional duration_s/degraded_reason — surface them here
+	# as a stderr note alongside the non-clean-status report below. stdout
+	# stays per-finding JSONL only; status-row (Phase 3) reads the
+	# envelope directly for the tabular form.
+	duration_s="$(printf '%s' "$raw" | jq -r '.duration_s // empty')"
+	degraded_reason="$(printf '%s' "$raw" | jq -r '.degraded_reason // empty')"
 
 	[[ -e "$cache" ]] || printf '' >"$cache"
 
@@ -158,6 +165,9 @@ cmd_normalize() {
 	approve | needs-attention) exit 0 ;;
 	error | skipped | deferred)
 		echo "run-gate normalize: gate '$gate' returned status=$status — not a clean pass, do not count toward convergence" >&2
+		if [[ -n "$duration_s" || -n "$degraded_reason" ]]; then
+			echo "run-gate normalize: gate '$gate' duration_s=${duration_s:-unknown} degraded_reason=${degraded_reason:-none}" >&2
+		fi
 		exit 4
 		;;
 	*)
