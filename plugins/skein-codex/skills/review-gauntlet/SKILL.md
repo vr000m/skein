@@ -74,7 +74,7 @@ If the ledger is missing (exit 4), stop with a clear error instead of silently s
 
 - **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1.
 - **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
-- **Exit 5** (terminal — `success`/`success_with_quarantine`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
+- **Exit 5** (terminal — `success`/`success_with_quarantine`/`regression`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
 
 This makes auto-chain invocations self-resuming by construction: they never pass `--resume`/`--fresh` explicitly, and the standalone path's exit-6 refusal never fires for them.
 
@@ -154,8 +154,9 @@ After the fixer batch returns:
 - A clean `pass_type: full` pass is terminal success when the supported/native gates produced no findings and there are no transient unresolved gate outcomes. Tally only truly unresolved gates and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: `error` always counts; an unexpected `skipped` or transient `deferred` status counts; known permanent capability gaps do not count. Today the permanent deferred slots are gate 4 (`security-review`, always, because Codex has no security-review primitive) and gate 3 (`skein:deep-review`) while nested-spawn topology/tier evidence remains unconfirmed. A full pass at count 0 with `--unresolved 0` may resolve to success even when those permanent gaps are present, but a full pass at count 0 with any transient unresolved gate is **not** success — the ledger falls through to `continue` so the errored/transient gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
 - A single monotonic counter increments every round, including structural restarts, and caps at 10.
 - Non-convergence is a running-minimum stall, K=2, **scoped to the current epoch** (the rounds since the last structural restart, if any): the reconciled count must fail to reach a new running minimum for K consecutive rounds before the loop bails and reports `non-converge`. Track the lowest count seen so far *within the current epoch*; a round that beats it resets the stall streak, a round that does not increments it, and a streak of 2 bails. This catches a plateau (`3,3,3`) and a sustained oscillation (`5,3,5,3`), but deliberately does not bail on a genuinely converging run with a transient blip like `5,4,5,3,2,1` — the running minimum keeps improving there. A structural restart opens a fresh epoch with a fresh running minimum: a pre-restart count is not commensurate with post-restart counts (the diff a fresh gate-1 corpus reviews has changed), so it must not anchor the stall streak, and each new epoch needs its own K+1 recorded rounds before non-convergence can fire again. `convergence-ledger.sh` owns the deterministic decision.
+- **Stop condition 5: `regression`.** A finding the ledger previously confirmed fixed has reappeared. Every round, compute each reconciled finding's regression key via the bundled `scripts/finding-key.sh` (`sha1(file|category|normalised summary)`, lowercase + whitespace-collapse only, no digit-stripping, deliberately distinct from the reconciler's line-anchored `(file, line, category)` dedup key — a finding that shifts line across rounds must still match) and pass the full list to `convergence-ledger.sh --present-keys <file>`. When the fixer claims a fix, run `finding-key.sh` over the claimed finding(s) and pass those keys via `--claimed-keys <file>` (schema `{claimed:[key...]}` on the fixer's own report). **The ledger itself owns claimed->fixed promotion** — the conductor passes only what it observed this round (`--present-keys`) and what the fixer claimed this round (`--claimed-keys`); it never computes or asserts a `fixed_keys` set of its own. `regression` slots in the decision priority **after `success`/`success_with_quarantine`, before `cap`**, and fires on **both** pass types (a previously-fixed bug reappearing during a `pass_type: confirm` round is exactly as much a regression as one reappearing on a full pass); promotion into the ledger's cumulative `fixed_keys` set only ever happens on a `pass_type: full` round. `regression` is terminal — halt and hand the reappeared finding(s) back to the operator with the round history.
 
-Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
+Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine, regressed-key, or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
 
 ### Resume Decision Table
 
@@ -168,7 +169,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 | exit 0 + `confirm` | Run the confirm-pass gate sequence before returning to the full loop. Preserve the Codex gate matrix: supported native gates run, gated/deferred permanent capability slots are still reported separately, and only transient unresolved outcomes count toward `--unresolved`. |
 | exit 0 + `no-rounds` | Treat the existing empty ledger as a fresh run and start at gate 1 without reinitializing it. |
 | exit 4 | Missing ledger: stop and tell the operator there is nothing to resume for the resolved target. |
-| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `cap`, or `non-converge`): refuse to resume and report the terminal token. |
+| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `regression`, `cap`, or `non-converge`): refuse to resume and report the terminal token. |
 | any other non-zero exit | Stop and surface the script error; do not run gates against an ambiguous ledger. |
 
 ### What Resume Cannot Restore
@@ -196,6 +197,8 @@ The only quarantine trigger is a design/architecture conflict. Do not use confid
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
 
 **Ordering is not optional: run the trivial-fix applier before dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7) so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index. If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing next pass and stalling convergence. Within each round: reconcile -> route -> applier (trivial) + commit -> then fixer subagent (substantive).
+
+**Fixer output schema.** In addition to its blast-radius self-classification (`local`/`structural`) and quarantine report (Guardrail 1), every fixer dispatch's report includes `{claimed:[key...]}` — the regression key (via the bundled `scripts/finding-key.sh`) of every finding it just fixed this round, trivial and substantive alike. The fixer reports only what it observed and fixed — it never asserts a key is durably fixed; the ledger owns that promotion (see Stop condition 5 in Convergence Algorithm above), checking each claimed key against the SAME round's reconciled `--present-keys` on a full pass. A finding the fixer quarantines or defers (Guardrail 1) must never appear in `claimed` — only an applied fix belongs there.
 
 ### Guardrail 3 - a substantive bug fix requires a regression test, not just a re-review
 
@@ -232,13 +235,20 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   route_output.json | jq -c '.trivial_envelope' > annotated-envelope.json
   "$SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
-- **Convergence decision**:
+- **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's gate envelopes, run `run-gate.sh status-row` and print the row it emits — the ONLY gate-status table this skill shows, script-emitted, never hand-authored:
+  ```
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_review"
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_adversarial"
+  ```
+  Columns (in emission order): `gate`, `status`, `duration_s`, `findings`, `degraded_reason`. Gate 1/1b already carry `duration_s` from `gate_run_bounded`; any other gate slot's envelope gets `duration_s` stamped by the conductor from its own wall clock before calling `status-row` (accepted prose seam, not script-enforced). A missing `duration_s`/`degraded_reason` renders `-`, never the raw `null` token.
+- **Convergence decision** (after the status rows are printed for the round):
   ```
   . "$SKILL_DIR"/lib/gauntlet-common.sh
   canonical_target="<pr:N-or-branch:name>"
   ledger_path="$(gc_ledger_path "$canonical_target" codex)"
-  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N>
+  "$SKILL_DIR"/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N> --present-keys "$present_keys_file" --claimed-keys "$claimed_keys_file"
   ```
+  `--present-keys <file>` is a newline-separated list of every reconciled finding's regression key this round (via `scripts/finding-key.sh`); `--claimed-keys <file>` is the same, over the fixer's `{claimed:[key...]}` report. Both are optional — omitting them reproduces the exact pre-Phase-3 decision behavior.
 
 `run-gate.sh reconcile` invokes this skill's bundled `reconcile-findings.sh` without `--skill`. Gate findings passed into reconcile must not carry `auto_fix` blocks.
 

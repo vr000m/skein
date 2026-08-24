@@ -577,6 +577,83 @@ else
 	fail "convergence-ledger.sh is byte-identical across the Claude and Codex mirrors"
 fi
 
+# --- 18. Phase 3 golden/byte-parity: flag-absent behaviour is UNCHANGED ---
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
+# Goal: "Existing ledger decisions are byte-for-byte unchanged when the key
+# flags [--present-keys/--claimed-keys] are absent." This locks the exact
+# on-disk ledger shape produced by an append call that never mentions the new
+# flags: no present_keys/claimed_keys/fixed_keys pollution, decision tokens
+# unchanged from the pre-Phase-3 golden values asserted in sections 1-17
+# above. The golden JSON below is constructed inline (via jq, not a checked-in
+# fixture) from the documented pre-Phase-3 schema, so this test does not
+# depend on a byte-identical fixture surviving unrelated formatting drift.
+
+golden_flag_absent_round() {
+	local label="$1" count="$2" structural="$3" local_="$4" pass_type="$5" quarantine="$6" expected_json="$7"
+	local ledger
+	ledger="$(new_ledger)"
+	"$LEDGER_SCRIPT" --ledger "$ledger" --target "branch:golden-$label" --count "$count" \
+		--structural "$structural" --local "$local_" --pass-type "$pass_type" \
+		--quarantine "$quarantine" >/dev/null
+	local actual
+	actual="$(jq -S . "$ledger")"
+	local expected
+	expected="$(jq -S . <<<"$expected_json")"
+	assert_eq "$actual" "$expected" "$label: flag-absent append produces byte-for-byte-identical ledger shape (no present_keys/claimed_keys/fixed_keys pollution)"
+}
+
+golden_flag_absent_round "clean-full-pass" 0 0 0 full 0 \
+	'{"target":"branch:golden-clean-full-pass","cap":10,"k":2,"loop_counter":1,"rounds":[{"count":0,"structural_tally":0,"local_tally":0,"pass_type":"full","quarantine_size":0,"unresolved_gates":0}]}'
+
+golden_flag_absent_round "quarantine-success" 0 0 0 full 3 \
+	'{"target":"branch:golden-quarantine-success","cap":10,"k":2,"loop_counter":1,"rounds":[{"count":0,"structural_tally":0,"local_tally":0,"pass_type":"full","quarantine_size":3,"unresolved_gates":0}]}'
+
+golden_flag_absent_round "confirm-with-findings" 4 0 4 confirm 0 \
+	'{"target":"branch:golden-confirm-with-findings","cap":10,"k":2,"loop_counter":1,"rounds":[{"count":4,"structural_tally":0,"local_tally":4,"pass_type":"confirm","quarantine_size":0,"unresolved_gates":0}]}'
+
+# Decision tokens for the same three vectors must also be unchanged.
+L_golden_tok="$(new_ledger)"
+tok_golden="$(round "$L_golden_tok" 0 0 0 full 0)"
+assert_eq "$tok_golden" "success" "flag-absent decision token unchanged: clean full pass -> success"
+
+# --- 19. Backward compat: --resume (append + --last-decision) on a
+#         pre-change ledger file lacking the new fields (no fixed_keys key
+#         at all, matching a ledger written before Phase 3 shipped) --------
+
+PRECHANGE_LEDGER="$(new_ledger)"
+printf '{"target":"branch:precompat","cap":10,"k":2,"loop_counter":1,"rounds":[{"count":0,"structural_tally":0,"local_tally":0,"pass_type":"full","quarantine_size":0,"unresolved_gates":0}]}\n' >"$PRECHANGE_LEDGER"
+
+set +e
+precompat_peek="$("$LEDGER_SCRIPT" --last-decision --ledger "$PRECHANGE_LEDGER" --target "branch:precompat")"
+precompat_peek_exit=$?
+set -e
+assert_eq "$precompat_peek" "success" "backward compat: --last-decision on a pre-Phase-3 ledger (no fixed_keys field) reads back its correct token"
+assert_eq "$precompat_peek_exit" "5" "backward compat: --last-decision on the pre-Phase-3 ledger's terminal token still exits 5"
+
+# A fresh --resume-style append onto that same pre-change ledger, with the
+# new key flags actually supplied this time, must not crash on the missing
+# fixed_keys field -- it should treat "field absent" as "empty fixed_keys".
+PRECHANGE_LEDGER2="$(new_ledger)"
+printf '{"target":"branch:precompat2","cap":10,"k":2,"loop_counter":2,"rounds":[{"count":3,"structural_tally":0,"local_tally":3,"pass_type":"confirm","quarantine_size":0,"unresolved_gates":0},{"count":3,"structural_tally":0,"local_tally":3,"pass_type":"confirm","quarantine_size":0,"unresolved_gates":0}]}\n' >"$PRECHANGE_LEDGER2"
+
+present_keys_file="$(mktemp)"
+TMP_LEDGERS+=("$present_keys_file")
+printf 'some-regression-key\n' >"$present_keys_file"
+
+set +e
+precompat_resume_tok="$("$LEDGER_SCRIPT" --ledger "$PRECHANGE_LEDGER2" --target "branch:precompat2" \
+	--count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
+	--present-keys "$present_keys_file" 2>/tmp/gauntlet-ledger-test-precompat.$$)"
+precompat_resume_exit=$?
+set -e
+rm -f /tmp/gauntlet-ledger-test-precompat.$$
+if [[ "$precompat_resume_exit" -eq 0 ]]; then
+	pass "backward compat: --resume append onto a pre-Phase-3 ledger (missing fixed_keys field) with --present-keys supplied does not crash, resolves normally ('$precompat_resume_tok')"
+else
+	fail "backward compat: --resume append onto a pre-Phase-3 ledger with --present-keys supplied must not crash (got exit $precompat_resume_exit)"
+fi
+assert_ne "$precompat_resume_tok" "regression" "backward compat: a present key never previously claimed on the pre-Phase-3 ledger must not spuriously fire regression (absent fixed_keys treated as empty, not as 'everything is fixed')"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

@@ -68,6 +68,14 @@ bundle_applier_for() {
 # only into deep-review's and review-plan's mirrors (the two skills that spawn
 # lens subagents) — never review-gauntlet's, which spawns no lenses of its
 # own.
+#
+# finding-key.sh (Phase 3): canonical in scripts/, bundled only into
+# review-gauntlet's mirrors via this function — NOT BUNDLE_SHARED, since
+# deep-review/review-plan have no regression-key concept (they dedup on the
+# reconciler's line-anchored key only). Computes the ledger-owned regression
+# key the orchestrator feeds to convergence-ledger.sh's --present-keys/
+# --claimed-keys; see the script header for why it is deliberately distinct
+# from the reconciler's (file, line, category) dedup key.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)
@@ -85,7 +93,7 @@ bundle_extra_for() {
 		printf 'collect-lens-results.sh\n'
 		;;
 	review-gauntlet)
-		:
+		printf 'finding-key.sh\n'
 		;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2

@@ -8,7 +8,8 @@
 #       [--cap 10] [--k 2]
 #   convergence-ledger.sh --ledger <path> [--target <target>] --count <N> \
 #       --structural <N> --local <N> --pass-type <full|confirm> \
-#       --quarantine <N> [--unresolved <N>] [--cap 10] [--k 2]
+#       --quarantine <N> [--unresolved <N>] [--cap 10] [--k 2] \
+#       [--present-keys <file>] [--claimed-keys <file>]
 #
 # Exit codes:
 #   0 - success / non-terminal decision
@@ -21,11 +22,55 @@
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
 #
-#   continue | restart | confirm | success | success_with_quarantine | cap | non-converge
+#   continue | restart | confirm | success | success_with_quarantine
+#       | regression | cap | non-converge
 #
 # --last-decision is read-only. It recomputes the token implied by the current
 # on-disk ledger and exits 5 for terminal tokens so the conductor can refuse
 # resume deterministically.
+#
+# --present-keys <file> and --claimed-keys <file> (both optional; a missing or
+# malformed file is treated as an empty key list, never a crash — see
+# read_keys_file below) feed the regression-loop stop condition:
+#
+#   --present-keys <file>  newline-separated regression keys (from the
+#                           bundled scripts/finding-key.sh) observed in THIS
+#                           round's reconciled findings. Persisted verbatim
+#                           onto this round (`rounds[-1].present_keys`) so a
+#                           later --last-decision peek can recompute the same
+#                           regression check without re-deriving it.
+#   --claimed-keys <file>  newline-separated regression keys the fixer
+#                           subagent claims to have fixed THIS round (schema
+#                           `{claimed:[key...]}` on the SKILL.md side; the
+#                           caller extracts the array before writing the
+#                           file). The ledger — never the caller — decides
+#                           when a claimed key is actually promoted to
+#                           `fixed_keys`: only when it is ALSO absent from
+#                           THIS SAME round's `--present-keys`, on a
+#                           `pass_type: full` round (a round already bundles
+#                           "the gates re-ran after the fix" together with
+#                           "the fixer's claim", so there is nothing to defer
+#                           to a later round). A `pass_type: confirm` round
+#                           never promotes, and a claimed key still present
+#                           this same round is simply dropped — it never
+#                           enters `fixed_keys` and there is no retry queue;
+#                           the fixer must claim it again on a later round
+#                           that actually shows it gone. `fixed_keys` is a
+#                           cumulative, top-level, monotonically-growing set
+#                           that survives a structural restart (nothing in
+#                           this script ever removes from it short of
+#                           `--init --force` starting a brand new ledger).
+#
+# `regression` fires whenever THIS round's `--present-keys` intersects the
+# ledger's cumulative `fixed_keys` — on BOTH pass types (a previously-fixed
+# bug reappearing during a confirm pass is exactly as much a regression as
+# one reappearing on a full pass) — and is terminal, slotted in the decision
+# priority chain immediately after `success`/`success_with_quarantine` and
+# before `cap`. A ledger with neither flag ever supplied has `fixed_keys: []`
+# and no round ever carries `present_keys`, so `regression` can never fire and
+# every other decision is computed exactly as before these flags existed —
+# the regression key machinery is additive, not a modification of the
+# existing decision table.
 #
 # Dependencies: bash + jq + shasum|sha1sum (via gauntlet-common.sh).
 
@@ -41,7 +86,8 @@ usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
        convergence-ledger.sh --ledger <path> [--target <target>] --count <N> --structural <N> \
               --local <N> --pass-type <full|confirm> --quarantine <N> \
-              [--unresolved <N>] [--cap 10] [--k 2]
+              [--unresolved <N>] [--cap 10] [--k 2] \
+              [--present-keys <file>] [--claimed-keys <file>]
 EOF
 }
 
@@ -58,6 +104,8 @@ K=2
 MODE="append"
 FORCE=0
 ROUND_ARG_SEEN=0
+PRESENT_KEYS_FILE=""
+CLAIMED_KEYS_FILE=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -150,6 +198,24 @@ while [[ $# -gt 0 ]]; do
 		UNRESOLVED="$1"
 		ROUND_ARG_SEEN=1
 		;;
+	--present-keys)
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		PRESENT_KEYS_FILE="$1"
+		ROUND_ARG_SEEN=1
+		;;
+	--claimed-keys)
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		CLAIMED_KEYS_FILE="$1"
+		ROUND_ARG_SEEN=1
+		;;
 	--cap)
 		shift
 		[[ $# -gt 0 ]] || {
@@ -181,6 +247,28 @@ done
 
 is_nonneg_int() {
 	[[ "$1" =~ ^[0-9]+$ ]]
+}
+
+# read_keys_file <path> — echo a JSON array of newline-separated keys read
+# from <path>. An empty/unset <path>, a missing file, or any unreadable/
+# non-utf8 content all degrade to an empty array rather than a crash: this is
+# the "malformed/missing --claimed-keys file -> defined behaviour, never a
+# crash" contract. `jq -R -s` on raw text can only fail to produce the
+# structure we want (never fails to parse — it treats its input as raw
+# text), so the fallback branch below only guards the pathological case of
+# `jq` itself being unable to run against the file (e.g. a directory path).
+read_keys_file() {
+	local path="$1"
+	if [[ -z "$path" ]]; then
+		printf '[]'
+		return 0
+	fi
+	if [[ ! -f "$path" ]]; then
+		echo "convergence-ledger: keys file not found: $path (treating as empty)" >&2
+		printf '[]'
+		return 0
+	fi
+	jq -R -s 'split("\n") | map(select(length > 0))' "$path" 2>/dev/null || printf '[]'
 }
 
 validate_common_args() {
@@ -285,6 +373,11 @@ write_fresh_ledger() {
 	local tmp
 	mkdir -p "$(dirname "$ledger_path")"
 	tmp="$(mktemp)"
+	# fixed_keys/pending_claimed are deliberately NOT written here: a ledger
+	# that never sees --present-keys/--claimed-keys must stay byte-for-byte
+	# identical to the pre-Phase-3 shape (no key-tracking pollution). Both
+	# fields are added lazily, only once a round actually supplies one of
+	# those flags — see the append-mode handler below.
 	if [[ -n "$target" ]]; then
 		jq -n --arg target "$target" --argjson cap "$cap" --argjson k "$k" \
 			'{target: $target, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
@@ -316,7 +409,7 @@ decision_from_ledger() {
 	local ledger_path="$1"
 	local cli_cap="$2"
 	local cli_k="$3"
-	local round_len loop_counter cap k count structural local_tally pass_type quarantine unresolved
+	local round_len loop_counter cap k count structural local_tally pass_type quarantine unresolved regression_hit
 
 	round_len="$(jq -r '.rounds | length' "$ledger_path")"
 	if [[ "$round_len" -eq 0 ]]; then
@@ -357,19 +450,38 @@ decision_from_ledger() {
 		return 0
 	fi
 
-	# 2. Cap.
+	# 2. Regression: THIS round's present_keys intersects the ledger's
+	# cumulative fixed_keys — a previously-confirmed-fixed finding has
+	# reappeared. Fires on BOTH pass types (full and confirm alike — a
+	# reappearance during a confirm pass is exactly as much a regression);
+	# promotion into fixed_keys itself only ever happens on a full pass (see
+	# the append-mode handler below). A ledger where neither field was ever
+	# populated (no --present-keys/--claimed-keys flag ever passed) has
+	# fixed_keys == [] and every round's present_keys == [], so this check is
+	# a no-op and every other decision below is unaffected.
+	regression_hit="$(jq -r '
+		(.fixed_keys // []) as $fixed
+		| (.rounds[-1].present_keys // []) as $present
+		| (([$present[] as $p | $fixed | index($p)] | map(select(. != null)) | length) > 0)
+	' "$ledger_path")"
+	if [[ "$regression_hit" == "true" ]]; then
+		echo "regression"
+		return 0
+	fi
+
+	# 3. Cap.
 	if [[ "$loop_counter" -ge "$cap" ]]; then
 		echo "cap"
 		return 0
 	fi
 
-	# 3. Restart: any structural fix this round. Checked before non-convergence.
+	# 4. Restart: any structural fix this round. Checked before non-convergence.
 	if [[ "$structural" -gt 0 ]]; then
 		echo "restart"
 		return 0
 	fi
 
-	# 4. Non-convergence: running-minimum stall scoped to the current epoch.
+	# 5. Non-convergence: running-minimum stall scoped to the current epoch.
 	epoch_stats="$(jq -c '
 		(.rounds | to_entries | map(select(.value.structural_tally > 0)) | last | .key) as $restart_idx
 		| (if $restart_idx == null then .rounds else .rounds[($restart_idx + 1):] end) as $epoch
@@ -393,19 +505,19 @@ decision_from_ledger() {
 		fi
 	fi
 
-	# 5. Confirm: only-local round with remaining findings.
+	# 6. Confirm: only-local round with remaining findings.
 	if [[ "$count" -gt 0 && "$structural" -eq 0 && "$local_tally" -gt 0 ]]; then
 		echo "confirm"
 		return 0
 	fi
 
-	# 6. Clean confirm pass is not terminal; return to the full loop.
+	# 7. Clean confirm pass is not terminal; return to the full loop.
 	if [[ "$pass_type" == "confirm" && "$count" -eq 0 ]]; then
 		echo "continue"
 		return 0
 	fi
 
-	# 7. Otherwise, continue.
+	# 8. Otherwise, continue.
 	echo "continue"
 }
 
@@ -446,7 +558,7 @@ last-decision)
 	decision="$(decision_from_ledger "$LEDGER_PATH" "$CAP" "$K")"
 	echo "$decision"
 	case "$decision" in
-	success | success_with_quarantine | cap | non-converge)
+	success | success_with_quarantine | regression | cap | non-converge)
 		exit 5
 		;;
 	*)
@@ -462,6 +574,26 @@ append)
 	validate_append_args
 	ensure_ledger_for_append
 
+	present_keys_json="$(read_keys_file "$PRESENT_KEYS_FILE")"
+	claimed_keys_json="$(read_keys_file "$CLAIMED_KEYS_FILE")"
+
+	# keys_active gates EVERY bit of the regression-key machinery below,
+	# including whether a round even GAINS a `present_keys` field: a ledger
+	# that has never once seen --present-keys/--claimed-keys (this round OR
+	# any prior round already on disk) must come out of this append
+	# byte-for-byte identical to the pre-Phase-3 shape — no `fixed_keys`,
+	# no `present_keys` anywhere. Once either flag is used for the first
+	# time, the ledger switches into key-tracking mode for good (fixed_keys
+	# persists across every later round, structural restarts included),
+	# which is why "already has fixed_keys on disk" also counts as active
+	# even on a round that itself supplies neither flag.
+	keys_active="false"
+	if [[ -n "$PRESENT_KEYS_FILE" || -n "$CLAIMED_KEYS_FILE" ]]; then
+		keys_active="true"
+	elif jq -e 'has("fixed_keys")' "$LEDGER_PATH" >/dev/null 2>&1; then
+		keys_active="true"
+	fi
+
 	tmp_ledger="$(mktemp)"
 	trap 'rm -f "$tmp_ledger"' EXIT
 	jq \
@@ -473,17 +605,55 @@ append)
 		--argjson unresolved "$UNRESOLVED" \
 		--argjson cap "$CAP" \
 		--argjson k "$K" \
+		--argjson present_keys "$present_keys_json" \
+		--argjson claimed_keys "$claimed_keys_json" \
+		--argjson keys_active "$keys_active" \
 		'.loop_counter += 1
 		 | (if has("cap") then . else .cap = $cap end)
 		 | (if has("k") then . else .k = $k end)
-		 | .rounds += [{
-			 count: $count,
-			 structural_tally: $structural,
-			 local_tally: $local,
-			 pass_type: $pass_type,
-			 quarantine_size: $quarantine,
-			 unresolved_gates: $unresolved
-		 }]' \
+		 | (if $keys_active then
+		      (if has("fixed_keys") then . else .fixed_keys = [] end)
+		      # Promotion: a THIS-ROUND claimed key that is ALSO absent
+		      # from THIS ROUND'"'"'S OWN present_keys, on a full pass,
+		      # is proven fixed and promoted into the cumulative
+		      # fixed_keys set right away — a round bundles "the gates
+		      # ran again after the fix" and "the fixer'"'"'s claim" as
+		      # one unit, so there is nothing to defer to a later round.
+		      # Promotion is full-pass-only: a confirm-pass round never
+		      # promotes (a clean confirm pass does not prove global
+		      # convergence any more than it does for the plain
+		      # success/cap/restart decisions above). A claimed key that
+		      # is STILL present this round is simply dropped — it never
+		      # enters fixed_keys and there is no retry queue; the fixer
+		      # must claim it again on a later round that actually shows
+		      # it gone.
+		      | (if $pass_type == "full" then
+		           ($claimed_keys - $present_keys) as $promoted
+		           | .fixed_keys = ((.fixed_keys + $promoted) | unique)
+		         else . end)
+		    else . end)
+		 | .rounds += [
+		     (if $keys_active then
+		        {
+		          count: $count,
+		          structural_tally: $structural,
+		          local_tally: $local,
+		          pass_type: $pass_type,
+		          quarantine_size: $quarantine,
+		          unresolved_gates: $unresolved,
+		          present_keys: $present_keys
+		        }
+		      else
+		        {
+		          count: $count,
+		          structural_tally: $structural,
+		          local_tally: $local,
+		          pass_type: $pass_type,
+		          quarantine_size: $quarantine,
+		          unresolved_gates: $unresolved
+		        }
+		      end)
+		   ]' \
 		"$LEDGER_PATH" >"$tmp_ledger"
 	mv "$tmp_ledger" "$LEDGER_PATH"
 

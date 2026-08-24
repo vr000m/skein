@@ -38,6 +38,18 @@
 #       reconcile-findings.sh, called without --skill. Emits the reconciled
 #       v2 envelope JSON on stdout.
 #
+#   run-gate.sh status-row [<envelope.json>|-]
+#       Reads one gate's ENVELOPE (the object `gate_run_bounded`/lib/
+#       gate-bounded.sh writes on every exit path: {status, notes, findings,
+#       gate, duration_s, degraded_reason} — NOT the raw tool-out) and emits
+#       exactly one tab-separated table row on stdout: `gate <TAB> status
+#       <TAB> duration_s <TAB> findings <TAB> degraded_reason`. `findings` is
+#       the length of the envelope's `.findings` array. `duration_s` and
+#       `degraded_reason` render as the literal `-` when null/absent — never
+#       the raw JSON token `null`, never empty. This is the ONLY thing that
+#       builds a gate-status row (SKILL.md only says where to print rows it
+#       gets by calling this — see R7 in the dev plan).
+#
 #   run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
 #       Re-attaches any cached auto_fix proposal to each reconciled finding
 #       by matching (file, line, category), runs the bundled
@@ -77,6 +89,7 @@ usage() {
 usage: run-gate.sh normalize --gate <name> --autofix-cache <path> [<raw.json>|-]
        run-gate.sh reconcile [<pooled-findings.jsonl>|-]
        run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
+       run-gate.sh status-row [<envelope.json>|-]
 EOF
 }
 
@@ -308,6 +321,40 @@ cmd_route() {
 	'
 }
 
+cmd_status_row() {
+	local input_path="-"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--help | -h)
+			usage
+			exit 0
+			;;
+		*)
+			input_path="$1"
+			;;
+		esac
+		shift
+	done
+	gc_have_jq
+
+	local envelope
+	envelope="$(read_input "$input_path")"
+
+	# `//"-"` covers both an absent key and an explicit JSON null — the one
+	# rendering rule this subcommand exists to guarantee: the raw token
+	# "null" must never appear in a printed row, and neither may an empty
+	# field silently stand in for "no value here".
+	printf '%s' "$envelope" | jq -r '
+		[
+			(.gate // "-"),
+			(.status // "-"),
+			((.duration_s // "-") | tostring),
+			(if (.findings | type) == "array" then (.findings | length | tostring) else "-" end),
+			(.degraded_reason // "-")
+		] | @tsv
+	'
+}
+
 if [[ $# -eq 0 ]]; then
 	usage
 	exit 2
@@ -319,6 +366,7 @@ case "$subcommand" in
 normalize) cmd_normalize "$@" ;;
 reconcile) cmd_reconcile "$@" ;;
 route) cmd_route "$@" ;;
+status-row) cmd_status_row "$@" ;;
 --help | -h)
 	usage
 	exit 0

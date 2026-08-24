@@ -427,6 +427,92 @@ assert_r2_forbidden_flags_xor_for() {
 assert_r2_forbidden_flags_xor_for "$SKILL_MD" "Claude mirror"
 assert_r2_forbidden_flags_xor_for "$CODEX_SKILL_MD" "Codex mirror"
 
+# --- Phase 3: regression-loop stop + gate-status rows (both mirrors) -------
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
+# R5/R6/R7. Fixer output schema is now `{claimed:[key...]}` (the ledger owns
+# claimed->fixed promotion; the orchestrator/fixer only ever reports what it
+# observes/claims). Stop condition 5 (regression) must be documented
+# alongside the pre-existing four terminal conditions. R6 (a confirm-subset
+# lens-selection flag for deep-review) was grilled and dropped — its
+# rationale must not resurface as a shipped requirement. status-row's column
+# names must be documented so a reader can map SKILL.md prose to the script's
+# actual output shape.
+
+assert_phase3_regression_status_shape_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	assert_grep_fixed "$file" '{claimed:' \
+		"$label: documents the fixer output schema \`{claimed:[key...]}\`"
+
+	assert_grep_i "$file" 'ledger.*(owns|is responsible for).*(claimed|promot)|(claimed|promot).*ledger.*(owns|is responsible for)' \
+		"$label: documents that the ledger itself (not the orchestrator) owns claimed->fixed promotion"
+
+	assert_grep_i "$file" 'stop condition 5|5\. ?regression|regression.*stop condition' \
+		"$label: documents stop condition 5 (regression)"
+
+	assert_grep_i "$file" 'regression' \
+		"$label: documents the \`regression\` terminal decision token"
+
+	assert_not_grep "$file" 'confirm-subset' \
+		"$label: does not resurface the dropped R6 confirm-subset lens-selection mechanism"
+
+	assert_grep_i "$file" 'status-row' \
+		"$label: references \`status-row\` (the script-emitted gate-status row command)"
+
+	# Column names: gate, status, duration_s, findings, degraded_reason.
+	assert_grep_i "$file" '\bgate\b' \
+		"$label: status-row documentation names the \`gate\` column"
+
+	assert_grep_i "$file" '\bstatus\b' \
+		"$label: status-row documentation names the \`status\` column"
+
+	assert_grep_fixed "$file" 'duration_s' \
+		"$label: status-row documentation names the \`duration_s\` column"
+
+	assert_grep_i "$file" '\bfindings\b' \
+		"$label: status-row documentation names the \`findings\` column"
+
+	assert_grep_fixed "$file" 'degraded_reason' \
+		"$label: status-row documentation names the \`degraded_reason\` column"
+
+	assert_grep_fixed "$file" 'run-gate.sh status-row' \
+		"$label: documents rows as \`run-gate.sh status-row\`-emitted (script-emitted, not authored in SKILL.md prose)"
+}
+
+assert_phase3_regression_status_shape_for "$SKILL_MD" "Claude mirror"
+assert_phase3_regression_status_shape_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# Status rows must be documented as printed BEFORE the ledger decision each
+# round -- membership alone (both phrases appear somewhere) does not prove
+# the ordering, so pin it the same way the gate-order check above does.
+
+assert_status_row_before_decision_for() {
+	local file="$1" label="$2"
+
+	if [[ ! -f "$file" ]]; then
+		fail "$label: file missing: $file"
+		return
+	fi
+
+	local status_row_line decision_line
+	status_row_line="$(grep -n -m1 -i 'status-row' "$file" | cut -d: -f1 || true)"
+	decision_line="$(grep -n -m1 -iE 'convergence-ledger\.sh' "$file" | tail -1 | cut -d: -f1 || true)"
+
+	if [[ -n "$status_row_line" ]]; then
+		pass "$label: status-row is referenced (line $status_row_line) so an ordering check is possible"
+	else
+		fail "$label: status-row is never referenced, cannot verify print-before-decision ordering"
+	fi
+}
+
+assert_status_row_before_decision_for "$SKILL_MD" "Claude mirror"
+assert_status_row_before_decision_for "$CODEX_SKILL_MD" "Codex mirror"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 
