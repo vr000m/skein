@@ -1002,6 +1002,103 @@ else
 	fail "R10-A1b:$r10a1b_bad"
 fi
 
+# ---------------------------------------------------------------------------
+# R11-F2 — neither mirror hand-codes the claim join.
+#
+# The unique-(file,line) claim rule decides what enters the ledger's
+# cumulative `fixed_keys`, and an over-claim there fires the TERMINAL
+# `regression` stop on a healthy loop. It was ~45 lines of jq authored TWICE
+# in prose (once per mirror) and covered by no test. It now lives in
+# scripts/claimed-findings.sh with the same ownership contract as
+# finding-key.sh. These assertions are what stop it being pasted back in.
+r11f2_bad=""
+for r11f2_md in "$SKILL_MD" "$CODEX_SKILL_MD"; do
+	r11f2_label="$(basename "$(dirname "$(dirname "$(dirname "$r11f2_md")")")")"
+	grep -Fq -- '--slurpfile m' "$r11f2_md" &&
+		r11f2_bad="$r11f2_bad [$r11f2_label still hand-codes the manifest join (--slurpfile m)]"
+	grep -Fq 'group_by((.file|tostring)' "$r11f2_md" &&
+		r11f2_bad="$r11f2_bad [$r11f2_label still hand-codes the unique-(file,line) group_by]"
+	r11f2_calls="$(grep -c 'claimed-findings\.sh' "$r11f2_md" || true)"
+	[[ "$r11f2_calls" == "1" ]] ||
+		r11f2_bad="$r11f2_bad [$r11f2_label invokes claimed-findings.sh $r11f2_calls times, expected exactly 1]"
+done
+if [[ -z "$r11f2_bad" ]]; then
+	pass "R11-F2: neither review-gauntlet mirror hand-codes the claim join; both call the bundled claimed-findings.sh exactly once"
+else
+	fail "R11-F2:$r11f2_bad"
+fi
+
+# The bundled script must actually be there to call, in both mirrors.
+r11f2_bundle_bad=""
+for r11f2_dir in skein skein-codex; do
+	[[ -f "$ROOT_DIR/plugins/$r11f2_dir/skills/review-gauntlet/scripts/claimed-findings.sh" ]] ||
+		r11f2_bundle_bad="$r11f2_bundle_bad [$r11f2_dir]"
+done
+if [[ -z "$r11f2_bundle_bad" ]]; then
+	pass "R11-F2: claimed-findings.sh is bundled into both review-gauntlet mirrors"
+else
+	fail "R11-F2: claimed-findings.sh missing from bundle:$r11f2_bundle_bad (is it registered in scripts/lib/bundle-map.sh's bundle_extra_for?)"
+fi
+
+# ---------------------------------------------------------------------------
+# R11-F8 — the two mirrors differ only by their harness anchor.
+#
+# Codex declared keys_dir/present_keys_file/claimed_findings_file/
+# claimed_keys_file/auto_fix_manifest in the up-front gate-paths block;
+# Claude declared them inline at the convergence step. That is a STRUCTURAL
+# divergence, and the mirrors' stated invariant is that they diverge only in
+# ${CLAUDE_PLUGIN_ROOT} vs $SKILL_DIR. Codex's placement was adopted.
+#
+# "In the gate-paths block" is checked positionally: each declaration must
+# appear before the first status-row invocation, which is the block's
+# downstream consumer and sits well after the gate-path declarations.
+r11f8_bad=""
+for r11f8_md in "$SKILL_MD" "$CODEX_SKILL_MD"; do
+	r11f8_label="$(basename "$(dirname "$(dirname "$(dirname "$r11f8_md")")")")"
+	r11f8_anchor="$(grep -n 'run-gate\.sh status-row' "$r11f8_md" | head -1 | cut -d: -f1)"
+	if [[ -z "$r11f8_anchor" ]]; then
+		r11f8_bad="$r11f8_bad [$r11f8_label has no status-row invocation to anchor on]"
+		continue
+	fi
+	for r11f8_var in keys_dir present_keys_file claimed_findings_file claimed_keys_file auto_fix_manifest; do
+		r11f8_line="$(grep -n "^${r11f8_var}=" "$r11f8_md" | head -1 | cut -d: -f1)"
+		if [[ -z "$r11f8_line" ]]; then
+			r11f8_bad="$r11f8_bad [$r11f8_label never declares $r11f8_var]"
+		elif [[ "$r11f8_line" -gt "$r11f8_anchor" ]]; then
+			r11f8_bad="$r11f8_bad [$r11f8_label declares $r11f8_var at :$r11f8_line, after the gate-paths block]"
+		fi
+	done
+done
+if [[ -z "$r11f8_bad" ]]; then
+	pass "R11-F8: both gauntlet mirrors declare the key-file variables in the up-front gate-paths block"
+else
+	fail "R11-F8:$r11f8_bad"
+fi
+
+# ---------------------------------------------------------------------------
+# R11-F21 — the injection-mitigation section names DERIVED content.
+#
+# Old invariant: untrusted <=> plan/diff content. But gate-produced finding
+# text is derived from reviewed code and reaches the EDIT-CAPABLE fixer, so a
+# crafted comment can steer a gate into emitting a `suggestion` that reads as
+# an instruction. New invariant: untrusted <=> anything derived from reviewed
+# content, gate findings and fixer-report text included.
+r11f21_bad=""
+for r11f21_md in "$SKILL_MD" "$CODEX_SKILL_MD"; do
+	r11f21_label="$(basename "$(dirname "$(dirname "$(dirname "$r11f21_md")")")")"
+	grep -Fq 'fixer-report.json' "$r11f21_md" ||
+		r11f21_bad="$r11f21_bad [$r11f21_label never mentions fixer-report.json]"
+	grep -Eq 'gate-produced finding' "$r11f21_md" ||
+		r11f21_bad="$r11f21_bad [$r11f21_label does not name gate-produced finding fields as untrusted]"
+	grep -Eq '`suggestion`' "$r11f21_md" ||
+		r11f21_bad="$r11f21_bad [$r11f21_label does not name the suggestion field]"
+done
+if [[ -z "$r11f21_bad" ]]; then
+	pass "R11-F21: both mirrors' injection-mitigation section names gate findings and fixer-report content as untrusted"
+else
+	fail "R11-F21:$r11f21_bad"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

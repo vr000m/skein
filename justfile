@@ -59,6 +59,7 @@ gauntlet-tests:
     bash tests/gauntlet/test-lens-budget.sh
     bash tests/gauntlet/test-regression-stop.sh
     bash tests/gauntlet/test-finding-key.sh
+    bash tests/gauntlet/test-claimed-findings.sh
     bash tests/gauntlet/test-status-row.sh
 
 # Phase 2 disk-first streamed lens results: persist-lens-result.sh (writer),

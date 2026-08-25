@@ -69,13 +69,19 @@ bundle_applier_for() {
 # lens subagents) — never review-gauntlet's, which spawns no lenses of its
 # own.
 #
-# finding-key.sh (Phase 3): canonical in scripts/, bundled only into
-# review-gauntlet's mirrors via this function — NOT BUNDLE_SHARED, since
-# deep-review/review-plan have no regression-key concept (they dedup on the
-# reconciler's line-anchored key only). Computes the ledger-owned regression
+# finding-key.sh (Phase 3) and claimed-findings.sh (R11/F2): canonical in
+# scripts/, bundled only into review-gauntlet's mirrors via this function —
+# NOT BUNDLE_SHARED, since deep-review/review-plan have neither a
+# regression-key nor a CLAIM concept (they dedup on the reconciler's
+# line-anchored key only, and nothing in them promotes a finding into a
+# cumulative fixed set). finding-key.sh computes the ledger-owned regression
 # key the orchestrator feeds to convergence-ledger.sh's --present-keys/
 # --claimed-keys; see the script header for why it is deliberately distinct
-# from the reconciler's (file, line, category) dedup key.
+# from the reconciler's (file, line, category) dedup key. claimed-findings.sh
+# produces the finding objects that key list is derived FROM, merging the
+# applier-owned and fixer-owned claim sources under the unique-(file, line)
+# rule; it was ~45 lines of untested jq authored twice in SKILL.md prose
+# before R11 extracted it here.
 #
 # review-gauntlet DELIBERATELY does not receive lib/persist-common.sh (round
 # 7, F4). That is a decision, not an oversight: the gauntlet's state-path
@@ -105,6 +111,7 @@ bundle_extra_for() {
 		;;
 	review-gauntlet)
 		printf 'finding-key.sh\n'
+		printf 'claimed-findings.sh\n'
 		;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2
