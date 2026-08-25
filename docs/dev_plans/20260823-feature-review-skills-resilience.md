@@ -1,6 +1,6 @@
 # Task: Review-skill resilience — bounded gates, durable lens state, regression guard, hygiene
 
-**Status**: Not Started
+**Status**: Complete (PR #25 open)
 **Component**: review-skills
 **Assigned to**: Claude (conduct) + Codex mirror via `codex:rescue`
 **Priority**: High
@@ -271,7 +271,7 @@ Context lifecycle:
 - Repo `.claude/CLAUDE.md` carries the three new sections (global upstreamed via skills.md, recorded in `## Findings`); `just parity-tests && just check-sync` green; both manifests bumped (test_manifests.sh); Codex mirrors aligned per phase.
 - Code reviewed and approved; tests passing; docs updated.
 
-<!-- reviewed: 2026-08-24 @ e168c2e1ba049f5ee6f86c0a551f852725f0e004 -->
+<!-- reviewed: 2026-08-25 @ 65b5ddfa8b15a28b67d62a8b69327a0ca0822425 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -343,3 +343,4 @@ Context lifecycle:
 ## Final Results
 - **Documented residual — `mkdir -p "$gate_out_dir"` in review-gauntlet SKILL.md (2026-08-25, review-gauntlet r6)**: the orchestrator's per-round `mkdir -p` is not routed through `gauntlet_assert_no_symlink`; every write into that directory (`gate-bounded.sh`, `run-gate.sh --autofix-cache`, the ledger) is guarded, so a symlinked round dir yields refused writes rather than an escape. Left as-is: directory creation is not a containment breach, and `lib/state-path-guard.sh` is not sourced by SKILL.md prose.
 - **Gauntlet convergence observation (2026-08-25, review-gauntlet r9 of 10)**: reconciled counts per round were 24, 37, 13, 23, 11, 7, 12, 10, 12. Every round landed at least one `structural` fix, so every round was a gate-1 restart that opened a fresh epoch — and the K=2 non-convergence stop (R4) is epoch-scoped, so it could never fire; the run will end at the loop cap, not by convergence. r6–r8 oscillated on one mechanism (the `.gauntlet/` symlink containment guard: shared guard → cwd-derived bound → innermost-root bypass → lexical shallowest-`.git` loop); r9's corpus is second-order seams on the r8 fixes. Follow-up for the gauntlet design, out of this plan's scope: the non-convergence detector needs a cross-epoch signal (e.g. a cap on consecutive structural restarts, or a running minimum that survives restarts), otherwise "structural every round" is indistinguishable from progress.
+- **review-gauntlet terminal status: `cap` (2026-08-25)**: 10 rounds, all `pass_type: full`, all structural → 10 gate-1 restarts; reconciled counts 24, 37, 13, 23, 11, 7, 12, 10, 12, 10 (159 findings fixed, 0 quarantined, 0 halted). Every round's fixes were verified by a clean-context verifier and all suites are green at HEAD; the loop ended by cap, not by convergence — see the convergence-observation entry above for why the K=2 detector could not fire. Round-10 residue (next round's likely corpus, not fixed): none Critical/Important outstanding; the class that keeps re-surfacing is second-order seams of prose recipes in the two SKILL.md mirrors, which the R10-A1a/A1b skill-shape assertions now pin mechanically. Ledger: `.gauntlet/ledger-claude-branch-feature-review-skills-resilience-f0b806ce5b99.json`.

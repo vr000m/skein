@@ -4,6 +4,19 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- `scripts/lib/state-path-guard.sh` (bundled into `review-gauntlet/lib/`): `gauntlet_assert_no_symlink` refuses symlinked `.gauntlet/` state paths via one lexical loop bounded at the shallowest non-symlink ancestor carrying `.git`; wired into `convergence-ledger.sh`, `gate-bounded.sh`, `run-gate.sh`.
+- `scripts/lint-temp-paths.sh` + `tests/plugin/test-lint-temp-paths.sh`: static lint against hard-coded `/tmp`/`$RANDOM` temp paths, run by `just lint-scripts`.
+- `persist_assert_no_duplicate_keys` (duplicate JSON keys detected via `jq --stream` event count) and `persist_validate_json_shape` in `lib/persist-common.sh`.
+- Skill-shape assertions (R10-A1a/A1b) pinning the `run-gate.sh normalize → reconcile → route → status-row` recipe in both `review-gauntlet` SKILL.md mirrors to files `gate_run_bounded` actually writes.
+
+### Changed
+- Lens-state `units` wire is JSON-array-only (the CSV-string arm was dropped); `persist_path_is_inside_root` absolutises and matches physical paths.
+- `run-gate.sh`: positional envelope guard on `normalize`/`status-row`, `route` guarded by the state-path guard, `status-row` stderr passthrough.
+
+### Fixed
+- 159 findings from ten `review-gauntlet` rounds on the resilience branch (terminal status `cap`, see the plan's Findings); notable: PATH-dependent `dirname` bypass in the containment guard, innermost-`.git` bound regression, `jq -e` misdiagnosing `false`/`null` as invalid JSON, temp-path lint reading `grep`'s `path:line:` prefix instead of file content.
+
 ## [0.6.0] - 2026-08-24
 
 ### Added
