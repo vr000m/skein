@@ -81,7 +81,7 @@
 #     location, summary, evidence, suggestion) must be absent, `null`, or a
 #     STRING containing no NUL. An array, object, number or boolean for any
 #     of them exits 2, nothing written. (`units` is exempt and validated
-#     separately as an array-of-strings or a CSV string.)
+#     separately as an array of strings — the CSV spelling is argv-only.)
 #   * There is NO `eval` in this script and no shell-quoting round-trip:
 #     the payload is decoded by jq into a NUL-delimited key/value stream
 #     that `read -d ''` consumes verbatim. No payload byte is ever parsed
@@ -92,7 +92,7 @@
 #   * Mutually exclusive with the payload flags --type/--units/--unit/
 #     --status/--severity/--category/--location/--summary/--evidence/
 #     --suggestion. Passing both exits 2, nothing written.
-#   * Recognised body keys: type, units (JSON array, or a CSV string),
+#   * Recognised body keys: type, units (JSON array of strings; no CSV spelling on this wire),
 #     unit, status, severity, category, location, summary, evidence,
 #     suggestion. They populate the SAME internal variables flag mode uses
 #     and then fall through to the SAME per-`--type` required-field
@@ -152,7 +152,7 @@
 # round 5 brought this header into line with the code it describes).
 #
 #   * On the FILE/JSON transports — `--json-file`, and the `--json-stdin`
-#     `units` ARRAY spelling — a unit's rules are exactly
+#     `units` ARRAY spelling, which is the ONLY spelling — a unit's rules are exactly
 #     PERSIST_UNIT_JQ_GATE's (scripts/lib/persist-common.sh): non-empty and
 #     NUL-free. A comma, a newline, a leading `-` and shell metacharacters
 #     are DATA on this wire; `## Post-completion follow-ups (A3/A5,
@@ -160,8 +160,11 @@
 #     collector applies the same filter to --expected-file, so writer and
 #     reader cannot disagree about what a unit is.
 #   * The comma is a SEPARATOR only where it genuinely is one: the `--units`
-#     and `--json-stdin` `units` CSV-*string* spellings here, and the
-#     collector's `--expected`.
+#     CSV here and the collector's `--expected` — both ARGV wires. Round 6
+#     removed the `--json-stdin`/`--json-file` `units` CSV-*string* spelling
+#     entirely: on a JSON wire a comma is data, and that spelling split a
+#     legitimate comma-bearing unit into two units nothing could ever report.
+#     `units` on the JSON wire is an ARRAY or it is exit 2.
 #   * A unit arriving as a standalone ARGV token — `--unit`, and each element
 #     of `--units` after the split — additionally carries
 #     persist_validate_unit's argv blacklist: a leading `-`, `$`, backtick,
@@ -300,7 +303,7 @@ while [[ $# -gt 0 ]]; do
 		# `--unit -foo` and `--unit 'src/$(id).ts'` were both accepted.
 		# persist_require_value only checks ARITY -- it has no idea what
 		# the token looks like. One helper, both sides of the wire.
-		persist_validate_unit "$1" persist-lens-result argv || exit 2
+		persist_validate_unit "$1" persist-lens-result || exit 2
 		UNIT="$1"
 		note_payload_flag --unit
 		;;
@@ -517,9 +520,24 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		| ., "\u0000", (($o[.] // "")), "\u0000"
 	')
 
-	# `units` may be a JSON array (the transport form) or a CSV string (the
-	# flag-mode spelling, accepted here for symmetry). Absent => --units was
-	# not passed.
+	# `units` is a JSON ARRAY, full stop. Absent => --units was not passed.
+	#
+	# R6/F5: this filter also accepted a CSV *STRING* and split it on `,`.
+	# That spelling contradicted this transport's own documented invariant —
+	# restated in this script's header, in PERSIST_UNIT_JQ_GATE's comment
+	# block, in the frozen plan, and in ALL FOUR lens SKILL.md mirrors ("a
+	# JSON array of strings ... A unit is a string, not a CSV field") — that a
+	# comma inside a unit is DATA. A lens emitting the plausible single-unit
+	# rendering `{"type":"start","units":"## Post-completion follow-ups
+	# (A3/A5, 2026-05-24)"}` silently registered TWO assigned units, neither
+	# of which any `progress` record can ever match: the permanent-`partial`
+	# failure mode the non-empty/NUL rules exist to prevent, and with no
+	# exit 2. Round 5 defended the split SEMANTICS of that spelling; it never
+	# justified the spelling existing at all ("kept for symmetry"). No
+	# in-tree producer used it, and no mirror prescribes it, so the decoder is
+	# now strictly narrower than every documented encoder. The ARGV `--units`
+	# CSV is untouched — that is the wire where a comma genuinely is a
+	# separator, and persist_units_csv_to_json remains its only splitter.
 	#
 	# F3/F10: the comma gate used to apply to BOTH spellings. On the CSV
 	# spelling it was a no-op by construction (`split(",")` cannot yield a
@@ -531,23 +549,13 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 	# remains is PERSIST_UNIT_JQ_GATE, the SAME filter
 	# collect-lens-results.sh's --expected-file reader applies, so writer and
 	# reader can no longer disagree about what a unit is.
-	# R5/R1 -- the `units` CSV-STRING spelling below is DELIBERATELY not routed
-	# through persist_units_csv_to_json, and that is not an oversight. This CSV
-	# never reaches a command line: it arrives inside a JSON payload, so the
-	# ARGV rules must not apply to it (they would re-break r4 C5/F10 -- a
-	# leading `-` and a comma-bearing plan heading are legal on this wire).
-	# What R2 was about was the SPLITTER disagreement, and that is closed:
-	# jq `split(",")` is now the only split semantics in the tree.
-	# PERSIST_UNIT_JQ_GATE remains this spelling gate. Do not "unify" the two.
 	STDIN_UNITS_JSON="$(printf '%s' "$STDIN_JSON" | jq -c '
 		(if has("units") | not then null
 		 elif (.units | type) == "array" then .units
-		 elif (.units | type) == "string" then
-			(if .units == "" then [] else (.units | split(",")) end)
-		 else error("units must be an array or a CSV string") end)
+		 else error("units must be an array of non-empty strings") end)
 		| if . == null then null else ('"$PERSIST_UNIT_JQ_GATE"') end
 	')" || {
-		echo "persist-lens-result: --json-stdin/--json-file 'units' must be an array of non-empty strings or a CSV string" >&2
+		echo "persist-lens-result: --json-stdin/--json-file 'units' must be an array of non-empty strings" >&2
 		exit 2
 	}
 	if [[ "$STDIN_UNITS_JSON" != "null" ]]; then

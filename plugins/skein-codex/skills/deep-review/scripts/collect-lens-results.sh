@@ -43,6 +43,19 @@
 # and stop the orchestrator waiting. --continue passes
 # `--running <lens>:<next-attempt>` for each lens it has just respawned.
 #
+# DUPLICATES ARE NOT SYMMETRIC ACROSS THESE FLAGS, deliberately (round 6/F6).
+# --attempts and --running are last-wins, as stated above: they are
+# OBSERVATIONS about spawn state, monotone by construction, and a later entry
+# is simply newer information — nothing about them can drop assigned work.
+# --expected and --expected-file are the ASSIGNMENT, and a repeated entry for
+# one lens is REFUSED with exit 2: last-wins there silently shrinks the
+# assignment, so the earlier entry's units disappear from `assigned` AND from
+# `unreviewed` and a lens that reviewed half its work reports `completed` with
+# `unreviewed: []`. Merging instead would invent a union semantic no caller
+# asked for and --expected-file cannot express. The --expected-file form of
+# the same mistake is a duplicate JSON key, which jq collapses before any
+# filter can see it; it is detected with a `jq --stream` leaf count.
+#
 # --findings-jsonl (boolean, mutually exclusive with the default summary
 # object; changes stdout only) emits one JSON object per line instead of the
 # per-lens summary:
@@ -346,6 +359,27 @@ while [[ $# -gt 0 ]]; do
 		# persist_units_csv_to_json, the tree's only units-CSV splitter, and
 		# the writer's `--units` goes through the same helper.
 		expected_units_json="$(persist_units_csv_to_json "$expected_units_csv" collect-lens-results)" || exit 2
+		# R6/F6: --expected is the ASSIGNMENT, and a repeated entry for one
+		# lens used to be a silent LAST-WINS overwrite -- the per-lens result
+		# loop writes each pair into `output` with `. + {($lens): $obj}`, so
+		# the earlier entry's units vanished from `assigned` AND from
+		# `unreviewed`, and a lens that reviewed half its work reported
+		# `completed` with `unreviewed: []`. Merging would invent a union
+		# semantic no caller asked for and --expected-file cannot express, so
+		# this REFUSES, matching the --expected-file-may-be-given-once style
+		# below. (--attempts/--running keep last-wins deliberately: they are
+		# observations about spawn state and cannot drop assigned work.)
+		# Index loop, not `for x in "${arr[@]}"`: this file targets bash 3.2
+		# (macOS system bash), where an empty array under `set -u` makes the
+		# latter an unbound-variable error.
+		for ((expected_seen_i = 0; expected_seen_i < ${#EXPECTED_LENSES[@]}; expected_seen_i++)); do
+			expected_seen="${EXPECTED_LENSES[$expected_seen_i]}"
+			if [[ "$expected_seen" == "$expected_lens_name" ]]; then
+				echo "collect-lens-results: --expected may be given at most once per lens (got '$expected_lens_name' twice)" >&2
+				usage
+				exit 2
+			fi
+		done
 		EXPECTED_LENSES+=("$expected_lens_name")
 		EXPECTED_UNITS_JSON+=("$expected_units_json")
 		;;
@@ -510,6 +544,25 @@ if [[ -n "$EXPECTED_FILE" ]]; then
 	if ! printf '%s' "$expected_file_json" |
 		jq -e 'all(.[]; type == "array" and all(.[]; type == "string"))' >/dev/null 2>&1; then
 		echo "collect-lens-results: --expected-file must map each lens name to an ARRAY OF STRINGS: $EXPECTED_FILE" >&2
+		exit 2
+	fi
+
+	# R6/F6, the --expected-file half of the same drop. A duplicate lens key
+	# collapses inside jq itself (`{"logic":["a"],"logic":["b"]}` parses to a
+	# ONE-key object), so `keys_unsorted` can never see it -- the collapse has
+	# already happened by the time any filter runs. `jq --stream` is the only
+	# reader that reports the raw event sequence, so count the VALUE events
+	# and compare with the key count. Ordering is load-bearing: this runs
+	# AFTER the array-of-strings shape check above, which rules out nested
+	# arrays that would otherwise inflate the leaf count. The two arms cover
+	# a scalar/array leaf (`length==2` with a 1-deep path) and an EMPTY array
+	# (`length==1`, the closing event) -- an empty array is legal on this
+	# wire, a deliberately-skipped lens carries `[]`.
+	expected_value_events="$(jq --stream -c 'select((length==1 and (.[0]|length)==2)
+		or (length==2 and (.[0]|length)==1))' "$EXPECTED_FILE" | wc -l | tr -d ' ')"
+	expected_key_count="$(printf '%s' "$expected_file_json" | jq -r 'keys_unsorted | length')"
+	if [[ "$expected_value_events" -ne "$expected_key_count" ]]; then
+		echo "collect-lens-results: --expected-file has a duplicate lens key (a repeated key silently drops the earlier assignment): $EXPECTED_FILE" >&2
 		exit 2
 	fi
 

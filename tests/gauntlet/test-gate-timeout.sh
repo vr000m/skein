@@ -1263,6 +1263,128 @@ else
 	fail "G11(R5-G5): guard placement (secs=$g11_secs_line guard=$g11_guard_line unlink=$g11_unlink_line)"
 fi
 
+# ---------------------------------------------------------------------------
+# Group R6-G1 — ONE state-path guard for the whole skill.
+#
+# Round 5 closed "gate-bounded.sh has no symlink guard" by writing a NEW,
+# WEAKER copy of a walk that already existed in convergence-ledger.sh: leaf +
+# immediate parent, no `..` rejection. `.gauntlet/` itself is the GRANDPARENT
+# of every path the gauntlet composes (SKILL.md: gate_out_dir=
+# "$run_dir/round-$round_n"), so a tracked symlink there was refused by the
+# ledger and FOLLOWED by the gate, which wrote its envelope, tool-out and
+# tool-out.stderr outside the repo. The policy now lives once, in
+# lib/state-path-guard.sh, and both callers wrap it.
+# ---------------------------------------------------------------------------
+
+LEDGER_SCRIPT_R6="$SKILL_LIB/convergence-ledger.sh"
+r6g1_root="$WORKDIR/r6g1"
+mkdir -p "$r6g1_root/repo" "$r6g1_root/outside/r6" "$r6g1_root/outside/sub"
+git -C "$r6g1_root/repo" init -q 2>/dev/null || git -C "$r6g1_root/repo" init >/dev/null 2>&1
+ln -s "$r6g1_root/outside" "$r6g1_root/repo/.gauntlet"
+ln -s "$r6g1_root/outside" "$r6g1_root/repo/link"
+mkdir -p "$r6g1_root/repo/ok/dir"
+
+# R6-G1a — grandparent symlink (`.gauntlet` itself). This is the exact shape
+# the orchestrator composes, and the case the round-5 leaf+parent guard let
+# through.
+set +e
+r6g1a_err="$(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 .gauntlet/r6/env.json .gauntlet/r6/tool.txt -- /bin/echo 'hi' 2>&1 >/dev/null)"
+r6g1a_rc=$?
+set -e
+r6g1a_leaked=""
+for r6g1a_f in env.json tool.txt tool.txt.stderr; do
+	[[ -e "$r6g1_root/outside/r6/$r6g1a_f" ]] && r6g1a_leaked="$r6g1a_leaked $r6g1a_f"
+done
+if [[ "$r6g1a_rc" -eq 2 && "$r6g1a_err" == *"refusing to operate on symlink"* && -z "$r6g1a_leaked" ]]; then
+	pass "R6-G1a: a symlinked .gauntlet/ GRANDPARENT is refused and nothing is written through it"
+else
+	fail "R6-G1a: rc=$r6g1a_rc leaked='$r6g1a_leaked' err='$r6g1a_err'"
+fi
+
+# R6-G1b — deep ancestor: link -> outside, link/sub exists.
+set +e
+r6g1b_err="$(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 "$r6g1_root/repo/link/sub/env.json" "$r6g1_root/repo/link/sub/tool.out" -- /bin/echo 'hi' 2>&1 >/dev/null)"
+r6g1b_rc=$?
+set -e
+if [[ "$r6g1b_rc" -eq 2 && "$r6g1b_err" == *"refusing to operate on symlink"* &&
+	! -e "$r6g1_root/outside/sub/env.json" && ! -e "$r6g1_root/outside/sub/tool.out" ]]; then
+	pass "R6-G1b: a symlinked DEEP ancestor is refused and nothing is written through it"
+else
+	fail "R6-G1b: rc=$r6g1b_rc err='$r6g1b_err' env=$([[ -e "$r6g1_root/outside/sub/env.json" ]] && echo yes || echo no)"
+fi
+
+# R6-G1c — `..` re-entry. A `..` makes every lexical ancestor test unsound
+# (`$repo/link/../.gauntlet` is NOT `$repo/.gauntlet` when `link` is a
+# symlink), so the shape is refused outright.
+set +e
+r6g1c_err="$(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 "$r6g1_root/repo/link/../ok/dir/env.json" "$r6g1_root/repo/ok/dir/tool.out" -- /bin/echo 'hi' 2>&1 >/dev/null)"
+r6g1c_rc=$?
+set -e
+if [[ "$r6g1c_rc" -eq 2 && "$r6g1c_err" == *"'..'"* ]]; then
+	pass "R6-G1c: a '..' component in a state path is refused outright"
+else
+	fail "R6-G1c: rc=$r6g1c_rc err='$r6g1c_err'"
+fi
+
+# R6-G1d — BEHAVIOURAL PARITY TABLE. The same case paths driven through the
+# gate's entry point and the ledger's, asserting identical verdicts. This is
+# the test that would have caught the round-5 divergence at round 5: two
+# writers into one `.gauntlet/` tree must not apply two policies.
+mkdir -p "$r6g1_root/outofrepo"
+r6g1d_cases=(
+	"$r6g1_root/repo/.gauntlet/r6/x.json"
+	"$r6g1_root/repo/link/sub/x.json"
+	"$r6g1_root/repo/link/../ok/dir/x.json"
+	"$r6g1_root/repo/ok/dir/x.json"
+	"$r6g1_root/outofrepo/x.json"
+)
+r6g1d_mismatch=""
+for r6g1d_case in "${r6g1d_cases[@]}"; do
+	set +e
+	# Distinct leaves per writer: the symlink under test is an ANCESTOR in
+	# every case, so the leaf name is free -- and sharing one leaf would have
+	# the gate's envelope make the ledger's `--init` refuse an existing file,
+	# which is not the verdict under comparison.
+	(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 "$r6g1d_case.env" "$r6g1d_case.tool" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+	r6g1d_gate=$?
+	(cd "$r6g1_root/repo" && bash "$LEDGER_SCRIPT_R6" --init --ledger "$r6g1d_case.ledger" --target t --cap 3 --k 2) >/dev/null 2>&1
+	r6g1d_ledger=$?
+	set -e
+	r6g1d_gv=$([[ "$r6g1d_gate" -eq 0 ]] && echo accept || echo refuse)
+	r6g1d_lv=$([[ "$r6g1d_ledger" -eq 0 ]] && echo accept || echo refuse)
+	[[ "$r6g1d_gv" == "$r6g1d_lv" ]] || r6g1d_mismatch="$r6g1d_mismatch [$r6g1d_case gate=$r6g1d_gv ledger=$r6g1d_lv]"
+	rm -f "$r6g1d_case.env" "$r6g1d_case.tool" "$r6g1d_case.tool.stderr" "$r6g1d_case.ledger" 2>/dev/null || true
+done
+if [[ -z "$r6g1d_mismatch" ]]; then
+	pass "R6-G1d: gate and ledger return IDENTICAL verdicts on every state-path case"
+else
+	fail "R6-G1d: guard policies disagree:$r6g1d_mismatch"
+fi
+
+# R6-G1e — control: ordinary paths, in-repo and out-of-worktree (the macOS
+# $TMPDIR-under-/var case), must not be falsely refused.
+set +e
+(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 "$r6g1_root/repo/ok/dir/env.json" "$r6g1_root/repo/ok/dir/tool.out" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+r6g1e_in=$?
+(cd "$r6g1_root/repo" && "$RUNNER" --gate demo 5 "$r6g1_root/outofrepo/env.json" "$r6g1_root/outofrepo/tool.out" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+r6g1e_out=$?
+set -e
+if [[ "$r6g1e_in" -eq 0 && "$r6g1e_out" -eq 0 ]]; then
+	pass "R6-G1e/control: ordinary in-repo and out-of-worktree paths are not falsely refused"
+else
+	fail "R6-G1e/control: in-repo rc=$r6g1e_in out-of-worktree rc=$r6g1e_out"
+fi
+
+# Structural: neither wrapper re-implements a walk — the policy has ONE owner.
+r6g1_gate_body="$(sed -n '/^gate_assert_no_symlink() {/,/^}/p' "$GATE_BOUNDED")"
+r6g1_ledger_body="$(sed -n '/^ledger_assert_no_symlink() {/,/^}/p' "$LEDGER_SCRIPT_R6")"
+if [[ "$r6g1_gate_body" == *"gauntlet_assert_no_symlink"* && "$r6g1_gate_body" != *"-L"* &&
+	"$r6g1_ledger_body" == *"gauntlet_assert_no_symlink"* && "$r6g1_ledger_body" != *"-L"* ]]; then
+	pass "R6-G1: both callers are wrappers — neither re-implements the ancestor walk"
+else
+	fail "R6-G1: a caller still carries its own walk (gate='$r6g1_gate_body' ledger='$r6g1_ledger_body')"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

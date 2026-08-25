@@ -91,6 +91,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh disable=SC1091
 . "$SCRIPT_DIR/gauntlet-common.sh"
+# shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
+. "$SCRIPT_DIR/state-path-guard.sh"
 
 usage() {
 	cat >&2 <<'EOF'
@@ -146,6 +148,14 @@ cmd_normalize() {
 		usage
 		exit 2
 	fi
+	# Same state tree, same containment policy (round 6, G1 sweep). SKILL.md
+	# composes --autofix-cache from the very `$gate_out_dir` gate_run_bounded
+	# writes its envelope into, and this command CREATES that file
+	# (`printf '' >"$cache"`) and later APPENDS to it — so it is a state-tree
+	# writer with exactly the exposure gate-bounded.sh has, and had no guard
+	# at all. It sits here: after the flags are known to be present (so it is
+	# not guarding a guess) and before the first filesystem effect.
+	gauntlet_assert_no_symlink "$cache" run-gate || exit 2
 	gc_have_jq
 
 	local raw status duration_s degraded_reason

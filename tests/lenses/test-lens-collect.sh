@@ -1761,4 +1761,118 @@ else
 	fail "(R5-G4) dangling run-dir symlink: rc=$r5g4_rc err='$r5g4_err' (expected rc=2 with a symlink refusal)"
 fi
 
+# ---------------------------------------------------------------------------
+# R6-G2b — the collector's --expected-file guard must not depend on the CWD's
+# spelling either. Same defect as R6-G2a on the writer side: `$PWD` is the
+# LOGICAL cwd, `--root` is physical, the lexical prefix match failed, and
+# af_assert_no_symlink was skipped on an in-tree path.
+# ---------------------------------------------------------------------------
+
+r6g2b_base="$TMPDIR_ROOT/r6g2b"
+mkdir -p "$r6g2b_base"
+make_scratch_repo "$r6g2b_base/repo"
+r6g2b_phys="$(cd "$r6g2b_base/repo" && pwd -P)"
+mkdir -p "$r6g2b_base/repo/.deep-review/lenses/r6g2b"
+jq -n -c '{stolen:["x"]}' >"$r6g2b_base/outside.json"
+ln -s "$r6g2b_base/outside.json" "$r6g2b_base/repo/.deep-review/lenses/r6g2b/link.json"
+ln -s "$r6g2b_base/repo" "$r6g2b_base/cwd-link"
+set +e
+r6g2b_err="$(cd "$r6g2b_base/cwd-link" && bash "$SCRIPT" --root "$r6g2b_phys" \
+	--skill deep-review --run-id r6g2b \
+	--expected-file .deep-review/lenses/r6g2b/link.json 2>&1 >/dev/null)"
+r6g2b_rc=$?
+set -e
+if [[ "$r6g2b_rc" -eq 2 && "$r6g2b_err" == *"symlink"* ]]; then
+	pass "(R6-G2b) a symlinked --expected-file is still guarded when the cwd is a symlinked alias of the root"
+else
+	fail "(R6-G2b) cwd-spelling-dependent guard: rc=$r6g2b_rc err='$r6g2b_err'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R6-G4 — a repeated --expected for one lens is a usage error, not a
+# silent overwrite.
+#
+# --expected appends an index-parallel pair per occurrence and the per-lens
+# result loop writes each into `output` with `. + {($lens): $obj}`, so the LAST
+# entry for a duplicated lens won and the earlier entry's units vanished from
+# `assigned` AND from `unreviewed`. The invariant that broke: an assigned unit
+# either appears in `reviewed` or in `unreviewed`; it is never dropped from
+# both.
+# ---------------------------------------------------------------------------
+
+r6g4_root="$TMPDIR_ROOT/r6g4"
+make_scratch_repo "$r6g4_root"
+
+set +e
+r6g4a_out="$(bash "$SCRIPT" --root "$r6g4_root" --skill deep-review --run-id r6g4 \
+	--expected 'logic:a' --expected 'logic:b' 2>"$r6g4_root/a.err")"
+r6g4a_rc=$?
+set -e
+if [[ "$r6g4a_rc" -eq 2 && -z "$r6g4a_out" ]] && grep -q "at most once per lens" "$r6g4_root/a.err" &&
+	grep -q "logic" "$r6g4_root/a.err"; then
+	pass "(R6-G4a) a repeated --expected for one lens exits 2, names the lens, and emits no JSON"
+else
+	fail "(R6-G4a) rc=$r6g4a_rc out='$r6g4a_out' err='$(cat "$r6g4_root/a.err")'"
+fi
+
+set +e
+r6g4b_out="$(bash "$SCRIPT" --root "$r6g4_root" --skill deep-review --run-id r6g4 \
+	--expected 'logic:a,b' --expected 'security:c' 2>"$r6g4_root/b.err")"
+r6g4b_rc=$?
+set -e
+if [[ "$r6g4b_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r6g4b_out" | jq -r '.logic.assigned')" == "2" ]] &&
+	[[ "$(printf '%s' "$r6g4b_out" | jq -r '.security.assigned')" == "1" ]]; then
+	pass "(R6-G4b/control) --expected for DISTINCT lenses is unchanged"
+else
+	fail "(R6-G4b/control) rc=$r6g4b_rc out='$r6g4b_out' err='$(cat "$r6g4_root/b.err")'"
+fi
+
+# --expected-file: the same drop, through jq's duplicate-key collapse. The
+# collapse happens before any filter runs, so `keys_unsorted` cannot see it;
+# only `jq --stream`'s raw event sequence can.
+printf '%s' '{"logic":["a"],"logic":["b"]}' >"$r6g4_root/dup.json"
+set +e
+r6g4c_out="$(bash "$SCRIPT" --root "$r6g4_root" --skill deep-review --run-id r6g4 \
+	--expected-file "$r6g4_root/dup.json" 2>"$r6g4_root/c.err")"
+r6g4c_rc=$?
+set -e
+if [[ "$r6g4c_rc" -eq 2 && -z "$r6g4c_out" ]] && grep -q "duplicate lens key" "$r6g4_root/c.err"; then
+	pass "(R6-G4c) a duplicate lens key in --expected-file exits 2"
+else
+	fail "(R6-G4c) rc=$r6g4c_rc out='$r6g4c_out' err='$(cat "$r6g4_root/c.err")'"
+fi
+
+# Control: an EMPTY array is legal on this wire (a deliberately-skipped lens
+# carries []), and must not be mistaken for a missing value event.
+printf '%s' '{"logic":[],"security":["c"]}' >"$r6g4_root/empty.json"
+set +e
+r6g4d_out="$(bash "$SCRIPT" --root "$r6g4_root" --skill deep-review --run-id r6g4 \
+	--expected-file "$r6g4_root/empty.json" 2>"$r6g4_root/d.err")"
+r6g4d_rc=$?
+set -e
+if [[ "$r6g4d_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r6g4d_out" | jq -r '.logic.assigned')" == "0" ]] &&
+	[[ "$(printf '%s' "$r6g4d_out" | jq -r '.security.assigned')" == "1" ]]; then
+	pass "(R6-G4d/control) an empty units array in --expected-file is still accepted"
+else
+	fail "(R6-G4d/control) rc=$r6g4d_rc out='$r6g4d_out' err='$(cat "$r6g4_root/d.err")'"
+fi
+
+# Invariant, asserted directly: for every ACCEPTED invocation above,
+# assigned == |reviewed| + |unreviewed| per lens.
+r6g4_inv=""
+for r6g4_case in "$r6g4b_out" "$r6g4d_out"; do
+	while IFS= read -r r6g4_row; do
+		[[ -n "$r6g4_row" ]] || continue
+		r6g4_inv="$r6g4_inv $r6g4_row"
+	done < <(printf '%s' "$r6g4_case" |
+		jq -r 'to_entries[] | select(.value.assigned != ((.value.reviewed // [] | length) + (.value.unreviewed // [] | length))) | .key')
+done
+if [[ -z "$r6g4_inv" ]]; then
+	pass "(R6-G4) invariant: assigned == |reviewed| + |unreviewed| for every accepted lens"
+else
+	fail "(R6-G4) invariant broken for lenses:$r6g4_inv"
+fi
+
 finish

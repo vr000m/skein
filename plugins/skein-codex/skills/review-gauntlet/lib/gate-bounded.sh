@@ -12,6 +12,15 @@
 # Never uses `exit` — only `return` — since it runs inside the caller's
 # shell.
 #
+# It sources exactly ONE sibling, lib/state-path-guard.sh, resolved through
+# this file's own directory. Earlier revisions said "sources nothing by
+# contract"; the reason was gauntlet-common.sh's harness-divergent plugin-root
+# anchor, which state-path-guard.sh does not have — it is harness-neutral and
+# parity-enforced, exactly like this file. Round 6 (F1/F2/F3): the alternative
+# to sourcing it was a THIRD hand-rolled copy of the tree's containment
+# policy, and the weaker copy round 5 wrote here is precisely how a symlinked
+# `.gauntlet/` came to be refused by the ledger and followed by the gate.
+#
 # Provides:
 #   gate_run_bounded [--gate <name>] <budget-seconds> <envelope-out> <tool-out> -- <cmd...>
 #     Runs <cmd...> synchronously with its stdout captured into <tool-out>
@@ -173,6 +182,12 @@
 # could in principle recycle <pgid>. Closing that would need a
 # pidfd/process-handle API that portable bash does not have. It is
 # documented rather than claimed away.
+# The one sibling this file sources (see the header). Resolved through this
+# file's own directory, so it works in both plugin mirrors with no
+# harness-specific anchor substitution.
+# shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/state-path-guard.sh"
+
 _gate_sweep_pgid() {
 	local pgid="$1" self_pgid survivors
 	[[ "$pgid" =~ ^[0-9]+$ ]] || return 0
@@ -201,48 +216,29 @@ _gate_sweep_pgid() {
 
 # gate_assert_no_symlink <path> -> 0 safe, 1 with a diagnostic on stderr.
 #
-# R5/R7: state-path guard policy was per-FILE rather than per-skill.
-# convergence-ledger.sh carries a bespoke hardened ledger_assert_no_symlink
-# and the lens scripts route every repo-rooted path through
-# af_assert_no_symlink, but gate-bounded.sh — which unlinks and then writes
-# <envelope-out>, <tool-out> and <tool-out>.stderr into the same .gauntlet/
-# tree — had none. The hoisted `rm -f` removes a symlink ENTRY rather than
-# following it, so the leaf is defended at that instant; but the writes happen
-# a whole bounded run later (minutes, in the codex case), so a symlink
-# replanted in that window is followed by the `>` redirect, and a SYMLINKED
-# PARENT DIRECTORY was never defended at any point.
+# A ONE-LINE WRAPPER over the skill's single state-path guard (round 6,
+# F1/F2/F3). Round 5 added a guard here as a SELF-CONTAINED copy — leaf plus
+# immediate parent, no `..` rejection — because this file "sources nothing by
+# contract". That copy was strictly weaker than the walk convergence-ledger.sh
+# was already running over the SAME `.gauntlet/` tree: a symlink at
+# `.gauntlet/` itself (the grandparent of every path the gauntlet composes,
+# `SKILL.md`: `gate_out_dir="$run_dir/round-$round_n"`) was refused by the
+# ledger and FOLLOWED here, so the envelope, the tool output and its stderr
+# were written outside the repo. One tree must have one containment policy, so
+# the policy now lives once, in lib/state-path-guard.sh, and both callers are
+# wrappers.
 #
-# Self-contained on purpose: this file sources nothing by contract, and
-# af_assert_no_symlink lives in scripts/lib/auto-fix-common.sh, which is not
-# on the gauntlet's lib path — the same reasoning convergence-ledger.sh
-# applied to itself.
+# The "sources nothing" sentence in this file's header is AMENDED, not
+# silently broken: its reason was the harness-divergent plugin-root anchor in
+# gauntlet-common.sh, and state-path-guard.sh has no anchor to resolve — it is
+# reached through this file's own directory, the same mechanism run-gate.sh
+# and convergence-ledger.sh already use.
 #
-# Bounded at the path and its immediate parent, deliberately: these paths are
-# composed by the gauntlet under .gauntlet/, and a full ancestor walk would
-# refuse ordinary platform symlinks (macOS $TMPDIR under /var -> /private/var)
-# that a gate run never touches. Same bound convergence-ledger.sh applies
-# outside a worktree.
-#
-# Residual, documented rather than claimed away: the guard -> write window is
-# still a TOCTOU, the same class as ledger_assert_no_symlink's guard -> mkdir
-# window. Closing it needs openat(O_NOFOLLOW), which portable bash lacks.
+# The wrapper NAME stays, because it is what the three call sites in
+# gate_run_bounded and the structural placement assertion in
+# tests/gauntlet/test-gate-timeout.sh both refer to.
 gate_assert_no_symlink() {
-	local p="$1" parent
-	# Absolutise (resolving nothing) so the refusal diagnostic names the same
-	# path the `>` redirect will later open, whatever the caller's cwd. This
-	# is G2's lesson applied here: a containment or guard decision must not
-	# depend on how a path is spelled.
-	[[ "$p" == /* ]] || p="$PWD/$p"
-	if [[ -L "$p" ]]; then
-		echo "gate_run_bounded: refusing to write through a symlink: $p" >&2
-		return 1
-	fi
-	parent="$(dirname "$p")"
-	if [[ -L "$parent" ]]; then
-		echo "gate_run_bounded: refusing to write under a symlinked parent: $parent" >&2
-		return 1
-	fi
-	return 0
+	gauntlet_assert_no_symlink "$1" gate_run_bounded
 }
 
 gate_run_bounded() {

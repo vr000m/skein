@@ -768,8 +768,18 @@ fi
 # of a unit rather than of a transport (a lens can never report it reviewed).
 reject_payload "(A11c) an empty 'units' element exits 2, nothing written" case-a11c \
 	'{"type":"start","units":["a",""]}'
-# Positive control: the CSV spelling keeps its comma as the SEPARATOR, so
-# `"a,b"` is two comma-free units and stays accepted.
+# R6-G3a — the CSV-STRING spelling of `units` on the JSON wire is GONE.
+#
+# This case is the INVERSION of the round-5 (A11b) assertion, which required
+# `{"type":"start","units":"a,b"}` to be accepted and split into two units.
+# That assertion encoded the defect: on this transport a comma is DATA — the
+# script header, PERSIST_UNIT_JQ_GATE, the frozen plan and all four lens
+# SKILL.md mirrors all say "a JSON array of strings ... a unit is a string,
+# not a CSV field" — so a lens emitting a single comma-bearing unit as a bare
+# string silently registered TWO assigned units that no `progress` record can
+# ever match, stranding the lens at `partial` forever with no exit 2.
+# DO NOT RESTORE THE OLD ASSERTION. The ARGV `--units` CSV is a different
+# wire and keeps its comma separator — see (R6-G3c) below.
 a11b_root="$TMPDIR_ROOT/case-a11b"
 mkdir -p "$a11b_root"
 set +e
@@ -779,13 +789,51 @@ printf '%s' '{"type":"start","units":"a,b"}' |
 a11b_exit=$?
 set -e
 a11b_target="$a11b_root/.deep-review/lenses/run-a11b/logic.1.jsonl"
-if [[ $a11b_exit -ne 0 ]]; then
-	fail "(A11b) CSV 'units' string must still be accepted (exit $a11b_exit)"
-	sed 's/^/    /' "$a11b_root/stderr"
-elif [[ "$(jq -c '.units' "$a11b_target" 2>/dev/null)" != '["a","b"]' ]]; then
-	fail "(A11b) CSV 'units' not split into two units: $(jq -c '.units' "$a11b_target" 2>/dev/null)"
+if [[ $a11b_exit -eq 2 ]] && grep -q "array" "$a11b_root/stderr" && [[ ! -e "$a11b_target" ]]; then
+	pass "(R6-G3a) a CSV-string 'units' on the JSON wire exits 2, names 'array', and writes no attempt file"
 else
-	pass "(A11b) CSV 'units' comma is the separator, not a rejected character"
+	fail "(R6-G3a) exit=$a11b_exit err='$(cat "$a11b_root/stderr")' attempt_file=$([[ -e "$a11b_target" ]] && echo present || echo absent)"
+fi
+
+# R6-G3b — the POSITIVE control the removal exists to protect: a real
+# comma-bearing review-plan heading, carried as ONE array element, round-trips
+# byte-identically through the writer and back out of the collector's
+# `assigned`/`unreviewed`.
+r6g3b_root="$TMPDIR_ROOT/case-r6g3b"
+mkdir -p "$r6g3b_root"
+r6g3b_unit='## Post-completion follow-ups (A3/A5, 2026-05-24)'
+set +e
+jq -n -c --arg u "$r6g3b_unit" '{type:"start",units:[$u]}' |
+	bash "$SCRIPT" --root "$r6g3b_root" --skill deep-review --run-id run-r6g3b \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$r6g3b_root/stderr"
+r6g3b_exit=$?
+set -e
+r6g3b_target="$r6g3b_root/.deep-review/lenses/run-r6g3b/logic.1.jsonl"
+r6g3b_units="$(jq -c '.units' "$r6g3b_target" 2>/dev/null || true)"
+r6g3b_expect="$(jq -n -c --arg u "$r6g3b_unit" '[$u]')"
+jq -n -c --arg u "$r6g3b_unit" '{logic:[$u]}' >"$r6g3b_root/expected.json"
+r6g3b_collect="$(bash "$REPO_ROOT/scripts/collect-lens-results.sh" --root "$r6g3b_root" \
+	--skill deep-review --run-id run-r6g3b --expected-file "$r6g3b_root/expected.json" 2>"$r6g3b_root/collect.err" || true)"
+r6g3b_unreviewed="$(printf '%s' "$r6g3b_collect" | jq -c '.logic.unreviewed' 2>/dev/null || true)"
+if [[ $r6g3b_exit -eq 0 && "$r6g3b_units" == "$r6g3b_expect" && "$r6g3b_unreviewed" == "$r6g3b_expect" ]]; then
+	pass "(R6-G3b) a comma-bearing unit is ONE unit and round-trips byte-identically through the collector"
+else
+	fail "(R6-G3b) exit=$r6g3b_exit written=$r6g3b_units unreviewed=$r6g3b_unreviewed expected=$r6g3b_expect err='$(cat "$r6g3b_root/stderr")'"
+fi
+
+# R6-G3c — the ARGV wire is untouched: `--units 'a,b'` is still two units.
+r6g3c_root="$TMPDIR_ROOT/case-r6g3c"
+mkdir -p "$r6g3c_root"
+set +e
+bash "$SCRIPT" --root "$r6g3c_root" --skill deep-review --run-id run-r6g3c \
+	--lens logic --attempt 1 --type start --units 'a,b' >/dev/null 2>"$r6g3c_root/stderr"
+r6g3c_exit=$?
+set -e
+r6g3c_units="$(jq -c '.units' "$r6g3c_root/.deep-review/lenses/run-r6g3c/logic.1.jsonl" 2>/dev/null || true)"
+if [[ $r6g3c_exit -eq 0 && "$r6g3c_units" == '["a","b"]' ]]; then
+	pass "(R6-G3c) the ARGV --units CSV still splits on the comma"
+else
+	fail "(R6-G3c) exit=$r6g3c_exit units=$r6g3c_units err='$(cat "$r6g3c_root/stderr")'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -874,7 +922,7 @@ fi
 # --json-file) `units` is a JSON array and a comma inside an element is not a
 # separator, so it must round-trip. On the `--units <csv>` argv spelling the
 # comma IS the separator and keeps splitting. And `--unit` now goes through
-# persist_validate_unit with source=argv, which closes the missing
+# persist_validate_unit (the ARGV rules; it owns no other wire), which closes the missing
 # leading-`-` rule (persist_require_value only checks arity, so `--unit -foo`
 # was accepted).
 # ---------------------------------------------------------------------------
@@ -934,7 +982,7 @@ fi
 
 # Writer parity gap (F3): `--unit -foo` reached the wire because
 # persist_require_value only checks arity. It now goes through
-# persist_validate_unit with source=argv, which rejects a leading `-`.
+# persist_validate_unit (the ARGV rules; it owns no other wire), which rejects a leading `-`.
 set +e
 bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
 	--lens logic --attempt 1 --type progress --unit -foo >/dev/null 2>&1
@@ -1141,20 +1189,35 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Group R5-G6 — persist_validate_unit owns the ARGV rules only. The `file`
-# arm was a second-language restatement of PERSIST_UNIT_JQ_GATE's per-element
-# rule that nothing called; deleting it leaves one owner per wire. A future
-# `file` caller must now fail LOUDLY rather than drift silently.
+# Group R6-G5 — persist_validate_unit is an ARGV validator and its SIGNATURE
+# says so. R5-G6 removed the `file` arm, which left a <source> parameter with
+# exactly one legal value: a parameter expressing no choice, whose only job
+# was rejecting a word nothing meant any more, and which invited a future
+# reader to conclude another wire existed. This replaces that case: the
+# parameter is gone, and the argv rules are UNCONDITIONALLY in force.
 # ---------------------------------------------------------------------------
 
+r6g5_src() {
+	bash -c '. "$1/scripts/lib/auto-fix-common.sh"; . "$1/scripts/lib/persist-common.sh"; shift; persist_validate_unit "$@"' _ "$REPO_ROOT" "$@" 2>&1
+}
 set +e
-r5g6_out="$(bash -c '. "$1/scripts/lib/auto-fix-common.sh"; . "$1/scripts/lib/persist-common.sh"; persist_validate_unit x label file' _ "$REPO_ROOT" 2>&1)"
-r5g6_rc=$?
+r6g5_ok_out="$(r6g5_src x label)"
+r6g5_ok_rc=$?
+r6g5_bad_out="$(r6g5_src -x label)"
+r6g5_bad_rc=$?
 set -e
-if [[ "$r5g6_rc" -eq 2 && "$r5g6_out" == *"unknown source"* ]]; then
-	pass "(R5-G6) persist_validate_unit rejects source=file with exit 2 and an 'unknown source' diagnostic"
+r6g5_sig="$(grep -n '^# persist_validate_unit <value> <label>$' "$REPO_ROOT/scripts/lib/persist-common.sh" || true)"
+r6g5_locals="$(grep -c 'local value="\$1" label="\$2"$' "$REPO_ROOT/scripts/lib/persist-common.sh" || true)"
+r6g5_why=""
+[[ "$r6g5_ok_rc" -eq 0 ]] || r6g5_why="$r6g5_why two-arg-call-rc=$r6g5_ok_rc($r6g5_ok_out)"
+[[ "$r6g5_bad_rc" -eq 2 && "$r6g5_bad_out" == *"must not start with '-'"* ]] ||
+	r6g5_why="$r6g5_why argv-rules-not-in-force(rc=$r6g5_bad_rc out='$r6g5_bad_out')"
+[[ -n "$r6g5_sig" ]] || r6g5_why="$r6g5_why signature-still-takes-<source>"
+[[ "$r6g5_locals" -eq 1 ]] || r6g5_why="$r6g5_why body-still-binds-a-third-param"
+if [[ -z "$r6g5_why" ]]; then
+	pass "(R6-G5a) persist_validate_unit takes exactly <value> <label>, and the argv rules are unconditional"
 else
-	fail "(R5-G6) source=file must exit 2 with 'unknown source', got rc=$r5g6_rc out='$r5g6_out'"
+	fail "(R6-G5a)$r6g5_why"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1183,6 +1246,69 @@ if [[ "$r5g7_ok" -eq 1 ]]; then
 	pass "(R5-G7) the header's unit contract matches the code (no comma-joined doctrine; the wire gate is named)"
 else
 	fail "(R5-G7) header/code contract drift:$r5g7_why"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R6-G2 — a containment decision must not depend on the CWD's spelling
+# either.
+#
+# Round 5 absolutised a relative <path> against `$PWD`. `$PWD` is the LOGICAL
+# cwd: started from a symlinked directory alias it keeps the alias, while
+# `--root` (typically `git rev-parse --show-toplevel`) is PHYSICAL. The
+# lexical prefix match then failed, persist_path_is_inside_root answered
+# "outside", and BOTH callers skipped af_assert_no_symlink entirely --
+# fail-OPEN on exactly the in-tree path the guard exists to protect.
+# ---------------------------------------------------------------------------
+
+r6g2_base="$TMPDIR_ROOT/r6g2"
+mkdir -p "$r6g2_base/repo/sub" "$r6g2_base/outside"
+r6g2_phys="$(cd "$r6g2_base/repo" && pwd -P)"
+printf '%s' '{"type":"done","status":"completed"}' >"$r6g2_base/outside/payload.json"
+ln -s "$r6g2_base/outside/payload.json" "$r6g2_base/repo/rel-link.json"
+ln -s "$r6g2_base/repo" "$r6g2_base/cwd-link"
+
+set +e
+r6g2a_err="$(cd "$r6g2_base/cwd-link" && bash "$SCRIPT" --root "$r6g2_phys" \
+	--skill deep-review --run-id r6g2 --lens logic --attempt 1 \
+	--json-file rel-link.json 2>&1 >/dev/null)"
+r6g2a_rc=$?
+set -e
+if [[ "$r6g2a_rc" -eq 2 && "$r6g2a_err" == *"symlink"* ]] && no_jsonl_anywhere "$r6g2_base/repo"; then
+	pass "(R6-G2a) a symlinked --json-file is still guarded when the cwd is a symlinked alias of the root"
+else
+	fail "(R6-G2a) cwd-spelling-dependent guard: rc=$r6g2a_rc err='$r6g2a_err'"
+fi
+
+# R6-G2c — the containment table itself, asserted directly, from BOTH the
+# physical and the symlinked spelling of the same cwd. The out-of-tree row is
+# what keeps the platform-symlink false refusal from coming back.
+r6g2c_probe() {
+	# <cwd> <path> <root> -> prints "inside" or "outside"
+	bash -c '
+		cd "$1" || exit 9
+		. "$4/scripts/lib/auto-fix-common.sh"
+		. "$4/scripts/lib/persist-common.sh"
+		if persist_path_is_inside_root "$2" "$3"; then echo inside; else echo outside; fi
+	' _ "$1" "$2" "$3" "$REPO_ROOT"
+}
+r6g2c_rows=""
+for r6g2c_cwd in "$r6g2_phys" "$r6g2_base/cwd-link"; do
+	r6g2c_check() {
+		local got
+		got="$(r6g2c_probe "$r6g2c_cwd" "$1" "$2")"
+		[[ "$got" == "$3" ]] || r6g2c_rows="$r6g2c_rows"$'\n'"  cwd=$r6g2c_cwd path='$1' root='$2' expected=$3 got=$got"
+	}
+	r6g2c_check "sub/x.json" "$r6g2_phys" inside
+	r6g2c_check "sub/x.json" "." inside
+	r6g2c_check "/etc/passwd" "$r6g2_phys" outside
+	r6g2c_check "$r6g2_phys/sub/x.json" "$r6g2_phys" inside
+	r6g2c_check "../x" "$r6g2_phys" inside
+	r6g2c_check "$r6g2_base/outside/payload.json" "$r6g2_phys" outside
+done
+if [[ -z "$r6g2c_rows" ]]; then
+	pass "(R6-G2c) persist_path_is_inside_root answers identically from the physical and the symlinked cwd"
+else
+	fail "(R6-G2c) containment table mismatch:$r6g2c_rows"
 fi
 
 finish

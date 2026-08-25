@@ -125,8 +125,12 @@ fi
 # runtime-specific anchor to resolve, so both copies are the same file);
 # gauntlet-common.sh legitimately diverges (it resolves a runtime-specific
 # anchor: ${CLAUDE_PLUGIN_ROOT} on Claude, $SKILL_DIR on Codex) so it is
-# intentionally excluded from this check.
-GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh)
+# intentionally excluded from this check. state-path-guard.sh (round 6) is the
+# skill's single state-path containment policy — it is sourced by its siblings
+# through their own directory, has no anchor to resolve, and is therefore
+# byte-identical too; registering it here is what stops a per-caller copy of
+# that policy reappearing and drifting.
+GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh state-path-guard.sh)
 for f in "${GAUNTLET_LIB_PARITY_FILES[@]}"; do
 	claude_f="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/$f"
 	codex_f="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/$f"

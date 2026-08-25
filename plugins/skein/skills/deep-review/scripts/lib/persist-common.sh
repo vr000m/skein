@@ -97,10 +97,11 @@
 #                                primitive here — every call must add a line,
 #                                never replace the file's prior contents.
 #                                Returns 1 on any mkdir/write failure.
-#   persist_validate_unit <value> <label> <source>
+#   persist_validate_unit <value> <label>
 #                              — validate ONE review unit arriving as a
-#                                standalone ARGV token (source = argv; it is
-#                                the only accepted value). A narrow
+#                                standalone ARGV token. This function owns the
+#                                ARGV rules and nothing else, which is why it
+#                                takes no wire selector. A narrow
 #                                blacklist, NOT a persist_validate_id-style
 #                                whitelist: units are free-form review
 #                                targets (file paths for deep-review, plan
@@ -347,16 +348,34 @@ persist_lens_run_dir() {
 # root IS canonicalised, so both spellings of an in-root path match.
 #
 # ABSOLUTISING IS NOT CANONICALISING, and only the second is forbidden here.
-# Prefixing a relative path with $PWD resolves no component, so the lexical
+# Prefixing a relative path with the cwd resolves no component, so the lexical
 # property above is untouched; refusing to do it, however, meant no relative
 # spelling could EVER match an absolute root, so the function answered
 # "outside" and BOTH r4 symlink guards — collect-lens-results.sh's
 # --expected-file and persist-lens-result.sh's --json-file — were skipped for
 # every relative path, and for every run with a relative --root (round 5/R3).
-# ledger_assert_no_symlink in the review-gauntlet lib had been doing exactly
-# this step, with exactly this rationale, since r4; the two guards disagreed.
 # Whether a path is guarded must depend on what the path IS, not on how it is
 # spelled.
+#
+# BOTH CWD SPELLINGS, and that is round 6/F4. `$PWD` is the LOGICAL cwd: a
+# process started from a symlinked directory alias keeps the alias in `$PWD`,
+# while `--root` is typically `git rev-parse --show-toplevel` or another
+# PHYSICAL path. Anchoring only against `$PWD` then made the lexical prefix
+# match fail, the function answered "outside", and both callers skipped
+# af_assert_no_symlink ENTIRELY — fail-OPEN, on exactly the in-tree path the
+# guard exists to protect. So a relative <path> (and a relative <root>) is
+# anchored against `$PWD` AND `pwd -P`, and "inside" wins if either matches.
+# Adding alternatives can only move paths from unguarded to guarded, so the
+# change direction is fail-closed; the worst case stays a loud refusal on an
+# exotic out-of-tree fixture, which can always be respelled.
+#
+# DELIBERATE ASYMMETRY WITH gauntlet_assert_no_symlink (review-gauntlet's
+# lib/state-path-guard.sh), which absolutises against `$PWD` alone and stays
+# that way: it is not a lexical prefix match but a CANONICALISING two-pass
+# walk — pass 1 does `cd … && pwd -P` on each ancestor, so it finds the
+# worktree root through a symlinked cwd alias without help — and its failure
+# direction is fail-CLOSED. Prefix-matching containment needs both cwd
+# spellings; a canonicalising walk needs neither.
 #
 # `..` IS FAIL-CLOSED TO "INSIDE". A path with a `..` component can re-enter
 # the tree at a position no component of its own spelling names, so
@@ -375,31 +394,51 @@ persist_lens_run_dir() {
 # puts $TMPDIR under `/var`, which IS a symlink to `/private/var`.
 persist_path_is_inside_root() {
 	local path="$1" root="$2" root_canon root_abs
+	local pwd_logical pwd_physical path_abs path_physical p r
 	[[ -n "$root" ]] || return 1
 
-	# Absolutise both sides against $PWD, resolving nothing. `.` and `./x`
-	# are normalised so a `--root .` run does not build `$PWD/.` and then
-	# fail to prefix-match its own children.
-	if [[ "$path" != /* ]]; then
-		if [[ "$path" == "." ]]; then path="$PWD"; else path="$PWD/${path#./}"; fi
+	# BOTH cwd spellings. $PWD is the LOGICAL cwd: started from a symlinked
+	# directory alias, it keeps the alias, while `pwd -P` gives the physical
+	# path. A relative <path> is therefore absolutised twice, and "inside" is
+	# answered if EITHER spelling matches. See the header for why adding
+	# alternatives is the fail-closed direction here.
+	pwd_logical="$PWD"
+	pwd_physical="$(pwd -P 2>/dev/null)" || pwd_physical="$pwd_logical"
+
+	# Absolutise both sides, resolving nothing. `.` and `./x` are normalised
+	# so a `--root .` run does not build `$PWD/.` and then fail to
+	# prefix-match its own children.
+	if [[ "$path" == /* ]]; then
+		path_abs="$path"
+		path_physical="$path"
+	elif [[ "$path" == "." ]]; then
+		path_abs="$pwd_logical"
+		path_physical="$pwd_physical"
+	else
+		path_abs="$pwd_logical/${path#./}"
+		path_physical="$pwd_physical/${path#./}"
 	fi
 	if [[ "$root" == /* ]]; then
 		root_abs="$root"
 	elif [[ "$root" == "." ]]; then
-		root_abs="$PWD"
+		root_abs="$pwd_logical"
 	else
-		root_abs="$PWD/${root#./}"
+		root_abs="$pwd_logical/${root#./}"
 	fi
 
-	case "$path" in
+	case "$path_abs" in
 	*/../* | */..) return 0 ;;
 	esac
 
 	root_canon="$(cd "$root" 2>/dev/null && pwd -P)" || root_canon="$root"
-	case "$path" in
-	"$root" | "$root"/* | "$root_abs" | "$root_abs"/* | "$root_canon" | "$root_canon"/*) return 0 ;;
-	*) return 1 ;;
-	esac
+	for p in "$path_abs" "$path_physical"; do
+		for r in "$root" "$root_abs" "$root_canon"; do
+			case "$p" in
+			"$r" | "$r"/*) return 0 ;;
+			esac
+		done
+	done
+	return 1
 }
 
 # PERSIST_UNIT_JQ_GATE — the FILE/JSON wire's unit rules, as a jq filter whose
@@ -493,7 +532,7 @@ persist_validate_id() {
 	return 0
 }
 
-# persist_validate_unit <value> <label> <source>
+# persist_validate_unit <value> <label>
 #
 # Validate ONE review unit. A unit is NOT an id: unlike a lens name or a
 # run-id it is a free-form review target — deep-review passes diff-derived
@@ -504,16 +543,18 @@ persist_validate_id() {
 # interpolated string dangerous, not a whitelist of the characters that make
 # one safe.
 #
-# <source> has exactly ONE accepted value, `argv`. The FILE/JSON wire has a
-# different owner: PERSIST_UNIT_JQ_GATE, above, is that wire's sole rule set,
-# expressed once in jq over the whole array. Round 5 (R8) deleted the `file`
-# arm that used to restate the gate's per-element rule in bash: nothing
-# in-tree ever called it, so it was untested, and "keep the two in step" is
-# not a mechanism — G3's NUL rule would have had to be added in two languages
-# for one rule. Any other <source> falls through to a loud
-# "unknown source" error rather than a silent second copy.
+# THIS FUNCTION OWNS THE ARGV RULES, AND ONLY THEM, AND ITS SIGNATURE NOW SAYS
+# SO. Round 5 (R8) deleted the `file` arm that used to restate
+# PERSIST_UNIT_JQ_GATE's per-element rule in bash, which left a <source>
+# parameter with exactly one legal value — a parameter expressing no choice,
+# whose only remaining job was rejecting a word nothing meant any more, and
+# whose presence invited a future reader to conclude "there is another wire"
+# and invent one. Round 6 (F7) dropped it. The FILE/JSON wire has a different
+# owner: PERSIST_UNIT_JQ_GATE, above, is that wire's sole rule set, expressed
+# once in jq over the whole array. Do not add a wire selector back here; add a
+# rule to whichever owner the wire already has.
 #
-# What this function adds ON TOP of the gate's rules, for argv only: leading
+# What this function adds ON TOP of the gate's rules: leading
 # `-`, `$`, backtick, `"`, `\`, newline and comma. Each is a property of THIS
 # wire, not of a unit — a git path or a plan heading may legally begin with
 # `-` or contain a comma, and both are accepted on the file/JSON transports.
@@ -543,45 +584,35 @@ persist_validate_id() {
 #
 # Prints "<label>: invalid unit ..." to stderr and returns 2 on failure.
 persist_validate_unit() {
-	local value="$1" label="$2" source="${3:-argv}"
-
-	case "$source" in
-	argv) ;;
-	*)
-		echo "$label: persist_validate_unit: unknown source '$source'" >&2
-		return 2
-		;;
-	esac
+	local value="$1" label="$2"
 
 	if [[ -z "$value" ]]; then
 		echo "$label: invalid unit: empty unit name" >&2
 		return 2
 	fi
-	if [[ "$source" == "argv" ]]; then
-		# Comma: on argv a unit list IS comma-separated (`--expected
-		# <lens>:<u1>,<u2>`, `--units <csv>`), so a comma-bearing unit
-		# would silently split into two. That is a property of THIS wire.
-		if [[ "$value" == *,* ]]; then
-			echo "$label: invalid unit '$value' (unit lists on the command line are comma-separated; a unit passed on argv must not contain a comma - pass it via the units file instead)" >&2
-			return 2
-		fi
-		# Leading '-': the value reaches a command line, where it would be
-		# parsed as a flag.
-		if [[ "$value" == -* ]]; then
-			echo "$label: invalid unit '$value' (a unit passed on the command line must not start with '-'; it would be parsed as a flag - pass it via the units file instead)" >&2
-			return 2
-		fi
-		# Newline first: it is the one character that cannot be shown
-		# usefully inside the quoted echo below.
-		if [[ "$value" == *$'\n'* ]]; then
-			echo "$label: invalid unit: a unit passed on the command line must not contain a newline" >&2
-			return 2
-		fi
-		if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *'"'* || "$value" == *\\* ]]; then
-			printf '%s: invalid unit %s (a unit passed on the command line must not contain a dollar sign, backtick, double quote or backslash - pass diff-derived units via --expected-file instead)\n' \
-				"$label" "$value" >&2
-			return 2
-		fi
+	# Comma: on argv a unit list IS comma-separated (`--expected
+	# <lens>:<u1>,<u2>`, `--units <csv>`), so a comma-bearing unit would
+	# silently split into two. That is a property of THIS wire.
+	if [[ "$value" == *,* ]]; then
+		echo "$label: invalid unit '$value' (unit lists on the command line are comma-separated; a unit passed on argv must not contain a comma - pass it via the units file instead)" >&2
+		return 2
+	fi
+	# Leading '-': the value reaches a command line, where it would be
+	# parsed as a flag.
+	if [[ "$value" == -* ]]; then
+		echo "$label: invalid unit '$value' (a unit passed on the command line must not start with '-'; it would be parsed as a flag - pass it via the units file instead)" >&2
+		return 2
+	fi
+	# Newline first: it is the one character that cannot be shown usefully
+	# inside the quoted echo below.
+	if [[ "$value" == *$'\n'* ]]; then
+		echo "$label: invalid unit: a unit passed on the command line must not contain a newline" >&2
+		return 2
+	fi
+	if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *'"'* || "$value" == *\\* ]]; then
+		printf '%s: invalid unit %s (a unit passed on the command line must not contain a dollar sign, backtick, double quote or backslash - pass diff-derived units via --expected-file instead)\n' \
+			"$label" "$value" >&2
+		return 2
 	fi
 
 	return 0
@@ -627,7 +658,7 @@ persist_units_csv_to_json() {
 	# by the argv rules; the framing must be right first, or the diagnostic
 	# would name the wrong text.)
 	while IFS= read -r -d '' u; do
-		persist_validate_unit "$u" "$label" argv || return 2
+		persist_validate_unit "$u" "$label" || return 2
 	done < <(printf '%s' "$units_json" | jq -j '.[] | ., "\u0000"')
 	printf '%s\n' "$units_json"
 	return 0

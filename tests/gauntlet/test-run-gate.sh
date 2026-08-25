@@ -190,6 +190,45 @@ assert_eq "$(jq -r '.substantive_findings | map(select(.file == "d.py")) | lengt
 assert_eq "$(jq -r '.substantive_findings[] | select(.file == "d.py") | has("auto_fix")' "$arch_route_out")" "false" \
 	"route strips the auto_fix proposal from the architecture-category finding entirely"
 
+# ---------------------------------------------------------------------------
+# R6-G1f — `normalize --autofix-cache` is a STATE-TREE WRITER and gets the
+# skill's one containment guard.
+#
+# SKILL.md composes --autofix-cache from the same $gate_out_dir that
+# gate_run_bounded writes its envelope into, and this command CREATES that
+# file (`printf '' >"$cache"`) and later APPENDS full findings to it. It was
+# the one `.gauntlet/` writer in the skill with no guard at all — found by
+# sweeping the mechanism, not reported.
+# ---------------------------------------------------------------------------
+
+r6g1f_root="$WORKDIR/r6g1f"
+mkdir -p "$r6g1f_root/repo" "$r6g1f_root/outside"
+git -C "$r6g1f_root/repo" init -q 2>/dev/null || git -C "$r6g1f_root/repo" init >/dev/null 2>&1
+ln -s "$r6g1f_root/outside" "$r6g1f_root/repo/.gauntlet"
+set +e
+r6g1f_err="$(cd "$r6g1f_root/repo" && printf '%s' '{"status":"approve","findings":[]}' |
+	"$RUN_GATE" normalize --gate demo --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>&1 >/dev/null)"
+r6g1f_rc=$?
+set -e
+if [[ "$r6g1f_rc" -eq 2 && "$r6g1f_err" == *"refusing to operate on symlink"* &&
+	! -e "$r6g1f_root/outside/auto-fix-cache.jsonl" ]]; then
+	pass "R6-G1f: normalize --autofix-cache under a symlinked ancestor exits 2 and creates nothing"
+else
+	fail "R6-G1f: rc=$r6g1f_rc err='$r6g1f_err' created=$([[ -e "$r6g1f_root/outside/auto-fix-cache.jsonl" ]] && echo yes || echo no)"
+fi
+
+# Control: the same command against an ordinary path still works.
+set +e
+(cd "$r6g1f_root/repo" && mkdir -p real && printf '%s' '{"status":"approve","findings":[]}' |
+	"$RUN_GATE" normalize --gate demo --autofix-cache real/cache.jsonl -) >/dev/null 2>&1
+r6g1f_ok_rc=$?
+set -e
+if [[ "$r6g1f_ok_rc" -eq 0 && -e "$r6g1f_root/repo/real/cache.jsonl" ]]; then
+	pass "R6-G1f/control: an ordinary --autofix-cache path is still created and normalize exits 0"
+else
+	fail "R6-G1f/control: rc=$r6g1f_ok_rc created=$([[ -e "$r6g1f_root/repo/real/cache.jsonl" ]] && echo yes || echo no)"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]
