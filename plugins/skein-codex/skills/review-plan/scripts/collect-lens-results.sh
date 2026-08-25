@@ -125,7 +125,7 @@
 # held as a JSON array from jq to jq and are never joined, split, or passed
 # through a bash round-trip, so a comma or a newline inside a unit is just a
 # byte in a name (round 4: F10/F11). PERSIST_UNIT_JQ_GATE in
-# scripts/lib/persist-common.sh is the single source of that wire's rules and
+# scripts/lib/lens-common.sh is the single source of that wire's rules and
 # persist-lens-result.sh enforces the same one on the writer side (F3). The
 # comma restriction survives only on --expected, where the comma genuinely is
 # the separator.
@@ -172,12 +172,19 @@
 # Status derivation, per lens, across ALL attempt files
 # (<state-dir>/lenses/<run-id>/<lens>.<N>.jsonl, N ascending), with
 # `files` = number of that lens's attempt files on disk, `spawned` = its
-# --attempts value or 0 when absent, and `effective` = `spawned` when
-# --attempts named this lens, else `files`. It is deliberately NOT
-# max(spawned, files): `files` is a COUNT and `spawned` is an INDEX, and
-# conflating the two misread two recovered attempt files plus an in-flight
-# attempt 3 as two exhausted attempts. The orchestrator owns the attempt
-# count (R4); this script only counts files when it was not told.
+# --attempts value or 0 when absent, and `effective` = max(spawned,
+# max-on-disk-INDEX) -- see the A4 note at the computation itself.
+#
+# `effective` is an INDEX, never a file COUNT (R11/F18: this paragraph used
+# to say "else `files`", which is true only when the on-disk indices have no
+# GAP). A lone `logic.2.jsonl` has files == 1 but max-index 2, and the index
+# is the honest answer: a respawn demonstrably happened, so the lens is
+# `timed_out`, not `partial`. `files` is still reported and still gates the
+# zero-coverage branch below, where "no file at all" is exactly what is being
+# asked. It is deliberately NOT max(spawned, files): conflating a COUNT with
+# an INDEX misread two recovered attempt files plus an in-flight attempt 3 as
+# two exhausted attempts. The orchestrator owns the attempt count (R4); this
+# script derives one from the on-disk indices when it was not told.
 #   - No `done` line anywhere, files == 0, and effective <= 1 (i.e.
 #     spawned <= 1) -> zero coverage; unreviewed := the full --expected unit
 #     list (or [] if none was given). The status is "missing" ONLY when
@@ -208,9 +215,11 @@
 #         for the current orchestrator invocation)
 #       effective == 1 -> "partial" (still mid-run; a respawn on
 #         `unreviewed` is expected to follow)
-# With --attempts absent, spawned == 0 always, so effective == files and
-# this collapses exactly to the file-count-only table every existing test
-# already asserts on.
+# With --attempts absent, spawned == 0 always, so effective is the max
+# on-disk INDEX alone. For the gapless attempt sequences every existing test
+# uses (1..N with no missing index), that index equals `files`, which is why
+# this collapses exactly to the file-count table those tests assert on --
+# equal by arithmetic on that input, not by definition (R11/F18).
 #
 # `reviewed` is the union, across every attempt, of `--unit` values from
 # `progress` lines, intersected with `assigned` (so a stray progress line
@@ -237,7 +246,7 @@
 #
 # --run-id/each --expected, --attempts, and --running lens key are validated against the
 # same charset whitelist persist-lens-result.sh uses (see
-# scripts/lib/persist-common.sh's persist_validate_id): a lens name must
+# scripts/lib/lens-common.sh's persist_validate_id): a lens name must
 # match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no ':', no '/', no glob
 # metachars) and --run-id additionally allows ':'. This closes the same
 # glob/path-interpolation vector from the reader side that
@@ -264,7 +273,7 @@
 #     newline are rejected as defence in depth.
 #
 # See PERSIST_UNIT_JQ_GATE and persist_validate_unit in
-# scripts/lib/persist-common.sh -- the wire gate and the argv gate.
+# scripts/lib/lens-common.sh -- the wire gate and the argv gate.
 #
 # Exit codes:
 #   0 — always, once flags validate (a stale/unknown run-id or empty
@@ -284,8 +293,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/auto-fix-common.sh"
-# shellcheck source=scripts/lib/persist-common.sh disable=SC1091
-. "$SCRIPT_DIR/lib/persist-common.sh"
+# shellcheck source=scripts/lib/lens-common.sh disable=SC1091
+. "$SCRIPT_DIR/lib/lens-common.sh"
 
 usage() {
 	cat >&2 <<'EOF'
@@ -835,7 +844,16 @@ while [[ "$i" -lt "$n" ]]; do
 				  else $loc end
 			) end;
 		def key_line:
-			if has("line") then (.line | tostring)
+			# `(.line // "")` before tostring, matching key_file (R11/F19).
+			# `has("line")` is true for an EXPLICIT null, and a bare
+			# `tostring` renders that as the four-character string "null" --
+			# a dedup key distinct from the "" an ABSENT line produces, and
+			# a literal "null" leaking into the --findings-jsonl `line`
+			# field. The header rule is that absent and null default alike;
+			# only key_file implemented it.
+			# (No apostrophes in this comment: it sits inside a
+			# single-quoted jq program.)
+			if has("line") then ((.line // "") | tostring)
 			else (
 				(.location // "") as $loc
 				| if ($loc | index(":")) then ($loc | split(":") | last)

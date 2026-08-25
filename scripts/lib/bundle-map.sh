@@ -26,6 +26,20 @@ BUNDLE_SHARED=(
 	lens-budget.sh
 )
 
+# The Phase 2 disk-first lens set, bundled into exactly the two skills that
+# spawn lens subagents. Deliberately NOT in BUNDLE_SHARED: review-gauntlet
+# spawns no lenses, so adding it there would ship three inoperative files into
+# its mirrors and break this file's `bundled == operative` rule (see the
+# BUNDLE_SHARED comment above and bundle_extra_for's review-gauntlet note
+# below). It is a named group rather than the same literals repeated in two
+# `bundle_extra_for` arms so that a new lens file is added ONCE, not twice
+# -- the two-arm duplication is exactly how a lens file would come to ship
+# into one skill and not the other. lib/lens-common.sh (R11/F3) is the first
+# file to arrive through that single edit; lib/persist-common.sh stays in the
+# group because lens-common.sh sources it.
+# shellcheck disable=SC2034  # consumed by sourcing scripts
+BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh)
+
 # Skills that receive a bundled pipeline.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_SKILLS=(deep-review review-plan review-gauntlet)
@@ -53,11 +67,13 @@ bundle_applier_for() {
 # different schema from review-plan's persist-review-state.sh — see each
 # script's header), so it ships only into deep-review's mirrors.
 # lib/persist-common.sh is sourced by both persist-*.sh scripts (root-anchor,
-# CLI required-value check, and guard+atomic-write helpers, plus the Phase 2
-# lens-state-dir/jsonl-append helpers shared by persist-lens-result.sh and
-# collect-lens-results.sh), so it ships alongside each of them — never into
-# review-gauntlet's mirrors, which bundle neither persist script nor the two
-# lens scripts. review-gauntlet's gate 1 (Codex) invocation is wrapped in
+# CLI required-value check, guard+atomic-write helpers, and the shared JSON
+# shape/duplicate-key validators), so it ships alongside each of them. Since
+# R11/F3 it no longer carries the Phase 2 lens path/charset/append helpers:
+# those live in lib/lens-common.sh, which sources it and ships with the two
+# lens scripts — which is why persist-common.sh reaches deep-review and
+# review-plan by BOTH routes. Neither file goes into review-gauntlet's
+# mirrors, which bundle no persist script and no lens script. review-gauntlet's gate 1 (Codex) invocation is wrapped in
 # `lens-budget.sh --kind codex` for its wall-clock budget (see
 # lib/gate-bounded.sh, an authored — not bundled — harness-neutral helper);
 # lens-budget.sh itself is canonical and now BUNDLE_SHARED (see above), so it
@@ -99,15 +115,11 @@ bundle_extra_for() {
 		printf 'marker.py\n'
 		printf 'write-review-marker.py\n'
 		printf 'persist-review-state.sh\n'
-		printf 'lib/persist-common.sh\n'
-		printf 'persist-lens-result.sh\n'
-		printf 'collect-lens-results.sh\n'
+		printf '%s\n' "${BUNDLE_LENS[@]}"
 		;;
 	deep-review)
 		printf 'persist-deep-review-state.sh\n'
-		printf 'lib/persist-common.sh\n'
-		printf 'persist-lens-result.sh\n'
-		printf 'collect-lens-results.sh\n'
+		printf '%s\n' "${BUNDLE_LENS[@]}"
 		;;
 	review-gauntlet)
 		printf 'finding-key.sh\n'

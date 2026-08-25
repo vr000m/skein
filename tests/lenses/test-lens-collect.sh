@@ -2021,4 +2021,71 @@ else
 	fail "(R7-G4d) rc=$r7g4d_rc out='$r7g4d_out' err='$r7g4d_err'"
 fi
 
+# ---------------------------------------------------------------------------
+# (R11-F19) an EXPLICIT `line: null` and an ABSENT `line` must produce the
+# SAME dedup key, and both must emit "" -- never the four-character string
+# "null".
+#
+# key_file used `(.file // "")`; key_line used `has("line")` then a bare
+# `tostring`, which renders an explicit null as "null". That is two defects
+# in one: two findings that differ only by null-vs-absent survived dedup as
+# distinct, and `--findings-jsonl` emitted line "null", which
+# reconcile-findings.sh's `(.line == null or .line == "")` guard does NOT
+# recognise -- so a null-line finding was sorted as though "null" were a real
+# line number instead of collapsing to the -1 sentinel.
+# ---------------------------------------------------------------------------
+
+dir_f19="$TMPDIR_ROOT/case-r11-f19"
+make_scratch_repo "$dir_f19"
+write_lens_file "$(lens_file "$dir_f19" deep-review r11f19 logic 1)" <<'EOF'
+{"type":"start","units":["u1"]}
+{"type":"finding","file":"a.md","line":null,"category":"logic","severity":"minor","summary":"same"}
+{"type":"finding","file":"a.md","category":"logic","severity":"minor","summary":"same"}
+{"type":"progress","unit":"u1"}
+{"type":"done","status":"completed"}
+EOF
+
+f19_out="$(run_collect "$dir_f19" deep-review r11f19 "logic:u1")"
+f19_count="$(printf '%s' "$f19_out" | jq '.logic.findings | length')"
+if [[ "$f19_count" == "1" ]]; then
+	pass "(R11-F19a) explicit line:null and absent line dedup to ONE finding"
+else
+	fail "(R11-F19a) null-vs-absent line must share a dedup key (got $f19_count findings)"
+fi
+
+f19_lines="$(run_collect_jsonl "$dir_f19" deep-review r11f19 "logic:u1" | jq -r '.line' | sort -u | tr '\n' ' ')"
+if [[ "$f19_lines" == " " || "$f19_lines" == "  " ]]; then
+	pass "(R11-F19b) --findings-jsonl emits \"\" for a null/absent line"
+else
+	fail "(R11-F19b) expected only \"\" for line, got '$f19_lines'"
+fi
+
+# The consumer half of the blast radius: reconcile-findings.sh coerces an
+# absent/empty line to the -1 sentinel. "" hits that branch; "null" would not
+# have. Assert the emitted value against the coercion the consumer actually
+# performs, so this test fails if either side drifts.
+f19_sentinel="$(run_collect_jsonl "$dir_f19" deep-review r11f19 "logic:u1" |
+	jq -r '(if (.line == null or .line == "") then -1 else .line end) | tostring' | sort -u)"
+if [[ "$f19_sentinel" == "-1" ]]; then
+	pass "(R11-F19c) the emitted line reaches reconcile-findings.sh's -1 sentinel branch"
+else
+	fail "(R11-F19c) reconciler coercion gave '$f19_sentinel', expected -1"
+fi
+
+# Control: a REAL line is untouched by the `// \"\"` default.
+dir_f19b="$TMPDIR_ROOT/case-r11-f19b"
+make_scratch_repo "$dir_f19b"
+write_lens_file "$(lens_file "$dir_f19b" deep-review r11f19b logic 1)" <<'EOF'
+{"type":"start","units":["u1"]}
+{"type":"finding","file":"a.md","line":0,"category":"logic","severity":"minor","summary":"zero"}
+{"type":"finding","file":"a.md","line":7,"category":"logic","severity":"minor","summary":"seven"}
+{"type":"done","status":"completed"}
+EOF
+f19b_lines="$(run_collect_jsonl "$dir_f19b" deep-review r11f19b "logic:u1" | jq -r '.line' | sort | tr '\n' ' ')"
+if [[ "$f19b_lines" == "0 7 " ]]; then
+	pass "(R11-F19d/control) real line numbers, INCLUDING 0, survive the default"
+else
+	fail "(R11-F19d/control) expected '0 7 ', got '$f19b_lines'"
+fi
+
 finish

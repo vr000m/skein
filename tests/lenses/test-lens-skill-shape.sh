@@ -25,8 +25,8 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 # auto-fix-common.sh is already sourced.
 # shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
 . "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
-# shellcheck source=scripts/lib/persist-common.sh disable=SC1091
-. "$ROOT_DIR/scripts/lib/persist-common.sh"
+# shellcheck source=scripts/lib/lens-common.sh disable=SC1091
+. "$ROOT_DIR/scripts/lib/lens-common.sh"
 
 SKILLS=(
 	"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
@@ -214,49 +214,63 @@ for skill_md in "${DEEP_REVIEW_SKILLS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# (C15) persist-lens-result.sh must PRESENT --json-stdin first.
+# (C15) persist-lens-result.sh must present NO argv payload form at all.
 #
-# r2 finding #15: the script's header and `usage()` both led with the argv
-# payload form, so the first usage form a reader (or a model) copies is the
-# one every SKILL.md mirror forbids — reviewed text on argv is expanded by
-# the lens's OWN shell before this script ever runs. No behaviour change; the
-# flags stay for back-compat and tests. This locks the presentation order.
+# r2 finding #15 was an ORDERING rule: the script's header and `usage()` both
+# led with the argv payload form, so the first usage form a reader (or a
+# model) copies was the one every SKILL.md mirror forbids -- reviewed text on
+# argv is expanded by the lens's OWN shell before this script ever runs. The
+# fix at the time was presentational, because "the flags stay for back-compat
+# and tests".
+#
+# R11/F4 removed the flags. The ordering rule is now VACUOUS -- there is no
+# second form to be ordered against, and the original assertions would have
+# aborted on an empty `grep` rather than reporting anything. Ported to the
+# stronger property the ordering rule was a proxy for: a payload flag must
+# not appear in the usage text in ANY position, so there is nothing wrong to
+# copy. Weakening this back to an ordering check would re-admit the form.
 # ---------------------------------------------------------------------------
 
 PERSIST_SCRIPT="$ROOT_DIR/scripts/persist-lens-result.sh"
 
-# usage_body -- the text of the usage() heredoc, in order.
+# The ten flags F4 removed. --type/--units/--unit are payload keys on the
+# JSON wire and legitimate words in prose, so they are matched only in their
+# argv spelling (a flag token followed by a value placeholder or quote).
 usage_body="$(awk '/^usage\(\) \{/{f=1} f{print} f&&/^\}/{exit}' "$PERSIST_SCRIPT")"
-
-json_stdin_at="$(printf '%s\n' "$usage_body" | grep -n -- '--json-stdin' | head -1 | cut -d: -f1)"
-argv_flag_at="$(printf '%s\n' "$usage_body" | grep -nE -- '--(severity|category|location|summary|evidence|suggestion)' | head -1 | cut -d: -f1)"
-
-if [[ -z "$json_stdin_at" || -z "$argv_flag_at" ]]; then
-	fail "(C15) could not locate both usage forms in persist-lens-result.sh usage() (json-stdin='$json_stdin_at' argv='$argv_flag_at')"
-elif ((json_stdin_at < argv_flag_at)); then
-	pass "(C15) usage() presents --json-stdin before the argv content flags"
-else
-	fail "(C15) usage() still leads with the argv content flags (--json-stdin at line $json_stdin_at, first content flag at $argv_flag_at)"
-fi
-
-# The same order in the file header's `Usage:` block.
 header_body="$(sed -n '1,/^set -euo pipefail/p' "$PERSIST_SCRIPT")"
-h_json_at="$(printf '%s\n' "$header_body" | grep -n -- '--json-stdin <<' | head -1 | cut -d: -f1)"
-h_argv_at="$(printf '%s\n' "$header_body" | grep -n -- '\[--severity' | head -1 | cut -d: -f1)"
-if [[ -z "$h_json_at" || -z "$h_argv_at" ]]; then
-	fail "(C15b) could not locate both usage forms in the persist-lens-result.sh header (json='$h_json_at' argv='$h_argv_at')"
-elif ((h_json_at < h_argv_at)); then
-	pass "(C15b) the file header's Usage block presents --json-stdin first"
+
+c15_argv_re='[-][-](severity|category|location|summary|evidence|suggestion|status)( |=)?[<"'"'"']'
+c15_usage_hits="$(printf '%s\n' "$usage_body" | grep -cE -- "$c15_argv_re" || true)"
+c15_header_hits="$(printf '%s\n' "$header_body" | grep -cE -- "$c15_argv_re" || true)"
+
+if [[ "$c15_usage_hits" -eq 0 ]]; then
+	pass "(C15) usage() advertises no argv payload flag"
 else
-	fail "(C15b) the file header still leads with the argv form (--json-stdin at $h_json_at, --severity at $h_argv_at)"
+	fail "(C15) usage() still advertises $c15_usage_hits argv payload flag(s): $(printf '%s\n' "$usage_body" | grep -oE -- "$c15_argv_re" | sort -u | tr '\n' ' ')"
 fi
 
-# The argv content flags must carry the never-from-a-lens-prompt annotation.
-if grep -q 'back-compat/test only' "$PERSIST_SCRIPT" &&
-	grep -q 'never from a lens prompt' "$PERSIST_SCRIPT"; then
-	pass "(C15c) the argv content flags are annotated back-compat/test only, never from a lens prompt"
+if [[ "$c15_header_hits" -eq 0 ]]; then
+	pass "(C15b) the file header Usage block advertises no argv payload flag"
 else
-	fail "(C15c) the argv content flags carry no back-compat/test-only annotation"
+	fail "(C15b) the file header still advertises $c15_header_hits argv payload flag(s)"
+fi
+
+# Non-vacuous-pass guard: the two extractors must have found real text. An
+# awk/sed range that silently matched nothing would make both checks above
+# trivially true -- exactly the failure mode that hid the F4 breakage.
+if [[ -n "${usage_body// /}" && -n "${header_body// /}" && "$usage_body" == *"--json-stdin"* && "$header_body" == *"--json-stdin"* ]]; then
+	pass "(C15c/guard) both usage extractors returned real text naming --json-stdin"
+else
+	fail "(C15c/guard) an extractor returned no usable usage text (usage=${#usage_body} bytes, header=${#header_body} bytes)"
+fi
+
+# ...and the surviving text must state the single-transport rule positively,
+# so the absence above reads as a decision rather than an omission.
+if grep -q 'Exactly one of --json-stdin / --json-file is required' "$PERSIST_SCRIPT" &&
+	grep -q 'never argv flags' "$PERSIST_SCRIPT"; then
+	pass "(C15d) usage() states the single-payload-transport rule explicitly"
+else
+	fail "(C15d) usage() does not state that the payload is never argv flags"
 fi
 
 # ---------------------------------------------------------------------------

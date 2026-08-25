@@ -96,6 +96,23 @@ attempt_file() {
 	printf '%s/%s/lenses/%s/%s.%s.jsonl' "$root" "$state_dir" "$run_id" "$lens" "$attempt"
 }
 
+# jf <json-object> -- write the payload to a fresh temp file and echo its path.
+#
+# R11/F4 removed flag mode: --type/--units/--unit/--status and the six content
+# flags no longer exist, so every payload below crosses as ONE JSON OBJECT.
+# The cases ported to --json-file rather than --json-stdin because these are
+# `bash "$SCRIPT" ... >out 2>err` invocations whose stdin is not otherwise
+# redirected; --json-file keeps each call a single statement and reaches the
+# identical downstream gates (one-object shape, duplicate keys, scalar types,
+# units, the serializer are all shared verbatim -- see the script's G5 note).
+jf_counter=0
+jf() {
+	jf_counter=$((jf_counter + 1))
+	local f="$TMPDIR_ROOT/payload-$jf_counter.json"
+	printf '%s\n' "$1" >"$f"
+	printf '%s' "$f"
+}
+
 # ---------------------------------------------------------------------------
 # (1) two sequential calls append two lines -- append, never truncate
 # ---------------------------------------------------------------------------
@@ -106,11 +123,11 @@ target1="$(attempt_file "$case1_root" "deep-review" "run-1" "logic" "1")"
 
 set +e
 bash "$SCRIPT" --root "$case1_root" --skill deep-review --run-id run-1 \
-	--lens logic --attempt 1 --type start --units u1,u2,u3 \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"start","units":["u1","u2","u3"]}')" \
 	>"$case1_root/stdout1" 2>"$case1_root/stderr1"
 call1_exit=$?
 bash "$SCRIPT" --root "$case1_root" --skill deep-review --run-id run-1 \
-	--lens logic --attempt 1 --type progress --unit u1 \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"progress","unit":"u1"}')" \
 	>"$case1_root/stdout2" 2>"$case1_root/stderr2"
 call2_exit=$?
 set -e
@@ -136,7 +153,7 @@ fi
 # A third call must add a third line without disturbing the first two.
 set +e
 bash "$SCRIPT" --root "$case1_root" --skill deep-review --run-id run-1 \
-	--lens logic --attempt 1 --type progress --unit u2 \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"progress","unit":"u2"}')" \
 	>"$case1_root/stdout3" 2>"$case1_root/stderr3"
 call3_exit=$?
 set -e
@@ -164,7 +181,7 @@ target2="$(attempt_file "$case2_root" "deep-review" "run-2" "security" "1")"
 set +e
 (
 	cd "$unrelated_cwd" && bash "$SCRIPT" --root "$case2_root" --skill deep-review \
-		--run-id run-2 --lens security --attempt 1 --type progress --unit u1
+		--run-id run-2 --lens security --attempt 1 --json-file "$(jf '{"type":"progress","unit":"u1"}')"
 ) >"$case2_root/stdout" 2>"$case2_root/stderr"
 case2_exit=$?
 set -e
@@ -204,7 +221,12 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# (4) unknown --type -> non-zero exit, no file written
+# (4) an unrecognised payload `type` -> exit 2, no file written
+#
+# R11/F4: was `--type bogus`. Ported to the payload, NOT deleted -- the `type`
+# ENUM is JSON-path logic that outlived flag mode, and running it as an
+# unknown FLAG would have made this case pass for the wrong reason (exit 2
+# from the arg parser, never reaching the enum at all).
 # ---------------------------------------------------------------------------
 
 case4_root="$TMPDIR_ROOT/case-4"
@@ -212,17 +234,20 @@ mkdir -p "$case4_root"
 
 set +e
 bash "$SCRIPT" --root "$case4_root" --skill deep-review --run-id run-4 \
-	--lens logic --attempt 1 --type bogus \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"bogus"}')" \
 	>"$case4_root/stdout" 2>"$case4_root/stderr"
 case4_exit=$?
 set -e
 
-if [[ $case4_exit -eq 0 ]]; then
-	fail "(4) unknown --type exits non-zero (script exited 0 with --type bogus)"
+if [[ $case4_exit -ne 2 ]]; then
+	fail "(4) an unrecognised payload type must exit 2 (got $case4_exit)"
+	sed 's/^/    /' "$case4_root/stderr"
 elif find "$case4_root" -name '*.jsonl' 2>/dev/null | grep -q .; then
-	fail "(4) unknown --type exits non-zero, no file written (a .jsonl file was written despite the unknown type)"
+	fail "(4) an unrecognised payload type exits 2, no file written (a .jsonl file was written anyway)"
+elif ! grep -q "start|progress|finding|done" "$case4_root/stderr"; then
+	fail "(4) the rejection must come from the type ENUM, naming the alphabet (stderr: $(cat "$case4_root/stderr"))"
 else
-	pass "(4) unknown --type exits non-zero and writes no file"
+	pass "(4) an unrecognised payload type exits 2 via the type enum and writes no file"
 fi
 
 # ---------------------------------------------------------------------------
@@ -275,7 +300,7 @@ done
 for bad_run_id in '../x' '/etc/passwd' 'a*b' '-x' '.' 'a/b'; do
 	set +e
 	bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id "$bad_run_id" \
-		--lens logic --attempt 1 --type start --units u1 \
+		--lens logic --attempt 1 --json-file "$(jf '{"type":"start","units":["u1"]}')" \
 		>"$case5_root/stdout-br" 2>"$case5_root/stderr-br"
 	br_exit=$?
 	set -e
@@ -293,7 +318,7 @@ done
 target5_ok="$(attempt_file "$case5_root" "deep-review" "2026-03-17T14:30:00Z" "logic" "1")"
 set +e
 bash "$SCRIPT" --root "$case5_root" --skill deep-review --run-id '2026-03-17T14:30:00Z' \
-	--lens logic --attempt 1 --type start --units u1 \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"start","units":["u1"]}')" \
 	>"$case5_root/stdout-ok" 2>"$case5_root/stderr-ok"
 ok_exit=$?
 set -e
@@ -346,11 +371,11 @@ target7_padded="$(attempt_file "$case7_root" "deep-review" "run-7" "logic" "007"
 
 set +e
 bash "$SCRIPT" --root "$case7_root" --skill deep-review --run-id run-7 \
-	--lens logic --attempt 007 --type start --units u1 \
+	--lens logic --attempt 007 --json-file "$(jf '{"type":"start","units":["u1"]}')" \
 	>"$case7_root/stdout1" 2>"$case7_root/stderr1"
 c7a_exit=$?
 bash "$SCRIPT" --root "$case7_root" --skill deep-review --run-id run-7 \
-	--lens logic --attempt 7 --type progress --unit u1 \
+	--lens logic --attempt 7 --json-file "$(jf '{"type":"progress","unit":"u1"}')" \
 	>"$case7_root/stdout2" 2>"$case7_root/stderr2"
 c7b_exit=$?
 set -e
@@ -374,27 +399,36 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# (8) F10/D1 -- a --unit containing a comma is rejected, exit 2, no file
+# (8) R11/F4 -- a comma-bearing `unit` on the JSON wire is ONE unit.
+#
+# This case used to assert `--unit 'a,b'` exits 2, via persist_validate_unit's
+# ARGV blacklist. F4 removed the `--unit` flag, and the honest port is an
+# INVERSION, not a transliteration: on the JSON wire a comma is DATA. The
+# script says so in three places, F3/F10 deliberately moved the comma test OFF
+# this transport, and `## Post-completion follow-ups (A3/A5, 2026-05-24)` is a
+# real review-plan heading that must round-trip. Asserting exit 2 here would
+# have reversed a recorded decision and rejected legitimate unit names.
+#
+# The argv rule itself is not lost -- it moved to (R11-F4b), against the
+# collector's `--expected`, the one argv unit wire that remains.
 # ---------------------------------------------------------------------------
 
 case8_root="$TMPDIR_ROOT/case-8"
 mkdir -p "$case8_root"
+case8_target="$(attempt_file "$case8_root" "deep-review" "run-8" "logic" "1")"
 
 set +e
 bash "$SCRIPT" --root "$case8_root" --skill deep-review --run-id run-8 \
-	--lens logic --attempt 1 --type progress --unit 'a,b' \
+	--lens logic --attempt 1 --json-file "$(jf '{"type":"progress","unit":"a,b"}')" \
 	>"$case8_root/stdout" 2>"$case8_root/stderr"
 case8_exit=$?
 set -e
+case8_unit="$(jq -r '.unit' "$case8_target" 2>/dev/null || true)"
 
-if [[ $case8_exit -eq 2 ]]; then
-	if no_jsonl_anywhere "$case8_root"; then
-		pass "(8) --unit 'a,b' (comma) rejected with exit 2, no file written"
-	else
-		fail "(8) --unit 'a,b' rejected but a file was written anyway"
-	fi
+if [[ $case8_exit -eq 0 && "$case8_unit" == 'a,b' ]]; then
+	pass "(8) a comma-bearing 'unit' on the JSON wire is stored verbatim as ONE unit"
 else
-	fail "(8) --unit 'a,b' (comma) must exit 2 (got $case8_exit)"
+	fail "(8) comma unit on the JSON wire: exit=$case8_exit unit='$case8_unit' (expected 0 / 'a,b')"
 	sed 's/^/    /' "$case8_root/stderr"
 fi
 
@@ -441,38 +475,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# (9b) G1 -- --json-stdin line is byte-identical to the flag-mode line
+# (9b) R11/F4 -- a full finding record serialises every content key.
+#
+# This case used to assert that the flag-mode line and the --json-stdin line
+# were byte-identical ("one encoder, two transports"). With flag mode removed
+# that subject is vacuous -- there is only one transport to be identical to --
+# so its CONTENT assertion is kept and re-pointed: a finding payload carrying
+# all six content keys must land on disk with every one of them intact, and
+# --json-stdin and --json-file must agree with each other (the surviving pair
+# whose equivalence still has something to say).
 # ---------------------------------------------------------------------------
 
 case9b_root="$TMPDIR_ROOT/case-9b"
 mkdir -p "$case9b_root"
+case9b_payload='{"type":"finding","severity":"Important","category":"Logic","location":"a.md:2","summary":"one encoder","evidence":"ev","suggestion":"sg"}'
 
 set +e
 bash "$SCRIPT" --root "$case9b_root" --skill deep-review --run-id run-9b \
-	--lens logic --attempt 1 --type finding --severity Important \
-	--category Logic --location 'a.md:2' --summary 'flag mode' \
-	--evidence 'ev' --suggestion 'sg' >/dev/null 2>"$case9b_root/stderr"
-case9b_flag_exit=$?
-printf '%s' '{"type":"finding","severity":"Important","category":"Logic","location":"a.md:2","summary":"flag mode","evidence":"ev","suggestion":"sg"}' |
+	--lens logic --attempt 1 --json-file "$(jf "$case9b_payload")" \
+	>/dev/null 2>"$case9b_root/stderr"
+case9b_file_exit=$?
+printf '%s' "$case9b_payload" |
 	bash "$SCRIPT" --root "$case9b_root" --skill deep-review --run-id run-9b \
 		--lens logic --attempt 2 --json-stdin >/dev/null 2>>"$case9b_root/stderr"
-case9b_json_exit=$?
+case9b_stdin_exit=$?
 set -e
 
 case9b_a="$case9b_root/.deep-review/lenses/run-9b/logic.1.jsonl"
 case9b_b="$case9b_root/.deep-review/lenses/run-9b/logic.2.jsonl"
-if [[ $case9b_flag_exit -ne 0 || $case9b_json_exit -ne 0 ]]; then
-	fail "(9b) flag/json parity setup failed (flag=$case9b_flag_exit json=$case9b_json_exit)"
+if [[ $case9b_file_exit -ne 0 || $case9b_stdin_exit -ne 0 ]]; then
+	fail "(9b) setup failed (json-file=$case9b_file_exit json-stdin=$case9b_stdin_exit)"
 	sed 's/^/    /' "$case9b_root/stderr"
 elif [[ ! -f "$case9b_a" || ! -f "$case9b_b" ]]; then
-	fail "(9b) flag/json parity: one of the attempt files is missing"
+	fail "(9b) one of the attempt files is missing"
 else
+	case9b_content="$(jq -c '{severity, category, location, summary, evidence, suggestion}' "$case9b_a")"
+	case9b_want='{"severity":"Important","category":"Logic","location":"a.md:2","summary":"one encoder","evidence":"ev","suggestion":"sg"}'
+	if [[ "$case9b_content" == "$case9b_want" ]]; then
+		pass "(9b) a finding payload's six content keys all reach the on-disk line intact"
+	else
+		fail "(9b) finding content mismatch: got '$case9b_content' want '$case9b_want'"
+	fi
 	case9b_norm_a="$(jq -c 'del(.ts) | .attempt = 0' "$case9b_a")"
 	case9b_norm_b="$(jq -c 'del(.ts) | .attempt = 0' "$case9b_b")"
 	if [[ "$case9b_norm_a" == "$case9b_norm_b" ]]; then
-		pass "(9b) --json-stdin produces the same line shape as flag mode (one encoder)"
+		pass "(9b) --json-file and --json-stdin produce the same line (one encoder, one serializer)"
 	else
-		fail "(9b) flag/json line shapes diverge: '$case9b_norm_a' vs '$case9b_norm_b'"
+		fail "(9b) --json-file / --json-stdin line shapes diverge: '$case9b_norm_a' vs '$case9b_norm_b'"
 	fi
 fi
 
@@ -506,34 +555,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# (11) G1 -- --json-stdin is mutually exclusive with the payload flags
+# (11) R11/F4 -- a payload flag is an UNKNOWN ARGUMENT, not a conflicting one.
+#
+# This case asserted that --json-stdin plus a payload flag exits 2 via the
+# PAYLOAD_FLAGS mutual-exclusion check. With one transport that state is
+# unrepresentable and the old case would have passed for a different reason
+# (unknown-argument exit 2), silently testing nothing.
+#
+# Kept, re-pointed at what the removal actually guarantees: every one of the
+# ten removed flags is now rejected as UNKNOWN, and the diagnostic says so --
+# so a stale caller fails loudly rather than having its payload quietly
+# ignored. Deleting the case would have left "the flags are really gone"
+# asserted nowhere.
 # ---------------------------------------------------------------------------
 
 case11_root="$TMPDIR_ROOT/case-11"
 mkdir -p "$case11_root"
-
-set +e
-printf '%s' '{"type":"finding","severity":"Minor","category":"Logic","location":"a.md:1","summary":"s"}' |
-	bash "$SCRIPT" --root "$case11_root" --skill deep-review --run-id run-11 \
-		--lens logic --attempt 1 --json-stdin --type finding \
-		>"$case11_root/stdout" 2>"$case11_root/stderr"
-case11_exit=$?
-printf '%s' '{"type":"finding","severity":"Minor","category":"Logic","location":"a.md:1","summary":"s"}' |
-	bash "$SCRIPT" --root "$case11_root" --skill deep-review --run-id run-11 \
-		--lens logic --attempt 1 --json-stdin --evidence 'x' \
-		>>"$case11_root/stdout" 2>>"$case11_root/stderr"
-case11_ev_exit=$?
-set -e
-
-if [[ $case11_exit -eq 2 && $case11_ev_exit -eq 2 ]]; then
-	if no_jsonl_anywhere "$case11_root"; then
-		pass "(11) --json-stdin with --type/--evidence exits 2, nothing written"
-	else
-		fail "(11) --json-stdin + payload flag exited 2 but a file was written anyway"
-	fi
+case11_bad=""
+for case11_flag in --type --units --unit --status --severity --category --location --summary --evidence --suggestion; do
+	set +e
+	printf '%s' '{"type":"done","status":"completed"}' |
+		bash "$SCRIPT" --root "$case11_root" --skill deep-review --run-id run-11 \
+			--lens logic --attempt 1 --json-stdin "$case11_flag" x \
+			>/dev/null 2>"$case11_root/stderr-${case11_flag#--}"
+	case11_rc=$?
+	set -e
+	[[ "$case11_rc" -eq 2 ]] ||
+		case11_bad="$case11_bad [$case11_flag rc=$case11_rc]"
+	grep -q 'unrecognised argument' "$case11_root/stderr-${case11_flag#--}" 2>/dev/null ||
+		case11_bad="$case11_bad [$case11_flag not reported as unrecognised]"
+done
+if [[ -n "$case11_bad" ]]; then
+	fail "(11) removed payload flags must be rejected as unknown arguments:$case11_bad"
+elif ! no_jsonl_anywhere "$case11_root"; then
+	fail "(11) a removed payload flag was rejected but a file was written anyway"
 else
-	fail "(11) --json-stdin + payload flag must exit 2 (got $case11_exit / $case11_ev_exit)"
-	sed 's/^/    /' "$case11_root/stderr"
+	pass "(11) all ten removed payload flags are rejected as unrecognised arguments, nothing written"
 fi
 
 # ---------------------------------------------------------------------------
@@ -777,8 +834,10 @@ reject_payload "(A11c) an empty 'units' element exits 2, nothing written" case-a
 # not a CSV field" — so a lens emitting a single comma-bearing unit as a bare
 # string silently registered TWO assigned units that no `progress` record can
 # ever match, stranding the lens at `partial` forever with no exit 2.
-# DO NOT RESTORE THE OLD ASSERTION. The ARGV `--units` CSV is a different
-# wire and keeps its comma separator — see (R6-G3c) below.
+# DO NOT RESTORE THE OLD ASSERTION. An ARGV CSV is a different wire and keeps
+# its comma separator — see (R11-F4a) below. (Until R11 that wire was this
+# script's own `--units`; F4 removed flag mode, so the collector's
+# `--expected` is now the tree's last one.)
 a11b_root="$TMPDIR_ROOT/case-a11b"
 mkdir -p "$a11b_root"
 set +e
@@ -820,19 +879,34 @@ else
 	fail "(R6-G3b) exit=$r6g3b_exit written=$r6g3b_units unreviewed=$r6g3b_unreviewed expected=$r6g3b_expect err='$(cat "$r6g3b_root/stderr")'"
 fi
 
-# R6-G3c — the ARGV wire is untouched: `--units 'a,b'` is still two units.
-r6g3c_root="$TMPDIR_ROOT/case-r6g3c"
-mkdir -p "$r6g3c_root"
+# R11-F4a (was R6-G3c) — the ARGV wire still splits on the comma.
+#
+# RE-TARGETED, NOT DELETED. This asserted `--units 'a,b'` on THIS script.
+# R11/F4 removed flag mode, so the surviving argv-CSV surface is
+# collect-lens-results.sh's `--expected <lens>:<csv>` — and
+# persist_units_csv_to_json, the single splitter both used to share, still
+# ships and still needs a comma-split regression. Losing this case with flag
+# mode would have left that helper's only behaviour untested.
+r11f4a_root="$TMPDIR_ROOT/case-r11f4a"
+mkdir -p "$r11f4a_root"
+jq -n -c '{type:"start",units:["a","b"]}' >"$r11f4a_root/start.json"
+jq -n -c '{type:"done",status:"completed"}' >"$r11f4a_root/done.json"
 set +e
-bash "$SCRIPT" --root "$r6g3c_root" --skill deep-review --run-id run-r6g3c \
-	--lens logic --attempt 1 --type start --units 'a,b' >/dev/null 2>"$r6g3c_root/stderr"
-r6g3c_exit=$?
+bash "$SCRIPT" --root "$r11f4a_root" --skill deep-review --run-id run-r11f4a \
+	--lens logic --attempt 1 --json-file "$r11f4a_root/start.json" >/dev/null 2>"$r11f4a_root/stderr"
+bash "$SCRIPT" --root "$r11f4a_root" --skill deep-review --run-id run-r11f4a \
+	--lens logic --attempt 1 --json-file "$r11f4a_root/done.json" >/dev/null 2>>"$r11f4a_root/stderr"
+r11f4a_collect="$(bash "$REPO_ROOT/scripts/collect-lens-results.sh" --root "$r11f4a_root" \
+	--skill deep-review --run-id run-r11f4a --expected 'logic:a,b' 2>"$r11f4a_root/collect.err")"
+r11f4a_rc=$?
 set -e
-r6g3c_units="$(jq -c '.units' "$r6g3c_root/.deep-review/lenses/run-r6g3c/logic.1.jsonl" 2>/dev/null || true)"
-if [[ $r6g3c_exit -eq 0 && "$r6g3c_units" == '["a","b"]' ]]; then
-	pass "(R6-G3c) the ARGV --units CSV still splits on the comma"
+# `unreviewed` is the array form of the assignment (`assigned` is its count),
+# so it is what shows whether 'a,b' became ONE unit or TWO.
+r11f4a_unreviewed="$(printf '%s' "$r11f4a_collect" | jq -c '.logic.unreviewed' 2>/dev/null || true)"
+if [[ $r11f4a_rc -eq 0 && "$r11f4a_unreviewed" == '["a","b"]' ]]; then
+	pass "(R11-F4a) the collector's ARGV --expected CSV still splits on the comma"
 else
-	fail "(R6-G3c) exit=$r6g3c_exit units=$r6g3c_units err='$(cat "$r6g3c_root/stderr")'"
+	fail "(R11-F4a) rc=$r11f4a_rc unreviewed=$r11f4a_unreviewed err='$(cat "$r11f4a_root/collect.err")'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -966,47 +1040,46 @@ else
 	fail "(R4-G3) control-char unit: rc=$r4g3_ctl_rc units=$r4g3_ctl_units"
 fi
 
-# The argv CSV spelling still splits on commas -- it is that wire's format.
+# R11-F4b (was R4-G3/F3) — the ARGV unit BLACKLIST still applies where argv
+# still carries a unit.
+#
+# These asserted that `--unit -foo` and `--unit 'src/$(id).ts'` exit 2. That
+# rule is persist_validate_unit's, and it is a property of a COMMAND LINE, not
+# of a unit: it exists because an argv value is expanded by the CALLER's shell
+# before this script is entered. R11/F4 removed this script's last argv unit
+# wire, so the rule no longer has anything to apply to HERE -- and the helper
+# now has exactly one caller, collect-lens-results.sh's `--expected`, which is
+# where the regression is asserted.
+#
+# This is NOT a loosening: the values below are still refused on argv, by the
+# script that still accepts units on argv. What changed is which script that
+# is. The JSON-transport control immediately after is the other half -- the
+# same bytes are legitimate there and always were.
 set +e
-bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
-	--lens csv --attempt 1 --type start --units 'a,b' >/dev/null 2>&1
-r4g3_csv_rc=$?
-set -e
-r4g3_csv_units="$(jq -c '.units' "$r4g3_root/.deep-review/lenses/r4g3p/csv.1.jsonl" 2>/dev/null || true)"
-if [[ "$r4g3_csv_rc" -eq 0 && "$r4g3_csv_units" == '["a","b"]' ]]; then
-	pass "(R4-G3) --units 'a,b' still splits into two units on argv"
-else
-	fail "(R4-G3) argv CSV split regressed: rc=$r4g3_csv_rc units=$r4g3_csv_units"
-fi
-
-# Writer parity gap (F3): `--unit -foo` reached the wire because
-# persist_require_value only checks arity. It now goes through
-# persist_validate_unit (the ARGV rules; it owns no other wire), which rejects a leading `-`.
-set +e
-bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
-	--lens logic --attempt 1 --type progress --unit -foo >/dev/null 2>&1
+bash "$REPO_ROOT/scripts/collect-lens-results.sh" --root "$r4g3_root" \
+	--skill deep-review --run-id r4g3p --expected 'logic:-foo' >/dev/null 2>&1
 r4g3_dash_rc=$?
 set -e
 if [[ "$r4g3_dash_rc" -eq 2 ]]; then
-	pass "(R4-G3/F3) --unit -foo exits 2 (leading-dash rule now applies to the writer)"
+	pass "(R11-F4b) --expected 'logic:-foo' exits 2 (the leading-dash argv rule still applies on the last argv unit wire)"
 else
-	fail "(R4-G3/F3) --unit -foo must exit 2, got rc=$r4g3_dash_rc"
+	fail "(R11-F4b) --expected 'logic:-foo' must exit 2, got rc=$r4g3_dash_rc"
 fi
 
-# ...and the shell-metachar half of the argv blacklist reaches --unit too.
 set +e
-bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
-	--lens logic --attempt 1 --type progress --unit 'src/$(id).ts' >/dev/null 2>&1
+bash "$REPO_ROOT/scripts/collect-lens-results.sh" --root "$r4g3_root" \
+	--skill deep-review --run-id r4g3p --expected 'logic:src/$(id).ts' >/dev/null 2>&1
 r4g3_meta_rc=$?
 set -e
 if [[ "$r4g3_meta_rc" -eq 2 ]]; then
-	pass "(R4-G3/F3) a shell-metachar --unit exits 2 on the argv transport"
+	pass "(R11-F4b) a shell-metachar --expected unit exits 2 on the argv transport"
 else
-	fail "(R4-G3/F3) metachar --unit must exit 2, got rc=$r4g3_meta_rc"
+	fail "(R11-F4b) metachar --expected unit must exit 2, got rc=$r4g3_meta_rc"
 fi
 
 # ...but the SAME value is legitimate on the JSON transport, which never
-# passes through a shell. This is the asymmetry the parity fix preserves.
+# passes through a shell. This is the asymmetry the parity fix preserves, and
+# F4 does not touch it: the JSON wire never applied the argv blacklist.
 jq -n -c '{type:"progress",unit:"src/$(id).ts"}' >"$r4g3_root/meta.json"
 set +e
 bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
@@ -1056,10 +1129,17 @@ fi
 # Group R5-G1 — the argv CSV transport has ONE splitter, and its elements go
 # through the argv unit rules.
 #
-# `--units` split in jq and validated with the FILE-wire gate only, so
-# `--units '-foo'` and `--units 'src/$(id).ts'` were accepted by the writer
-# and rejected by the reader; and `--units $'a\nb'` aborted `jq -R` with the
-# wrong exit code (1, the "append failed" code, instead of 2, the usage code).
+# ORIGINAL SUBJECT: `--units` split in jq and validated with the FILE-wire
+# gate only, so `--units '-foo'` and `--units 'src/$(id).ts'` were accepted by
+# the WRITER and rejected by the READER; and `--units $'a\nb'` aborted `jq -R`
+# with the wrong exit code (1, the "append failed" code, instead of 2).
+#
+# R11/F4 removed the writer's argv CSV wire entirely, so the writer/reader
+# PARITY half of this group is vacuous -- there is one argv CSV wire left, and
+# a single wire cannot disagree with itself. What survives, and is what the
+# fix actually bought, is that persist_units_csv_to_json applies the argv unit
+# rules AND returns 2 (never jq's 1) for every value in the table. The table
+# is unchanged; only the side it is applied to is.
 # ---------------------------------------------------------------------------
 
 r5_root="$TMPDIR_ROOT/r5"
@@ -1087,47 +1167,60 @@ r5_write() {
 	printf '%s' "$rc"
 }
 
-r5g1_dash_rc="$(r5_write dash --type start --units '-foo,src/$(id).ts')"
-if [[ "$r5g1_dash_rc" -eq 2 ]]; then
-	pass "(R5-G1) --units applies the argv unit rules (leading dash / shell metachar -> exit 2)"
-else
-	fail "(R5-G1) --units '-foo,src/\$(id).ts' must exit 2, got rc=$r5g1_dash_rc"
-fi
-
-r5g1_nl_rc="$(r5_write nl --type start --units "$(printf 'a\nb')")"
-if [[ "$r5g1_nl_rc" -eq 2 ]]; then
-	pass "(R5-G1) a newline in --units is a USAGE error (exit 2), not a jq abort (exit 1)"
-else
-	fail "(R5-G1) --units \$'a\\nb' must exit 2, got rc=$r5g1_nl_rc"
-fi
-
-r5g1_ok_rc="$(r5_write okcsv --type start --units 'a,b')"
-r5g1_ok_units="$(jq -c '.units' "$r5_root/.deep-review/lenses/r5/okcsv.1.jsonl" 2>/dev/null || true)"
-if [[ "$r5g1_ok_rc" -eq 0 && "$r5g1_ok_units" == '["a","b"]' ]]; then
-	pass "(R5-G1/control) --units 'a,b' still yields exactly [\"a\",\"b\"]"
-else
-	fail "(R5-G1/control) rc=$r5g1_ok_rc units=$r5g1_ok_units"
-fi
-
-# The invariant itself: writer and reader accept and reject the SAME CSV.
-r5g1_parity_ok=1
-r5g1_table=""
-r5g1_i=0
-for r5g1_csv in 'a,b' 'a,b,' 'a,,b' '-foo' "$(printf 'a\nb')"; do
-	r5g1_i=$((r5g1_i + 1))
-	r5g1_w="$(r5_write "parity$r5g1_i" --type start --units "$r5g1_csv")"
+# r5_expected <csv> -- one collector invocation against that CSV, exit code on
+# stdout. The collector is the surviving argv-CSV wire.
+r5_expected() {
 	set +e
 	(cd "$r5_root" && bash "$COLLECT" --root "$r5_root" --skill deep-review \
-		--run-id r5collect --expected "logic:$r5g1_csv" >/dev/null 2>&1)
-	r5g1_r=$?
+		--run-id r5collect --expected "logic:$1" >/dev/null 2>&1)
+	local rc=$?
 	set -e
-	r5g1_table="$r5g1_table  csv=$(printf '%q' "$r5g1_csv") writer=$r5g1_w reader=$r5g1_r"$'\n'
-	[[ "$r5g1_w" -eq "$r5g1_r" ]] || r5g1_parity_ok=0
-done
-if [[ "$r5g1_parity_ok" -eq 1 ]]; then
-	pass "(R5-G1) writer and reader agree about the same --units/--expected CSV"
+	printf '%s' "$rc"
+}
+
+r5g1_dash_rc="$(r5_expected '-foo,src/$(id).ts')"
+if [[ "$r5g1_dash_rc" -eq 2 ]]; then
+	pass "(R5-G1) the argv CSV applies the argv unit rules (leading dash / shell metachar -> exit 2)"
 else
-	fail "(R5-G1) writer/reader CSV disagreement:"$'\n'"$r5g1_table"
+	fail "(R5-G1) --expected '-foo,src/\$(id).ts' must exit 2, got rc=$r5g1_dash_rc"
+fi
+
+r5g1_nl_rc="$(r5_expected "$(printf 'a\nb')")"
+if [[ "$r5g1_nl_rc" -eq 2 ]]; then
+	pass "(R5-G1) a newline in the argv CSV is a USAGE error (exit 2), not a jq abort (exit 1)"
+else
+	fail "(R5-G1) --expected \$'a\\nb' must exit 2, got rc=$r5g1_nl_rc"
+fi
+
+r5g1_ok_rc="$(r5_expected 'a,b')"
+if [[ "$r5g1_ok_rc" -eq 0 ]]; then
+	pass "(R5-G1/control) a well-formed 'a,b' CSV is still accepted"
+else
+	fail "(R5-G1/control) --expected 'a,b' must exit 0, got rc=$r5g1_ok_rc"
+fi
+
+# The whole value table, asserted against the one splitter that remains. The
+# accept/reject verdict per value is the invariant persist_units_csv_to_json
+# owns; it used to be checked as writer-vs-reader AGREEMENT, which needed two
+# wires. With one wire it is checked directly, against the expected verdict.
+r5g1_rules_ok=1
+r5g1_table=""
+for r5g1_pair in 'a,b:0' 'a,b,:2' 'a,,b:2' '-foo:2'; do
+	r5g1_csv="${r5g1_pair%:*}"
+	r5g1_want="${r5g1_pair##*:}"
+	r5g1_got="$(r5_expected "$r5g1_csv")"
+	r5g1_table="$r5g1_table  csv=$(printf '%q' "$r5g1_csv") want=$r5g1_want got=$r5g1_got"$'\n'
+	[[ "$r5g1_got" -eq "$r5g1_want" ]] || r5g1_rules_ok=0
+done
+# The newline case is kept out of the loop above only because a literal
+# newline cannot be written inside this `for` word list.
+r5g1_nl_again="$(r5_expected "$(printf 'a\nb')")"
+r5g1_table="$r5g1_table  csv=\$'a\\nb' want=2 got=$r5g1_nl_again"$'\n'
+[[ "$r5g1_nl_again" -eq 2 ]] || r5g1_rules_ok=0
+if [[ "$r5g1_rules_ok" -eq 1 ]]; then
+	pass "(R5-G1) the argv CSV splitter's accept/reject verdict is exit 0 or exit 2 for every table value, never jq's 1"
+else
+	fail "(R5-G1) argv CSV rule table mismatch:"$'\n'"$r5g1_table"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1197,7 +1290,7 @@ fi
 # ---------------------------------------------------------------------------
 
 r6g5_src() {
-	bash -c '. "$1/scripts/lib/auto-fix-common.sh"; . "$1/scripts/lib/persist-common.sh"; shift; persist_validate_unit "$@"' _ "$REPO_ROOT" "$@" 2>&1
+	bash -c '. "$1/scripts/lib/auto-fix-common.sh"; . "$1/scripts/lib/lens-common.sh"; shift; persist_validate_unit "$@"' _ "$REPO_ROOT" "$@" 2>&1
 }
 set +e
 r6g5_ok_out="$(r6g5_src x label)"
@@ -1205,8 +1298,8 @@ r6g5_ok_rc=$?
 r6g5_bad_out="$(r6g5_src -x label)"
 r6g5_bad_rc=$?
 set -e
-r6g5_sig="$(grep -n '^# persist_validate_unit <value> <label>$' "$REPO_ROOT/scripts/lib/persist-common.sh" || true)"
-r6g5_locals="$(grep -c 'local value="\$1" label="\$2"$' "$REPO_ROOT/scripts/lib/persist-common.sh" || true)"
+r6g5_sig="$(grep -n '^# persist_validate_unit <value> <label>$' "$REPO_ROOT/scripts/lib/lens-common.sh" || true)"
+r6g5_locals="$(grep -c 'local value="\$1" label="\$2"$' "$REPO_ROOT/scripts/lib/lens-common.sh" || true)"
 r6g5_why=""
 [[ "$r6g5_ok_rc" -eq 0 ]] || r6g5_why="$r6g5_why two-arg-call-rc=$r6g5_ok_rc($r6g5_ok_out)"
 [[ "$r6g5_bad_rc" -eq 2 && "$r6g5_bad_out" == *"must not start with '-'"* ]] ||
@@ -1286,7 +1379,7 @@ r6g2c_probe() {
 	bash -c '
 		cd "$1" || exit 9
 		. "$4/scripts/lib/auto-fix-common.sh"
-		. "$4/scripts/lib/persist-common.sh"
+		. "$4/scripts/lib/lens-common.sh"
 		if persist_path_is_inside_root "$2" "$3"; then echo inside; else echo outside; fi
 	' _ "$1" "$2" "$3" "$REPO_ROOT"
 }
@@ -1487,7 +1580,7 @@ r9g5b_expected="$(
 	# shellcheck source=/dev/null
 	. "$REPO_ROOT/scripts/lib/auto-fix-common.sh"
 	# shellcheck source=/dev/null
-	. "$REPO_ROOT/scripts/lib/persist-common.sh"
+	. "$REPO_ROOT/scripts/lib/lens-common.sh"
 	printf '%s/%s\n' \
 		"$(persist_lens_run_dir "$r9g5b_root" deep-review run-r9g5b)" \
 		"logic.3.jsonl"

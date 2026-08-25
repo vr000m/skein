@@ -250,7 +250,7 @@ fi
 
 C13_MARKER='SKILL->STATE-DIR MAPPING (4 sites)'
 c13_sites=(
-	"$REPO_ROOT/scripts/lib/persist-common.sh"
+	"$REPO_ROOT/scripts/lib/lens-common.sh"
 	"$REPO_ROOT/scripts/lib/auto-fix-common.sh"
 	"$REPO_ROOT/scripts/persist-deep-review-state.sh"
 	"$REPO_ROOT/scripts/persist-review-state.sh"
@@ -280,7 +280,7 @@ done
 # persist_root_dir when cwd is inside a worktree).
 # ---------------------------------------------------------------------------
 
-c14_file="$REPO_ROOT/scripts/lib/persist-common.sh"
+c14_file="$REPO_ROOT/scripts/lib/lens-common.sh"
 if grep -q 'Neither script derives a root from cwd' "$c14_file"; then
 	fail "(C14) persist-common.sh still claims neither Phase-2 consumer derives a root from cwd"
 elif grep -qi 'asymmetr' "$c14_file" && grep -q 'collect-lens-results.sh' "$c14_file"; then

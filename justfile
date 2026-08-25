@@ -36,6 +36,7 @@ parity-tests:
     bash tests/parity/test-spawn-tiers.sh
     bash tests/parity/test-managed-skills-parity.sh
     bash tests/parity/test-prompt-parity-extended.sh
+    bash tests/parity/test-state-dir-registration.sh
     uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
     uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
     uv run --with pytest python -m pytest tests/parity/test_delete_skills.py -q

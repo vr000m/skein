@@ -609,7 +609,12 @@ fi
 # is DERIVED, never listed. Two mechanical assertions:
 #   1. every script that sources persist-common.sh calls
 #      persist_assert_no_duplicate_keys (the header's "all four" claim, checked
-#      rather than asserted);
+#      rather than asserted). Since R11/F3 the two LENS callers reach
+#      persist-common.sh INDIRECTLY, through lib/lens-common.sh, so the
+#      sourcing probe accepts either spelling -- the rule is about which
+#      scripts have the helper in scope, and that set is unchanged at four.
+#      Matching only the direct spelling would have quietly dropped the two
+#      lens scripts out of the derived set and passed with a count of 2;
 #   2. every script that calls persist_validate_json_shape also calls the
 #      duplicate-key helper, so the shape/duplicate pairing cannot be half-added
 #      by a fifth caller.
@@ -621,7 +626,7 @@ r8g4c_missing_pair=""
 for r8g4c_f in "$REPO_ROOT"/scripts/*.sh; do
 	# The SOURCING form only — a mention in a comment or a bundle map is not
 	# a caller.
-	grep -qE '^[[:space:]]*(\.|source)[[:space:]].*persist-common\.sh' "$r8g4c_f" || continue
+	grep -qE '^[[:space:]]*(\.|source)[[:space:]].*(persist|lens)-common\.sh' "$r8g4c_f" || continue
 	r8g4c_base="$(basename "$r8g4c_f")"
 	r8g4c_sourcers="$r8g4c_sourcers $r8g4c_base"
 	grep -q 'persist_assert_no_duplicate_keys "' "$r8g4c_f" ||
@@ -633,7 +638,7 @@ for r8g4c_f in "$REPO_ROOT"/scripts/*.sh; do
 done
 r8g4c_count="$(printf '%s' "$r8g4c_sourcers" | wc -w | tr -d ' ')"
 if [[ "$r8g4c_count" -eq 4 && -z "$r8g4c_missing_dup" && -z "$r8g4c_missing_pair" ]]; then
-	pass "(R8-G4c) all four persist-common.sh callers enforce the duplicate-key rule, and every shape gate is paired with it:$r8g4c_sourcers"
+	pass "(R8-G4c) all four persist-common.sh callers (two direct, two via lens-common.sh) enforce the duplicate-key rule, and every shape gate is paired with it:$r8g4c_sourcers"
 else
 	fail "(R8-G4c) callers=$r8g4c_count ($r8g4c_sourcers) missing-duplicate-rule:${r8g4c_missing_dup:- none} unpaired-shape-gate:${r8g4c_missing_pair:- none}"
 fi
