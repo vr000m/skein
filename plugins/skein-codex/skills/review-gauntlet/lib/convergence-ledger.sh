@@ -820,6 +820,14 @@ append)
 	# `mktemp` would break the atomic-replace guarantee this path relies on.
 	tmp_ledger="$(mktemp "$(dirname "$LEDGER_PATH")/.ledger.XXXXXX")"
 	trap 'rm -f "$tmp_ledger"' EXIT
+	# The filter itself lives in lib/ledger-promote.jq -- see that file's
+	# header for why (r11/F9: it is the pending_claims/fixed_keys promotion
+	# state machine, the most safety-critical logic in the ledger, and as an
+	# inline single-quoted program every apostrophe in its comments had to be
+	# escaped through a four-character shell dance). It is a pure function of
+	# {this ledger, the twelve args below}; jq errors on an undefined
+	# $variable, so dropping one is a hard failure, not a silent behaviour
+	# change. Resolved through SCRIPT_DIR so it works in both plugin mirrors.
 	jq \
 		--argjson count "$COUNT" \
 		--argjson structural "$STRUCTURAL" \
@@ -833,59 +841,7 @@ append)
 		--argjson claimed_keys "$claimed_keys_json" \
 		--argjson keys_active "$keys_active" \
 		--argjson present_supplied "$present_supplied" \
-		'.loop_counter += 1
-		 | (if has("cap") then . else .cap = $cap end)
-		 | (if has("k") then . else .k = $k end)
-		 | (if $keys_active then
-		      (if has("fixed_keys") then . else .fixed_keys = [] end)
-		      | (if has("pending_claims") then . else .pending_claims = [] end)
-		      # Step 2 — EVALUATE pending claims, only on a COMPLETE FULL
-		      # PASS WITH EVIDENCE (pass_type == full AND unresolved == 0
-		      # AND present_supplied). A pending claim absent from THIS
-		      # round'"'"'s present_keys is proven fixed and promoted into
-		      # the cumulative fixed_keys set; every pending claim
-		      # (promoted or not) is then cleared — a still-present claim
-		      # is DROPPED, never promoted, and never retried
-		      # automatically (the fixer must claim it again on some
-		      # later round that actually shows it gone). A confirm pass,
-		      # a degraded full pass (unresolved > 0), or a full pass that
-		      # itself omits --present-keys neither promotes nor drops —
-		      # pending_claims is left exactly as it was.
-		      | (if ($pass_type == "full" and $unresolved == 0 and $present_supplied) then
-		           (.pending_claims - $present_keys) as $promoted
-		           | .fixed_keys = ((.fixed_keys + $promoted) | unique)
-		           | .pending_claims = []
-		         else . end)
-		      # Step 3 — RECORD this round'"'"'s claims, strictly AFTER
-		      # step 2 evaluated, so a claim made this round can never be
-		      # evaluated by the round that made it. Anything already in
-		      # fixed_keys (post-step-2) is not re-added as a pending
-		      # claim.
-		      | .pending_claims = ((.pending_claims + ($claimed_keys - .fixed_keys)) | unique)
-		    else . end)
-		 | .rounds += [
-		     (if $keys_active then
-		        {
-		          count: $count,
-		          structural_tally: $structural,
-		          local_tally: $local,
-		          pass_type: $pass_type,
-		          quarantine_size: $quarantine,
-		          unresolved_gates: $unresolved,
-		          present_keys: $present_keys,
-		          claimed_keys: $claimed_keys
-		        }
-		      else
-		        {
-		          count: $count,
-		          structural_tally: $structural,
-		          local_tally: $local,
-		          pass_type: $pass_type,
-		          quarantine_size: $quarantine,
-		          unresolved_gates: $unresolved
-		        }
-		      end)
-		   ]' \
+		-f "$SCRIPT_DIR/ledger-promote.jq" \
 		"$LEDGER_PATH" >"$tmp_ledger"
 	mv "$tmp_ledger" "$LEDGER_PATH"
 

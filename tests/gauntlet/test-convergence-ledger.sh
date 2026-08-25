@@ -710,7 +710,8 @@ handmade_ledger() {
 }
 
 # (a) A pre-cap/k ledger: neither key present at all.
-L_precap="$(handmade_ledger <<'EOF'
+L_precap="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "rounds": [
@@ -731,7 +732,8 @@ assert_eq "$precap_tok" "success" "G7(a): a pre-cap/k ledger's clean full pass s
 
 # (b) An explicit "cap": null / "k": null must behave like absent, not like
 # the literal string "null".
-L_nullcap="$(handmade_ledger <<'EOF'
+L_nullcap="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "cap": null,
@@ -754,7 +756,8 @@ assert_eq "$nullcap_tok" "success_with_quarantine" "G7(b): an explicit \"cap\": 
 
 # (c) A round whose pass_type is 'confirm' with findings must still decode
 # positionally even with cap/k absent.
-L_confirm="$(handmade_ledger <<'EOF'
+L_confirm="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 2,
   "rounds": [
@@ -778,7 +781,8 @@ assert_eq "$confirm_tok" "restart" "G7(c): structural_tally decodes in the right
 # admits 1.5. Both reached bash arithmetic and crashed outside the
 # documented exit-code contract.
 
-L_bad_unresolved="$(handmade_ledger <<'EOF'
+L_bad_unresolved="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "rounds": [
@@ -802,7 +806,8 @@ else
 	fail "G7(d): non-numeric unresolved_gates should exit 2 with empty stdout (rc=$bu_rc, out='$bu_out')"
 fi
 
-L_frac="$(handmade_ledger <<'EOF'
+L_frac="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "rounds": [
@@ -826,7 +831,8 @@ else
 	fail "G7(e): non-integral unresolved_gates should exit 2 with empty stdout (rc=$fr_rc, out='$fr_out')"
 fi
 
-L_frac_count="$(handmade_ledger <<'EOF'
+L_frac_count="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "rounds": [
@@ -852,7 +858,8 @@ fi
 
 # A missing unresolved_gates stays legal (it defaults to 0) — the tightened
 # validator must not break the documented backward-compatible ledger shape.
-L_no_unresolved="$(handmade_ledger <<'EOF'
+L_no_unresolved="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "rounds": [
@@ -869,7 +876,6 @@ EOF
 )"
 nu_tok="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_no_unresolved" 2>/dev/null || true)"
 assert_eq "$nu_tok" "success" "G7(g): a ledger with no unresolved_gates key still decodes (defaults to 0)"
-
 
 # --- G8. The ledger write must be a same-filesystem rename ---------------
 #
@@ -1182,7 +1188,8 @@ rm -rf "$g13_base"
 # loop_counter 3 against cap 1.5 is past any sane cap, and the k fixture's
 # last round is a non-clean full pass that falls through to the epoch check.
 
-L_frac_cap="$(handmade_ledger <<'EOF'
+L_frac_cap="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 3,
   "cap": 1.5,
@@ -1208,7 +1215,8 @@ else
 	fail "R11-F5a: fractional cap should exit 2 with empty stdout (rc=$fcap_rc, out='$fcap_out')"
 fi
 
-L_bad_k="$(handmade_ledger <<'EOF'
+L_bad_k="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 3,
   "cap": 10,
@@ -1234,7 +1242,8 @@ else
 	fail "R11-F5b: non-numeric k should exit 2 with empty stdout (rc=$bk_rc, out='$bk_out')"
 fi
 
-L_frac_lc="$(handmade_ledger <<'EOF'
+L_frac_lc="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1.5,
   "rounds": [
@@ -1263,7 +1272,8 @@ fi
 # --cap/--k. An absent OR EXPLICITLY NULL cap/k must stay legal, or the
 # tightened root gate would break every legacy ledger written before cap/k
 # were persisted.
-L_null_capk="$(handmade_ledger <<'EOF'
+L_null_capk="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 1,
   "cap": null,
@@ -1297,7 +1307,8 @@ assert_eq "$nck_rc" "5" "R11-F5d/control: ...and still exits 5 for a terminal to
 # Root validation now runs at both entry points before the short-circuit.
 
 # (a) --last-decision, round-less ledger, fractional cap -> exit 2.
-L_rl_cap="$(handmade_ledger <<'EOF'
+L_rl_cap="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 0,
   "cap": 1.5,
@@ -1326,7 +1337,8 @@ case "$rlcap_err" in
 esac
 
 # (b) --last-decision, round-less ledger, non-numeric k -> exit 2.
-L_rl_k="$(handmade_ledger <<'EOF'
+L_rl_k="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 0,
   "cap": 10,
@@ -1344,7 +1356,8 @@ else
 fi
 
 # (c) --last-decision, round-less ledger, negative loop_counter -> exit 2.
-L_rl_lc="$(handmade_ledger <<'EOF'
+L_rl_lc="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": -1,
   "cap": 10,
@@ -1364,7 +1377,8 @@ fi
 # (d) APPEND against the same malformed round-less ledger also exits 2 --
 # and does so BEFORE the write, so loop_counter is untouched and the bad
 # `cap` is not carried forward by the has("cap") backfill.
-L_rl_app="$(handmade_ledger <<'EOF'
+L_rl_app="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 0,
   "cap": 1.5,
@@ -1382,7 +1396,8 @@ assert_eq "$(jq -r '.rounds | length' "$L_rl_app")" "0" "R12-root-d3: ...and app
 
 # (e) CONTROL: a well-formed round-less ledger still prints no-rounds at
 # exit 0, and an explicit cap:null / k:null is still legitimate there.
-L_rl_ok="$(handmade_ledger <<'EOF'
+L_rl_ok="$(
+	handmade_ledger <<'EOF'
 {
   "loop_counter": 0,
   "cap": null,
@@ -1395,6 +1410,119 @@ rlok_rc=0
 rlok_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_ok" 2>/dev/null)" || rlok_rc=$?
 assert_eq "$rlok_out" "no-rounds" "R12-root-e/control: a round-less ledger with cap:null/k:null still prints no-rounds"
 assert_eq "$rlok_rc" "0" "R12-root-e2/control: ...and still exits 0"
+
+# --- R12/F9: the round-append filter is a jq FILE, run directly -----------
+# The pending_claims/fixed_keys promotion state machine used to be an inline
+# single-quoted jq program inside the append call, which forced every
+# apostrophe in its prose through the shell and made the comments unreadable
+# exactly where the logic decides what counts as PROVEN FIXED. It now lives
+# in lib/ledger-promote.jq, loaded with `jq -f`.
+#
+# The tests above already cover it through the CLI. THIS section runs the
+# .jq file directly, with no shell in between, so a regression in the filter
+# is attributed to the filter rather than to the caller -- the seam the F9
+# deferral said extraction would not create.
+
+PROMOTE_JQ="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/ledger-promote.jq"
+
+if [[ -f "$PROMOTE_JQ" ]]; then
+	pass "R12-F9a: lib/ledger-promote.jq exists"
+else
+	fail "R12-F9a: lib/ledger-promote.jq is missing"
+fi
+
+# promote_direct <ledger-json> <pass_type> <unresolved> <present-json>
+#                <claimed-json> <present_supplied> -> filtered ledger on stdout
+promote_direct() {
+	local ledger_json="$1" pass_type="$2" unresolved="$3"
+	local present="$4" claimed="$5" present_supplied="$6"
+	printf '%s' "$ledger_json" | jq \
+		--argjson count 1 \
+		--argjson structural 0 \
+		--argjson local 0 \
+		--arg pass_type "$pass_type" \
+		--argjson quarantine 0 \
+		--argjson unresolved "$unresolved" \
+		--argjson cap 10 \
+		--argjson k 2 \
+		--argjson present_keys "$present" \
+		--argjson claimed_keys "$claimed" \
+		--argjson keys_active true \
+		--argjson present_supplied "$present_supplied" \
+		-f "$PROMOTE_JQ"
+}
+
+R12_BASE='{"cap":10,"k":2,"loop_counter":1,"fixed_keys":["old:1"],"pending_claims":["a:1","b:2"],"rounds":[]}'
+
+# (b) PROMOTE: a full pass with evidence promotes the pending claim that is
+# absent from present_keys, drops the one still present, and records the new
+# claim.
+r12b="$(promote_direct "$R12_BASE" full 0 '["b:2"]' '["c:3"]' true)"
+assert_eq "$(printf '%s' "$r12b" | jq -c '.fixed_keys')" '["a:1","old:1"]' \
+	"R12-F9b: a full pass with evidence promotes the absent claim into fixed_keys"
+assert_eq "$(printf '%s' "$r12b" | jq -c '.pending_claims')" '["c:3"]' \
+	"R12-F9b2: ...drops the still-present claim and records this round's claim"
+
+# (c) NO-PROMOTE on a confirm pass: pending_claims is left exactly as it was
+# (plus this round's new claim), fixed_keys untouched.
+r12c="$(promote_direct "$R12_BASE" confirm 0 '["z:9"]' '["q:4"]' true)"
+assert_eq "$(printf '%s' "$r12c" | jq -c '.fixed_keys')" '["old:1"]' \
+	"R12-F9c: a confirm pass promotes nothing"
+assert_eq "$(printf '%s' "$r12c" | jq -c '.pending_claims')" '["a:1","b:2","q:4"]' \
+	"R12-F9c2: ...and drops nothing either"
+
+# (d) NO-PROMOTE on a DEGRADED full pass (unresolved > 0) -- the gate did not
+# review, so absence from present_keys is not evidence.
+r12d="$(promote_direct "$R12_BASE" full 2 '[]' '[]' true)"
+assert_eq "$(printf '%s' "$r12d" | jq -c '.fixed_keys')" '["old:1"]' \
+	"R12-F9d: a degraded full pass (unresolved > 0) promotes nothing"
+assert_eq "$(printf '%s' "$r12d" | jq -c '.pending_claims')" '["a:1","b:2"]' \
+	"R12-F9d2: ...and leaves pending_claims intact"
+
+# (e) NO-PROMOTE when the round supplied no --present-keys at all: an absent
+# flag is not vacuous "present_keys == []" evidence (F1/F2).
+r12e="$(promote_direct "$R12_BASE" full 0 '[]' '[]' false)"
+assert_eq "$(printf '%s' "$r12e" | jq -c '.fixed_keys')" '["old:1"]' \
+	"R12-F9e: a full pass that omits --present-keys promotes nothing"
+
+# (f) Step 3 runs strictly AFTER step 2: a claim made THIS round is never
+# evaluated by the round that made it, and an already-fixed key is not
+# re-added as pending.
+r12f="$(promote_direct "$R12_BASE" full 0 '["a:1","b:2"]' '["old:1","new:9"]' true)"
+assert_eq "$(printf '%s' "$r12f" | jq -c '.pending_claims')" '["new:9"]' \
+	"R12-F9f: a key already in fixed_keys is not re-recorded as a pending claim"
+
+# (g) keys_active false leaves the ledger in the pre-Phase-3 shape: no
+# fixed_keys, no pending_claims, and a six-field round.
+r12g="$(printf '%s' '{"cap":10,"k":2,"loop_counter":1,"rounds":[]}' | jq \
+	--argjson count 1 --argjson structural 0 --argjson local 0 \
+	--arg pass_type full --argjson quarantine 0 --argjson unresolved 0 \
+	--argjson cap 10 --argjson k 2 \
+	--argjson present_keys '[]' --argjson claimed_keys '[]' \
+	--argjson keys_active false --argjson present_supplied false \
+	-f "$PROMOTE_JQ")"
+assert_eq "$(printf '%s' "$r12g" | jq -c 'has("fixed_keys") or has("pending_claims")')" "false" \
+	"R12-F9g: keys_active false adds no key-tracking fields"
+assert_eq "$(printf '%s' "$r12g" | jq -c '.rounds[-1] | keys_unsorted | length')" "6" \
+	"R12-F9g2: ...and the round keeps the pre-Phase-3 six-field shape"
+
+# (h) Every argument is REQUIRED -- jq errors on an undefined $variable, so a
+# caller that drops one fails loudly instead of writing a different ledger.
+r12h_rc=0
+printf '%s' "$R12_BASE" | jq --argjson count 1 -f "$PROMOTE_JQ" >/dev/null 2>&1 || r12h_rc=$?
+if [[ "$r12h_rc" -ne 0 ]]; then
+	pass "R12-F9h: omitting arguments is a hard jq error, not a silently different ledger"
+else
+	fail "R12-F9h: the filter ran with 11 of 12 arguments missing"
+fi
+
+# (i) The mirrors carry the same filter byte-for-byte -- a drifted copy would
+# change what the Codex-side ledger treats as proven-fixed with no shell diff.
+if cmp -s "$PROMOTE_JQ" "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq"; then
+	pass "R12-F9i: ledger-promote.jq is byte-identical across the Claude and Codex mirrors"
+else
+	fail "R12-F9i: ledger-promote.jq differs between plugins/skein and plugins/skein-codex"
+fi
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

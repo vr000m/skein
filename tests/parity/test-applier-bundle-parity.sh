@@ -130,7 +130,12 @@ fi
 # through their own directory, has no anchor to resolve, and is therefore
 # byte-identical too; registering it here is what stops a per-caller copy of
 # that policy reappearing and drifting.
-GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh state-path-guard.sh)
+# ledger-promote.jq (r11/F9) is not a shell file but is authored here, is
+# byte-identical across mirrors, and is loaded by convergence-ledger.sh with
+# `jq -f` -- a drifted copy changes what the ledger treats as proven-fixed
+# with no shell diff to notice. Hence the enumeration below walks *.jq as
+# well as *.sh.
+GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh state-path-guard.sh ledger-promote.jq)
 for f in "${GAUNTLET_LIB_PARITY_FILES[@]}"; do
 	claude_f="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/$f"
 	codex_f="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/$f"
@@ -198,8 +203,8 @@ while IFS= read -r lib_base; do
 		fail "gauntlet lib mirror presence: $lib_base exists only in plugins/skein-codex -- add it to plugins/skein or remove it"
 	fi
 done < <({
-	find "$GAUNTLET_LIB_CLAUDE_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null
-	find "$GAUNTLET_LIB_CODEX_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null
+	find "$GAUNTLET_LIB_CLAUDE_DIR" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.jq' \) 2>/dev/null
+	find "$GAUNTLET_LIB_CODEX_DIR" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.jq' \) 2>/dev/null
 } | while IFS= read -r p; do basename "$p"; done | sort -u)
 
 # ---------------------------------------------------------------------------
