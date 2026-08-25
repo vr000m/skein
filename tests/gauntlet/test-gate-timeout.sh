@@ -990,8 +990,15 @@ else
 	fail "A11: temp-file leak -- \$TMPDIR went from $a11_before to $a11_after files across 50 runs"
 fi
 
+# R11/F20 added a fourth name (`"${pgid_file}.pid"`, the non-leader single-pid
+# sidecar) to both cleanup lines, so an exact-literal grep for the old
+# three-name form no longer matches. The ASSERTION is unchanged -- every line
+# that removes pgid_file must also remove state_file and rc_file -- it is now
+# expressed as a per-line conjunction rather than one fixed string, so it
+# survives a further sidecar without silently going vacuous.
 a11_pgid_rm="$(grep -c 'rm -f "\$pgid_file"' "$GATE_BOUNDED" || true)"
-a11_rc_rm="$(grep -c 'rm -f "\$pgid_file" "\$state_file" "\$rc_file"' "$GATE_BOUNDED" || true)"
+a11_rc_rm="$(grep 'rm -f "\$pgid_file"' "$GATE_BOUNDED" | grep '"\$state_file"' | grep -c '"\$rc_file"' || true)"
+a11_pidsc_rm="$(grep 'rm -f "\$pgid_file"' "$GATE_BOUNDED" | grep -c '"\${pgid_file}.pid"' || true)"
 if [[ "$a11_pgid_rm" -gt 0 && "$a11_rc_rm" == "$a11_pgid_rm" ]]; then
 	pass "A11: rc_file is removed on every path that removes pgid_file ($a11_rc_rm/$a11_pgid_rm)"
 else
@@ -2157,6 +2164,175 @@ if [[ -z "$r7g2b_bad" ]]; then
 	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh"
 else
 	fail "R7-G2b:$r7g2b_bad"
+fi
+
+# === R11/F20: record a pgid only when the launched process LEADS its group ===
+#
+# `$!` was written into <pgid-file> unconditionally and read back by
+# _gate_sweep_pgid AS A PGID. That identity only holds for a `timeout(1)`
+# that calls setpgid(0,0) on itself (GNU/Homebrew does). A `timeout` earlier
+# on PATH that does not -- a busybox build, a wrapper script, a shim -- leaves
+# `$!` an ordinary group member, and the sweep then treats a pid as a pgid.
+#
+# Two halves, tested separately because they fail differently:
+#   (a) RECORDING. _gate_record_gate_pid is exercised directly against a real
+#       leader and a real non-leader, asserting which sidecar gets written.
+#       This is the half that must not regress into the round-3 sweep-time
+#       check (which was false on EVERY expiry and so signalled nothing).
+#   (b) EXPIRY. A fake non-setpgid `timeout` is put on PATH and a hanging
+#       stub is run under it, asserting the budget is still enforced (the
+#       single-pid fallback actually fires) and that a decoy in this shell's
+#       own process group survives (the pid-as-pgid confusion is gone).
+
+# --- (a) recording -------------------------------------------------------
+r11f20_probe="$WORKDIR/r11f20-probe.sh"
+cat >"$r11f20_probe" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=/dev/null
+. "$GATE_BOUNDED"
+_gate_record_gate_pid "\$1" "\$2"
+EOF
+chmod +x "$r11f20_probe"
+
+# NON-LEADER: a plain background job in a non-interactive shell inherits its
+# parent's process group, so it is a member and not the leader.
+r11f20_nl_file="$WORKDIR/r11f20-nonleader.pgid"
+sleep 30 &
+r11f20_nl_pid=$!
+"$r11f20_probe" "$r11f20_nl_pid" "$r11f20_nl_file"
+if [[ ! -s "$r11f20_nl_file" ]]; then
+	pass "R11-F20a: a non-leader gate pid records an EMPTY pgid file (the group sweep is a no-op by construction)"
+else
+	fail "R11-F20a: a non-leader gate pid was recorded as a pgid ('$(cat "$r11f20_nl_file")') -- the pid-as-pgid confusion is back"
+fi
+assert_eq "$(cat "${r11f20_nl_file}.pid" 2>/dev/null || true)" "$r11f20_nl_pid" \
+	"R11-F20a: ...and the single pid goes into the .pid sidecar instead"
+kill -KILL "$r11f20_nl_pid" 2>/dev/null || true
+wait "$r11f20_nl_pid" 2>/dev/null || true
+
+# LEADER: python3 os.setsid makes the child a session AND group leader, so
+# its pid IS its pgid -- the same construction the shim fallback path uses.
+r11f20_l_file="$WORKDIR/r11f20-leader.pgid"
+python3 -c 'import os,time
+os.setsid()
+time.sleep(30)' &
+r11f20_l_pid=$!
+sleep 0.3 # let os.setsid() actually take effect before probing.
+"$r11f20_probe" "$r11f20_l_pid" "$r11f20_l_file"
+assert_eq "$(cat "$r11f20_l_file" 2>/dev/null || true)" "$r11f20_l_pid" \
+	"R11-F20a: a true group leader IS recorded as a pgid (the probe is not a blanket refusal)"
+if [[ ! -s "${r11f20_l_file}.pid" ]]; then
+	pass "R11-F20a: ...and the .pid sidecar is left empty on the leader path"
+else
+	fail "R11-F20a: leader path wrote a .pid sidecar ('$(cat "${r11f20_l_file}.pid")') as well as a pgid"
+fi
+kill -KILL "$r11f20_l_pid" 2>/dev/null || true
+wait "$r11f20_l_pid" 2>/dev/null || true
+
+# --- (b) expiry under a non-setpgid `timeout` ----------------------------
+# SCOPE. The fallback is NOT a budget enforcer -- `timeout` itself enforces
+# the budget, and gate_run_bounded's expiry branch only runs after `wait`
+# returns. What the fallback replaces is the SURVIVOR SWEEP that follows.
+# So the fake below is a `timeout` that enforces its budget correctly but
+# never calls setpgid, which is exactly the configuration that used to make
+# `$!` a non-leader recorded as a pgid.
+#
+# HONEST LIMIT, asserted rather than papered over: with no group to
+# enumerate, a `trap "" TERM` grandchild cannot be reaped. The old code did
+# not reap it either (`pgrep -g <non-leader-pid>` is empty, so the sweep was
+# already a documented no-op there); what the old code COULD do was signal an
+# unrelated live group that happened to bear that number. The assertions
+# below are therefore: the expiry classification still happens, the branch
+# does not abort, and nothing outside the target is signalled.
+r11f20_bin="$WORKDIR/r11f20-bin"
+mkdir -p "$r11f20_bin"
+cat >"$r11f20_bin/timeout" <<'FAKE'
+#!/usr/bin/env bash
+# A `timeout` that enforces its budget but never calls setpgid: the command
+# runs in the CALLER's process group, so this process is a group MEMBER and
+# `$!` in the caller is not a pgid.
+budget=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--kill-after=*) shift ;;
+	*[0-9]s)
+		budget="${1%s}"
+		shift
+		break
+		;;
+	*) break ;;
+	esac
+done
+"$@" &
+fake_child=$!
+(
+	sleep "$budget"
+	kill -TERM "$fake_child" 2>/dev/null
+	sleep 2
+	kill -KILL "$fake_child" 2>/dev/null
+) &
+fake_killer=$!
+fake_rc=0
+wait "$fake_child" || fake_rc=$?
+kill -KILL "$fake_killer" 2>/dev/null || true
+[[ "$fake_rc" -eq 0 ]] || fake_rc=124
+exit "$fake_rc"
+FAKE
+chmod +x "$r11f20_bin/timeout"
+
+r11f20_stub="$WORKDIR/r11f20-stub.sh"
+cat >"$r11f20_stub" <<'STUB'
+#!/usr/bin/env bash
+echo '{"status":"ok","findings":[]}'
+sleep 40
+STUB
+chmod +x "$r11f20_stub"
+
+# A decoy in THIS shell's process group, started immediately before the run
+# and checked immediately after, with a sleep far longer than the case takes
+# -- so "the decoy is gone" can only mean it was signalled, never that it
+# simply finished.
+sleep 300 &
+DECOY_PID=$!
+sleep 0.2
+
+r11f20_env="$WORKDIR/r11f20-envelope.json"
+r11f20_tool="$WORKDIR/r11f20-toolout.json"
+r11f20_start="$(date +%s)"
+PATH="$r11f20_bin:$HIDDEN_TIMEOUT_PATH" "$RUNNER" 2 "$r11f20_env" "$r11f20_tool" -- "$r11f20_stub" >/dev/null 2>&1 || true
+r11f20_elapsed=$(($(date +%s) - r11f20_start))
+
+if [[ "$r11f20_elapsed" -le 25 ]]; then
+	pass "R11-F20b: a non-setpgid timeout still returns inside the budget (elapsed=${r11f20_elapsed}s vs the stub's 40s sleep)"
+else
+	fail "R11-F20b: took ${r11f20_elapsed}s -- the expiry branch hung on the non-leader path"
+fi
+assert_eq "$(jq -r '.status' "$r11f20_env" 2>/dev/null || true)" "skipped" \
+	"R11-F20b: ...the run is still classified as expired and the DEGRADED envelope is written"
+if [[ -f "$r11f20_tool" ]]; then
+	fail "R11-F20b: tool-out survived the non-leader expiry path (it must be removed so normalize cannot read it as clean)"
+else
+	pass "R11-F20b: ...tool-out is still removed on the non-leader expiry path"
+fi
+if [[ -n "$DECOY_PID" ]] && kill -0 "$DECOY_PID" 2>/dev/null; then
+	pass "R11-F20b: a decoy in this shell's own process group survives -- the non-leader path signals one recorded pid, never a group it merely name-collides with"
+else
+	fail "R11-F20b: decoy process (pid $DECOY_PID) is gone -- the non-leader path signalled outside its target"
+fi
+kill -KILL "$DECOY_PID" 2>/dev/null || true
+wait "$DECOY_PID" 2>/dev/null || true
+DECOY_PID=""
+
+# --- (c) the record-time-vs-sweep-time distinction is documented ---------
+# Round 3 removed a leadership check for a real reason (it ran at SWEEP time,
+# after `wait` had reaped `timeout`, so it was false on every expiry). Without
+# the header saying why THIS check is different, a future round removes it
+# again on the same reasoning.
+if grep -q 'RECORD time' "$GATE_BOUNDED" && grep -q 'round-3' "$GATE_BOUNDED"; then
+	pass "R11-F20c: the header states why the record-time probe is not the removed sweep-time check"
+else
+	fail "R11-F20c: gate-bounded.sh does not document the record-time vs sweep-time distinction"
 fi
 
 echo ""

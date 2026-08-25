@@ -51,7 +51,14 @@
 #     On expiry, a pgid-scoped sweep (`_gate_sweep_pgid`, below) TERMs then
 #     KILLs any survivor left in the child's own process group — recorded
 #     into a sidecar file by whichever runner launched the child, so both
-#     paths hand bash the same fact through the same channel. The sweep
+#     paths hand bash the same fact through the same channel. R11/F20: what
+#     is recorded there is a pgid only when the launched process is verified
+#     (at record time) to LEAD its group — the python3 shim by construction
+#     (it calls os.setsid), the `timeout`/`gtimeout` arms by an explicit
+#     `ps -o pgid=` probe. When it does not lead one, the sidecar is left
+#     empty and a `.pid` sidecar carries the single pid instead, which expiry
+#     TERM/KILLs directly (`_gate_kill_single_pid`); see that block's comment
+#     for why this is not the round-3 sweep-time check returning. The sweep
 #     never touches any process outside that group: a descendant that
 #     escaped the group via its own setsid/setpgid is out of scope by
 #     construction (R1 ASSUMPTION; the dogfood step's manual `pgrep -f
@@ -182,6 +189,34 @@
 # could in principle recycle <pgid>. Closing that would need a
 # pidfd/process-handle API that portable bash does not have. It is
 # documented rather than claimed away.
+#
+# R11/F20 — WHAT IS RECORDED, AND WHY THAT IS NOT THE OLD RULE COMING BACK.
+#
+# Everything above assumes the number in <pgid-file> is a process-GROUP id.
+# It was written unconditionally as `$!`, which is a pid. That is only also a
+# pgid when the bounding process made itself a group leader: GNU/Homebrew
+# `timeout(1)` calls setpgid(0,0) on itself, so `$! == its pgid`. A
+# `timeout` that does NOT (a busybox/shim/wrapper `timeout` earlier on PATH)
+# leaves `$!` an ordinary group member, and the sweep then interprets a pid
+# as a pgid — normally a harmless no-op, because `pgrep -g <non-leader-pid>`
+# is empty, but a wrong kill whenever that number happens to match an
+# unrelated LIVE group.
+#
+# So leadership is now PROBED AT RECORD TIME (`_gate_record_gate_pid`, below)
+# and the two cases are recorded distinguishably:
+#   - leader     -> <pgid-file> holds the pgid; expiry sweeps the group.
+#   - non-leader -> <pgid-file> is left EMPTY and <pgid-file>.pid holds the
+#                   single pid; expiry falls back to a plain TERM/KILL on it.
+# An unreadable/empty probe is treated as NOT-a-leader: fail closed to the
+# single-pid path, which can never signal a process the gate did not start.
+#
+# This is NOT the round-3 "recorded leader still leads it" check being
+# reinstated. That check ran at SWEEP time — after `wait` had already reaped
+# `timeout` — so on the primary path it was false on every single expiry and
+# no signal ever went out. This one runs at RECORD time, while the process is
+# still alive and its pgid is still observable, and it decides which KIND of
+# kill to use rather than whether to kill at all. Neither path can become a
+# universal no-op. Do not "simplify" it back into the sweep.
 # The one sibling this file sources (see the header). Resolved through this
 # file's own directory, so it works in both plugin mirrors with no
 # harness-specific anchor substitution.
@@ -212,6 +247,56 @@ _gate_sweep_pgid() {
 	done
 	# shellcheck disable=SC2086
 	kill -KILL $survivors 2>/dev/null || true
+}
+
+# _gate_record_gate_pid <gate-pid> <pgid-file> — R11/F20. Called immediately
+# after `local gate_pid=$!`, while the process is still alive, from the
+# `timeout` and `gtimeout` arms ONLY. The python3 shim arm does not call it:
+# that shim calls os.setsid() itself and writes its own genuine pgid, so
+# probing it would be re-deriving a fact the shim already knows.
+#
+# `ps -o pgid= -p <pid>` is POSIX and behaves identically on macOS and Linux;
+# both pad the column, hence the `tr -d ' '` — the same idiom _gate_sweep_pgid
+# already uses for `$$`. `|| true` for the same reason it does: this is a
+# pipeline under the caller's `set -euo pipefail`, and a `ps` EPERM must
+# degrade to the fail-closed single-pid path, not abort the gate before it has
+# even run.
+_gate_record_gate_pid() {
+	local gate_pid="$1" pgid_file="$2" gate_pgid
+	gate_pgid="$(ps -o pgid= -p "$gate_pid" 2>/dev/null | tr -d ' ' || true)"
+	if [[ -n "$gate_pgid" && "$gate_pgid" == "$gate_pid" ]]; then
+		# True group leader: the recorded number really is a pgid and the
+		# group sweep is sound.
+		printf '%s' "$gate_pid" >"$pgid_file"
+		: >"${pgid_file}.pid"
+	else
+		# Not a leader (or unprobeable). Record NOTHING as a pgid — an empty
+		# <pgid-file> makes _gate_sweep_pgid's `[[ -n ]]` guard a no-op by
+		# construction — and keep the single pid in a sidecar instead.
+		: >"$pgid_file"
+		printf '%s' "$gate_pid" >"${pgid_file}.pid"
+	fi
+}
+
+# _gate_kill_single_pid <pid> — the non-leader fallback: TERM, a 5s polled
+# grace, then KILL, aimed at exactly one pid. Deliberately narrower than
+# _gate_sweep_pgid: with no group to enumerate there is nothing to escalate
+# to, so a `trap "" TERM` grandchild of a non-setpgid `timeout` survives. That
+# is strictly better than the alternative it replaces (treating the pid as a
+# pgid and signalling whatever unrelated group happens to bear that number),
+# and it is the honest limit of what is knowable without setpgid.
+_gate_kill_single_pid() {
+	local pid="$1" _i
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 0
+	((pid > 1)) || return 0
+	[[ "$pid" != "$$" ]] || return 0
+	kill -0 "$pid" 2>/dev/null || return 0
+	kill -TERM "$pid" 2>/dev/null || true
+	for _i in 1 2 3 4 5; do
+		kill -0 "$pid" 2>/dev/null || return 0
+		sleep 1
+	done
+	kill -KILL "$pid" 2>/dev/null || true
 }
 
 # gate_assert_no_symlink <path> -> 0 safe, 1 with a diagnostic on stderr.
@@ -383,12 +468,15 @@ gate_run_bounded() {
 		# propagates its exit status unchanged.
 		timeout --kill-after="${kill_after_s}s" "${seconds}s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" &
 		local gate_pid=$!
-		printf '%s' "$gate_pid" >"$pgid_file"
+		# R11/F20: probe leadership HERE, while $gate_pid is still alive.
+		# A `timeout` that does not setpgid leaves $! an ordinary group
+		# member, and recording it as a pgid is a wrong-kill hazard.
+		_gate_record_gate_pid "$gate_pid" "$pgid_file"
 		wait "$gate_pid" || exit_code=$?
 	elif command -v gtimeout >/dev/null 2>&1; then
 		gtimeout --kill-after="${kill_after_s}s" "${seconds}s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" &
 		local gate_pid=$!
-		printf '%s' "$gate_pid" >"$pgid_file"
+		_gate_record_gate_pid "$gate_pid" "$pgid_file"
 		wait "$gate_pid" || exit_code=$?
 	else
 		# python3 is guaranteed present here: the precondition block above
@@ -523,10 +611,20 @@ PYSHIM
 
 	if [[ "$expired" -eq 1 ]]; then
 		rm -f "$tool_out" "${tool_out}.stderr"
-		local pgid=""
+		# R11/F20: a NON-EMPTY pgid file means the record-time probe
+		# confirmed a true group leader (or the python3 shim wrote its own
+		# setsid pgid) -- sweep the group. An EMPTY one means the bounding
+		# process was not a leader, so the only sound target is the single
+		# pid in the sidecar.
+		local pgid="" gate_pid_recorded=""
 		[[ -s "$pgid_file" ]] && pgid="$(cat "$pgid_file")"
-		_gate_sweep_pgid "$pgid"
-		rm -f "$pgid_file" "$state_file" "$rc_file"
+		[[ -s "${pgid_file}.pid" ]] && gate_pid_recorded="$(cat "${pgid_file}.pid")"
+		if [[ -n "$pgid" ]]; then
+			_gate_sweep_pgid "$pgid"
+		else
+			_gate_kill_single_pid "$gate_pid_recorded"
+		fi
+		rm -f "$pgid_file" "${pgid_file}.pid" "$state_file" "$rc_file"
 		local reason="DEGRADED: timeout after ${seconds}s"
 		jq -n \
 			--arg reason "$reason" \
@@ -537,7 +635,7 @@ PYSHIM
 		return 0
 	fi
 
-	rm -f "$pgid_file" "$state_file" "$rc_file"
+	rm -f "$pgid_file" "${pgid_file}.pid" "$state_file" "$rc_file"
 
 	# G3: `.findings` must be a real array, not merely present-and-ignorable.
 	# `run-gate.sh normalize` reads `.findings[]?`; the `?` swallows a
