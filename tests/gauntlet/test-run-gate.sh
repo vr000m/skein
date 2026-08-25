@@ -337,9 +337,16 @@ for r8g2_sub in "${r8g2_subcommands[@]}"; do
 		# F4 is load-bearing here and is exactly why read_input RETURNS
 		# instead of exiting: a refused envelope must still account for its
 		# slot with exactly one `error` row, and exit 0.
+		#
+		# Round 9, F11: the STATUS is absorbed, the DIAGNOSTIC is not. The
+		# old `2>/dev/null || true` swallowed both, so a refused envelope
+		# rendered identically to a gate that produced nothing — the one
+		# condition an operator has to act on, made invisible. stderr was
+		# already captured here per subcommand and simply not asserted on.
 		r8g2_rows="$(printf '%s' "$r8g2_out" | grep -c . || true)"
-		if [[ "$r8g2_rc" -ne 0 || "$r8g2_rows" != "1" || "$r8g2_out" != *"error"* ]]; then
-			r8g2a_bad="$r8g2a_bad [status-row rc=$r8g2_rc rows=$r8g2_rows out='$r8g2_out']"
+		if [[ "$r8g2_rc" -ne 0 || "$r8g2_rows" != "1" || "$r8g2_out" != *"error"* ||
+			"$r8g2_err" != *"refusing to operate on symlink"* ]]; then
+			r8g2a_bad="$r8g2a_bad [status-row rc=$r8g2_rc rows=$r8g2_rows out='$r8g2_out' err='$r8g2_err']"
 		fi
 	else
 		if [[ "$r8g2_rc" -ne 2 || "$r8g2_err" != *"refusing to operate on symlink"* || -n "$r8g2_out" ]]; then
@@ -348,7 +355,7 @@ for r8g2_sub in "${r8g2_subcommands[@]}"; do
 	fi
 done
 if [[ -z "$r8g2a_bad" ]]; then
-	pass "R8-G2a: every subcommand refuses a SYMLINKED positional path — normalize/reconcile/route exit 2 with the diagnostic and emit nothing; status-row still prints exactly one error row and exits 0"
+	pass "R8-G2a: every subcommand refuses a SYMLINKED positional path — normalize/reconcile/route exit 2 with the diagnostic and emit nothing; status-row still prints exactly one error row and exits 0, and the refusal diagnostic still reaches stderr"
 else
 	fail "R8-G2a: unguarded or wrongly-handled positional read:$r8g2a_bad"
 fi

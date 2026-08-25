@@ -468,16 +468,13 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		}
 	fi
 
-	# Shape gate. jq WITHOUT --slurp applies the filter to each top-level
-	# document independently and its exit status reflects only the LAST one,
-	# so `{"a":1} {"b":2}` would pass a bare `type == "object"` check and the
-	# first document would be silently dropped. Slurp first, then require
-	# exactly one document and that document an object. Empty stdin slurps to
-	# `[]` -> length 0 -> exit 2.
-	if ! printf '%s' "$STDIN_JSON" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
-		echo "persist-lens-result: --json-stdin/--json-file requires exactly one JSON object" >&2
-		exit 2
-	fi
+	# The one-document/object rule is a property of the JSON WIRE, so it runs
+	# from the shared lib on BOTH sides of it — the same principle
+	# collect-lens-results.sh states for the duplicate-key rule
+	# (round 9, F8). This file used to restate the helper's rationale
+	# verbatim and emit a DIFFERENT diagnostic for the same rejection.
+	persist_validate_json_shape "$STDIN_JSON" persist-lens-result \
+		"--json-stdin/--json-file payload" || exit 2
 
 	# R7/F6: the WRITER half of the duplicate-key wire rule. jq collapses a
 	# repeated key to the last occurrence before any filter runs, so a
@@ -672,8 +669,11 @@ line="$(jq -n -c \
 	exit 1
 }
 
-lenses_dir="$(persist_lens_state_dir "$ROOT" "$SKILL")" || exit 2
-attempt_dir="$lenses_dir/$RUN_ID"
+# The run dir is composed by the SHARED helper the reader uses (round 9, F9).
+# Hand-composing `<lenses_dir>/$RUN_ID` here is the silent-divergence class
+# persist-common.sh's "writer and reader derive the same directory" note
+# exists to prevent.
+attempt_dir="$(persist_lens_run_dir "$ROOT" "$SKILL" "$RUN_ID")" || exit 2
 attempt_file="$attempt_dir/$LENS.$ATTEMPT.jsonl"
 
 if ! af_assert_no_symlink "$attempt_file" "$ROOT"; then

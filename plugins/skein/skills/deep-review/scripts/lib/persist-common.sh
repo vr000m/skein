@@ -15,7 +15,14 @@
 #     scripts/collect-lens-results.sh     (reader/merge)
 #
 # Which helpers belong to whom:
-#   - persist_root_dir, persist_require_value,
+#   - persist_root_dir                   — THREE callers, not four (round 9,
+#                                          F8/F9). persist-lens-result.sh
+#                                          takes `--root` from the
+#                                          orchestrator as a REQUIRED flag and
+#                                          derives no root of its own, so it
+#                                          must not fall back to a cwd the
+#                                          orchestrator did not choose.
+#   - persist_require_value,
 #     persist_validate_json_shape,
 #     persist_assert_no_duplicate_keys   — all four. On the STATE-FILE
 #                                          callers it runs directly AFTER the

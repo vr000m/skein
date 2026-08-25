@@ -246,6 +246,97 @@ if [[ -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
 	rm -rf "$g9_fixture"
 fi
 
+# ---------------------------------------------------------------------------
+# §7 (round 9, F12) — "bundled == operative", FORWARD direction only.
+#
+# §6 guards the sibling invariant for authored lib/ files: it enumerates the
+# directory and fails on an unregistered member. Nothing did the equivalent for
+# scripts/: a canonical script absent from BUNDLE_SHARED or from its skill's
+# bundle_extra_for arm never reaches any mirror no matter how often
+# bundle-appliers.sh runs (scripts/bundle-appliers.sh states the hazard in
+# prose), and this branch hand-registered four such scripts under exactly that
+# rule (lens-budget.sh, persist-lens-result.sh, collect-lens-results.sh,
+# finding-key.sh). This section turns the prose into a check: every
+# `skills/<skill>/scripts/<X>` path any mirror's SKILL.md names must exist in
+# BOTH mirrors of that skill.
+#
+# THE REVERSE DIRECTION IS DELIBERATELY NOT CHECKED, and this is not an
+# oversight. A bundled file can be operative WITHOUT appearing in SKILL.md:
+# review-gauntlet bundles audit-auto-fix-eligibility.sh and never names it,
+# because `run-gate.sh route` delegates to it internally
+# (review-gauntlet/SKILL.md: "route already delegates ... internally"). A
+# SKILL.md-derived reverse enumeration would flag that file every run. Reverse
+# coverage, if ever wanted, has to read the lib/ sources, not the prose.
+#
+# scripts/check-sync.sh walks the DECLARED set only (its check_bundle_dir
+# catches a stale leftover: a bundled file with no map entry). §7 is the third,
+# missing direction: a REFERENCED file with no map entry. The three are
+# complementary and none subsumes another.
+#
+# PARITY_BUNDLE_REF_ROOT repoints ONLY this section at a fixture tree, the same
+# minimum-override pattern §6 uses for PARITY_GAUNTLET_LIB_ROOT.
+# ---------------------------------------------------------------------------
+BUNDLE_REF_ROOT="${PARITY_BUNDLE_REF_ROOT:-$ROOT_DIR}"
+bundle_ref_seen=0
+while IFS= read -r skill_ref; do
+	[[ -n "$skill_ref" ]] || continue
+	bundle_ref_seen=$((bundle_ref_seen + 1))
+	ref_missing=""
+	for mirror in skein skein-codex; do
+		if [[ ! -f "$BUNDLE_REF_ROOT/plugins/$mirror/$skill_ref" ]]; then
+			ref_missing="$ref_missing plugins/$mirror"
+		fi
+	done
+	if [[ -z "$ref_missing" ]]; then
+		pass "bundle reference: $skill_ref resolves in both mirrors"
+	else
+		fail "bundle reference: $skill_ref is named by a SKILL.md but is not bundled into:$ref_missing -- register it in scripts/lib/bundle-map.sh (BUNDLE_SHARED or bundle_extra_for) and re-run 'just bundle-appliers'"
+	fi
+done < <(grep -rhoE 'skills/[a-z0-9-]+/scripts/[A-Za-z0-9._-]+\.sh' \
+	"$BUNDLE_REF_ROOT"/plugins/*/skills/*/SKILL.md 2>/dev/null | sort -u)
+
+if [[ "$bundle_ref_seen" -eq 0 ]]; then
+	fail "bundle reference: no skills/<skill>/scripts/<X>.sh reference found in any SKILL.md -- the enumeration is vacuous"
+fi
+
+# ---------------------------------------------------------------------------
+# R9-G8a — self-test: a sweep that cannot fail is not a check. Point §7 at a
+# fixture whose SKILL.md names a script that is bundled nowhere, and assert §7
+# fails and names it. Modelled on §6's G9 control. Skipped when this process is
+# itself a fixture run (either override set), which is what bounds the
+# recursion.
+# ---------------------------------------------------------------------------
+if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
+	r9g8_fixture="$(mktemp -d)"
+	for mirror in skein skein-codex; do
+		mkdir -p "$r9g8_fixture/plugins/$mirror/skills/deep-review/scripts"
+		printf '%s\n' 'x' >"$r9g8_fixture/plugins/$mirror/skills/deep-review/scripts/present.sh"
+	done
+	printf '%s\n' \
+		'Run skills/deep-review/scripts/present.sh then' \
+		'skills/deep-review/scripts/not-bundled.sh to finish.' \
+		>"$r9g8_fixture/plugins/skein/skills/deep-review/SKILL.md"
+	r9g8_rc=0
+	r9g8_out="$(PARITY_BUNDLE_REF_ROOT="$r9g8_fixture" bash "${BASH_SOURCE[0]}" 2>&1)" || r9g8_rc=$?
+
+	if [[ "$r9g8_rc" -ne 0 ]]; then
+		pass "R9-G8a: a SKILL.md-referenced but unbundled script makes §7 fail (rc=$r9g8_rc)"
+	else
+		fail "R9-G8a: a SKILL.md-referenced but unbundled script must make §7 fail (got rc=0)"
+	fi
+	if printf '%s\n' "$r9g8_out" | grep -q 'bundle reference: skills/deep-review/scripts/not-bundled.sh is named by a SKILL.md'; then
+		pass "R9-G8a: the failure names the unbundled script"
+	else
+		fail "R9-G8a: the failure does not name not-bundled.sh"
+	fi
+	if printf '%s\n' "$r9g8_out" | grep -q 'bundle reference: skills/deep-review/scripts/present.sh resolves in both mirrors'; then
+		pass "R9-G8a: a genuinely bundled reference still passes in the same fixture"
+	else
+		fail "R9-G8a: present.sh should have passed in the fixture"
+	fi
+	rm -rf "$r9g8_fixture"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 # Non-vacuous-pass guard: if the bundle glob matched zero files we would exit 0

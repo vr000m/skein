@@ -194,16 +194,23 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 `review-gauntlet` has its own bundled copies of the shared pipeline, placed by `scripts/bundle-appliers.sh` (driven by `BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh`) — byte-identical to the repo canonical, enforced by `tests/parity/test-applier-bundle-parity.sh`. **Never reach into deep-review's own `scripts/` directory via a relative parent-directory path** — always resolve this skill's own bundled copy. Resolve the skill's own bundled directory the same way `deep-review/SKILL.md` does — bind `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/` once and run every operative command from there. If that path is absent, abort with a clear error; never fall back to applying fixes by hand or to an unbundled script.
 
-`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The three invocations below are its `normalize`/`reconcile`/`route` subcommands, in that order.
+`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The first three bullets below are its `normalize`/`reconcile`/`route` subcommands, in operative order; the fourth uses `status-row`. Every gate-output step goes through `run-gate.sh` — never through a bundled pipeline script a subcommand already wraps, so the positional path's symlink guard (`read_input`) is on the path the harness actually takes.
 
-- **Cross-gate dedup**: pipe pooled JSON-Lines findings through the bundled reconciler, called **without** `--skill` (the reconciler rejects any `--skill` value other than `deep-review`/`review-plan` with exit 2, and this gauntlet is neither of those):
+- **Gate normalization** (once per gate, before dedup): converts one gate's raw JSON into the common finding schema and strips any `auto_fix` block aside into the cache.
   ```
-  cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/reconcile-findings.sh
+  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh normalize \
+    --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" "$gate_out_dir/<gate>-raw.json"
+  ```
+- **Cross-gate dedup**: pipe pooled JSON-Lines findings through `run-gate.sh reconcile`, which is the bundled reconciler invoked **without** `--skill` (the reconciler rejects any `--skill` value other than `deep-review`/`review-plan` with exit 2, and this gauntlet is neither of those) plus the positional path's symlink guard:
+  ```
+  cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh reconcile
   ```
   Gate findings passed into reconcile **must not** carry `auto_fix` blocks — the reconciler only requires `--skill` when `auto_fix` is present, and trivial-fix proposals are handled by the fixer's route logic (Guardrail 2), not by the reconcile stage.
 - **Trivial-fix apply**: `run-gate.sh route` already delegates to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — **do not run a separate eligibility audit before applying; route already did it.** `trivial_envelope` is the ready-to-apply annotated envelope; extract it and feed it to the applier:
   ```
-  route_output.json | jq -c '.trivial_envelope' > annotated-envelope.json
+  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh route \
+    --autofix-cache "$gate_out_dir/autofix-cache.jsonl" "$gate_out_dir/reconciled.json" > route_output.json
+  jq -c '.trivial_envelope' route_output.json > annotated-envelope.json
   ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
   **Never pipe `route`'s raw stdout directly into the applier** — the applier reads a top-level `.findings[]` (see `apply-auto-fix-code.sh`), but route's raw output has no top-level `.findings` key (it's nested under `.trivial_envelope.findings`); doing so silently applies zero fixes every round (the applier reports "no would_apply findings" and exits 0), and every allowlisted trivial fix reappears next gate pass, stalling convergence exactly like the fixer-before-applier ordering bug above.

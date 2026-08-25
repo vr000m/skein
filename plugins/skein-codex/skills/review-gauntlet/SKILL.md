@@ -263,7 +263,7 @@ If the fixer's summary claims edits, commits, or a test addition that the live d
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
 
-`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The three bullets below are its `normalize`/`reconcile`/`route` subcommands.
+`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The first three bullets below cover its `reconcile`/`normalize`/`route` subcommands (operative order is normalize → reconcile → route); the fourth uses `status-row`.
 
 - **Cross-gate dedup**:
   ```
@@ -279,7 +279,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   ```
   `route` already delegates eligibility to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — do not run a separate eligibility audit before applying. Extract `.trivial_envelope` and feed it to the applier; **never pipe `route`'s raw stdout directly into `apply-auto-fix-code.sh`** — the applier reads a top-level `.findings[]`, which does not exist on route's raw output (it's nested under `.trivial_envelope.findings`), so doing so silently applies zero fixes every round:
   ```
-  route_output.json | jq -c '.trivial_envelope' > annotated-envelope.json
+  jq -c '.trivial_envelope' route_output.json > annotated-envelope.json
   "$SKILL_DIR"/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
   The applier prints its manifest path to stderr; capture the reported path in

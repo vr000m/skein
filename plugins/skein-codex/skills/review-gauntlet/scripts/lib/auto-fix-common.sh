@@ -109,6 +109,18 @@ af_assert_no_symlink() {
 	# appliers omit the bound: their writes go via `git hash-object -w` which
 	# dereferences anywhere along the path, so they prefer the stricter walk.
 	local root="${2:-}"
+	# Normalise the spelling ONCE, before any test (round 9, F1/F2 — the same
+	# defect as gauntlet_assert_no_symlink's). `[[ -L "$p/" ]]` is ALWAYS
+	# false (a trailing slash forces bash to resolve the symlink), and a `//`
+	# run makes `${p%/*}` strip an EMPTY component. Unlike the gauntlet guard
+	# this one must NOT absolutise: resolve_path rejects absolute paths
+	# upstream, so relative spellings are the normal input here.
+	if [[ -z "$path" ]]; then
+		echo "auto-fix: refusing an empty path" >&2
+		return 6
+	fi
+	while [[ "$path" == *//* ]]; do path="${path//\/\///}"; done
+	while [[ "$path" == */ && "$path" != "/" ]]; do path="${path%/}"; done
 	if [[ -L "$path" ]]; then
 		echo "auto-fix: refusing to operate on symlink: $path" >&2
 		return 6
@@ -118,8 +130,14 @@ af_assert_no_symlink() {
 		root_canon="$(cd "$root" 2>/dev/null && pwd -P)" || root_canon=""
 	fi
 	# A symlinked parent dir is equally dangerous — git hash-object dereferences.
-	local parent parent_canon
-	parent="$(dirname "$path")"
+	local parent parent_canon next
+	# `${p%/*}` REPLACES `dirname` (round 9, F3): `dirname` is a PATH lookup,
+	# and a shadowing `dirname` that answers `/` collapses this walk. The
+	# `!= "$path"` arm is what makes it correct on the RELATIVE alphabet:
+	# `${p%/*}` on `foo` yields `foo`, where `dirname foo` is `.`.
+	parent="${path%/*}"
+	[[ "$parent" != "$path" ]] || parent="."
+	[[ -n "$parent" ]] || parent="/"
 	while [[ "$parent" != "/" && "$parent" != "." ]]; do
 		if [[ -L "$parent" ]]; then
 			echo "auto-fix: refusing to operate under symlinked parent: $parent" >&2
@@ -131,7 +149,11 @@ af_assert_no_symlink() {
 				break
 			fi
 		fi
-		parent="$(dirname "$parent")"
+		next="${parent%/*}"
+		[[ "$next" != "$parent" ]] || next="."
+		[[ -n "$next" ]] || next="/"
+		[[ "$next" != "$parent" ]] || break
+		parent="$next"
 	done
 	return 0
 }

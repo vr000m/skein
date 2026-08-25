@@ -565,7 +565,6 @@ else
 	fi
 fi
 
-
 # ---------------------------------------------------------------------------
 # (A1-A10) --json-stdin decoder must never let a payload byte reach a shell.
 #
@@ -1436,6 +1435,68 @@ if [[ "$r8g3e_rc" -eq 2 && "$r8g3e_err" == *"duplicate key"* && "$r8g3e_err" == 
 	pass "(R8-G3e) a --json-stdin payload whose duplicate 'units' assignments have DISJOINT shapes exits 2, names the key, and persists nothing"
 else
 	fail "(R8-G3e) rc=$r8g3e_rc err='$r8g3e_err'"
+fi
+
+# ---------------------------------------------------------------------------
+# (R9-G5a) F8 -- the one-document/object rule is a WIRE rule, so the writer
+# must reject through the SHARED helper the reader uses, not through a
+# hand-rolled copy with its own diagnostic. Two implementations of one rule is
+# the defect; the observable symptom is two different messages for the same
+# rejection. Asserting the HELPER's wording is what makes the single
+# implementation checkable rather than asserted.
+# ---------------------------------------------------------------------------
+r9g5a_root="$TMPDIR_ROOT/r9g5a"
+mkdir -p "$r9g5a_root"
+
+set +e
+r9g5a_multi_err="$(printf '%s' '{"type":"start"} {"type":"done"}' |
+	bash "$SCRIPT" --root "$r9g5a_root" --skill deep-review --run-id run-r9g5a \
+		--lens logic --attempt 1 --json-stdin 2>&1 >/dev/null)"
+r9g5a_multi_rc=$?
+r9g5a_arr_err="$(printf '%s' '[{"type":"start"}]' |
+	bash "$SCRIPT" --root "$r9g5a_root" --skill deep-review --run-id run-r9g5a \
+		--lens logic --attempt 1 --json-stdin 2>&1 >/dev/null)"
+r9g5a_arr_rc=$?
+set -e
+
+if [[ "$r9g5a_multi_rc" -eq 2 && "$r9g5a_arr_rc" -eq 2 &&
+	"$r9g5a_multi_err" == *"must be exactly one JSON document"* &&
+	"$r9g5a_arr_err" == *"must be a JSON object"* ]] &&
+	no_jsonl_anywhere "$r9g5a_root"; then
+	pass "(R9-G5a) the writer's shape gate is persist_validate_json_shape -- both rejections carry the SHARED helper's wording and persist nothing"
+else
+	fail "(R9-G5a) multi rc=$r9g5a_multi_rc err='$r9g5a_multi_err'; array rc=$r9g5a_arr_rc err='$r9g5a_arr_err'"
+fi
+
+# ---------------------------------------------------------------------------
+# (R9-G5b) F9 -- the writer must COMPOSE the attempt directory with
+# persist_lens_run_dir, the same helper the reader (collect-lens-results.sh)
+# uses, not by re-spelling `<lenses_dir>/$RUN_ID` inline. Derive the expected
+# path by calling the helper directly and assert it equals what the writer
+# PRINTS on stdout: this fails the moment the helper's body changes and the
+# writer does not follow -- the silent-divergence class that makes the
+# collector report every lens `missing`.
+# ---------------------------------------------------------------------------
+r9g5b_root="$TMPDIR_ROOT/r9g5b"
+mkdir -p "$r9g5b_root"
+
+r9g5b_written="$(printf '%s' '{"type":"start","units":["u1"]}' |
+	bash "$SCRIPT" --root "$r9g5b_root" --skill deep-review --run-id run-r9g5b \
+		--lens logic --attempt 3 --json-stdin)"
+r9g5b_expected="$(
+	# shellcheck source=/dev/null
+	. "$REPO_ROOT/scripts/lib/auto-fix-common.sh"
+	# shellcheck source=/dev/null
+	. "$REPO_ROOT/scripts/lib/persist-common.sh"
+	printf '%s/%s\n' \
+		"$(persist_lens_run_dir "$r9g5b_root" deep-review run-r9g5b)" \
+		"logic.3.jsonl"
+)"
+
+if [[ -n "$r9g5b_written" && "$r9g5b_written" == "$r9g5b_expected" && -f "$r9g5b_expected" ]]; then
+	pass "(R9-G5b) the writer's attempt path is persist_lens_run_dir's output -- writer and reader derive the same directory"
+else
+	fail "(R9-G5b) writer='$r9g5b_written' helper='$r9g5b_expected'"
 fi
 
 finish

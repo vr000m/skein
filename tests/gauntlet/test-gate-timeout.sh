@@ -1399,7 +1399,15 @@ R8G5_SYMLINK_RE='^[^#]*(\[\[? *-[Lh] |test +-[Lh] |readlink|realpath)'
 # with no symlink logic at all") tripped neither half. Derive the caller set
 # from the DIRECTORY instead: any lib file that performs a filesystem effect on
 # a variable-borne path is a state-path caller and must source the guard.
-R8G5_EFFECT_RE='(^|[^>])>>? *"\$[A-Za-z_]|mkdir -p "\$[A-Za-z_]|(^|[;( ])cat "\$[A-Za-z_]|(^|[;( ])(mv|cp|touch) [^|]*"\$[A-Za-z_]'
+# Round 9, F7: the regex encoded the brace-LESS house spelling only, so
+# `>"${v}/f"`, `mkdir -p "${v}/d"` and `tee "$v"` were invisible to the very
+# sweep that exists to catch "a NEW lib file writes state with no guard" —
+# and the braced form is already live in this tree
+# (gate-bounded.sh writes `2>"${tool_out}.stderr"`). `\$\{?` covers both
+# spellings; the verb anchor widens from `[;( ]` to `[;([:space:]]` because
+# real lib code is TAB-indented, which would otherwise have made the added
+# `tee` alternative dead on arrival.
+R8G5_EFFECT_RE='(^|[^>])>>? *"\$\{?[A-Za-z_]|mkdir -p "\$\{?[A-Za-z_]|(^|[;([:space:]])cat "\$\{?[A-Za-z_]|(^|[;([:space:]])(mv|cp|touch|tee) [^|]*"\$\{?[A-Za-z_]'
 
 # The only names left anywhere in this check, and they are ASSERTED by R8-G5c
 # rather than trusted: state-path-guard.sh is the policy owner itself, and
@@ -1517,6 +1525,32 @@ if [[ "$r8g5a_planted" == *"new-writer.sh"* ]]; then
 	pass "R8-G5a/control: a NEW lib file that writes a variable-borne path with no guard is flagged ($r8g5a_planted)"
 else
 	fail "R8-G5a/control: an unguarded new state-path writer was invisible to the caller sweep (got '$r8g5a_planted')"
+fi
+
+# R9-G4a — the same failure mode in the BRACED house spelling (round 9, F7).
+# R8G5_EFFECT_RE encoded `"$var` only, so `>"${v}/f"`, `mkdir -p "${v}/d"` and
+# `tee "$v"` were invisible to the very sweep that exists to catch "a NEW lib
+# file writes state with no guard" — and the braced form is already live in
+# this tree (gate-bounded.sh writes `2>"${tool_out}.stderr"`), so R8-G5a's
+# unbraced plant could never expose the gap. The verb anchor also had to widen
+# from `[;( ]` to `[;([:space:]]`, since real lib code is TAB-indented.
+# R8-G5a stays as the control for the unbraced spelling.
+r9g4a_tmp="$(mktemp -d "$WORKDIR/r9g4alib.XXXXXX")"
+cp "$SKILL_LIB"/*.sh "$r9g4a_tmp/"
+cat >"$r9g4a_tmp/braced-writer.sh" <<'R9G4AEOF'
+#!/usr/bin/env bash
+braced_writer() {
+	local out_dir="$1" out_file="$2"
+	mkdir -p "${out_dir}/d"
+	printf 'x' >"${out_dir}/f"
+	printf 'y' | tee "${out_file}"
+}
+R9G4AEOF
+r9g4a_planted="$(r8g5_sweep_callers "$r9g4a_tmp")"
+if [[ "$r9g4a_planted" == *"braced-writer.sh"* ]]; then
+	pass "R9-G4a/control: a NEW lib file writing state in the BRACED spelling is flagged ($r9g4a_planted)"
+else
+	fail "R9-G4a/control: an unguarded braced-spelling state writer was invisible to the caller sweep (got '$r9g4a_planted')"
 fi
 
 # R8-G5c — the exclusion list is CHECKED, not asserted: exactly two members,
@@ -1764,6 +1798,132 @@ else
 	fail "R8-G1c: rc=$r8g1c_rc err='$r8g1c_err'"
 fi
 
+# ---------------------------------------------------------------------------
+# R9-G1a — a TRAILING SLASH (or a `//` run) must not change the verdict
+# (round 9, F1/F2). Every test in the guard is lexical, and `[[ -L "$p/" ]]` is
+# ALWAYS false — a trailing slash forces bash to resolve the symlink — while a
+# `//` run makes `${p%/*}` strip an EMPTY component. On 6703445 the four
+# spellings below returned 1/0/0/0: an escaping leaf symlink was ACCEPTED
+# whenever the caller happened to type a trailing slash. The guard now
+# normalises its input once, so the verdict is a function of the path, not of
+# its spelling.
+# The `dirname` shadow used by R9-G1b; created up front so `r9g1_verdict`
+# below can reference it unconditionally.
+r9g1_fakebin="$WORKDIR/r9g1bin"
+mkdir -p "$r9g1_fakebin"
+printf '%s\n' '#!/usr/bin/env bash' 'echo /' >"$r9g1_fakebin/dirname"
+chmod +x "$r9g1_fakebin/dirname"
+
+r9g1_spellings=(
+	"$r8g1_root/victim/.gauntlet"
+	"$r8g1_root/victim/.gauntlet/"
+	"$r8g1_root/victim/.gauntlet//"
+	"$r8g1_root//victim/.gauntlet/"
+)
+r9g1_verdict() {
+	# $1 path, $2 = 1 to put a `dirname` that answers `/` earlier on PATH.
+	(
+		if [[ "${2:-0}" -eq 1 ]]; then
+			PATH="$r9g1_fakebin:$PATH"
+			export PATH
+		fi
+		# shellcheck source=/dev/null
+		. "$SKILL_LIB/state-path-guard.sh"
+		set +e
+		r9g1_err="$(gauntlet_assert_no_symlink "$1" r9 2>&1 >/dev/null)"
+		r9g1_rc=$?
+		set -e
+		printf '%s:%s' "$r9g1_rc" "$([[ "$r9g1_err" == *"refusing to operate on symlink"* ]] && echo named || echo unnamed)"
+	)
+}
+
+r9g1a_bad=""
+r9g1a_table=""
+for r9g1a_p in "${r9g1_spellings[@]}"; do
+	r9g1a_got="$(r9g1_verdict "$r9g1a_p")"
+	r9g1a_table="$r9g1a_table [${r9g1a_p#"$r8g1_root"} -> $r9g1a_got]"
+	[[ "$r9g1a_got" == "1:named" ]] || r9g1a_bad="$r9g1a_bad [${r9g1a_p#"$r8g1_root"} -> $r9g1a_got]"
+done
+if [[ -z "$r9g1a_bad" ]]; then
+	pass "R9-G1a: every slash spelling of an escaping leaf symlink is refused with the naming diagnostic:$r9g1a_table"
+else
+	fail "R9-G1a: a slash spelling changed the verdict:$r9g1a_bad"
+fi
+
+# ---------------------------------------------------------------------------
+# R9-G1b — no PATH channel into the guard (round 9, F3). R8-G1b is the same
+# control for GIT_DIR/GIT_WORK_TREE; the ancestor walk still called `dirname`,
+# which is a PATH lookup, so a shadowing `dirname` that answers `/` collapsed
+# the bound search and the containment guard could be bypassed by an
+# attacker-controlled PATH entry. The walk is `${p%/*}` now and invokes
+# nothing, so the two matrices must be byte-identical. Also asserts the empty
+# path is refused rather than silently rewritten into $PWD.
+r9g1b_plain=""
+r9g1b_shadow=""
+for r9g1b_p in "${r9g1_spellings[@]}"; do
+	r9g1b_plain="$r9g1b_plain $(r9g1_verdict "$r9g1b_p" 0)"
+	r9g1b_shadow="$r9g1b_shadow $(r9g1_verdict "$r9g1b_p" 1)"
+done
+set +e
+r9g1b_empty_err="$(
+	# shellcheck source=/dev/null
+	. "$SKILL_LIB/state-path-guard.sh"
+	gauntlet_assert_no_symlink "" r9 2>&1 >/dev/null
+)"
+r9g1b_empty_rc=$?
+set -e
+if [[ "$r9g1b_plain" == "$r9g1b_shadow" && "$r9g1b_empty_rc" -eq 1 && "$r9g1b_empty_err" == *"empty state path"* ]]; then
+	pass "R9-G1b: a shadowing 'dirname' on PATH cannot move a verdict (plain:$r9g1b_plain), and an empty path is refused"
+else
+	fail "R9-G1b: plain:$r9g1b_plain shadow:$r9g1b_shadow empty_rc=$r9g1b_empty_rc empty_err='$r9g1b_empty_err'"
+fi
+
+# ---------------------------------------------------------------------------
+# R9-G1c — the SAME normalisation defect existed in the second guard,
+# af_assert_no_symlink (scripts/lib/auto-fix-common.sh), which owns the
+# `.deep-review/` / `.review-plan/` trees. Two extra properties are asserted
+# here that the gauntlet guard does not have: this guard accepts RELATIVE
+# paths (resolve_path rejects absolute ones upstream), so it must NOT
+# absolutise, and its `${p%/*}` walk needs the `!= "$path"` arm — `${p%/*}` on
+# `foo` yields `foo` where `dirname foo` is `.` — or a relative single-component
+# path would loop forever.
+r9g1c_root="$WORKDIR/r9g1c"
+mkdir -p "$r9g1c_root/proj" "$r9g1c_root/outside"
+ln -s "$r9g1c_root/outside" "$r9g1c_root/proj/.deep-review"
+mkdir -p "$r9g1c_root/proj/reldir"
+ln -s "$r9g1c_root/outside" "$r9g1c_root/proj/rellink"
+
+r9g1c_af() {
+	(
+		cd "$r9g1c_root/proj" || exit 9
+		# shellcheck source=/dev/null
+		. "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
+		set +e
+		af_assert_no_symlink "$1" >/dev/null 2>&1
+		printf '%s' "$?"
+		set -e
+	)
+}
+
+r9g1c_bad=""
+for r9g1c_p in ".deep-review" ".deep-review/" ".deep-review//" "rellink/x.json" "rellink//x.json"; do
+	r9g1c_got="$(r9g1c_af "$r9g1c_p")"
+	[[ "$r9g1c_got" == "6" ]] || r9g1c_bad="$r9g1c_bad [$r9g1c_p -> $r9g1c_got, expected 6]"
+done
+# Relative negative controls: the walk must TERMINATE and ACCEPT.
+for r9g1c_ok in "reldir" "reldir/x.json" "./reldir/x.json"; do
+	r9g1c_got="$(r9g1c_af "$r9g1c_ok")"
+	[[ "$r9g1c_got" == "0" ]] || r9g1c_bad="$r9g1c_bad [$r9g1c_ok -> $r9g1c_got, expected 0]"
+done
+r9g1c_empty="$(r9g1c_af "")"
+[[ "$r9g1c_empty" == "6" ]] || r9g1c_bad="$r9g1c_bad [empty -> $r9g1c_empty, expected 6]"
+
+if [[ -z "$r9g1c_bad" ]]; then
+	pass "R9-G1c: af_assert_no_symlink refuses every slash spelling of a symlinked path, still accepts relative in-tree paths, and refuses an empty one"
+else
+	fail "R9-G1c:$r9g1c_bad"
+fi
+
 # R8-G1d — negative control (the round-4 F7 false-refusal guard): an ordinary
 # path inside a checkout that itself sits below a platform alias ($WORKDIR is
 # mktemp -d, i.e. under /var -> /private/var on macOS) must still be ACCEPTED.
@@ -1878,45 +2038,6 @@ if [[ -z "$r7g2b_bad" ]]; then
 	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh"
 else
 	fail "R7-G2b:$r7g2b_bad"
-fi
-
-# ---------------------------------------------------------------------------
-# R8-G6a — the temp-path lint must see a FULLY STATIC /tmp path (round 8, F10).
-#
-# The old regex encoded "predictable = literal PLUS `$$`/`$RANDOM`", so a
-# static `/tmp/<name>/x` — strictly MORE predictable — was invisible to the
-# lint whose stated rule is "refuse predictable temp paths". That is how a
-# security fixture in THIS file came to use `/tmp/r7g1x/env.json` as a guard
-# input with an expected verdict of "accepted": any local user could
-# pre-create that directory as a symlink and flip the verdict.
-#
-# The lint anchors on its own location (`cd <script dir>/..`), so it is
-# exercised against a scratch tree rather than the repo.
-r8g6_root="$WORKDIR/r8g6"
-mkdir -p "$r8g6_root/scripts" "$r8g6_root/tests" "$r8g6_root/plugins"
-cp "$ROOT_DIR/scripts/lint-temp-paths.sh" "$r8g6_root/scripts/"
-
-# The banned literal is assembled from two pieces so that the FIXTURE contains
-# it while this test file does not — otherwise the lint under test would flag
-# its own regression test.
-r8g6_static_path="/tmp""/staticname/x"
-printf '%s\n' '#!/usr/bin/env bash' "p=\"$r8g6_static_path\"" >"$r8g6_root/tests/static.sh"
-set +e
-r8g6_static_out="$(bash "$r8g6_root/scripts/lint-temp-paths.sh" 2>&1)"
-r8g6_static_rc=$?
-set -e
-
-rm -f "$r8g6_root/tests/static.sh"
-printf '%s\n' '#!/usr/bin/env bash' 'cd /tmp || exit 1' '# a comment mentioning '"$r8g6_static_path" >"$r8g6_root/tests/cwd.sh"
-set +e
-bash "$r8g6_root/scripts/lint-temp-paths.sh" >/dev/null 2>&1
-r8g6_cwd_rc=$?
-set -e
-
-if [[ "$r8g6_static_rc" -eq 1 && "$r8g6_static_out" == *"$r8g6_static_path"* && "$r8g6_cwd_rc" -eq 0 ]]; then
-	pass "R8-G6a: lint-temp-paths.sh refuses a fully STATIC /tmp path and still allows bare '/tmp' as a cwd (and prose in comments)"
-else
-	fail "R8-G6a: static rc=$r8g6_static_rc out='$r8g6_static_out'; cwd-only rc=$r8g6_cwd_rc"
 fi
 
 echo ""

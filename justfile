@@ -98,8 +98,8 @@ reconciliation-tests:
 # Codex copy is held byte-identical to it by
 # tests/parity/test-applier-bundle-parity.sh.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
     ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.
@@ -111,6 +111,7 @@ lint-scripts:
 plugin-tests:
     bash tests/plugin/test-claude-md-hygiene.sh
     bash tests/plugin/test_manifests.sh
+    bash tests/plugin/test-lint-temp-paths.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but

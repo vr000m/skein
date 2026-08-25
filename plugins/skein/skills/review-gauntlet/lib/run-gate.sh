@@ -396,7 +396,15 @@ cmd_status_row() {
 	gc_have_jq
 
 	local envelope
-	envelope="$(read_input "$input_path" 2>/dev/null || true)"
+	# `|| true` (NOT `2>/dev/null || true`) — round 9, F11. The STATUS must
+	# be absorbed so F4 still holds: a refused or unreadable envelope prints
+	# exactly one `error` row and exits 0, so the slot never vanishes from
+	# the operator's table. The DIAGNOSTIC must not be: a symlink refusal
+	# from read_input's guard is the one condition an operator has to act on,
+	# and swallowing it rendered it identically to "the gate produced
+	# nothing". A missing-file `cat` error now also reaches stderr, naming
+	# the path the generic row cannot.
+	envelope="$(read_input "$input_path" || true)"
 
 	# F4: a zero-byte, missing/unreadable, or non-object envelope (including
 	# valid-but-wrong-shape JSON like `[]`) must still produce exactly one

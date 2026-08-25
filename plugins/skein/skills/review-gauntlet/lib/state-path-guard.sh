@@ -80,15 +80,22 @@
 # PARENT-WALK BOUND — THE OUTERMOST CHECKOUT BOUNDARY ON THE PATH'S OWN
 # ANCESTOR CHAIN (round 8, F1/F2). The invariant, stated once and in full:
 #
-#   For a guarded path P, let A(P) be P's lexical ancestor chain (`dirname`
-#   repeatedly, up to `/`), and let B be the SHALLOWEST element of A(P) that
-#   is not itself a symlink and carries a `.git` entry.
-#   gauntlet_assert_no_symlink returns 1 iff P contains a `..` component, or
-#   P itself is a symlink, or any element of A(P) strictly below B is a
-#   symlink. If no such B exists, only P and `dirname P` are tested. The
-#   verdict is a pure function of P's spelling and the `-L`/`-e` state of the
-#   named components. NO SUBPROCESS, NO ENVIRONMENT VARIABLE, and no
-#   `cd`/`pwd -P` participates.
+#   Let N(P) be the NORMALISED spelling of a guarded path P (round 9,
+#   F1/F2): P absolutised against $PWD, then every run of `/` collapsed to
+#   one and every trailing `/` removed (`/` itself excepted). An empty P is
+#   refused before normalisation. Every test below is applied to N(P), so P
+#   and any `P` + `/`* spelling of it receive the SAME verdict.
+#
+#   For a guarded path P, let A(P) be N(P)'s lexical ancestor chain
+#   (`${p%/*}` repeatedly, up to `/`), and let B be the SHALLOWEST element
+#   of A(P) that is not itself a symlink and carries a `.git` entry.
+#   gauntlet_assert_no_symlink returns 1 iff N(P) contains a `..` component,
+#   or N(P) itself is a symlink, or any element of A(P) strictly below B is
+#   a symlink. If no such B exists, only N(P) and its parent are tested. The
+#   verdict is a pure function of N(P)'s spelling and the `-L`/`-e` state of
+#   the named components. NO SUBPROCESS, NO ENVIRONMENT VARIABLE, no
+#   `cd`/`pwd -P`, and NO EXTERNAL COMMAND — `dirname` included —
+#   participates.
 #
 # OUTERMOST, NOT INNERMOST (round 8, F1). Round 7 stopped at the FIRST
 # (innermost) worktree-bearing ancestor, which let an attacker CHOOSE the
@@ -164,7 +171,26 @@ gauntlet_assert_no_symlink() {
 	# relative one it merely picks which spelling of the same file is being
 	# guarded, and this guard's failure direction is fail-CLOSED (a `-L` hit
 	# refuses loudly) either way.
+	# An empty path is never a legitimate guard subject, and it is the one
+	# input that would otherwise be silently rewritten into $PWD by the
+	# absolutisation below — guarding the process's cwd instead of refusing.
+	if [[ -z "$path" ]]; then
+		echo "$label: refusing an empty state path" >&2
+		return 1
+	fi
+
 	[[ "$path" == /* ]] || path="$PWD/$path"
+
+	# NORMALISE THE SPELLING ONCE, BEFORE ANY TEST (round 9, F1/F2). Every
+	# check below is lexical, and `-L` and `${p%/*}` do not agree with a
+	# caller's slash spelling: `[[ -L "$p/" ]]` is ALWAYS false (a trailing
+	# slash forces bash to resolve the symlink), and a `//` run makes
+	# `${p%/*}` strip an EMPTY component instead of a real one. Collapsing
+	# runs and dropping trailing slashes makes the guard's verdict a function
+	# of the path, not of how the caller happened to type it — the property
+	# the header's invariant claims and the round-8 spelling did not have.
+	while [[ "$path" == *//* ]]; do path="${path//\/\///}"; done
+	while [[ "$path" == */ && "$path" != "/" ]]; do path="${path%/}"; done
 
 	# Then refuse any `..` component, before a single other check runs.
 	#
@@ -195,8 +221,16 @@ gauntlet_assert_no_symlink() {
 		return 1
 	fi
 
-	local parent
-	parent="$(dirname "$path")"
+	# `${p%/*}` REPLACES `dirname` (round 9, F3). `dirname` is a PATH
+	# lookup, and a shadowing `dirname` that answers `/` collapses the bound
+	# search below to nothing — a containment guard whose verdict an
+	# attacker-controlled PATH entry can flip. On the normalised alphabet
+	# above (absolute, no `//`, no trailing `/`) `${p%/*}` is exactly
+	# `dirname`, with `""` -> `/` the only special case, and it invokes
+	# nothing.
+	local parent next
+	parent="${path%/*}"
+	[[ -n "$parent" ]] || parent="/"
 	if [[ -L "$parent" ]]; then
 		echo "$label: refusing to operate on symlink: $parent" >&2
 		return 1
@@ -242,7 +276,14 @@ gauntlet_assert_no_symlink() {
 		if [[ ! -L "$cand" ]] && { [[ -e "$cand/.git" ]] || [[ -L "$cand/.git" ]]; }; then
 			bound="$cand"
 		fi
-		cand="$(dirname "$cand")"
+		next="${cand%/*}"
+		[[ -n "$next" ]] || next="/"
+		# Termination is not assumed: on the normalised alphabet each step
+		# removes at least one component, so `next == cand` is impossible
+		# for any `cand != "/"`. The break is a backstop that turns a
+		# violated premise into a return, never a hang.
+		[[ "$next" != "$cand" ]] || break
+		cand="$next"
 	done
 	[[ -n "$bound" ]] || return 0
 
@@ -255,7 +296,11 @@ gauntlet_assert_no_symlink() {
 			echo "$label: refusing to operate on symlink: $parent" >&2
 			return 1
 		fi
-		parent="$(dirname "$parent")"
+		next="${parent%/*}"
+		[[ -n "$next" ]] || next="/"
+		# Same textual-progress backstop as the bound search above.
+		[[ "$next" != "$parent" ]] || break
+		parent="$next"
 	done
 
 	return 0

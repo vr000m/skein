@@ -216,11 +216,15 @@ assert_grep "$SKILL_MD" '<untrusted-content>' \
 
 # --- Reuse: bundled scripts, no relative-path fork -------------------------
 
-assert_grep "$SKILL_MD" 'reconcile-findings\.sh' \
-	"references the bundled \`reconcile-findings.sh\`"
-
-assert_not_grep "$SKILL_MD" 'reconcile-findings\.sh[^\n]*--skill' \
-	"does not call \`reconcile-findings.sh\` with \`--skill\`"
+# Round 9, F10: this used to assert the mirror NAMES `reconcile-findings.sh`.
+# It no longer may — cross-gate dedup goes through `run-gate.sh reconcile`,
+# which IS the bundled reconciler invoked with no `--skill` plus the positional
+# symlink guard, so a direct call would bypass round 8's `read_input`
+# hardening. R9-G6a below is the positive form (all four subcommands present as
+# runnable invocations in BOTH mirrors) and also forbids the direct call; what
+# survives here is the no-`--skill` rule, restated against the dispatcher.
+assert_not_grep "$SKILL_MD" 'run-gate\.sh reconcile[^\n]*--skill' \
+	"does not pass \`--skill\` to \`run-gate.sh reconcile\`"
 
 assert_grep "$SKILL_MD" 'apply-auto-fix-code\.sh' \
 	"references the bundled \`apply-auto-fix-code.sh\`"
@@ -812,6 +816,54 @@ if [[ -z "$r7g7_missing" ]]; then
 	pass "R7-G7a: every file in GAUNTLET_LIB_PARITY_FILES is named in BOTH SKILL.md mirrors"
 else
 	fail "R7-G7a: undocumented authored lib file(s):$r7g7_missing (Codex-mirror SKILL.md prose is applied by the codex-mirror agent — see .gauntlet/r7/codex-mirror-edits.md for the exact sentence)"
+fi
+
+# ---------------------------------------------------------------------------
+# R9-G6a (round 9, F10) — BOTH mirrors must invoke the three run-gate.sh
+# subcommands they promise, as RUNNABLE invocations rather than prose.
+#
+# The Claude mirror's own sentence claimed "the invocations below are its
+# normalize/reconcile/route subcommands, in that order", but what followed was
+# a DIRECT bundled-reconciler call, a `route` code block whose first line
+# consumed `route_output.json` without ever showing the `route` call that
+# produced it, and `status-row` — which is not one of the three. The Codex
+# mirror carried all three, so the divergence was one-sided and invisible to
+# `just check-prompt-parity` (which covers rubric.md/*-prompt.md, not this
+# section). The consequence was concrete: round 8's `read_input` symlink guard
+# justifies itself in-code with "SKILL.md composes it from the same
+# $gate_out_dir" — true of the Codex prescriptions only, so on the Claude path
+# the hardening guarded a call the harness was never told to make.
+#
+# "Runnable" is distinguished from prose by requiring the anchor prefix on the
+# same line (`${CLAUDE_PLUGIN_ROOT}/…/lib/` or `"$SKILL_DIR"/lib/`), which
+# prose references lack. The two anchors are harness-divergent BY DESIGN and
+# are never collapsed.
+# ---------------------------------------------------------------------------
+r9g6_mirrors=(
+	"$ROOT_DIR/plugins/skein/skills/review-gauntlet/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/SKILL.md"
+)
+r9g6_bad=""
+for r9g6_md in "${r9g6_mirrors[@]}"; do
+	if [[ ! -f "$r9g6_md" ]]; then
+		r9g6_bad="$r9g6_bad [missing $r9g6_md]"
+		continue
+	fi
+	for r9g6_sub in normalize reconcile route status-row; do
+		if ! grep -qE '(\$\{CLAUDE_PLUGIN_ROOT\}/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r9g6_sub"'([[:space:]]|$)' "$r9g6_md"; then
+			r9g6_bad="$r9g6_bad [$(basename "$(dirname "$(dirname "$(dirname "$r9g6_md")")")"): no runnable 'run-gate.sh $r9g6_sub' invocation]"
+		fi
+	done
+	# The dispatcher is the SOLE route to gate output: no mirror may invoke a
+	# bundled pipeline script that a run-gate.sh subcommand already wraps.
+	if grep -qE 'scripts/reconcile-findings\.sh' "$r9g6_md"; then
+		r9g6_bad="$r9g6_bad [$(basename "$(dirname "$(dirname "$(dirname "$r9g6_md")")")"): invokes scripts/reconcile-findings.sh directly instead of 'run-gate.sh reconcile']"
+	fi
+done
+if [[ -z "$r9g6_bad" ]]; then
+	pass "R9-G6a: both mirrors invoke run-gate.sh normalize/reconcile/route/status-row as runnable, anchored commands and neither calls the bundled reconciler directly"
+else
+	fail "R9-G6a:$r9g6_bad"
 fi
 
 echo ""
