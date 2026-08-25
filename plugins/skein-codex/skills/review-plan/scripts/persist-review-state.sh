@@ -133,6 +133,12 @@ fi
 # lookup itself error out non-zero, crashing the script uninformatively
 # under `set -e` instead of failing with a clear usage message.
 persist_validate_json_shape "$input" "persist-review-state" "envelope" || exit 2
+# Duplicate-key rule, on the STATE-FILE side of the wire too (round 8, F7).
+# Ordering is deliberate: shape first, so a non-object payload fails with the
+# clearer message; duplicates second. Both read the ALREADY-CAPTURED $input,
+# never a second read of the file (round 7, F7/F8), and both sit before any
+# use of the parsed document.
+persist_assert_no_duplicate_keys "$input" "persist-review-state" "envelope" || exit 2
 
 schema_version="$(printf '%s' "$input" | jq -r '.schema_version // empty')"
 if [[ "$schema_version" != "2" ]]; then

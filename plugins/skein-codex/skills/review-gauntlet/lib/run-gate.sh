@@ -105,10 +105,23 @@ EOF
 
 read_input() {
 	# Read the trailing positional (file path or "-"/absent for stdin).
+	#
+	# A NAMED PATH HERE IS A `.gauntlet/` STATE PATH (round 8, F3) — SKILL.md
+	# composes it from the same `$gate_out_dir` as --autofix-cache — and it is
+	# the file the `auto_fix` blocks ORIGINATE in (`normalize` strips them into
+	# the cache; `route` re-attaches them). Guarding the flag and not the
+	# positional was the same asymmetry round 7's F9 closed one hop
+	# downstream. The guard lives at the SINGLE open, not per subcommand, so a
+	# new subcommand cannot inherit an unguarded read. `-` is stdin: no path,
+	# nothing to guard.
+	#
+	# NEVER exits: `cmd_status_row` must still emit exactly one row (F4), so a
+	# refusal has to come back as a return status its caller can absorb.
 	local path="${1:--}"
 	if [[ "$path" == "-" ]]; then
 		cat
 	else
+		gauntlet_assert_no_symlink "$path" run-gate || return 1
 		cat "$path"
 	fi
 }
@@ -159,7 +172,7 @@ cmd_normalize() {
 	gc_have_jq
 
 	local raw status duration_s degraded_reason
-	raw="$(read_input "$input_path")"
+	raw="$(read_input "$input_path")" || exit 2
 	status="$(printf '%s' "$raw" | jq -r '.status // empty')"
 	if [[ -z "$status" ]]; then
 		echo "run-gate normalize: gate '$gate' raw output missing .status" >&2
@@ -228,7 +241,18 @@ cmd_reconcile() {
 	# review-plan, and findings reaching this point are already
 	# auto_fix-free (stripped in `normalize`), so the reconciler never
 	# requires --skill here.
-	read_input "$input_path" | "$reconciler"
+	# Captured, not piped: a pipeline swallows read_input's status, so a
+	# refused (symlinked) envelope path would reconcile an empty stream and
+	# exit 0 (round 8, F3).
+	local pooled
+	pooled="$(read_input "$input_path")" || exit 2
+	if [[ -n "$pooled" ]]; then
+		# Re-terminate: command substitution stripped the trailing
+		# newline the reconciler's line reader needs on the last record.
+		printf '%s\n' "$pooled" | "$reconciler"
+	else
+		printf '' | "$reconciler"
+	fi
 }
 
 cmd_route() {
@@ -269,7 +293,7 @@ cmd_route() {
 	gc_have_jq
 
 	local reconciled cache_jsonl
-	reconciled="$(read_input "$input_path")"
+	reconciled="$(read_input "$input_path")" || exit 2
 	if [[ -e "$cache" ]]; then
 		cache_jsonl="$(cat "$cache")"
 	else

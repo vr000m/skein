@@ -17,7 +17,13 @@
 # Which helpers belong to whom:
 #   - persist_root_dir, persist_require_value,
 #     persist_validate_json_shape,
-#     persist_assert_no_duplicate_keys   — all four.
+#     persist_assert_no_duplicate_keys   — all four. On the STATE-FILE
+#                                          callers it runs directly AFTER the
+#                                          shape gate, over the same captured
+#                                          `$input`, so a non-object payload
+#                                          fails with the clearer shape
+#                                          message and neither helper ever
+#                                          re-reads the file (round 8, F7).
 #   - persist_atomic_write               — STATE-FILE callers only. The lens
 #                                          contract is append-only (see
 #                                          persist_jsonl_append), so an
@@ -57,9 +63,13 @@
 #   persist_assert_no_duplicate_keys <json-text> <label> <what>
 #                              — 0 when no object key repeats anywhere in
 #                                <json-text>, 1 with a diagnostic otherwise.
-#                                Takes TEXT, never a path: the verdict has
-#                                to come from the same bytes the caller
-#                                goes on to use (round 7, F7/F8).
+#                                Detects a repeat for ANY pair of value
+#                                shapes by comparing jq --stream EVENT COUNTS
+#                                raw vs collapsed (round 8, F4/F5/F6), not by
+#                                comparing event paths. Takes TEXT, never a
+#                                path: the verdict has to come from the same
+#                                bytes the caller goes on to use (round 7,
+#                                F7/F8).
 #   persist_validate_json_shape <input> <label> <noun> [<object-suffix>]
 #                              — validate <input> is syntactically valid
 #                                JSON, exactly one top-level document, and a
@@ -209,30 +219,52 @@ persist_validate_json_shape() {
 #
 # Refuse a duplicate object key ANYWHERE in <json-text>. jq collapses a
 # repeated key to the LAST occurrence before any filter runs, so
-# `keys_unsorted` can never see one; `jq --stream` is the only reader that
-# reports the raw event sequence. Every VALUE event (`length == 2`) carries
-# the path it was assigned to, and two assignments to the same key produce
-# two events with the SAME path -- while array elements get distinct
-# indices and container-CLOSING events (`length == 1`) legitimately repeat
-# a value event's path, which is why only value events are counted.
+# `keys_unsorted` can never see one.
+#
+# The rule is a COUNT, not a path comparison (round 8, F4/F5/F6).
+# `jq --stream` over the RAW text emits every assignment, including the ones
+# parsing is about to drop; `jq -c .` first collapses the document, so
+# streaming THAT emits only the survivors. A dropped assignment contributes at
+# least one event and removes none, so raw > collapsed IFF a key was collapsed
+# -- for every pair of value shapes, at every depth. Round 7 compared value-
+# event PATHS instead and so only caught duplicates whose two values happened
+# to emit a common leaf path: `{"logic":["a","b"],"logic":[]}` emits
+# ["logic",0],["logic",1] and ["logic"], shares nothing, and passed.
 #
 # Takes the payload as TEXT, never a path: the verdict must be computed
 # from the same bytes the caller already captured, or it is a TOCTOU
 # against a second read (round 7, F7/F8). Being depth-general, it is also
-# no longer order-coupled to any shape gate -- the round-6 leaf-count
-# comparison had to run AFTER the array-of-strings check or nested arrays
-# inflated the count.
+# not order-coupled to any shape gate -- but the STATE-FILE callers still run
+# it immediately AFTER persist_validate_json_shape, so a non-object payload
+# fails with the clearer shape message first (round 8, F7).
 persist_assert_no_duplicate_keys() {
-	local json="$1" label="$2" what="$3" dups
-	if ! dups="$(printf '%s' "$json" | jq --stream -c 'select(length == 2) | .[0]' 2>/dev/null | sort | uniq -d)"; then
+	local json="$1" label="$2" what="$3" raw canon raw_n canon_n hint
+	if ! raw="$(printf '%s' "$json" | jq --stream -c '.[0]' 2>/dev/null)"; then
 		echo "$label: could not scan $what for duplicate keys" >&2
 		return 1
 	fi
-	if [[ -n "$dups" ]]; then
-		echo "$label: $what has a duplicate key (a repeated key silently drops the earlier assignment): $(printf '%s' "$dups" | tr '\n' ' ')" >&2
+	if ! canon="$(printf '%s' "$json" | jq -c . 2>/dev/null |
+		jq --stream -c '.[0]' 2>/dev/null)"; then
+		echo "$label: could not scan $what for duplicate keys" >&2
 		return 1
 	fi
-	return 0
+	raw_n=0
+	if [[ -n "$raw" ]]; then
+		raw_n="$(printf '%s\n' "$raw" | wc -l | tr -d ' ')"
+	fi
+	canon_n=0
+	if [[ -n "$canon" ]]; then
+		canon_n="$(printf '%s\n' "$canon" | wc -l | tr -d ' ')"
+	fi
+	if [[ "$raw_n" -le "$canon_n" ]]; then
+		return 0
+	fi
+	# Name the offending key: the event paths present in the RAW stream but
+	# not in the collapsed one are exactly the dropped assignment's.
+	hint="$(comm -13 <(printf '%s\n' "$canon" | sort) <(printf '%s\n' "$raw" | sort) |
+		sort -u | tr '\n' ' ')"
+	echo "$label: $what has a duplicate key (a repeated key silently drops the earlier assignment): ${hint:-(key path unavailable)}" >&2
+	return 1
 }
 
 # Shared "Could not persist findings JSON: <reason>" stderr message used by

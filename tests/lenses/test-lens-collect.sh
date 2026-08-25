@@ -54,6 +54,70 @@ fail() {
 	fail_count=$((fail_count + 1))
 }
 
+# ---------------------------------------------------------------------------
+# Group R8-G3 — the duplicate-key rule counts EVENTS, it does not compare leaf
+# paths (round 8, F4/F5/F6).
+#
+# Round 7 flagged a duplicate only when the two assignments happened to emit at
+# least one IDENTICAL leaf path — a coincidence of value SHAPE, not a rule.
+# `{"logic":["a","b"],"logic":[]}` emits ["logic",0],["logic",1] for the first
+# assignment and ["logic"] for the second, shares nothing, and passed: both
+# real units were silently dropped, on the very wire this branch set out to
+# harden (round 6 caught it; round 7 regressed it).
+# ---------------------------------------------------------------------------
+
+r8g3_root="$TMPDIR_ROOT/r8g3"
+mkdir -p "$r8g3_root"
+
+r8g3_case() {
+	local label="$1" payload="$2" want_rc="$3" want_key="$4" tag="$5"
+	local out rc err
+	printf '%s' "$payload" >"$r8g3_root/$tag.json"
+	set +e
+	out="$(bash "$SCRIPT" --root "$r8g3_root" --skill deep-review --run-id "$tag" \
+		--expected-file "$r8g3_root/$tag.json" 2>"$r8g3_root/$tag.err")"
+	rc=$?
+	set -e
+	err="$(cat "$r8g3_root/$tag.err")"
+	if [[ "$rc" -ne "$want_rc" ]]; then
+		fail "($label) rc=$rc (want $want_rc) out='$out' err='$err'"
+		return
+	fi
+	if [[ "$want_rc" -eq 2 ]]; then
+		if [[ -z "$out" && "$err" == *"duplicate key"* && "$err" == *"$want_key"* ]]; then
+			pass "($label) refused, and the diagnostic names $want_key"
+		else
+			fail "($label) out='$out' err='$err'"
+		fi
+	else
+		pass "($label) accepted"
+	fi
+}
+
+# R8-G3a — the exact round-8 reproduction: disjoint value shapes, the second
+# one empty. Exits 0 at a970c3a with assigned=0 for `logic`.
+r8g3_case R8-G3a '{"logic":["a","b"],"logic":[]}' 2 '"logic"' a
+# R8-G3b — the same with the EMPTY value first (the other order).
+r8g3_case R8-G3b '{"logic":[],"logic":["b"]}' 2 '"logic"' b
+# R8-G3c — disjoint OBJECT members: no leaf path is shared at all.
+r8g3_case R8-G3c '{"a":{"b":1},"a":{"c":2}}' 2 '"a"' c
+
+# R8-G3d/control — a duplicate-free document is still accepted, with the
+# per-lens `assigned` counts intact (no false refusal from the count rule).
+printf '%s' '{"logic":["a"],"security":[]}' >"$r8g3_root/d.json"
+set +e
+r8g3d_out="$(bash "$SCRIPT" --root "$r8g3_root" --skill deep-review --run-id r8g3d \
+	--expected-file "$r8g3_root/d.json" 2>"$r8g3_root/d.err")"
+r8g3d_rc=$?
+set -e
+if [[ "$r8g3d_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r8g3d_out" | jq -r '.logic.assigned')" == "1" ]] &&
+	[[ "$(printf '%s' "$r8g3d_out" | jq -r '.security.assigned')" == "0" ]]; then
+	pass "(R8-G3d/control) a duplicate-free document is accepted with assigned counts intact"
+else
+	fail "(R8-G3d/control) rc=$r8g3d_rc out='$r8g3d_out' err='$(cat "$r8g3_root/d.err")'"
+fi
+
 finish() {
 	echo ""
 	echo "Summary: $pass_count passed, $fail_count failed"

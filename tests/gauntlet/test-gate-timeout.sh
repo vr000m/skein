@@ -1389,27 +1389,64 @@ fi
 # The Codex mirror's lib/ is byte-identical by parity (GAUNTLET_LIB_PARITY_FILES
 # in tests/parity/test-applier-bundle-parity.sh), so sweeping the canonical
 # directory covers both mirrors.
+# Round 8, F9: the detector recognised only the `[[ -L` spelling, so a
+# hand-rolled walk written as `[ -L "$p" ]`, `test -L "$p"` or with `-h` — all
+# exactly as dangerous — passed the sweep untouched.
+R8G5_SYMLINK_RE='^[^#]*(\[\[? *-[Lh] |test +-[Lh] |readlink|realpath)'
+
+# Round 8, F8: the SECOND half of this check used to be a hardcoded
+# three-name caller list, so its failure mode ("a NEW lib file touches state
+# with no symlink logic at all") tripped neither half. Derive the caller set
+# from the DIRECTORY instead: any lib file that performs a filesystem effect on
+# a variable-borne path is a state-path caller and must source the guard.
+R8G5_EFFECT_RE='(^|[^>])>>? *"\$[A-Za-z_]|mkdir -p "\$[A-Za-z_]|(^|[;( ])cat "\$[A-Za-z_]|(^|[;( ])(mv|cp|touch) [^|]*"\$[A-Za-z_]'
+
+# The only names left anywhere in this check, and they are ASSERTED by R8-G5c
+# rather than trusted: state-path-guard.sh is the policy owner itself, and
+# gauntlet-common.sh is the documented anchor-divergent parity exclusion (it
+# resolves a harness-specific plugin-root anchor and composes no state path).
+R8G5_EXCLUDED=(state-path-guard.sh gauntlet-common.sh)
+
+r8g5_is_excluded() {
+	local base="$1" x
+	for x in "${R8G5_EXCLUDED[@]}"; do
+		[[ "$base" == "$x" ]] && return 0
+	done
+	return 1
+}
+
 r7g6_sweep_lib() {
 	local dir="$1" f base hits out=""
 	for f in "$dir"/*.sh; do
 		[[ -e "$f" ]] || continue
 		base="$(basename "$f")"
 		[[ "$base" == "state-path-guard.sh" ]] && continue
-		hits="$(grep -nE '^[^#]*(\[\[ *-L |readlink|realpath)' "$f" || true)"
+		hits="$(grep -nE "$R8G5_SYMLINK_RE" "$f" || true)"
 		[[ -n "$hits" ]] && out="$out $base:$(printf '%s' "$hits" | head -1 | cut -d: -f1)"
 	done
 	printf '%s' "$out"
 }
 
+# Second half, directory-derived. Returns the basenames that perform a
+# filesystem effect on a variable-borne path without sourcing the guard.
+r8g5_sweep_callers() {
+	local dir="$1" f base out=""
+	for f in "$dir"/*.sh; do
+		[[ -e "$f" ]] || continue
+		base="$(basename "$f")"
+		r8g5_is_excluded "$base" && continue
+		grep -qE "$R8G5_EFFECT_RE" "$f" || continue
+		if ! { grep -q 'state-path-guard.sh' "$f" && grep -q 'gauntlet_assert_no_symlink' "$f"; }; then
+			out="$out $base"
+		fi
+	done
+	printf '%s' "$out"
+}
+
 r7g6_real="$(r7g6_sweep_lib "$SKILL_LIB")"
+r7g6_callers_missing="$(r8g5_sweep_callers "$SKILL_LIB")"
 r7g6_callers_ok=1
-r7g6_callers_missing=""
-for r7g6_caller in gate-bounded.sh convergence-ledger.sh run-gate.sh; do
-	if ! grep -q 'gauntlet_assert_no_symlink' "$SKILL_LIB/$r7g6_caller"; then
-		r7g6_callers_ok=0
-		r7g6_callers_missing="$r7g6_callers_missing $r7g6_caller"
-	fi
-done
+[[ -n "$r7g6_callers_missing" ]] && r7g6_callers_ok=0
 if [[ -z "$r7g6_real" && "$r7g6_callers_ok" -eq 1 ]]; then
 	pass "R7-G6: state-path-guard.sh is the ONLY file in review-gauntlet lib/ with symlink-resolution logic, and every state-path caller calls it"
 else
@@ -1438,6 +1475,66 @@ else
 	fail "R7-G6a/control: the sweep did not catch a planted hand-rolled '[[ -L ]]' walk"
 fi
 
+# R8-G5b — the reviewer's own reproduction of F9: the SINGLE-BRACKET spelling.
+# A separate copy so it is this spelling alone that has to be caught.
+r8g5b_tmp="$(mktemp -d "$WORKDIR/r8g5blib.XXXXXX")"
+cp "$SKILL_LIB"/*.sh "$r8g5b_tmp/"
+cat >>"$r8g5b_tmp/convergence-ledger.sh" <<'R8G5BEOF'
+
+single_bracket_walk() {
+	local p="$1"
+	if [ -L "$p" ]; then
+		return 1
+	fi
+	if test -h "$p"; then
+		return 1
+	fi
+	return 0
+}
+R8G5BEOF
+r8g5b_planted="$(r7g6_sweep_lib "$r8g5b_tmp")"
+if [[ -n "$r8g5b_planted" ]]; then
+	pass "R8-G5b/control: the sweep CATCHES the single-bracket '[ -L ]' / 'test -h' spellings too ($r8g5b_planted)"
+else
+	fail "R8-G5b/control: a planted '[ -L \"\$p\" ]' walk was invisible to the sweep"
+fi
+
+# R8-G5a — F8's failure mode, which the old three-name caller list could not
+# see: a NEW lib file that writes a variable-borne path and carries no symlink
+# logic at all. The first half stays silent (nothing to detect); the
+# directory-derived second half must flag it.
+r8g5a_tmp="$(mktemp -d "$WORKDIR/r8g5alib.XXXXXX")"
+cp "$SKILL_LIB"/*.sh "$r8g5a_tmp/"
+cat >"$r8g5a_tmp/new-writer.sh" <<'R8G5AEOF'
+#!/usr/bin/env bash
+new_writer() {
+	local some_path="$1"
+	printf 'x' >"$some_path"
+}
+R8G5AEOF
+r8g5a_planted="$(r8g5_sweep_callers "$r8g5a_tmp")"
+if [[ "$r8g5a_planted" == *"new-writer.sh"* ]]; then
+	pass "R8-G5a/control: a NEW lib file that writes a variable-borne path with no guard is flagged ($r8g5a_planted)"
+else
+	fail "R8-G5a/control: an unguarded new state-path writer was invisible to the caller sweep (got '$r8g5a_planted')"
+fi
+
+# R8-G5c — the exclusion list is CHECKED, not asserted: exactly two members,
+# and the non-owner one (gauntlet-common.sh) must genuinely compose no state
+# path, i.e. match no effect pattern. If it ever does, the exclusion has to go.
+r8g5c_bad=""
+if [[ "${R8G5_EXCLUDED[*]}" != "state-path-guard.sh gauntlet-common.sh" ]]; then
+	r8g5c_bad="$r8g5c_bad [exclusion list is '${R8G5_EXCLUDED[*]}', expected 'state-path-guard.sh gauntlet-common.sh']"
+fi
+if grep -qE "$R8G5_EFFECT_RE" "$SKILL_LIB/gauntlet-common.sh"; then
+	r8g5c_bad="$r8g5c_bad [gauntlet-common.sh now performs a filesystem effect on a variable path — it can no longer be excluded]"
+fi
+if [[ -z "$r8g5c_bad" ]]; then
+	pass "R8-G5c: the sweep's only two excluded names are the policy owner and the anchor-divergent file, and the latter still composes no state path"
+else
+	fail "R8-G5c:$r8g5c_bad"
+fi
+
 # ---------------------------------------------------------------------------
 # Group R7-G1 — the containment bound comes from the PATH, never the cwd.
 #
@@ -1454,6 +1551,26 @@ git -C "$r7g1_root/repo" init -q >/dev/null 2>&1 || git -C "$r7g1_root/repo" ini
 git -C "$r7g1_root/repo2" init -q >/dev/null 2>&1 || git -C "$r7g1_root/repo2" init >/dev/null 2>&1
 ln -s "$r7g1_root/out" "$r7g1_root/repo/.gauntlet"
 ln -s "$r7g1_root/repo2" "$r7g1_root/repo/otherlink"
+
+# Round-8 F1 fixture, folded into this matrix so cwd-invariance covers it too:
+# the escape target itself carries a checkout marker BELOW the symlink
+# (`evil/r8/.git`). Round 7 stopped the bound at the INNERMOST worktree-bearing
+# ancestor, which here is the guarded path's own parent — pass 2 never ran and
+# the symlinked `.gauntlet` was never -L-tested. The bound must come from the
+# OUTERMOST boundary (`victim2`), which the attacker cannot lower.
+mkdir -p "$r7g1_root/evil/r8" "$r7g1_root/victim2"
+git -C "$r7g1_root/victim2" init -q >/dev/null 2>&1 || git -C "$r7g1_root/victim2" init >/dev/null 2>&1
+# A REAL checkout at the escape target, not just a `.git` directory: round 7
+# asked git, so only a repo git recognises reproduces its bypass.
+git -C "$r7g1_root/evil/r8" init -q >/dev/null 2>&1 || git -C "$r7g1_root/evil/r8" init >/dev/null 2>&1
+ln -s "$r7g1_root/evil" "$r7g1_root/victim2/.gauntlet"
+
+# Round-8 F10: this row used to be a HARD-CODED `/tmp/<literal>/env.json`, i.e.
+# a security fixture whose expected verdict (accepted) any local user could
+# flip by pre-creating that directory as a symlink. `mktemp -d` under $WORKDIR
+# keeps the meaning (a path with no checkout on its chain) without the
+# predictable name, and the file's existing trap already removes it.
+r7g1_outside="$(mktemp -d "$WORKDIR/r7g1out.XXXXXX")"
 
 # Ask the guard directly, from a chosen cwd, in a subshell.
 r7g1_verdict() {
@@ -1473,9 +1590,10 @@ r7g1_paths=(
 	"$r7g1_root/repo/ok/dir/env.json"
 	"$r7g1_root/repo/deep/new/dir/env.json"
 	"$r7g1_root/outofrepo/env.json"
-	"/tmp/r7g1x/env.json"
+	"$r7g1_outside/env.json"
+	"$r7g1_root/victim2/.gauntlet/r8/ledger.json"
 )
-r7g1_expected=(1 1 0 0 0 0)
+r7g1_expected=(1 1 0 0 0 0 1)
 r7g1_cwds=("$r7g1_root/repo" "$r7g1_root/nonrepo" "/tmp")
 
 r7g1a_bad=""
@@ -1544,6 +1662,117 @@ if [[ "$r7g1d_in" -eq 0 && "$r7g1d_out" -eq 0 ]]; then
 	pass "R7-G1d/control: ordinary in-repo and out-of-worktree paths are not falsely refused FROM A FOREIGN CWD"
 else
 	fail "R7-G1d/control: in-repo rc=$r7g1d_in out-of-worktree rc=$r7g1d_out"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R8-G1 — the containment bound is the OUTERMOST checkout boundary on the
+# path's own lexical ancestor chain, decided by `-e <cand>/.git` alone.
+#
+# Round 7 asked `git -C <ancestor> rev-parse --show-toplevel` and stopped at the
+# INNERMOST match. Both halves of that sentence were findings:
+#   F1 — innermost means the ATTACKER picks the bound (plant a `.git` under the
+#        escape target and the bound lands below the escaping symlink).
+#   F2 — `git -C` reads GIT_DIR/GIT_WORK_TREE from the environment, so an
+#        exported pair moved the answer off the path entirely and the bound
+#        vanished, silently degrading the guard to leaf+parent.
+r8g1_root="$WORKDIR/r8g1"
+mkdir -p "$r8g1_root/victim" "$r8g1_root/evil/r8" "$r8g1_root/nonrepo" \
+	"$r8g1_root/envrepo" "$r8g1_root/outer" "$r8g1_root/elsewhere/proj/.gauntlet/r1" \
+	"$r8g1_root/tmprepo/ok/dir"
+git -C "$r8g1_root/victim" init -q >/dev/null 2>&1 || git -C "$r8g1_root/victim" init >/dev/null 2>&1
+# The escape target is a REAL checkout (round 7 asked git, so only a repo git
+# recognises reproduces its innermost-bound bypass).
+git -C "$r8g1_root/evil/r8" init -q >/dev/null 2>&1 || git -C "$r8g1_root/evil/r8" init >/dev/null 2>&1
+git -C "$r8g1_root/envrepo" init -q >/dev/null 2>&1 || git -C "$r8g1_root/envrepo" init >/dev/null 2>&1
+git -C "$r8g1_root/elsewhere/proj" init -q >/dev/null 2>&1 || git -C "$r8g1_root/elsewhere/proj" init >/dev/null 2>&1
+git -C "$r8g1_root/tmprepo" init -q >/dev/null 2>&1 || git -C "$r8g1_root/tmprepo" init >/dev/null 2>&1
+ln -s "$r8g1_root/evil" "$r8g1_root/victim/.gauntlet"
+mkdir -p "$r8g1_root/outer/.git"
+ln -s "$r8g1_root/elsewhere/proj" "$r8g1_root/outer/proj"
+
+r8g1_cwds=("$r8g1_root/victim" "$r8g1_root/nonrepo" "/tmp")
+
+# Like r7g1_verdict, but also captures the diagnostic and can export a
+# GIT_DIR/GIT_WORK_TREE pair pointing at an UNRELATED repo.
+r8g1_verdict() {
+	local cwd="$1" path="$2" with_env="${3:-0}"
+	(
+		cd "$cwd" || exit 9
+		if [[ "$with_env" -eq 1 ]]; then
+			export GIT_DIR="$r8g1_root/envrepo/.git"
+			export GIT_WORK_TREE="$r8g1_root/envrepo"
+		fi
+		# shellcheck source=/dev/null
+		. "$SKILL_LIB/state-path-guard.sh"
+		gauntlet_assert_no_symlink "$path" r8 >/dev/null 2>&1
+	)
+	echo $?
+}
+
+# R8-G1a — F1's own reproduction: the escape target carries a `.git` BELOW the
+# escaping symlink, so the innermost worktree-bearing ancestor IS the guarded
+# path's parent. Must be refused from every cwd.
+r8g1a_bad=""
+for r8g1_cwd in "${r8g1_cwds[@]}"; do
+	r8g1a_rc="$(r8g1_verdict "$r8g1_cwd" "$r8g1_root/victim/.gauntlet/r8/ledger.json")"
+	[[ "$r8g1a_rc" == "1" ]] || r8g1a_bad="$r8g1a_bad [cwd=$r8g1_cwd rc=$r8g1a_rc]"
+done
+if [[ -z "$r8g1a_bad" ]]; then
+	pass "R8-G1a: a '.git' planted under the escape target cannot lower the bound — the symlinked ancestor is still refused from every cwd"
+else
+	fail "R8-G1a: attacker-planted inner boundary bypassed the guard:$r8g1a_bad"
+fi
+
+# R8-G1b — F2: an exported GIT_DIR/GIT_WORK_TREE pair at an unrelated repo must
+# not change ONE verdict. The whole R7-G1a matrix is re-run with the pair
+# exported and compared cell for cell against the plain run.
+r8g1b_bad=""
+r8g1b_table=""
+for r8g1_i in "${!r7g1_paths[@]}"; do
+	r8g1_plain=""
+	r8g1_env=""
+	for r8g1_cwd in "${r7g1_cwds[@]}"; do
+		r8g1_plain="$r8g1_plain $(r8g1_verdict "$r8g1_cwd" "${r7g1_paths[$r8g1_i]}" 0)"
+		r8g1_env="$r8g1_env $(r8g1_verdict "$r8g1_cwd" "${r7g1_paths[$r8g1_i]}" 1)"
+	done
+	r8g1b_table="$r8g1b_table
+  ${r7g1_paths[$r8g1_i]#"$r7g1_root/"} -> plain:$r8g1_plain env:$r8g1_env"
+	[[ "$r8g1_plain" == "$r8g1_env" ]] ||
+		r8g1b_bad="$r8g1b_bad [${r7g1_paths[$r8g1_i]} plain:$r8g1_plain env:$r8g1_env]"
+done
+if [[ -z "$r8g1b_bad" ]]; then
+	pass "R8-G1b: the verdict matrix is IDENTICAL with GIT_DIR/GIT_WORK_TREE exported at an unrelated repo — no environment channel into the bound:$r8g1b_table"
+else
+	fail "R8-G1b: an exported GIT_DIR/GIT_WORK_TREE moved the bound:$r8g1b_bad$r8g1b_table"
+fi
+
+# R8-G1c — the ONE deliberate widening, pinned as intended behaviour so a later
+# round cannot quietly "fix" it back: a symlinked ancestor BELOW the outermost
+# boundary (`outer/.git` present, `outer/proj -> elsewhere/proj`) is refused,
+# and the diagnostic names the offending component.
+set +e
+r8g1c_err="$(
+	# shellcheck source=/dev/null
+	. "$SKILL_LIB/state-path-guard.sh"
+	gauntlet_assert_no_symlink "$r8g1_root/outer/proj/.gauntlet/r1/x.json" r8 2>&1 >/dev/null
+)"
+r8g1c_rc=$?
+set -e
+if [[ "$r8g1c_rc" -eq 1 && "$r8g1c_err" == *"$r8g1_root/outer/proj"* ]]; then
+	pass "R8-G1c: a symlinked ancestor below the outermost boundary is refused fail-closed, and the diagnostic names it"
+else
+	fail "R8-G1c: rc=$r8g1c_rc err='$r8g1c_err'"
+fi
+
+# R8-G1d — negative control (the round-4 F7 false-refusal guard): an ordinary
+# path inside a checkout that itself sits below a platform alias ($WORKDIR is
+# mktemp -d, i.e. under /var -> /private/var on macOS) must still be ACCEPTED.
+# The outermost boundary is the checkout, so nothing above it is ever -L-tested.
+r8g1d_rc="$(r8g1_verdict "$r8g1_root/nonrepo" "$r8g1_root/tmprepo/ok/dir/env.json")"
+if [[ "$r8g1d_rc" == "0" ]]; then
+	pass "R8-G1d/control: an ordinary in-checkout path below a platform symlink alias is not falsely refused"
+else
+	fail "R8-G1d/control: rc=$r8g1d_rc (platform alias above the boundary was -L-tested)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1649,6 +1878,45 @@ if [[ -z "$r7g2b_bad" ]]; then
 	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh"
 else
 	fail "R7-G2b:$r7g2b_bad"
+fi
+
+# ---------------------------------------------------------------------------
+# R8-G6a — the temp-path lint must see a FULLY STATIC /tmp path (round 8, F10).
+#
+# The old regex encoded "predictable = literal PLUS `$$`/`$RANDOM`", so a
+# static `/tmp/<name>/x` — strictly MORE predictable — was invisible to the
+# lint whose stated rule is "refuse predictable temp paths". That is how a
+# security fixture in THIS file came to use `/tmp/r7g1x/env.json` as a guard
+# input with an expected verdict of "accepted": any local user could
+# pre-create that directory as a symlink and flip the verdict.
+#
+# The lint anchors on its own location (`cd <script dir>/..`), so it is
+# exercised against a scratch tree rather than the repo.
+r8g6_root="$WORKDIR/r8g6"
+mkdir -p "$r8g6_root/scripts" "$r8g6_root/tests" "$r8g6_root/plugins"
+cp "$ROOT_DIR/scripts/lint-temp-paths.sh" "$r8g6_root/scripts/"
+
+# The banned literal is assembled from two pieces so that the FIXTURE contains
+# it while this test file does not — otherwise the lint under test would flag
+# its own regression test.
+r8g6_static_path="/tmp""/staticname/x"
+printf '%s\n' '#!/usr/bin/env bash' "p=\"$r8g6_static_path\"" >"$r8g6_root/tests/static.sh"
+set +e
+r8g6_static_out="$(bash "$r8g6_root/scripts/lint-temp-paths.sh" 2>&1)"
+r8g6_static_rc=$?
+set -e
+
+rm -f "$r8g6_root/tests/static.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'cd /tmp || exit 1' '# a comment mentioning '"$r8g6_static_path" >"$r8g6_root/tests/cwd.sh"
+set +e
+bash "$r8g6_root/scripts/lint-temp-paths.sh" >/dev/null 2>&1
+r8g6_cwd_rc=$?
+set -e
+
+if [[ "$r8g6_static_rc" -eq 1 && "$r8g6_static_out" == *"$r8g6_static_path"* && "$r8g6_cwd_rc" -eq 0 ]]; then
+	pass "R8-G6a: lint-temp-paths.sh refuses a fully STATIC /tmp path and still allows bare '/tmp' as a cwd (and prose in comments)"
+else
+	fail "R8-G6a: static rc=$r8g6_static_rc out='$r8g6_static_out'; cwd-only rc=$r8g6_cwd_rc"
 fi
 
 echo ""

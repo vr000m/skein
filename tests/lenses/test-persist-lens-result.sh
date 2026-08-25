@@ -544,7 +544,7 @@ case12_root="$TMPDIR_ROOT/case-12"
 mkdir -p "$case12_root"
 
 set +e
-printf '%s' '{"type":"done","status":"completed","lens":"evil","attempt":99,"run_id":"other","skill":"review-plan","root":"/tmp/evil"}' |
+printf '%s' '{"type":"done","status":"completed","lens":"evil","attempt":99,"run_id":"other","skill":"review-plan","root":"/nonexistent/evil"}' |
 	bash "$SCRIPT" --root "$case12_root" --skill deep-review --run-id run-12 \
 		--lens logic --attempt 1 --json-stdin >"$case12_root/stdout" 2>"$case12_root/stderr"
 case12_exit=$?
@@ -1413,6 +1413,29 @@ if [[ "$r7g4f_rc" -eq 0 ]] && ! no_jsonl_anywhere "$r7g4_base"; then
 	pass "(R7-G4f/control) the same payload with a single 'units' key still persists normally"
 else
 	fail "(R7-G4f/control) rc=$r7g4f_rc"
+fi
+
+# ---------------------------------------------------------------------------
+# R8-G3e — the writer half of the EVENT-COUNT rule (round 8, F6).
+#
+# R7-G4e's payload (`{"units":["a"],"units":["b"]}`) shares the leaf paths
+# ["units",0] between its two assignments, which is the only reason the round-7
+# path-comparison rule caught it. Disjoint value shapes shared nothing and
+# passed: `{"units":["x","y"],"units":[]}` persisted at a970c3a with the two
+# real units dropped.
+r8g3_base="$TMPDIR_ROOT/r8g3"
+mkdir -p "$r8g3_base"
+set +e
+r8g3e_err="$(printf '%s' '{"type":"start","units":["x","y"],"units":[]}' |
+	bash "$SCRIPT" --root "$r8g3_base" --skill deep-review --run-id r8g3 \
+		--lens logic --attempt 1 --json-stdin 2>&1 >/dev/null)"
+r8g3e_rc=$?
+set -e
+if [[ "$r8g3e_rc" -eq 2 && "$r8g3e_err" == *"duplicate key"* && "$r8g3e_err" == *"units"* ]] &&
+	no_jsonl_anywhere "$r8g3_base"; then
+	pass "(R8-G3e) a --json-stdin payload whose duplicate 'units' assignments have DISJOINT shapes exits 2, names the key, and persists nothing"
+else
+	fail "(R8-G3e) rc=$r8g3e_rc err='$r8g3e_err'"
 fi
 
 finish

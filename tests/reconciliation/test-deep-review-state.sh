@@ -569,6 +569,75 @@ else
 	sed 's/^/    /' "$case_j_dir/stderr"
 fi
 
+# ---------------------------------------------------------------------------
+# (R8-G4a) a duplicated LENS KEY in the input must be refused, not persisted.
+#
+# The duplicate-key rule was extracted into persist-common.sh in round 7 and
+# registered for all four callers, but only the two LENS callers were wired.
+# The two STATE-FILE callers are the worse case: this input is an externally
+# supplied per-lens KEYED document whose .lenses.<lens>.status entries drive
+# --continue resumption, so a hand-built lenses.json spelling one lens twice
+# silently lost the earlier lens's status. At a970c3a this persisted happily.
+# ---------------------------------------------------------------------------
+
+case_r8g4a_dir="$TMPDIR_ROOT/case-r8g4a"
+make_scratch_repo "$case_r8g4a_dir"
+cat >"$case_r8g4a_dir/lenses.json" <<'JSON'
+{
+  "logic": {"status": "completed", "model": "opus", "effort": "high", "findings": []},
+  "logic": {}
+}
+JSON
+
+if (
+	cd "$case_r8g4a_dir" && persist_state "$case_r8g4a_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:09Z" "abc1234" "def5678" "sha256:deadbeef" ""
+) >"$case_r8g4a_dir/stdout" 2>"$case_r8g4a_dir/stderr"; then
+	fail "(R8-G4a) a duplicated lens key must exit 2 (script exited 0 and persisted)"
+else
+	r8g4a_err="$(cat "$case_r8g4a_dir/stderr")"
+	if [[ "$r8g4a_err" == *"duplicate key"* && "$r8g4a_err" == *"logic"* ]] &&
+		[[ ! -f "$case_r8g4a_dir/.deep-review/latest-claude.json" ]]; then
+		pass "(R8-G4a) a duplicated lens key exits 2, names the lens, and persists nothing"
+	else
+		fail "(R8-G4a) err='$r8g4a_err' target-exists=$([[ -f "$case_r8g4a_dir/.deep-review/latest-claude.json" ]] && echo yes || echo no)"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (R8-G4c) STRUCTURAL: the duplicate-key rule is a WIRE rule, so the caller set
+# is DERIVED, never listed. Two mechanical assertions:
+#   1. every script that sources persist-common.sh calls
+#      persist_assert_no_duplicate_keys (the header's "all four" claim, checked
+#      rather than asserted);
+#   2. every script that calls persist_validate_json_shape also calls the
+#      duplicate-key helper, so the shape/duplicate pairing cannot be half-added
+#      by a fifth caller.
+# ---------------------------------------------------------------------------
+
+r8g4c_sourcers=""
+r8g4c_missing_dup=""
+r8g4c_missing_pair=""
+for r8g4c_f in "$REPO_ROOT"/scripts/*.sh; do
+	# The SOURCING form only — a mention in a comment or a bundle map is not
+	# a caller.
+	grep -qE '^[[:space:]]*(\.|source)[[:space:]].*persist-common\.sh' "$r8g4c_f" || continue
+	r8g4c_base="$(basename "$r8g4c_f")"
+	r8g4c_sourcers="$r8g4c_sourcers $r8g4c_base"
+	grep -q 'persist_assert_no_duplicate_keys "' "$r8g4c_f" ||
+		r8g4c_missing_dup="$r8g4c_missing_dup $r8g4c_base"
+	if grep -q 'persist_validate_json_shape "' "$r8g4c_f" &&
+		! grep -q 'persist_assert_no_duplicate_keys "' "$r8g4c_f"; then
+		r8g4c_missing_pair="$r8g4c_missing_pair $r8g4c_base"
+	fi
+done
+r8g4c_count="$(printf '%s' "$r8g4c_sourcers" | wc -w | tr -d ' ')"
+if [[ "$r8g4c_count" -eq 4 && -z "$r8g4c_missing_dup" && -z "$r8g4c_missing_pair" ]]; then
+	pass "(R8-G4c) all four persist-common.sh callers enforce the duplicate-key rule, and every shape gate is paired with it:$r8g4c_sourcers"
+else
+	fail "(R8-G4c) callers=$r8g4c_count ($r8g4c_sourcers) missing-duplicate-rule:${r8g4c_missing_dup:- none} unpaired-shape-gate:${r8g4c_missing_pair:- none}"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 

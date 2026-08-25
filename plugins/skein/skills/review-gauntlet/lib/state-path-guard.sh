@@ -77,31 +77,49 @@
 # the directory, not the contents), but the asymmetry inside one change set —
 # some state writes guarded, others not — is the actual defect.
 #
-# PARENT-WALK BOUND, AND IT COMES FROM THE PATH (round 7, F1/F2/F3). The
-# bound is the innermost git worktree root among the PATH's OWN lexical
-# ancestors, found by asking each existing, non-symlink ancestor with
-# `git -C <ancestor> rev-parse --show-toplevel` which worktree it is in. The
-# process cwd is never consulted. It used to be: a bare `git rev-parse`
-# answered about the CALLER's cwd, so one and the same path was refused from
-# inside the repo and ACCEPTED from anywhere else — the guard silently
-# degraded to the leaf-plus-immediate-parent bound this file exists to
-# replace. The verdict is now a function of the path's spelling and the
-# filesystem alone.
+# PARENT-WALK BOUND — THE OUTERMOST CHECKOUT BOUNDARY ON THE PATH'S OWN
+# ANCESTOR CHAIN (round 8, F1/F2). The invariant, stated once and in full:
 #
-# Inside a worktree the walk stops AT the worktree root — the root itself and
-# everything above it is never `-L`-tested by the loop: that span is the whole
-# reach of a checkout, and testing past it would reject legitimate paths under
-# platform symlinks (macOS `/var` -> `/private/var`, `/tmp` ->
-# `/private/tmp`) that have nothing to do with the repo. Outside a worktree
-# only the path and its immediate parent are checked — the two positions the
-# threat actually occupies — for the same reason.
+#   For a guarded path P, let A(P) be P's lexical ancestor chain (`dirname`
+#   repeatedly, up to `/`), and let B be the SHALLOWEST element of A(P) that
+#   is not itself a symlink and carries a `.git` entry.
+#   gauntlet_assert_no_symlink returns 1 iff P contains a `..` component, or
+#   P itself is a symlink, or any element of A(P) strictly below B is a
+#   symlink. If no such B exists, only P and `dirname P` are tested. The
+#   verdict is a pure function of P's spelling and the `-L`/`-e` state of the
+#   named components. NO SUBPROCESS, NO ENVIRONMENT VARIABLE, and no
+#   `cd`/`pwd -P` participates.
 #
-# CANDIDATE ANCESTORS THAT ARE THEMSELVES SYMLINKS are skipped on both sides
-# of that question (`! -L "$cand"` when asking git, `! -L "$probe"` when
-# accepting the match). An ancestor that is itself a symlink can never be the
-# containment boundary: `…/.gauntlet -> <another worktree root>` would
-# otherwise end the walk AT the symlink and exempt from pass 2 the one
-# component the guard exists to catch.
+# OUTERMOST, NOT INNERMOST (round 8, F1). Round 7 stopped at the FIRST
+# (innermost) worktree-bearing ancestor, which let an attacker CHOOSE the
+# bound: plant `.gauntlet -> <dir>` and a `.git` under `<dir>/<run-dir>`, and
+# the bound becomes the guarded path's own parent — pass 2's loop body never
+# runs and the escaping symlink at `.gauntlet` is never `-L`-tested. A bound
+# found further UP can only ADD components to the tested set, never remove
+# one, so the shallowest match is the only bound an attacker standing below
+# it cannot lower.
+#
+# A `.git` ENTRY, NOT `git rev-parse` (round 8, F2). `git -C <dir> rev-parse
+# --show-toplevel` answers about GIT_DIR/GIT_WORK_TREE when those are
+# exported — and git exports them into every hook process — so the answer
+# stopped being about <dir> at all: no ancestor matched, the bound vanished,
+# and the guard silently degraded to the leaf-plus-parent bound this file
+# exists to replace. `-e`/`-L` on `<cand>/.git` cannot be redirected by any
+# environment variable. Its error direction is also the safe one: a stray
+# `.git` makes the bound SHALLOWER (more components tested, fail-closed); the
+# only way to lose a bound is for the victim's own `.git` to be absent.
+#
+# The walk stops AT that boundary — the boundary and everything above it is
+# never `-L`-tested by the loop. Platform aliases (macOS `/tmp` ->
+# `/private/tmp`, `/var` -> `/private/var`) sit above every `.git` on any real
+# host, so they are never tested and never falsely refused. A path with no
+# `.git` anywhere on its chain (a test fixture, a temp dir) is bounded at its
+# immediate parent — the two positions the threat actually occupies.
+#
+# A CANDIDATE THAT IS ITSELF A SYMLINK can never be the boundary
+# (`! -L "$cand"`): `…/.gauntlet -> <another checkout>` would otherwise end
+# the walk AT the symlink and exempt from pass 2 the one component the guard
+# exists to catch.
 #
 # ANCESTORS THAT DO NOT EXIST YET ARE STILL WALKED. Callers guard and then
 # `mkdir -p`, so the components `mkdir -p` is about to create are exactly the
@@ -109,18 +127,29 @@
 # canonicalised is NOT evidence of safety: the walk continues upward with
 # containment undecided until it reaches one that exists.
 #
-# RESIDUAL, documented rather than claimed away: the guard -> write (or
-# guard -> mkdir) window is a TOCTOU. Closing it needs openat(O_NOFOLLOW),
-# which portable bash lacks.
+# RESIDUALS — THREE, documented rather than claimed away:
 #
-# SECOND RESIDUAL, stated honestly: when a worktree root is reachable only
-# through a symlinked spelling of its own path (`~/proj -> /Volumes/x/proj`,
-# and the guarded path spelled `~/proj/.gauntlet/x`), no NON-symlink lexical
-# ancestor canonicalises to the root, so no candidate matches and the guard
-# falls back to the documented out-of-worktree bound — the leaf and its
-# immediate parent. That is the same bound this spelling already received from
-# every cwd but one before round 7; it is a weaker check, never a false
-# refusal.
+#   1. TOCTOU. The guard -> write (or guard -> mkdir) window is unclosed.
+#      Closing it needs openat(O_NOFOLLOW), which portable bash lacks.
+#
+#   2. A CHECKOUT WITH NO `.git` ENTRY AT ITS ROOT — a bare repository
+#      addressed through an exported GIT_DIR, or a `core.worktree`
+#      configuration — presents no filesystem boundary to find, so no bound
+#      exists and the guard falls back to the documented out-of-worktree
+#      bound: the leaf and its immediate parent. Weaker, never a false
+#      refusal.
+#
+#   3. A WIDENED REFUSAL, deliberate (round 8). When a symlinked ancestor
+#      sits BELOW the outermost boundary, round 7 accepted (its bound sat
+#      below the symlink, so pass 2 never reached it) and round 8 refuses.
+#      The concrete case is `~/proj -> /Volumes/x/proj` WITH a `.git` in
+#      $HOME (a dotfiles repo): the bound becomes $HOME, pass 2 reaches
+#      `~/proj`, `-L` hits, refusal. That is correct fail-closed behaviour —
+#      the guard cannot distinguish that symlink from an attack — and the
+#      diagnostic names the offending component. Without a `.git` in $HOME
+#      the round-7 behaviour is unchanged (no bound, leaf+parent, accept).
+#      Pinned by `R8-G1c` in tests/gauntlet/test-gate-timeout.sh so a later
+#      round cannot quietly "fix" it back.
 gauntlet_assert_no_symlink() {
 	local path="$1" label="${2:-state-path-guard}"
 
@@ -173,27 +202,20 @@ gauntlet_assert_no_symlink() {
 		return 1
 	fi
 
-	# Decide whether to keep walking. The extra parents are only worth
-	# checking when this path lives INSIDE a git worktree, because a
-	# checkout is the only way an attacker materialises a symlink here. A
-	# path outside a worktree (a test fixture, a temp dir) is bounded at the
-	# immediate parent: walking further would reject perfectly ordinary
-	# platform symlinks — macOS puts $TMPDIR under `/var`, which IS a
-	# symlink to `/private/var` — and turn the guard into a false refusal.
-	# The candidate root comes from the PATH's own lexical ancestors (round
-	# 7, F1/F2/F3): each ancestor that exists and is not itself a symlink is
-	# asked, with `git -C`, which worktree IT is in. A bare `git rev-parse`
-	# here answered about the process cwd instead, so the same path was
-	# refused from one cwd and accepted from another. `git -C <missing>`
-	# fails immediately, so a not-yet-existing tail costs nothing; the depth
-	# is bounded by the path.
+	# Decide how far up to walk. The extra parents are only worth checking
+	# when this path lives INSIDE a checkout, because a checkout is the only
+	# way an attacker materialises a symlink here. A path with no checkout
+	# on its chain (a test fixture, a temp dir) is bounded at the immediate
+	# parent: walking further would reject perfectly ordinary platform
+	# symlinks — macOS puts $TMPDIR under `/var`, which IS a symlink to
+	# `/private/var` — and turn the guard into a false refusal.
 	#
-	# TWO passes, and the split is the whole fix. Three round-4 defects meet
-	# here, and each one is a way of getting the containment decision wrong:
+	# Two round-4 defects still bound the SHAPE of this code, so they are
+	# recorded here rather than rediscovered:
 	#
 	# F7 — the old code advanced `parent` past the already-checked parent and
-	#   applied `-L` BEFORE the root-equality break, so when the checked
-	#   parent WAS the root the first iteration tested the ROOT'S PARENT. On
+	#   applied `-L` BEFORE the boundary break, so when the checked parent
+	#   WAS the boundary the first iteration tested the BOUNDARY'S PARENT. On
 	#   macOS a repo under $TMPDIR sits below `/var` -> `/private/var`, so a
 	#   perfectly legitimate write was refused.
 	#
@@ -203,58 +225,32 @@ gauntlet_assert_no_symlink() {
 	#   repo, `$repo/link/sub/new` does not exist, the probe bailed out with
 	#   success, and `mkdir -p` then followed `link` and wrote outside the
 	#   worktree. A not-yet-existing ancestor is exactly what `mkdir -p` is
-	#   about to create: it must be WALKED, never trusted.
+	#   about to create: it must be WALKED, never trusted. The lexical loop
+	#   below walks it for free — `-L` and `-e` on a missing component are
+	#   simply false, never an answer.
 	#
-	# The trap under both — a symlinked ancestor CANONICALISES TO SOMEWHERE
-	#   ELSE. Any "is this canonical parent still under the root?" test breaks
-	#   on the one ancestor it exists to catch: `link` resolves outside the
-	#   root, reads as out-of-scope, and gates itself out of its own check.
-	#
-	# So containment is decided ONCE, and lexically, before any -L test runs:
-	#
-	#   Pass 1 climbs from the path's parent looking for an ancestor whose
-	#   CANONICAL form equals the worktree root. Its only output is a yes/no
-	#   and, on yes, the root's spelling AS THIS PATH SPELLS IT ($probe) --
-	#   which is what makes the stop point immune to symlinks anywhere above
-	#   it. Unreadable ancestors are climbed past, not treated as an answer.
-	#   No `return 1` and no diagnostic can come out of this pass.
-	#
-	#   Pass 2 -L-tests every component from the path's parent up to, but
-	#   NOT including, $probe. Everything strictly inside the worktree is
-	#   tested, including ancestors that do not exist yet; nothing at or above
-	#   the root ever is.
-	#
-	# A path that is not under the worktree at all never reaches pass 2 (pass
-	# 1 walks it to `/` and answers no), so an out-of-tree fixture is not
-	# refused on a platform symlink it never touches.
-	local cand="$parent" cand_root probe probe_canon inside=0
+	# The bound is the OUTERMOST checkout boundary on the path's own lexical
+	# ancestor chain: the shallowest ancestor that is not itself a symlink
+	# and carries a `.git` entry. Two properties, and both are the round-8
+	# fix (F1 and F2 — see the OUTERMOST and `.git` ENTRY paragraphs in this
+	# file's header for why each one is the whole finding). `-L "$cand/.git"`
+	# is ORed in so a DANGLING `.git` symlink still marks a boundary — the
+	# same fail-closed direction. There is deliberately NO early exit: the
+	# loop always climbs to `/`, because a shallower boundary must win.
+	local cand="$parent" bound=""
 	while [[ "$cand" != "/" && "$cand" != "." ]]; do
-		# A candidate ancestor that is ITSELF a symlink can never be the
-		# containment boundary: `.gauntlet -> <another worktree root>`
-		# would otherwise end the walk AT the symlink and exempt it from
-		# pass 2 — the one component the guard exists to catch. Same rule
-		# on the accepting side (`! -L "$probe"`).
-		if [[ ! -L "$cand" ]] && cand_root="$(git -C "$cand" rev-parse --show-toplevel 2>/dev/null)"; then
-			cand_root="$(cd "$cand_root" 2>/dev/null && pwd -P)" || cand_root=""
-			if [[ -n "$cand_root" ]]; then
-				probe="$parent"
-				while [[ "$probe" != "/" && "$probe" != "." ]]; do
-					if probe_canon="$(cd "$probe" 2>/dev/null && pwd -P)"; then
-						if [[ "$probe_canon" == "$cand_root" && ! -L "$probe" ]]; then
-							inside=1
-							break
-						fi
-					fi
-					probe="$(dirname "$probe")"
-				done
-				[[ "$inside" -eq 1 ]] && break
-			fi
+		if [[ ! -L "$cand" ]] && { [[ -e "$cand/.git" ]] || [[ -L "$cand/.git" ]]; }; then
+			bound="$cand"
 		fi
 		cand="$(dirname "$cand")"
 	done
-	[[ "$inside" -eq 1 ]] || return 0
+	[[ -n "$bound" ]] || return 0
 
-	while [[ "$parent" != "$probe" && "$parent" != "/" && "$parent" != "." ]]; do
+	# Pass 2: `-L`-test every component from the path's parent up to, but NOT
+	# including, $bound. Everything strictly inside the boundary is tested,
+	# including ancestors that do not exist yet; nothing at or above the
+	# boundary ever is.
+	while [[ "$parent" != "$bound" && "$parent" != "/" && "$parent" != "." ]]; do
 		if [[ -L "$parent" ]]; then
 			echo "$label: refusing to operate on symlink: $parent" >&2
 			return 1

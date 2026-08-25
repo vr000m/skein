@@ -217,6 +217,13 @@ else
 fi
 
 persist_validate_json_shape "$input" "persist-deep-review-state" "lenses input" " (one key per lens)" || exit 2
+# Duplicate-key rule, on the STATE-FILE side of the wire too (round 8, F7).
+# This payload is a per-lens KEYED object whose .lenses.<lens>.status entries
+# drive --continue resumption, so a hand-built lenses.json spelling one lens
+# twice would silently lose the earlier lens's status. Ordering is deliberate:
+# shape first (clearer message for a non-object), duplicates second, both over
+# the already-captured $input — never a second read (round 7, F7/F8).
+persist_assert_no_duplicate_keys "$input" "persist-deep-review-state" "lenses input" || exit 2
 
 if [[ "$FROM_COLLECTOR" -eq 1 ]]; then
 	# Collector contract: every top-level value must itself be an object

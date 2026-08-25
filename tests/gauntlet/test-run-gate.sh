@@ -273,6 +273,117 @@ else
 	fail "R7-G5b/control: rc=$r7g5b_rc attached='$r7g5b_attached'"
 fi
 
+# ---------------------------------------------------------------------------
+# Group R8-G2 — the TRAILING POSITIONAL is a state path, and it is guarded at
+# the single open (round 8, F3).
+#
+# `--autofix-cache` was guarded on both the write (round 6) and the read (round
+# 7, F9) side, but the positional envelope/pooled-findings path — a
+# `.gauntlet/` path composed by SKILL.md from the same `$gate_out_dir`, and the
+# file the `auto_fix` blocks ORIGINATE in — was read through unguarded by all
+# four subcommands. The guard now lives in `read_input`, so the SUBCOMMAND LIST
+# IS DERIVED FROM `usage()` rather than hardcoded here: a new subcommand joins
+# this matrix automatically and cannot inherit an unguarded read.
+r8g2_root="$WORKDIR/r8g2"
+mkdir -p "$r8g2_root/repo/.gauntlet"
+git -C "$r8g2_root/repo" init -q >/dev/null 2>&1 || git -C "$r8g2_root/repo" init >/dev/null 2>&1
+printf '%s' '{"gate":"demo","status":"approve","findings":[],"notes":"n"}' >"$r8g2_root/target.json"
+ln -s "$r8g2_root/target.json" "$r8g2_root/repo/.gauntlet/in.json"
+r8g2_link="$r8g2_root/repo/.gauntlet/in.json"
+r8g2_cache="$r8g2_root/repo/.gauntlet/cache.jsonl"
+
+# No `mapfile`: this repo holds itself to bash 3.2 portability (asserted for
+# scripts/ by tests/lenses/test-lens-collect.sh case (v)); the same discipline
+# applies here.
+r8g2_subcommands=()
+while IFS= read -r r8g2_line; do
+	[[ -n "$r8g2_line" ]] && r8g2_subcommands+=("$r8g2_line")
+done < <("$RUN_GATE" --help 2>&1 | awk '{for (i = 1; i < NF; i++) if ($i == "run-gate.sh") print $(i + 1)}' | sort -u)
+if [[ "${#r8g2_subcommands[@]}" -lt 4 ]]; then
+	fail "R8-G2a: could not parse the subcommand list out of usage() (got '${r8g2_subcommands[*]}')"
+else
+	pass "R8-G2a/setup: subcommand matrix derived from usage(): ${r8g2_subcommands[*]}"
+fi
+
+# Per-subcommand stdin payload: route wants a reconciled envelope, the others
+# a gate envelope. Only the READ PATH is under test here, not the schema.
+r8g2_stdin_for() {
+	case "$1" in
+	route) printf '%s' '{"schema_version":2,"findings":[]}' ;;
+	*) printf '%s' '{"gate":"demo","status":"approve","findings":[],"notes":"n"}' ;;
+	esac
+}
+
+r8g2_args_for() {
+	case "$1" in
+	normalize) printf '%s\n' --gate demo --autofix-cache "$r8g2_cache" ;;
+	route) printf '%s\n' --autofix-cache "$r8g2_cache" ;;
+	*) : ;;
+	esac
+}
+
+r8g2a_bad=""
+for r8g2_sub in "${r8g2_subcommands[@]}"; do
+	r8g2_flags=()
+	while IFS= read -r r8g2_a; do
+		[[ -n "$r8g2_a" ]] && r8g2_flags+=("$r8g2_a")
+	done < <(r8g2_args_for "$r8g2_sub")
+	set +e
+	r8g2_out="$("$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" "$r8g2_link" 2>"$r8g2_root/err.$r8g2_sub")"
+	r8g2_rc=$?
+	set -e
+	r8g2_err="$(cat "$r8g2_root/err.$r8g2_sub")"
+	if [[ "$r8g2_sub" == "status-row" ]]; then
+		# F4 is load-bearing here and is exactly why read_input RETURNS
+		# instead of exiting: a refused envelope must still account for its
+		# slot with exactly one `error` row, and exit 0.
+		r8g2_rows="$(printf '%s' "$r8g2_out" | grep -c . || true)"
+		if [[ "$r8g2_rc" -ne 0 || "$r8g2_rows" != "1" || "$r8g2_out" != *"error"* ]]; then
+			r8g2a_bad="$r8g2a_bad [status-row rc=$r8g2_rc rows=$r8g2_rows out='$r8g2_out']"
+		fi
+	else
+		if [[ "$r8g2_rc" -ne 2 || "$r8g2_err" != *"refusing to operate on symlink"* || -n "$r8g2_out" ]]; then
+			r8g2a_bad="$r8g2a_bad [$r8g2_sub rc=$r8g2_rc err='$r8g2_err' out='$r8g2_out']"
+		fi
+	fi
+done
+if [[ -z "$r8g2a_bad" ]]; then
+	pass "R8-G2a: every subcommand refuses a SYMLINKED positional path — normalize/reconcile/route exit 2 with the diagnostic and emit nothing; status-row still prints exactly one error row and exits 0"
+else
+	fail "R8-G2a: unguarded or wrongly-handled positional read:$r8g2a_bad"
+fi
+
+# R8-G2b/control — the guard adds a refusal, not a behaviour change: `-` (and
+# an absent positional) still reads stdin for every subcommand.
+r8g2b_bad=""
+for r8g2_sub in "${r8g2_subcommands[@]}"; do
+	r8g2_flags=()
+	while IFS= read -r r8g2_a; do
+		[[ -n "$r8g2_a" ]] && r8g2_flags+=("$r8g2_a")
+	done < <(r8g2_args_for "$r8g2_sub")
+	for r8g2_pos in "-" ""; do
+		set +e
+		if [[ -n "$r8g2_pos" ]]; then
+			r8g2_out="$(r8g2_stdin_for "$r8g2_sub" |
+				"$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" "$r8g2_pos" 2>/dev/null)"
+		else
+			r8g2_out="$(r8g2_stdin_for "$r8g2_sub" |
+				"$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" 2>/dev/null)"
+		fi
+		r8g2_rc=$?
+		set -e
+		[[ "$r8g2_rc" -eq 0 ]] || r8g2b_bad="$r8g2b_bad [$r8g2_sub pos='${r8g2_pos:-<absent>}' rc=$r8g2_rc]"
+		if [[ "$r8g2_sub" == "status-row" && "$r8g2_out" == *"envelope missing or unreadable"* ]]; then
+			r8g2b_bad="$r8g2b_bad [status-row pos='${r8g2_pos:-<absent>}' did not read stdin]"
+		fi
+	done
+done
+if [[ -z "$r8g2b_bad" ]]; then
+	pass "R8-G2b/control: '-' and an absent positional still read stdin unchanged, for every subcommand"
+else
+	fail "R8-G2b/control:$r8g2b_bad"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]
