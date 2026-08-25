@@ -386,7 +386,7 @@ Suggested schema. The per-lens entries are the collector's shape; concrete model
 `reasoning_effort` routing hints stay in the run summary/banner, not in `.lenses`.
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "run_id": "2026-03-17T14:30:00Z",
   "target_kind": "plan|pr|branch",
   "target_ref": "feature/deep-review",
@@ -405,7 +405,7 @@ Suggested schema. The per-lens entries are the collector's shape; concrete model
 
 `--continue` rules:
 - If the state file is missing, warn and fall back to `--full`
-- If `schema_version` is absent or does not match the current expected version (`1`), warn and fall
+- If `schema_version` is absent or does not match the current expected version (2), warn and fall
   back to `--full`
 - If `review_focus_hash` no longer matches, warn and fall back to `--full`
 - If stored `head_commit` equals current `HEAD`, resume the incomplete run: rerun only lenses with
