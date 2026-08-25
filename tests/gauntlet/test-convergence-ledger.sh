@@ -1286,6 +1286,116 @@ nck_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_null_capk" 2>/dev/null)
 assert_eq "$nck_out" "success" "R11-F5d/control: an explicit cap:null / k:null still falls back to the CLI values (-> success)"
 assert_eq "$nck_rc" "5" "R11-F5d/control: ...and still exits 5 for a terminal token, not 2"
 
+# --- R12 F-ledger-root: root fields are validated BEFORE the no-rounds ----
+# short-circuit.
+# decision_from_ledger returns `no-rounds` (exit 0) the moment
+# `.rounds | length == 0`, BEFORE validate_ledger_fields runs. So the R11-F5
+# root guard above — which lived only inside validate_ledger_fields — was
+# unreachable on a round-less ledger: a fractional cap, a string k, or a
+# negative loop_counter all reported `no-rounds` at exit 0 and the caller
+# looped on against a cap that would crash on the first appended round.
+# Root validation now runs at both entry points before the short-circuit.
+
+# (a) --last-decision, round-less ledger, fractional cap -> exit 2.
+L_rl_cap="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 0,
+  "cap": 1.5,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlcap_rc=0
+rlcap_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_cap" 2>/dev/null)" || rlcap_rc=$?
+if [[ "$rlcap_rc" -eq 2 && -z "$rlcap_out" ]]; then
+	pass "R12-root-a: a round-less ledger with a fractional cap exits 2, not no-rounds/exit 0"
+else
+	fail "R12-root-a: expected exit 2 with empty stdout (rc=$rlcap_rc, out='$rlcap_out')"
+fi
+
+# ...with the existing root-field diagnostic, not some new message.
+rlcap_err="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_cap" 2>&1 >/dev/null || true)"
+case "$rlcap_err" in
+*"malformed root fields"*)
+	pass "R12-root-a2: ...and emits the existing 'malformed root fields' diagnostic"
+	;;
+*)
+	fail "R12-root-a2: expected the 'malformed root fields' diagnostic (got '$rlcap_err')"
+	;;
+esac
+
+# (b) --last-decision, round-less ledger, non-numeric k -> exit 2.
+L_rl_k="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 0,
+  "cap": 10,
+  "k": "abc",
+  "rounds": []
+}
+EOF
+)"
+rlk_rc=0
+rlk_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_k" 2>/dev/null)" || rlk_rc=$?
+if [[ "$rlk_rc" -eq 2 && -z "$rlk_out" ]]; then
+	pass "R12-root-b: a round-less ledger with a non-numeric k exits 2"
+else
+	fail "R12-root-b: expected exit 2 with empty stdout (rc=$rlk_rc, out='$rlk_out')"
+fi
+
+# (c) --last-decision, round-less ledger, negative loop_counter -> exit 2.
+L_rl_lc="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": -1,
+  "cap": 10,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rllc_rc=0
+rllc_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_lc" 2>/dev/null)" || rllc_rc=$?
+if [[ "$rllc_rc" -eq 2 && -z "$rllc_out" ]]; then
+	pass "R12-root-c: a round-less ledger with a negative loop_counter exits 2"
+else
+	fail "R12-root-c: expected exit 2 with empty stdout (rc=$rllc_rc, out='$rllc_out')"
+fi
+
+# (d) APPEND against the same malformed round-less ledger also exits 2 --
+# and does so BEFORE the write, so loop_counter is untouched and the bad
+# `cap` is not carried forward by the has("cap") backfill.
+L_rl_app="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 0,
+  "cap": 1.5,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlapp_rc=0
+"$LEDGER_SCRIPT" --ledger "$L_rl_app" --count 0 --structural 0 --local 0 \
+	--pass-type full --quarantine 0 >/dev/null 2>&1 || rlapp_rc=$?
+assert_eq "$rlapp_rc" "2" "R12-root-d: append onto a round-less ledger with a fractional cap exits 2"
+assert_eq "$(jq -r '.loop_counter' "$L_rl_app")" "0" "R12-root-d2: ...and the refused append left loop_counter at 0"
+assert_eq "$(jq -r '.rounds | length' "$L_rl_app")" "0" "R12-root-d3: ...and appended no round"
+
+# (e) CONTROL: a well-formed round-less ledger still prints no-rounds at
+# exit 0, and an explicit cap:null / k:null is still legitimate there.
+L_rl_ok="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 0,
+  "cap": null,
+  "k": null,
+  "rounds": []
+}
+EOF
+)"
+rlok_rc=0
+rlok_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_ok" 2>/dev/null)" || rlok_rc=$?
+assert_eq "$rlok_out" "no-rounds" "R12-root-e/control: a round-less ledger with cap:null/k:null still prints no-rounds"
+assert_eq "$rlok_rc" "0" "R12-root-e2/control: ...and still exits 0"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

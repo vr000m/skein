@@ -413,8 +413,9 @@ validate_ledger_shape() {
 # read. That is two groups, not one, because they live at different depths:
 #   - LAST-ROUND fields (below): count, structural_tally, local_tally,
 #     quarantine_size, unresolved_gates, pass_type.
-#   - ROOT fields (second jq clause below): loop_counter, cap, k, which feed
-#     `((loop_counter >= cap))` and `((epoch_len >= k+1))`.
+#   - ROOT fields (validate_ledger_root_fields, called from here AND from
+#     both entry points before the no-rounds short-circuit): loop_counter,
+#     cap, k, which feed `((loop_counter >= cap))` and `((epoch_len >= k+1))`.
 # A malformed member of either group exits 2 ("invalid ledger"), the code
 # already reserved for this class. Before R11 the root group was ungated, so a
 # fractional `cap` degraded a terminal `cap` stop into `continue` (exit 0) and
@@ -442,14 +443,35 @@ validate_ledger_fields() {
 		echo "convergence-ledger: ledger at $ledger_path has a malformed last round (missing/invalid count, structural_tally, local_tally, quarantine_size, unresolved_gates, or pass_type -- the five numeric fields must be integers)" >&2
 		exit 2
 	fi
-	# Root-level arithmetic inputs. `loop_counter` is REQUIRED (validate_ledger_shape
-	# already demands `type == "number"`; this tightens that to a non-negative
-	# INTEGER). `cap`/`k` are OPTIONAL by construction: the decoder reads them
-	# as `(.cap // "" | tostring)` and falls back to the CLI-supplied
-	# `--cap`/`--k`, which `is_nonneg_int` has already validated at :339-344.
-	# So absent-or-null is legitimate and must stay legitimate; only a PRESENT,
-	# non-null, non-integral value is rejected — the same OPTIONAL-but-checked
-	# shape `unresolved_gates` uses above.
+	validate_ledger_root_fields "$ledger_path"
+}
+
+# validate_ledger_root_fields guards the ROOT arithmetic inputs — loop_counter,
+# cap, k — which feed `((loop_counter >= cap))` and `((epoch_len >= k+1))`.
+#
+# WHY IT IS A SEPARATE FUNCTION AND A SEPARATE CALL SITE (R12/F-ledger-root).
+# The root fields do NOT depend on a round existing, but the only caller used
+# to be validate_ledger_fields, which decision_from_ledger invokes AFTER its
+# `round_len == 0 -> echo no-rounds; return 0` short-circuit. So a ledger with
+# zero rounds and a fractional `cap` (or a string `k`, or a negative
+# loop_counter) sailed past every guard and reported `no-rounds` at exit 0 —
+# the caller then kept looping against a cap that would crash the moment the
+# first round landed. Root validation now runs at BOTH entry points
+# (--last-decision and the append path, each immediately after
+# validate_ledger_shape) so it precedes the short-circuit, and stays inside
+# validate_ledger_fields as well so no future call site can reintroduce the
+# hole. The duplicate jq is one subprocess on a path that already runs
+# several; the alternative is a guard that is correct only by call-order luck.
+#
+# `loop_counter` is REQUIRED (validate_ledger_shape already demands
+# `type == "number"`; this tightens that to a non-negative INTEGER).
+# `cap`/`k` are OPTIONAL by construction: the decoder reads them as
+# `(.cap // "" | tostring)` and falls back to the CLI-supplied `--cap`/`--k`,
+# which `is_nonneg_int` has already validated. So absent-or-null is legitimate
+# and must stay legitimate; only a PRESENT, non-null, non-integral value is
+# rejected — the same OPTIONAL-but-checked shape `unresolved_gates` uses.
+validate_ledger_root_fields() {
+	local ledger_path="$1"
 	if ! jq -e '
 		def is_int: type == "number" and (. | floor) == . and . >= 0;
 		. as $root
@@ -544,6 +566,12 @@ write_fresh_ledger() {
 ensure_ledger_for_append() {
 	if [[ -e "$LEDGER_PATH" ]]; then
 		validate_ledger_shape "$LEDGER_PATH"
+		# Root fields BEFORE the append writes: an existing ledger with a
+		# fractional cap would otherwise be carried forward verbatim by the
+		# `if has("cap") then . else .cap = $cap end` backfill below and only
+		# be caught by decision_from_ledger AFTER the bad state was rewritten
+		# to disk with loop_counter incremented.
+		validate_ledger_root_fields "$LEDGER_PATH"
 		check_target_match "$LEDGER_PATH" "$TARGET"
 	else
 		write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
@@ -725,6 +753,9 @@ last-decision)
 		exit 4
 	fi
 	validate_ledger_shape "$LEDGER_PATH"
+	# Root fields BEFORE decision_from_ledger, whose `no-rounds`
+	# short-circuit returns 0 without ever reaching validate_ledger_fields.
+	validate_ledger_root_fields "$LEDGER_PATH"
 	check_target_match "$LEDGER_PATH" "$TARGET"
 	decision="$(decision_from_ledger "$LEDGER_PATH" "$CAP" "$K")"
 	echo "$decision"
