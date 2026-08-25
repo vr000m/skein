@@ -10,7 +10,7 @@ just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundl
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
-just gauntlet-tests              # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap + gate-timeout + lens-budget + regression-stop + finding-key + status-row
+just gauntlet-tests              # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap + gate-timeout (bounded-gate budget/expiry envelope) + lens-budget (size-scaled budget arithmetic) + regression-stop (terminal regression gate) + finding-key (stable finding hashing) + status-row (gate status-table rendering)
 just lens-tests                  # disk-first lens results: persist-lens-result + collect-lens-results + --from-collector state + deep-review/review-plan SKILL.md shape (both mirrors)
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
 just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/

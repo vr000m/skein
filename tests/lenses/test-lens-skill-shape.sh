@@ -4,7 +4,8 @@
 #
 # Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 2
 # checklist ("new shape test tests/lenses/test-lens-skill-shape.sh asserts
-# both mirrors reference persist-lens-result.sh --type start, --attempt 2,
+# both mirrors reference persist-lens-result.sh (JSON transport only since
+# r4/G1 — G6(a) asserts NO flag-mode --type start remains), --attempt 2,
 # collect-lens-results.sh, lens-budget.sh, the --continue re-run clause
 # (timed_out|errored|partial|absent), and the Codex sequential-mode
 # clause").
@@ -481,9 +482,24 @@ for skill_md in "${SKILLS[@]}"; do
 		pass "G4(b) ($glabel): no collector invocation interpolates units into --expected"
 	fi
 
-	# G4(c): the units file is named as the transport, with its path.
-	assert_grep "$skill_md" 'lens-runs/<run_id>/expected\.json' \
-		"G4(c) ($glabel): the units-file path is prescribed"
+	# G4(c): the units file is named as the transport, with its path -- and
+	# that path is the SKILL'S OWN per-run lens state dir
+	# (persist_lens_state_dir <root> <skill> / <run_id>), the directory the
+	# attempt files already live in. r4 F2: `.skein/lens-runs/<run_id>/` was a
+	# third state root invented in prose, owned by no helper and absent from
+	# .gitignore, so a collect run left an untracked file behind.
+	case "$g_skill" in
+	deep-review) g_state_dir='\.deep-review' ;;
+	review-plan) g_state_dir='\.review-plan' ;;
+	*) g_state_dir='' ;;
+	esac
+	assert_grep "$skill_md" "$g_state_dir/lenses/<run_id>/expected\\.json" \
+		"G4(c) ($glabel): the units-file path is the per-run lens state dir"
+	if grep -Fq 'skein/lens-runs' "$skill_md"; then
+		fail "G4(c2) ($glabel): the retired .skein/lens-runs path literal survives"
+	else
+		pass "G4(c2) ($glabel): no .skein/lens-runs path literal"
+	fi
 
 	# G5: the delimiter-line hazard is named in the persistence contract.
 	assert_grep "$skill_md" 'line consisting only of .SKEIN_JSON' \
@@ -492,6 +508,135 @@ for skill_md in "${SKILLS[@]}"; do
 		"G5(b) ($glabel): the contract requires a single-line payload"
 	assert_grep "$skill_md" 'persist-lens-result\.sh --json-file' \
 		"G5(c) ($glabel): orchestrator-side writes are prescribed --json-file"
+done
+
+# ---------------------------------------------------------------------------
+# Group G6 (r4 G1) — EXCLUSIVITY, not existence.
+#
+# G5(c) above only asserts `--json-file` appears SOMEWHERE. A mirror that kept
+# the old `--type start --units ...` spelling for one clause (the `--continue`
+# attempt-N start, or the Codex skipped-lens clause) alongside a migrated one
+# elsewhere still passes it. r4 F0/F1 are exactly that: the round-3 migration
+# rewrote the sequential and skipped-lens clauses in three mirrors but not the
+# Codex skipped-lens clause nor the attempt-N `start` clause in any mirror.
+#
+# F0 is the Critical half: it also prescribes `--expected`, which
+# collect-lens-results.sh rejects as mutually exclusive with the
+# `--expected-file` the same document's collect line uses -- so a Codex
+# deep-review run that skips any lens aborts the whole collection with a usage
+# error. G6(c) therefore checks the WHOLE FILE for a bare `--expected ` token,
+# not just inside a collector invocation: F0's offending text is prose, which
+# the invocation-scoped G4(b) grep cannot see.
+# ---------------------------------------------------------------------------
+
+for skill_md in "${SKILLS[@]}"; do
+	require_file "$skill_md" || continue
+	g6_plugin="$(basename "$(dirname "$(dirname "$(dirname "$skill_md")")")")"
+	g6_skill="$(basename "$(dirname "$skill_md")")"
+	g6label="$g6_plugin/$g6_skill"
+
+	# G6(a): no persist-lens-result.sh invocation anywhere in prose uses the
+	# flag-mode `--type <record-type>` payload spelling. Orchestrator-side
+	# records go through --json-file; lens-side records go through
+	# --json-stdin. Neither puts the payload on argv.
+	# Whole-file, not scoped to a `grep -oE 'persist-lens-result\.sh[^`]*'`
+	# slice: that slice is LINE-oriented, and the Codex mirrors reflow prose,
+	# so a wrapped invocation hides its own payload flags from it -- which is
+	# exactly how F0 survived round 3. `--type <record-type>` with one of the
+	# four record types is persist-specific; run-gate.sh/status-row prose uses
+	# an unrelated `--type` namespace and never these four values.
+	if grep -Eq -- '--type (start|done|progress|finding)' "$skill_md"; then
+		fail "G6(a) ($g6label): a persist-lens-result.sh invocation still uses flag-mode --type"
+	else
+		pass "G6(a) ($g6label): no persist-lens-result.sh invocation uses flag-mode --type"
+	fi
+
+	# G6(b): and none carries a `--units` payload on argv either. This is the
+	# half that actually puts diff-derived text on a command line.
+	if grep -Eq -- '--units[ "`]' "$skill_md"; then
+		fail "G6(b) ($g6label): a persist-lens-result.sh invocation still passes --units on argv"
+	else
+		pass "G6(b) ($g6label): no persist-lens-result.sh invocation passes --units on argv"
+	fi
+
+	# G6(c): the bare `--expected ` token (space-terminated, so
+	# `--expected-file` does not match) appears nowhere in the file -- prose
+	# included. --expected survives in the script as the hand-invocation
+	# transport, but no SKILL.md may prescribe or even illustrate it, because
+	# it is mutually exclusive with the --expected-file every collect line
+	# uses.
+	if grep -Eq -- '--expected[ "]' "$skill_md"; then
+		fail "G6(c) ($g6label): a bare \`--expected\` token survives in prose"
+	else
+		pass "G6(c) ($g6label): no bare \`--expected\` token anywhere in the file"
+	fi
+
+	# G6(d) (r4 G10 / Codex addendum, SKILL.md:189): the expected-units file
+	# is IMMUTABLE across a respawn. collect-lens-results.sh derives
+	# `assigned`/`reviewed`/`unreviewed` from it, and progress records merge
+	# across every attempt -- so narrowing the file to the retry's unit list
+	# drops the already-reviewed units out of coverage accounting entirely.
+	# Only the respawn PROMPT's unit payload narrows.
+	assert_grep "$skill_md" 'never (rewrite|overwrite) the units file' \
+		"G6(d) ($g6label): the units file is prescribed immutable across a respawn"
+
+	# G6(e) (r4 G8 / F14): the units file is named as the REQUIRED transport,
+	# not merely an available one.
+	assert_grep "$skill_md" '\*\*required\*\*' \
+		"G6(e) ($g6label): the units file is marked as the required transport"
+
+	# G6(f) (Codex addendum, SKILL.md:193): every --json-file recipe in prose
+	# names the required context flags. persist-lens-result.sh requires
+	# --root, --skill, --run-id, --lens and --attempt in EVERY mode; a recipe
+	# that shows only `--lens spec --attempt 1 --json-file <path>` exits 2 and
+	# writes no record, so the collector reports the intentionally-skipped
+	# lens as `missing`.
+	assert_grep "$skill_md" \
+		'[-][-]root .* [-][-]skill .* [-][-]run-id .* [-][-]lens .* [-][-]attempt .* [-][-]json-file' \
+		"G6(f) ($g6label): a --json-file recipe carries the full required-flag prefix"
+
+	# G6(g) (design G1(b), "same assertion applied to --json-stdin recipes
+	# for symmetry"): the lens-side form is symmetric, but it cannot be
+	# asserted the same way, and pretending otherwise would encode the wrong
+	# contract. Lens recipes are written as `{{PERSIST_CMD}} --json-stdin`,
+	# where the orchestrator substitutes the resolved prefix before dispatch
+	# -- the flags are real, they are just supplied one layer up. So the
+	# symmetric guarantee is checked in two halves:
+	#
+	#   (i) every `{{PERSIST_CMD}}` DEFINITION line spells all five required
+	#       context flags, since that definition is what the five required
+	#       flags actually come from at dispatch time; and
+	#   (ii) no --json-stdin recipe bypasses the placeholder by naming
+	#        persist-lens-result.sh directly on the same line without a
+	#        --root, which is the shape that would exit 2 if followed
+	#        literally -- the exact G1(b)/C3 failure, on the other transport.
+	# A DEFINITION line is one that mentions {{PERSIST_CMD}} and starts
+	# spelling flags for it (`--root`); a recipe line mentions the
+	# placeholder and nothing else. Keyed on the flags rather than on any
+	# particular sentence, because the two mirror families word this
+	# differently on purpose -- but a definition, in either wording, must be
+	# on ONE line and must carry all five flags, or the substituted prefix
+	# the lens receives is incomplete and every lens-side write exits 2.
+	# `{{ATTEMPT}}` is the discriminator: it appears ONLY in a resolved-prefix
+	# definition, never in a recipe line and never in prose, so it selects
+	# exactly the lines this rule is about without depending on either
+	# mirror family's sentence wording.
+	g6g_defs="$(grep -c -- '{{ATTEMPT}}' "$skill_md" || true)"
+	g6g_full="$(grep -- '{{ATTEMPT}}' "$skill_md" |
+		grep -c -- '[-][-]root .*[-][-]skill .*[-][-]run-id .*[-][-]lens .*[-][-]attempt' || true)"
+	if [[ "$g6g_defs" -gt 0 && "$g6g_full" -eq "$g6g_defs" ]]; then
+		pass "G6(g) ($g6label): all $g6g_defs {{PERSIST_CMD}} definitions spell the five required context flags on one line"
+	else
+		fail "G6(g) ($g6label): $g6g_full of $g6g_defs {{PERSIST_CMD}} definitions carry the full required-flag prefix"
+	fi
+
+	g6g_bare="$(grep -E -- 'persist-lens-result\.sh[^`]*[-][-]json-stdin' "$skill_md" |
+		grep -vc -- '[-][-]root' || true)"
+	if [[ "$g6g_bare" -eq 0 ]]; then
+		pass "G6(g) ($g6label): no --json-stdin recipe names the script directly without its context flags"
+	else
+		fail "G6(g) ($g6label): $g6g_bare --json-stdin recipe(s) name persist-lens-result.sh with no --root"
+	fi
 done
 
 echo ""

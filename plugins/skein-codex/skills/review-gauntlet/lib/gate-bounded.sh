@@ -103,20 +103,38 @@
 #     envelope's `.status` is the failure signal callers read, via
 #     `run-gate.sh normalize`'s exit code, never this function's own return
 #     value. Returns 2 only for a usage error (bad arguments, including a
-#     <budget-seconds> below 1) before any command ran — no envelope is
-#     written on this path, and any stale envelope already at
-#     <envelope-out> from a previous round is removed first, so a return-2
-#     caller that ignores the return value never reads a stale result as
-#     fresh.
+#     <budget-seconds> below 1) before any command ran.
 #
-#     EXACTLY TWO usage errors are exempt, and only because <envelope-out>
-#     is not knowable when they are detected: `--gate` given without a
-#     <name>, and fewer than two arguments remaining once any `--gate`
-#     pair has been consumed. On every other `return 2` path — a missing
-#     `--` separator, a missing <cmd...>, a non-positive <budget-seconds>
-#     — <envelope-out> and <tool-out> (plus its `.stderr` sibling) are
-#     removed BEFORE the check that fails. The unlink is best-effort: an
-#     unremovable path does not itself become a usage error.
+#     ON rc=2, NO COMMAND RAN AND NO ENVELOPE WAS WRITTEN — so a caller
+#     must never read <envelope-out> after rc=2. Do not treat whatever is
+#     at that path as this round's result; treat rc=2 itself as the result.
+#     Whether that path was emptied depends on WHICH usage error fired, and
+#     that is precisely why the return code, not the file, is the signal:
+#
+#       - A POSITIONAL-SHAPE error (too few arguments, a missing `--`
+#         separator, an empty <cmd...>, a <budget-seconds> below 1) returns
+#         2 having touched NOTHING. At those lines `$2`/`$3` are not yet
+#         known to be <envelope-out>/<tool-out> — with the arguments
+#         shifted, `$3` is a command word — so a stale artefact is left in
+#         place rather than a guessed path being deleted.
+#
+#       - A PRECONDITION error taken after the shape checks (no jq, no
+#         bounding mechanism) returns 2 with <envelope-out> and <tool-out>
+#         already removed, because by then those locals are validated.
+#
+#     This inverts the round-3 contract, which removed <envelope-out> and
+#     <tool-out> before most `return 2` paths so a caller ignoring the
+#     return value could not misread a stale envelope as fresh. That
+#     removal ran at the TOP of the function, where `$2`/`$3` have not yet
+#     been established to BE those paths — with the arguments shifted, `$3`
+#     is a command word, and the unlink deleted it. Removing a guessed path
+#     is a worse failure than leaving a stale one for a caller that is
+#     already ignoring its return code. Round 4 does not drop the removal;
+#     it MOVES it down to the first line at which the paths are known —
+#     immediately after the positional-shape checks — so every later exit
+#     still gets it. It is best-effort (`|| :`), so an unremovable path
+#     neither becomes a usage error nor aborts the caller under
+#     `set -euo pipefail`.
 #
 # Dependencies: bash + jq + (GNU/Homebrew `timeout` or `gtimeout`, else
 # python3 as the setsid-shim fallback).
@@ -192,28 +210,6 @@ gate_run_bounded() {
 		shift 2
 	fi
 
-	# Stale-artefact unlink, hoisted to the FIRST point at which the paths
-	# are knowable. Every `return 2` below this line therefore leaves no
-	# previous round's artefacts behind — the contract the header promises.
-	# It used to sit after the `$4 != "--"` check, so three usage errors
-	# (`--gate` with no name, fewer than 5 arguments, a missing `--`)
-	# returned 2 with a possibly-CLEAN previous-round envelope still at
-	# $envelope_out for a caller that ignores the return value to misread as
-	# this round's result. The third of those already knew the path.
-	#
-	# Positional meaning after the `--gate` shift, per the usage line below:
-	#   $1 = <seconds>  $2 = <envelope-out>  $3 = <tool-out>
-	# `$# -ge 2` is the guard: with fewer arguments than that no path has
-	# been supplied and there is nothing to remove. Best-effort by design —
-	# an unremovable path is not itself a usage error, and the real write
-	# below would fail loudly anyway.
-	if [[ $# -ge 2 ]]; then
-		rm -f "$2"
-		if [[ $# -ge 3 ]]; then
-			rm -f "$3" "${3}.stderr"
-		fi
-	fi
-
 	if [[ $# -lt 5 ]]; then
 		echo "gate_run_bounded: usage: gate_run_bounded [--gate <name>] <seconds> <envelope-out> <tool-out> -- <cmd...>" >&2
 		return 2
@@ -224,10 +220,6 @@ gate_run_bounded() {
 		return 2
 	fi
 
-	# (The stale-artefact unlink used to live here. It is hoisted above the
-	# argument checks now — one owner, and every `return 2` that can name a
-	# path is covered.)
-
 	shift 4
 	if [[ $# -eq 0 ]]; then
 		echo "gate_run_bounded: missing <cmd...>" >&2
@@ -237,8 +229,51 @@ gate_run_bounded() {
 		echo "gate_run_bounded: <seconds> must be a positive integer (>= 1); got '$seconds'" >&2
 		return 2
 	fi
+
+	# Stale-artefact unlink. It sits immediately below the POSITIONAL-SHAPE
+	# checks -- `$#`, the `--` separator, a non-empty <cmd...>, and a
+	# positive integer budget -- and above every remaining check and the
+	# first command launch. That position is the whole fix, and it is chosen
+	# by one question: at this line, are `$2`/`$3` KNOWN to be
+	# <envelope-out>/<tool-out>? Above the shape checks they are not; below
+	# them they are. Round 3 hoisted this to the top of the function to buy
+	# "no stale envelope on a usage error"; round 4 found two defects in that
+	# hoist:
+	#
+	#   F16 — at the top of the function `$2`/`$3` are not yet KNOWN to be
+	#     <envelope-out>/<tool-out>. With the arguments shifted (say
+	#     `gate_run_bounded 900 -- my-gate.sh`) `$3` is a COMMAND WORD, and
+	#     the hoisted `rm -f` deleted it. The unlink was operating on a guess.
+	#
+	#   F8 — `rm -f "$3" "${3}.stderr"` was the last command of a `then`
+	#     list, so under the caller's documented `set -euo pipefail` a failing
+	#     unlink (an unremovable path, e.g. a directory) aborted the CALLER
+	#     outright: the exact opposite of the "best-effort" this comment and
+	#     the header both promise. Both lines are now explicitly `|| :`.
+	#
+	# What round 3 was protecting is kept: every `return 2` that FOLLOWS the
+	# shape checks -- a missing jq, no bounding mechanism -- still leaves no
+	# stale envelope behind, because the unlink has already run on validated
+	# locals. What changes is the handful of exits ABOVE it, where the
+	# function cannot yet name the paths: those now return 2 having touched
+	# nothing at all, and the header tells the caller not to read
+	# <envelope-out> on rc=2 rather than handing it an emptied path.
+	rm -f "$envelope_out" 2>/dev/null || :
+	rm -f "$tool_out" "${tool_out}.stderr" 2>/dev/null || :
+
 	if ! command -v jq >/dev/null 2>&1; then
 		echo "gate_run_bounded: jq is required" >&2
+		return 2
+	fi
+	# Bounding mechanism, checked HERE rather than on the shim branch below.
+	# Exactly equivalent (the branch check could only fire when neither
+	# `timeout` nor `gtimeout` exists), but hoisting it keeps every remaining
+	# `return 2` a precondition failure taken before any temp file is
+	# created, so no exit path can leave a half-built run behind.
+	if ! command -v timeout >/dev/null 2>&1 &&
+		! command -v gtimeout >/dev/null 2>&1 &&
+		! command -v python3 >/dev/null 2>&1; then
+		echo "gate_run_bounded: none of timeout, gtimeout, or python3 is available" >&2
 		return 2
 	fi
 
@@ -299,11 +334,9 @@ gate_run_bounded() {
 		printf '%s' "$gate_pid" >"$pgid_file"
 		wait "$gate_pid" || exit_code=$?
 	else
-		if ! command -v python3 >/dev/null 2>&1; then
-			rm -f "$pgid_file" "$state_file" "$rc_file"
-			echo "gate_run_bounded: none of timeout, gtimeout, or python3 is available" >&2
-			return 2
-		fi
+		# python3 is guaranteed present here: the precondition block above
+		# already refused when none of timeout/gtimeout/python3 exists, and
+		# this branch is only reached when neither of the first two does.
 		python3 - "$pgid_file" "$state_file" "$seconds" "$kill_after_s" "${bounded_cmd[@]}" >"$tool_out" 2>"${tool_out}.stderr" <<'PYSHIM' || exit_code=$?
 import os
 import signal

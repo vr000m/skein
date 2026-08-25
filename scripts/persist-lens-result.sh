@@ -275,6 +275,13 @@ while [[ $# -gt 0 ]]; do
 	--unit)
 		shift
 		persist_require_value "$@"
+		# F3 (writer/reader parity): the reader ran every ARGV unit
+		# through persist_validate_unit; the writer ran a hand-rolled
+		# `*,*` test at the type-validation step and nothing else, so
+		# `--unit -foo` and `--unit 'src/$(id).ts'` were both accepted.
+		# persist_require_value only checks ARITY -- it has no idea what
+		# the token looks like. One helper, both sides of the wire.
+		persist_validate_unit "$1" persist-lens-result argv || exit 2
 		UNIT="$1"
 		note_payload_flag --unit
 		;;
@@ -411,6 +418,19 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 	fi
 
 	if [[ -n "$JSON_FILE" ]]; then
+		# G4/F12: a repo-rooted path gets the same symlink guard every
+		# other state path already has. Which guard applies is decided by
+		# what the path IS, not by which flag carried it -- an
+		# out-of-tree payload file (a fixture, a scratch file in $TMPDIR)
+		# stays legal, and is deliberately NOT walked, because walking it
+		# would refuse ordinary platform symlinks (macOS puts $TMPDIR
+		# under `/var` -> `/private/var`).
+		if persist_path_is_inside_root "$JSON_FILE" "$ROOT"; then
+			if ! af_assert_no_symlink "$JSON_FILE" "$ROOT"; then
+				echo "persist-lens-result: refusing to read through a symlink at $JSON_FILE" >&2
+				exit 2
+			fi
+		fi
 		if [[ ! -f "$JSON_FILE" || ! -r "$JSON_FILE" ]]; then
 			echo "persist-lens-result: --json-file is not a readable file: $JSON_FILE" >&2
 			exit 2
@@ -478,27 +498,29 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		| ., "\u0000", (($o[.] // "")), "\u0000"
 	')
 
-	# `units` may be a JSON array (preferred -- no comma-separator restriction)
-	# or a CSV string (flag-mode spelling). Absent => --units was not passed.
-	# The trailing comma gate applies to BOTH spellings. In the CSV spelling
-	# the comma is the separator, so `split(",")` can never yield a
-	# comma-bearing element and the gate is a no-op there; in the array
-	# spelling it is the only thing standing between a unit named "a,b" and a
-	# collector that re-splits it into two units the lens will never report,
-	# leaving that lens permanently short of `completed`.
+	# `units` may be a JSON array (the transport form) or a CSV string (the
+	# flag-mode spelling, accepted here for symmetry). Absent => --units was
+	# not passed.
+	#
+	# F3/F10: the comma gate used to apply to BOTH spellings. On the CSV
+	# spelling it was a no-op by construction (`split(",")` cannot yield a
+	# comma-bearing element); on the ARRAY spelling it was the collector's old
+	# comma-joined internal representation leaking into the writer's contract.
+	# The collector no longer joins anything, so a comma in an array element
+	# is just a byte in a name -- and `## Post-completion follow-ups (A3/A5,
+	# 2026-05-24)` is a real review-plan heading the rule was rejecting. What
+	# remains is PERSIST_UNIT_JQ_GATE, the SAME filter
+	# collect-lens-results.sh's --expected-file reader applies, so writer and
+	# reader can no longer disagree about what a unit is.
 	STDIN_UNITS_JSON="$(printf '%s' "$STDIN_JSON" | jq -c '
 		(if has("units") | not then null
-		 elif (.units | type) == "array" then
-			(if (.units | all(type == "string")) then .units
-			 else error("units array must contain only strings") end)
+		 elif (.units | type) == "array" then .units
 		 elif (.units | type) == "string" then
 			(if .units == "" then [] else (.units | split(",")) end)
 		 else error("units must be an array or a CSV string") end)
-		| if . != null and any(.[]; contains(","))
-		  then error("unit names must not contain a comma")
-		  else . end
+		| if . == null then null else ('"$PERSIST_UNIT_JQ_GATE"') end
 	')" || {
-		echo "persist-lens-result: --json-stdin 'units' must be an array of comma-free strings or a CSV string" >&2
+		echo "persist-lens-result: --json-stdin/--json-file 'units' must be an array of non-empty strings or a CSV string" >&2
 		exit 2
 	}
 	if [[ "$STDIN_UNITS_JSON" != "null" ]]; then
@@ -529,11 +551,13 @@ progress)
 		usage
 		exit 2
 	fi
-	if [[ "$UNIT" == *,* ]]; then
-		echo "persist-lens-result: --unit must not contain a comma (unit lists are comma-joined and unescaped: '$UNIT')" >&2
-		usage
-		exit 2
-	fi
+	# The comma test that used to live here applied to BOTH transports, so a
+	# JSON-payload `{"type":"progress","unit":"a,b"}` was refused even though
+	# nothing on that wire splits on a comma. It moved to the `--unit` FLAG
+	# handler, via persist_validate_unit's argv rules -- which is also where
+	# the leading-dash and shell-metachar rules the writer was missing now
+	# apply (F3). Nothing extra is needed for the JSON transports: the
+	# non-empty check above is PERSIST_UNIT_JQ_GATE's per-element rule.
 	;;
 finding)
 	if [[ -z "$SEVERITY" || -z "$CATEGORY" || -z "$LOCATION" || -z "$SUMMARY" ]]; then
@@ -564,15 +588,11 @@ if [[ "$TYPE" == "start" ]]; then
 		units_json="[]"
 	else
 		# Comma is the separator here, so every element is comma-free by
-		# construction; the gate is stated for symmetry with the --json-stdin
-		# array spelling above, which has no such guarantee.
-		units_json="$(printf '%s' "$UNITS" | jq -R -c '
-			split(",")
-			| if any(.[]; contains(",")) then
-				error("unit names must not contain a comma")
-			  else . end
-		')" || {
-			echo "persist-lens-result: --units elements must not contain a comma" >&2
+		# construction. What the shared gate still catches on this wire is
+		# an EMPTY element (`--units 'a,,b'`), which no lens could ever
+		# report as reviewed.
+		units_json="$(printf '%s' "$UNITS" | jq -R -c 'split(",") | ('"$PERSIST_UNIT_JQ_GATE"')')" || {
+			echo "persist-lens-result: --units elements must be non-empty" >&2
 			exit 2
 		}
 	fi

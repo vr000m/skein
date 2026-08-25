@@ -736,12 +736,38 @@ fi
 reject_payload "(A10b) 'units' with a non-string element exits 2, nothing written" case-a10b \
 	'{"type":"start","units":["a",1]}'
 
-# --- A11: a comma-bearing unit name is rejected at the boundary -----------
-# Expected units reach the collector as a CSV (`--expected lens:a,b`), so a
-# unit whose own name holds a comma is re-split downstream and its progress
-# can never match -- the lens could never reach `completed`. Reject it here.
-reject_payload "(A11) a comma-bearing 'units' element exits 2, nothing written" case-a11 \
-	'{"type":"start","units":["a,b"]}'
+# --- A11: a comma-bearing unit name ROUND-TRIPS on the JSON transport -----
+# r4 F10 INVERSION. This used to reject `{"units":["a,b"]}`, on the reasoning
+# that expected units reach the collector as a CSV so a comma-bearing name
+# would be re-split downstream and never match its own progress record. That
+# premise is gone: the collector holds --expected-file units as a JSON array
+# from jq to jq and never joins them. The rule was enforcing a property of the
+# collector's old internal representation, and it rejected a real review-plan
+# heading (`## Post-completion follow-ups (A3/A5, 2026-05-24)`) at the writer.
+# The comma survives as a restriction only on the CSV spellings, where it
+# genuinely is the separator (A11b below, and --expected in the collector).
+a11_root="$TMPDIR_ROOT/case-a11"
+mkdir -p "$a11_root"
+set +e
+printf '%s' '{"type":"start","units":["a,b","c"]}' |
+	bash "$SCRIPT" --root "$a11_root" --skill deep-review --run-id run-a11 \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>"$a11_root/stderr"
+a11_exit=$?
+set -e
+a11_target="$a11_root/.deep-review/lenses/run-a11/logic.1.jsonl"
+if [[ $a11_exit -ne 0 ]]; then
+	fail "(A11) a comma-bearing 'units' element must be accepted on the JSON transport (exit $a11_exit)"
+	sed 's/^/    /' "$a11_root/stderr"
+elif [[ "$(jq -c '.units' "$a11_target" 2>/dev/null)" != '["a,b","c"]' ]]; then
+	fail "(A11) comma-bearing unit not preserved: $(jq -c '.units' "$a11_target" 2>/dev/null)"
+else
+	pass "(A11) a comma-bearing 'units' element round-trips as ONE unit on the JSON transport"
+fi
+
+# An EMPTY element is still rejected: that is the one rule which is a property
+# of a unit rather than of a transport (a lens can never report it reviewed).
+reject_payload "(A11c) an empty 'units' element exits 2, nothing written" case-a11c \
+	'{"type":"start","units":["a",""]}'
 # Positive control: the CSV spelling keeps its comma as the SEPARATOR, so
 # `"a,b"` is two comma-free units and stays accepted.
 a11b_root="$TMPDIR_ROOT/case-a11b"
@@ -839,6 +865,144 @@ if [[ $g5_both_rc -eq 2 && $g5_absent_rc -eq 2 ]]; then
 	pass "(G5) --json-file with --json-stdin exits 2; an unreadable --json-file exits 2"
 else
 	fail "(G5) both-flags rc=$g5_both_rc, unreadable rc=$g5_absent_rc (both must be 2)"
+fi
+# ---------------------------------------------------------------------------
+# Group R4-G3 — writer/reader unit-validation parity (F3), and the comma rule
+# scoped to the wire that actually needs it.
+#
+# A unit is a STRING, not a CSV field. On the JSON transports (--json-stdin,
+# --json-file) `units` is a JSON array and a comma inside an element is not a
+# separator, so it must round-trip. On the `--units <csv>` argv spelling the
+# comma IS the separator and keeps splitting. And `--unit` now goes through
+# persist_validate_unit with source=argv, which closes the missing
+# leading-`-` rule (persist_require_value only checks arity, so `--unit -foo`
+# was accepted).
+# ---------------------------------------------------------------------------
+
+r4g3_root="$TMPDIR_ROOT/r4g3p"
+mkdir -p "$r4g3_root"
+(
+	cd "$r4g3_root"
+	git init -q
+	git config user.email "t@example.com"
+	git config user.name "T"
+	echo x >README.md
+	git add README.md
+	git commit -q -m init
+)
+
+# A comma-bearing unit on the JSON transport round-trips as ONE element.
+printf '%s' '{"type":"start","units":["a,b","c"]}' >"$r4g3_root/start.json"
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens logic --attempt 1 --json-file "$r4g3_root/start.json" >/dev/null 2>&1
+r4g3_start_rc=$?
+set -e
+r4g3_units="$(jq -c '.units' "$r4g3_root/.deep-review/lenses/r4g3p/logic.1.jsonl" 2>/dev/null || true)"
+if [[ "$r4g3_start_rc" -eq 0 && "$r4g3_units" == '["a,b","c"]' ]]; then
+	pass "(R4-G3) a comma-bearing unit on --json-file is stored as ONE element"
+else
+	fail "(R4-G3) comma unit on --json-file: rc=$r4g3_start_rc units=$r4g3_units"
+fi
+
+# A control character (a literal newline) in a JSON-transport unit survives.
+jq -n -c '{type:"start",units:["a\nb"]}' >"$r4g3_root/ctl.json"
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens ctl --attempt 1 --json-file "$r4g3_root/ctl.json" >/dev/null 2>&1
+r4g3_ctl_rc=$?
+set -e
+r4g3_ctl_units="$(jq -c '.units' "$r4g3_root/.deep-review/lenses/r4g3p/ctl.1.jsonl" 2>/dev/null || true)"
+if [[ "$r4g3_ctl_rc" -eq 0 && "$r4g3_ctl_units" == '["a\nb"]' ]]; then
+	pass "(R4-G3) a control-character unit on --json-file survives verbatim"
+else
+	fail "(R4-G3) control-char unit: rc=$r4g3_ctl_rc units=$r4g3_ctl_units"
+fi
+
+# The argv CSV spelling still splits on commas -- it is that wire's format.
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens csv --attempt 1 --type start --units 'a,b' >/dev/null 2>&1
+r4g3_csv_rc=$?
+set -e
+r4g3_csv_units="$(jq -c '.units' "$r4g3_root/.deep-review/lenses/r4g3p/csv.1.jsonl" 2>/dev/null || true)"
+if [[ "$r4g3_csv_rc" -eq 0 && "$r4g3_csv_units" == '["a","b"]' ]]; then
+	pass "(R4-G3) --units 'a,b' still splits into two units on argv"
+else
+	fail "(R4-G3) argv CSV split regressed: rc=$r4g3_csv_rc units=$r4g3_csv_units"
+fi
+
+# Writer parity gap (F3): `--unit -foo` reached the wire because
+# persist_require_value only checks arity. It now goes through
+# persist_validate_unit with source=argv, which rejects a leading `-`.
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens logic --attempt 1 --type progress --unit -foo >/dev/null 2>&1
+r4g3_dash_rc=$?
+set -e
+if [[ "$r4g3_dash_rc" -eq 2 ]]; then
+	pass "(R4-G3/F3) --unit -foo exits 2 (leading-dash rule now applies to the writer)"
+else
+	fail "(R4-G3/F3) --unit -foo must exit 2, got rc=$r4g3_dash_rc"
+fi
+
+# ...and the shell-metachar half of the argv blacklist reaches --unit too.
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens logic --attempt 1 --type progress --unit 'src/$(id).ts' >/dev/null 2>&1
+r4g3_meta_rc=$?
+set -e
+if [[ "$r4g3_meta_rc" -eq 2 ]]; then
+	pass "(R4-G3/F3) a shell-metachar --unit exits 2 on the argv transport"
+else
+	fail "(R4-G3/F3) metachar --unit must exit 2, got rc=$r4g3_meta_rc"
+fi
+
+# ...but the SAME value is legitimate on the JSON transport, which never
+# passes through a shell. This is the asymmetry the parity fix preserves.
+jq -n -c '{type:"progress",unit:"src/$(id).ts"}' >"$r4g3_root/meta.json"
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens meta --attempt 1 --json-file "$r4g3_root/meta.json" >/dev/null 2>&1
+r4g3_metaok_rc=$?
+set -e
+if [[ "$r4g3_metaok_rc" -eq 0 ]]; then
+	pass "(R4-G3/F3) the same metachar unit is accepted on the --json-file transport"
+else
+	fail "(R4-G3/F3) metachar unit on --json-file must succeed, got rc=$r4g3_metaok_rc"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R4-G4 (F12) — --json-file gets the same symlink guard every other
+# repo-rooted state path already has. The guard depends on WHAT the path is,
+# not WHICH FLAG carried it: an out-of-tree payload file stays legal.
+# ---------------------------------------------------------------------------
+
+mkdir -p "$r4g3_root/real"
+printf '%s' '{"type":"done","status":"completed"}' >"$r4g3_root/real/payload.json"
+ln -s "$r4g3_root/real/payload.json" "$r4g3_root/linked-payload.json"
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens logic --attempt 1 --json-file "$r4g3_root/linked-payload.json" >/dev/null 2>&1
+r4g4_link_rc=$?
+set -e
+if [[ "$r4g4_link_rc" -eq 2 ]]; then
+	pass "(R4-G4/F12) a symlinked --json-file inside the root exits 2"
+else
+	fail "(R4-G4/F12) symlinked --json-file must exit 2, got rc=$r4g4_link_rc"
+fi
+
+r4g4_ext="$TMPDIR_ROOT/outside-payload.json"
+printf '%s' '{"type":"done","status":"completed"}' >"$r4g4_ext"
+set +e
+bash "$SCRIPT" --root "$r4g3_root" --skill deep-review --run-id r4g3p \
+	--lens ext --attempt 1 --json-file "$r4g4_ext" >/dev/null 2>&1
+r4g4_ext_rc=$?
+set -e
+if [[ "$r4g4_ext_rc" -eq 0 ]]; then
+	pass "(R4-G4/control) an out-of-tree --json-file is still accepted"
+else
+	fail "(R4-G4/control) out-of-tree --json-file broke (rc=$r4g4_ext_rc)"
 fi
 
 finish

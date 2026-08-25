@@ -26,6 +26,9 @@
 #                                          file, used only by
 #                                          persist_atomic_write.)
 #   - persist_lens_state_dir,
+#     persist_lens_run_dir,
+#     persist_path_is_inside_root,
+#     PERSIST_UNIT_JQ_GATE,
 #     persist_jsonl_append,
 #     persist_validate_id,
 #     persist_validate_unit              — LENS callers only. These exist
@@ -102,6 +105,24 @@
 #                                deep-review, plan sections for review-plan).
 #                                See the function for the exact rules and why
 #                                the two sources differ.
+#   PERSIST_UNIT_JQ_GATE       — the FILE/JSON wire's unit rules as a jq
+#                                filter over an ARRAY of units, so the reader
+#                                and the writer enforce one rule set from one
+#                                source. See the definition for the rules.
+#   persist_lens_run_dir <root> <skill> <run-id>
+#                              — print the per-run lens directory
+#                                (`persist_lens_state_dir`/<run-id>). Every
+#                                per-run lens artefact — the attempt files AND
+#                                the units file the orchestrator writes for
+#                                `collect-lens-results.sh --expected-file` —
+#                                lives here, so there is exactly one helper
+#                                deriving it.
+#   persist_path_is_inside_root <path> <root>
+#                              — 0 when <path> is LEXICALLY under <root> (or
+#                                under its canonicalised form), 1 otherwise.
+#                                Gates the repo-rooted symlink guard so an
+#                                out-of-tree fixture path is not refused on a
+#                                platform symlink it never touches.
 
 # Root-anchor. Falls back to cwd when not inside a git worktree, matching
 # scripts/apply-auto-fix-plan.sh's pre-existing WORKTREE_ROOT precedent.
@@ -286,6 +307,85 @@ persist_lens_state_dir() {
 	esac
 }
 
+# Every PER-RUN lens artefact lives under one directory, and this is the only
+# place that derives it. Round 4 (F2) folded the orchestrator-written units
+# file (`collect-lens-results.sh --expected-file`) in here too: it had been
+# given a path literal invented in SKILL.md prose
+# (`<repo-root>/.skein/lens-runs/<run-id>/expected.json`), a THIRD state root
+# owned by no helper and absent from .gitignore, so every collect run left an
+# untracked file in `git status`. Both real state roots are already
+# gitignored, so moving it here needed no .gitignore change.
+#
+# No collision with attempt discovery: collect-lens-results.sh matches
+# `<lens>.<attempt>.jsonl` basenames only, and `expected.json` is neither.
+persist_lens_run_dir() {
+	local root="$1" skill="$2" run_id="$3"
+	local lenses_dir
+	lenses_dir="$(persist_lens_state_dir "$root" "$skill")" || return 1
+	printf '%s/%s\n' "$lenses_dir" "$run_id"
+}
+
+# persist_path_is_inside_root <path> <root>
+#
+# LEXICAL on purpose. Canonicalising <path> first would resolve a symlinked
+# ancestor and report a path that escapes the root as "outside", skipping the
+# very guard that exists to catch it — the escape would gate itself out. The
+# root IS canonicalised, so both spellings of an in-root path match.
+#
+# Used to scope the repo-rooted symlink guard: a state path under <root> is
+# guarded, an out-of-tree path (a test fixture, a payload in $TMPDIR) is not.
+# Without the scope the guard would refuse ordinary platform symlinks — macOS
+# puts $TMPDIR under `/var`, which IS a symlink to `/private/var`.
+persist_path_is_inside_root() {
+	local path="$1" root="$2" root_canon
+	[[ -n "$root" ]] || return 1
+	root_canon="$(cd "$root" 2>/dev/null && pwd -P)" || root_canon="$root"
+	case "$path" in
+	"$root" | "$root"/* | "$root_canon" | "$root_canon"/*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# PERSIST_UNIT_JQ_GATE — the FILE/JSON wire's unit rules, as a jq filter whose
+# input and output are the units ARRAY. Errors (with a message) on a
+# violation, so callers use `jq ... || <diagnostic>; exit 2`.
+#
+# The rules are deliberately thin, and that is the round-4 correction. A unit
+# is a STRING, not a CSV field: on this wire it is carried as a JSON string
+# from the orchestrator's file-write tool, through jq, into a JSON document,
+# and back out through jq. It never passes through a shell and it is never
+# joined with a delimiter, so a comma, a newline, a NUL or a leading `-` are
+# all just bytes in a name.
+#
+# What round 3 enforced here, and why each rule left:
+#   * no comma — the collector used to hold assigned units as a COMMA-JOINED
+#     STRING and re-split it. It no longer joins them at all, and the rule was
+#     hard-failing a real review-plan heading:
+#     `## Post-completion follow-ups (A3/A5, 2026-05-24)` (F10). The comma
+#     rule now lives only where a comma really is a separator: the `--expected`
+#     and `--units` CSV spellings on argv.
+#   * no leading `-` — a flag-injection rule for a value that reaches a
+#     COMMAND LINE. On this wire it never does; a git path or a plan heading
+#     may legitimately start with `-`. Retained for source=argv only.
+#   * no NUL / no newline — artefacts of the old bash round-trip (a NUL
+#     delimiter that is not injective for a unit containing a NUL, F9; a
+#     line-oriented `jq -R` that turned an embedded newline into two JSON
+#     documents and aborted the whole collection, F11). Nothing splits on
+#     either byte any more.
+#
+# What survives is the one rule that is a property of a unit rather than of a
+# transport: a unit must be a non-empty string. An empty unit can never be
+# reported as reviewed, so it would strand its lens short of `completed`
+# forever.
+# shellcheck disable=SC2034  # sourced by the two lens callers, not used here.
+PERSIST_UNIT_JQ_GATE='
+	if type != "array" then error("units must be an array") else . end
+	| if any(.[]; type != "string")
+	  then error("units must be an array of strings") else . end
+	| if any(.[]; length == 0)
+	  then error("a unit must not be an empty string") else . end
+'
+
 # persist_validate_id <value> <label> <kind>
 #   kind = name   : lens names, attempt-file basename component and an
 #                   `--expected <lens>:<units>` key -> ':' MUST be excluded
@@ -340,15 +440,24 @@ persist_validate_id() {
 # have genuinely different threat surfaces:
 #
 #   file — the unit arrived inside a JSON file (`collect-lens-results.sh
-#          --expected-file`), written by the orchestrator with its file-write
-#          tool and read back with jq. It never passes through a shell, so
-#          only the two END-TO-END WIRE rules apply:
-#            * no comma: unit lists are comma-joined and unescaped
-#              everywhere downstream (collector --expected,
-#              persist-lens-result.sh --units); a comma-bearing unit would
-#              silently split into two.
-#            * no leading '-': a unit that reaches a command line later
-#              would be parsed as a flag.
+#          --expected-file`) or a JSON payload (`persist-lens-result.sh
+#          --json-file`/`--json-stdin`), written by the orchestrator with its
+#          file-write tool and read back with jq. It never passes through a
+#          shell and it is never joined with a delimiter, so the ONLY rule is
+#          the one that is a property of a unit rather than of a transport:
+#          non-empty. This is the bash spelling of PERSIST_UNIT_JQ_GATE's
+#          per-element rule; the collector applies the jq form to the whole
+#          array in one pass, which is why nothing in-tree calls this branch
+#          today. Keep the two in step if either changes.
+#
+#          Round 4 removed two rules from this branch. `no comma` was a
+#          property of the collector's old comma-joined internal
+#          representation, not of a unit, and it hard-failed the real
+#          review-plan heading `## Post-completion follow-ups (A3/A5,
+#          2026-05-24)`. `no leading -` is a flag-injection rule for a value
+#          that reaches a command line, which a file-transport unit never
+#          does, and it rejected git paths and plan headings that legally
+#          begin with `-`. Both survive below, scoped to argv.
 #
 #   argv — the unit arrived on a command line the orchestrator ASSEMBLED AS
 #          SHELL TEXT (`--expected "<lens>:<unit>,<unit>"`). Substitution
@@ -381,16 +490,20 @@ persist_validate_unit() {
 		echo "$label: invalid unit: empty unit name" >&2
 		return 2
 	fi
-	if [[ "$value" == *,* ]]; then
-		echo "$label: invalid unit '$value' (unit lists are comma-joined and unescaped end-to-end; a unit must not contain a comma)" >&2
-		return 2
-	fi
-	if [[ "$value" == -* ]]; then
-		echo "$label: invalid unit '$value' (a unit must not start with '-'; it would be parsed as a flag)" >&2
-		return 2
-	fi
-
 	if [[ "$source" == "argv" ]]; then
+		# Comma: on argv a unit list IS comma-separated (`--expected
+		# <lens>:<u1>,<u2>`, `--units <csv>`), so a comma-bearing unit
+		# would silently split into two. That is a property of THIS wire.
+		if [[ "$value" == *,* ]]; then
+			echo "$label: invalid unit '$value' (unit lists on the command line are comma-separated; a unit passed on argv must not contain a comma - pass it via the units file instead)" >&2
+			return 2
+		fi
+		# Leading '-': the value reaches a command line, where it would be
+		# parsed as a flag.
+		if [[ "$value" == -* ]]; then
+			echo "$label: invalid unit '$value' (a unit passed on the command line must not start with '-'; it would be parsed as a flag - pass it via the units file instead)" >&2
+			return 2
+		fi
 		# Newline first: it is the one character that cannot be shown
 		# usefully inside the quoted echo below.
 		if [[ "$value" == *$'\n'* ]]; then

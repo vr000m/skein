@@ -543,10 +543,16 @@ STUB
 
 	assert_eq "$rc" "2" "budget='$budget': gate_run_bounded returns 2 for a non-positive/non-numeric budget"
 
-	if [[ ! -e "$envelope" ]]; then
-		pass "budget='$budget': stale pre-existing envelope was removed, no new envelope written"
+	# r4 F16/F8 INVERSION: a rejected budget is a USAGE error, and rc=2 now
+	# means "no command ran, no envelope was written, and <envelope-out> was
+	# not touched -- do not read it". The stale envelope therefore survives
+	# UNCHANGED; what the caller must not do is read it. Asserting on its
+	# CONTENT (not merely its presence) is the real check: it proves nothing
+	# was written over it either.
+	if [[ -e "$envelope" ]] && grep -q '"status":"approve"' "$envelope"; then
+		pass "budget='$budget': rc=2 left the stale envelope byte-untouched, and wrote no new one"
 	else
-		fail "budget='$budget': envelope still present after a rejected budget (expected removed): $(cat "$envelope" 2>/dev/null)"
+		fail "budget='$budget': a usage error modified or removed <envelope-out> (present=$([[ -e "$envelope" ]] && echo yes || echo no)): $(cat "$envelope" 2>/dev/null)"
 	fi
 
 	if [[ ! -e "$marker" ]]; then
@@ -1046,15 +1052,21 @@ set +e
 g10_rc=$?
 set -e
 assert_eq "$g10_rc" "2" "G10: a missing -- separator returns 2"
-if [[ ! -e "$g10_env" ]]; then
-	pass "G10: the stale envelope is removed before the missing-\`--\` return 2"
+# r4 F16/F8 INVERSION. The round-3 hoist bought "no stale envelope on a usage
+# error" by unlinking UNVALIDATED positional tokens: with the arguments
+# shifted, `$2`/`$3` are not yet known to be <envelope-out>/<tool-out>, so the
+# unlink was removing a guess. The contract is now the stronger one: rc=2
+# means NO FILESYSTEM EFFECT and <envelope-out> WAS NOT TOUCHED -- do not read
+# it. The unlink moved below every usage check, where the paths are validated.
+if [[ -e "$g10_env" ]]; then
+	pass "G10: rc=2 on a missing \`--\` touches nothing -- <envelope-out> is left alone"
 else
-	fail "G10: a stale envelope survived the missing-\`--\` return 2 ($(cat "$g10_env"))"
+	fail "G10: a usage error removed <envelope-out>; rc=2 must have no filesystem effect"
 fi
-if [[ ! -e "$g10_tool" && ! -e "${g10_tool}.stderr" ]]; then
-	pass "G10: the stale tool-out and its .stderr sibling are removed too"
+if [[ -e "$g10_tool" && -e "${g10_tool}.stderr" ]]; then
+	pass "G10: <tool-out> and its .stderr sibling are left alone too"
 else
-	fail "G10: stale tool-out artefacts survived the return 2"
+	fail "G10: a usage error removed <tool-out> artefacts; rc=2 must have no filesystem effect"
 fi
 
 # Same for the other two path-knowing return-2 arms: a missing <cmd...> and
@@ -1073,10 +1085,10 @@ g10_zero_rc=$?
 set -e
 g10_zero_gone=$([[ -e "$g10_env" ]] && echo no || echo yes)
 
-if [[ "$g10_nocmd_rc" -eq 2 && "$g10_nocmd_gone" == "yes" && "$g10_zero_rc" -eq 2 && "$g10_zero_gone" == "yes" ]]; then
-	pass "G10: missing <cmd...> and <budget-seconds> 0 both return 2 with no stale envelope"
+if [[ "$g10_nocmd_rc" -eq 2 && "$g10_nocmd_gone" == "no" && "$g10_zero_rc" -eq 2 && "$g10_zero_gone" == "no" ]]; then
+	pass "G10: missing <cmd...> and <budget-seconds> 0 both return 2 without touching <envelope-out>"
 else
-	fail "G10: nocmd rc=$g10_nocmd_rc gone=$g10_nocmd_gone; zero-budget rc=$g10_zero_rc gone=$g10_zero_gone"
+	fail "G10: nocmd rc=$g10_nocmd_rc gone=$g10_nocmd_gone; zero-budget rc=$g10_zero_rc gone=$g10_zero_gone (both must be rc=2, gone=no)"
 fi
 
 # The two documented EXEMPTIONS must not crash: <envelope-out> is unknowable
@@ -1094,15 +1106,97 @@ else
 	fail "G10: exemption arms: --gate rc=$g10_gate_rc, short rc=$g10_short_rc, unrelated env present=$([[ -e "$g10_env" ]] && echo yes || echo no)"
 fi
 
-# Structural: every `return 2` inside gate_run_bounded must sit at or after
-# the hoisted unlink, except the two the header names. Asserted on the file so
-# a future arm added above the unlink is caught even if no test exercises it.
-g10_unlink_line="$(grep -n 'Stale-artefact unlink, hoisted' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
-g10_early_returns="$(awk -v u="$g10_unlink_line" 'NR < u && /^[[:space:]]*return 2$/ {c++} END {print c+0}' "$GATE_BOUNDED")"
-assert_eq "$g10_early_returns" "1" "G10: exactly one \`return 2\` (the --gate exemption) precedes the hoisted unlink"
+# Structural (r4 F16): the stale-artefact unlink sits in EXACTLY one window --
+# below every POSITIONAL-SHAPE check, above every remaining check and above the
+# first temp file. Asserted on the file, positionally, so a future shape check
+# added below the unlink (or a precondition hoisted above it) is caught even
+# when no behavioural test exercises it.
+#
+# The invariant, old -> new:
+#   old: "`rm -f` only ever targets a token validated as <envelope-out>/
+#         <tool-out>" -- FALSE. The round-3 hoist ran it on raw `$2`/`$3` at
+#         the top of the function, before any shape check had established that
+#         those positionals were paths at all.
+#   new: TRUE. Both halves matter and pull opposite ways, which is why the
+#        window is bounded on BOTH sides:
+#          lower bound -- the unlink must come AFTER the four shape checks,
+#            or it is deleting a guess again (F16);
+#          upper bound -- it must come BEFORE the jq/bounding-mechanism
+#            preconditions and before any temp file, or a `return 2` taken
+#            after it leaves a stale envelope for a caller that ignores the
+#            return code, which is the round-3 defect this must not undo.
+g10_unlink_line="$(grep -n 'Stale-artefact unlink' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_seconds_line="$(grep -n '<seconds> must be a positive integer' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_missing_cmd_line="$(grep -n 'missing <cmd\.\.\.>' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_sep_line="$(grep -n 'expected -- as the 4th argument' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_jq_line="$(grep -n 'jq is required' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_mktemp_line="$(awk -v f="$(grep -n '^gate_run_bounded() {' "$GATE_BOUNDED" | head -1 | cut -d: -f1)" \
+	'NR > f && /mktemp/ {print NR; exit}' "$GATE_BOUNDED")"
+
+if [[ -n "$g10_unlink_line" && -n "$g10_seconds_line" && -n "$g10_missing_cmd_line" &&
+	-n "$g10_sep_line" && "$g10_sep_line" -lt "$g10_unlink_line" &&
+	"$g10_missing_cmd_line" -lt "$g10_unlink_line" && "$g10_seconds_line" -lt "$g10_unlink_line" ]]; then
+	pass "G10(F16): every positional-shape check returns 2 BEFORE the stale-artefact unlink"
+else
+	fail "G10(F16): a shape check does not precede the unlink (sep=$g10_sep_line cmd=$g10_missing_cmd_line secs=$g10_seconds_line unlink=$g10_unlink_line)"
+fi
+
+if [[ -n "$g10_jq_line" && -n "$g10_mktemp_line" && "$g10_unlink_line" -lt "$g10_jq_line" &&
+	"$g10_unlink_line" -lt "$g10_mktemp_line" ]]; then
+	pass "G10(F16): the unlink precedes the jq/bounding preconditions and the first temp file"
+else
+	fail "G10(F16): the unlink is not above the remaining preconditions (unlink=$g10_unlink_line jq=$g10_jq_line mktemp=$g10_mktemp_line)"
+fi
 
 g10_unlink_count="$(grep -c 'rm -f "\$envelope_out"' "$GATE_BOUNDED" || true)"
-assert_eq "$g10_unlink_count" "0" "G10: the old post-check unlink is gone -- one owner for the stale-artefact removal"
+assert_eq "$g10_unlink_count" "1" "G10: the unlink targets the VALIDATED \$envelope_out local, not a raw positional"
+
+g10_raw_unlink="$(grep -cE '^[[:space:]]*rm -f "\$[23]"' "$GATE_BOUNDED" || true)"
+assert_eq "$g10_raw_unlink" "0" "G10: no \`rm -f\` targets an unvalidated positional token"
+
+# F8: the unlink must be best-effort. It is the last command of its block, so
+# under the caller's documented `set -euo pipefail` a bare failing `rm -f`
+# aborts the caller outright -- the opposite of what the header promises.
+g10_besteffort="$(grep -cE 'rm -f "\$(envelope_out|tool_out)".*\|\| :' "$GATE_BOUNDED" || true)"
+if [[ "$g10_besteffort" -ge 2 ]]; then
+	pass "G10(F8): both unlink lines are explicitly best-effort (\`|| :\`)"
+else
+	fail "G10(F8): only $g10_besteffort of 2 unlink lines are best-effort"
+fi
+
+# F8, behaviourally: with EXACTLY two arguments the hoisted `rm -f "$2"` was
+# the last command of its `then` list, so a failing unlink (here: `$2` is a
+# DIRECTORY) aborted the caller outright under the documented
+# `set -euo pipefail` -- no usage message, no rc=2, the opposite of the
+# "best-effort" the header and the comment both promise. With no unlink before
+# the shape checks there is nothing to fail: the arity check reports cleanly.
+g10f8_dir="$WORKDIR/g10f8"
+mkdir -p "$g10f8_dir/env.json"
+set +e
+g10f8_err="$("$RUNNER" 5 "$g10f8_dir/env.json" 2>&1 >/dev/null)"
+g10f8_rc=$?
+set -e
+if [[ "$g10f8_rc" -eq 2 && "$g10f8_err" == *"usage:"* ]]; then
+	pass "G10(F8): an unremovable path does not abort the caller under set -e (rc=2 with a usage message)"
+else
+	fail "G10(F8): rc=$g10f8_rc err='$g10f8_err' (expected rc=2 and a usage message, not a set -e abort)"
+fi
+
+# F16, behaviourally: with the arguments shifted so `$3` is a COMMAND WORD
+# rather than <tool-out>, the shape check must return 2 and that command word
+# must still exist afterwards. Under the round-3 hoist it was unlinked.
+g10f16_dir="$WORKDIR/g10f16"
+mkdir -p "$g10f16_dir"
+printf '%s\n' '#!/bin/sh' >"$g10f16_dir/my-gate.sh"
+set +e
+"$RUNNER" 900 -- "$g10f16_dir/my-gate.sh" >/dev/null 2>&1
+g10f16_rc=$?
+set -e
+if [[ "$g10f16_rc" -eq 2 && -e "$g10f16_dir/my-gate.sh" ]]; then
+	pass "G10(F16): a shifted-argument shape error returns 2 with the command word still present"
+else
+	fail "G10(F16): rc=$g10f16_rc present=$([[ -e "$g10f16_dir/my-gate.sh" ]] && echo yes || echo no)"
+fi
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

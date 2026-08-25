@@ -96,9 +96,10 @@
 #
 # Exit codes:
 #   0 — every line either produced a key or was skipped (not exactly one
-#       JSON object, a non-string field, or an extraction failure), each
-#       skip carrying a stderr warning. A skip never emits a key, so a
-#       truncated or all-empty key can never reach the ledger.
+#       JSON object, a non-string field, an all-empty identity, or an
+#       extraction failure), each skip carrying a stderr warning. A skip
+#       never emits a key, so a truncated or all-empty key can never reach
+#       the ledger.
 #   2 — usage error (too many arguments, missing jq/shasum, unreadable
 #       input path).
 #
@@ -195,6 +196,16 @@ FK_TYPE_GATE='
 #     regex, cannot be confused by a trailing newline).
 #   - `\u001F` is the ASCII US separator, kept purely for legibility — the
 #     length prefixes, not the separator, are what make this injective.
+#   - ALL-EMPTY emits NOTHING (r4 F15). FK_TYPE_GATE rejects a
+#     present-but-non-string identity field, but an ABSENT or null one falls
+#     through `// ""` — so `{}` and `{"severity":"Minor"}`, two findings with
+#     nothing in common, hashed to the SAME key. A shared key is precisely the
+#     false-`regression` this identity is biased against, and the header's
+#     "a truncated or all-empty key can never reach the ledger" was not yet
+#     true. Emitting `empty` gives bash zero output for that line, which takes
+#     the EXISTING malformed-line path below: warn on stderr, emit no key,
+#     do not abort. A PARTIALLY empty finding still hashes and stays injective
+#     via the length prefixes, so well-formed input is untouched.
 #
 # NO digit-stripping: see the summary rationale in the header.
 # shellcheck disable=SC2016  # this is a jq program, not shell: $file/$category/
@@ -205,9 +216,11 @@ FK_KEY_FILTER='
 	| ((.category // "") | ascii_downcase) as $category
 	| ((.summary // "") | ascii_downcase
 	   | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" ")) as $summary
-	| "\($file | utf8bytelength):\($file)\u001F"
-	  + "\($category | utf8bytelength):\($category)\u001F"
-	  + "\($summary | utf8bytelength):\($summary)"
+	| if ($file == "" and $category == "" and $summary == "") then empty else
+	    "\($file | utf8bytelength):\($file)\u001F"
+	    + "\($category | utf8bytelength):\($category)\u001F"
+	    + "\($summary | utf8bytelength):\($summary)"
+	  end
 '
 
 # Scratch file for one line's pre-hash string. A file, not a variable: the
@@ -263,6 +276,16 @@ while IFS= read -r line || [[ -n "$line" ]]; do
 	# consumer's `pipefail`.
 	if ! printf '%s' "$line" | jq -j -s "$FK_KEY_FILTER" >"$FK_KEY_BUF"; then
 		printf 'finding-key: skipping line %d: key extraction failed\n' "$fk_lineno" >&2
+		continue
+	fi
+	# Zero bytes means FK_KEY_FILTER emitted `empty`: file, category and
+	# summary were ALL empty after normalisation (r4 F15). A well-formed line
+	# can never produce an empty buffer -- even an all-empty finding would
+	# otherwise render the fixed 8-byte `0:\u001F0:\u001F0:` -- so this is an
+	# unambiguous signal, not a heuristic. Same treatment as every other
+	# malformed line: warn, emit no key, keep going.
+	if [[ ! -s "$FK_KEY_BUF" ]]; then
+		printf 'finding-key: skipping line %d: file, category and summary are all empty\n' "$fk_lineno" >&2
 		continue
 	fi
 	fk_sha1 <"$FK_KEY_BUF"

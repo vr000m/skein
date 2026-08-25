@@ -82,8 +82,8 @@
 #
 # Key order is preserved, so it produces the same lens ordering repeated
 # --expected flags would. Each key goes through persist_validate_id (the
-# same lens-name whitelist --expected uses); each unit goes through
-# persist_validate_unit with source=file.
+# same lens-name whitelist --expected uses); the unit ARRAY goes through
+# PERSIST_UNIT_JQ_GATE in one jq hop -- see "A UNIT IS A STRING" below.
 #
 # WHY a file and not a flag. `--expected "logic:src/$(id).ts"` is substituted
 # by the ORCHESTRATOR'S SHELL before this script is ever entered, so no
@@ -92,9 +92,26 @@
 # the --json-stdin work closed on the writer side, and the reason the fix is
 # a transport change rather than a validation change. The orchestrator
 # writes the file with its file-write tool (no shell) at
-# <repo-root>/.skein/lens-runs/<run-id>/expected.json — a path whose every
-# component is already persist_validate_id-clean — and passes only that
-# path on the command line.
+# `persist_lens_run_dir <root> <skill> <run-id>`/expected.json — i.e.
+# <repo-root>/.deep-review/lenses/<run-id>/expected.json (review-plan:
+# <repo-root>/.review-plan/lenses/<run-id>/expected.json), the same per-run
+# directory the attempt files occupy, whose every component is already
+# persist_validate_id-clean — and passes only that path on the command line.
+# (Round 4/F2: it used to be given a path literal invented in SKILL.md prose,
+# `<repo-root>/.skein/lens-runs/<run-id>/expected.json`, a third state root
+# owned by no helper and absent from .gitignore. Both real state roots are
+# gitignored, so a collect run now leaves no untracked file behind. Attempt
+# discovery matches `<lens>.<attempt>.jsonl` basenames only, so expected.json
+# sitting in that directory is never read as an attempt file.)
+#
+# A UNIT IS A STRING, NOT A CSV FIELD. Units read from --expected-file are
+# held as a JSON array from jq to jq and are never joined, split, or passed
+# through a bash round-trip, so a comma, a newline or a NUL inside a unit is
+# just a byte in a name (round 4: F9/F10/F11). PERSIST_UNIT_JQ_GATE in
+# scripts/lib/persist-common.sh is the single source of that wire's rules and
+# persist-lens-result.sh enforces the same one on the writer side (F3). The
+# comma restriction survives only on --expected, where the comma genuinely is
+# the separator.
 #
 # --expected-file and --expected are MUTUALLY EXCLUSIVE (exit 2 if both are
 # given): last-wins between two transports for the same list is too subtle a
@@ -196,19 +213,31 @@
 # persist-lens-result.sh closes from the writer side. Unit names are NOT
 # ids — they are free-form review targets (file paths for deep-review, plan
 # sections for review-plan) — so they go through persist_validate_unit's
-# narrow blacklist instead: no comma (unit lists are comma-joined and
-# unescaped end-to-end — writer --units, collector --expected/--expected-file
-# — so a comma-bearing unit would silently split) and no leading '-'. A unit
-# arriving on ARGV via --expected is additionally rejected for '$', backtick,
-# '"', '\\' or a newline; a unit arriving via --expected-file is not, because
-# it never reaches a shell. See scripts/lib/persist-common.sh.
+# narrow blacklist instead, and WHICH rules apply is a property of the
+# TRANSPORT, not of the unit:
+#
+#   --expected-file (the required transport for diff- or heading-derived
+#     units): a unit is a JSON string inside a JSON array. It is never a
+#     shell word and never an option position, so the only rule is
+#     non-empty. A comma, a newline, a NUL, a leading '-', a '$' or a
+#     backtick are all just bytes and survive verbatim.
+#
+#   --expected (the hand-invocation transport): the comma really IS the
+#     separator here, so a comma-bearing unit would silently split and is
+#     rejected; a leading '-' really would occupy an option position, so it
+#     is rejected too; and because the caller's shell has already expanded
+#     this value before the script was entered, '$', backtick, '"', '\\' and
+#     newline are rejected as defence in depth.
+#
+# See PERSIST_UNIT_JQ_GATE and persist_validate_unit in
+# scripts/lib/persist-common.sh -- the wire gate and the argv gate.
 #
 # Exit codes:
 #   0 — always, once flags validate (a stale/unknown run-id or empty
 #       --expected list is a normal "missing" result, not an error).
 #   2 — usage error (missing --skill/--run-id, unknown --skill, a malformed
 #       --expected/--attempts/--running entry, a --run-id/lens name outside
-#       its charset, a unit rejected by persist_validate_unit, --expected
+#       its charset, a unit rejected by its transport's gate, --expected
 #       given together with --expected-file, an --expected-file that is
 #       unreadable or is not an object of string arrays, --root omitted
 #       while cwd is not inside a git worktree, or a symlinked run directory
@@ -246,7 +275,10 @@ FINDINGS_JSONL=0
 EXPECTED_FILE=""
 SAW_EXPECTED_ARGV=0
 declare -a EXPECTED_LENSES=()
-declare -a EXPECTED_UNITS_CSV=()
+# One compact JSON array per lens, index-parallel with EXPECTED_LENSES. NOT a
+# comma-joined string: that single representation was the root cause of four
+# round-4 findings at once (see the header's "A UNIT IS A STRING" note).
+declare -a EXPECTED_UNITS_JSON=()
 declare -a ATTEMPTS_LENSES=()
 declare -a ATTEMPTS_N=()
 declare -a RUNNING_LENSES=()
@@ -294,8 +326,19 @@ while [[ $# -gt 0 ]]; do
 			done
 		fi
 		SAW_EXPECTED_ARGV=1
+		# CSV is THIS transport's own wire format, so the split stays
+		# here -- and every unit reaching it has already been through
+		# persist_validate_unit's argv rules, which forbid the newline
+		# `jq -R` cannot survive.
+		expected_units_json='[]'
+		if [[ -n "$expected_units_csv" ]]; then
+			expected_units_json="$(printf '%s' "$expected_units_csv" | jq -R -c 'split(",")')" || {
+				echo "collect-lens-results: could not parse --expected unit list for '$expected_lens_name'" >&2
+				exit 2
+			}
+		fi
 		EXPECTED_LENSES+=("$expected_lens_name")
-		EXPECTED_UNITS_CSV+=("$expected_units_csv")
+		EXPECTED_UNITS_JSON+=("$expected_units_json")
 		;;
 	--expected-file)
 		shift
@@ -408,12 +451,40 @@ fi
 # that passes both has a bug, and silently preferring one of them hides it.
 # A lens named by NEITHER is simply unreported, exactly as before.
 # ---------------------------------------------------------------------------
+# G4/F12 ORDERING: derive the run dir and run its symlink guard BEFORE
+# --expected-file is read, so a symlinked run directory is refused before any
+# of its contents are trusted. Once the units file lives inside run_dir (F2),
+# it inherits this check as well -- the two fixes reinforce each other.
+run_dir="$(persist_lens_run_dir "$ROOT" "$SKILL" "$RUN_ID")" || exit 2
+
+if [[ -e "$run_dir" ]]; then
+	if ! af_assert_no_symlink "$run_dir" "$ROOT"; then
+		echo "collect-lens-results: refusing to read through a symlink at $run_dir" >&2
+		exit 2
+	fi
+fi
+
 if [[ -n "$EXPECTED_FILE" ]]; then
 	if [[ "$SAW_EXPECTED_ARGV" -eq 1 ]]; then
 		echo "collect-lens-results: --expected and --expected-file are mutually exclusive (pass diff-derived units via --expected-file only)" >&2
 		usage
 		exit 2
 	fi
+	# G4/F12: a repo-rooted state path gets the same symlink guard every
+	# other one already has. Which GUARD applies is decided by what the path
+	# IS, not by which flag carried it. Scoped to in-root paths on purpose:
+	# an out-of-tree fixture or payload path must stay legal, and walking its
+	# parents would refuse ordinary platform symlinks (macOS puts $TMPDIR
+	# under `/var` -> `/private/var`). persist_path_is_inside_root is LEXICAL
+	# precisely so a path escaping the root THROUGH a symlink still counts as
+	# in-root and is caught here rather than gating itself out.
+	if persist_path_is_inside_root "$EXPECTED_FILE" "$ROOT"; then
+		if ! af_assert_no_symlink "$EXPECTED_FILE" "$ROOT"; then
+			echo "collect-lens-results: refusing to read through a symlink at $EXPECTED_FILE" >&2
+			exit 2
+		fi
+	fi
+
 	if [[ ! -f "$EXPECTED_FILE" || ! -r "$EXPECTED_FILE" ]]; then
 		echo "collect-lens-results: --expected-file is not a readable file: $EXPECTED_FILE" >&2
 		exit 2
@@ -427,45 +498,32 @@ if [[ -n "$EXPECTED_FILE" ]]; then
 		exit 2
 	fi
 
-	# Two NUL-delimited passes rather than one joined record: a unit is
-	# free-form text and may legitimately contain a newline, so the only
-	# delimiter that is safe here is NUL — and a unit cannot contain one,
-	# because the file is JSON and jq would have rejected it.
+	# ONE jq hop per lens, array in and array out. NOTHING is carried
+	# through a bash variable, which is what makes the unit's bytes
+	# irrelevant: round 3 pulled each unit out through a NUL-delimited read
+	# and re-joined them with commas, and every one of F9 (NUL),
+	# F10 (comma) and F11 (newline) is a way for that round-trip to be
+	# non-injective. The per-unit rules are PERSIST_UNIT_JQ_GATE's, the same
+	# filter persist-lens-result.sh applies on the writer side (F3).
+	#
+	# Only the LENS NAMES still come through a NUL-delimited read, and they
+	# are safe there because persist_validate_id's whitelist admits neither
+	# a NUL nor a newline.
+	#
 	# Object key order is preserved by jq, so --expected-file yields the
 	# same lens order the file was written in, matching repeated --expected.
+	# shellcheck disable=SC2016  # $lens is a jq variable, not a shell one.
+	expected_units_filter='.[$lens] | '"$PERSIST_UNIT_JQ_GATE"
 	while IFS= read -r -d '' expected_file_lens; do
 		persist_validate_id "$expected_file_lens" collect-lens-results name || exit 2
-		expected_file_units=()
-		while IFS= read -r -d '' expected_file_unit; do
-			# source=file: only the two end-to-end WIRE rules (no comma,
-			# no leading '-') apply. The shell-metacharacter half of the
-			# blacklist is deliberately NOT applied — these units never
-			# reach a command line, and rejecting `$` or a quote here
-			# would reject legitimate review targets.
-			persist_validate_unit "$expected_file_unit" collect-lens-results file || exit 2
-			expected_file_units+=("$expected_file_unit")
-		done < <(printf '%s' "$expected_file_json" |
-			jq -j --arg lens "$expected_file_lens" '.[$lens][] | . + "\u0000"')
-		expected_file_csv=""
-		if [[ "${#expected_file_units[@]}" -gt 0 ]]; then
-			expected_file_csv="$(
-				IFS=','
-				printf '%s' "${expected_file_units[*]}"
-			)"
+		if ! expected_file_units_json="$(printf '%s' "$expected_file_json" |
+			jq -c --arg lens "$expected_file_lens" "$expected_units_filter" 2>/dev/null)"; then
+			echo "collect-lens-results: --expected-file: lens '$expected_file_lens' has an invalid unit list (units must be non-empty strings): $EXPECTED_FILE" >&2
+			exit 2
 		fi
 		EXPECTED_LENSES+=("$expected_file_lens")
-		EXPECTED_UNITS_CSV+=("$expected_file_csv")
+		EXPECTED_UNITS_JSON+=("$expected_file_units_json")
 	done < <(printf '%s' "$expected_file_json" | jq -j 'keys_unsorted[] | . + "\u0000"')
-fi
-
-lenses_dir="$(persist_lens_state_dir "$ROOT" "$SKILL")" || exit 2
-run_dir="$lenses_dir/$RUN_ID"
-
-if [[ -d "$run_dir" ]]; then
-	if ! af_assert_no_symlink "$run_dir" "$ROOT"; then
-		echo "collect-lens-results: refusing to read through a symlink at $run_dir" >&2
-		exit 2
-	fi
 fi
 
 # spawned_attempts_for <lens> -- the --attempts value for <lens>, or 0 when
@@ -486,12 +544,15 @@ spawned_attempts_for() {
 }
 
 units_json_for() {
-	# $1 = comma-separated unit list (may be empty)
-	local csv="$1"
-	if [[ -z "$csv" ]]; then
+	# $1 = the stored compact JSON array for this lens (may be empty when no
+	# units were assigned). Both transports now store JSON, so there is
+	# nothing left to parse here -- which is the point: the only place a unit
+	# list is ever turned into or out of text is the one jq hop that read it.
+	local stored="$1"
+	if [[ -z "$stored" ]]; then
 		printf '[]'
 	else
-		printf '%s' "$csv" | jq -R -c 'split(",")'
+		printf '%s' "$stored"
 	fi
 }
 
@@ -566,7 +627,7 @@ n="${#EXPECTED_LENSES[@]}"
 i=0
 while [[ "$i" -lt "$n" ]]; do
 	lens="${EXPECTED_LENSES[$i]}"
-	assigned_json="$(units_json_for "${EXPECTED_UNITS_CSV[$i]}")"
+	assigned_json="$(units_json_for "${EXPECTED_UNITS_JSON[$i]}")"
 	spawned="$(spawned_attempts_for "$lens")"
 	i=$((i + 1))
 

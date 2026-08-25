@@ -1012,6 +1012,154 @@ fi
 
 rm -rf "$g12_base"
 
+# ---------------------------------------------------------------------------
+# G13 (r4 F7 + Codex addendum) — the parent walk is bounded BY the worktree
+# root, and it does not give up on an ancestor that does not exist yet.
+#
+# F7: the old loop advanced `parent` past the already-checked parent and then
+# applied `-L` BEFORE the root-equality break, so when the checked parent WAS
+# the root, the first iteration tested the ROOT'S PARENT. Under a repo whose
+# own ancestor is a symlink (`/tmp` -> `/private/tmp` on macOS is the everyday
+# case) that refused a perfectly legitimate `--init`.
+#
+# Codex addendum (convergence-ledger.sh:508): the containment probe returned
+# SUCCESS when `cd "$parent"` failed. For `--ledger "$repo/link/sub/new/l.json"`
+# with `link` a symlink pointing out of the repo, `$repo/link/sub/new` does not
+# exist, the probe bailed out with 0, and `mkdir -p` then followed the symlink
+# and wrote the ledger outside the worktree. Unresolved ancestors must be
+# WALKED, not treated as proof of safety.
+# ---------------------------------------------------------------------------
+
+# Fixture geometry matches the reported repro exactly: the SYMLINK is the
+# worktree root's PARENT (`symtest` -> `symreal`), and every component from
+# the root downward is a real directory.
+g13_base="$(mktemp -d "${TMPDIR:-/tmp}/gauntlet-g13.XXXXXX")"
+g13_real="$g13_base/symreal"
+g13_link="$g13_base/symtest"
+mkdir -p "$g13_real/repo"
+ln -s "$g13_real" "$g13_link"
+g13_repo="$g13_link/repo"
+
+(
+	cd "$g13_repo"
+	git init -q
+	git config user.email "t@example.com"
+	git config user.name "T"
+	echo x >README.md
+	git add README.md
+	git commit -q -m init
+) >/dev/null 2>&1
+
+set +e
+g13_sym_err="$(cd "$g13_repo" && bash "$LEDGER_SCRIPT" --ledger "$g13_repo/.gauntlet/ledger.json" \
+	--init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g13_sym_rc=$?
+set -e
+if [[ "$g13_sym_rc" -eq 0 && -f "$g13_real/repo/.gauntlet/ledger.json" ]]; then
+	pass "G13(F7): a repo under a symlinked ancestor still --inits (nothing above the worktree root is -L-tested)"
+else
+	fail "G13(F7): rc=$g13_sym_rc err='$g13_sym_err' (a symlinked ancestor ABOVE the worktree root must not be tested)"
+fi
+
+# Codex addendum: an UNRESOLVED chain, strictly inside the root, whose first
+# EXISTING component is a symlink out of the repo. `$repo/link2/sub/new` does
+# not exist, so the old containment probe could not `cd` into it and returned
+# SUCCESS -- then `mkdir -p` followed `link2` and wrote the ledger outside the
+# worktree. The walk must climb through the unresolved components, reach
+# `link2`, and refuse before anything is created.
+g13_out="$g13_base/outside"
+mkdir -p "$g13_out"
+ln -s "$g13_out" "$g13_real/repo/link2"
+set +e
+g13_unres_err="$(cd "$g13_repo" && bash "$LEDGER_SCRIPT" \
+	--ledger "$g13_repo/link2/sub/new/ledger.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g13_unres_rc=$?
+set -e
+if [[ "$g13_unres_rc" -ne 0 && "$g13_unres_err" == *"refusing to operate on symlink"* &&
+	! -e "$g13_out/sub" ]]; then
+	pass "G13(addendum): an unresolved ancestor chain through a symlink is refused before mkdir"
+else
+	fail "G13(addendum): rc=$g13_unres_rc err='$g13_unres_err' escaped=$([[ -e "$g13_out/sub" ]] && echo yes || echo no)"
+fi
+
+# Control: a symlinked INTERMEDIATE directory strictly inside the root is
+# still refused -- the F7 fix must not widen the hole it narrows.
+ln -s "$g13_out" "$g13_real/repo/inner"
+set +e
+g13_inner_err="$(cd "$g13_repo" && bash "$LEDGER_SCRIPT" \
+	--ledger "$g13_repo/inner/ledger.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g13_inner_rc=$?
+set -e
+if [[ "$g13_inner_rc" -ne 0 && "$g13_inner_err" == *"refusing to operate on symlink"* &&
+	! -e "$g13_out/ledger.json" ]]; then
+	pass "G13(control): a symlinked intermediate dir strictly inside the root is still refused"
+else
+	fail "G13(control): rc=$g13_inner_rc err='$g13_inner_err'"
+fi
+
+# G14 (C1, design step 1): a `..` component anywhere in the ledger path is
+# REFUSED outright. This is not tidiness -- it is what makes every other check
+# in this guard sound. The walk is lexical, and lexical normalisation is
+# unsound under symlinks: `$repo/link/../.gauntlet` does NOT mean
+# `$repo/.gauntlet` when `link` is a symlink, it means
+# `<link-target-parent>/.gauntlet`. Any guard that reasons about components
+# can be walked straight past by a `..` that re-enters somewhere else, so the
+# fail-closed answer is to reject the shape rather than try to resolve it.
+g14_base="$(mktemp -d "${TMPDIR:-/tmp}/gauntlet-g14.XXXXXX")"
+g14_out="$g14_base/outside"
+mkdir -p "$g14_base/repo" "$g14_out"
+(
+	cd "$g14_base/repo"
+	git init -q
+	git config user.email "t@example.com"
+	git config user.name "T"
+	echo x >README.md
+	git add README.md
+	git commit -q -m init
+) >/dev/null 2>&1
+ln -s "$g14_out" "$g14_base/repo/esc"
+
+set +e
+g14_err="$(cd "$g14_base/repo" && bash "$LEDGER_SCRIPT" \
+	--ledger "$g14_base/repo/esc/../ledger.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g14_rc=$?
+set -e
+if [[ "$g14_rc" -ne 0 && "$g14_err" == *".."* && ! -e "$g14_base/ledger.json" ]]; then
+	pass "G14: a '..' component in the ledger path is refused with a diagnostic naming it"
+else
+	fail "G14: rc=$g14_rc err='$g14_err' (a '..' component must be refused, not lexically resolved)"
+fi
+
+# A plain `..` with no symlink involved is refused too -- the rule is on the
+# SHAPE of the path, not on whether this particular one happens to escape.
+set +e
+g14b_err="$(cd "$g14_base/repo" && bash "$LEDGER_SCRIPT" \
+	--ledger "$g14_base/repo/sub/../ledger.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g14b_rc=$?
+set -e
+if [[ "$g14b_rc" -ne 0 && "$g14b_err" == *".."* ]]; then
+	pass "G14: the '..' rejection is unconditional, not contingent on an escape"
+else
+	fail "G14: rc=$g14b_rc err='$g14b_err'"
+fi
+
+# Control: an ordinary filename that merely CONTAINS dots is not a `..`
+# component and must still be accepted.
+set +e
+g14c_err="$(cd "$g14_base/repo" && bash "$LEDGER_SCRIPT" \
+	--ledger "$g14_base/repo/.gauntlet/a..b.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g14c_rc=$?
+set -e
+if [[ "$g14c_rc" -eq 0 && -f "$g14_base/repo/.gauntlet/a..b.json" ]]; then
+	pass "G14(control): a filename containing '..' is not a '..' component and is accepted"
+else
+	fail "G14(control): rc=$g14c_rc err='$g14c_err'"
+fi
+
+rm -rf "$g14_base"
+
+rm -rf "$g13_base"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

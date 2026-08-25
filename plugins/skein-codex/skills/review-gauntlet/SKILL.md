@@ -52,6 +52,8 @@ ledger_path="$(gc_ledger_path "$canonical_target" codex)"
 "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"
 ```
 
+Every write path into the ledger first runs `ledger_assert_no_symlink`: it **refuses — it never redirects, and never falls back to another path** — when the ledger path, or any directory component of it strictly inside the worktree, is a symlink, exiting 1 with `refusing to operate on symlink: <path>`. The threat is a **tracked symlink** committed into the repository: `.gauntlet/` is gitignored, but a tracked symlink at that exact path still materialises on checkout, and `mkdir -p` follows it — so a malicious clone could point `.gauntlet/` outside the repo and have every ledger write land on an arbitrary user-writable file. Components that do not exist yet are checked too, since those are precisely the ones `mkdir -p` is about to create. Treat that refusal as a finding about the checkout, not as a bug to route around: **do not** retarget `--ledger` at another path to get past it.
+
 If that exits because the ledger already exists (exit 6), stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
 
 ```bash

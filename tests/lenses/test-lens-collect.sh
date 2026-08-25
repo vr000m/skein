@@ -1289,18 +1289,27 @@ else
 	fail "(G4) a leading-dash unit must exit 2, got rc=$g4_dash_rc"
 fi
 
-# A comma-bearing unit is rejected on BOTH transports: unit lists are
-# comma-joined and unescaped end-to-end, so it would silently split in two.
+# r4 F10 INVERSION. This used to assert "a comma-bearing unit is rejected on
+# BOTH transports", on the reasoning that unit lists are comma-joined
+# end-to-end. They are not, any more: the collector holds --expected-file
+# units as a JSON array from jq to jq and never joins them, so the rule was
+# enforcing a property of the OLD internal representation, not of a unit --
+# and it hard-failed a real review-plan heading,
+# `## Post-completion follow-ups (A3/A5, 2026-05-24)`. The comma restriction
+# now lives only on --expected, where the comma genuinely is the separator
+# (asserted in the R4-G3 group below).
 printf '%s' '{"logic":["a,b"]}' >"$g4_root/comma.json"
 set +e
-bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
-	--expected-file "$g4_root/comma.json" >/dev/null 2>&1
+g4_comma_out="$(bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_root/comma.json" 2>&1)"
 g4_comma_rc=$?
 set -e
-if [[ "$g4_comma_rc" -eq 2 ]]; then
-	pass "(G4) a comma-bearing unit inside --expected-file exits 2"
+if [[ "$g4_comma_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$g4_comma_out" | jq -r '.logic.assigned' 2>/dev/null)" == "1" ]] &&
+	[[ "$(printf '%s' "$g4_comma_out" | jq -r '.logic.unreviewed[0]' 2>/dev/null)" == "a,b" ]]; then
+	pass "(G4) a comma-bearing unit inside --expected-file is ONE unit, not a usage error"
 else
-	fail "(G4) a comma-bearing --expected-file unit must exit 2, got rc=$g4_comma_rc"
+	fail "(G4) comma unit on --expected-file: rc=$g4_comma_rc out=$g4_comma_out"
 fi
 
 # ...but a shell metacharacter inside --expected-file is ACCEPTED: those
@@ -1340,6 +1349,301 @@ if [[ "$g4_shape_rc" -eq 2 && "$g4_missing_rc" -eq 2 ]]; then
 	pass "(G4) a non-array-valued or unreadable --expected-file exits 2"
 else
 	fail "(G4) shape rc=$g4_shape_rc, missing-file rc=$g4_missing_rc (both must be 2)"
+fi
+# ---------------------------------------------------------------------------
+# Group R4-G3 — A UNIT IS A STRING, NOT A CSV FIELD.
+#
+# One root cause behind four r4 findings (F3, F9, F10, F11): the collector
+# held assigned units as a COMMA-JOINED STRING and re-split it with
+# `jq -R 'split(",")'`.
+#   F11 newline: `jq -R` is line-oriented, so a unit containing a newline
+#        produced TWO JSON documents and --argjson aborted the collection.
+#   F9  NUL: the NUL-delimited validation pass is not injective for a unit
+#        that itself contains a NUL -- it silently became two units.
+#   F10 comma: the no-comma rule hard-failed on a REAL review-plan heading,
+#        `## Post-completion follow-ups (A3/A5, 2026-05-24)`.
+#   F3  the writer never adopted the reader's validation helper.
+#
+# The fix keeps the unit as a JSON string end-to-end on the FILE transport.
+# The comma/leading-dash/metachar restrictions survive only on ARGV, where
+# they are honestly properties of that wire and not of a unit.
+# ---------------------------------------------------------------------------
+
+r4g3_root="$TMPDIR_ROOT/r4g3"
+make_scratch_repo "$r4g3_root"
+
+# r4g3_collect <units-json> [extra args...] -- write the units file OUTSIDE
+# the run dir (the run-dir symlink group below owns that axis) and collect.
+r4g3_collect() {
+	local json="$1"
+	shift
+	local ef="$r4g3_root/units.json"
+	printf '%s' "$json" >"$ef"
+	(cd "$r4g3_root" && bash "$SCRIPT" --root "$r4g3_root" --skill deep-review \
+		--run-id r4g3 --expected-file "$ef" "$@")
+}
+
+# F11: a unit containing a literal newline.
+set +e
+r4g3_nl_out="$(r4g3_collect "$(jq -n -c '{logic:["a\nb","c"]}')" 2>&1)"
+r4g3_nl_rc=$?
+set -e
+r4g3_nl_first="$(printf '%s' "$r4g3_nl_out" | jq -r '.logic.unreviewed[0]' 2>/dev/null || true)"
+if [[ "$r4g3_nl_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_nl_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]] &&
+	[[ "$r4g3_nl_first" == "$(printf 'a\nb')" ]]; then
+	pass "(R4-G3/F11) a newline-bearing unit collects as ONE unit, exit 0"
+else
+	fail "(R4-G3/F11) newline unit: rc=$r4g3_nl_rc out=$r4g3_nl_out"
+fi
+
+# F9: a unit containing a NUL. JSON carries one as \u0000, and the old
+# NUL-delimited extraction split it into two units.
+set +e
+r4g3_nul_out="$(r4g3_collect "$(jq -n -c '{logic:["a\u0000b","c"]}')" 2>&1)"
+r4g3_nul_rc=$?
+set -e
+if [[ "$r4g3_nul_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_nul_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]]; then
+	pass "(R4-G3/F9) a NUL-bearing unit collects as ONE unit (assigned: 2, not 3)"
+else
+	fail "(R4-G3/F9) NUL unit: rc=$r4g3_nul_rc out=$r4g3_nul_out"
+fi
+
+# F10: a real review-plan heading with a comma in it.
+r4g3_heading='Post-completion follow-ups (A3/A5, 2026-05-24)'
+set +e
+r4g3_comma_out="$(r4g3_collect "$(jq -n -c --arg h "$r4g3_heading" '{architecture:[$h]}')" 2>&1)"
+r4g3_comma_rc=$?
+set -e
+if [[ "$r4g3_comma_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_comma_out" | jq -r '.architecture.assigned' 2>/dev/null)" == "1" ]] &&
+	[[ "$(printf '%s' "$r4g3_comma_out" | jq -r '.architecture.unreviewed[0]' 2>/dev/null)" == "$r4g3_heading" ]]; then
+	pass "(R4-G3/F10) a comma-bearing plan heading is ONE unit on the file transport"
+else
+	fail "(R4-G3/F10) comma heading: rc=$r4g3_comma_rc out=$r4g3_comma_out"
+fi
+
+# Codex addendum (persist-common.sh:388): a leading `-` is an ARGV concern.
+# On the file transport the value arrived as data, never at an option
+# boundary, and a git path or plan heading may legally start with one.
+set +e
+r4g3_dash_out="$(r4g3_collect "$(jq -n -c '{logic:["-foo","bar"]}')" 2>&1)"
+r4g3_dash_rc=$?
+set -e
+if [[ "$r4g3_dash_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_dash_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]]; then
+	pass "(R4-G3/addendum) a leading-dash unit is accepted on the file transport"
+else
+	fail "(R4-G3/addendum) leading-dash unit: rc=$r4g3_dash_rc out=$r4g3_dash_out"
+fi
+
+# ...and is still REFUSED on argv, where it would be parsed as a flag.
+set +e
+(cd "$r4g3_root" && bash "$SCRIPT" --root "$r4g3_root" --skill deep-review \
+	--run-id r4g3 --expected 'logic:-foo' >/dev/null 2>&1)
+r4g3_dash_argv_rc=$?
+set -e
+if [[ "$r4g3_dash_argv_rc" -eq 2 ]]; then
+	pass "(R4-G3/addendum) a leading-dash unit still exits 2 on argv"
+else
+	fail "(R4-G3/addendum) leading-dash on argv must exit 2, got rc=$r4g3_dash_argv_rc"
+fi
+
+# ...and argv CSV still splits on commas: --expected is that wire's own
+# format and keeps its own semantics.
+set +e
+r4g3_argv_out="$(cd "$r4g3_root" && bash "$SCRIPT" --root "$r4g3_root" \
+	--skill deep-review --run-id r4g3 --expected 'logic:a,b' 2>&1)"
+r4g3_argv_rc=$?
+set -e
+if [[ "$r4g3_argv_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_argv_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]]; then
+	pass "(R4-G3) --expected 'logic:a,b' still splits into 2 units on argv"
+else
+	fail "(R4-G3) argv CSV split regressed: rc=$r4g3_argv_rc out=$r4g3_argv_out"
+fi
+
+# Writer -> disk -> reader round-trip for a comma-bearing unit: the whole
+# point of the parity fix. persist-lens-result.sh records progress on the
+# unit; the collector must match it against the assigned entry byte-for-byte.
+r4g3_pscript="$REPO_ROOT/scripts/persist-lens-result.sh"
+jq -n -c --arg h "$r4g3_heading" '{type:"start",units:[$h]}' >"$r4g3_root/start.json"
+jq -n -c --arg h "$r4g3_heading" '{type:"progress",unit:$h}' >"$r4g3_root/pay.json"
+jq -n -c '{type:"done",status:"completed"}' >"$r4g3_root/done.json"
+set +e
+bash "$r4g3_pscript" --root "$r4g3_root" --skill review-plan --run-id r4g3rt \
+	--lens architecture --attempt 1 --json-file "$r4g3_root/start.json" >/dev/null 2>&1
+r4g3_w1=$?
+bash "$r4g3_pscript" --root "$r4g3_root" --skill review-plan --run-id r4g3rt \
+	--lens architecture --attempt 1 --json-file "$r4g3_root/pay.json" >/dev/null 2>&1
+r4g3_w2=$?
+bash "$r4g3_pscript" --root "$r4g3_root" --skill review-plan --run-id r4g3rt \
+	--lens architecture --attempt 1 --json-file "$r4g3_root/done.json" >/dev/null 2>&1
+r4g3_w3=$?
+jq -n -c --arg h "$r4g3_heading" '{architecture:[$h]}' >"$r4g3_root/rt-units.json"
+r4g3_rt_out="$(cd "$r4g3_root" && bash "$SCRIPT" --root "$r4g3_root" --skill review-plan \
+	--run-id r4g3rt --expected-file "$r4g3_root/rt-units.json" 2>&1)"
+r4g3_rt_rc=$?
+set -e
+if [[ "$r4g3_w1" -eq 0 && "$r4g3_w2" -eq 0 && "$r4g3_w3" -eq 0 && "$r4g3_rt_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g3_rt_out" | jq -r '.architecture.reviewed' 2>/dev/null)" == "1" ]] &&
+	[[ "$(printf '%s' "$r4g3_rt_out" | jq -r '.architecture.status' 2>/dev/null)" == "completed" ]]; then
+	pass "(R4-G3/F3) a comma-bearing unit survives writer -> disk -> reader as ONE unit"
+else
+	fail "(R4-G3/F3) round-trip: w=$r4g3_w1/$r4g3_w2/$r4g3_w3 rc=$r4g3_rt_rc out=$r4g3_rt_out"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R4-G2 — expected.json lives in the per-run lens state dir.
+#
+# The prescribed path is now `persist_lens_state_dir <root> <skill>`/<run_id>/
+# expected.json -- the same directory the attempt files occupy. Attempt
+# discovery matches `<lens>.<attempt>.jsonl` only, so expected.json must NOT
+# be picked up as an attempt file.
+# ---------------------------------------------------------------------------
+
+r4g2_root="$TMPDIR_ROOT/r4g2"
+make_scratch_repo "$r4g2_root"
+r4g2_run="$r4g2_root/.deep-review/lenses/r4g2"
+mkdir -p "$r4g2_run"
+jq -n -c '{logic:["u1","u2"]}' >"$r4g2_run/expected.json"
+write_lens_file "$r4g2_run/logic.1.jsonl" <<'R4G2EOF'
+{"type":"start","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+{"type":"done","status":"completed"}
+R4G2EOF
+
+set +e
+r4g2_out="$(cd "$r4g2_root" && bash "$SCRIPT" --root "$r4g2_root" --skill deep-review \
+	--run-id r4g2 --expected-file "$r4g2_run/expected.json" 2>&1)"
+r4g2_rc=$?
+set -e
+if [[ "$r4g2_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g2_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]] &&
+	[[ "$(printf '%s' "$r4g2_out" | jq -r '.logic.reviewed' 2>/dev/null)" == "1" ]] &&
+	[[ "$(printf '%s' "$r4g2_out" | jq -r 'keys | length' 2>/dev/null)" == "1" ]]; then
+	pass "(R4-G2) expected.json inside the run dir is read, and is not collected as an attempt file"
+else
+	fail "(R4-G2) in-run-dir expected.json: rc=$r4g2_rc out=$r4g2_out"
+fi
+
+# ...and a collect run leaves no `.skein/` state root behind: the retired
+# third root was ungitignored, so it showed up in `git status`.
+if [[ ! -e "$r4g2_root/.skein" ]]; then
+	pass "(R4-G2) no .skein/ state root is created by a collect run"
+else
+	fail "(R4-G2) a collect run created a .skein/ state root"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R4-G4 — the file transport gets the same symlink guard as every other
+# repo-rooted state path (F12). The guard now depends on WHAT the path is (a
+# repo-rooted state path), not on WHICH FLAG it arrived through. An
+# out-of-tree fixture path stays legal, so the whole suite above still runs.
+# ---------------------------------------------------------------------------
+
+r4g4_root="$TMPDIR_ROOT/r4g4"
+make_scratch_repo "$r4g4_root"
+mkdir -p "$r4g4_root/real" "$r4g4_root/.deep-review/lenses/r4g4"
+jq -n -c '{logic:["u1"]}' >"$r4g4_root/real/units.json"
+ln -s "$r4g4_root/real/units.json" "$r4g4_root/linked-units.json"
+
+set +e
+(cd "$r4g4_root" && bash "$SCRIPT" --root "$r4g4_root" --skill deep-review \
+	--run-id r4g4 --expected-file "$r4g4_root/linked-units.json" >/dev/null 2>&1)
+r4g4_link_rc=$?
+set -e
+if [[ "$r4g4_link_rc" -eq 2 ]]; then
+	pass "(R4-G4/F12) a symlinked --expected-file inside the root exits 2"
+else
+	fail "(R4-G4/F12) symlinked --expected-file must exit 2, got rc=$r4g4_link_rc"
+fi
+
+# Ordering: the run dir's own guard must fire BEFORE --expected-file is read,
+# so a symlinked run directory is refused before its contents are trusted.
+r4g4b_root="$TMPDIR_ROOT/r4g4b"
+make_scratch_repo "$r4g4b_root"
+mkdir -p "$r4g4b_root/.deep-review/lenses" "$r4g4b_root/elsewhere"
+ln -s "$r4g4b_root/elsewhere" "$r4g4b_root/.deep-review/lenses/r4g4b"
+jq -n -c '{logic:["u1"]}' >"$r4g4b_root/.deep-review/lenses/r4g4b/expected.json"
+set +e
+r4g4b_err="$(cd "$r4g4b_root" && bash "$SCRIPT" --root "$r4g4b_root" --skill deep-review \
+	--run-id r4g4b --expected-file "$r4g4b_root/.deep-review/lenses/r4g4b/expected.json" 2>&1 >/dev/null)"
+r4g4b_rc=$?
+set -e
+if [[ "$r4g4b_rc" -eq 2 && "$r4g4b_err" == *"symlink"* && "$r4g4b_err" == *"lenses/r4g4b"* ]]; then
+	pass "(R4-G4/F12) a symlinked run dir is refused before --expected-file is read"
+else
+	fail "(R4-G4/F12) symlinked run dir: rc=$r4g4b_rc err='$r4g4b_err'"
+fi
+
+# Control: an out-of-tree --expected-file (the fixture transport this whole
+# suite uses) is untouched by the guard.
+r4g4_ext="$TMPDIR_ROOT/outside-units.json"
+jq -n -c '{logic:["u1"]}' >"$r4g4_ext"
+set +e
+(cd "$r4g4_root" && bash "$SCRIPT" --root "$r4g4_root" --skill deep-review \
+	--run-id r4g4 --expected-file "$r4g4_ext" >/dev/null 2>&1)
+r4g4_ext_rc=$?
+set -e
+if [[ "$r4g4_ext_rc" -eq 0 ]]; then
+	pass "(R4-G4/control) an out-of-tree --expected-file is still accepted"
+else
+	fail "(R4-G4/control) out-of-tree --expected-file broke (rc=$r4g4_ext_rc)"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R4-G10 — coverage accounting survives a respawn.
+#
+# Codex addendum (SKILL.md:189): on respawn the prompt's unit payload narrows
+# to the unreviewed list, but the EXPECTED FILE must keep the full original
+# set. progress records merge across every attempt, and reviewed/unreviewed
+# are computed as (assigned INTERSECT progress) / (assigned MINUS progress) --
+# so a narrowed expected file drops the already-reviewed units out of
+# `assigned` and the run under-reports its own coverage.
+# ---------------------------------------------------------------------------
+
+r4g10_root="$TMPDIR_ROOT/r4g10"
+make_scratch_repo "$r4g10_root"
+r4g10_run="$r4g10_root/.deep-review/lenses/r4g10"
+mkdir -p "$r4g10_run"
+write_lens_file "$r4g10_run/logic.1.jsonl" <<'R4G10A'
+{"type":"start","units":["u1","u2"]}
+{"type":"progress","unit":"u1"}
+R4G10A
+write_lens_file "$r4g10_run/logic.2.jsonl" <<'R4G10B'
+{"type":"start","units":["u2"]}
+{"type":"progress","unit":"u2"}
+{"type":"done","status":"completed"}
+R4G10B
+
+jq -n -c '{logic:["u1","u2"]}' >"$r4g10_run/expected.json"
+set +e
+r4g10_full="$(cd "$r4g10_root" && bash "$SCRIPT" --root "$r4g10_root" --skill deep-review \
+	--run-id r4g10 --expected-file "$r4g10_run/expected.json" --attempts 'logic:2' 2>&1)"
+r4g10_full_rc=$?
+set -e
+if [[ "$r4g10_full_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r4g10_full" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]] &&
+	[[ "$(printf '%s' "$r4g10_full" | jq -r '.logic.reviewed' 2>/dev/null)" == "2" ]]; then
+	pass "(R4-G10) an IMMUTABLE expected file reports full post-respawn coverage (assigned 2, reviewed 2)"
+else
+	fail "(R4-G10) immutable expected file: rc=$r4g10_full_rc out=$r4g10_full"
+fi
+
+# The counter-case the SKILL.md rule exists to prevent: a NARROWED expected
+# file silently loses u1 from coverage accounting. Pinning it here records
+# why the prose rule is load-bearing rather than stylistic.
+jq -n -c '{logic:["u2"]}' >"$r4g10_root/narrowed.json"
+set +e
+r4g10_narrow="$(cd "$r4g10_root" && bash "$SCRIPT" --root "$r4g10_root" --skill deep-review \
+	--run-id r4g10 --expected-file "$r4g10_root/narrowed.json" --attempts 'logic:2' 2>&1)"
+set -e
+if [[ "$(printf '%s' "$r4g10_narrow" | jq -r '.logic.assigned' 2>/dev/null)" == "1" ]]; then
+	pass "(R4-G10/rationale) a narrowed expected file under-reports assigned (1, not 2) -- why the file is immutable"
+else
+	fail "(R4-G10/rationale) expected a narrowed file to report assigned:1, got $r4g10_narrow"
 fi
 
 finish

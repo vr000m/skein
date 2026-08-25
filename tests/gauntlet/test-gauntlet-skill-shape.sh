@@ -753,6 +753,41 @@ g11_check_block() {
 g11_check_block "$SKILL_MD" "skein/review-gauntlet"
 g11_check_block "$CODEX_SKILL_MD" "skein-codex/review-gauntlet"
 
+# ---------------------------------------------------------------------------
+# G12 (r4 F6) — the ledger's symlink guard is documented where the ledger is
+# initialised.
+#
+# `ledger_assert_no_symlink` refuses (never redirects) a ledger path any of
+# whose components inside the worktree is a symlink. The threat is a TRACKED
+# symlink that materialises on checkout: a malicious clone points
+# `.gauntlet/` outside the repo and every ledger write lands on an arbitrary
+# user-writable file. An operator who does not know the guard exists reads its
+# refusal as a bug and works around it -- which is exactly the wrong response,
+# so the behaviour has to be stated, not inferred from a diagnostic.
+# ---------------------------------------------------------------------------
+
+g12_check_ledger_guard() {
+	local file="$1" label="$2"
+	if grep -qF 'ledger_assert_no_symlink' "$file"; then
+		pass "G12(a) ($label): the ledger symlink guard is named"
+	else
+		fail "G12(a) ($label): the ledger-init prose never names ledger_assert_no_symlink"
+	fi
+	if grep -Eq 'tracked symlink' "$file"; then
+		pass "G12(b) ($label): the tracked-symlink-on-checkout threat is stated"
+	else
+		fail "G12(b) ($label): the tracked-symlink-on-checkout threat is not stated"
+	fi
+	if grep -Eq 'refuses[^.]*never redirect' "$file"; then
+		pass "G12(c) ($label): the refuse-never-redirect behaviour is stated"
+	else
+		fail "G12(c) ($label): the refuse-never-redirect behaviour is not stated"
+	fi
+}
+
+g12_check_ledger_guard "$SKILL_MD" "skein/review-gauntlet"
+g12_check_ledger_guard "$CODEX_SKILL_MD" "skein-codex/review-gauntlet"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

@@ -422,6 +422,69 @@ else
 	echo "SKIP: G3 golden corpus (HEAD:scripts/finding-key.sh unavailable)"
 fi
 
+# ---------------------------------------------------------------------------
+# G4 (r4 F15) — an ALL-EMPTY finding key never reaches the ledger.
+#
+# FK_TYPE_GATE rejects a present-but-non-string identity field, but an ABSENT
+# or null one falls through `// ""`. So `{}` and `{"severity":"Minor"}` -- two
+# findings with nothing in common -- hashed to the SAME key: exactly the
+# shared-key false-`regression` the identity is biased against, and the case
+# the header's "a truncated or all-empty key can never reach the ledger"
+# claimed was already closed.
+#
+# The filter now emits nothing when file, category and summary are all empty
+# after normalisation, and the script takes its existing malformed-line path:
+# warn on stderr, emit no key. A PARTIALLY empty finding still hashes and
+# stays injective via the length prefixes, so well-formed input is untouched.
+# ---------------------------------------------------------------------------
+
+g4_in="$WORKDIR/g4-allempty.jsonl"
+{
+	printf '%s\n' '{}'
+	printf '%s\n' '{"severity":"Minor"}'
+	printf '%s\n' '{"file":"","category":"","summary":"   "}'
+} >"$g4_in"
+
+set +e
+g4_out="$(bash "$FINDING_KEY_SCRIPT" "$g4_in" 2>"$WORKDIR/g4.err")"
+g4_rc=$?
+set -e
+g4_keys="$(printf '%s' "$g4_out" | grep -c . || true)"
+g4_warns="$(grep -c . "$WORKDIR/g4.err" || true)"
+
+if [[ "$g4_rc" -eq 0 && "$g4_keys" -eq 0 && "$g4_warns" -ge 3 ]]; then
+	pass "G4: three all-empty findings emit NO key and warn on stderr (rc=0)"
+else
+	fail "G4: rc=$g4_rc keys=$g4_keys warns=$g4_warns out='$g4_out'"
+fi
+
+# Control 1: a well-formed finding's key is unchanged by the guard.
+g4_wf="$WORKDIR/g4-wellformed.jsonl"
+printf '%s\n' '{"file":"a.sh","category":"logic","summary":"boom"}' >"$g4_wf"
+g4_wf_key="$(bash "$FINDING_KEY_SCRIPT" "$g4_wf")"
+if [[ -n "$g4_wf_key" && "$g4_wf_key" =~ ^[0-9a-f]{40}$ ]]; then
+	pass "G4(control): a well-formed finding still hashes to a key"
+else
+	fail "G4(control): well-formed key='$g4_wf_key'"
+fi
+
+# Control 2: PARTIALLY empty findings stay DISTINCT -- the length prefixes,
+# not a presence check, are what make the identity injective.
+g4_part="$WORKDIR/g4-partial.jsonl"
+{
+	printf '%s\n' '{"file":"a.sh"}'
+	printf '%s\n' '{"category":"a.sh"}'
+	printf '%s\n' '{"summary":"a.sh"}'
+} >"$g4_part"
+g4_part_keys="$(bash "$FINDING_KEY_SCRIPT" "$g4_part" 2>/dev/null)"
+g4_part_n="$(printf '%s\n' "$g4_part_keys" | grep -c . || true)"
+g4_part_u="$(printf '%s\n' "$g4_part_keys" | sort -u | grep -c . || true)"
+if [[ "$g4_part_n" -eq 3 && "$g4_part_u" -eq 3 ]]; then
+	pass "G4(control): three partially-empty findings still hash to three DISTINCT keys"
+else
+	fail "G4(control): partial keys n=$g4_part_n unique=$g4_part_u"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

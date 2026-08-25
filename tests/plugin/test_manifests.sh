@@ -223,4 +223,42 @@ if [[ -n "$unregistered" ]]; then
 fi
 echo "ok: every test-running justfile recipe is registered in AGENTS.md"
 
+# --- 9. Each gauntlet-tests member is glossed, not just named (r4 F13) -----
+# AGENTS.md's Commands block is the runnable contract (see §8). A gloss that
+# reads "... + gate-timeout + lens-budget + regression-stop + finding-key +
+# status-row" registers the recipe but tells a reader nothing about what those
+# five suites cover, so the contract names them without explaining them. Each
+# must carry a short parenthetical gloss.
+agents_gauntlet_line="$(grep -E '^just gauntlet-tests' AGENTS.md || true)"
+if [[ -z "$agents_gauntlet_line" ]]; then
+	fail "AGENTS.md: no 'just gauntlet-tests' line in the Commands block"
+fi
+for recipe_name in gate-timeout lens-budget regression-stop finding-key status-row; do
+	if ! grep -qE "${recipe_name} \(" <<<"$agents_gauntlet_line"; then
+		fail "AGENTS.md: gauntlet-tests member '$recipe_name' is named without a parenthetical gloss"
+	fi
+done
+echo "ok: every gauntlet-tests member in AGENTS.md carries a gloss"
+
+# --- 10. CHANGELOG names the units-file transport, not the argv flag (F4) ---
+# The 0.6.0 entry still described the assigned-units list as the
+# "--expected <lens:units,...>" flag. That flag is shell-substituted before
+# the collector is entered, which is precisely why the documented transport
+# became a units FILE. A changelog that names the retired form sends a reader
+# to the transport the fix removed.
+changelog_lens_entry="$(grep -F 'Disk-first streamed lens results' CHANGELOG.md || true)"
+if [[ -z "$changelog_lens_entry" ]]; then
+	fail "CHANGELOG.md: the disk-first lens-results entry is missing"
+fi
+if grep -qE -- '--expected <lens' <<<"$changelog_lens_entry"; then
+	fail "CHANGELOG.md: the lens-results entry still names the retired '--expected <lens:units,...>' transport"
+fi
+if ! grep -qF -- '--expected-file' <<<"$changelog_lens_entry"; then
+	fail "CHANGELOG.md: the lens-results entry does not name the --expected-file units-file transport"
+fi
+if ! grep -qE 'lenses/<run-?id>/expected\.json' <<<"$changelog_lens_entry"; then
+	fail "CHANGELOG.md: the lens-results entry does not give the units-file path"
+fi
+echo "ok: CHANGELOG names the units-file transport and its path"
+
 echo "test_manifests.sh: all assertions passed"
