@@ -866,6 +866,142 @@ else
 	fail "R9-G6a:$r9g6_bad"
 fi
 
+# ---------------------------------------------------------------------------
+# R10-A1a (round 10, F1/F2/F5) — the run-gate recipe must COMPOSE, not merely
+# contain the four subcommands.
+#
+# R9-G6a asserts MEMBERSHIP: each subcommand appears as a runnable, anchored
+# invocation. It says nothing about whether the blocks join, and three defects
+# landed in that gap. `normalize` was handed `$gate_out_dir/<gate>-raw.json`,
+# a name `gate_run_bounded` never writes (it writes `<name>.envelope.json` and
+# `<name>.tool-out.json`, both declared 100 lines earlier in the paths block);
+# `normalize` and `reconcile` emit to STDOUT and neither block redirected, so
+# `findings.jsonl` and `reconciled.json` had no producer anywhere in the file;
+# and the Codex mirror's `route` block lacked `> route_output.json` while the
+# line after it read `route_output.json`.
+#
+# The invariant this asserts: within the recipe section, every file path a
+# shown command CONSUMES is either a declared gate envelope or a path an
+# earlier shown command PRODUCES. Comparing basenames across the produce/
+# consume boundary is what makes this a composition test rather than a second
+# membership test.
+# ---------------------------------------------------------------------------
+
+# Join backslash line-continuations so a multi-line invocation is one logical
+# line — the recipe wraps `normalize` across three source lines.
+r10a1_logical() {
+	sed -e ':a' -e '/\\$/{N; s/\\\n[[:space:]]*/ /; ta' -e '}' "$1"
+}
+# The redirect target of a logical line, unquoted.
+r10a1_target() {
+	printf '%s\n' "$1" | sed -E 's/.*>[[:space:]]*//; s/[[:space:]]*$//; s/^"//; s/"$//'
+}
+# The last token BEFORE the redirect (the positional), unquoted.
+r10a1_positional() {
+	printf '%s\n' "$1" | sed -E 's/[[:space:]]*>.*$//' | awk '{print $NF}' | sed -E 's/^"//; s/"$//'
+}
+
+r10a1_bad=""
+for r10a1_md in "${r9g6_mirrors[@]}"; do
+	[[ -f "$r10a1_md" ]] || continue
+	r10a1_name="$(basename "$(dirname "$(dirname "$(dirname "$r10a1_md")")")")"
+
+	# The negative control for F1: `gate_run_bounded` writes no *raw.json*, so
+	# the token must not appear anywhere in either mirror -- not in a command
+	# and not in prose that would teach it back.
+	if grep -q 'raw\.json' "$r10a1_md"; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: the token 'raw.json' appears, but gate_run_bounded writes only <name>.envelope.json / <name>.tool-out.json]"
+	fi
+
+	r10a1_section="$(r10a1_logical "$r10a1_md" |
+		awk '/is the gate-output dispatcher/{f=1} f{print} f && /run-gate\.sh status-row/{exit}')"
+	if [[ -z "$r10a1_section" ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: no run-gate recipe section found]"
+		continue
+	fi
+
+	r10a1_norm="$(printf '%s\n' "$r10a1_section" | grep -E 'run-gate\.sh normalize ' | head -1 || true)"
+	r10a1_rec="$(printf '%s\n' "$r10a1_section" | grep -E 'run-gate\.sh reconcile ' | head -1 || true)"
+	r10a1_route="$(printf '%s\n' "$r10a1_section" | grep -E 'run-gate\.sh route ' | head -1 || true)"
+	r10a1_jq="$(printf '%s\n' "$r10a1_section" | grep -F "jq -c '.trivial_envelope'" | head -1 || true)"
+
+	# normalize: reads a declared ENVELOPE, writes its own file.
+	if [[ "$r10a1_norm" != *".envelope.json"* ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: normalize's positional is not a *.envelope.json: '$r10a1_norm']"
+	fi
+	if [[ "$r10a1_norm" != *">"* ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: normalize emits to stdout but its invocation has no '>' redirect -- nothing produces the pooled findings]"
+	fi
+
+	# reconcile's OUTPUT must be route's INPUT.
+	if [[ "$r10a1_rec" != *">"* ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: reconcile emits to stdout but its invocation has no '>' redirect -- reconciled.json has no producer]"
+	else
+		r10a1_rec_out="$(r10a1_target "$r10a1_rec")"
+		r10a1_route_in="$(r10a1_positional "$r10a1_route")"
+		if [[ "${r10a1_rec_out##*/}" != "${r10a1_route_in##*/}" ]]; then
+			r10a1_bad="$r10a1_bad [$r10a1_name: reconcile writes '${r10a1_rec_out##*/}' but route reads '${r10a1_route_in##*/}']"
+		fi
+	fi
+
+	# route's OUTPUT must be what the trivial-envelope extraction reads.
+	if [[ "$r10a1_route" != *">"* ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: route emits to stdout but its invocation has no '>' redirect -- route_output.json has no producer]"
+	elif [[ -z "$r10a1_jq" ]]; then
+		r10a1_bad="$r10a1_bad [$r10a1_name: no \"jq -c '.trivial_envelope'\" extraction in the recipe section]"
+	else
+		r10a1_route_out="$(r10a1_target "$r10a1_route")"
+		r10a1_jq_in="$(printf '%s\n' "$r10a1_jq" | sed -E "s/.*jq -c '\.trivial_envelope'[[:space:]]*//" | awk '{print $1}' | sed -E 's/^"//; s/"$//')"
+		if [[ "${r10a1_route_out##*/}" != "${r10a1_jq_in##*/}" ]]; then
+			r10a1_bad="$r10a1_bad [$r10a1_name: route writes '${r10a1_route_out##*/}' but the trivial-envelope extraction reads '${r10a1_jq_in##*/}']"
+		fi
+	fi
+done
+
+if [[ -z "$r10a1_bad" ]]; then
+	pass "R10-A1a: in both mirrors the run-gate recipe composes -- normalize reads a declared envelope and redirects, reconcile's output is route's input, and route's output is what the trivial-envelope extraction reads"
+else
+	fail "R10-A1a:$r10a1_bad"
+fi
+
+# ---------------------------------------------------------------------------
+# R10-A1b (round 10, F3/F4) — the bullets must be in OPERATIVE order and both
+# mirrors must carry the sole-route normative sentence.
+#
+# R9-G6a enforces "never through a bundled pipeline script a subcommand
+# already wraps" against BOTH mirrors, but the sentence that STATES the rule
+# landed only in the Claude one — a rule enforced against a mirror that does
+# not state it. The Codex mirror also presented `reconcile` before `normalize`
+# with a parenthetical conceding that the operative order was the other way
+# round, so the reading order contradicted the running order.
+# ---------------------------------------------------------------------------
+r10a1b_bad=""
+for r10a1b_md in "${r9g6_mirrors[@]}"; do
+	[[ -f "$r10a1b_md" ]] || continue
+	r10a1b_name="$(basename "$(dirname "$(dirname "$(dirname "$r10a1b_md")")")")"
+
+	if ! grep -qE 'Every gate-output step goes through .run-gate\.sh.' "$r10a1b_md"; then
+		r10a1b_bad="$r10a1b_bad [$r10a1b_name: missing the sole-route normative sentence R9-G6a enforces against it]"
+	fi
+
+	r10a1b_lines=()
+	for r10a1b_sub in normalize reconcile route; do
+		r10a1b_n="$(grep -nE '(\$\{CLAUDE_PLUGIN_ROOT\}/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r10a1b_sub"'([[:space:]]|$)' "$r10a1b_md" | head -1 | cut -d: -f1 || true)"
+		r10a1b_lines+=("$r10a1b_n")
+	done
+	if [[ -z "${r10a1b_lines[0]}" || -z "${r10a1b_lines[1]}" || -z "${r10a1b_lines[2]}" ]]; then
+		r10a1b_bad="$r10a1b_bad [$r10a1b_name: could not locate all three runnable invocations (got '${r10a1b_lines[*]}')]"
+	elif ! ((r10a1b_lines[0] < r10a1b_lines[1] && r10a1b_lines[1] < r10a1b_lines[2])); then
+		r10a1b_bad="$r10a1b_bad [$r10a1b_name: bullets are not in operative order normalize(${r10a1b_lines[0]}) < reconcile(${r10a1b_lines[1]}) < route(${r10a1b_lines[2]})]"
+	fi
+done
+
+if [[ -z "$r10a1b_bad" ]]; then
+	pass "R10-A1b: both mirrors present normalize -> reconcile -> route in operative order and carry the sole-route normative sentence"
+else
+	fail "R10-A1b:$r10a1b_bad"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

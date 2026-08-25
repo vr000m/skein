@@ -167,6 +167,62 @@ else
 	fail "R9-G2c: carve-out rc=$r9g2c_rc out='$r9g2c_out'"
 fi
 
+# ---------------------------------------------------------------------------
+# R10-B1a — the comment exemption must be a predicate over the LINE'S OWN
+# TEXT, never over `grep -rn`'s `path:line:` prefix (round 10, F7). The old
+# exemption regex `^[^:]*:[0-9]+:[[:space:]]*#` was applied to a string whose
+# first field is the FILENAME, so a source file named `a:9:#.sh` satisfied the
+# exemption in its own PATH and every offending line in it was dropped. The
+# lint now greps each file individually (`grep -n` emits `lineno:content`, no
+# path) and re-attaches the path with `printf` purely for the report.
+r10b1a_root="$(lint_root r10b1a)"
+r10b1a_path="$TMP_PREFIX""/predictable/x"
+printf '%s\n' '#!/usr/bin/env bash' "p=\"$r10b1a_path\"" >"$r10b1a_root/tests/a:9:#.sh"
+r10b1a_res="$(run_lint "$r10b1a_root")"
+r10b1a_rc="$(printf '%s' "$r10b1a_res" | head -1)"
+r10b1a_out="$(printf '%s' "$r10b1a_res" | tail -n +2)"
+
+if [[ "$r10b1a_rc" -eq 1 && "$r10b1a_out" == *"$r10b1a_path"* ]]; then
+	pass "R10-B1a: a filename containing ':<digits>:#' cannot exempt its own lines"
+else
+	fail "R10-B1a: rc=$r10b1a_rc out='$r10b1a_out'"
+fi
+
+# ---------------------------------------------------------------------------
+# R10-B1b — a QUOTED first component must be in the class (round 10, F6). The
+# round-9 class `[A-Za-z0-9._$-]` answered "what can start a filename or an
+# expansion" and never asked what appears in a shell SOURCE line, where the
+# first character after `/tmp/` is very often a quote (`/tmp/"$v"/f` — the
+# spelling shellcheck pushes authors toward). The second half of this case is
+# the anti-regression control: widening the class must not have swept in bare
+# `/tmp` as a cwd or whole-line comment prose.
+r10b1b_root="$(lint_root r10b1b)"
+r10b1b_dq="$TMP_PREFIX""/\"\$v\"/f"
+r10b1b_sq="$TMP_PREFIX""/'lit'"
+{
+	printf '%s\n' '#!/usr/bin/env bash'
+	printf 'w=%s\n' "$r10b1b_dq"
+	printf 'x=%s\n' "$r10b1b_sq"
+} >"$r10b1b_root/tests/quoted.sh"
+{
+	printf '%s\n' '#!/usr/bin/env bash'
+	printf '%s\n' 'cd /tmp || exit 1'
+	printf '# prose naming %s\n' "$r10b1b_dq"
+} >"$r10b1b_root/tests/exempt.sh"
+r10b1b_res="$(run_lint "$r10b1b_root")"
+r10b1b_rc="$(printf '%s' "$r10b1b_res" | head -1)"
+r10b1b_out="$(printf '%s' "$r10b1b_res" | tail -n +2)"
+r10b1b_exempt_hits="$(printf '%s\n' "$r10b1b_out" | grep -c 'exempt\.sh' || true)"
+
+if [[ "$r10b1b_rc" -eq 1 &&
+	"$r10b1b_out" == *"$r10b1b_dq"* &&
+	"$r10b1b_out" == *"$r10b1b_sq"* &&
+	"$r10b1b_exempt_hits" -eq 0 ]]; then
+	pass "R10-B1b: quoted first components are refused; bare '/tmp' cwd and comment prose stay exempt"
+else
+	fail "R10-B1b: rc=$r10b1b_rc exempt_hits=$r10b1b_exempt_hits out='$r10b1b_out'"
+fi
+
 # --- Summary -----------------------------------------------------------------
 echo
 echo "test-lint-temp-paths.sh: $PASS_COUNT passed, $FAIL_COUNT failed"

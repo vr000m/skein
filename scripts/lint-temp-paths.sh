@@ -18,10 +18,12 @@
 # all defend against; a script that opts out of `mktemp` opts out of all of
 # it.
 #
-# THE CLASS IS THE UNION OF BOTH SHAPES (round 9, F4): a child of `/tmp` or
-# `/var/tmp` whose first component begins with a filename character OR a `$`
-# — the static (`/tmp/name`), the PID/RANDOM (`/tmp/$$`, `/var/tmp/$$-foo`)
-# and the expansion (`/tmp/$RANDOM/x`, `/tmp/${v}.json`) spellings alike.
+# THE CLASS IS THE UNION OF BOTH SHAPES (round 9, F4; widened round 10, F6): a
+# child of `/tmp` or `/var/tmp` whose first component begins with a filename
+# character, a `$`, or a QUOTE — the static (`/tmp/name`), the PID/RANDOM
+# (`/tmp/$$`, `/var/tmp/$$-foo`), the expansion (`/tmp/$RANDOM/x`,
+# `/tmp/${v}.json`) and the quoted (`/tmp/"$v"/f`, `/tmp/'lit'`) spellings
+# alike.
 #
 # BARE `/tmp` (or `/var/tmp`) WITH NO CHILD COMPONENT STAYS LEGAL: it names no
 # file, and using it as a CWD is required by the cwd-invariance matrix in
@@ -37,22 +39,33 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# The class is the UNION of the static and the expansion shapes (round 9, F4):
-# `$` belongs in it because `/tmp/$$` and `/tmp/$RANDOM/x` are the ORIGINAL
-# threat this lint was written for, and the round-8 widening REPLACED that
-# alternative instead of ORing it — so the three shapes the header still
-# claims to cover all passed clean.
+# THE PREDICATE READS FILE CONTENT, NEVER `grep -rn`'s PREFIX (round 10,
+# F6/F7). Rounds 8 and 9 both tuned a regex applied to `path:line:content`,
+# and both left a hole in the same place: the class did not cover a QUOTED
+# first component (`/tmp/"$v"/f` — the spelling shellcheck pushes authors
+# toward), and the comment exemption matched inside the FILENAME, so a file
+# named `a:9:#.sh` exempted its own offending lines. The lint now greps each
+# file individually: `grep -n` then emits `lineno:content` with no path, the
+# comment exemption is anchored on `^[0-9]+:` and cannot see a filename, and
+# the path is re-attached with `printf` purely for the report. The class is
+# the union of filename characters, `$`, and the two quote characters. Bare
+# `/tmp` with no child component stays legal (see above).
 #
-# The comment exemption is a LINE predicate, not a prefix class (round 9, F5).
-# `^[^#]*` exempted any line carrying a `#` anywhere to the left of the path —
-# inside a string, in a `jq` filter, in a `${v#pfx}` expansion, or as a
-# trailing comment — so appending ` # ok` to an offending line silently
-# disabled the lint for it. Only a line whose first non-blank character is `#`
-# is prose; the second grep drops exactly those, matching on the
-# `path:line:` prefix `grep -rn` emits.
-hits="$(grep -rn --include='*.sh' -E '(/tmp|/var/tmp)/[A-Za-z0-9._$-]' \
-	scripts tests plugins |
-	grep -vE '^[^:]*:[0-9]+:[[:space:]]*#' || true)"
+# `|| true` on the inner pipeline is MANDATORY: under `set -euo pipefail` a
+# file with no match makes `grep` exit 1, which would abort the whole lint
+# silently with no output. `-- "$f"` keeps a filename beginning with `-`
+# from being read as a grep option; `printf` (not `sed`) re-attaches the path
+# so a filename containing `|`, `&` or a backslash cannot alter the
+# rendering; `LC_ALL=C sort -z` makes the report order deterministic.
+hits="$(
+	find scripts tests plugins -type f -name '*.sh' -print0 |
+		LC_ALL=C sort -z |
+		while IFS= read -r -d '' f; do
+			grep -nE "(/tmp|/var/tmp)/[A-Za-z0-9._\$'\"-]" -- "$f" |
+				grep -vE '^[0-9]+:[[:space:]]*#' |
+				while IFS= read -r line; do printf '%s:%s\n' "$f" "$line"; done || true
+		done
+)"
 
 if [[ -n "$hits" ]]; then
 	echo "lint-temp-paths: hard-coded temp path(s) below /tmp found -- use mktemp:" >&2

@@ -1499,4 +1499,49 @@ else
 	fail "(R9-G5b) writer='$r9g5b_written' helper='$r9g5b_expected'"
 fi
 
+# ---------------------------------------------------------------------------
+# (R10-E1a) F10 -- `jq -e .` reports the TRUTHINESS OF THE RESULT, not parse
+# success: it exits 1 on the valid documents `false` and `null`, so the shape
+# helper's first gate misdiagnosed them as "is not valid JSON" and they never
+# reached the type gate that would have named the real problem. The verdict
+# (reject, exit 2) was always right; only the reason was wrong. The gate now
+# uses `jq empty`, which is non-zero iff parsing failed. `false` and `null`
+# are the negative control -- they carry the wrong message before this fix.
+# ---------------------------------------------------------------------------
+r10e1a_root="$TMPDIR_ROOT/r10e1a"
+mkdir -p "$r10e1a_root"
+
+# <input> <expected substring in stderr>
+r10e1a_cases=(
+	'false|must be a JSON object'
+	'null|must be a JSON object'
+	'[]|must be a JSON object'
+	'"x"|must be a JSON object'
+	'{"a":1}{"b":2}|must be exactly one JSON document'
+	'not json|is not valid JSON'
+)
+
+r10e1a_bad=""
+for r10e1a_case in "${r10e1a_cases[@]}"; do
+	r10e1a_input="${r10e1a_case%%|*}"
+	r10e1a_want="${r10e1a_case##*|}"
+	set +e
+	r10e1a_err="$(printf '%s' "$r10e1a_input" |
+		bash "$SCRIPT" --root "$r10e1a_root" --skill deep-review --run-id run-r10e1a \
+			--lens logic --attempt 1 --json-stdin 2>&1 >/dev/null)"
+	r10e1a_rc=$?
+	set -e
+	if [[ "$r10e1a_rc" -ne 2 ]]; then
+		r10e1a_bad="$r10e1a_bad [$r10e1a_input: rc=$r10e1a_rc]"
+	elif [[ "$r10e1a_err" != *"$r10e1a_want"* ]]; then
+		r10e1a_bad="$r10e1a_bad [$r10e1a_input: want '$r10e1a_want' got '$r10e1a_err']"
+	fi
+done
+
+if [[ -z "$r10e1a_bad" ]] && no_jsonl_anywhere "$r10e1a_root"; then
+	pass "(R10-E1a) every parseable non-object is rejected as 'must be a JSON object' -- only unparseable input is 'is not valid JSON'"
+else
+	fail "(R10-E1a)$r10e1a_bad"
+fi
+
 finish

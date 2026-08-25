@@ -2015,6 +2015,125 @@ else
 	fail "R7-G2a: relation broken:$r7g2_violations dotdot_divergence=$r7g2_dotdot_divergence outoftree_divergence=$r7g2_outoftree_divergence$r7g2_table"
 fi
 
+# ---------------------------------------------------------------------------
+# R10-D1a — SPELLING-INVARIANCE, JOINTLY (round 10, F9). The two containment
+# guards each carry their own hand-copied slash normalisation (collapse `//`
+# runs, drop trailing `/`). R9-G1b/R9-G1c assert each guard against its own
+# case list and R7-G2a asserts a refusal-SUBSET relation, so nothing fails
+# when ONE normaliser is edited and the other is not — the drift this test
+# closes.
+#
+# A SHARED HELPER IS DELIBERATELY NOT THE FIX. state-path-guard.sh is an
+# AUTHORED lib; scripts/lib/auto-fix-common.sh is a CANONICAL BUNDLED file, so
+# sourcing it here would invert the dependency direction the two trees are
+# built on and break gate-bounded.sh's stated single-sibling contract (it
+# sources exactly ONE sibling, resolved through its own directory, precisely
+# to keep a harness-divergent plugin-root anchor off this path). Four lines of
+# lexical string handling is not worth that boundary; the divergence risk is
+# closed here instead.
+#
+# The claim is about NORMALISATION, not policy. The two guards legitimately
+# differ in policy (absolutisation, `..` rejection, root bound —
+# state-path-guard.sh:42-72, reason 3), so the corpus is restricted to
+# relative, `..`-free, in-root paths where the documented policies coincide.
+# That restriction is what makes the partition claim about spelling alone.
+r10d1a_root="$WORKDIR/r10d1a"
+mkdir -p "$r10d1a_root/repo/ok/dir" "$r10d1a_root/outside/sub"
+git -C "$r10d1a_root/repo" init -q >/dev/null 2>&1 || git -C "$r10d1a_root/repo" init >/dev/null 2>&1
+: >"$r10d1a_root/repo/ok/dir/x.json"
+ln -s "$r10d1a_root/outside/sub" "$r10d1a_root/repo/ok/leaflink"
+ln -s "$r10d1a_root/outside" "$r10d1a_root/repo/parentlink"
+
+# <label>|<dir-part>|<leaf-part> — spellings are generated from the pair.
+# Verdict helpers: the guard call must be the subshell's LAST command so
+# `set -e` cannot abort before the status is read — `echo $?` sits OUTSIDE the
+# subshell, the same shape R7-G2a uses. Each echoes `<rc>|<stderr>`: the rc is
+# the verdict, and the DIAGNOSTIC is what actually pins the normalisation,
+# because it names the offending component and therefore carries the spelling
+# the guard reasoned about. Verdicts alone are too coarse — with a trailing
+# slash a leaf symlink is simply caught one step later as a symlinked PARENT,
+# so refuse/refuse hides the drift while the message does not.
+r10d1a_gauntlet() {
+	local err rc
+	err="$(
+		(
+			cd "$r10d1a_root/repo" || exit 9
+			# shellcheck source=/dev/null
+			. "$SKILL_LIB/state-path-guard.sh"
+			gauntlet_assert_no_symlink "$1" r10d1a 2>&1 >/dev/null
+		)
+	)"
+	rc=$?
+	printf '%s|%s\n' "$rc" "$err"
+}
+r10d1a_af() {
+	local err rc
+	err="$(
+		(
+			cd "$r10d1a_root/repo" || exit 9
+			# shellcheck source=/dev/null
+			. "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
+			af_assert_no_symlink "$1" "$PWD" 2>&1 >/dev/null
+		)
+	)"
+	rc=$?
+	printf '%s|%s\n' "$rc" "$err"
+}
+
+r10d1a_bases=(
+	"real file|ok/dir|x.json"
+	"real dir|ok|dir"
+	"leaf symlink|ok|leaflink"
+	"parent symlink|parentlink|sub"
+)
+r10d1a_bad=""
+r10d1a_table=""
+for r10d1a_base in "${r10d1a_bases[@]}"; do
+	r10d1a_label="${r10d1a_base%%|*}"
+	r10d1a_rest="${r10d1a_base#*|}"
+	r10d1a_d="${r10d1a_rest%%|*}"
+	r10d1a_l="${r10d1a_rest##*|}"
+	r10d1a_spellings=(
+		"$r10d1a_d/$r10d1a_l"
+		"$r10d1a_d//$r10d1a_l"
+		"$r10d1a_d///$r10d1a_l"
+		"$r10d1a_d/$r10d1a_l/"
+		"$r10d1a_d//$r10d1a_l/"
+	)
+	r10d1a_g_ref=""
+	r10d1a_a_ref=""
+	for r10d1a_sp in "${r10d1a_spellings[@]}"; do
+		r10d1a_g="$(r10d1a_gauntlet "$r10d1a_sp")"
+		r10d1a_a="$(r10d1a_af "$r10d1a_sp")"
+		# Compare VERDICTS (accept/refuse), not raw codes, ACROSS the guards:
+		# the two return different non-zero codes by design (1 vs 6) and word
+		# their diagnostics differently. WITHIN a guard, compare the whole
+		# `<rc>|<stderr>` response.
+		r10d1a_gv="$([[ "${r10d1a_g%%|*}" -eq 0 ]] && echo accept || echo refuse)"
+		r10d1a_av="$([[ "${r10d1a_a%%|*}" -eq 0 ]] && echo accept || echo refuse)"
+		if [[ -z "$r10d1a_g_ref" ]]; then
+			r10d1a_g_ref="$r10d1a_g"
+			r10d1a_a_ref="$r10d1a_a"
+			r10d1a_table="$r10d1a_table
+  [$r10d1a_label] gauntlet=$r10d1a_gv af=$r10d1a_av"
+		else
+			[[ "$r10d1a_g" == "$r10d1a_g_ref" ]] ||
+				r10d1a_bad="$r10d1a_bad [$r10d1a_label: gauntlet '${r10d1a_spellings[0]}' -> '$r10d1a_g_ref' but '$r10d1a_sp' -> '$r10d1a_g']"
+			[[ "$r10d1a_a" == "$r10d1a_a_ref" ]] ||
+				r10d1a_bad="$r10d1a_bad [$r10d1a_label: af '${r10d1a_spellings[0]}' -> '$r10d1a_a_ref' but '$r10d1a_sp' -> '$r10d1a_a']"
+		fi
+		# Same partition: the two guards agree on every member of the class.
+		[[ "$r10d1a_gv" == "$r10d1a_av" ]] ||
+			r10d1a_bad="$r10d1a_bad [$r10d1a_label: '$r10d1a_sp' gauntlet=$r10d1a_gv af=$r10d1a_av]"
+	done
+done
+
+if [[ -z "$r10d1a_bad" ]]; then
+	pass "R10-D1a: both containment guards are spelling-invariant and induce the SAME partition on relative, '..'-free, in-root paths:$r10d1a_table"
+else
+	fail "R10-D1a:$r10d1a_bad$r10d1a_table"
+fi
+
 # R7-G2b — the LAYERING half of the same rule: the authored guard must not
 # source a GENERATED file, and review-gauntlet must not acquire
 # lib/persist-common.sh as a bundle extra just to reuse a predicate.

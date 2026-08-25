@@ -199,10 +199,20 @@ persist_require_value() {
 # reflects only the last value) and then silently flow through as a
 # concatenated multi-object blob. Reject anything but exactly one top-level
 # document up front, then confirm it's an object.
+#
+# `jq empty` rather than `jq -e .` (round 10, F10): `-e` reports the
+# TRUTHINESS OF THE RESULT, not parse success, so it exits 1 on the valid
+# documents `false` and `null` — sending an operator to hunt a syntax error in
+# syntactically perfect input. `jq empty` is non-zero iff parsing failed,
+# which is the only question this gate asks; the type gate below is what
+# rejects a non-object, and with the right message. The multi-document
+# reasoning above is unchanged: `jq empty` likewise applies to each top-level
+# value independently, which is why the `jq -s 'length'` count gate still
+# stands between it and the type gate.
 persist_validate_json_shape() {
 	local input="$1" label="$2" noun="$3" object_suffix="${4:-}"
 
-	if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+	if ! printf '%s' "$input" | jq empty >/dev/null 2>&1; then
 		echo "$label: $noun is not valid JSON" >&2
 		return 2
 	fi

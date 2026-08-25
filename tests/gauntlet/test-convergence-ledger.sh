@@ -900,7 +900,7 @@ if [[ ! -f "$g8_ledger" ]]; then
 	fail "G8(a): no ledger written at $g8_ledger (tokens: '$g8_tok_init'/'$g8_tok_append')"
 elif [[ -n "$(find "$g8_dir" -name '.ledger.*' -print -quit)" ]]; then
 	fail "G8(a): temp-file residue left beside the ledger: $(find "$g8_dir" -name '.ledger.*')"
-elif ! jq -e . "$g8_ledger" >/dev/null 2>&1; then
+elif ! jq empty "$g8_ledger" >/dev/null 2>&1; then
 	fail "G8(a): ledger is not valid JSON after two writes"
 else
 	pass "G8(a): both write paths leave a valid ledger and no .ledger.* residue"

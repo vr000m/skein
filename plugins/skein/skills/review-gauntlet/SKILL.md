@@ -194,17 +194,23 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 `review-gauntlet` has its own bundled copies of the shared pipeline, placed by `scripts/bundle-appliers.sh` (driven by `BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh`) — byte-identical to the repo canonical, enforced by `tests/parity/test-applier-bundle-parity.sh`. **Never reach into deep-review's own `scripts/` directory via a relative parent-directory path** — always resolve this skill's own bundled copy. Resolve the skill's own bundled directory the same way `deep-review/SKILL.md` does — bind `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/` once and run every operative command from there. If that path is absent, abort with a clear error; never fall back to applying fixes by hand or to an unbundled script.
 
-`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The first three bullets below are its `normalize`/`reconcile`/`route` subcommands, in operative order; the fourth uses `status-row`. Every gate-output step goes through `run-gate.sh` — never through a bundled pipeline script a subcommand already wraps, so the positional path's symlink guard (`read_input`) is on the path the harness actually takes.
+`run-gate.sh` (this skill's own authored `lib/` script, not a bundled copy) is the gate-output dispatcher: `normalize --gate <name> --autofix-cache <path>` converts one gate's raw JSON into the common finding schema, stripping any `auto_fix` block aside into the cache; `reconcile` pipes pooled findings through the bundled reconciler; `route --autofix-cache <path>` re-attaches cached `auto_fix` proposals by `(file, line, category)` and emits `{trivial_envelope, substantive_findings}`. The first three bullets below are its `normalize`/`reconcile`/`route` subcommands, in operative order; the fourth uses `status-row`. Every gate-output step goes through `run-gate.sh` — never through a bundled pipeline script a subcommand already wraps, so the positional path's symlink guard (`read_input`) is on the path the harness actually takes. Each subcommand emits to stdout and each block below redirects into the file the next block consumes; run them in the order listed and the pipeline composes — there is no hidden step and no file that appears only as an input.
 
-- **Gate normalization** (once per gate, before dedup): converts one gate's raw JSON into the common finding schema and strips any `auto_fix` block aside into the cache.
+`normalize` exits **4** when a gate's envelope reports `error`/`skipped`/`deferred` — its findings are still emitted, but the round is not a clean pass and must not be counted as one. Under `set -e` that exit aborts the round, so capture it (`|| rc=$?`) rather than letting it kill the pipeline, and carry it into the convergence decision.
+
+- **Gate normalization** (once per gate, before dedup): converts one gate's raw JSON into the common finding schema and strips any `auto_fix` block aside into the cache. The positional argument is the gate's **envelope** — the same `$gate_out_dir/<name>.envelope.json` declared in the paths block above, the file `gate_run_bounded` writes on every exit path. There is no separate raw-JSON file: `normalize` reads only the envelope, never the tool-out (that is what makes a killed gate unmistakable for a clean pass). Normalized findings go to **stdout**, so every invocation redirects into its own per-gate `.normalized.jsonl`; the `auto_fix` blocks it strips aside go to `--autofix-cache`, which `route` reads back later.
   ```
   ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh normalize \
-    --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" "$gate_out_dir/<gate>-raw.json"
+    --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" \
+    "$gate_out_dir/<name>.envelope.json" > "$gate_out_dir/<name>.normalized.jsonl"
   ```
-- **Cross-gate dedup**: pipe pooled JSON-Lines findings through `run-gate.sh reconcile`, which is the bundled reconciler invoked **without** `--skill` (the reconciler rejects any `--skill` value other than `deep-review`/`review-plan` with exit 2, and this gauntlet is neither of those) plus the positional path's symlink guard:
+- **Cross-gate dedup**: pool every gate's normalized JSON-Lines findings and pass the pooled file to `run-gate.sh reconcile`, which is the bundled reconciler invoked **without** `--skill` (the reconciler rejects any `--skill` value other than `deep-review`/`review-plan` with exit 2, and this gauntlet is neither of those) plus the positional path's symlink guard:
   ```
-  cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh reconcile
+  cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings.jsonl"
+  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh reconcile \
+    "$gate_out_dir/findings.jsonl" > "$gate_out_dir/reconciled.json"
   ```
+  Pool every gate's `.normalized.jsonl` into `findings.jsonl` first — `reconcile`'s input is the concatenation across **all** gates, which is what makes cross-gate corroboration possible at all. Pass it as a **positional path**, not on stdin: the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
   Gate findings passed into reconcile **must not** carry `auto_fix` blocks — the reconciler only requires `--skill` when `auto_fix` is present, and trivial-fix proposals are handled by the fixer's route logic (Guardrail 2), not by the reconcile stage.
 - **Trivial-fix apply**: `run-gate.sh route` already delegates to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — **do not run a separate eligibility audit before applying; route already did it.** `trivial_envelope` is the ready-to-apply annotated envelope; extract it and feed it to the applier:
   ```
@@ -240,7 +246,7 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
   #    `.findings` makes the unconditional form exit 5, and under `pipefail`
   #    that aborts the round before a single key file is written. Both
   #    extractions are total.
-  jq -c '.findings[]?' reconciled-envelope.json \
+  jq -c '.findings[]?' "$gate_out_dir/reconciled.json" \
     | "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/scripts/finding-key.sh - > "$present_keys_file"
 
   # 2. claimed findings: applier-owned trivial fixes, then fixer-owned substantive

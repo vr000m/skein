@@ -97,6 +97,20 @@ reconciliation-tests:
 # directives would be linted by nothing. Only the Claude copy is listed: the
 # Codex copy is held byte-identical to it by
 # tests/parity/test-applier-bundle-parity.sh.
+#
+# The fourth entry is not an exception to the rule, it IS a rule (round 10,
+# F8): a `tests/` file is listed here IFF it is the regression suite for a
+# lint that this recipe itself runs. `tests/plugin/test-lint-temp-paths.sh`
+# qualifies because the last line runs `scripts/lint-temp-paths.sh`; a suite
+# that tests something else does not, however shell-shaped it is. The other 61
+# files under `tests/*/` are out of scope by MEASUREMENT, not oversight:
+# `shellcheck -f gcc tests/*/*.sh` reports 86 findings across 41 files today
+# (and even the narrowest containing glob, `tests/plugin/*.sh`, reports 2 --
+# in noqa-probe.sh and test_history_and_assets.sh -- plus `shfmt -d` diffs in
+# those same two files), so widening a glob here turns `lint-scripts` red on
+# pre-existing style debt.
+# Cleaning that up is its own change with its own diff; adopt a new file here
+# only together with the fix that makes it pass.
 lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
     shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
