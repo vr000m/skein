@@ -701,6 +701,58 @@ assert_phase3_deferred_and_gate_stamp_for() {
 assert_phase3_deferred_and_gate_stamp_for "$SKILL_MD" "Claude mirror"
 assert_phase3_deferred_and_gate_stamp_for "$CODEX_SKILL_MD" "Codex mirror"
 
+# ---------------------------------------------------------------------------
+# (G11) The convergence key-extraction block must be TOTAL under `set -u` and
+# `pipefail`.
+#
+# Two ways it aborted the very round it was written to protect:
+#   * `$auto_fix_manifest` is assigned only by capturing the applier's stderr
+#     line, which does not happen when the applier never ran -- so
+#     `[[ -s "$auto_fix_manifest" ]]` is an unbound-variable abort under
+#     `set -u`, reintroducing the abort the surrounding guard prevents.
+#   * step 1 used `.findings[]` while 2a used `.findings[]?`; a null or absent
+#     `.findings` makes the unconditional form exit non-zero and, under
+#     `pipefail`, aborts the round before any key file is written.
+# Asserted on the extracted block so a future edit cannot silently regress it.
+# ---------------------------------------------------------------------------
+
+g11_check_block() {
+	local file="$1" label="$2"
+
+	# Asserted over the whole SKILL.md rather than an extracted range: the two
+	# mirrors lay the convergence section out differently, and the patterns are
+	# specific enough (they name the variable and the exact artifact) that a
+	# file-wide check has no false-positive surface.
+	# Comment lines are stripped first: the surrounding prose deliberately
+	# NAMES the broken form when explaining why the guard exists, and that
+	# must not read as the broken form still being present.
+	local g11_code
+	g11_code="$(grep -v '^[[:space:]]*#' "$file")"
+
+	if printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\$auto_fix_manifest" \]\]'; then
+		fail "G11(a) ($label): an UNGUARDED \$auto_fix_manifest test remains (unbound-variable abort under set -u)"
+	elif printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\${auto_fix_manifest:-}" \]\]'; then
+		pass "G11(a) ($label): the \$auto_fix_manifest test carries a :- default"
+	else
+		fail "G11(a) ($label): no recognisable \$auto_fix_manifest guard found"
+	fi
+
+	if printf '%s\n' "$g11_code" | grep -q 'auto_fix_manifest=""'; then
+		pass "G11(b) ($label): \$auto_fix_manifest is initialised in the keys setup block (it has an owner)"
+	else
+		fail "G11(b) ($label): \$auto_fix_manifest is never initialised -- only defensively read"
+	fi
+
+	if printf '%s\n' "$g11_code" | grep -qF "jq -c '.findings[]' reconciled-envelope.json"; then
+		fail "G11(c) ($label): an UNGUARDED .findings[] expansion remains (exits non-zero on a null/absent .findings, aborting the round under pipefail)"
+	else
+		pass "G11(c) ($label): the present-keys extraction is optional (.findings[]?), matching 2a"
+	fi
+}
+
+g11_check_block "$SKILL_MD" "skein/review-gauntlet"
+g11_check_block "$CODEX_SKILL_MD" "skein-codex/review-gauntlet"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

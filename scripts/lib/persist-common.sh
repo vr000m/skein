@@ -1,9 +1,41 @@
 #!/usr/bin/env bash
-# persist-common.sh — shared helpers for the state-file persistence scripts
-# (`scripts/persist-review-state.sh`, `scripts/persist-deep-review-state.sh`).
+# persist-common.sh — shared helpers for the persistence scripts.
 #
-# Source this file from a persist script; it does not run on its own.
-# Both callers already `source scripts/lib/auto-fix-common.sh` for
+# FOUR callers, not two (G8). Keep this list exact: it is the only place
+# that records which helpers exist for whom, and `grep -rn
+# 'persist-common.sh' scripts/ plugins/` must return exactly these sourcing
+# sites (plus the bundled copies of the same four scripts).
+#
+#   STATE-FILE callers — write one latest-state JSON document per harness:
+#     scripts/persist-review-state.sh
+#     scripts/persist-deep-review-state.sh
+#   LENS callers — Phase 2's disk-first streamed lens results, one
+#   append-only JSONL attempt file per (run-id, lens, attempt):
+#     scripts/persist-lens-result.sh      (writer)
+#     scripts/collect-lens-results.sh     (reader/merge)
+#
+# Which helpers belong to whom:
+#   - persist_root_dir, persist_require_value,
+#     persist_validate_json_shape        — all four.
+#   - persist_atomic_write               — STATE-FILE callers only. The lens
+#                                          contract is append-only (see
+#                                          persist_jsonl_append), so an
+#                                          atomic replace-in-place would be
+#                                          the wrong primitive there.
+#                                          (persist_fail is internal to this
+#                                          file, used only by
+#                                          persist_atomic_write.)
+#   - persist_lens_state_dir,
+#     persist_jsonl_append,
+#     persist_validate_id,
+#     persist_validate_unit              — LENS callers only. These exist
+#                                          solely so the writer and the
+#                                          reader derive the same directory
+#                                          and enforce the same charset on
+#                                          both sides of the wire.
+#
+# Source this file from a caller; it does not run on its own. All four
+# callers already `source scripts/lib/auto-fix-common.sh` for
 # af_assert_no_symlink; this file assumes that's already sourced too.
 #
 # Helpers provided:
@@ -62,6 +94,14 @@
 #                                primitive here — every call must add a line,
 #                                never replace the file's prior contents.
 #                                Returns 1 on any mkdir/write failure.
+#   persist_validate_unit <value> <label> <source>
+#                              — validate ONE review unit (source =
+#                                argv|file). A narrow blacklist, NOT a
+#                                persist_validate_id-style whitelist: units
+#                                are free-form review targets (file paths for
+#                                deep-review, plan sections for review-plan).
+#                                See the function for the exact rules and why
+#                                the two sources differ.
 
 # Root-anchor. Falls back to cwd when not inside a git worktree, matching
 # scripts/apply-auto-fix-plan.sh's pre-existing WORKTREE_ROOT precedent.
@@ -282,6 +322,88 @@ persist_validate_id() {
 		fi
 		return 2
 	fi
+	return 0
+}
+
+# persist_validate_unit <value> <label> <source>
+#
+# Validate ONE review unit. A unit is NOT an id: unlike a lens name or a
+# run-id it is a free-form review target — deep-review passes diff-derived
+# FILE PATHS, review-plan passes PLAN SECTION headings — so paths with
+# spaces, parentheses, `#`, `+` or non-ASCII characters are all legitimate
+# and a persist_validate_id-style whitelist would reject real input. This is
+# therefore a deliberately NARROW BLACKLIST of the characters that make an
+# interpolated string dangerous, not a whitelist of the characters that make
+# one safe.
+#
+# <source> selects how far the blacklist goes, because the two transports
+# have genuinely different threat surfaces:
+#
+#   file — the unit arrived inside a JSON file (`collect-lens-results.sh
+#          --expected-file`), written by the orchestrator with its file-write
+#          tool and read back with jq. It never passes through a shell, so
+#          only the two END-TO-END WIRE rules apply:
+#            * no comma: unit lists are comma-joined and unescaped
+#              everywhere downstream (collector --expected,
+#              persist-lens-result.sh --units); a comma-bearing unit would
+#              silently split into two.
+#            * no leading '-': a unit that reaches a command line later
+#              would be parsed as a flag.
+#
+#   argv — the unit arrived on a command line the orchestrator ASSEMBLED AS
+#          SHELL TEXT (`--expected "<lens>:<unit>,<unit>"`). Substitution
+#          happens in the orchestrator's shell BEFORE this script is entered,
+#          so no in-script check can see the pre-substitution text; what this
+#          check buys is defence in depth against a unit that is echoed back
+#          into another command line, and a loud failure that names the
+#          offending text. Adds: `$`, backtick, `"`, `\` and newline —
+#          precisely the five characters that let interpolated text trigger
+#          substitution or escape its quoting. Double quotes around the
+#          argument stop word-splitting and globbing; they do NOT stop
+#          substitution, which is why quoting alone was not a fix.
+#
+# The PRIMARY control for diff-derived units is not this function: it is
+# keeping them off argv entirely via --expected-file. This is layer 2.
+#
+# Prints "<label>: invalid unit ..." to stderr and returns 2 on failure.
+persist_validate_unit() {
+	local value="$1" label="$2" source="${3:-argv}"
+
+	case "$source" in
+	argv | file) ;;
+	*)
+		echo "$label: persist_validate_unit: unknown source '$source'" >&2
+		return 2
+		;;
+	esac
+
+	if [[ -z "$value" ]]; then
+		echo "$label: invalid unit: empty unit name" >&2
+		return 2
+	fi
+	if [[ "$value" == *,* ]]; then
+		echo "$label: invalid unit '$value' (unit lists are comma-joined and unescaped end-to-end; a unit must not contain a comma)" >&2
+		return 2
+	fi
+	if [[ "$value" == -* ]]; then
+		echo "$label: invalid unit '$value' (a unit must not start with '-'; it would be parsed as a flag)" >&2
+		return 2
+	fi
+
+	if [[ "$source" == "argv" ]]; then
+		# Newline first: it is the one character that cannot be shown
+		# usefully inside the quoted echo below.
+		if [[ "$value" == *$'\n'* ]]; then
+			echo "$label: invalid unit: a unit passed on the command line must not contain a newline" >&2
+			return 2
+		fi
+		if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *'"'* || "$value" == *\\* ]]; then
+			printf '%s: invalid unit %s (a unit passed on the command line must not contain a dollar sign, backtick, double quote or backslash - pass diff-derived units via --expected-file instead)\n' \
+				"$label" "$value" >&2
+			return 2
+		fi
+	fi
+
 	return 0
 }
 

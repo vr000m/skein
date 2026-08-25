@@ -447,12 +447,98 @@ check_target_match() {
 # mid-write. cap/k are persisted alongside target so a later --last-decision
 # peek reads the SAME cap/k the run was created with, rather than falling
 # back to this script's own (possibly different) --cap/--k defaults.
+# ledger_assert_no_symlink <path> — refuse to create or replace the ledger
+# through a symlink, at the ledger path itself or at any parent directory.
+#
+# WHY THIS EXISTS. `scripts/lib/persist-common.sh`'s persist_atomic_write
+# guards this exact case for the state files and documents the threat:
+# `.gauntlet/` is gitignored (.gitignore:9), but a *tracked* symlink at that
+# path still materialises on checkout, and `mkdir -p` follows it — so a
+# malicious clone could point it outside the repo and have the ledger write
+# land on an arbitrary user-writable file. Impact is bounded (the attacker
+# chooses the directory, not the contents, which are ledger-shaped JSON), but
+# the asymmetry inside one change set — every persist-* write guarded, every
+# ledger write not — is the actual defect.
+#
+# WHY IT IS DEFINED HERE and not in gauntlet-common.sh. gauntlet-common.sh is
+# the documented anchor-divergent EXCLUSION from mirror parity
+# (tests/parity/test-applier-bundle-parity.sh), so a helper placed there is
+# never byte-compared between the two plugins and can silently drift.
+# convergence-ledger.sh is parity-enforced. This file also sources only
+# gauntlet-common.sh, so af_assert_no_symlink is genuinely out of scope —
+# hence a small self-contained copy modelled on it.
+#
+# PARENT-WALK BOUND. Inside a git worktree the walk stops at the worktree
+# root: that is the whole span an attacker can control through a checkout,
+# and walking past it would reject legitimate paths under platform symlinks
+# (macOS `/var` -> `/private/var`, `/tmp` -> `/private/tmp`) that have
+# nothing to do with the repo. Outside a worktree only the ledger path and
+# its immediate parent are checked — the two positions the threat actually
+# occupies — for the same reason.
+#
+# Returns 0 when the path is safe, 1 with a diagnostic on stderr otherwise.
+# The caller exits; this function never does.
+ledger_assert_no_symlink() {
+	local path="$1"
+
+	if [[ -L "$path" ]]; then
+		echo "convergence-ledger: refusing to operate on symlink: $path" >&2
+		return 1
+	fi
+
+	local parent
+	parent="$(dirname "$path")"
+	if [[ -L "$parent" ]]; then
+		echo "convergence-ledger: refusing to operate on symlink: $parent" >&2
+		return 1
+	fi
+
+	# Decide whether to keep walking. The extra parents are only worth
+	# checking when this ledger lives INSIDE a git worktree, because a
+	# checkout is the only way an attacker materialises a symlink here. A
+	# path outside a worktree (a test fixture, a temp dir) is bounded at the
+	# immediate parent: walking further would reject perfectly ordinary
+	# platform symlinks — macOS puts $TMPDIR under `/var`, which IS a
+	# symlink to `/private/var` — and turn the guard into a false refusal.
+	local root_canon="" git_root parent_canon
+	if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+		root_canon="$(cd "$git_root" 2>/dev/null && pwd -P)" || root_canon=""
+	fi
+	[[ -n "$root_canon" ]] || return 0
+	parent_canon="$(cd "$parent" 2>/dev/null && pwd -P)" || return 0
+	case "$parent_canon" in
+	"$root_canon" | "$root_canon"/*) ;;
+	*) return 0 ;;
+	esac
+
+	parent="$(dirname "$parent")"
+	while [[ "$parent" != "/" && "$parent" != "." ]]; do
+		if [[ -L "$parent" ]]; then
+			echo "convergence-ledger: refusing to operate on symlink: $parent" >&2
+			return 1
+		fi
+		parent_canon="$(cd "$parent" 2>/dev/null && pwd -P)" || break
+		[[ "$parent_canon" != "$root_canon" ]] || break
+		parent="$(dirname "$parent")"
+	done
+
+	return 0
+}
+
 write_fresh_ledger() {
 	local ledger_path="$1"
 	local target="$2"
 	local cap="$3"
 	local k="$4"
 	local tmp
+	# Guard BEFORE mkdir -p: mkdir follows a symlinked component, so the
+	# check has to happen while there is still nothing to create.
+	if ! ledger_assert_no_symlink "$(dirname "$ledger_path")"; then
+		exit 1
+	fi
+	if ! ledger_assert_no_symlink "$ledger_path"; then
+		exit 1
+	fi
 	mkdir -p "$(dirname "$ledger_path")"
 	# In-directory template, not a bare `mktemp`: the atomicity this write
 	# path asserts comes from `mv` being a same-filesystem rename(2). A bare
@@ -704,6 +790,15 @@ append)
 		keys_active="true"
 	fi
 
+	# Same symlink guard as write_fresh_ledger: this path also creates a
+	# file (the in-directory temp) and then `mv`s over $LEDGER_PATH, so a
+	# symlinked ancestor redirects both.
+	if ! ledger_assert_no_symlink "$(dirname "$LEDGER_PATH")"; then
+		exit 1
+	fi
+	if ! ledger_assert_no_symlink "$LEDGER_PATH"; then
+		exit 1
+	fi
 	# In-directory template — see write_fresh_ledger above for why a bare
 	# `mktemp` would break the atomic-replace guarantee this path relies on.
 	tmp_ledger="$(mktemp "$(dirname "$LEDGER_PATH")/.ledger.XXXXXX")"

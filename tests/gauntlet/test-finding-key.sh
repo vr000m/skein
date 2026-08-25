@@ -50,6 +50,10 @@ WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
+# Repo root, for the G3 golden-corpus gate below (HEAD baseline + the
+# in-repo .gauntlet/*/ reconciled artifacts it hashes).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 # finding FILE SUMMARY CATEGORY LINE -> writes a common-schema finding JSON
 # to WORKDIR/FILE and echoes its path. FILE here is the fixture basename,
 # not the "file" field value (which is fixed at "src/app.py" unless a
@@ -217,6 +221,206 @@ assert_eq "$a15_split_count" "2" "A15(b): the same two objects on two lines stil
 a15_k1="$(printf '%s\n' "$a15_split_keys" | sed -n 1p)"
 a15_k2="$(printf '%s\n' "$a15_split_keys" | sed -n 2p)"
 assert_ne "$a15_k1" "$a15_k2" "A15(b): the two per-line keys are distinct"
+
+# --- 14. G3: a NON-STRING file/category/summary is SKIPPED, not coerced ---
+# `//` substitutes only null/false, so a number in .file used to reach jq's
+# string concat, abort the filter, and leave the NUL-delimited read loop with
+# nothing -- every field resolved to empty and EVERY malformed finding
+# collapsed onto ONE shared key (also the key of a genuinely empty finding).
+# A shared key is precisely the false-`regression` failure this identity is
+# biased against: a claimed fix on malformed finding A promotes the shared
+# key, so malformed finding B next round fires the terminal stop.
+#
+# The fix is a TYPE GATE, not `tostring` coercion: coercing would fabricate
+# an identity for output that is malformed at the source. So both lines are
+# skipped with a warning naming the field and its type, neither emits a key,
+# and neither can collide with the empty-object key because neither exists.
+# The skip must be per-line (exit 0), because the documented consumer runs
+# this under `pipefail`.
+
+g3_err="$(mktemp)"
+set +e
+g3_nonstring_out="$(printf '%s\n%s\n' \
+	'{"file":123,"category":"Logic","summary":"boom"}' \
+	'{"file":456,"category":"Logic","summary":"boom"}' |
+	bash "$FINDING_KEY_SCRIPT" - 2>"$g3_err")"
+g3_nonstring_rc=$?
+set -e
+
+g3_nonstring_count="$(printf '%s' "$g3_nonstring_out" | grep -c . || true)"
+assert_eq "$g3_nonstring_count" "0" "G3: non-string .file findings emit NO key (never a shared fabricated one)"
+assert_eq "$g3_nonstring_rc" "0" "G3: a non-string field is skipped per-line, not fatal (exit 0)"
+
+g3_warn_count="$(grep -c 'non-string field' "$g3_err" || true)"
+assert_eq "$g3_warn_count" "2" "G3: each non-string line gets its own stderr warning"
+if grep -q 'file is number' "$g3_err"; then
+	pass "G3: the warning names the offending field and its type"
+else
+	fail "G3: the warning must name the field and its type (stderr: $(tr '\n' ' ' <"$g3_err"))"
+fi
+
+# A good line must survive a bad one -- the whole point of skipping per line.
+g3_mixed="$(printf '%s\n%s\n' \
+	'{"file":123,"category":"L","summary":"x"}' \
+	'{"file":"a.md","category":"Logic","summary":"a"}' |
+	bash "$FINDING_KEY_SCRIPT" - 2>/dev/null)"
+g3_mixed_count="$(printf '%s' "$g3_mixed" | grep -c . || true)"
+assert_eq "$g3_mixed_count" "1" "G3: a good line still yields its key when a malformed line precedes it"
+
+# A non-string CATEGORY and a non-string SUMMARY are gated too, not just file.
+for g3_field in category summary; do
+	g3_field_err="$(mktemp)"
+	set +e
+	g3_field_out="$(printf '{"file":"a.md","%s":42}\n' "$g3_field" |
+		bash "$FINDING_KEY_SCRIPT" - 2>"$g3_field_err")"
+	set -e
+	g3_field_count="$(printf '%s' "$g3_field_out" | grep -c . || true)"
+	assert_eq "$g3_field_count" "0" "G3: a non-string .$g3_field emits no key either"
+	if grep -q "$g3_field is number" "$g3_field_err"; then
+		pass "G3: the .$g3_field warning names the field and its type"
+	else
+		fail "G3: the .$g3_field warning must name the field and its type"
+	fi
+	rm -f "$g3_field_err"
+done
+
+# An ABSENT or explicitly null field is NOT malformed -- it is the "" default.
+g3_null_key="$(printf '%s\n' '{"file":null,"category":null,"summary":null}' |
+	bash "$FINDING_KEY_SCRIPT" - 2>/dev/null)"
+g3_empty_key="$(printf '%s\n' '{}' | bash "$FINDING_KEY_SCRIPT" - 2>/dev/null)"
+assert_eq "$g3_null_key" "$g3_empty_key" "G3: explicit nulls are the documented \"\" default, not a non-string field"
+
+if grep -qi 'jq: error' "$g3_err"; then
+	fail "G3: a non-string field must not raise a jq error on stderr (stderr: $(tr '\n' ' ' <"$g3_err"))"
+else
+	pass "G3: a non-string field raises no jq error on stderr"
+fi
+rm -f "$g3_err"
+
+# --- 15. Codex addendum: an embedded NUL must not TRUNCATE the key ---------
+# A bash string cannot hold a NUL, so the NUL-delimited field reader stopped
+# at the first one: summary "a<NUL>b" keyed identically to summary "a".
+# Any in-band delimiter has this defect; the fix removes the bash round-trip
+# entirely, so the digest is fed the whole field.
+
+g3_nul_line="$(printf '{"file":"f.md","category":"Logic","summary":"a\\u0000b"}')"
+g3_prefix_line='{"file":"f.md","category":"Logic","summary":"a"}'
+g3_nul_key="$(printf '%s\n' "$g3_nul_line" | bash "$FINDING_KEY_SCRIPT" -)"
+g3_prefix_key="$(printf '%s\n' "$g3_prefix_line" | bash "$FINDING_KEY_SCRIPT" -)"
+assert_ne "$g3_nul_key" "$g3_prefix_key" "addendum: summary \"a<NUL>b\" and summary \"a\" produce DISTINCT keys (no NUL truncation)"
+
+# --- 16. Codex addendum: extraction failure exits NON-ZERO, emits no key ---
+# The old loop swallowed a failed extraction and printed the all-empty key.
+# Fail closed instead: no key, and a non-zero exit the caller can see. Forced
+# with a jq shim that fails ONLY the key-extraction invocation (identified by
+# `utf8bytelength` in its filter) and delegates every other call to real jq,
+# so the one-object shape gate still behaves normally.
+
+g3_real_jq="$(command -v jq)"
+g3_shim_dir="$WORKDIR/jq-shim"
+mkdir -p "$g3_shim_dir"
+cat >"$g3_shim_dir/jq" <<SHIM
+#!/usr/bin/env bash
+for a in "\$@"; do
+	case "\$a" in
+	*utf8bytelength*)
+		echo "jq shim: simulated extraction failure" >&2
+		exit 1
+		;;
+	esac
+done
+exec "$g3_real_jq" "\$@"
+SHIM
+chmod +x "$g3_shim_dir/jq"
+
+g3_fail_err="$(mktemp)"
+set +e
+g3_fail_out="$(printf '%s\n%s\n' \
+	'{"file":"a.md","category":"Logic","summary":"x"}' \
+	'{"file":"b.md","category":"Logic","summary":"y"}' |
+	PATH="$g3_shim_dir:$PATH" bash "$FINDING_KEY_SCRIPT" - 2>"$g3_fail_err")"
+g3_fail_rc=$?
+set -e
+# Skip-and-warn, NOT a non-zero exit: the documented consumer is
+# `finding-key.sh - > "$present_keys_file"` under `pipefail`, so aborting on
+# one bad line would discard every good key in the round -- the same
+# convergence-abort class this diff removes elsewhere.
+assert_eq "$g3_fail_rc" "0" "G3: a failed key extraction is skipped per-line, not fatal (exit 0)"
+g3_fail_count="$(printf '%s' "$g3_fail_out" | grep -c . || true)"
+assert_eq "$g3_fail_count" "0" "G3: a failed key extraction emits NO key (never the all-empty key)"
+g3_fail_warns="$(grep -c 'key extraction failed' "$g3_fail_err" || true)"
+assert_eq "$g3_fail_warns" "2" "G3: each failed extraction is reported on stderr, one warning per line"
+rm -f "$g3_fail_err"
+
+# --- 17. Control: the shim is not itself the cause -- with real jq the same
+# input still yields a key and exit 0.
+
+g3_control="$(printf '%s\n' '{"file":"a.md","category":"Logic","summary":"x"}' |
+	bash "$FINDING_KEY_SCRIPT" -)"
+if [[ "$g3_control" =~ ^[0-9a-f]{40}$ ]]; then
+	pass "addendum(control): the same input under real jq yields a key and exit 0"
+else
+	fail "addendum(control): the same input under real jq must yield a key (got '$g3_control')"
+fi
+
+# --- 18. G3: a literal US (0x1F) inside a summary must not shift a field ---
+# The pre-image joins fields with 0x1F. The length prefixes are what make the
+# encoding injective, but that claim was never tested against the separator
+# byte itself -- so a summary containing one is the sharpest available probe.
+# The byte is built with jq (`[31]|implode`), never typed into this source.
+
+g3_us_line="$(jq -nc '{file:"f.md",category:"Logic",summary:("x"+([31]|implode)+"y")}')"
+g3_us_key="$(printf '%s\n' "$g3_us_line" | bash "$FINDING_KEY_SCRIPT" - 2>/dev/null)"
+g3_us_plain="$(printf '%s\n' '{"file":"f.md","category":"Logic","summary":"xy"}' |
+	bash "$FINDING_KEY_SCRIPT" - 2>/dev/null)"
+assert_ne "$g3_us_key" "$g3_us_plain" "G3: a literal 0x1F in a summary keys differently from the same summary without it"
+if [[ "$g3_us_key" =~ ^[0-9a-f]{40}$ ]]; then
+	pass "G3: a 0x1F-bearing summary still yields a well-formed sha1 key"
+else
+	fail "G3: a 0x1F-bearing summary must still yield a key (got '$g3_us_key')"
+fi
+
+# --- 19. G3 acceptance gate: golden corpus, old key == new key ------------
+# `fixed_keys` in existing .gauntlet/*/ledger.json were computed by the OLD
+# code. If this port changes the key for any WELL-FORMED finding, every
+# stored key silently stops matching: regressions are missed (safe) and
+# `pending_claimed` never clears (not safe -- it accumulates). So byte
+# identity against the HEAD implementation is a hard gate, not a nicety.
+# Corpus: 122 real gate findings already in-repo.
+
+g3_baseline="$WORKDIR/finding-key-head.sh"
+if git -C "$REPO_ROOT" show "HEAD:scripts/finding-key.sh" >"$g3_baseline" 2>/dev/null; then
+	g3_corpus="$WORKDIR/corpus.jsonl"
+	: >"$g3_corpus"
+	g3_corpus_files=0
+	for g3_src in .gauntlet/r1/reconciled.json .gauntlet/r2/reconciled.json .gauntlet/r3/prior-findings.json; do
+		if [[ -f "$REPO_ROOT/$g3_src" ]]; then
+			g3_corpus_files=$((g3_corpus_files + 1))
+			jq -c '[.. | objects
+				| select(has("file") and has("category") and has("summary"))
+				| select((.file | type) == "string" and (.category | type) == "string" and (.summary | type) == "string")][]' \
+				"$REPO_ROOT/$g3_src" >>"$g3_corpus"
+		fi
+	done
+	g3_corpus_n="$(grep -c . "$g3_corpus" || true)"
+	if [[ "$g3_corpus_files" -eq 0 || "$g3_corpus_n" -eq 0 ]]; then
+		echo "SKIP: G3 golden corpus (no .gauntlet/*/ reconciled artifacts in this checkout)"
+	else
+		g3_old_keys="$(bash "$g3_baseline" "$g3_corpus" 2>/dev/null || true)"
+		g3_new_keys="$(bash "$FINDING_KEY_SCRIPT" "$g3_corpus" 2>/dev/null || true)"
+		g3_old_n="$(printf '%s' "$g3_old_keys" | grep -c . || true)"
+		g3_new_n="$(printf '%s' "$g3_new_keys" | grep -c . || true)"
+		assert_eq "$g3_new_n" "$g3_corpus_n" "G3(corpus): every well-formed corpus finding yields a key ($g3_corpus_n findings)"
+		assert_eq "$g3_new_n" "$g3_old_n" "G3(corpus): the port yields exactly as many keys as HEAD"
+		if [[ "$g3_old_keys" == "$g3_new_keys" ]]; then
+			pass "G3(corpus): old key == new key, byte-identical, for all $g3_corpus_n well-formed findings"
+		else
+			fail "G3(corpus): key churn detected -- stored ledger fixed_keys would stop matching ($(diff <(printf '%s\n' "$g3_old_keys") <(printf '%s\n' "$g3_new_keys") | grep -c '^[<>]' || true) differing lines)"
+		fi
+	fi
+else
+	echo "SKIP: G3 golden corpus (HEAD:scripts/finding-key.sh unavailable)"
+fi
 
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"

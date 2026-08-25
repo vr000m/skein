@@ -943,6 +943,75 @@ else
 fi
 rm -rf "$g8_dir" "$g8_dir2"
 
+# ---------------------------------------------------------------------------
+# (G12) The ledger write paths must refuse a symlinked target or parent.
+#
+# persist_atomic_write (scripts/lib/persist-common.sh) guards exactly this
+# case for the state files and documents the threat: `.gauntlet/` is
+# gitignored, but a *tracked* symlink at that path still materialises on
+# checkout, and `mkdir -p` follows it. Impact is bounded (a ledger-shaped
+# JSON file in an attacker-chosen user-writable directory) -- the asymmetry
+# inside one change set is the point.
+#
+# The fixture is built INSIDE the repo worktree on purpose: the guard's
+# parent walk is deliberately bounded to the worktree (a checkout is the only
+# way this symlink appears), so a fixture in $TMPDIR would exercise the
+# bounded, early-return path instead of the real one.
+# ---------------------------------------------------------------------------
+g12_base="$ROOT_DIR/.gauntlet-g12-fixture.$$"
+mkdir -p "$g12_base/run" "$g12_base/outside"
+ln -s "$g12_base/outside" "$g12_base/run/.gauntlet"
+g12_ledger="$g12_base/run/.gauntlet/ledger.json"
+
+set +e
+g12_err="$(bash "$LEDGER_SCRIPT" --ledger "$g12_ledger" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g12_rc=$?
+set -e
+
+if [[ "$g12_rc" -ne 0 ]]; then
+	pass "G12: a fresh-ledger write through a symlinked parent exits non-zero (rc=$g12_rc)"
+else
+	fail "G12: a fresh-ledger write through a symlinked parent must exit non-zero (got 0)"
+fi
+if [[ "$g12_err" == *"refusing to operate on symlink"* ]]; then
+	pass "G12: the refusal names the symlink in its diagnostic"
+else
+	fail "G12: expected a 'refusing to operate on symlink' diagnostic, got: $g12_err"
+fi
+if [[ ! -e "$g12_base/outside/ledger.json" ]]; then
+	pass "G12: nothing was written through the symlink into the outside directory"
+else
+	fail "G12: the write escaped through the symlink to $g12_base/outside/ledger.json"
+fi
+
+# A DIRECT symlink at the ledger path itself is refused too.
+mkdir -p "$g12_base/run2/.gauntlet"
+ln -s "$g12_base/outside/direct.json" "$g12_base/run2/.gauntlet/ledger.json"
+set +e
+g12_direct_err="$(bash "$LEDGER_SCRIPT" --ledger "$g12_base/run2/.gauntlet/ledger.json" --init --target "t" --cap 3 --k 2 2>&1 >/dev/null)"
+g12_direct_rc=$?
+set -e
+if [[ "$g12_direct_rc" -ne 0 && "$g12_direct_err" == *"refusing to operate on symlink"* && ! -e "$g12_base/outside/direct.json" ]]; then
+	pass "G12: a symlink AT the ledger path is refused and nothing is written through it"
+else
+	fail "G12: direct-symlink case: rc=$g12_direct_rc err='$g12_direct_err'"
+fi
+
+# Control: the same write into a real directory still succeeds, so the guard
+# is rejecting the symlink and not the write path.
+mkdir -p "$g12_base/clean/.gauntlet"
+set +e
+bash "$LEDGER_SCRIPT" --ledger "$g12_base/clean/.gauntlet/ledger.json" --init --target "t" --cap 3 --k 2 >/dev/null 2>&1
+g12_clean_rc=$?
+set -e
+if [[ "$g12_clean_rc" -eq 0 && -f "$g12_base/clean/.gauntlet/ledger.json" ]]; then
+	pass "G12(control): an unsymlinked ledger path still writes normally"
+else
+	fail "G12(control): a clean ledger write broke (rc=$g12_clean_rc)"
+fi
+
+rm -rf "$g12_base"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

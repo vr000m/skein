@@ -149,8 +149,27 @@ done
 # byte-identical across mirrors. Mirrors scripts/check-sync.sh's own
 # stale-leftover guard in check_bundle_dir.
 GAUNTLET_LIB_ANCHOR_DIVERGENT=(gauntlet-common.sh)
-while IFS= read -r lib_path; do
-	lib_base="$(basename "$lib_path")"
+# PARITY_GAUNTLET_LIB_ROOT repoints ONLY §6's lib enumeration at a fixture
+# tree. It is the minimum override needed to make this guard testable: there
+# is no way to introduce a Codex-only lib file into the real repo just to
+# assert it is caught, and overriding the whole ROOT_DIR would drag every
+# other section of this suite into the fixture too. Unset in normal runs.
+GAUNTLET_LIB_ROOT="${PARITY_GAUNTLET_LIB_ROOT:-$ROOT_DIR}"
+GAUNTLET_LIB_CLAUDE_DIR="$GAUNTLET_LIB_ROOT/plugins/skein/skills/review-gauntlet/lib"
+GAUNTLET_LIB_CODEX_DIR="$GAUNTLET_LIB_ROOT/plugins/skein-codex/skills/review-gauntlet/lib"
+
+# G9: the enumeration is the UNION of both mirrors' lib/, not just the
+# Claude side. Walking only the canonical tree left a hole the byte-identity
+# loop above cannot cover: a lib/*.sh added SOLELY to the Codex mirror is not
+# in GAUNTLET_LIB_PARITY_FILES (so it is never byte-compared) and never
+# appeared in the enumeration (so it was never reported unregistered) — the
+# guard passed vacuously on exactly the file it exists to catch. The
+# byte-identity loop's "missing in one or both plugins" arm only fires for
+# DECLARED files; the union enumeration is what routes an undeclared
+# Codex-only file into any failure at all. scripts/check-sync.sh:60-61
+# already runs check_bundle_dir against both paths — this follows it.
+while IFS= read -r lib_base; do
+	[[ -n "$lib_base" ]] || continue
 	declared=0
 	for d in "${GAUNTLET_LIB_PARITY_FILES[@]}" "${GAUNTLET_LIB_ANCHOR_DIVERGENT[@]}"; do
 		[[ "$lib_base" == "$d" ]] && declared=1 && break
@@ -160,7 +179,68 @@ while IFS= read -r lib_path; do
 	else
 		pass "gauntlet lib enumeration: $lib_base is registered"
 	fi
-done < <(find "$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib" -maxdepth 1 -type f -name '*.sh' 2>/dev/null | sort)
+
+	# Mirror-presence: a lib file in one mirror and not the other is a
+	# parity failure in its own right, independent of registration.
+	in_claude=0
+	in_codex=0
+	[[ -f "$GAUNTLET_LIB_CLAUDE_DIR/$lib_base" ]] && in_claude=1
+	[[ -f "$GAUNTLET_LIB_CODEX_DIR/$lib_base" ]] && in_codex=1
+	if [[ "$in_claude" -eq 1 && "$in_codex" -eq 1 ]]; then
+		pass "gauntlet lib mirror presence: $lib_base exists in both mirrors"
+	elif [[ "$in_claude" -eq 1 ]]; then
+		fail "gauntlet lib mirror presence: $lib_base exists only in plugins/skein -- add it to plugins/skein-codex or remove it"
+	else
+		fail "gauntlet lib mirror presence: $lib_base exists only in plugins/skein-codex -- add it to plugins/skein or remove it"
+	fi
+done < <({
+	find "$GAUNTLET_LIB_CLAUDE_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null
+	find "$GAUNTLET_LIB_CODEX_DIR" -maxdepth 1 -type f -name '*.sh' 2>/dev/null
+} | while IFS= read -r p; do basename "$p"; done | sort -u)
+
+# ---------------------------------------------------------------------------
+# (G9) Self-test: the union enumeration must actually catch a Codex-ONLY lib
+# file. Before this fix the enumeration walked only plugins/skein, so such a
+# file was neither byte-compared (not in GAUNTLET_LIB_PARITY_FILES) nor
+# reported unregistered -- the guard passed vacuously on exactly the case it
+# exists to catch.
+#
+# Run against a FIXTURE lib tree via PARITY_GAUNTLET_LIB_ROOT (there is no
+# way to add a Codex-only lib file to the real repo just to assert it is
+# caught), and only when this process is not itself the fixture run.
+# ---------------------------------------------------------------------------
+if [[ -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
+	g9_fixture="$(mktemp -d)"
+	mkdir -p "$g9_fixture/plugins/skein/skills/review-gauntlet/lib" \
+		"$g9_fixture/plugins/skein-codex/skills/review-gauntlet/lib"
+	for g9_f in "${GAUNTLET_LIB_PARITY_FILES[@]}" "${GAUNTLET_LIB_ANCHOR_DIVERGENT[@]}"; do
+		printf '%s\n' '#!/usr/bin/env bash' >"$g9_fixture/plugins/skein/skills/review-gauntlet/lib/$g9_f"
+		cp "$g9_fixture/plugins/skein/skills/review-gauntlet/lib/$g9_f" \
+			"$g9_fixture/plugins/skein-codex/skills/review-gauntlet/lib/$g9_f"
+	done
+	# The orphan: present in the Codex mirror ONLY, and undeclared.
+	printf '%s\n' '#!/usr/bin/env bash' >"$g9_fixture/plugins/skein-codex/skills/review-gauntlet/lib/orphan.sh"
+
+	g9_rc=0
+	g9_out="$(PARITY_GAUNTLET_LIB_ROOT="$g9_fixture" bash "${BASH_SOURCE[0]}" 2>&1)" || g9_rc=$?
+
+	if [[ "$g9_rc" -ne 0 ]]; then
+		pass "G9: a Codex-only lib file makes the enumeration fail (rc=$g9_rc)"
+	else
+		fail "G9: a Codex-only lib file must make the enumeration fail (got rc=0)"
+	fi
+	if printf '%s\n' "$g9_out" | grep -q 'orphan.sh'; then
+		pass "G9: the failure names the offending Codex-only basename"
+	else
+		fail "G9: the failure does not name orphan.sh"
+	fi
+	if printf '%s\n' "$g9_out" | grep -q 'mirror presence: orphan.sh exists only in plugins/skein-codex'; then
+		pass "G9: the Codex-only file is reported as a mirror-presence failure"
+	else
+		fail "G9: no mirror-presence failure was reported for orphan.sh"
+	fi
+	rm -rf "$g9_fixture"
+fi
 
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"

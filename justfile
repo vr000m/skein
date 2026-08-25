@@ -94,12 +94,24 @@ lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
     shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
 
-# Plugin-level guards: CLAUDE.md hygiene rules, the `# noqa` stripping probe,
-# and the manifest checks. (tests/plugin/test_history_and_assets.sh is
-# deliberately NOT listed: it is a one-off migration-commit assertion that
-# only holds against the specific commit it was written for, not a suite
-# member that can run against arbitrary HEAD.)
+# Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.
+# (tests/plugin/test_history_and_assets.sh is deliberately NOT listed: it is
+# a one-off migration-commit assertion that only holds against the specific
+# commit it was written for, not a suite member that can run against
+# arbitrary HEAD. tests/plugin/noqa-probe.sh is not listed either -- see the
+# `noqa-probe` recipe below.)
 plugin-tests:
     bash tests/plugin/test-claude-md-hygiene.sh
-    bash tests/plugin/noqa-probe.sh
     bash tests/plugin/test_manifests.sh
+
+# Diagnostic, NOT a suite member. noqa-probe.sh asserts that
+# ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but
+# that hook is owned by sync-computer, not by this repo, so skein has no code
+# path that can turn a red probe green. Its SKIP arms cover "hook absent" and
+# "ruff absent", not "hook present and still stripping", which is exactly the
+# state the ownership boundary makes possible. Wiring it into plugin-tests
+# would therefore fail the suite for a defect in another repo. Run it by hand
+# when investigating a stripped `# noqa`; override the target with
+# HOOK_PATH=/path/to/format-on-edit.sh.
+noqa-probe:
+    bash tests/plugin/noqa-probe.sh

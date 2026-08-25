@@ -10,10 +10,12 @@ just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundl
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
-just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap
+just gauntlet-tests              # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap + gate-timeout + lens-budget + regression-stop + finding-key + status-row
+just lens-tests                  # disk-first lens results: persist-lens-result + collect-lens-results + --from-collector state + deep-review/review-plan SKILL.md shape (both mirrors)
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
 just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/
-just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + `# noqa` probe + manifest checks
+just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + manifest checks (incl. AGENTS.md recipe registration)
+just noqa-probe                  # Diagnostic (not a suite member): does ~/.claude/hooks/format-on-edit.sh strip `# noqa`? Hook is sync-computer-owned
 ```
 
 Requires: `brew install just jq shellcheck shfmt`

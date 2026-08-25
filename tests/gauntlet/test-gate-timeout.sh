@@ -1021,6 +1021,89 @@ else
 	fail "A12: the error envelope note does not name the multi-document cause (got '$a12_note')"
 fi
 
+# ---------------------------------------------------------------------------
+# (G10) A `return 2` must never leave a stale envelope behind.
+#
+# The unlink used to sit AFTER the `$4 != "--"` check, so three usage errors
+# returned 2 with a previous round's envelope still on disk. Two of them
+# (`--gate` with no name; fewer than two arguments) genuinely cannot know
+# <envelope-out> and are named as exemptions in the header. The third -- a
+# missing `--` separator -- already knew the path, so it was an outright
+# contract violation: a caller that ignores the return value reads the
+# previous round's possibly-CLEAN envelope as this round's result.
+# ---------------------------------------------------------------------------
+g10_dir="$WORKDIR/g10"
+mkdir -p "$g10_dir"
+g10_env="$g10_dir/env.json"
+g10_tool="$g10_dir/tool.out"
+
+printf '%s' '{"status":"approve","notes":"stale from a previous round","findings":[],"gate":null,"duration_s":1,"degraded_reason":null}' >"$g10_env"
+printf '%s' 'stale tool output' >"$g10_tool"
+printf '%s' 'stale stderr' >"${g10_tool}.stderr"
+
+set +e
+"$RUNNER" 5 "$g10_env" "$g10_tool" NOTDASHDASH -- true >/dev/null 2>&1
+g10_rc=$?
+set -e
+assert_eq "$g10_rc" "2" "G10: a missing -- separator returns 2"
+if [[ ! -e "$g10_env" ]]; then
+	pass "G10: the stale envelope is removed before the missing-\`--\` return 2"
+else
+	fail "G10: a stale envelope survived the missing-\`--\` return 2 ($(cat "$g10_env"))"
+fi
+if [[ ! -e "$g10_tool" && ! -e "${g10_tool}.stderr" ]]; then
+	pass "G10: the stale tool-out and its .stderr sibling are removed too"
+else
+	fail "G10: stale tool-out artefacts survived the return 2"
+fi
+
+# Same for the other two path-knowing return-2 arms: a missing <cmd...> and
+# a non-positive <budget-seconds>.
+printf '%s' '{"status":"approve"}' >"$g10_env"
+set +e
+"$RUNNER" 5 "$g10_env" "$g10_tool" -- >/dev/null 2>&1
+g10_nocmd_rc=$?
+set -e
+g10_nocmd_gone=$([[ -e "$g10_env" ]] && echo no || echo yes)
+
+printf '%s' '{"status":"approve"}' >"$g10_env"
+set +e
+"$RUNNER" 0 "$g10_env" "$g10_tool" -- true >/dev/null 2>&1
+g10_zero_rc=$?
+set -e
+g10_zero_gone=$([[ -e "$g10_env" ]] && echo no || echo yes)
+
+if [[ "$g10_nocmd_rc" -eq 2 && "$g10_nocmd_gone" == "yes" && "$g10_zero_rc" -eq 2 && "$g10_zero_gone" == "yes" ]]; then
+	pass "G10: missing <cmd...> and <budget-seconds> 0 both return 2 with no stale envelope"
+else
+	fail "G10: nocmd rc=$g10_nocmd_rc gone=$g10_nocmd_gone; zero-budget rc=$g10_zero_rc gone=$g10_zero_gone"
+fi
+
+# The two documented EXEMPTIONS must not crash: <envelope-out> is unknowable
+# there, so the function returns 2 without touching the filesystem.
+printf '%s' '{"status":"approve"}' >"$g10_env"
+set +e
+"$RUNNER" --gate >/dev/null 2>&1
+g10_gate_rc=$?
+"$RUNNER" 5 >/dev/null 2>&1
+g10_short_rc=$?
+set -e
+if [[ "$g10_gate_rc" -eq 2 && "$g10_short_rc" -eq 2 && -e "$g10_env" ]]; then
+	pass "G10: the two documented exemptions return 2 and leave unrelated files alone"
+else
+	fail "G10: exemption arms: --gate rc=$g10_gate_rc, short rc=$g10_short_rc, unrelated env present=$([[ -e "$g10_env" ]] && echo yes || echo no)"
+fi
+
+# Structural: every `return 2` inside gate_run_bounded must sit at or after
+# the hoisted unlink, except the two the header names. Asserted on the file so
+# a future arm added above the unlink is caught even if no test exercises it.
+g10_unlink_line="$(grep -n 'Stale-artefact unlink, hoisted' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g10_early_returns="$(awk -v u="$g10_unlink_line" 'NR < u && /^[[:space:]]*return 2$/ {c++} END {print c+0}' "$GATE_BOUNDED")"
+assert_eq "$g10_early_returns" "1" "G10: exactly one \`return 2\` (the --gate exemption) precedes the hoisted unlink"
+
+g10_unlink_count="$(grep -c 'rm -f "\$envelope_out"' "$GATE_BOUNDED" || true)"
+assert_eq "$g10_unlink_count" "0" "G10: the old post-check unlink is gone -- one owner for the stale-artefact removal"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

@@ -187,8 +187,12 @@ for skill_md in "${DEEP_REVIEW_SKILLS[@]}"; do
 	assert_grep "$skill_md" '\-\-from-collector' \
 		"final persist block uses --from-collector ($skill_md)"
 
-	assert_grep "$skill_md" '\-\-status[[:space:]]+skipped' \
-		"documents the orchestrator-emitted 'done --status skipped' clause ($skill_md)"
+	# Either transport: the flag form (--status skipped) or the --json-file
+	# payload form ("status":"skipped"). G5 moved orchestrator-side writes to
+	# --json-file, so pinning this to the flag spelling would assert the
+	# transport rather than the clause.
+	assert_grep "$skill_md" '(\-\-status[[:space:]]+skipped|"status":"skipped")' \
+		"documents the orchestrator-emitted 'done status skipped' clause ($skill_md)"
 
 	# No positional lenses.json placeholder left in the final-persist prose
 	# -- the fix-spec explicitly says to delete this wording when switching
@@ -436,6 +440,58 @@ for skill_md in "${SKILLS[@]}"; do
 	else
 		pass "A10 ($label): every collector invocation argument is quoted"
 	fi
+done
+
+# ---------------------------------------------------------------------------
+# Group G (r3 G4/G5) — diff-derived text must not reach a shell command line,
+# and the heredoc boundary must be named rather than inferred.
+#
+# G4: `--expected "logic:src/$(id).ts"` is substituted by the ORCHESTRATOR'S
+# shell before collect-lens-results.sh is entered, so no in-script whitelist
+# can see it and double quotes do not help (they stop splitting and globbing,
+# not substitution). The fix is a transport change: units travel in a file.
+#
+# G5: bash ends a heredoc at a line consisting EXACTLY of the delimiter, so a
+# payload line reading only `SKEIN_JSON` would end the payload and execute the
+# remainder as shell. Valid JSON cannot produce one, so the hazard is gated on
+# a model FORMATTING error -- which is precisely why the contract has to name
+# it instead of expecting the model to infer the boundary rule.
+# ---------------------------------------------------------------------------
+
+for skill_md in "${SKILLS[@]}"; do
+	require_file "$skill_md" || continue
+	g_plugin="$(basename "$(dirname "$(dirname "$(dirname "$skill_md")")")")"
+	g_skill="$(basename "$(dirname "$skill_md")")"
+	glabel="$g_plugin/$g_skill"
+
+	# G4(a): every collector invocation prescribes --expected-file.
+	if grep -oE 'collect-lens-results\.sh[^`]*' "$skill_md" | grep -q -- '--expected-file'; then
+		pass "G4(a) ($glabel): a collector invocation prescribes --expected-file"
+	else
+		fail "G4(a) ($glabel): no collector invocation prescribes --expected-file"
+	fi
+
+	# G4(b): NO collector invocation interpolates a unit placeholder into
+	# --expected. This is the assertion that actually closes the finding --
+	# adding --expected-file somewhere else would not.
+	if grep -oE 'collect-lens-results\.sh[^`]*' "$skill_md" |
+		grep -Eq -- '--expected "<(lens|[a-z]+)>:'; then
+		fail "G4(b) ($glabel): a collector invocation still interpolates units into --expected"
+	else
+		pass "G4(b) ($glabel): no collector invocation interpolates units into --expected"
+	fi
+
+	# G4(c): the units file is named as the transport, with its path.
+	assert_grep "$skill_md" 'lens-runs/<run_id>/expected\.json' \
+		"G4(c) ($glabel): the units-file path is prescribed"
+
+	# G5: the delimiter-line hazard is named in the persistence contract.
+	assert_grep "$skill_md" 'line consisting only of .SKEIN_JSON' \
+		"G5(a) ($glabel): the contract forbids a bare SKEIN_JSON delimiter line"
+	assert_grep "$skill_md" 'exactly one line' \
+		"G5(b) ($glabel): the contract requires a single-line payload"
+	assert_grep "$skill_md" 'persist-lens-result\.sh --json-file' \
+		"G5(c) ($glabel): orchestrator-side writes are prescribed --json-file"
 done
 
 echo ""

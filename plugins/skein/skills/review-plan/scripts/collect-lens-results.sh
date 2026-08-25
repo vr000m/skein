@@ -11,7 +11,7 @@
 #
 # Usage:
 #   scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
-#       --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
+#       --run-id <id> [--expected-file <path> | --expected <lens>:<unit1>,<unit2>,... ...] \
 #       [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
 #       [--running ...] [--findings-jsonl]
 #
@@ -73,6 +73,33 @@
 # would silently read a different `<state-dir>/lenses` than the one written
 # to and report every lens `missing`.
 #
+# --expected-file <path> is the PREFERRED transport for the assigned-units
+# list, and the REQUIRED one whenever the units are derived from the diff or
+# from any other reviewed text (G4). It names one JSON file holding a single
+# object mapping lens name -> array of unit strings:
+#
+#   {"logic": ["src/app.ts", "src/db.ts"], "security": ["src/auth.ts"]}
+#
+# Key order is preserved, so it produces the same lens ordering repeated
+# --expected flags would. Each key goes through persist_validate_id (the
+# same lens-name whitelist --expected uses); each unit goes through
+# persist_validate_unit with source=file.
+#
+# WHY a file and not a flag. `--expected "logic:src/$(id).ts"` is substituted
+# by the ORCHESTRATOR'S SHELL before this script is ever entered, so no
+# in-script whitelist can see the pre-substitution text; double quotes stop
+# word-splitting and globbing but NOT substitution. This is the same class
+# the --json-stdin work closed on the writer side, and the reason the fix is
+# a transport change rather than a validation change. The orchestrator
+# writes the file with its file-write tool (no shell) at
+# <repo-root>/.skein/lens-runs/<run-id>/expected.json — a path whose every
+# component is already persist_validate_id-clean — and passes only that
+# path on the command line.
+#
+# --expected-file and --expected are MUTUALLY EXCLUSIVE (exit 2 if both are
+# given): last-wins between two transports for the same list is too subtle a
+# failure to debug. A lens named by neither is unreported, unchanged.
+#
 # --expected is repeatable, one per lens the orchestrator assigned work to.
 # The orchestrator OWNS the assigned-units list (R4) — this script never
 # infers "what should have been reviewed" from what a lens happened to
@@ -104,8 +131,14 @@
 # attempt 3 as two exhausted attempts. The orchestrator owns the attempt
 # count (R4); this script only counts files when it was not told.
 #   - No `done` line anywhere, files == 0, and effective <= 1 (i.e.
-#     spawned <= 1) -> "missing"; unreviewed := the full --expected unit
-#     list (or [] if none was given).
+#     spawned <= 1) -> zero coverage; unreviewed := the full --expected unit
+#     list (or [] if none was given). The status is "missing" ONLY when
+#     --running does not name this lens; when it does, the status is
+#     "partial". The --running floor is unconditional (see --running above):
+#     a lens the orchestrator has declared in flight is never terminal and
+#     never "missing", at EVERY attempt index including 1. "missing" is what
+#     makes --continue treat a lens as never-spawned and reassign it from
+#     scratch, which would discard a healthy in-flight attempt.
 #   - Otherwise, take the `done` line (if any) from the LATEST (highest-
 #     numbered) attempt file -- whether or not that file has one. A
 #     completed attempt 1 does NOT supply the status for a start-only
@@ -160,19 +193,26 @@
 # match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no ':', no '/', no glob
 # metachars) and --run-id additionally allows ':'. This closes the same
 # glob/path-interpolation vector from the reader side that
-# persist-lens-result.sh closes from the writer side. Unit names must not
-# contain commas — unit lists are comma-joined and unescaped end-to-end
-# (writer --units, collector --expected); a comma-bearing unit is rejected
-# at the writer boundary rather than silently split (see
-# persist-lens-result.sh).
+# persist-lens-result.sh closes from the writer side. Unit names are NOT
+# ids — they are free-form review targets (file paths for deep-review, plan
+# sections for review-plan) — so they go through persist_validate_unit's
+# narrow blacklist instead: no comma (unit lists are comma-joined and
+# unescaped end-to-end — writer --units, collector --expected/--expected-file
+# — so a comma-bearing unit would silently split) and no leading '-'. A unit
+# arriving on ARGV via --expected is additionally rejected for '$', backtick,
+# '"', '\\' or a newline; a unit arriving via --expected-file is not, because
+# it never reaches a shell. See scripts/lib/persist-common.sh.
 #
 # Exit codes:
 #   0 — always, once flags validate (a stale/unknown run-id or empty
 #       --expected list is a normal "missing" result, not an error).
 #   2 — usage error (missing --skill/--run-id, unknown --skill, a malformed
 #       --expected/--attempts/--running entry, a --run-id/lens name outside
-#       its charset, --root omitted while cwd is not inside a git worktree,
-#       or a symlinked run directory at <state-dir>/lenses/<run-id>).
+#       its charset, a unit rejected by persist_validate_unit, --expected
+#       given together with --expected-file, an --expected-file that is
+#       unreadable or is not an object of string arrays, --root omitted
+#       while cwd is not inside a git worktree, or a symlinked run directory
+#       at <state-dir>/lenses/<run-id>).
 #
 # Dependencies: jq.
 
@@ -187,9 +227,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
 	cat >&2 <<'EOF'
 usage: scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
-    --run-id <id> [--expected <lens>:<unit1>,<unit2>,...] [--expected ...] \
+    --run-id <id> [--expected-file <path> | --expected <lens>:<unit1>,<unit2>,... ...] \
     [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
     [--running ...] [--findings-jsonl]
+
+--expected-file is the DOCUMENTED form for diff-derived unit lists (file
+paths): the orchestrator writes the JSON with its file-write tool, so no
+reviewed text is ever interpolated into a shell command line. --expected
+remains for hand-written, non-diff-derived unit lists. They are mutually
+exclusive.
 EOF
 }
 
@@ -197,6 +243,8 @@ ROOT=""
 SKILL=""
 RUN_ID=""
 FINDINGS_JSONL=0
+EXPECTED_FILE=""
+SAW_EXPECTED_ARGV=0
 declare -a EXPECTED_LENSES=()
 declare -a EXPECTED_UNITS_CSV=()
 declare -a ATTEMPTS_LENSES=()
@@ -232,8 +280,32 @@ while [[ $# -gt 0 ]]; do
 		fi
 		expected_lens_name="${entry%%:*}"
 		persist_validate_id "$expected_lens_name" collect-lens-results name || exit 2
+		expected_units_csv="${entry#*:}"
+		# G4 layer 2: every unit that arrives on ARGV is blacklist-checked
+		# (see persist_validate_unit). This is defence in depth, not the
+		# primary control: the orchestrator's shell has already performed
+		# any substitution before this script is entered, so a
+		# diff-derived unit must not reach argv in the first place — use
+		# --expected-file for those.
+		if [[ -n "$expected_units_csv" ]]; then
+			IFS=',' read -r -a expected_units_argv <<<"$expected_units_csv"
+			for expected_unit in "${expected_units_argv[@]}"; do
+				persist_validate_unit "$expected_unit" collect-lens-results argv || exit 2
+			done
+		fi
+		SAW_EXPECTED_ARGV=1
 		EXPECTED_LENSES+=("$expected_lens_name")
-		EXPECTED_UNITS_CSV+=("${entry#*:}")
+		EXPECTED_UNITS_CSV+=("$expected_units_csv")
+		;;
+	--expected-file)
+		shift
+		persist_require_value "$@"
+		if [[ -n "$EXPECTED_FILE" ]]; then
+			echo "collect-lens-results: --expected-file may be given at most once (got '$EXPECTED_FILE' then '$1')" >&2
+			usage
+			exit 2
+		fi
+		EXPECTED_FILE="$1"
 		;;
 	--attempts)
 		shift
@@ -326,6 +398,64 @@ persist_validate_id "$RUN_ID" collect-lens-results run-id || exit 2
 if ! command -v jq >/dev/null 2>&1; then
 	echo "collect-lens-results: jq is required" >&2
 	exit 2
+fi
+
+# ---------------------------------------------------------------------------
+# --expected-file (G4 layer 1): the unit-list transport that does not go
+# through a shell.
+#
+# Mutually exclusive with --expected rather than last-wins: an orchestrator
+# that passes both has a bug, and silently preferring one of them hides it.
+# A lens named by NEITHER is simply unreported, exactly as before.
+# ---------------------------------------------------------------------------
+if [[ -n "$EXPECTED_FILE" ]]; then
+	if [[ "$SAW_EXPECTED_ARGV" -eq 1 ]]; then
+		echo "collect-lens-results: --expected and --expected-file are mutually exclusive (pass diff-derived units via --expected-file only)" >&2
+		usage
+		exit 2
+	fi
+	if [[ ! -f "$EXPECTED_FILE" || ! -r "$EXPECTED_FILE" ]]; then
+		echo "collect-lens-results: --expected-file is not a readable file: $EXPECTED_FILE" >&2
+		exit 2
+	fi
+
+	expected_file_json="$(cat "$EXPECTED_FILE")"
+	persist_validate_json_shape "$expected_file_json" collect-lens-results "--expected-file content" || exit 2
+	if ! printf '%s' "$expected_file_json" |
+		jq -e 'all(.[]; type == "array" and all(.[]; type == "string"))' >/dev/null 2>&1; then
+		echo "collect-lens-results: --expected-file must map each lens name to an ARRAY OF STRINGS: $EXPECTED_FILE" >&2
+		exit 2
+	fi
+
+	# Two NUL-delimited passes rather than one joined record: a unit is
+	# free-form text and may legitimately contain a newline, so the only
+	# delimiter that is safe here is NUL — and a unit cannot contain one,
+	# because the file is JSON and jq would have rejected it.
+	# Object key order is preserved by jq, so --expected-file yields the
+	# same lens order the file was written in, matching repeated --expected.
+	while IFS= read -r -d '' expected_file_lens; do
+		persist_validate_id "$expected_file_lens" collect-lens-results name || exit 2
+		expected_file_units=()
+		while IFS= read -r -d '' expected_file_unit; do
+			# source=file: only the two end-to-end WIRE rules (no comma,
+			# no leading '-') apply. The shell-metacharacter half of the
+			# blacklist is deliberately NOT applied — these units never
+			# reach a command line, and rejecting `$` or a quote here
+			# would reject legitimate review targets.
+			persist_validate_unit "$expected_file_unit" collect-lens-results file || exit 2
+			expected_file_units+=("$expected_file_unit")
+		done < <(printf '%s' "$expected_file_json" |
+			jq -j --arg lens "$expected_file_lens" '.[$lens][] | . + "\u0000"')
+		expected_file_csv=""
+		if [[ "${#expected_file_units[@]}" -gt 0 ]]; then
+			expected_file_csv="$(
+				IFS=','
+				printf '%s' "${expected_file_units[*]}"
+			)"
+		fi
+		EXPECTED_LENSES+=("$expected_file_lens")
+		EXPECTED_UNITS_CSV+=("$expected_file_csv")
+	done < <(printf '%s' "$expected_file_json" | jq -j 'keys_unsorted[] | . + "\u0000"')
 fi
 
 lenses_dir="$(persist_lens_state_dir "$ROOT" "$SKILL")" || exit 2
@@ -489,14 +619,39 @@ while [[ "$i" -lt "$n" ]]; do
 	running="$(running_attempt_for "$lens")"
 
 	# Decision table (D2): no done line found (checked below via
-	# .done_status) AND files==0 AND effective<=1 -> missing. With files==0
-	# the max on-disk index is 0, so effective is exactly the declared
-	# `--attempts` value (0 when none was declared). Everything else
+	# .done_status) AND files==0 AND effective<=1 -> ZERO-COVERAGE result.
+	# With files==0 the max on-disk index is 0, so effective is exactly the
+	# declared `--attempts` value (0 when none was declared). Everything else
 	# (files>0, or spawned>=2) falls through to the merge/jq block so a
 	# spawned-but-fileless attempt still reports timed_out via $effective.
+	#
+	# The zero-coverage status is `missing` ONLY when the orchestrator has
+	# not declared this lens in flight. `--running` is documented (header and
+	# the status table above) as an UNCONDITIONAL floor -- a running lens is
+	# never terminal AND never `missing` -- but this shortcut sits ABOVE the
+	# jq status ladder that was taught about `--running`, so before this fix
+	# `--attempts logic:1 --running logic:1` on an empty run dir reported
+	# `missing` while `--attempts logic:2 --running logic:2` reported
+	# `partial`: the floor held at attempt 2 and not at attempt 1. `missing`
+	# is what makes --continue treat a lens as never-spawned and reassign it
+	# from scratch, discarding a healthy in-flight attempt 1.
+	#
+	# The `partial` arm emits the SAME zero-coverage object rather than
+	# falling through to the jq block: with files==0 the `attempt_files`
+	# array is empty, and bash 3.2 (the repo's declared floor) aborts under
+	# `set -u` on `"${empty[@]}"` -- see the G5 comment below.
+	#
+	# `running` is `running_attempt_for`'s value: 0 when --running did not
+	# name this lens, otherwise the in-flight attempt INDEX (>= 1, validated
+	# at parse time). It is a number, never the empty string.
 	if [[ "$files" -eq 0 && "$effective" -le 1 ]]; then
-		lens_obj="$(jq -n -c --argjson assigned "$assigned_json" \
-			'{status: "missing", assigned: ($assigned | length), reviewed: 0, unreviewed: $assigned, findings: []}')"
+		if ((10#$running > 0)); then
+			zero_coverage_status="partial"
+		else
+			zero_coverage_status="missing"
+		fi
+		lens_obj="$(jq -n -c --argjson assigned "$assigned_json" --arg status "$zero_coverage_status" \
+			'{status: $status, assigned: ($assigned | length), reviewed: 0, unreviewed: $assigned, findings: []}')"
 		output="$(printf '%s' "$output" | jq -c --arg lens "$lens" --argjson obj "$lens_obj" '. + {($lens): $obj}')"
 		continue
 	fi

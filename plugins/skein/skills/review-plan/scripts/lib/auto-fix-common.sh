@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
-# auto-fix-common.sh — shared helpers for the deep-review and review-plan
-# auto-fix appliers (`scripts/apply-auto-fix-code.sh`,
-# `scripts/apply-auto-fix-plan.sh`).
+# auto-fix-common.sh — shared helpers for the auto-fix appliers AND for the
+# persistence scripts that reuse its root-anchor and symlink guard.
 #
-# Source this file from an applier; it does not run on its own.
+# SEVEN callers, not two (G8). Keep this list exact; `grep -rn '\.
+# .*auto-fix-common.sh"' scripts/*.sh` must return exactly these:
+#
+#   AUTO-FIX callers — the allowlist/manifest pipeline this file was
+#   written for:
+#     scripts/apply-auto-fix-code.sh
+#     scripts/apply-auto-fix-plan.sh
+#     scripts/audit-auto-fix-eligibility.sh
+#   STATE-FILE callers — source it for af_assert_no_symlink, which
+#   persist_atomic_write delegates to, and for af_manifest_dir:
+#     scripts/persist-review-state.sh
+#     scripts/persist-deep-review-state.sh
+#   LENS callers — Phase 2's disk-first streamed lens results; they source
+#   it for af_common_root / af_assert_no_symlink only, never for the
+#   allowlist helpers:
+#     scripts/persist-lens-result.sh
+#     scripts/collect-lens-results.sh
+#
+# Which helpers belong to whom:
+#   - af_assert_no_symlink  — the only helper ALL of the non-auto-fix
+#     callers want. The two LENS callers source this file for it and for
+#     nothing else.
+#   - $AF_COMMON_ROOT       — the AUTO-FIX and STATE-FILE callers (five).
+#     The LENS callers take their root from an explicit --root instead.
+#   - af_have_jq            — the two appliers.
+#   - af_manifest_dir       — the two STATE-FILE callers.
+#   - af_allowlist_* and the rest of the plan/code applier helpers —
+#     AUTO-FIX callers only. See the "SKILL->STATE-DIR MAPPING (4 sites)"
+#     block below for the four places a new skill must be registered.
+#
+# Source this file from a caller; it does not run on its own.
 #
 # Helpers provided:
 #   af_have_jq                 — exit 2 if jq is missing.

@@ -1195,4 +1195,151 @@ else
 	fail "(A2) attempts-only='$a2_attempts_only' (expected timed_out), both='$a2_both' (expected partial)"
 fi
 
+# ---------------------------------------------------------------------------
+# (G2) The --running floor applies at attempt 1 with ZERO files on disk.
+# The `missing` shortcut (files==0 && effective<=1) sits ABOVE the jq status
+# ladder that r2 taught about --running, so the floor held at attempt 2 and
+# broke at attempt 1: `--attempts logic:1 --running logic:1` on an empty run
+# dir reported `missing`, while `--attempts logic:2 --running logic:2`
+# reported `partial`. `missing` is what makes --continue treat a lens as
+# never-spawned and reassign it from scratch, discarding a healthy in-flight
+# attempt 1. The header and the status table both call the floor
+# unconditional; this asserts it is.
+# ---------------------------------------------------------------------------
+g2_root="$TMPDIR_ROOT/case-g2"
+mkdir -p "$g2_root/.deep-review/lenses/g2-run"
+g2_out="$(bash "$SCRIPT" --root "$g2_root" --skill deep-review --run-id g2-run \
+	--expected "logic:u1,u2" --attempts "logic:1" --running "logic:1" 2>/dev/null || true)"
+g2_status="$(printf '%s' "$g2_out" | jq -r '.logic.status')"
+g2_unreviewed="$(printf '%s' "$g2_out" | jq -c '.logic.unreviewed')"
+if [[ "$g2_status" == "partial" ]]; then
+	pass "(G2) running floor applies at attempt 1 with zero files: status is partial, not missing"
+else
+	fail "(G2) running floor broke at attempt 1 with zero files (status='$g2_status', expected partial)"
+fi
+if [[ "$g2_unreviewed" == '["u1","u2"]' ]]; then
+	pass "(G2) the zero-coverage partial still reports the full --expected unit list as unreviewed"
+else
+	fail "(G2) zero-coverage unreviewed='$g2_unreviewed' (expected [\"u1\",\"u2\"])"
+fi
+
+# Control: WITHOUT --running the same zero-file fixture is still `missing`.
+g2b_status="$(bash "$SCRIPT" --root "$g2_root" --skill deep-review --run-id g2-run \
+	--expected "logic:u1,u2" --attempts "logic:1" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$g2b_status" == "missing" ]]; then
+	pass "(G2b) control: without --running the same zero-file fixture is still missing"
+else
+	fail "(G2b) control broke: expected missing without --running, got '$g2b_status'"
+fi
+
+# Parity: the floor must not depend on the attempt index. Attempt 1 and
+# attempt 2 with zero files on disk must agree once --running names the lens.
+g2c_status="$(bash "$SCRIPT" --root "$g2_root" --skill deep-review --run-id g2-run \
+	--expected "logic:u1,u2" --attempts "logic:2" --running "logic:2" 2>/dev/null | jq -r '.logic.status')"
+if [[ "$g2c_status" == "$g2_status" ]]; then
+	pass "(G2c) the running floor is attempt-index independent (attempt 1 and 2 both report '$g2_status')"
+else
+	fail "(G2c) attempt 1 reported '$g2_status' but attempt 2 reported '$g2c_status'"
+fi
+
+# ---------------------------------------------------------------------------
+# (G4) Diff-derived unit lists must not travel on the command line.
+#
+# `--expected "logic:src/$(id).ts"` is substituted by the ORCHESTRATOR'S
+# shell before this script is entered, so no in-script whitelist can see the
+# pre-substitution text; quoting stops splitting and globbing but not
+# substitution. The fix is a transport change (--expected-file, written with
+# a file-write tool) plus a defence-in-depth blacklist on anything that does
+# reach argv.
+# ---------------------------------------------------------------------------
+g4_root="$TMPDIR_ROOT/case-g4"
+mkdir -p "$g4_root/.deep-review/lenses/g4-run"
+g4_ef="$g4_root/expected.json"
+printf '%s' '{"logic":["u1","u2"],"security":["s1"]}' >"$g4_ef"
+
+g4_file_out="$(bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_ef" 2>/dev/null || true)"
+g4_argv_out="$(bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected "logic:u1,u2" --expected "security:s1" 2>/dev/null || true)"
+if [[ -n "$g4_file_out" && "$g4_file_out" == "$g4_argv_out" ]]; then
+	pass "(G4) --expected-file yields the SAME envelope as the equivalent --expected flags"
+else
+	fail "(G4) --expected-file envelope differs: file='$g4_file_out' argv='$g4_argv_out'"
+fi
+
+set +e
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected 'logic:src/$(id).ts' >/dev/null 2>&1
+g4_subst_rc=$?
+set -e
+if [[ "$g4_subst_rc" -eq 2 ]]; then
+	pass "(G4) a command-substitution-shaped unit on --expected exits 2"
+else
+	fail "(G4) --expected 'logic:src/\$(id).ts' must exit 2, got rc=$g4_subst_rc"
+fi
+
+set +e
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected 'logic:--not-a-unit' >/dev/null 2>&1
+g4_dash_rc=$?
+set -e
+if [[ "$g4_dash_rc" -eq 2 ]]; then
+	pass "(G4) a leading-dash unit exits 2 (it would be parsed as a flag downstream)"
+else
+	fail "(G4) a leading-dash unit must exit 2, got rc=$g4_dash_rc"
+fi
+
+# A comma-bearing unit is rejected on BOTH transports: unit lists are
+# comma-joined and unescaped end-to-end, so it would silently split in two.
+printf '%s' '{"logic":["a,b"]}' >"$g4_root/comma.json"
+set +e
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_root/comma.json" >/dev/null 2>&1
+g4_comma_rc=$?
+set -e
+if [[ "$g4_comma_rc" -eq 2 ]]; then
+	pass "(G4) a comma-bearing unit inside --expected-file exits 2"
+else
+	fail "(G4) a comma-bearing --expected-file unit must exit 2, got rc=$g4_comma_rc"
+fi
+
+# ...but a shell metacharacter inside --expected-file is ACCEPTED: those
+# units never reach a command line, and a file path or plan section may
+# legitimately contain '$' or a quote. Rejecting it would be a whitelist,
+# which is exactly what this deliberately is not.
+printf '%s' '{"logic":["src/$weird (v2).ts"]}' >"$g4_root/meta.json"
+g4_meta_units="$(bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_root/meta.json" 2>/dev/null | jq -c '.logic.unreviewed' || true)"
+if [[ "$g4_meta_units" == '["src/$weird (v2).ts"]' ]]; then
+	pass "(G4) a shell metacharacter inside --expected-file is accepted verbatim (file transport never reaches a shell)"
+else
+	fail "(G4) --expected-file mangled or rejected a legitimate unit (got '$g4_meta_units')"
+fi
+
+set +e
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected "logic:u1" --expected-file "$g4_ef" >/dev/null 2>&1
+g4_both_rc=$?
+set -e
+if [[ "$g4_both_rc" -eq 2 ]]; then
+	pass "(G4) --expected and --expected-file are mutually exclusive (exit 2)"
+else
+	fail "(G4) --expected + --expected-file must exit 2, got rc=$g4_both_rc"
+fi
+
+set +e
+printf '%s' '{"logic":"u1"}' >"$g4_root/notarray.json"
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_root/notarray.json" >/dev/null 2>&1
+g4_shape_rc=$?
+bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
+	--expected-file "$g4_root/nope.json" >/dev/null 2>&1
+g4_missing_rc=$?
+set -e
+if [[ "$g4_shape_rc" -eq 2 && "$g4_missing_rc" -eq 2 ]]; then
+	pass "(G4) a non-array-valued or unreadable --expected-file exits 2"
+else
+	fail "(G4) shape rc=$g4_shape_rc, missing-file rc=$g4_missing_rc (both must be 2)"
+fi
+
 finish

@@ -105,6 +105,12 @@ keys_dir="$gate_out_dir"
 present_keys_file="$keys_dir/present-keys.txt"
 claimed_findings_file="$keys_dir/claimed-findings.jsonl"
 claimed_keys_file="$keys_dir/claimed-keys.txt"
+# Give $auto_fix_manifest an OWNER, not just a defensive read. It is
+# otherwise assigned only by capturing the applier's stderr line (step 2a),
+# which never happens on a round where the applier did not run — and under
+# `set -u` the -s test below would then abort the round, reintroducing
+# exactly the abort that guard exists to prevent.
+auto_fix_manifest=""
 ```
 `lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when supplied. `gate_run_bounded` (`lib/gate-bounded.sh`, byte-identical to the Claude mirror's copy) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. The bounded calls pass an authoritative `--gate <name>` so the envelope identity is retained on clean, timeout, and invalid-JSON paths. `"$SKILL_DIR"/lib/run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass. Each gate gets its **own** envelope/tool-out pair, scoped to the round — never reuse a path across gates or rounds: `"$SKILL_DIR"/lib/run-gate.sh normalize` reads the envelope by path, so a reused path silently reports the previous gate's (or previous round's) result as this one's.
 
@@ -294,7 +300,11 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   the ledger call:
   ```bash
   # 1. present keys: every reconciled finding of THIS round
-  jq -c '.findings[]' reconciled-envelope.json \
+  # `.findings[]?` for the same reason 2a uses it: a null or absent
+  #    `.findings` makes the unconditional form exit non-zero, and under
+  #    `pipefail` that aborts the round before a single key file is written.
+  #    Both extractions are total.
+  jq -c '.findings[]?' reconciled-envelope.json \
     | "$SKILL_DIR"/scripts/finding-key.sh - > "$present_keys_file"
 
   # 2. claimed findings: applier-owned trivial fixes, then fixer-owned substantive
@@ -318,7 +328,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   #       the artifact AND keep each extraction total (`($m[0] // [])`,
   #       `.claimed[]?`) — an unconditional jq exits 2 and aborts convergence on
   #       exactly the clean round that would have succeeded.
-  if [[ -s "$auto_fix_manifest" ]]; then
+  if [[ -s "${auto_fix_manifest:-}" ]]; then
   jq -c --slurpfile m "$auto_fix_manifest" '
         (($m[0] // []) | map(select(.status == "applied"))
                | map((.file|tostring) + "\u0000" + (.line|tostring))) as $ok

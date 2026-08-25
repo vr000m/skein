@@ -762,4 +762,83 @@ else
 	pass "(A11b) CSV 'units' comma is the separator, not a rejected character"
 fi
 
+# ---------------------------------------------------------------------------
+# (G5) --json-file: the same payload, read from a file, with no heredoc
+# delimiter to end early.
+#
+# --json-stdin reaches this script under a quoted heredoc (<<'SKEIN_JSON'),
+# and bash ends a heredoc at a line consisting EXACTLY of the delimiter. A
+# payload that ever contained a bare `SKEIN_JSON` line would end the heredoc
+# there and the remainder would execute as shell. Valid JSON cannot produce
+# such a line, so the hazard is gated on a model FORMATTING error rather than
+# on reviewed content -- but orchestrator-side writers have a file-write tool
+# and no reason to accept it. Lenses keep --json-stdin (a temp file per
+# streamed finding is worse ergonomics for a streaming writer).
+# ---------------------------------------------------------------------------
+g5_root="$TMPDIR_ROOT/case-g5"
+mkdir -p "$g5_root"
+g5_payload="$g5_root/payload.json"
+printf '%s' '{"type":"start","units":["u1","u2"]}' >"$g5_payload"
+
+set +e
+bash "$SCRIPT" --root "$g5_root" --skill deep-review --run-id run-g5 \
+	--lens logic --attempt 1 --json-file "$g5_payload" >/dev/null 2>"$g5_root/stderr"
+g5_rc=$?
+set -e
+g5_target="$g5_root/.deep-review/lenses/run-g5/logic.1.jsonl"
+if [[ $g5_rc -ne 0 ]]; then
+	fail "(G5) --json-file must be accepted (exit $g5_rc)"
+	sed 's/^/    /' "$g5_root/stderr"
+elif [[ "$(jq -r '.type' "$g5_target" 2>/dev/null)" != "start" ]] ||
+	[[ "$(jq -c '.units' "$g5_target" 2>/dev/null)" != '["u1","u2"]' ]]; then
+	fail "(G5) --json-file wrote the wrong line: $(cat "$g5_target" 2>/dev/null)"
+else
+	pass "(G5) --json-file writes the same line --json-stdin would"
+fi
+
+# Parity: --json-file and --json-stdin must produce byte-identical lines
+# apart from the timestamp, i.e. they share every gate and the serializer.
+set +e
+printf '%s' '{"type":"start","units":["u1","u2"]}' |
+	bash "$SCRIPT" --root "$g5_root" --skill deep-review --run-id run-g5 \
+		--lens logic --attempt 2 --json-stdin >/dev/null 2>&1
+set -e
+g5_stdin_target="$g5_root/.deep-review/lenses/run-g5/logic.2.jsonl"
+g5_a="$(jq -Sc 'del(.ts, .attempt)' "$g5_target" 2>/dev/null || true)"
+g5_b="$(jq -Sc 'del(.ts, .attempt)' "$g5_stdin_target" 2>/dev/null || true)"
+if [[ -n "$g5_a" && "$g5_a" == "$g5_b" ]]; then
+	pass "(G5) --json-file and --json-stdin serialize identically (shared gates and serializer)"
+else
+	fail "(G5) transport parity broke: file='$g5_a' stdin='$g5_b'"
+fi
+
+# Two concatenated objects are rejected on the FILE transport too -- the
+# one-object shape gate is shared, not re-implemented.
+printf '%s' '{"type":"start"} {"type":"start"}' >"$g5_root/two.json"
+set +e
+bash "$SCRIPT" --root "$g5_root" --skill deep-review --run-id run-g5 \
+	--lens logic --attempt 3 --json-file "$g5_root/two.json" >/dev/null 2>&1
+g5_two_rc=$?
+set -e
+if [[ $g5_two_rc -eq 2 ]] && [[ ! -e "$g5_root/.deep-review/lenses/run-g5/logic.3.jsonl" ]]; then
+	pass "(G5) two concatenated objects in --json-file exit 2 with no byte written"
+else
+	fail "(G5) two-object --json-file: rc=$g5_two_rc (expected 2), file exists=$([[ -e "$g5_root/.deep-review/lenses/run-g5/logic.3.jsonl" ]] && echo yes || echo no)"
+fi
+
+# --json-file with --json-stdin is a caller bug, not last-wins.
+set +e
+bash "$SCRIPT" --root "$g5_root" --skill deep-review --run-id run-g5 \
+	--lens logic --attempt 4 --json-file "$g5_payload" --json-stdin </dev/null >/dev/null 2>&1
+g5_both_rc=$?
+bash "$SCRIPT" --root "$g5_root" --skill deep-review --run-id run-g5 \
+	--lens logic --attempt 5 --json-file "$g5_root/absent.json" >/dev/null 2>&1
+g5_absent_rc=$?
+set -e
+if [[ $g5_both_rc -eq 2 && $g5_absent_rc -eq 2 ]]; then
+	pass "(G5) --json-file with --json-stdin exits 2; an unreadable --json-file exits 2"
+else
+	fail "(G5) both-flags rc=$g5_both_rc, unreadable rc=$g5_absent_rc (both must be 2)"
+fi
+
 finish

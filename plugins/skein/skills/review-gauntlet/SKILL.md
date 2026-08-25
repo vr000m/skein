@@ -219,9 +219,19 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
   present_keys_file="$keys_dir/present-keys.txt"
   claimed_findings_file="$keys_dir/claimed-findings.jsonl"
   claimed_keys_file="$keys_dir/claimed-keys.txt"
+  # Give $auto_fix_manifest an OWNER, not just a defensive read. It is
+  # otherwise assigned only by capturing the applier's stderr line (step 2a),
+  # which never happens on a round where the applier did not run — and under
+  # `set -u` the `[[ -s "$auto_fix_manifest" ]]` test below would then abort
+  # the round, reintroducing exactly the abort that guard exists to prevent.
+  auto_fix_manifest=""
 
-  # 1. present keys: every reconciled finding of THIS round
-  jq -c '.findings[]' reconciled-envelope.json \
+  # 1. present keys: every reconciled finding of THIS round.
+  #    `.findings[]?` for the same reason 2a uses it: a null or absent
+  #    `.findings` makes the unconditional form exit 5, and under `pipefail`
+  #    that aborts the round before a single key file is written. Both
+  #    extractions are total.
+  jq -c '.findings[]?' reconciled-envelope.json \
     | "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/scripts/finding-key.sh - > "$present_keys_file"
 
   # 2. claimed findings: applier-owned trivial fixes, then fixer-owned substantive
@@ -247,9 +257,16 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
   #       apply no auto-fix, so each contributes an EMPTY list when its artifact
   #       is absent, and an empty $claimed_findings_file is legitimate. Guard on
   #       the artifact AND keep each extraction total (`($m[0] // [])`,
-  #       `.claimed[]?`) — an unconditional jq exits 2 and aborts convergence on
-  #       exactly the clean round that would have succeeded.
-  if [[ -s "$auto_fix_manifest" ]]; then
+  #       `.findings[]?`, `.claimed[]?`) — an unconditional jq exits non-zero
+  #       and aborts convergence on exactly the clean round that would have
+  #       succeeded. The `${auto_fix_manifest:-}` default below is part of the
+  #       same guarantee, not belt-and-braces: the variable is only ever
+  #       assigned by capturing the applier's stderr, so on a round with no
+  #       applier run it is UNSET, and `[[ -s "$auto_fix_manifest" ]]` is an
+  #       unbound-variable abort under `set -u`. It is initialised to empty
+  #       above as well, so the block has an owner and not only a defensive
+  #       read.
+  if [[ -s "${auto_fix_manifest:-}" ]]; then
   jq -c --slurpfile m "$auto_fix_manifest" '
         (($m[0] // []) | map(select(.status == "applied"))
                | map((.file|tostring) + "\u0000" + (.line|tostring))) as $ok

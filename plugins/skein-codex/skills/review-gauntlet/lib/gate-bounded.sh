@@ -109,6 +109,15 @@
 #     caller that ignores the return value never reads a stale result as
 #     fresh.
 #
+#     EXACTLY TWO usage errors are exempt, and only because <envelope-out>
+#     is not knowable when they are detected: `--gate` given without a
+#     <name>, and fewer than two arguments remaining once any `--gate`
+#     pair has been consumed. On every other `return 2` path — a missing
+#     `--` separator, a missing <cmd...>, a non-positive <budget-seconds>
+#     — <envelope-out> and <tool-out> (plus its `.stderr` sibling) are
+#     removed BEFORE the check that fails. The unlink is best-effort: an
+#     unremovable path does not itself become a usage error.
+#
 # Dependencies: bash + jq + (GNU/Homebrew `timeout` or `gtimeout`, else
 # python3 as the setsid-shim fallback).
 
@@ -183,6 +192,28 @@ gate_run_bounded() {
 		shift 2
 	fi
 
+	# Stale-artefact unlink, hoisted to the FIRST point at which the paths
+	# are knowable. Every `return 2` below this line therefore leaves no
+	# previous round's artefacts behind — the contract the header promises.
+	# It used to sit after the `$4 != "--"` check, so three usage errors
+	# (`--gate` with no name, fewer than 5 arguments, a missing `--`)
+	# returned 2 with a possibly-CLEAN previous-round envelope still at
+	# $envelope_out for a caller that ignores the return value to misread as
+	# this round's result. The third of those already knew the path.
+	#
+	# Positional meaning after the `--gate` shift, per the usage line below:
+	#   $1 = <seconds>  $2 = <envelope-out>  $3 = <tool-out>
+	# `$# -ge 2` is the guard: with fewer arguments than that no path has
+	# been supplied and there is nothing to remove. Best-effort by design —
+	# an unremovable path is not itself a usage error, and the real write
+	# below would fail loudly anyway.
+	if [[ $# -ge 2 ]]; then
+		rm -f "$2"
+		if [[ $# -ge 3 ]]; then
+			rm -f "$3" "${3}.stderr"
+		fi
+	fi
+
 	if [[ $# -lt 5 ]]; then
 		echo "gate_run_bounded: usage: gate_run_bounded [--gate <name>] <seconds> <envelope-out> <tool-out> -- <cmd...>" >&2
 		return 2
@@ -193,12 +224,9 @@ gate_run_bounded() {
 		return 2
 	fi
 
-	# Unlink any stale envelope/tool-out from a previous round as soon as
-	# the paths are known — every remaining check below can fail and
-	# `return 2`, and a return-2 must never leave a previous round's
-	# (possibly clean) envelope sitting at $envelope_out for a caller that
-	# ignores the return value to misread as this round's result.
-	rm -f "$tool_out" "${tool_out}.stderr" "$envelope_out"
+	# (The stale-artefact unlink used to live here. It is hoisted above the
+	# argument checks now — one owner, and every `return 2` that can name a
+	# path is covered.)
 
 	shift 4
 	if [[ $# -eq 0 ]]; then

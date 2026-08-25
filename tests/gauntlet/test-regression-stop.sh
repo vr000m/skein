@@ -660,7 +660,9 @@ for a7_mirror in skein skein-codex; do
 
 	# Both extractions must be guarded on the artifact existing at all, and
 	# both must be total: `.claimed[]?` and `($m[0] // [])`.
-	if grep -q 'if \[\[ -s "\$auto_fix_manifest" \]\]' "$a7_skill"; then
+	# G11 (r3) made the guard set -u safe: `${auto_fix_manifest:-}`; accept
+	# either spelling so the guard's presence, not its default syntax, is tested.
+	if grep -Eq 'if \[\[ -s "\$\{?auto_fix_manifest(:-)?\}?" \]\]' "$a7_skill"; then
 		pass "(A7/$a7_mirror) Step 2a is guarded on the manifest existing"
 	else
 		fail "(A7/$a7_mirror) Step 2a runs unconditionally -- a clean round with no applier aborts convergence"

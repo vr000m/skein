@@ -33,6 +33,33 @@
 # quoting reviewed code into them re-opens exactly the hole --json-stdin
 # exists to close. Every SKILL.md mirror instructs --json-stdin only.
 #
+# --json-file <path> (G5) is --json-stdin with the transport swapped: it
+# reads the same one-JSON-object payload from a FILE instead of stdin, and
+# every gate after the read -- one-object shape, scalar type, units, the
+# serializer -- is shared verbatim, so the two forms cannot drift in what
+# they accept. Mutually exclusive with --json-stdin and with the payload
+# flags.
+#
+# It exists for ORCHESTRATOR-SIDE writes: the Codex sequential clause, the
+# skipped-lens clause, and the attempt-N `start` clause. Those payloads are
+# written by a caller that HAS a file-write tool, and a file has no
+# delimiter to end early. `--json-stdin` reaches this script under a quoted
+# heredoc (`<<'SKEIN_JSON'`), and bash ends a heredoc at a line consisting
+# EXACTLY of the delimiter -- so a payload that ever contained a bare
+# `SKEIN_JSON` line would end the heredoc there and the remainder would be
+# executed as shell. Valid JSON cannot produce such a line (the payload is
+# one line, and a raw newline inside a JSON string is invalid JSON, which
+# the shape gate below rejects anyway), so this is gated on a MODEL
+# FORMATTING ERROR rather than on reviewed content -- but the trigger (a
+# diff line reading exactly `SKEIN_JSON`, giving the model a template to
+# copy) is plausible, and an orchestrator has no reason to accept that risk
+# when it can write a file.
+#
+# LENSES KEEP --json-stdin. A temp file per streamed finding is worse
+# ergonomics for the streaming writer, and the prompt contract in every
+# SKILL.md mirror now names the delimiter-line hazard explicitly instead of
+# expecting the model to infer the boundary rule.
+#
 # WHY STDIN MODE EXISTS. The lens-persistence prompt contract is a shell
 # command template, and a lens is instructed to quote the code it is
 # reviewing into the payload. In flag mode that reviewed text lands on the
@@ -136,8 +163,9 @@
 #   2 — usage error (missing/unknown --skill, --type, or --status; a
 #       required --type-specific flag missing; non-positive --attempt;
 #       --run-id/--lens outside its charset; a comma in --unit;
-#       --json-stdin combined with a payload flag; stdin that is not
-#       exactly one JSON object; a --json-stdin payload key whose value is
+#       --json-stdin/--json-file combined with a payload flag; --json-file
+#       combined with --json-stdin; an unreadable --json-file; input that is
+#       not exactly one JSON object; a payload key whose value is
 #       neither absent, null, nor a NUL-free string). No file is written.
 #   1 — append refused or failed (symlink guard, permissions, disk full);
 #       no line written.
@@ -168,6 +196,10 @@ shell. It is mutually exclusive with
 --type/--units/--unit/--status/--severity/--category/--location/--summary/
 --evidence/--suggestion.
 
+--json-file <path> is the same payload read from a file instead of stdin,
+for ORCHESTRATOR-SIDE writes (the caller has a file-write tool). It has no
+heredoc delimiter to end early. Mutually exclusive with --json-stdin.
+
 The six content flags --severity/--category/--location/--summary/--evidence/
 --suggestion are back-compat/test only -- never from a lens prompt: reviewed
 text on argv is expanded by the lens's own shell before this script runs.
@@ -191,6 +223,7 @@ SUMMARY=""
 EVIDENCE=""
 SUGGESTION=""
 JSON_STDIN=0
+JSON_FILE=""
 PAYLOAD_FLAGS=""
 
 # note_payload_flag <flag> -- record that a flag-mode payload flag was used
@@ -290,6 +323,16 @@ while [[ $# -gt 0 ]]; do
 	--json-stdin)
 		JSON_STDIN=1
 		;;
+	--json-file)
+		shift
+		persist_require_value "$@"
+		if [[ -n "$JSON_FILE" ]]; then
+			echo "persist-lens-result: --json-file may be given at most once (got '$JSON_FILE' then '$1')" >&2
+			usage
+			exit 2
+		fi
+		JSON_FILE="$1"
+		;;
 	--help | -h)
 		usage
 		exit 0
@@ -347,6 +390,19 @@ fi
 # fills, then fall through to the shared per-`--type` validation and the
 # shared jq serializer below. Nothing here builds a path or writes a byte:
 # every rejection is exit 2 before persist_lens_state_dir is ever called.
+# G5: --json-file is --json-stdin with the transport swapped. Everything
+# after the read -- the one-object shape gate, the scalar type gate, the
+# units gate, the serializer -- is shared verbatim, so the two forms cannot
+# drift in what they accept.
+if [[ -n "$JSON_FILE" ]]; then
+	if [[ "$JSON_STDIN" -eq 1 ]]; then
+		echo "persist-lens-result: --json-file and --json-stdin are mutually exclusive" >&2
+		usage
+		exit 2
+	fi
+	JSON_STDIN=1
+fi
+
 if [[ "$JSON_STDIN" -eq 1 ]]; then
 	if [[ -n "$PAYLOAD_FLAGS" ]]; then
 		echo "persist-lens-result: --json-stdin is mutually exclusive with payload flags (got: $PAYLOAD_FLAGS)" >&2
@@ -354,10 +410,21 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		exit 2
 	fi
 
-	STDIN_JSON="$(cat)" || {
-		echo "persist-lens-result: failed to read --json-stdin payload" >&2
-		exit 2
-	}
+	if [[ -n "$JSON_FILE" ]]; then
+		if [[ ! -f "$JSON_FILE" || ! -r "$JSON_FILE" ]]; then
+			echo "persist-lens-result: --json-file is not a readable file: $JSON_FILE" >&2
+			exit 2
+		fi
+		STDIN_JSON="$(cat "$JSON_FILE")" || {
+			echo "persist-lens-result: failed to read --json-file payload: $JSON_FILE" >&2
+			exit 2
+		}
+	else
+		STDIN_JSON="$(cat)" || {
+			echo "persist-lens-result: failed to read --json-stdin payload" >&2
+			exit 2
+		}
+	fi
 
 	# Shape gate. jq WITHOUT --slurp applies the filter to each top-level
 	# document independently and its exit status reflects only the LAST one,
@@ -366,7 +433,7 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 	# exactly one document and that document an object. Empty stdin slurps to
 	# `[]` -> length 0 -> exit 2.
 	if ! printf '%s' "$STDIN_JSON" | jq -e -s 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1; then
-		echo "persist-lens-result: --json-stdin requires exactly one JSON object on stdin" >&2
+		echo "persist-lens-result: --json-stdin/--json-file requires exactly one JSON object" >&2
 		exit 2
 	fi
 
