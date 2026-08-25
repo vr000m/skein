@@ -1168,6 +1168,124 @@ rm -rf "$g14_base"
 
 rm -rf "$g13_base"
 
+# --- R11 F5: root-level arithmetic fields (cap / k / loop_counter) ---------
+# validate_ledger_fields (renamed from validate_last_round_fields) gated only
+# the LAST ROUND's five numbers. `cap`, `k` and `loop_counter` are top-level
+# ledger fields that feed `((loop_counter >= cap))` and `((epoch_len >= k+1))`
+# with no gate at all, so a malformed one either DEGRADED a terminal stop into
+# a non-terminal token (fractional cap -> the `cap` comparison errors, the
+# chain falls through to `continue`, exit 0) or crashed outside the documented
+# 0/2/3/4/5/6 alphabet (non-numeric k -> unbound-variable exit 1). Both must
+# now be exit 2 (invalid ledger), the code already reserved for this class.
+#
+# Each fixture is otherwise a ledger that WOULD reach the guarded comparison:
+# loop_counter 3 against cap 1.5 is past any sane cap, and the k fixture's
+# last round is a non-clean full pass that falls through to the epoch check.
+
+L_frac_cap="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 3,
+  "cap": 1.5,
+  "k": 2,
+  "rounds": [
+    {
+      "count": 2,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+fcap_rc=0
+fcap_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_frac_cap" 2>/dev/null)" || fcap_rc=$?
+if [[ "$fcap_rc" -eq 2 && -z "$fcap_out" ]]; then
+	pass "R11-F5a: a fractional cap (1.5) exits 2, not a silent non-terminal continue"
+else
+	fail "R11-F5a: fractional cap should exit 2 with empty stdout (rc=$fcap_rc, out='$fcap_out')"
+fi
+
+L_bad_k="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 3,
+  "cap": 10,
+  "k": "abc",
+  "rounds": [
+    {
+      "count": 2,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+bk_rc=0
+bk_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_bad_k" 2>/dev/null)" || bk_rc=$?
+if [[ "$bk_rc" -eq 2 && -z "$bk_out" ]]; then
+	pass "R11-F5b: a non-numeric k exits 2, inside the documented exit-code alphabet"
+else
+	fail "R11-F5b: non-numeric k should exit 2 with empty stdout (rc=$bk_rc, out='$bk_out')"
+fi
+
+L_frac_lc="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1.5,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "confirm",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+flc_rc=0
+flc_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_frac_lc" 2>/dev/null)" || flc_rc=$?
+if [[ "$flc_rc" -eq 2 && -z "$flc_out" ]]; then
+	pass "R11-F5c: a non-integral loop_counter exits 2 (validate_ledger_shape admits any number)"
+else
+	fail "R11-F5c: non-integral loop_counter should exit 2 with empty stdout (rc=$flc_rc, out='$flc_out')"
+fi
+
+# CONTROL: cap/k are OPTIONAL by construction — the decoder reads them as
+# `(.cap // "")` and falls back to the CLI-supplied, already-validated
+# --cap/--k. An absent OR EXPLICITLY NULL cap/k must stay legal, or the
+# tightened root gate would break every legacy ledger written before cap/k
+# were persisted.
+L_null_capk="$(handmade_ledger <<'EOF'
+{
+  "loop_counter": 1,
+  "cap": null,
+  "k": null,
+  "rounds": [
+    {
+      "count": 0,
+      "structural_tally": 0,
+      "local_tally": 0,
+      "pass_type": "full",
+      "quarantine_size": 0,
+      "unresolved_gates": 0
+    }
+  ]
+}
+EOF
+)"
+nck_rc=0
+nck_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_null_capk" 2>/dev/null)" || nck_rc=$?
+assert_eq "$nck_out" "success" "R11-F5d/control: an explicit cap:null / k:null still falls back to the CLI values (-> success)"
+assert_eq "$nck_rc" "5" "R11-F5d/control: ...and still exits 5 for a terminal token, not 2"
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

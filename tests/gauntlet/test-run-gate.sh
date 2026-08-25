@@ -391,6 +391,92 @@ else
 	fail "R8-G2b/control:$r8g2b_bad"
 fi
 
+# --- R11 F16: normalize validates the status ALPHABET before any side effect
+# The findings loop streams JSONL to stdout and APPENDS auto_fix-carrying
+# findings to the autofix cache, and the trailing `case "$status"` ran after
+# it — so an unrecognised status exited 2 having already half-populated the
+# cache that `route` later reads back into the auto-fix stream.
+#
+# INVARIANT: exit 2 (validation) never has side effects; only exit 4 does.
+# The assertion is therefore on BOTH the exit code and the cache: a test that
+# only checked rc=2 passed before the fix as well.
+
+r11f16_cache="$WORKDIR/r11f16-cache.jsonl"
+r11f16_raw="$WORKDIR/r11f16-raw.json"
+cat >"$r11f16_raw" <<'EOF'
+{"gate": "code-review", "status": "bogus-status",
+ "findings": [{"file": "d.py", "line": 7, "category": "correctness",
+               "severity": "high", "confidence": 0.9, "summary": "s",
+               "evidence": "e",
+               "auto_fix": {"kind": "docstring_typo", "before": "a",
+                            "after": "b", "scope": "7-7"}}],
+ "notes": null}
+EOF
+# Pre-create the cache with a known sentinel line so "untouched" is provable
+# by content, not merely by the file's absence.
+printf '{"sentinel":true}\n' >"$r11f16_cache"
+r11f16_before="$(cat "$r11f16_cache")"
+r11f16_out="$WORKDIR/r11f16.out"
+r11f16_rc=0
+"$RUN_GATE" normalize --gate code-review --autofix-cache "$r11f16_cache" "$r11f16_raw" \
+	>"$r11f16_out" 2>/dev/null || r11f16_rc=$?
+
+assert_eq "$r11f16_rc" "2" "R11-F16: an unrecognised gate status exits 2"
+assert_eq "$(cat "$r11f16_cache")" "$r11f16_before" \
+	"R11-F16: ...leaving the autofix cache byte-for-byte untouched (no half-populated side effect)"
+assert_eq "$(grep -c '^' "$r11f16_out" || true)" "0" \
+	"R11-F16: ...and emitting no findings to stdout"
+
+# CONTROL: the exit-4 path is the one that IS documented to emit partially,
+# and must keep doing so — the fix moved validation, it did not move the
+# clean/not-clean report.
+r11f16b_cache="$WORKDIR/r11f16b-cache.jsonl"
+r11f16b_raw="$WORKDIR/r11f16b-raw.json"
+cat >"$r11f16b_raw" <<'EOF'
+{"gate": "code-review", "status": "deferred",
+ "findings": [{"file": "d.py", "line": 7, "category": "correctness",
+               "severity": "high", "confidence": 0.9, "summary": "s",
+               "evidence": "e"}],
+ "notes": null}
+EOF
+r11f16b_out="$WORKDIR/r11f16b.out"
+r11f16b_rc=0
+"$RUN_GATE" normalize --gate code-review --autofix-cache "$r11f16b_cache" "$r11f16b_raw" \
+	>"$r11f16b_out" 2>/dev/null || r11f16b_rc=$?
+assert_eq "$r11f16b_rc" "4" "R11-F16/control: a recognised non-clean status still exits 4"
+assert_eq "$(grep -c '^' "$r11f16b_out")" "1" \
+	"R11-F16/control: ...and still emits its findings (partial emission is exit 4's documented behaviour)"
+
+# --- R11 F17: route shape-gates its reconciled input ----------------------
+# cmd_route fed `$reconciled` straight to `jq -n --argjson` with no check,
+# while normalize, reconcile and status-row all validated theirs. Empty or
+# non-object input surfaced as a raw `jq: Invalid JSON text passed to
+# --argjson`, naming neither the command nor the input.
+
+r11f17_cache="$WORKDIR/r11f17-cache.jsonl"
+: >"$r11f17_cache"
+r11f17_empty="$WORKDIR/r11f17-empty.json"
+: >"$r11f17_empty"
+r11f17_rc=0
+r11f17_err="$("$RUN_GATE" route --autofix-cache "$r11f17_cache" "$r11f17_empty" 2>&1 >/dev/null)" || r11f17_rc=$?
+assert_eq "$r11f17_rc" "2" "R11-F17: route on empty input exits 2"
+if [[ "$r11f17_err" == run-gate\ route:* ]]; then
+	pass "R11-F17: ...with a run-gate-prefixed diagnostic, not a raw jq --argjson error"
+else
+	fail "R11-F17: route on empty input should print a run-gate diagnostic (got '$r11f17_err')"
+fi
+
+r11f17_arr="$WORKDIR/r11f17-array.json"
+printf '[]\n' >"$r11f17_arr"
+r11f17b_rc=0
+r11f17b_err="$("$RUN_GATE" route --autofix-cache "$r11f17_cache" "$r11f17_arr" 2>&1 >/dev/null)" || r11f17b_rc=$?
+assert_eq "$r11f17b_rc" "2" "R11-F17: route on valid-but-non-object JSON ([]) exits 2"
+if [[ "$r11f17b_err" == run-gate\ route:* ]]; then
+	pass "R11-F17: ...also with a run-gate-prefixed diagnostic"
+else
+	fail "R11-F17: route on [] should print a run-gate diagnostic (got '$r11f17b_err')"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

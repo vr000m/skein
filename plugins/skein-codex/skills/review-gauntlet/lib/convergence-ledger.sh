@@ -397,7 +397,7 @@ validate_ledger_shape() {
 	fi
 }
 
-# validate_last_round_fields guards decision_from_ledger's bash arithmetic
+# validate_ledger_fields guards decision_from_ledger's bash arithmetic
 # tests (`[[ "$x" -eq N ]]`) against a malformed on-disk ledger. --last-decision
 # reads back arbitrary, possibly stale ledger state from a prior/interrupted
 # session, a plugin upgrade, or a hand-edited file — validate_ledger_shape
@@ -407,7 +407,21 @@ validate_ledger_shape() {
 # field becomes the literal string "null", and bash's arithmetic evaluator
 # aborts with an "unbound variable" crash instead of the documented exit-code
 # contract. Only called once round_len > 0 is already established.
-validate_last_round_fields() {
+#
+# INVARIANT (R11/F5): every ledger field that reaches a bash arithmetic
+# comparison in decision_from_ledger is integer-validated HERE, before the
+# read. That is two groups, not one, because they live at different depths:
+#   - LAST-ROUND fields (below): count, structural_tally, local_tally,
+#     quarantine_size, unresolved_gates, pass_type.
+#   - ROOT fields (second jq clause below): loop_counter, cap, k, which feed
+#     `((loop_counter >= cap))` and `((epoch_len >= k+1))`.
+# A malformed member of either group exits 2 ("invalid ledger"), the code
+# already reserved for this class. Before R11 the root group was ungated, so a
+# fractional `cap` degraded a terminal `cap` stop into `continue` (exit 0) and
+# a non-numeric `k` crashed with exit 1 — outside the documented 0/2/3/4/5/6
+# alphabet. Renamed from validate_last_round_fields (single call site) because
+# it no longer validates only the last round.
+validate_ledger_fields() {
 	local ledger_path="$1"
 	# Every one of these five values enters bash arithmetic below, so
 	# `type == "number"` is not enough: it admits 1.5, which crashes
@@ -426,6 +440,25 @@ validate_last_round_fields() {
 		and ($r.pass_type == "full" or $r.pass_type == "confirm")
 	' "$ledger_path" >/dev/null 2>&1; then
 		echo "convergence-ledger: ledger at $ledger_path has a malformed last round (missing/invalid count, structural_tally, local_tally, quarantine_size, unresolved_gates, or pass_type -- the five numeric fields must be integers)" >&2
+		exit 2
+	fi
+	# Root-level arithmetic inputs. `loop_counter` is REQUIRED (validate_ledger_shape
+	# already demands `type == "number"`; this tightens that to a non-negative
+	# INTEGER). `cap`/`k` are OPTIONAL by construction: the decoder reads them
+	# as `(.cap // "" | tostring)` and falls back to the CLI-supplied
+	# `--cap`/`--k`, which `is_nonneg_int` has already validated at :339-344.
+	# So absent-or-null is legitimate and must stay legitimate; only a PRESENT,
+	# non-null, non-integral value is rejected — the same OPTIONAL-but-checked
+	# shape `unresolved_gates` uses above.
+	if ! jq -e '
+		def is_int: type == "number" and (. | floor) == . and . >= 0;
+		. as $root
+		| ($root.loop_counter | is_int)
+		and all(["cap", "k"][];
+			. as $f
+			| ($root[$f] == null) or ($root[$f] | is_int))
+	' "$ledger_path" >/dev/null 2>&1; then
+		echo "convergence-ledger: ledger at $ledger_path has malformed root fields (loop_counter must be a non-negative integer; cap and k, when present, must be non-negative integers)" >&2
 		exit 2
 	fi
 }
@@ -530,6 +563,12 @@ decision_from_ledger() {
 	local cli_cap="$2"
 	local cli_k="$3"
 	local round_len loop_counter cap k count structural local_tally pass_type quarantine unresolved regression_hit
+	# R11/F14: epoch_stats/epoch_len/stall_streak (assigned in step 5 below)
+	# were the only assignments in this function that leaked into the global
+	# namespace. Harmless today — one decision_from_ledger call per process —
+	# but the file's convention is that every function-scoped variable is
+	# declared `local`, and step 5 is now adjacent to validated arithmetic.
+	local epoch_stats epoch_len stall_streak
 
 	round_len="$(jq -r '.rounds | length' "$ledger_path")"
 	if [[ "$round_len" -eq 0 ]]; then
@@ -537,7 +576,7 @@ decision_from_ledger() {
 		return 0
 	fi
 
-	validate_last_round_fields "$ledger_path"
+	validate_ledger_fields "$ledger_path"
 
 	# One combined jq call for loop_counter, ledger-persisted cap/k, and every
 	# field of the last round, instead of one jq subprocess per field.

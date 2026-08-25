@@ -178,6 +178,27 @@ cmd_normalize() {
 		echo "run-gate normalize: gate '$gate' raw output missing .status" >&2
 		exit 2
 	fi
+	# R11/F16: the status ALPHABET is validated here, beside the presence
+	# check, not in the `case` after the findings loop.
+	#
+	# INVARIANT. Old: partial emission was documented for exit 4 only, but an
+	# unrecognised status also exited 2 from the trailing `case` — AFTER the
+	# loop had streamed findings to stdout and appended auto_fix entries to
+	# the cache, leaving a half-populated cache that `route` later reads.
+	# New: exit 2 (validation) has no side effects; only exit 4 does. Every
+	# exit-2 arm in this command now precedes the cache creation at
+	# `[[ -e "$cache" ]] || printf ''` below.
+	#
+	# The trailing `case` keeps only the clean/not-clean split, which is a
+	# post-emission REPORT (it needs duration_s/degraded_reason and the
+	# findings already emitted), not a validation.
+	case "$status" in
+	approve | needs-attention | error | skipped | deferred) ;;
+	*)
+		echo "run-gate normalize: gate '$gate' returned unrecognised status '$status'" >&2
+		exit 2
+		;;
+	esac
 	# gate_run_bounded (lib/gate-bounded.sh) stamps every envelope it
 	# writes with optional duration_s/degraded_reason — surface them here
 	# as a stderr note alongside the non-clean-status report below. stdout
@@ -205,18 +226,16 @@ cmd_normalize() {
 		fi
 	done
 
+	# Status is already known to be in the alphabet (validated above, before
+	# any side effect), so this is a two-way split with no error arm.
 	case "$status" in
 	approve | needs-attention) exit 0 ;;
-	error | skipped | deferred)
+	*)
 		echo "run-gate normalize: gate '$gate' returned status=$status — not a clean pass, do not count toward convergence" >&2
 		if [[ -n "$duration_s" || -n "$degraded_reason" ]]; then
 			echo "run-gate normalize: gate '$gate' duration_s=${duration_s:-unknown} degraded_reason=${degraded_reason:-none}" >&2
 		fi
 		exit 4
-		;;
-	*)
-		echo "run-gate normalize: gate '$gate' returned unrecognised status '$status'" >&2
-		exit 2
 		;;
 	esac
 }
@@ -294,6 +313,19 @@ cmd_route() {
 
 	local reconciled cache_jsonl
 	reconciled="$(read_input "$input_path")" || exit 2
+	# R11/F17: shape-gate the reconciled envelope before it reaches
+	# `jq -n --argjson reconciled` below. `--argjson` on empty or non-JSON
+	# input fails inside jq, so the operator saw a raw
+	# `jq: Invalid JSON text passed to --argjson` with no indication of which
+	# run-gate command or which input produced it. `cmd_normalize` (:177) and
+	# `cmd_reconcile` (:249) already validate their input; `cmd_status_row`
+	# (:434) already uses exactly this `[[ -z ]] || ! jq -e 'type == "object"'`
+	# idiom. Route was the one reader with neither. Same exit-2 usage class,
+	# same `run-gate:`-prefixed diagnostic as its siblings.
+	if [[ -z "$reconciled" ]] || ! printf '%s' "$reconciled" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		echo "run-gate route: reconciled input is empty or not a JSON object" >&2
+		exit 2
+	fi
 	if [[ -e "$cache" ]]; then
 		cache_jsonl="$(cat "$cache")"
 	else
