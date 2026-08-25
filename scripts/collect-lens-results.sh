@@ -54,7 +54,11 @@
 # `unreviewed: []`. Merging instead would invent a union semantic no caller
 # asked for and --expected-file cannot express. The --expected-file form of
 # the same mistake is a duplicate JSON key, which jq collapses before any
-# filter can see it; it is detected with a `jq --stream` leaf count.
+# filter can see it; it is refused by persist_assert_no_duplicate_keys, the
+# shared wire rule, over the SAME captured bytes this script goes on to parse
+# (round 7, F6/F7/F8 — it used to be a second read of the file, i.e. a TOCTOU
+# against itself). persist-lens-result.sh applies the identical rule on the
+# writer half of the same wire.
 #
 # --findings-jsonl (boolean, mutually exclusive with the default summary
 # object; changes stdout only) emits one JSON object per line instead of the
@@ -541,28 +545,16 @@ if [[ -n "$EXPECTED_FILE" ]]; then
 
 	expected_file_json="$(cat "$EXPECTED_FILE")"
 	persist_validate_json_shape "$expected_file_json" collect-lens-results "--expected-file content" || exit 2
+	# R7/F6-F8: the duplicate-key rule is a property of the JSON WIRE, so it
+	# lives in the shared lib and runs on BOTH sides of it. It is applied to
+	# `$expected_file_json` — the bytes already captured above, the ones every
+	# consumer below uses — not to a second read of $EXPECTED_FILE, which was
+	# a TOCTOU against this script's own copy. Being depth-general it also no
+	# longer has to run after the array-of-strings gate.
+	persist_assert_no_duplicate_keys "$expected_file_json" collect-lens-results "--expected-file content" || exit 2
 	if ! printf '%s' "$expected_file_json" |
 		jq -e 'all(.[]; type == "array" and all(.[]; type == "string"))' >/dev/null 2>&1; then
 		echo "collect-lens-results: --expected-file must map each lens name to an ARRAY OF STRINGS: $EXPECTED_FILE" >&2
-		exit 2
-	fi
-
-	# R6/F6, the --expected-file half of the same drop. A duplicate lens key
-	# collapses inside jq itself (`{"logic":["a"],"logic":["b"]}` parses to a
-	# ONE-key object), so `keys_unsorted` can never see it -- the collapse has
-	# already happened by the time any filter runs. `jq --stream` is the only
-	# reader that reports the raw event sequence, so count the VALUE events
-	# and compare with the key count. Ordering is load-bearing: this runs
-	# AFTER the array-of-strings shape check above, which rules out nested
-	# arrays that would otherwise inflate the leaf count. The two arms cover
-	# a scalar/array leaf (`length==2` with a 1-deep path) and an EMPTY array
-	# (`length==1`, the closing event) -- an empty array is legal on this
-	# wire, a deliberately-skipped lens carries `[]`.
-	expected_value_events="$(jq --stream -c 'select((length==1 and (.[0]|length)==2)
-		or (length==2 and (.[0]|length)==1))' "$EXPECTED_FILE" | wc -l | tr -d ' ')"
-	expected_key_count="$(printf '%s' "$expected_file_json" | jq -r 'keys_unsorted | length')"
-	if [[ "$expected_value_events" -ne "$expected_key_count" ]]; then
-		echo "collect-lens-results: --expected-file has a duplicate lens key (a repeated key silently drops the earlier assignment): $EXPECTED_FILE" >&2
 		exit 2
 	fi
 

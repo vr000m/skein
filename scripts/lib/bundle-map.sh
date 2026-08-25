@@ -76,6 +76,17 @@ bundle_applier_for() {
 # key the orchestrator feeds to convergence-ledger.sh's --present-keys/
 # --claimed-keys; see the script header for why it is deliberately distinct
 # from the reconciler's (file, line, category) dedup key.
+#
+# review-gauntlet DELIBERATELY does not receive lib/persist-common.sh (round
+# 7, F4). That is a decision, not an oversight: the gauntlet's state-path
+# containment policy is the AUTHORED lib/state-path-guard.sh in its own lib/
+# dir (byte-mirrored, parity-enforced), and adding persist-common.sh here to
+# reuse persist_path_is_inside_root would break this file's own
+# `bundled == operative` rule — a file is bundled into a skill iff that
+# skill's SKILL.md invokes it, and review-gauntlet's SKILL.md invokes no
+# persist script. The two containment implementations are related by an
+# asserted boundary (see state-path-guard.sh's header and R7-G2a in
+# tests/gauntlet/test-gate-timeout.sh), not by a shared source file.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)

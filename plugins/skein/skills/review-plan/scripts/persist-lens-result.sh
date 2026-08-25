@@ -479,6 +479,15 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 		exit 2
 	fi
 
+	# R7/F6: the WRITER half of the duplicate-key wire rule. jq collapses a
+	# repeated key to the last occurrence before any filter runs, so a
+	# payload spelling `units` (or any other key) twice silently loses the
+	# earlier assignment on the way in. The reader
+	# (collect-lens-results.sh --expected-file) has refused this since round
+	# 6; a rule that holds on one side of a wire only is not a wire rule.
+	# Applied to `$STDIN_JSON`, the exact bytes every gate below parses.
+	persist_assert_no_duplicate_keys "$STDIN_JSON" persist-lens-result "--json-stdin/--json-file payload" || exit 2
+
 	# Type gate for the nine recognised scalar keys: each must be absent,
 	# `null`, or a string, and no string may contain a NUL -- NUL is the
 	# extractor's delimiter below, and a bash variable cannot hold one anyway.

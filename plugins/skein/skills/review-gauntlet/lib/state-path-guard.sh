@@ -37,9 +37,38 @@
 # the two mirrors spell that anchor differently on purpose), so a guard placed
 # there is never byte-compared between
 # the mirrors and can silently drift — which is the exact failure this file
-# exists to end. WHY NOT scripts/lib/auto-fix-common.sh's af_assert_no_symlink:
-# that file is not on the gauntlet's lib path, and bundling it in would drag
-# the whole auto-fix surface into the gauntlet lib.
+# exists to end.
+#
+# WHY NOT scripts/lib/auto-fix-common.sh's af_assert_no_symlink (round 7, F4).
+# Not for reachability: `scripts/lib/auto-fix-common.sh` IS in BUNDLE_SHARED
+# (scripts/lib/bundle-map.sh) and review-gauntlet IS in BUNDLE_SKILLS, so a
+# bundled copy of it sits in this skill's `scripts/lib/` in both mirrors. An
+# earlier version of this paragraph claimed otherwise and was checkably false,
+# which is worse than no rationale at all. The three reasons that are true:
+#
+#   1. LAYERING. `plugins/*/skills/review-gauntlet/scripts/**` is a GENERATED
+#      artifact (`just bundle-appliers`, `just check-sync`, byte-parity
+#      enforced). An AUTHORED file sourcing a generated one inverts the
+#      dependency: this lib would stop working in the canonical repo layout
+#      the moment the bundle map changed, and check-sync would be gating a
+#      runtime dependency rather than an artifact.
+#   2. `bundled == operative`. bundle-map.sh's rule is that a file is bundled
+#      into a skill IFF that skill's SKILL.md invokes it. Sourcing
+#      persist_path_is_inside_root would mean adding lib/persist-common.sh to
+#      `bundle_extra_for review-gauntlet` for a predicate the gauntlet does
+#      not otherwise need, breaking that invariant.
+#   3. DIFFERENT QUESTIONS, OPPOSITE FAILURE DIRECTIONS.
+#      persist_path_is_inside_root is a SCOPING predicate — lexical,
+#      fail-OPEN, and required to answer "outside" for legitimate out-of-tree
+#      fixtures. This function is a fail-CLOSED enforcement walk that composes
+#      its own paths and rejects `..` outright. Collapsing them would force one
+#      failure direction onto the other.
+#
+# So: one owner per state tree, two implementations, and the boundary written
+# down AND test-asserted. af_assert_no_symlink owns the `.deep-review/` /
+# `.review-plan/` trees; this function owns `.gauntlet/`. The relation between
+# them is asserted by `R7-G2a` in tests/gauntlet/test-gate-timeout.sh, not by
+# this paragraph.
 #
 # `.gauntlet/` is gitignored (.gitignore:9), but a *tracked* symlink at that
 # path still materialises on checkout, and `mkdir -p` follows it — so a
@@ -48,14 +77,31 @@
 # the directory, not the contents), but the asymmetry inside one change set —
 # some state writes guarded, others not — is the actual defect.
 #
-# PARENT-WALK BOUND. Inside a git worktree the walk stops AT the worktree
-# root — the root itself and everything above it is never `-L`-tested by the
-# loop: that span is the whole reach of a checkout, and testing past it would
-# reject legitimate paths under platform symlinks (macOS `/var` ->
-# `/private/var`, `/tmp` -> `/private/tmp`) that have nothing to do with the
-# repo. Outside a worktree only the path and its immediate parent are
-# checked — the two positions the threat actually occupies — for the same
-# reason.
+# PARENT-WALK BOUND, AND IT COMES FROM THE PATH (round 7, F1/F2/F3). The
+# bound is the innermost git worktree root among the PATH's OWN lexical
+# ancestors, found by asking each existing, non-symlink ancestor with
+# `git -C <ancestor> rev-parse --show-toplevel` which worktree it is in. The
+# process cwd is never consulted. It used to be: a bare `git rev-parse`
+# answered about the CALLER's cwd, so one and the same path was refused from
+# inside the repo and ACCEPTED from anywhere else — the guard silently
+# degraded to the leaf-plus-immediate-parent bound this file exists to
+# replace. The verdict is now a function of the path's spelling and the
+# filesystem alone.
+#
+# Inside a worktree the walk stops AT the worktree root — the root itself and
+# everything above it is never `-L`-tested by the loop: that span is the whole
+# reach of a checkout, and testing past it would reject legitimate paths under
+# platform symlinks (macOS `/var` -> `/private/var`, `/tmp` ->
+# `/private/tmp`) that have nothing to do with the repo. Outside a worktree
+# only the path and its immediate parent are checked — the two positions the
+# threat actually occupies — for the same reason.
+#
+# CANDIDATE ANCESTORS THAT ARE THEMSELVES SYMLINKS are skipped on both sides
+# of that question (`! -L "$cand"` when asking git, `! -L "$probe"` when
+# accepting the match). An ancestor that is itself a symlink can never be the
+# containment boundary: `…/.gauntlet -> <another worktree root>` would
+# otherwise end the walk AT the symlink and exempt from pass 2 the one
+# component the guard exists to catch.
 #
 # ANCESTORS THAT DO NOT EXIST YET ARE STILL WALKED. Callers guard and then
 # `mkdir -p`, so the components `mkdir -p` is about to create are exactly the
@@ -66,19 +112,29 @@
 # RESIDUAL, documented rather than claimed away: the guard -> write (or
 # guard -> mkdir) window is a TOCTOU. Closing it needs openat(O_NOFOLLOW),
 # which portable bash lacks.
+#
+# SECOND RESIDUAL, stated honestly: when a worktree root is reachable only
+# through a symlinked spelling of its own path (`~/proj -> /Volumes/x/proj`,
+# and the guarded path spelled `~/proj/.gauntlet/x`), no NON-symlink lexical
+# ancestor canonicalises to the root, so no candidate matches and the guard
+# falls back to the documented out-of-worktree bound — the leaf and its
+# immediate parent. That is the same bound this spelling already received from
+# every cwd but one before round 7; it is a weaker check, never a false
+# refusal.
 gauntlet_assert_no_symlink() {
 	local path="$1" label="${2:-state-path-guard}"
 
 	# Absolutise first. Everything below reasons about ANCESTORS, and a
 	# relative path's ancestor chain terminates at "." rather than at the
 	# filesystem root, so a relative spelling would silently shorten the
-	# walk. Absolutising against $PWD resolves no component; a $PWD that is
-	# itself a symlinked alias is fine here because pass 1 below
-	# CANONICALISES each ancestor (`cd … && pwd -P`) and so still finds the
-	# worktree root through the alias — and this guard's failure direction is
-	# fail-CLOSED (a `-L` hit refuses loudly), unlike the lexical
-	# prefix-matching in persist_path_is_inside_root, which needs both cwd
-	# spellings because ITS failure direction is fail-open.
+	# walk. Absolutising against $PWD resolves no component, and it is the
+	# ONLY thing the cwd is used for: the containment bound below is derived
+	# from the path's own ancestors, never from where the process is
+	# standing (round 7, F1/F2/F3). A $PWD that is itself a symlinked alias
+	# therefore cannot change a verdict for an already-absolute path; for a
+	# relative one it merely picks which spelling of the same file is being
+	# guarded, and this guard's failure direction is fail-CLOSED (a `-L` hit
+	# refuses loudly) either way.
 	[[ "$path" == /* ]] || path="$PWD/$path"
 
 	# Then refuse any `..` component, before a single other check runs.
@@ -124,12 +180,14 @@ gauntlet_assert_no_symlink() {
 	# immediate parent: walking further would reject perfectly ordinary
 	# platform symlinks — macOS puts $TMPDIR under `/var`, which IS a
 	# symlink to `/private/var` — and turn the guard into a false refusal.
-	local root_canon="" git_root
-	if git_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
-		root_canon="$(cd "$git_root" 2>/dev/null && pwd -P)" || root_canon=""
-	fi
-	[[ -n "$root_canon" ]] || return 0
-
+	# The candidate root comes from the PATH's own lexical ancestors (round
+	# 7, F1/F2/F3): each ancestor that exists and is not itself a symlink is
+	# asked, with `git -C`, which worktree IT is in. A bare `git rev-parse`
+	# here answered about the process cwd instead, so the same path was
+	# refused from one cwd and accepted from another. `git -C <missing>`
+	# fails immediately, so a not-yet-existing tail costs nothing; the depth
+	# is bounded by the path.
+	#
 	# TWO passes, and the split is the whole fix. Three round-4 defects meet
 	# here, and each one is a way of getting the containment decision wrong:
 	#
@@ -169,15 +227,30 @@ gauntlet_assert_no_symlink() {
 	# A path that is not under the worktree at all never reaches pass 2 (pass
 	# 1 walks it to `/` and answers no), so an out-of-tree fixture is not
 	# refused on a platform symlink it never touches.
-	local probe="$parent" probe_canon inside=0
-	while [[ "$probe" != "/" && "$probe" != "." ]]; do
-		if probe_canon="$(cd "$probe" 2>/dev/null && pwd -P)"; then
-			if [[ "$probe_canon" == "$root_canon" ]]; then
-				inside=1
-				break
+	local cand="$parent" cand_root probe probe_canon inside=0
+	while [[ "$cand" != "/" && "$cand" != "." ]]; do
+		# A candidate ancestor that is ITSELF a symlink can never be the
+		# containment boundary: `.gauntlet -> <another worktree root>`
+		# would otherwise end the walk AT the symlink and exempt it from
+		# pass 2 — the one component the guard exists to catch. Same rule
+		# on the accepting side (`! -L "$probe"`).
+		if [[ ! -L "$cand" ]] && cand_root="$(git -C "$cand" rev-parse --show-toplevel 2>/dev/null)"; then
+			cand_root="$(cd "$cand_root" 2>/dev/null && pwd -P)" || cand_root=""
+			if [[ -n "$cand_root" ]]; then
+				probe="$parent"
+				while [[ "$probe" != "/" && "$probe" != "." ]]; do
+					if probe_canon="$(cd "$probe" 2>/dev/null && pwd -P)"; then
+						if [[ "$probe_canon" == "$cand_root" && ! -L "$probe" ]]; then
+							inside=1
+							break
+						fi
+					fi
+					probe="$(dirname "$probe")"
+				done
+				[[ "$inside" -eq 1 ]] && break
 			fi
 		fi
-		probe="$(dirname "$probe")"
+		cand="$(dirname "$cand")"
 	done
 	[[ "$inside" -eq 1 ]] || return 0
 

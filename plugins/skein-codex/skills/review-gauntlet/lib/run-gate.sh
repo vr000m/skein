@@ -258,6 +258,14 @@ cmd_route() {
 		usage
 		exit 2
 	fi
+	# Round 7, F9: same state tree, same policy — and a READ is guarded too,
+	# because this file's content becomes `.auto_fix` proposals below, which
+	# apply-auto-fix-code.sh later applies to the working tree. An
+	# attacker-planted symlink at the cache path would otherwise feed chosen
+	# JSON into the auto-fix stream. `cmd_normalize` guards the same flag,
+	# composed from the same `$gate_out_dir`; guarding one and not the other
+	# was the whole defect.
+	gauntlet_assert_no_symlink "$cache" run-gate || exit 2
 	gc_have_jq
 
 	local reconciled cache_jsonl

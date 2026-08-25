@@ -788,6 +788,32 @@ g12_check_ledger_guard() {
 g12_check_ledger_guard "$SKILL_MD" "skein/review-gauntlet"
 g12_check_ledger_guard "$CODEX_SKILL_MD" "skein-codex/review-gauntlet"
 
+# ---------------------------------------------------------------------------
+# R7-G7a — every AUTHORED lib file is documented in BOTH SKILL.md mirrors.
+#
+# `lib/state-path-guard.sh` shipped in round 6 registered in
+# GAUNTLET_LIB_PARITY_FILES and sourced by three siblings, but named nowhere
+# in the skill's own prose. Generalised so the NEXT lib file cannot ship
+# undocumented either: the parity list is the source of truth for what is
+# authored here, so drive the assertion off it.
+#
+# The mention must be a BARE `lib/<name>` — no ${CLAUDE_PLUGIN_ROOT} /
+# $SKILL_DIR anchor — because these files are never invoked as entrypoints;
+# that also keeps the sentence identical in both mirrors for
+# `just check-prompt-parity`.
+r7g7_codex_md="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/SKILL.md"
+r7g7_missing=""
+for r7g7_f in $(sed -n 's/^GAUNTLET_LIB_PARITY_FILES=(\(.*\))$/\1/p' \
+	"$ROOT_DIR/tests/parity/test-applier-bundle-parity.sh"); do
+	grep -Fq "lib/$r7g7_f" "$SKILL_MD" || r7g7_missing="$r7g7_missing [claude:$r7g7_f]"
+	grep -Fq "lib/$r7g7_f" "$r7g7_codex_md" || r7g7_missing="$r7g7_missing [codex:$r7g7_f]"
+done
+if [[ -z "$r7g7_missing" ]]; then
+	pass "R7-G7a: every file in GAUNTLET_LIB_PARITY_FILES is named in BOTH SKILL.md mirrors"
+else
+	fail "R7-G7a: undocumented authored lib file(s):$r7g7_missing (Codex-mirror SKILL.md prose is applied by the codex-mirror agent — see .gauntlet/r7/codex-mirror-edits.md for the exact sentence)"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 

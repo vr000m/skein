@@ -16,7 +16,8 @@
 #
 # Which helpers belong to whom:
 #   - persist_root_dir, persist_require_value,
-#     persist_validate_json_shape        — all four.
+#     persist_validate_json_shape,
+#     persist_assert_no_duplicate_keys   — all four.
 #   - persist_atomic_write               — STATE-FILE callers only. The lens
 #                                          contract is append-only (see
 #                                          persist_jsonl_append), so an
@@ -28,6 +29,7 @@
 #   - persist_lens_state_dir,
 #     persist_lens_run_dir,
 #     persist_path_is_inside_root,
+#     persist_path_physical_match,
 #     PERSIST_UNIT_JQ_GATE,
 #     persist_jsonl_append,
 #     persist_validate_id,
@@ -52,6 +54,12 @@
 #                                exits 2 via the caller's own `usage`
 #                                function (which must already be defined) if
 #                                no value token remains.
+#   persist_assert_no_duplicate_keys <json-text> <label> <what>
+#                              — 0 when no object key repeats anywhere in
+#                                <json-text>, 1 with a diagnostic otherwise.
+#                                Takes TEXT, never a path: the verdict has
+#                                to come from the same bytes the caller
+#                                goes on to use (round 7, F7/F8).
 #   persist_validate_json_shape <input> <label> <noun> [<object-suffix>]
 #                              — validate <input> is syntactically valid
 #                                JSON, exactly one top-level document, and a
@@ -138,6 +146,14 @@
 #                                guard so an out-of-tree fixture path is not
 #                                refused on a platform symlink it never
 #                                touches.
+#   persist_path_physical_match <abs-path> <root>...
+#                              — 0 when some physical-prefix spelling of
+#                                <abs-path> (an EXISTING ancestor prefix
+#                                replaced by its `pwd -P` form, tail kept)
+#                                is or lies under one of the <root>s. The
+#                                absolute half of "both spellings"
+#                                (round 7, F5); used only by
+#                                persist_path_is_inside_root.
 
 # Root-anchor. Falls back to cwd when not inside a git worktree, matching
 # scripts/apply-auto-fix-plan.sh's pre-existing WORKTREE_ROOT precedent.
@@ -189,6 +205,36 @@ persist_validate_json_shape() {
 	return 0
 }
 
+# persist_assert_no_duplicate_keys <json-text> <label> <what>
+#
+# Refuse a duplicate object key ANYWHERE in <json-text>. jq collapses a
+# repeated key to the LAST occurrence before any filter runs, so
+# `keys_unsorted` can never see one; `jq --stream` is the only reader that
+# reports the raw event sequence. Every VALUE event (`length == 2`) carries
+# the path it was assigned to, and two assignments to the same key produce
+# two events with the SAME path -- while array elements get distinct
+# indices and container-CLOSING events (`length == 1`) legitimately repeat
+# a value event's path, which is why only value events are counted.
+#
+# Takes the payload as TEXT, never a path: the verdict must be computed
+# from the same bytes the caller already captured, or it is a TOCTOU
+# against a second read (round 7, F7/F8). Being depth-general, it is also
+# no longer order-coupled to any shape gate -- the round-6 leaf-count
+# comparison had to run AFTER the array-of-strings check or nested arrays
+# inflated the count.
+persist_assert_no_duplicate_keys() {
+	local json="$1" label="$2" what="$3" dups
+	if ! dups="$(printf '%s' "$json" | jq --stream -c 'select(length == 2) | .[0]' 2>/dev/null | sort | uniq -d)"; then
+		echo "$label: could not scan $what for duplicate keys" >&2
+		return 1
+	fi
+	if [[ -n "$dups" ]]; then
+		echo "$label: $what has a duplicate key (a repeated key silently drops the earlier assignment): $(printf '%s' "$dups" | tr '\n' ' ')" >&2
+		return 1
+	fi
+	return 0
+}
+
 # Shared "Could not persist findings JSON: <reason>" stderr message used by
 # every guard/write step in persist_atomic_write below. Only prints the
 # message — callers still do their own `return 1`, since a helper can't
@@ -217,6 +263,17 @@ persist_atomic_write() {
 	# user-writable file. Delegates to auto-fix-common.sh's
 	# af_assert_no_symlink, which walks the full parent-directory chain
 	# (not just the immediate target).
+	#
+	# UNBOUNDED ON PURPOSE (round 7, F4). These two calls pass NO <root>, so
+	# the walk runs all the way up; the lens call sites
+	# (persist-lens-result.sh, collect-lens-results.sh) pass `--root` and are
+	# bounded. The asymmetry is one-directional and deliberate: unbounded is
+	# strictly stricter — it can only refuse more. These paths are composed
+	# by this file from the state root, so there is no caller-supplied
+	# fixture path that a longer walk could falsely refuse; the lens call
+	# sites DO accept caller-supplied paths (out-of-tree fixtures, payloads
+	# under $TMPDIR), which is why they need the bound. Do not "harmonise"
+	# these two by adding a root here — that would weaken them.
 	if ! af_assert_no_symlink "$out_dir"; then
 		persist_fail "" "refusing to write through a symlink at $out_dir"
 		return 1
@@ -340,6 +397,51 @@ persist_lens_run_dir() {
 	printf '%s/%s\n' "$lenses_dir" "$run_id"
 }
 
+# persist_path_physical_match <abs-path> <root>...
+#
+# 0 when SOME physical-prefix spelling of <abs-path> is one of the <root>s or
+# lies under it; 1 otherwise. A physical-prefix spelling replaces an EXISTING
+# ancestor prefix of <abs-path> with that ancestor's physical form
+# (`cd … && pwd -P`) and re-appends the rest of the path untouched. This is
+# what resolves a directory ALIAS in the prefix (`/tmp` -> `/private/tmp`,
+# `/var` -> `/private/var`) so an absolute in-root path spelled through the
+# alias still matches a physical --root (round 7, F5).
+#
+# EVERY existing ancestor is tried, not just the deepest. The deepest one
+# alone is not enough: for `<alias-cwd>/escapelink/payload.json` the deepest
+# existing ancestor IS the escaping symlink, whose physical form lands
+# outside the root, so the path would gate itself out of its own guard --
+# exactly the failure the LEXICAL rule elsewhere in this file exists to
+# avoid. One level shallower, the alias resolves and the ESCAPE stays in the
+# lexical tail, so the path answers "inside" and reaches
+# af_assert_no_symlink, which then refuses it.
+#
+# The comparison happens INSIDE the walk rather than through a returned list
+# of spellings: a path component may legitimately contain a newline, so there
+# is no safe line-delimited carrier for the candidates.
+#
+# Adding spellings only moves paths from unguarded to guarded (the header's
+# fail-closed direction), which is precisely why canonicalisation is safe as
+# an ADDITIONAL alternative and unsafe as a replacement.
+persist_path_physical_match() {
+	local p="$1"
+	shift
+	local d="$p" tail="" c r
+	while [[ "$d" != "/" && "$d" != "." ]]; do
+		if c="$(cd "$d" 2>/dev/null && pwd -P)"; then
+			for r in "$@"; do
+				[[ -n "$r" ]] || continue
+				case "$c$tail" in
+				"$r" | "$r"/*) return 0 ;;
+				esac
+			done
+		fi
+		tail="/$(basename "$d")$tail"
+		d="$(dirname "$d")"
+	done
+	return 1
+}
+
 # persist_path_is_inside_root <path> <root>
 #
 # LEXICAL on purpose. Canonicalising <path> first would resolve a symlinked
@@ -369,13 +471,24 @@ persist_lens_run_dir() {
 # change direction is fail-closed; the worst case stays a loud refusal on an
 # exotic out-of-tree fixture, which can always be respelled.
 #
+# THE SAME RULE COVERS ABSOLUTE SPELLINGS (round 7, F5). Round 6 fixed the
+# RELATIVE branch only, so an in-root file named by an ABSOLUTE path that
+# runs through a symlinked directory alias (`$PWD/.gauntlet/x` where the cwd
+# was reached through `/tmp` -> `/private/tmp`, or `$TMPDIR` under `/var` ->
+# `/private/var`) still prefix-matched nothing against a physical `--root`,
+# answered "outside", and skipped both file-transport guards entirely. An
+# absolute <path> is now also matched through persist_path_physical_match:
+# every EXISTING ancestor prefix canonicalised in turn, with the rest of the
+# path kept lexical. Same fail-closed direction — an added alternative can
+# only move paths from unguarded to guarded.
+#
 # DELIBERATE ASYMMETRY WITH gauntlet_assert_no_symlink (review-gauntlet's
-# lib/state-path-guard.sh), which absolutises against `$PWD` alone and stays
-# that way: it is not a lexical prefix match but a CANONICALISING two-pass
-# walk — pass 1 does `cd … && pwd -P` on each ancestor, so it finds the
-# worktree root through a symlinked cwd alias without help — and its failure
-# direction is fail-CLOSED. Prefix-matching containment needs both cwd
-# spellings; a canonicalising walk needs neither.
+# lib/state-path-guard.sh): it is not a lexical prefix match but a
+# CANONICALISING two-pass walk whose containment bound is derived from the
+# PATH's own ancestors (`git -C` on each, round 7) rather than from the cwd
+# at all — and its failure direction is fail-CLOSED. Prefix-matching
+# containment needs every spelling it can get; a canonicalising walk that
+# never consults the cwd needs none.
 #
 # `..` IS FAIL-CLOSED TO "INSIDE". A path with a `..` component can re-enter
 # the tree at a position no component of its own spelling names, so
@@ -437,6 +550,23 @@ persist_path_is_inside_root() {
 			"$r" | "$r"/*) return 0 ;;
 			esac
 		done
+	done
+
+	# Round 7, F5. The lexical spellings above cover a RELATIVE path (the
+	# round-6 fix absolutised it against both cwd spellings). An ABSOLUTE
+	# path already carries its own prefix, and if that prefix runs through a
+	# directory alias -- `$PWD/.gauntlet/x` where the cwd was reached via
+	# `/tmp` -> `/private/tmp`, or a fixture under `$TMPDIR` below
+	# `/var` -> `/private/var` -- it prefix-matches nothing against a
+	# physical --root, the function answers "outside", and BOTH file-transport
+	# guards are skipped. Same fail-open, same guard, different spelling. So
+	# try the physical-prefix spellings too; see the helper's header for why
+	# every existing ancestor is tried and why this can only move paths from
+	# unguarded to guarded.
+	for p in "$path_abs" "$path_physical"; do
+		if persist_path_physical_match "$p" "$root" "$root_abs" "$root_canon"; then
+			return 0
+		fi
 	done
 	return 1
 }

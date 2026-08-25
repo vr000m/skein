@@ -1837,8 +1837,13 @@ r6g4c_out="$(bash "$SCRIPT" --root "$r6g4_root" --skill deep-review --run-id r6g
 	--expected-file "$r6g4_root/dup.json" 2>"$r6g4_root/c.err")"
 r6g4c_rc=$?
 set -e
-if [[ "$r6g4c_rc" -eq 2 && -z "$r6g4c_out" ]] && grep -q "duplicate lens key" "$r6g4_root/c.err"; then
-	pass "(R6-G4c) a duplicate lens key in --expected-file exits 2"
+# Round 7 moved this rule into persist_assert_no_duplicate_keys (the shared
+# wire rule, applied to the CAPTURED bytes), which drops the reader-specific
+# noun: the diagnostic is now "duplicate key" and names the key path. The
+# assertion is matched on the stable substring; (R7-G4a) below asserts the
+# named-key-path half that the new wording adds.
+if [[ "$r6g4c_rc" -eq 2 && -z "$r6g4c_out" ]] && grep -q "duplicate key" "$r6g4_root/c.err"; then
+	pass "(R6-G4c) a duplicate lens key in --expected-file exits 2 (invalid unit list: duplicate key)"
 else
 	fail "(R6-G4c) rc=$r6g4c_rc out='$r6g4c_out' err='$(cat "$r6g4_root/c.err")'"
 fi
@@ -1873,6 +1878,83 @@ if [[ -z "$r6g4_inv" ]]; then
 	pass "(R6-G4) invariant: assigned == |reviewed| + |unreviewed| for every accepted lens"
 else
 	fail "(R6-G4) invariant broken for lenses:$r6g4_inv"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R7-G4 — the duplicate-key rule, moved onto the wire and computed from
+# the bytes actually used (round 7, F6/F7/F8).
+#
+# Round 6 implemented it in the READER, over a SECOND READ of the file
+# (`jq --stream … "$EXPECTED_FILE"`) compared against a key count taken from
+# the separately-cat'd copy — a TOCTOU against itself, with the copy the rest
+# of the script consumes being the one that was never checked. A failure of
+# that second jq also yielded a count of 0 and was misreported as a duplicate.
+# It is now persist_assert_no_duplicate_keys over `$expected_file_json`.
+# ---------------------------------------------------------------------------
+
+r7g4_root="$TMPDIR_ROOT/r7g4"
+mkdir -p "$r7g4_root"
+
+# R7-G4a — the verdict comes from the CAPTURED BYTES: the diagnostic names the
+# duplicated key PATH, which is only derivable from the copy the script parsed.
+printf '%s' '{"logic":["a"],"logic":["b"],"security":["c"]}' >"$r7g4_root/dup.json"
+set +e
+r7g4a_out="$(bash "$SCRIPT" --root "$r7g4_root" --skill deep-review --run-id r7g4 \
+	--expected-file "$r7g4_root/dup.json" 2>"$r7g4_root/a.err")"
+r7g4a_rc=$?
+set -e
+r7g4a_err="$(cat "$r7g4_root/a.err")"
+if [[ "$r7g4a_rc" -eq 2 && -z "$r7g4a_out" && "$r7g4a_err" == *"duplicate key"* && "$r7g4a_err" == *'"logic"'* ]]; then
+	pass "(R7-G4a) a duplicate lens key exits 2 and the diagnostic NAMES the duplicated key path (derivable only from the captured copy)"
+else
+	fail "(R7-G4a) rc=$r7g4a_rc out='$r7g4a_out' err='$r7g4a_err'"
+fi
+
+# R7-G4b — DEPTH-GENERAL: a duplicate nested inside an object is refused too.
+# The round-6 leaf-count comparison was 1-deep and order-coupled to the
+# array-of-strings gate; this rule is neither.
+printf '%s' '{"logic":["a"],"meta":{"d":1,"d":2}}' >"$r7g4_root/nested.json"
+set +e
+r7g4b_out="$(bash "$SCRIPT" --root "$r7g4_root" --skill deep-review --run-id r7g4b \
+	--expected-file "$r7g4_root/nested.json" 2>"$r7g4_root/b.err")"
+r7g4b_rc=$?
+set -e
+r7g4b_err="$(cat "$r7g4_root/b.err")"
+if [[ "$r7g4b_rc" -eq 2 && -z "$r7g4b_out" && "$r7g4b_err" == *"duplicate key"* && "$r7g4b_err" == *'"d"'* ]]; then
+	pass "(R7-G4b) a NESTED duplicate key is refused and named — the rule is depth-general"
+else
+	fail "(R7-G4b) rc=$r7g4b_rc out='$r7g4b_out' err='$r7g4b_err'"
+fi
+
+# R7-G4c/control — an empty units array is still accepted (the R6-G4d case,
+# re-asserted against the new rule: `[]` IS a value event, so the legal
+# empty-lens shape is still distinguishable from a duplicate).
+set +e
+r7g4c_out="$(bash "$SCRIPT" --root "$r7g4_root" --skill deep-review --run-id r7g4c \
+	--expected-file "$r6g4_root/empty.json" 2>"$r7g4_root/c.err")"
+r7g4c_rc=$?
+set -e
+if [[ "$r7g4c_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r7g4c_out" | jq -r '.logic.assigned')" == "0" ]]; then
+	pass "(R7-G4c/control) an empty units array is still accepted under the new wire rule"
+else
+	fail "(R7-G4c/control) rc=$r7g4c_rc out='$r7g4c_out' err='$(cat "$r7g4_root/c.err")'"
+fi
+
+# R7-G4d — a malformed payload must NOT be misreported as a duplicate. Round
+# 6's check took its count from a second `jq --stream` whose failure produced
+# 0, which is `-ne` the key count, so ANY read/parse failure said "duplicate".
+printf '%s' 'this is not json' >"$r7g4_root/bad.json"
+set +e
+r7g4d_out="$(bash "$SCRIPT" --root "$r7g4_root" --skill deep-review --run-id r7g4d \
+	--expected-file "$r7g4_root/bad.json" 2>"$r7g4_root/d.err")"
+r7g4d_rc=$?
+set -e
+r7g4d_err="$(cat "$r7g4_root/d.err")"
+if [[ "$r7g4d_rc" -eq 2 && -z "$r7g4d_out" && "$r7g4d_err" == *"not valid JSON"* && "$r7g4d_err" != *"duplicate"* ]]; then
+	pass "(R7-G4d) a malformed --expected-file reports the SHAPE gate, never 'duplicate'"
+else
+	fail "(R7-G4d) rc=$r7g4d_rc out='$r7g4d_out' err='$r7g4d_err'"
 fi
 
 finish

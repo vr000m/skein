@@ -229,6 +229,50 @@ else
 	fail "R6-G1f/control: rc=$r6g1f_ok_rc created=$([[ -e "$r6g1f_root/repo/real/cache.jsonl" ]] && echo yes || echo no)"
 fi
 
+# ---------------------------------------------------------------------------
+# R7-G5 — `route` READS the same state path `normalize` guards (round 7, F9).
+#
+# Round 6 guarded --autofix-cache in `normalize` and left `route` alone as
+# "read-only". But route's read is re-attached as `.auto_fix` objects that
+# apply-auto-fix-code.sh later applies to the WORKING TREE, so an
+# attacker-planted symlink at the cache path feeds chosen JSON into the
+# auto-fix proposal stream. Every access to a `.gauntlet/` state path — read
+# or write — passes the guard before the first filesystem effect.
+# ---------------------------------------------------------------------------
+
+r7g5_root="$WORKDIR/r7g5"
+mkdir -p "$r7g5_root/repo" "$r7g5_root/outside"
+git -C "$r7g5_root/repo" init -q 2>/dev/null || git -C "$r7g5_root/repo" init >/dev/null 2>&1
+ln -s "$r7g5_root/outside" "$r7g5_root/repo/.gauntlet"
+printf '%s\n' '{"file":"a.py","line":1,"category":"logic","auto_fix":{"kind":"planted"}}' \
+	>"$r7g5_root/outside/auto-fix-cache.jsonl"
+set +e
+r7g5a_out="$(cd "$r7g5_root/repo" && printf '%s' '{"findings":[]}' |
+	"$RUN_GATE" route --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>/dev/null)"
+r7g5a_rc=$?
+r7g5a_err="$(cd "$r7g5_root/repo" && printf '%s' '{"findings":[]}' |
+	"$RUN_GATE" route --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>&1 >/dev/null)"
+set -e
+if [[ "$r7g5a_rc" -eq 2 && "$r7g5a_err" == *"refusing to operate on symlink"* && -z "$r7g5a_out" ]]; then
+	pass "R7-G5a: route --autofix-cache under a symlinked ancestor exits 2, refuses loudly, and emits no envelope"
+else
+	fail "R7-G5a: rc=$r7g5a_rc err='$r7g5a_err' out='$r7g5a_out'"
+fi
+
+# R7-G5b/control: an ordinary (non-symlinked) cache path still routes and
+# re-attaches .auto_fix unchanged — the guard adds a refusal, not a behaviour
+# change. Reuses the section-4 fixtures, which are the real route wire.
+set +e
+r7g5b_out="$("$RUN_GATE" route --autofix-cache "$cache" "$reconciled" 2>/dev/null)"
+r7g5b_rc=$?
+set -e
+r7g5b_attached="$(printf '%s' "$r7g5b_out" | jq -r '[.substantive_findings[], (.trivial_envelope.findings[]?)] | map(select(.file == "b.py")) | any(has("auto_fix"))' 2>/dev/null)"
+if [[ "$r7g5b_rc" -eq 0 && "$r7g5b_attached" == "true" ]]; then
+	pass "R7-G5b/control: an ordinary --autofix-cache path still routes (rc 0) and re-attaches .auto_fix unchanged"
+else
+	fail "R7-G5b/control: rc=$r7g5b_rc attached='$r7g5b_attached'"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

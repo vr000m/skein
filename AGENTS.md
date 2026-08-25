@@ -31,6 +31,7 @@ plugins/skein/.claude-plugin/plugin.json       Claude plugin manifest
 plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle
 scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh) and by the two persist-*.sh state-file scripts (persist-common.sh)
+plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
 tests/                       Reconciliation, parity, and auto-fix test harnesses
 docs/dev_plans/              Development plans
 docs/skills_architecture/    Skills architecture design docs (source; rendered via /plan-view --rich)
@@ -41,6 +42,16 @@ docs/_plan_view/             Gitignored generated HTML output from /plan-view (d
 _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
                              Deterministic and rich pages are cross-linked: forward links (plain → `.rich.html`) are emitted unconditionally; back-links (rich → plain/index, breadcrumb) are injected idempotently by `relink_rich_pages()` on every plain run, back-filling pre-existing rich pages.
 ```
+
+### review-gauntlet `lib/` (authored, mirror-parity-enforced)
+
+`plugins/*/skills/review-gauntlet/lib/` is hand-written, unlike the generated `scripts/` subtree beside it. Five files:
+
+- `gauntlet-common.sh` — the documented **anchor-divergent exclusion**: it resolves the harness-specific plugin-root anchor, which the two mirrors spell differently on purpose, so it is *not* byte-compared between them.
+- `state-path-guard.sh` — **the single state-path containment policy** for the skill. `gauntlet_assert_no_symlink <path> <label>` refuses a `.gauntlet/` path whose leaf or any ancestor up to the worktree root is a symlink, or that contains a `..` component. Its containment bound is derived from the path's own ancestors (`git -C`), never from the process cwd. Every `lib/` state-path access — read or write — goes through it (the orchestrator's per-round `mkdir -p` in SKILL.md is the one documented residual: directory creation, with every write into that directory guarded); a worktree root reachable only through a symlinked spelling of its own path falls back to the leaf-plus-parent bound, as the header documents. No other file in `lib/` carries symlink-resolution logic, and `tests/gauntlet/test-gate-timeout.sh` sweeps the directory to enforce that.
+- `gate-bounded.sh`, `convergence-ledger.sh`, `run-gate.sh` — callers of the guard above.
+
+All four non-anchor files are byte-identical across the two mirrors; the list is registered as `GAUNTLET_LIB_PARITY_FILES` in `tests/parity/test-applier-bundle-parity.sh`, which fails on any `lib/*.sh` basename that is neither registered nor the documented exclusion. A new file here must be registered there.
 
 ### Path-resolution idiom (harness-divergent)
 

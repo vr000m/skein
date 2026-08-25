@@ -1311,4 +1311,108 @@ else
 	fail "(R6-G2c) containment table mismatch:$r6g2c_rows"
 fi
 
+# ---------------------------------------------------------------------------
+# Group R7-G3 — the ABSOLUTE branch of persist_path_is_inside_root needs a
+# physical spelling too (round 7, F5).
+#
+# Round 6 fixed the RELATIVE branch only. An in-root file named by an
+# ABSOLUTE path running through a symlinked directory alias prefix-matched
+# nothing against a physical --root, the predicate answered "outside", and
+# BOTH r4 file-transport guards were skipped entirely. Same fail-open, same
+# guard, different spelling.
+# ---------------------------------------------------------------------------
+
+r7g3_alias="$r6g2_base/cwd-link"
+r7g3_alias_pwd="$(cd "$r7g3_alias" && printf '%s' "$PWD")"
+
+# R7-G3a — the three spellings of ONE in-root file must all answer "inside".
+r7g3a_rows=""
+r7g3a_check() {
+	local got
+	got="$(r6g2c_probe "$r7g3_alias" "$1" "$r6g2_phys")"
+	[[ "$got" == "inside" ]] || r7g3a_rows="$r7g3a_rows"$'\n'"  path='$1' expected=inside got=$got"
+}
+r7g3a_check "sub/x.json"
+r7g3a_check "$r7g3_alias_pwd/sub/x.json"
+r7g3a_check "$r6g2_phys/sub/x.json"
+if [[ -z "$r7g3a_rows" ]]; then
+	pass "(R7-G3a) relative, alias-absolute and physical-absolute spellings of one in-root file all answer 'inside'"
+else
+	fail "(R7-G3a) absolute alias spelling is not guarded:$r7g3a_rows"
+fi
+
+# R7-G3b — end-to-end: an ABSOLUTE --json-file spelled through the cwd alias,
+# whose parent is a symlink OUT of the repo, must be refused. On 470c636 the
+# scope predicate answered "outside" and the payload was read and persisted.
+mkdir -p "$r6g2_base/outside/esc"
+printf '%s' '{"type":"done","status":"completed"}' >"$r6g2_base/outside/esc/payload.json"
+ln -s "$r6g2_base/outside/esc" "$r6g2_base/repo/esclink"
+set +e
+r7g3b_err="$(cd "$r7g3_alias" && bash "$SCRIPT" --root "$r6g2_phys" \
+	--skill deep-review --run-id r7g3 --lens logic --attempt 1 \
+	--json-file "$r7g3_alias_pwd/esclink/payload.json" 2>&1 >/dev/null)"
+r7g3b_rc=$?
+set -e
+if [[ "$r7g3b_rc" -eq 2 && "$r7g3b_err" == *"symlink"* ]]; then
+	pass "(R7-G3b) an ABSOLUTE --json-file spelled through the cwd alias, with a symlinked parent, is refused"
+else
+	fail "(R7-G3b) rc=$r7g3b_rc err='$r7g3b_err'"
+fi
+
+# R7-G3c/control — a genuinely out-of-tree fixture still answers "outside"
+# and is still accepted: no false refusal, no platform-symlink regression.
+r7g3c_rows=""
+for r7g3c_cwd in "$r6g2_phys" "$r7g3_alias"; do
+	r7g3c_got="$(r6g2c_probe "$r7g3c_cwd" "$r6g2_base/outside/payload.json" "$r6g2_phys")"
+	[[ "$r7g3c_got" == "outside" ]] || r7g3c_rows="$r7g3c_rows [cwd=$r7g3c_cwd got=$r7g3c_got]"
+done
+set +e
+(cd "$r7g3_alias" && bash "$SCRIPT" --root "$r6g2_phys" \
+	--skill deep-review --run-id r7g3c --lens logic --attempt 1 \
+	--json-file "$r6g2_base/outside/payload.json") >/dev/null 2>&1
+r7g3c_rc=$?
+set -e
+if [[ -z "$r7g3c_rows" && "$r7g3c_rc" -eq 0 ]]; then
+	pass "(R7-G3c/control) an out-of-tree fixture still answers 'outside' from both cwd spellings and is still accepted"
+else
+	fail "(R7-G3c/control) rows:$r7g3c_rows accept_rc=$r7g3c_rc"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R7-G4 — the duplicate-key rule is a WIRE rule, enforced on both sides.
+#
+# The reader (collect-lens-results.sh --expected-file) has refused a repeated
+# object key since round 6; the WRITER accepted it, so `units` spelled twice
+# was silently collapsed to the last occurrence on the same transport. A rule
+# that holds on one side of a wire only is not a wire rule.
+# ---------------------------------------------------------------------------
+
+r7g4_base="$TMPDIR_ROOT/r7g4"
+mkdir -p "$r7g4_base"
+set +e
+r7g4e_err="$(printf '%s' '{"type":"start","units":["a"],"units":["b"]}' |
+	bash "$SCRIPT" --root "$r7g4_base" --skill deep-review --run-id r7g4 \
+		--lens logic --attempt 1 --json-stdin 2>&1 >/dev/null)"
+r7g4e_rc=$?
+set -e
+if [[ "$r7g4e_rc" -eq 2 && "$r7g4e_err" == *"duplicate key"* && "$r7g4e_err" == *"units"* ]] &&
+	no_jsonl_anywhere "$r7g4_base"; then
+	pass "(R7-G4e) a --json-stdin payload spelling 'units' twice exits 2, NAMES the duplicated key, and persists nothing"
+else
+	fail "(R7-G4e) rc=$r7g4e_rc err='$r7g4e_err'"
+fi
+
+# R7-G4f/control — the same payload with ONE `units` key is unchanged.
+set +e
+printf '%s' '{"type":"start","units":["a","b"]}' |
+	bash "$SCRIPT" --root "$r7g4_base" --skill deep-review --run-id r7g4f \
+		--lens logic --attempt 1 --json-stdin >/dev/null 2>&1
+r7g4f_rc=$?
+set -e
+if [[ "$r7g4f_rc" -eq 0 ]] && ! no_jsonl_anywhere "$r7g4_base"; then
+	pass "(R7-G4f/control) the same payload with a single 'units' key still persists normally"
+else
+	fail "(R7-G4f/control) rc=$r7g4f_rc"
+fi
+
 finish

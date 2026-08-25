@@ -1375,14 +1375,280 @@ else
 	fail "R6-G1e/control: in-repo rc=$r6g1e_in out-of-worktree rc=$r6g1e_out"
 fi
 
-# Structural: neither wrapper re-implements a walk — the policy has ONE owner.
-r6g1_gate_body="$(sed -n '/^gate_assert_no_symlink() {/,/^}/p' "$GATE_BOUNDED")"
-r6g1_ledger_body="$(sed -n '/^ledger_assert_no_symlink() {/,/^}/p' "$LEDGER_SCRIPT_R6")"
-if [[ "$r6g1_gate_body" == *"gauntlet_assert_no_symlink"* && "$r6g1_gate_body" != *"-L"* &&
-	"$r6g1_ledger_body" == *"gauntlet_assert_no_symlink"* && "$r6g1_ledger_body" != *"-L"* ]]; then
-	pass "R6-G1: both callers are wrappers — neither re-implements the ancestor walk"
+# ---------------------------------------------------------------------------
+# Group R6-G1 structural, GENERALISED in round 7 (F10).
+#
+# The old form extracted TWO function bodies BY NAME and asserted they carried
+# no `-L`. The failure mode it exists to prevent is "a new caller hand-rolls a
+# walk" — which is exactly what round 5 did, and which a name list cannot see:
+# run-gate.sh's call site was not covered at all, and any future lib file or
+# new function in the covered files was exempt forever. So sweep the
+# DIRECTORY, the way tests/parity/test-applier-bundle-parity.sh sweeps
+# canonical lib/ for unregistered basenames.
+#
+# The Codex mirror's lib/ is byte-identical by parity (GAUNTLET_LIB_PARITY_FILES
+# in tests/parity/test-applier-bundle-parity.sh), so sweeping the canonical
+# directory covers both mirrors.
+r7g6_sweep_lib() {
+	local dir="$1" f base hits out=""
+	for f in "$dir"/*.sh; do
+		[[ -e "$f" ]] || continue
+		base="$(basename "$f")"
+		[[ "$base" == "state-path-guard.sh" ]] && continue
+		hits="$(grep -nE '^[^#]*(\[\[ *-L |readlink|realpath)' "$f" || true)"
+		[[ -n "$hits" ]] && out="$out $base:$(printf '%s' "$hits" | head -1 | cut -d: -f1)"
+	done
+	printf '%s' "$out"
+}
+
+r7g6_real="$(r7g6_sweep_lib "$SKILL_LIB")"
+r7g6_callers_ok=1
+r7g6_callers_missing=""
+for r7g6_caller in gate-bounded.sh convergence-ledger.sh run-gate.sh; do
+	if ! grep -q 'gauntlet_assert_no_symlink' "$SKILL_LIB/$r7g6_caller"; then
+		r7g6_callers_ok=0
+		r7g6_callers_missing="$r7g6_callers_missing $r7g6_caller"
+	fi
+done
+if [[ -z "$r7g6_real" && "$r7g6_callers_ok" -eq 1 ]]; then
+	pass "R7-G6: state-path-guard.sh is the ONLY file in review-gauntlet lib/ with symlink-resolution logic, and every state-path caller calls it"
 else
-	fail "R6-G1: a caller still carries its own walk (gate='$r6g1_gate_body' ledger='$r6g1_ledger_body')"
+	fail "R7-G6: hand-rolled walk in$r7g6_real; callers missing the guard:$r7g6_callers_missing"
+fi
+
+# R7-G6a — NEGATIVE CONTROL for the sweep itself. A sweep that cannot fail is
+# not a check. Plant a hand-rolled walk in a COPY of lib/ and require the
+# sweep to catch it.
+r7g6_tmp="$(mktemp -d "$WORKDIR/r7g6lib.XXXXXX")"
+cp "$SKILL_LIB"/*.sh "$r7g6_tmp/"
+cat >>"$r7g6_tmp/gate-bounded.sh" <<'R7G6EOF'
+
+hand_rolled_walk() {
+	local p="$1"
+	if [[ -L "$p" ]]; then
+		return 1
+	fi
+	return 0
+}
+R7G6EOF
+r7g6_planted="$(r7g6_sweep_lib "$r7g6_tmp")"
+if [[ -n "$r7g6_planted" ]]; then
+	pass "R7-G6a/control: the sweep CATCHES a hand-rolled walk planted in a copy of lib/ ($r7g6_planted)"
+else
+	fail "R7-G6a/control: the sweep did not catch a planted hand-rolled '[[ -L ]]' walk"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R7-G1 — the containment bound comes from the PATH, never the cwd.
+#
+# `gauntlet_assert_no_symlink` used to derive the worktree root with a bare
+# `git rev-parse --show-toplevel`, i.e. from the CALLER's cwd. One and the
+# same path was therefore refused from inside the repo and ACCEPTED from
+# anywhere else, silently degrading to the leaf+immediate-parent bound this
+# file exists to replace. INVARIANT UNDER TEST: the verdict is a function of
+# (the path's spelling, the filesystem) alone.
+r7g1_root="$WORKDIR/r7g1"
+mkdir -p "$r7g1_root/repo" "$r7g1_root/out/round-1" "$r7g1_root/repo2/sub" \
+	"$r7g1_root/outofrepo" "$r7g1_root/nonrepo" "$r7g1_root/repo/ok/dir"
+git -C "$r7g1_root/repo" init -q >/dev/null 2>&1 || git -C "$r7g1_root/repo" init >/dev/null 2>&1
+git -C "$r7g1_root/repo2" init -q >/dev/null 2>&1 || git -C "$r7g1_root/repo2" init >/dev/null 2>&1
+ln -s "$r7g1_root/out" "$r7g1_root/repo/.gauntlet"
+ln -s "$r7g1_root/repo2" "$r7g1_root/repo/otherlink"
+
+# Ask the guard directly, from a chosen cwd, in a subshell.
+r7g1_verdict() {
+	local cwd="$1" path="$2"
+	(
+		cd "$cwd" || exit 9
+		# shellcheck source=/dev/null
+		. "$SKILL_LIB/state-path-guard.sh"
+		gauntlet_assert_no_symlink "$path" r7 >/dev/null 2>&1
+	)
+	echo $?
+}
+
+r7g1_paths=(
+	"$r7g1_root/repo/.gauntlet/round-1/env.json"
+	"$r7g1_root/repo/otherlink/sub/env.json"
+	"$r7g1_root/repo/ok/dir/env.json"
+	"$r7g1_root/repo/deep/new/dir/env.json"
+	"$r7g1_root/outofrepo/env.json"
+	"/tmp/r7g1x/env.json"
+)
+r7g1_expected=(1 1 0 0 0 0)
+r7g1_cwds=("$r7g1_root/repo" "$r7g1_root/nonrepo" "/tmp")
+
+r7g1a_bad=""
+r7g1a_matrix=""
+for r7g1_i in "${!r7g1_paths[@]}"; do
+	r7g1_row=""
+	for r7g1_cwd in "${r7g1_cwds[@]}"; do
+		r7g1_row="$r7g1_row $(r7g1_verdict "$r7g1_cwd" "${r7g1_paths[$r7g1_i]}")"
+	done
+	r7g1_uniq="$(printf '%s\n' $r7g1_row | sort -u | tr '\n' ',' | sed 's/,$//')"
+	r7g1a_matrix="$r7g1a_matrix
+  ${r7g1_paths[$r7g1_i]#"$r7g1_root/"} ->$r7g1_row (expected ${r7g1_expected[$r7g1_i]})"
+	if [[ "$r7g1_uniq" != "${r7g1_expected[$r7g1_i]}" ]]; then
+		r7g1a_bad="$r7g1a_bad [${r7g1_paths[$r7g1_i]} got:$r7g1_row want:${r7g1_expected[$r7g1_i]} across all cwds]"
+	fi
+done
+if [[ -z "$r7g1a_bad" ]]; then
+	pass "R7-G1a: the verdict is IDENTICAL from every cwd (repo / non-repo / /tmp) for every path, and equals the expected column:$r7g1a_matrix"
+else
+	fail "R7-G1a: cwd-dependent or wrong verdict:$r7g1a_bad$r7g1a_matrix"
+fi
+
+# R7-G1b — a symlinked ancestor pointing at ANOTHER WORKTREE ROOT must not be
+# allowed to END the walk at itself (the `! -L "$cand"` / `! -L "$probe"`
+# rule). Without it the candidate search accepts repo2 as the bound, stops AT
+# `otherlink`, and never -L-tests the one component that matters.
+r7g1b_bad=""
+for r7g1_cwd in "${r7g1_cwds[@]}"; do
+	r7g1b_rc="$(r7g1_verdict "$r7g1_cwd" "$r7g1_root/repo/otherlink/sub/env.json")"
+	[[ "$r7g1b_rc" == "1" ]] || r7g1b_bad="$r7g1b_bad [cwd=$r7g1_cwd rc=$r7g1b_rc]"
+done
+if [[ -z "$r7g1b_bad" ]]; then
+	pass "R7-G1b: a symlink pointing AT a second worktree root is refused from every cwd (it can never be the containment bound)"
+else
+	fail "R7-G1b: symlink-to-other-worktree accepted:$r7g1b_bad"
+fi
+
+# R7-G1c — the finding's own reproduction, promoted: gate_run_bounded run from
+# a cwd OUTSIDE the repo, writing into repo/.gauntlet/... through the
+# symlinked `.gauntlet`, must fail and leak nothing.
+set +e
+(cd "$r7g1_root/nonrepo" && "$RUNNER" --gate demo 5 \
+	"$r7g1_root/repo/.gauntlet/round-1/env.json" \
+	"$r7g1_root/repo/.gauntlet/round-1/tool.txt" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+r7g1c_rc=$?
+set -e
+r7g1c_leaked=""
+for r7g1c_f in env.json tool.txt tool.txt.stderr; do
+	[[ -e "$r7g1_root/out/round-1/$r7g1c_f" ]] && r7g1c_leaked="$r7g1c_leaked $r7g1c_f"
+done
+if [[ "$r7g1c_rc" -ne 0 && -z "$r7g1c_leaked" ]]; then
+	pass "R7-G1c/control: gate_run_bounded from a FOREIGN cwd still refuses a symlinked .gauntlet/ and writes nothing through it"
+else
+	fail "R7-G1c/control: rc=$r7g1c_rc leaked='$r7g1c_leaked'"
+fi
+
+# R7-G1d — no false refusal from a foreign cwd either: the R6-G1e controls
+# (ordinary in-repo path, out-of-worktree $TMPDIR path) must still be accepted.
+set +e
+(cd "$r7g1_root/nonrepo" && "$RUNNER" --gate demo 5 "$r7g1_root/repo/ok/dir/env.json" "$r7g1_root/repo/ok/dir/tool.out" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+r7g1d_in=$?
+(cd "$r7g1_root/nonrepo" && "$RUNNER" --gate demo 5 "$r7g1_root/outofrepo/env.json" "$r7g1_root/outofrepo/tool.out" -- /bin/echo '{"status":"clean"}') >/dev/null 2>&1
+r7g1d_out=$?
+set -e
+if [[ "$r7g1d_in" -eq 0 && "$r7g1d_out" -eq 0 ]]; then
+	pass "R7-G1d/control: ordinary in-repo and out-of-worktree paths are not falsely refused FROM A FOREIGN CWD"
+else
+	fail "R7-G1d/control: in-repo rc=$r7g1d_in out-of-worktree rc=$r7g1d_out"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R7-G2 — the boundary between the repo's TWO containment owners is
+# asserted by a test, not by a comment (round 7, F4).
+#
+# `gauntlet_assert_no_symlink` owns `.gauntlet/`; `af_assert_no_symlink`
+# (scripts/lib/auto-fix-common.sh) owns `.deep-review/` / `.review-plan/`.
+# The documented relation is `gauntlet ⊇ af-bounded` FOR IN-ROOT PATHS:
+# anything the auto-fix walk refuses for an in-root path, the gauntlet walk
+# also refuses. A future edit that makes `gauntlet` WEAKER than `af` on an
+# in-root row fails here.
+r7g2_root="$WORKDIR/r7g2"
+mkdir -p "$r7g2_root/repo/ok/dir" "$r7g2_root/outside/sub" "$r7g2_root/outofrepo"
+git -C "$r7g2_root/repo" init -q >/dev/null 2>&1 || git -C "$r7g2_root/repo" init >/dev/null 2>&1
+ln -s "$r7g2_root/outside" "$r7g2_root/repo/link"
+ln -s "$r7g2_root/outside" "$r7g2_root/repo/.gauntlet"
+ln -s "$r7g2_root/outside/sub" "$r7g2_root/repo/ok/leaflink"
+
+r7g2_gauntlet() {
+	(
+		# shellcheck source=/dev/null
+		. "$SKILL_LIB/state-path-guard.sh"
+		gauntlet_assert_no_symlink "$1" r7 >/dev/null 2>&1
+	)
+	echo $?
+}
+r7g2_af() {
+	(
+		# shellcheck source=/dev/null
+		. "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
+		af_assert_no_symlink "$1" "$2" >/dev/null 2>&1
+	)
+	echo $?
+}
+
+# rows: <in-root?>|<label>|<path>
+r7g2_rows=(
+	"1|ordinary in-repo|$r7g2_root/repo/ok/dir/x.json"
+	"1|leaf symlink|$r7g2_root/repo/ok/leaflink"
+	"1|parent symlink|$r7g2_root/repo/link/sub/x.json"
+	"1|grandparent symlink|$r7g2_root/repo/.gauntlet/r/x.json"
+	"1|'..' with no symlink on the chain|$r7g2_root/repo/ok/../ok/dir/x.json"
+	"0|out-of-tree fixture|$r7g2_root/outofrepo/x.json"
+)
+r7g2_violations=""
+r7g2_table=""
+r7g2_dotdot_divergence=0
+r7g2_outoftree_divergence=0
+for r7g2_row in "${r7g2_rows[@]}"; do
+	r7g2_in="${r7g2_row%%|*}"
+	r7g2_rest="${r7g2_row#*|}"
+	r7g2_label="${r7g2_rest%%|*}"
+	r7g2_path="${r7g2_rest#*|}"
+	r7g2_g="$(r7g2_gauntlet "$r7g2_path")"
+	r7g2_a="$(r7g2_af "$r7g2_path" "$r7g2_root/repo")"
+	r7g2_table="$r7g2_table
+  [$r7g2_label] gauntlet=$([[ $r7g2_g -eq 0 ]] && echo accept || echo refuse) af=$([[ $r7g2_a -eq 0 ]] && echo accept || echo refuse)"
+	if [[ "$r7g2_in" == "1" ]]; then
+		# af refuses => gauntlet must refuse.
+		if [[ "$r7g2_a" -ne 0 && "$r7g2_g" -eq 0 ]]; then
+			r7g2_violations="$r7g2_violations [$r7g2_label: af refused, gauntlet ACCEPTED]"
+		fi
+		# Documented divergence #1: `..` is refused by gauntlet only.
+		if [[ "$r7g2_label" == "'..' with no symlink on the chain" && "$r7g2_g" -ne 0 && "$r7g2_a" -eq 0 ]]; then
+			r7g2_dotdot_divergence=1
+		fi
+	else
+		# Documented divergence #2: an OUT-OF-ROOT path is out of scope for
+		# the implication — af (bounded at a root it never reaches) walks to
+		# `/` and refuses on a platform symlink; gauntlet answers "not in a
+		# worktree" and accepts. Neither is a defect; it is why the relation
+		# is stated for in-root paths only.
+		[[ "$r7g2_g" -eq 0 ]] && r7g2_outoftree_divergence=1
+	fi
+done
+if [[ -z "$r7g2_violations" && "$r7g2_dotdot_divergence" -eq 1 && "$r7g2_outoftree_divergence" -eq 1 ]]; then
+	pass "R7-G2a: gauntlet ⊇ af-bounded on every in-root row, with both documented divergences present:$r7g2_table"
+else
+	fail "R7-G2a: relation broken:$r7g2_violations dotdot_divergence=$r7g2_dotdot_divergence outoftree_divergence=$r7g2_outoftree_divergence$r7g2_table"
+fi
+
+# R7-G2b — the LAYERING half of the same rule: the authored guard must not
+# source a GENERATED file, and review-gauntlet must not acquire
+# lib/persist-common.sh as a bundle extra just to reuse a predicate.
+r7g2b_bad=""
+if grep -q 'auto-fix-common' "$SKILL_LIB/state-path-guard.sh"; then
+	grep -qE '^[^#]*auto-fix-common' "$SKILL_LIB/state-path-guard.sh" &&
+		r7g2b_bad="$r7g2b_bad [state-path-guard.sh SOURCES auto-fix-common.sh]"
+fi
+if grep -qE '^[^#]*persist-common' "$SKILL_LIB/state-path-guard.sh"; then
+	r7g2b_bad="$r7g2b_bad [state-path-guard.sh SOURCES persist-common.sh]"
+fi
+r7g2b_extra="$(
+	# shellcheck source=/dev/null
+	. "$ROOT_DIR/scripts/lib/bundle-map.sh"
+	bundle_extra_for review-gauntlet
+)"
+if [[ "$r7g2b_extra" != "finding-key.sh" ]]; then
+	r7g2b_bad="$r7g2b_bad [bundle_extra_for review-gauntlet = '$r7g2b_extra', expected 'finding-key.sh']"
+fi
+if [[ -z "$r7g2b_bad" ]]; then
+	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh"
+else
+	fail "R7-G2b:$r7g2b_bad"
 fi
 
 echo ""
