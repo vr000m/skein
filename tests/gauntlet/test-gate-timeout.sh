@@ -979,10 +979,13 @@ else
 	fail "A11: the self-exiting gate's status was not passed through (got '$(jq -r '.status' "$a11_env" 2>/dev/null)')"
 fi
 
-# Temp-file lifecycle. BSD `mktemp` ignores \$TMPDIR when given no template,
-# so the count below is only discriminating where it is honoured; the
-# structural assertion that follows is the portable one -- a new temp file
-# that is not removed on EVERY exit path leaks one file per gate invocation.
+# Temp-file lifecycle. BSD `mktemp` ignores \$TMPDIR when given NO TEMPLATE,
+# which is exactly what the pre-R12 code did -- so this count was blind to
+# the leak it was written to catch (the files landed in the system temp dir
+# instead). R12/F15 moved all scratch into one `mktemp -d
+# "${TMPDIR:-/tmp}/gate-bounded.XXXXXX"`, an explicit template that DOES
+# honour \$TMPDIR, so the count below is now discriminating on this host as
+# well. The structural assertion that follows is still the portable one.
 a11_after="$(find "$a11_tmp" -type f 2>/dev/null | wc -l | tr -d ' ')"
 if [[ "$a11_after" == "$a11_before" ]]; then
 	pass "A11: no temp-file residue under \$TMPDIR across 50 bounded runs"
@@ -990,19 +993,32 @@ else
 	fail "A11: temp-file leak -- \$TMPDIR went from $a11_before to $a11_after files across 50 runs"
 fi
 
-# R11/F20 added a fourth name (`"${pgid_file}.pid"`, the non-leader single-pid
-# sidecar) to both cleanup lines, so an exact-literal grep for the old
-# three-name form no longer matches. The ASSERTION is unchanged -- every line
-# that removes pgid_file must also remove state_file and rc_file -- it is now
-# expressed as a per-line conjunction rather than one fixed string, so it
-# survives a further sidecar without silently going vacuous.
-a11_pgid_rm="$(grep -c 'rm -f "\$pgid_file"' "$GATE_BOUNDED" || true)"
-a11_rc_rm="$(grep 'rm -f "\$pgid_file"' "$GATE_BOUNDED" | grep '"\$state_file"' | grep -c '"\$rc_file"' || true)"
-a11_pidsc_rm="$(grep 'rm -f "\$pgid_file"' "$GATE_BOUNDED" | grep -c '"\${pgid_file}.pid"' || true)"
-if [[ "$a11_pgid_rm" -gt 0 && "$a11_rc_rm" == "$a11_pgid_rm" ]]; then
-	pass "A11: rc_file is removed on every path that removes pgid_file ($a11_rc_rm/$a11_pgid_rm)"
+# STRUCTURAL half of the same invariant, rewritten for R12/F15. It used to
+# assert "every line that removes pgid_file also removes state_file and
+# rc_file" -- a per-line conjunction that kept working as sidecars were added
+# (R11/F20's `"${pgid_file}.pid"` was the fourth name). That form is now
+# unexpressible AND unnecessary: there are no per-file `rm -f` lines left.
+# All scratch lives in ONE `mktemp -d` directory removed by
+# `_gate_scratch_cleanup`, so the invariant is stronger and simpler -- a
+# future fifth scratch file cannot leak as long as it is created inside that
+# directory. The three assertions below are what makes that true:
+#   1. every scratch path is a child of $_GATE_SCRATCH_DIR,
+#   2. no bare, template-less `mktemp` survives (the form that both leaked
+#      and dodged $TMPDIR),
+#   3. the directory is registered on an EXIT trap, which -- unlike RETURN --
+#      fires when `set -e` aborts.
+a11_scratch_paths="$(grep -c '_file="\$_GATE_SCRATCH_DIR/' "$GATE_BOUNDED" || true)"
+assert_eq "$a11_scratch_paths" "3" \
+	"A11/F15: all three scratch paths (pgid/state/rc) are children of \$_GATE_SCRATCH_DIR"
+
+a11_bare_mktemp="$(grep -c '="\$(mktemp)"' "$GATE_BOUNDED" || true)"
+assert_eq "$a11_bare_mktemp" "0" \
+	"A11/F15: no bare template-less \`mktemp\` remains (that form leaked AND ignored \$TMPDIR on BSD)"
+
+if grep -q "trap '_gate_scratch_cleanup' EXIT" "$GATE_BOUNDED"; then
+	pass "A11/F15: the scratch dir is registered on an EXIT trap, which fires on a \`set -e\` abort"
 else
-	fail "A11: rc_file is missing from $((a11_pgid_rm - a11_rc_rm)) of the $a11_pgid_rm pgid_file cleanup paths"
+	fail "A11/F15: no EXIT trap registers _gate_scratch_cleanup -- an abort leaks the whole scratch dir"
 fi
 
 # --- A12: the envelope holds exactly ONE JSON object ----------------------
@@ -2341,6 +2357,80 @@ if grep -q 'RECORD time' "$GATE_BOUNDED" && grep -q 'round-3' "$GATE_BOUNDED"; t
 	pass "R11-F20c: the header states why the record-time probe is not the removed sweep-time check"
 else
 	fail "R11-F20c: gate-bounded.sh does not document the record-time vs sweep-time distinction"
+fi
+
+# --- R12/F15: scratch files are removed on an ABORT, not only on the two ---
+# success paths.
+#
+# gate_run_bounded's pgid/state/rc scratch files used to be three bare
+# `mktemp` calls removed only by the explicit `rm -f` on the expiry and
+# success paths. Under the caller's documented `set -euo pipefail`, ANY
+# failure between creation and those lines aborts the shell and leaks all
+# four files (three plus the `.pid` sidecar) permanently.
+#
+# Two things made this invisible until now:
+#   1. A RETURN trap does not fire on a `set -e` abort, so the obvious guard
+#      does not work (see the header of gate-bounded.sh).
+#   2. BSD `mktemp` WITH NO TEMPLATE ignores $TMPDIR and always uses the
+#      system default (verified on this host) -- so the leaked files landed
+#      in the user's real temp dir, where no TMPDIR-scoped test could see
+#      them. The fix's `mktemp -d "${TMPDIR:-/tmp}/gate-bounded.XXXXXX"`
+#      passes an explicit template, which DOES honour $TMPDIR; that is what
+#      makes the assertions below both possible and non-vacuous.
+#
+# The abort is injected with a `date` shim that exits 1. `date +%s` is the
+# first command gate_run_bounded runs after the three scratch paths are
+# assigned, so it stands in for any mid-region failure with no timing race.
+
+F15_DIR="$WORKDIR/f15"
+mkdir -p "$F15_DIR/tmp" "$F15_DIR/bin"
+
+# Stub that reports what lives under $TMPDIR *while the gate is running*.
+cat >"$F15_DIR/stub.sh" <<EOF
+#!/usr/bin/env bash
+ls -A "\$TMPDIR" >"$F15_DIR/tmpdir-during-run.txt" 2>/dev/null || true
+printf '{"status":"clean","findings":[]}\n'
+EOF
+chmod +x "$F15_DIR/stub.sh"
+
+# (a) CONTROL / non-vacuity: a normal run must actually create its scratch
+# dir UNDER the private $TMPDIR, or (b)'s "nothing left behind" proves
+# nothing.
+TMPDIR="$F15_DIR/tmp" "$RUNNER" 30 "$F15_DIR/ok-env.json" "$F15_DIR/ok-out.json" \
+	-- "$F15_DIR/stub.sh" >/dev/null 2>&1 || true
+if grep -q '^gate-bounded\.' "$F15_DIR/tmpdir-during-run.txt" 2>/dev/null; then
+	pass "R12-F15a: scratch lives in ONE gate-bounded.* dir under \$TMPDIR while the gate runs (so the leak is observable at all)"
+else
+	fail "R12-F15a: no gate-bounded.* scratch dir seen under \$TMPDIR during the run (got '$(cat "$F15_DIR/tmpdir-during-run.txt" 2>/dev/null)')"
+fi
+assert_eq "$(ls -A "$F15_DIR/tmp" | tr '\n' ' ')" "" \
+	"R12-F15b: ...and the clean success path leaves \$TMPDIR empty"
+
+# (c) THE REGRESSION: abort after the scratch files exist.
+cat >"$F15_DIR/bin/date" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$F15_DIR/bin/date"
+
+f15_rc=0
+TMPDIR="$F15_DIR/tmp" PATH="$F15_DIR/bin:$PATH" "$RUNNER" 30 \
+	"$F15_DIR/abort-env.json" "$F15_DIR/abort-out.json" \
+	-- "$F15_DIR/stub.sh" >/dev/null 2>&1 || f15_rc=$?
+if [[ "$f15_rc" -ne 0 ]]; then
+	pass "R12-F15c: the injected failure really does abort gate_run_bounded (rc=$f15_rc)"
+else
+	fail "R12-F15c: expected a non-zero abort, got rc=0 -- the injection no longer aborts and (d) is vacuous"
+fi
+assert_eq "$(ls -A "$F15_DIR/tmp" | tr '\n' ' ')" "" \
+	"R12-F15d: an abort between scratch creation and the success/expiry cleanup leaves NO scratch files behind"
+
+# (e) The mechanism is documented where the next round will look for it: a
+# RETURN trap is the obvious "fix" here and it does not work.
+if grep -q 'RETURN trap does NOT fire' "$GATE_BOUNDED"; then
+	pass "R12-F15e: gate-bounded.sh records why a RETURN trap is not the mechanism"
+else
+	fail "R12-F15e: gate-bounded.sh does not document the RETURN-trap counter-evidence"
 fi
 
 echo ""
