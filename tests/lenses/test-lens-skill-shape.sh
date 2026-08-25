@@ -673,6 +673,146 @@ for skill_md in "${SKILLS[@]}"; do
 	fi
 done
 
+# ---------------------------------------------------------------------------
+# (R11-F1) the deep-review state schema_version agrees across all three sites.
+#
+# The Phase-2 rework changed the per-lens object from
+# {status, model, effort, reason, findings} to
+# {status, assigned, reviewed, unreviewed, findings} and widened the status
+# enum, WITHOUT bumping schema_version -- so version 1 named two
+# incompatible shapes and SKILL.md's --continue compat gate could not tell
+# them apart. The bump to 2 is only half the fix; this is the other half.
+# Nothing failed when the producer and the two mirrors disagreed, which is
+# exactly how the drift went unnoticed. Assert the three agree, by value.
+# ---------------------------------------------------------------------------
+
+f1_script="$(grep -oE -- '--argjson schema_version [0-9]+' "$ROOT_DIR/scripts/persist-deep-review-state.sh" |
+	grep -oE '[0-9]+$' | sort -u)"
+f1_claude="$(grep -oE '"schema_version": [0-9]+,' "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" |
+	grep -oE '[0-9]+' | sort -u)"
+f1_codex="$(grep -oE '"schema_version": [0-9]+,' "$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md" |
+	grep -oE '[0-9]+' | sort -u)"
+
+if [[ -z "$f1_script" ]]; then
+	fail "(R11-F1) could not read --argjson schema_version from persist-deep-review-state.sh"
+elif [[ "$(printf '%s' "$f1_script" | wc -l)" -ne 0 ]]; then
+	fail "(R11-F1) persist-deep-review-state.sh stamps more than one schema_version: $(echo $f1_script)"
+elif [[ "$f1_script" == "$f1_claude" && "$f1_script" == "$f1_codex" ]]; then
+	pass "(R11-F1) schema_version $f1_script agrees across the script and both deep-review mirrors"
+else
+	fail "(R11-F1) schema_version drift: script=$f1_script claude-mirror=$(echo $f1_claude) codex-mirror=$(echo $f1_codex)"
+fi
+
+# The compat gate must name the SAME version in prose. This is the sentence
+# that decides whether a stale state file is honoured or discarded, so a
+# bumped sample with an un-bumped gate is worse than no bump at all.
+for f1_md in "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" "$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"; do
+	f1_gate="$(grep -oE 'current expected version \([0-9]+\)' "$f1_md" | grep -oE '[0-9]+' | sort -u || true)"
+	if [[ -z "$f1_gate" ]]; then
+		fail "(R11-F1b) $(basename "$(dirname "$f1_md")")/$(basename "$f1_md") in $(basename "$(dirname "$(dirname "$(dirname "$f1_md")")")") states no --continue expected-version gate"
+	elif [[ "$f1_gate" == "$f1_script" ]]; then
+		pass "(R11-F1b) the --continue compat gate names version $f1_gate ($(basename "$(dirname "$(dirname "$(dirname "$f1_md")")")"))"
+	else
+		fail "(R11-F1b) compat gate names version $(echo $f1_gate) but the script stamps $f1_script ($f1_md)"
+	fi
+done
+
+# ---------------------------------------------------------------------------
+# (R11-F10) every Lens Persistence Contract block in a file is IDENTICAL once
+# the three deliberately per-lens tokens are normalised.
+#
+# Each mirror pastes this block into five lens prompts. The suite already
+# asserted each block's PRESENCE, never that the copies agree -- so any of
+# the twenty could drift and every existing assertion still passed. That is
+# a twenty-way synchronised edit guarded by nothing.
+#
+# The block is NOT hoisted: these are prompt templates pasted into each lens
+# subagent's prompt, so hoisting changes what text reaches five lenses --
+# a prompt-behaviour change to settle a duplication complaint. The
+# assertion gives the same protection at zero prompt risk.
+#
+# Three tokens legitimately vary per lens and are normalised by name rather
+# than by a catch-all: the --lens value, the finding `category`, and the
+# `location` placeholder (documentation findings name a file, not a line).
+# A fourth varying token must therefore FAIL this test rather than be
+# absorbed silently.
+# ---------------------------------------------------------------------------
+
+f10_files=(
+	"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
+	"$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md"
+	"$ROOT_DIR/plugins/skein-codex/skills/review-plan/SKILL.md"
+)
+
+f10_total=0
+for f10_md in "${f10_files[@]}"; do
+	f10_label="$(basename "$(dirname "$(dirname "$(dirname "$f10_md")")")")/$(basename "$(dirname "$f10_md")")"
+
+	f10_count="$(grep -c '^## Lens Persistence Contract' "$f10_md" || true)"
+
+	# The Codex deep-review mirror states the contract ONCE, as an
+	# orchestrator instruction, instead of pasting a per-lens copy -- it has
+	# zero blocks by this heading, which is a different (and strictly safer)
+	# shape, not drift. Recorded here so "zero blocks" can never become the
+	# way a mirror silently loses the contract: the total-count guard below
+	# still has to be satisfied by the other three.
+	if [[ "$f10_count" -eq 0 ]]; then
+		if grep -q 'persist-lens-result.sh' "$f10_md"; then
+			pass "(R11-F10) $f10_label states the persistence contract once, not per lens — nothing to compare"
+		else
+			fail "(R11-F10) $f10_label has no Lens Persistence Contract blocks AND never names persist-lens-result.sh"
+		fi
+		continue
+	fi
+
+	# Extract each block into its own file: the "## Lens Persistence
+	# Contract" heading through the line before the next "## " heading.
+	# Separate files rather than a delimiter-in-a-pipeline, so the block
+	# text itself can contain anything without ending its own record.
+	f10_dir="$(mktemp -d)"
+	awk -v out="$f10_dir" '
+		/^## Lens Persistence Contract/ { n++; f = sprintf("%s/blk.%02d", out, n); inblock = 1; next }
+		inblock && /^## / { inblock = 0 }
+		inblock { print > f }
+	' "$f10_md"
+
+	# Normalise the three deliberately per-lens tokens, then hash.
+	f10_hashes="$(for f10_blk in "$f10_dir"/blk.*; do
+		sed -E -e 's/--lens [A-Za-z0-9_-]+ /--lens <LENS> /g' \
+			-e 's/"category":"[A-Za-z ]+"/"category":"<CAT>"/g' \
+			-e 's/"location":"<[^"]*>"/"location":"<LOC>"/g' "$f10_blk" |
+			shasum | cut -d' ' -f1
+	done)"
+	rm -rf "$f10_dir"
+
+	# Cross-check the extractor against a trivially-correct count, so a
+	# broken awk range cannot pass vacuously.
+	f10_uniq="$(printf '%s\n' "$f10_hashes" | grep -c . || true)"
+
+	f10_total=$((f10_total + f10_count))
+
+	if [[ "$f10_count" -lt 2 ]]; then
+		fail "(R11-F10) $f10_label has $f10_count Lens Persistence Contract blocks — nothing to compare (extractor drift?)"
+		continue
+	fi
+
+	f10_distinct="$(printf '%s\n' "$f10_hashes" | grep . | sort -u | wc -l | tr -d ' ')"
+	if [[ "$f10_uniq" -ne "$f10_count" ]]; then
+		fail "(R11-F10) $f10_label: extracted $f10_uniq blocks but the file has $f10_count"
+	elif [[ "$f10_distinct" -eq 1 ]]; then
+		pass "(R11-F10) $f10_label: all $f10_count Lens Persistence Contract blocks are identical after normalisation"
+	else
+		fail "(R11-F10) $f10_label: $f10_count blocks normalise to $f10_distinct DISTINCT texts — the copies have drifted"
+	fi
+done
+
+if [[ "$f10_total" -ge 12 ]]; then
+	pass "(R11-F10/guard) $f10_total Lens Persistence Contract blocks were compared across the four mirrors"
+else
+	fail "(R11-F10/guard) only $f10_total blocks found across four mirrors — layout drift, not a passing test"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 

@@ -13,7 +13,8 @@
 #     positional lenses-path argument, or stdin when it is "-" or omitted.
 #     Root-anchors via git rev-parse --show-toplevel.
 #     Wraps the input as the `lenses` key of a new top-level object alongside
-#     schema_version (stamped 1 by the script) and the five run-metadata
+#     schema_version (stamped 2 by the script -- R11/F1 bumped it with the
+#     Phase-2 per-lens shape change) and the five run-metadata
 #     fields, writing atomically (temp file + rename) to
 #     .deep-review/latest-<harness>.json.
 #     Exit 0 on success; exit 2 on a usage error; exit 1 on a best-effort
@@ -172,10 +173,10 @@ if (
 			fi
 		done
 		if [[ -z "$missing_keys" ]]; then
-			if [[ "$(jq -r '.schema_version' "$target")" == "1" ]]; then
-				pass "(a) writes required top-level keys (schema_version=1, empty review_focus_hash tolerated)"
+			if [[ "$(jq -r '.schema_version' "$target")" == "2" ]]; then
+				pass "(a) writes required top-level keys (schema_version=2, empty review_focus_hash tolerated)"
 			else
-				fail "(a) writes required top-level keys (schema_version is not 1)"
+				fail "(a) writes required top-level keys (schema_version is not 2)"
 				sed 's/^/    /' "$target"
 			fi
 		else

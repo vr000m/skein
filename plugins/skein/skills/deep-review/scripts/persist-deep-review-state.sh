@@ -53,17 +53,29 @@
 # section:
 #
 #   {
-#     "schema_version": 1,
+#     "schema_version": 2,
 #     "run_id": "...", "base_commit": "...", "head_commit": "...",
 #     "diff_hash": "...", "review_focus_hash": "...",
 #     "lenses": <input>
 #   }
 #
-# `schema_version` is stamped by THIS script (always `1`) — unlike
+# `schema_version` is stamped by THIS script (always `2`) — unlike
 # persist-review-state.sh, which validates an already-stamped
 # `schema_version` from its upstream reconciler (`reconcile-findings.sh`),
 # nothing upstream of this script stamps a schema_version onto the raw
 # per-lens data, so this script owns it.
+#
+# v2 (R11/F1). v1 meant a per-lens object of
+# `{status, model, effort, reason, findings}` with a 3-value status enum.
+# The Phase-2 lens rework replaced that with
+# `{status, assigned, reviewed, unreviewed, findings}` and a 6-value enum
+# (completed|partial|timed_out|errored|skipped|missing) WITHOUT bumping the
+# version, so `schema_version == 1` briefly named two incompatible shapes.
+# A stale v1 file now fails deep-review SKILL.md's --continue compat gate and
+# falls back to --full, instead of being read as v2 and yielding lens objects
+# missing three keys. The version is asserted across the script and both
+# SKILL.md mirrors by tests/lenses/test-lens-skill-shape.sh (R11-F1), so the
+# NEXT shape change cannot skip the bump silently.
 #
 # `--review-focus-hash` accepts an empty string (`--review-focus-hash ""`)
 # for the common case where no plan file / `## Review Focus` section was
@@ -255,7 +267,7 @@ OUT_DIR="$ROOT_DIR/.deep-review"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 
 output="$(printf '%s' "$input" | jq \
-	--argjson schema_version 1 \
+	--argjson schema_version 2 \
 	--arg run_id "$RUN_ID" \
 	--arg base_commit "$BASE_COMMIT" \
 	--arg head_commit "$HEAD_COMMIT" \

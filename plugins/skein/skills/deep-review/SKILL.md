@@ -37,7 +37,7 @@ If a plan file is supplied, treat it as the author-supplied review brief. If the
 - **Disk-first lens results (Phase 2).** Each checkpoint is now `collect-lens-results.sh` (reads the per-lens attempt files under `.deep-review/lenses/<run-id>/`) piped into `persist-deep-review-state.sh --from-collector` (derives `.lenses` from the collector's shape) — a single derivation path, replacing the earlier "assemble a per-lens object by hand" checkpoint. The disk attempt files, written by each lens subagent via `persist-lens-result.sh` as it works, are the source of truth; the Agent return value is a fallback only. See [Step 2](#2-spawn-fresh-context-subagents) for the full protocol (persistence contract, budgets, and the one-respawn rule).
 - **Status enum is now the superset** `completed | partial | timed_out | errored | skipped` (absent key = missing), emitted verbatim by `collect-lens-results.sh` and persisted verbatim into `.lenses`. `skipped` is orchestrator-emitted on a deliberately-skipped lens's behalf (e.g. the spec lens with no Review Focus) and is terminal for `--continue`. `partial` means the lens is still mid-run (pre-respawn); `timed_out` means a respawn already happened and the lens still produced no completion signal.
 - **Absent lens keys count as unresolved, not skipped.** A lens whose key is entirely absent from the persisted `.lenses` object — because the process terminated before that lens's incremental checkpoint ever ran — must be treated identically to `errored`/`timed_out`/`partial` by `--continue`'s resume logic (mode 1, below): it needs to be (re-)run, not silently skipped. This closes the gap where a lens that hadn't even started yet when the process died would otherwise fall through every explicit status check.
-- If the state file is missing, or `schema_version` is absent / does not match the current expected version (1), treat `--continue` as `--full` with a warning.
+- If the state file is missing, or `schema_version` is absent / does not match the current expected version (2), treat `--continue` as `--full` with a warning.
 - Any downstream consumer of this run's findings (e.g. `skein:review-gauntlet`'s gate 3) MUST source them from this state file or the pre-render Step 3.5 reconciled data — never from Step 5's rendered report, which intentionally omits Evidence/Suggestion for Minor findings under this plan's compact default.
 
 ### Worktree Identity
@@ -58,7 +58,7 @@ Suggested schema:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "run_id": "2026-03-17T14:30:00Z",
   "base_commit": "abc1234",
   "head_commit": "def5678",
