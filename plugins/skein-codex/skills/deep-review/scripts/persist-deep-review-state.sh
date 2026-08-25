@@ -119,7 +119,7 @@ SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
+usage: scripts/persist-deep-review-state.sh [--from-collector] --harness claude|codex --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
 EOF
 }
 
