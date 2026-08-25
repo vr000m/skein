@@ -199,6 +199,52 @@ _gate_sweep_pgid() {
 	kill -KILL $survivors 2>/dev/null || true
 }
 
+# gate_assert_no_symlink <path> -> 0 safe, 1 with a diagnostic on stderr.
+#
+# R5/R7: state-path guard policy was per-FILE rather than per-skill.
+# convergence-ledger.sh carries a bespoke hardened ledger_assert_no_symlink
+# and the lens scripts route every repo-rooted path through
+# af_assert_no_symlink, but gate-bounded.sh — which unlinks and then writes
+# <envelope-out>, <tool-out> and <tool-out>.stderr into the same .gauntlet/
+# tree — had none. The hoisted `rm -f` removes a symlink ENTRY rather than
+# following it, so the leaf is defended at that instant; but the writes happen
+# a whole bounded run later (minutes, in the codex case), so a symlink
+# replanted in that window is followed by the `>` redirect, and a SYMLINKED
+# PARENT DIRECTORY was never defended at any point.
+#
+# Self-contained on purpose: this file sources nothing by contract, and
+# af_assert_no_symlink lives in scripts/lib/auto-fix-common.sh, which is not
+# on the gauntlet's lib path — the same reasoning convergence-ledger.sh
+# applied to itself.
+#
+# Bounded at the path and its immediate parent, deliberately: these paths are
+# composed by the gauntlet under .gauntlet/, and a full ancestor walk would
+# refuse ordinary platform symlinks (macOS $TMPDIR under /var -> /private/var)
+# that a gate run never touches. Same bound convergence-ledger.sh applies
+# outside a worktree.
+#
+# Residual, documented rather than claimed away: the guard -> write window is
+# still a TOCTOU, the same class as ledger_assert_no_symlink's guard -> mkdir
+# window. Closing it needs openat(O_NOFOLLOW), which portable bash lacks.
+gate_assert_no_symlink() {
+	local p="$1" parent
+	# Absolutise (resolving nothing) so the refusal diagnostic names the same
+	# path the `>` redirect will later open, whatever the caller's cwd. This
+	# is G2's lesson applied here: a containment or guard decision must not
+	# depend on how a path is spelled.
+	[[ "$p" == /* ]] || p="$PWD/$p"
+	if [[ -L "$p" ]]; then
+		echo "gate_run_bounded: refusing to write through a symlink: $p" >&2
+		return 1
+	fi
+	parent="$(dirname "$p")"
+	if [[ -L "$parent" ]]; then
+		echo "gate_run_bounded: refusing to write under a symlinked parent: $parent" >&2
+		return 1
+	fi
+	return 0
+}
+
 gate_run_bounded() {
 	local gate_name=""
 	if [[ "${1:-}" == "--gate" ]]; then
@@ -227,6 +273,21 @@ gate_run_bounded() {
 	fi
 	if ! [[ "$seconds" =~ ^[0-9]+$ ]] || ((10#$seconds < 1)); then
 		echo "gate_run_bounded: <seconds> must be a positive integer (>= 1); got '$seconds'" >&2
+		return 2
+	fi
+
+	# Symlink guard on the three paths this function writes. It sits HERE --
+	# after the positional-shape checks, so `$2`/`$3` are KNOWN to be
+	# <envelope-out>/<tool-out> and it is not guarding a guess (the F16
+	# lesson), and before the stale-artefact unlink below, so it precedes the
+	# first filesystem effect of any kind. A refusal is a USAGE error: the
+	# caller handed an unusable path, and rc=2 composes with the header's
+	# contract that on rc=2 no envelope was written and <envelope-out> was
+	# not touched. `${tool_out}.stderr` shares $tool_out's parent, so only
+	# its own leaf needs a separate test.
+	if ! gate_assert_no_symlink "$envelope_out" ||
+		! gate_assert_no_symlink "$tool_out" ||
+		! gate_assert_no_symlink "${tool_out}.stderr"; then
 		return 2
 	fi
 

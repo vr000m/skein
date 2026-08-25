@@ -98,13 +98,21 @@
 #                                never replace the file's prior contents.
 #                                Returns 1 on any mkdir/write failure.
 #   persist_validate_unit <value> <label> <source>
-#                              — validate ONE review unit (source =
-#                                argv|file). A narrow blacklist, NOT a
-#                                persist_validate_id-style whitelist: units
-#                                are free-form review targets (file paths for
-#                                deep-review, plan sections for review-plan).
-#                                See the function for the exact rules and why
-#                                the two sources differ.
+#                              — validate ONE review unit arriving as a
+#                                standalone ARGV token (source = argv; it is
+#                                the only accepted value). A narrow
+#                                blacklist, NOT a persist_validate_id-style
+#                                whitelist: units are free-form review
+#                                targets (file paths for deep-review, plan
+#                                sections for review-plan). The FILE/JSON
+#                                wire's rules are owned solely by
+#                                PERSIST_UNIT_JQ_GATE — see the function for
+#                                why the two are not the same rule set.
+#   persist_units_csv_to_json <csv> <label>
+#                              — the ONLY splitter for an argv units CSV.
+#                                Prints a compact JSON array; returns 2 with a
+#                                diagnostic on any violation. Nothing else in
+#                                the tree may split a units CSV.
 #   PERSIST_UNIT_JQ_GATE       — the FILE/JSON wire's unit rules as a jq
 #                                filter over an ARRAY of units, so the reader
 #                                and the writer enforce one rule set from one
@@ -119,10 +127,16 @@
 #                                deriving it.
 #   persist_path_is_inside_root <path> <root>
 #                              — 0 when <path> is LEXICALLY under <root> (or
-#                                under its canonicalised form), 1 otherwise.
-#                                Gates the repo-rooted symlink guard so an
-#                                out-of-tree fixture path is not refused on a
-#                                platform symlink it never touches.
+#                                under its absolutised or canonicalised
+#                                form), 1 otherwise. Relative spellings of
+#                                either argument are absolutised against
+#                                $PWD first — absolutising resolves no
+#                                component, so the lexical property is kept —
+#                                and a `..`-bearing path is fail-closed to
+#                                "inside". Gates the repo-rooted symlink
+#                                guard so an out-of-tree fixture path is not
+#                                refused on a platform symlink it never
+#                                touches.
 
 # Root-anchor. Falls back to cwd when not inside a git worktree, matching
 # scripts/apply-auto-fix-plan.sh's pre-existing WORKTREE_ROOT precedent.
@@ -332,16 +346,58 @@ persist_lens_run_dir() {
 # very guard that exists to catch it — the escape would gate itself out. The
 # root IS canonicalised, so both spellings of an in-root path match.
 #
+# ABSOLUTISING IS NOT CANONICALISING, and only the second is forbidden here.
+# Prefixing a relative path with $PWD resolves no component, so the lexical
+# property above is untouched; refusing to do it, however, meant no relative
+# spelling could EVER match an absolute root, so the function answered
+# "outside" and BOTH r4 symlink guards — collect-lens-results.sh's
+# --expected-file and persist-lens-result.sh's --json-file — were skipped for
+# every relative path, and for every run with a relative --root (round 5/R3).
+# ledger_assert_no_symlink in the review-gauntlet lib had been doing exactly
+# this step, with exactly this rationale, since r4; the two guards disagreed.
+# Whether a path is guarded must depend on what the path IS, not on how it is
+# spelled.
+#
+# `..` IS FAIL-CLOSED TO "INSIDE". A path with a `..` component can re-enter
+# the tree at a position no component of its own spelling names, so
+# containment cannot be decided lexically at all; this returns 0 — guarded —
+# for any such path. The worst case is a loud refusal on an exotic
+# out-of-tree fixture path (which can always be respelled without `..`),
+# never a silent bypass. Note the deliberate asymmetry with
+# ledger_assert_no_symlink, which REJECTS `..` outright: the ledger composes
+# its own path from a repo root and can afford to, whereas
+# --expected-file/--json-file accept caller-supplied fixture paths, so the
+# strongest safe answer here is "guard it".
+#
 # Used to scope the repo-rooted symlink guard: a state path under <root> is
 # guarded, an out-of-tree path (a test fixture, a payload in $TMPDIR) is not.
 # Without the scope the guard would refuse ordinary platform symlinks — macOS
 # puts $TMPDIR under `/var`, which IS a symlink to `/private/var`.
 persist_path_is_inside_root() {
-	local path="$1" root="$2" root_canon
+	local path="$1" root="$2" root_canon root_abs
 	[[ -n "$root" ]] || return 1
+
+	# Absolutise both sides against $PWD, resolving nothing. `.` and `./x`
+	# are normalised so a `--root .` run does not build `$PWD/.` and then
+	# fail to prefix-match its own children.
+	if [[ "$path" != /* ]]; then
+		if [[ "$path" == "." ]]; then path="$PWD"; else path="$PWD/${path#./}"; fi
+	fi
+	if [[ "$root" == /* ]]; then
+		root_abs="$root"
+	elif [[ "$root" == "." ]]; then
+		root_abs="$PWD"
+	else
+		root_abs="$PWD/${root#./}"
+	fi
+
+	case "$path" in
+	*/../* | */..) return 0 ;;
+	esac
+
 	root_canon="$(cd "$root" 2>/dev/null && pwd -P)" || root_canon="$root"
 	case "$path" in
-	"$root" | "$root"/* | "$root_canon" | "$root_canon"/*) return 0 ;;
+	"$root" | "$root"/* | "$root_abs" | "$root_abs"/* | "$root_canon" | "$root_canon"/*) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -354,8 +410,9 @@ persist_path_is_inside_root() {
 # is a STRING, not a CSV field: on this wire it is carried as a JSON string
 # from the orchestrator's file-write tool, through jq, into a JSON document,
 # and back out through jq. It never passes through a shell and it is never
-# joined with a delimiter, so a comma, a newline, a NUL or a leading `-` are
-# all just bytes in a name.
+# joined with a delimiter, so a comma, a newline or a leading `-` are all just
+# bytes in a name. A NUL is NOT (round 5) -- see below: that rule is about the
+# REPORTING path, not about splitting.
 #
 # What round 3 enforced here, and why each rule left:
 #   * no comma — the collector used to hold assigned units as a COMMA-JOINED
@@ -367,16 +424,25 @@ persist_path_is_inside_root() {
 #   * no leading `-` — a flag-injection rule for a value that reaches a
 #     COMMAND LINE. On this wire it never does; a git path or a plan heading
 #     may legitimately start with `-`. Retained for source=argv only.
-#   * no NUL / no newline — artefacts of the old bash round-trip (a NUL
-#     delimiter that is not injective for a unit containing a NUL, F9; a
-#     line-oriented `jq -R` that turned an embedded newline into two JSON
-#     documents and aborted the whole collection, F11). Nothing splits on
-#     either byte any more.
+#   * no newline — an artefact of the old bash round-trip: a line-oriented
+#     `jq -R` turned an embedded newline into two JSON documents and aborted
+#     the whole collection (F11). Nothing is line-split on this wire any
+#     more, and the reporting path is newline-safe by construction (it is
+#     NUL-delimited, which is precisely why it chose that delimiter).
 #
-# What survives is the one rule that is a property of a unit rather than of a
-# transport: a unit must be a non-empty string. An empty unit can never be
-# reported as reviewed, so it would strand its lens short of `completed`
-# forever.
+# What survives are the two rules that are properties of a UNIT rather than of
+# a transport, and they share one rationale — an assigned unit that cannot be
+# reported strands its lens short of `completed` forever:
+#   * non-empty — an empty unit can never be reported as reviewed.
+#   * no NUL — persist-lens-result.sh's payload extractor is a NUL-delimited
+#     jq -> `read -d ''` stream and a bash variable cannot hold a NUL at all,
+#     so the byte is structurally unrepresentable on the REPORTING path. It
+#     is assignable but not reportable. Round 4 dropped this rule alongside
+#     the newline one on the rationale that "nothing splits on either byte any
+#     more" (F9); that rationale is sound for assignment and false for
+#     reporting. Round 5 (R4/R5) restored it HERE, on the assignment side, so
+#     the failure is a loud exit 2 at assignment time rather than a silent,
+#     permanent `partial`.
 # shellcheck disable=SC2034  # sourced by the two lens callers, not used here.
 PERSIST_UNIT_JQ_GATE='
 	if type != "array" then error("units must be an array") else . end
@@ -384,6 +450,8 @@ PERSIST_UNIT_JQ_GATE='
 	  then error("units must be an array of strings") else . end
 	| if any(.[]; length == 0)
 	  then error("a unit must not be an empty string") else . end
+	| if any(.[]; contains("\u0000"))
+	  then error("a unit must not contain a NUL byte") else . end
 '
 
 # persist_validate_id <value> <label> <kind>
@@ -436,28 +504,27 @@ persist_validate_id() {
 # interpolated string dangerous, not a whitelist of the characters that make
 # one safe.
 #
-# <source> selects how far the blacklist goes, because the two transports
-# have genuinely different threat surfaces:
+# <source> has exactly ONE accepted value, `argv`. The FILE/JSON wire has a
+# different owner: PERSIST_UNIT_JQ_GATE, above, is that wire's sole rule set,
+# expressed once in jq over the whole array. Round 5 (R8) deleted the `file`
+# arm that used to restate the gate's per-element rule in bash: nothing
+# in-tree ever called it, so it was untested, and "keep the two in step" is
+# not a mechanism — G3's NUL rule would have had to be added in two languages
+# for one rule. Any other <source> falls through to a loud
+# "unknown source" error rather than a silent second copy.
 #
-#   file — the unit arrived inside a JSON file (`collect-lens-results.sh
-#          --expected-file`) or a JSON payload (`persist-lens-result.sh
-#          --json-file`/`--json-stdin`), written by the orchestrator with its
-#          file-write tool and read back with jq. It never passes through a
-#          shell and it is never joined with a delimiter, so the ONLY rule is
-#          the one that is a property of a unit rather than of a transport:
-#          non-empty. This is the bash spelling of PERSIST_UNIT_JQ_GATE's
-#          per-element rule; the collector applies the jq form to the whole
-#          array in one pass, which is why nothing in-tree calls this branch
-#          today. Keep the two in step if either changes.
+# What this function adds ON TOP of the gate's rules, for argv only: leading
+# `-`, `$`, backtick, `"`, `\`, newline and comma. Each is a property of THIS
+# wire, not of a unit — a git path or a plan heading may legally begin with
+# `-` or contain a comma, and both are accepted on the file/JSON transports.
 #
-#          Round 4 removed two rules from this branch. `no comma` was a
-#          property of the collector's old comma-joined internal
-#          representation, not of a unit, and it hard-failed the real
-#          review-plan heading `## Post-completion follow-ups (A3/A5,
-#          2026-05-24)`. `no leading -` is a flag-injection rule for a value
-#          that reaches a command line, which a file-transport unit never
-#          does, and it rejected git paths and plan headings that legally
-#          begin with `-`. Both survive below, scoped to argv.
+# The gate's NUL rule is deliberately NOT restated here, and that is not the
+# `file`-arm mistake repeating itself. A NUL cannot reach argv at all: execve()
+# terminates every argument at the first NUL, and a bash variable cannot hold
+# one, so `[[ "$value" == *$'\0'* ]]` is `*""*` — a pattern that matches EVERY
+# value. A restated rule here would reject all units, not NUL-bearing ones.
+# The rule lives once, in PERSIST_UNIT_JQ_GATE, on the wire that can carry the
+# byte.
 #
 #   argv — the unit arrived on a command line the orchestrator ASSEMBLED AS
 #          SHELL TEXT (`--expected "<lens>:<unit>,<unit>"`). Substitution
@@ -479,7 +546,7 @@ persist_validate_unit() {
 	local value="$1" label="$2" source="${3:-argv}"
 
 	case "$source" in
-	argv | file) ;;
+	argv) ;;
 	*)
 		echo "$label: persist_validate_unit: unknown source '$source'" >&2
 		return 2
@@ -517,6 +584,52 @@ persist_validate_unit() {
 		fi
 	fi
 
+	return 0
+}
+
+# persist_units_csv_to_json <csv> <label>
+#
+# The ONLY splitter for an argv units CSV in this tree. Prints a compact JSON
+# array on stdout; returns 2 with a diagnostic on any violation.
+#
+# Round 5 (R1/R2). The argv CSV wire had grown one ad-hoc splitter per call
+# site, and collect-lens-results.sh had grown TWO for a single value: an
+# `IFS=',' read -r -a` pass to VALIDATE and a `jq -R 'split(",")'` pass to
+# BUILD. They agree on every input but one — a single trailing comma, which
+# `read -a` drops and jq keeps as an empty element. The dropped element was
+# never validated, so `--expected 'logic:a,b,'` assigned a lens an EMPTY unit
+# that nothing can ever report, stranding it at `partial` forever. Meanwhile
+# persist-lens-result.sh's `--units` split in jq and validated with the FILE
+# wire's gate, so it accepted `-foo` and `src/$(id).ts` that the reader
+# refused.
+#
+# The split happens exactly ONCE, in jq, and every element it produces is then
+# run through the ARGV rules — so the elements validated are exactly the
+# elements persisted, and writer and reader accept and reject identical CSVs.
+#
+# `jq -n --arg`, deliberately NOT `jq -R`: `-R` is line-oriented, so an
+# embedded newline emits TWO documents and the caller's `--argjson` aborts
+# with exit 1 instead of the contract's exit 2. `--arg` carries the byte
+# string whole, so the newline survives to be REJECTED below by a rule that
+# names it.
+persist_units_csv_to_json() {
+	local csv="$1" label="$2" units_json u
+	if [[ -z "$csv" ]]; then
+		printf '[]\n'
+		return 0
+	fi
+	if ! units_json="$(jq -n -c --arg csv "$csv" '$csv | split(",")')"; then
+		echo "$label: could not parse the unit list '$csv'" >&2
+		return 2
+	fi
+	# NUL-delimited jq stream into `read -d ''`, so an element containing a
+	# newline is ONE element rather than two. (The newline is then rejected
+	# by the argv rules; the framing must be right first, or the diagnostic
+	# would name the wrong text.)
+	while IFS= read -r -d '' u; do
+		persist_validate_unit "$u" "$label" argv || return 2
+	done < <(printf '%s' "$units_json" | jq -j '.[] | ., "\u0000"')
+	printf '%s\n' "$units_json"
 	return 0
 }
 

@@ -20,6 +20,14 @@ set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 
+# G4(c) derives the skill -> state-dir mapping from its OWNER rather than
+# keeping a second copy (see the group below). persist-common.sh assumes
+# auto-fix-common.sh is already sourced.
+# shellcheck source=scripts/lib/auto-fix-common.sh disable=SC1091
+. "$ROOT_DIR/scripts/lib/auto-fix-common.sh"
+# shellcheck source=scripts/lib/persist-common.sh disable=SC1091
+. "$ROOT_DIR/scripts/lib/persist-common.sh"
+
 SKILLS=(
 	"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
 	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
@@ -488,13 +496,25 @@ for skill_md in "${SKILLS[@]}"; do
 	# attempt files already live in. r4 F2: `.skein/lens-runs/<run_id>/` was a
 	# third state root invented in prose, owned by no helper and absent from
 	# .gitignore, so a collect run left an untracked file behind.
-	case "$g_skill" in
-	deep-review) g_state_dir='\.deep-review' ;;
-	review-plan) g_state_dir='\.review-plan' ;;
-	*) g_state_dir='' ;;
-	esac
-	assert_grep "$skill_md" "$g_state_dir/lenses/<run_id>/expected\\.json" \
-		"G4(c) ($glabel): the units-file path is the per-run lens state dir"
+	#
+	# R5/R10: this guard used to keep its OWN hardcoded copy of the
+	# skill -> state-dir mapping and grep the prose for that literal, so a
+	# change to persist_lens_state_dir plus a matching change to the prose
+	# left it green -- it could not detect drift on the side it exists to
+	# police. It now DERIVES the directory from the helper that owns it, so
+	# the only hand-written component left is `/<run_id>/expected.json`. The
+	# old `*) g_state_dir='' ;;` arm was itself a silent-pass hazard: an
+	# empty pattern makes assert_grep match anything. An unknown skill is now
+	# a loud failure, which is what persist_lens_state_dir already returns 1
+	# for.
+	if g_state_dir_abs="$(persist_lens_state_dir /ROOT "$g_skill" 2>/dev/null)"; then
+		g_state_dir="${g_state_dir_abs#/ROOT/}"
+		g_state_dir_re="$(printf '%s' "$g_state_dir" | sed 's/[.[\*^$]/\\&/g')"
+		assert_grep "$skill_md" "$g_state_dir_re/<run_id>/expected\\.json" \
+			"G4(c) ($glabel): the units-file path is the per-run lens state dir"
+	else
+		fail "G4(c) ($glabel): persist_lens_state_dir does not know skill '$g_skill'"
+	fi
 	if grep -Fq 'skein/lens-runs' "$skill_md"; then
 		fail "G4(c2) ($glabel): the retired .skein/lens-runs path literal survives"
 	else

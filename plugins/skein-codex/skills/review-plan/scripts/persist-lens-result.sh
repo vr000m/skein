@@ -148,21 +148,40 @@
 # outside its charset is rejected before any directory is created or byte
 # written.
 #
-# Unit names must not contain commas — unit lists are comma-joined and
-# unescaped end-to-end (writer --units, collector --expected). A
-# comma-bearing --unit is rejected at the boundary rather than silently
-# split; --units (and the --json-stdin `units` CSV *string* spelling) is a
-# CSV itself, so its comma is the separator, not a rejected character. The
-# --json-stdin `units` ARRAY spelling has no separator to hide behind: a
-# comma inside an element is rejected with exit 2, because --expected
-# transports the collector's expected units as a CSV and would re-split it
-# into units no lens ever reports.
+# A UNIT IS A STRING, NOT A CSV FIELD (round 4 reversed the round-3 contract;
+# round 5 brought this header into line with the code it describes).
+#
+#   * On the FILE/JSON transports — `--json-file`, and the `--json-stdin`
+#     `units` ARRAY spelling — a unit's rules are exactly
+#     PERSIST_UNIT_JQ_GATE's (scripts/lib/persist-common.sh): non-empty and
+#     NUL-free. A comma, a newline, a leading `-` and shell metacharacters
+#     are DATA on this wire; `## Post-completion follow-ups (A3/A5,
+#     2026-05-24)` is a real review-plan heading that must round-trip. The
+#     collector applies the same filter to --expected-file, so writer and
+#     reader cannot disagree about what a unit is.
+#   * The comma is a SEPARATOR only where it genuinely is one: the `--units`
+#     and `--json-stdin` `units` CSV-*string* spellings here, and the
+#     collector's `--expected`.
+#   * A unit arriving as a standalone ARGV token — `--unit`, and each element
+#     of `--units` after the split — additionally carries
+#     persist_validate_unit's argv blacklist: a leading `-`, `$`, backtick,
+#     `"`, `\`, a newline, or a comma. Those are properties of the command
+#     line, not of a unit, which is why they do not apply above. (A NUL is
+#     not in that list because it cannot reach argv at all: execve()
+#     terminates every argument at the first NUL. PERSIST_UNIT_JQ_GATE owns
+#     that rule, on the wire that can carry the byte.)
+#   * `--units` and the collector's `--expected` are split by ONE helper,
+#     persist_units_csv_to_json, so the two scripts accept and reject
+#     identical CSVs.
 #
 # Exit codes:
 #   0 — line appended.
 #   2 — usage error (missing/unknown --skill, --type, or --status; a
 #       required --type-specific flag missing; non-positive --attempt;
-#       --run-id/--lens outside its charset; a comma in --unit;
+#       --run-id/--lens outside its charset; a `--unit`/`--units` element
+#       that violates the ARGV unit rules above, or is empty — including a
+#       `--units` value that cannot be parsed, which is 2 and never 1;
+#       a `units` element containing a NUL on any transport;
 #       --json-stdin/--json-file combined with a payload flag; --json-file
 #       combined with --json-stdin; an unreadable --json-file; input that is
 #       not exactly one JSON object; a payload key whose value is
@@ -512,6 +531,14 @@ if [[ "$JSON_STDIN" -eq 1 ]]; then
 	# remains is PERSIST_UNIT_JQ_GATE, the SAME filter
 	# collect-lens-results.sh's --expected-file reader applies, so writer and
 	# reader can no longer disagree about what a unit is.
+	# R5/R1 -- the `units` CSV-STRING spelling below is DELIBERATELY not routed
+	# through persist_units_csv_to_json, and that is not an oversight. This CSV
+	# never reaches a command line: it arrives inside a JSON payload, so the
+	# ARGV rules must not apply to it (they would re-break r4 C5/F10 -- a
+	# leading `-` and a comma-bearing plan heading are legal on this wire).
+	# What R2 was about was the SPLITTER disagreement, and that is closed:
+	# jq `split(",")` is now the only split semantics in the tree.
+	# PERSIST_UNIT_JQ_GATE remains this spelling gate. Do not "unify" the two.
 	STDIN_UNITS_JSON="$(printf '%s' "$STDIN_JSON" | jq -c '
 		(if has("units") | not then null
 		 elif (.units | type) == "array" then .units
@@ -587,14 +614,15 @@ if [[ "$TYPE" == "start" ]]; then
 	elif [[ -z "$UNITS" ]]; then
 		units_json="[]"
 	else
-		# Comma is the separator here, so every element is comma-free by
-		# construction. What the shared gate still catches on this wire is
-		# an EMPTY element (`--units 'a,,b'`), which no lens could ever
-		# report as reviewed.
-		units_json="$(printf '%s' "$UNITS" | jq -R -c 'split(",") | ('"$PERSIST_UNIT_JQ_GATE"')')" || {
-			echo "persist-lens-result: --units elements must be non-empty" >&2
-			exit 2
-		}
+		# R5/R1: this used to split in `jq -R` and validate with the FILE
+		# wire's gate only, so `--units '-foo'` and `--units 'src/$(id).ts'`
+		# were written by this script and refused by the reader, and
+		# `--units $'a\nb'` aborted `jq -R` with exit 1 -- the "append
+		# failed" code -- where the contract says a bad flag value is 2.
+		# persist_units_csv_to_json is now the tree's only units-CSV
+		# splitter, shared with collect-lens-results.sh's --expected, and it
+		# runs every element it produces through the ARGV rules.
+		units_json="$(persist_units_csv_to_json "$UNITS" persist-lens-result)" || exit 2
 	fi
 fi
 

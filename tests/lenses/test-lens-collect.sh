@@ -1397,17 +1397,26 @@ else
 	fail "(R4-G3/F11) newline unit: rc=$r4g3_nl_rc out=$r4g3_nl_out"
 fi
 
-# F9: a unit containing a NUL. JSON carries one as \u0000, and the old
-# NUL-delimited extraction split it into two units.
+# R5-G3 --- DELIBERATE INVERSION of the r4 F9 assertion. DO NOT RESTORE IT.
+#
+# r4 asserted `{"logic":["a\u0000b","c"]}` -> exit 0, assigned: 2, on the
+# rationale that "nothing splits on a NUL any more". That is true for
+# ASSIGNMENT and false for REPORTING: persist-lens-result.sh's payload
+# extractor is a NUL-delimited jq -> `read -d ''` stream and a bash variable
+# cannot hold a NUL at all, so a NUL-bearing unit can be assigned and then
+# never reported -- stranding its lens short of `completed` forever, exactly
+# as an empty unit would. The rule therefore belongs on the ASSIGNMENT side,
+# as a loud exit 2, which is where PERSIST_UNIT_JQ_GATE now carries it.
+# The newline and comma siblings on either side of this case stay green: the
+# three bytes are treated differently on purpose, not by accident.
 set +e
-r4g3_nul_out="$(r4g3_collect "$(jq -n -c '{logic:["a\u0000b","c"]}')" 2>&1)"
-r4g3_nul_rc=$?
+r5g3_nul_out="$(r4g3_collect "$(jq -n -c '{logic:["a\u0000b","c"]}')" 2>&1)"
+r5g3_nul_rc=$?
 set -e
-if [[ "$r4g3_nul_rc" -eq 0 ]] &&
-	[[ "$(printf '%s' "$r4g3_nul_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]]; then
-	pass "(R4-G3/F9) a NUL-bearing unit collects as ONE unit (assigned: 2, not 3)"
+if [[ "$r5g3_nul_rc" -eq 2 ]]; then
+	pass "(R5-G3) a NUL-bearing unit is refused at assignment (exit 2)"
 else
-	fail "(R4-G3/F9) NUL unit: rc=$r4g3_nul_rc out=$r4g3_nul_out"
+	fail "(R5-G3) NUL unit must exit 2, got rc=$r5g3_nul_rc out=$r5g3_nul_out"
 fi
 
 # F10: a real review-plan heading with a comma in it.
@@ -1644,6 +1653,112 @@ if [[ "$(printf '%s' "$r4g10_narrow" | jq -r '.logic.assigned' 2>/dev/null)" == 
 	pass "(R4-G10/rationale) a narrowed expected file under-reports assigned (1, not 2) -- why the file is immutable"
 else
 	fail "(R4-G10/rationale) expected a narrowed file to report assigned:1, got $r4g10_narrow"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G1 — the argv CSV transport has exactly ONE splitter.
+#
+# The collector used to split --expected TWICE: `IFS=',' read -r -a` to
+# validate and `jq -R 'split(",")'` to build. The two disagree on exactly one
+# input class -- a single trailing comma, which `read -a` drops and jq keeps
+# as an empty element. The empty element then sails past validation and is
+# assigned to a lens that can never report it (an empty unit is unreportable),
+# stranding the lens at `partial` forever. Both splits are now one helper,
+# persist_units_csv_to_json, whose every element goes through the argv rules.
+# ---------------------------------------------------------------------------
+
+r5g1_root="$TMPDIR_ROOT/r5g1"
+make_scratch_repo "$r5g1_root"
+
+r5g1_collect() {
+	(cd "$r5g1_root" && bash "$SCRIPT" --root "$r5g1_root" --skill deep-review \
+		--run-id r5g1 "$@")
+}
+
+set +e
+r5g1_tc_out="$(r5g1_collect --expected 'logic:a,b,' 2>&1)"
+r5g1_tc_rc=$?
+set -e
+if [[ "$r5g1_tc_rc" -eq 2 ]]; then
+	pass "(R5-G1) --expected 'logic:a,b,' is rejected (exit 2), not silently assigned an empty unit"
+else
+	fail "(R5-G1) trailing-comma --expected must exit 2, got rc=$r5g1_tc_rc out=$r5g1_tc_out"
+fi
+
+set +e
+r5g1_ok_out="$(r5g1_collect --expected 'logic:a,b' 2>&1)"
+r5g1_ok_rc=$?
+set -e
+if [[ "$r5g1_ok_rc" -eq 0 ]] &&
+	[[ "$(printf '%s' "$r5g1_ok_out" | jq -r '.logic.assigned' 2>/dev/null)" == "2" ]]; then
+	pass "(R5-G1/control) --expected 'logic:a,b' still assigns exactly 2 units"
+else
+	fail "(R5-G1/control) rc=$r5g1_ok_rc out=$r5g1_ok_out"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G2 — a containment probe must ABSOLUTISE before it can be lexical.
+#
+# persist_path_is_inside_root compared a caller-supplied path (which may be
+# relative) against an absolute root, so no relative spelling could ever match
+# and BOTH r4 symlink guards were skipped for it. Whether a path is guarded
+# must depend on what the path IS, not on how it is spelled.
+# ---------------------------------------------------------------------------
+
+r5g2_root="$TMPDIR_ROOT/r5g2"
+make_scratch_repo "$r5g2_root"
+mkdir -p "$r5g2_root/.deep-review/lenses/r5g2"
+jq -n -c '{stolen:["x"]}' >"$TMPDIR_ROOT/r5g2-outside.json"
+ln -s "$TMPDIR_ROOT/r5g2-outside.json" "$r5g2_root/.deep-review/lenses/r5g2/link.json"
+
+set +e
+(cd "$r5g2_root" && bash "$SCRIPT" --root "$r5g2_root" --skill deep-review \
+	--run-id r5g2 --expected-file "$r5g2_root/.deep-review/lenses/r5g2/link.json" >/dev/null 2>&1)
+r5g2_abs_rc=$?
+(cd "$r5g2_root" && bash "$SCRIPT" --root "$r5g2_root" --skill deep-review \
+	--run-id r5g2 --expected-file ".deep-review/lenses/r5g2/link.json" >/dev/null 2>&1)
+r5g2_rel_rc=$?
+set -e
+# Asserted as a PAIR on purpose: a future regression that fixes one spelling
+# and loses the other must not be able to leave this case green.
+if [[ "$r5g2_abs_rc" -eq 2 && "$r5g2_rel_rc" -eq 2 ]]; then
+	pass "(R5-G2) --expected-file symlink is refused through the ABSOLUTE and the RELATIVE spelling alike"
+else
+	fail "(R5-G2) spelling-dependent guard: absolute rc=$r5g2_abs_rc, relative rc=$r5g2_rel_rc (both must be 2)"
+fi
+
+set +e
+(cd "$r5g2_root" && bash "$SCRIPT" --root . --skill deep-review \
+	--run-id r5g2 --expected-file ".deep-review/lenses/r5g2/link.json" >/dev/null 2>&1)
+r5g2_relroot_rc=$?
+set -e
+if [[ "$r5g2_relroot_rc" -eq 2 ]]; then
+	pass "(R5-G2) a relative --root still guards an in-root symlinked --expected-file"
+else
+	fail "(R5-G2) relative --root must still guard, got rc=$r5g2_relroot_rc"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G4 — a dangling symlink is CORRUPTED state, not MISSING state.
+#
+# `[[ -e "$run_dir" ]]` dereferences, so a run dir that IS a dangling symlink
+# tests false, the guard is skipped entirely, and the collector reports the
+# lens as ordinary `missing` work instead of refusing.
+# ---------------------------------------------------------------------------
+
+r5g4_root="$TMPDIR_ROOT/r5g4"
+make_scratch_repo "$r5g4_root"
+mkdir -p "$r5g4_root/.deep-review/lenses"
+ln -s "$r5g4_root/nonexistent-target" "$r5g4_root/.deep-review/lenses/r5g4"
+set +e
+r5g4_err="$(cd "$r5g4_root" && bash "$SCRIPT" --root "$r5g4_root" --skill deep-review \
+	--run-id r5g4 --expected 'logic:u1' 2>&1 >/dev/null)"
+r5g4_rc=$?
+set -e
+if [[ "$r5g4_rc" -eq 2 && "$r5g4_err" == *symlink* ]]; then
+	pass "(R5-G4) a dangling run-dir symlink is refused, not reported as missing"
+else
+	fail "(R5-G4) dangling run-dir symlink: rc=$r5g4_rc err='$r5g4_err' (expected rc=2 with a symlink refusal)"
 fi
 
 finish

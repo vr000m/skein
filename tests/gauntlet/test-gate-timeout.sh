@@ -1198,6 +1198,71 @@ else
 	fail "G10(F16): rc=$g10f16_rc present=$([[ -e "$g10f16_dir/my-gate.sh" ]] && echo yes || echo no)"
 fi
 
+# ---------------------------------------------------------------------------
+# Group R5-G5 — gate_run_bounded's OWN state paths get the symlink guard its
+# skill-mates already have.
+#
+# convergence-ledger.sh carries a bespoke hardened ledger_assert_no_symlink
+# and the lens scripts route every repo-rooted path through
+# af_assert_no_symlink; gate-bounded.sh, which unlinks and then writes
+# <envelope-out>, <tool-out> and <tool-out>.stderr into the same .gauntlet/
+# tree, had none. The hoisted `rm -f` removes a symlink ENTRY rather than
+# following it, so the leaf is defended at that instant -- but the writes
+# happen a whole bounded run later (minutes, in the codex case), and a
+# SYMLINKED PARENT DIRECTORY was never defended at any point.
+# ---------------------------------------------------------------------------
+
+g11_dir="$WORKDIR/g11"
+mkdir -p "$g11_dir"
+printf 'ORIGINAL\n' >"$g11_dir/outside-target.json"
+ln -s "$g11_dir/outside-target.json" "$g11_dir/env-link.json"
+set +e
+"$RUNNER" 5 "$g11_dir/env-link.json" "$g11_dir/tool.out" -- /bin/echo '{"status":"clean"}' >/dev/null 2>&1
+g11_link_rc=$?
+set -e
+if [[ "$g11_link_rc" -eq 2 && -L "$g11_dir/env-link.json" ]] &&
+	cmp -s "$g11_dir/outside-target.json" <(printf 'ORIGINAL\n'); then
+	pass "G11(R5-G5): a symlinked <envelope-out> returns 2 with the symlink and its target untouched"
+else
+	fail "G11(R5-G5): rc=$g11_link_rc link_present=$([[ -L "$g11_dir/env-link.json" ]] && echo yes || echo no) target=$(cat "$g11_dir/outside-target.json" 2>/dev/null)"
+fi
+
+mkdir -p "$g11_dir/realdir"
+ln -s "$g11_dir/realdir" "$g11_dir/linkdir"
+set +e
+"$RUNNER" 5 "$g11_dir/env2.json" "$g11_dir/linkdir/tool.out" -- /bin/echo '{"status":"clean"}' >/dev/null 2>&1
+g11_parent_rc=$?
+set -e
+if [[ "$g11_parent_rc" -eq 2 ]]; then
+	pass "G11(R5-G5): a SYMLINKED PARENT of <tool-out> returns 2"
+else
+	fail "G11(R5-G5): symlinked <tool-out> parent must return 2, got rc=$g11_parent_rc"
+fi
+
+# Control: ordinary in-tree paths are unaffected.
+set +e
+"$RUNNER" 5 "$g11_dir/env3.json" "$g11_dir/tool3.out" -- /bin/echo '{"status":"clean","findings":[]}' >/dev/null 2>&1
+g11_ok_rc=$?
+set -e
+if [[ "$g11_ok_rc" -eq 0 && -s "$g11_dir/env3.json" ]]; then
+	pass "G11(R5-G5/control): ordinary non-symlinked paths still run to a clean envelope"
+else
+	fail "G11(R5-G5/control): rc=$g11_ok_rc envelope=$(cat "$g11_dir/env3.json" 2>/dev/null)"
+fi
+
+# Structural: the guard sits AFTER the positional-shape checks (so it is not
+# validating a guess) and BEFORE the stale-artefact unlink (so no filesystem
+# effect precedes it).
+g11_guard_line="$(grep -n 'gate_assert_no_symlink "\$envelope_out"' "$GATE_BOUNDED" | head -1 | cut -d: -f1 || true)"
+g11_secs_line="$(grep -n '<seconds> must be a positive integer' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+g11_unlink_line="$(grep -n 'Stale-artefact unlink' "$GATE_BOUNDED" | head -1 | cut -d: -f1)"
+if [[ -n "$g11_guard_line" && -n "$g11_secs_line" && -n "$g11_unlink_line" &&
+	"$g11_secs_line" -lt "$g11_guard_line" && "$g11_guard_line" -lt "$g11_unlink_line" ]]; then
+	pass "G11(R5-G5): the symlink guard sits after the shape checks and before the stale-artefact unlink"
+else
+	fail "G11(R5-G5): guard placement (secs=$g11_secs_line guard=$g11_guard_line unlink=$g11_unlink_line)"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

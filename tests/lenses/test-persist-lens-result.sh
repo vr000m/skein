@@ -1005,4 +1005,184 @@ else
 	fail "(R4-G4/control) out-of-tree --json-file broke (rc=$r4g4_ext_rc)"
 fi
 
+# ---------------------------------------------------------------------------
+# Group R5-G1 — the argv CSV transport has ONE splitter, and its elements go
+# through the argv unit rules.
+#
+# `--units` split in jq and validated with the FILE-wire gate only, so
+# `--units '-foo'` and `--units 'src/$(id).ts'` were accepted by the writer
+# and rejected by the reader; and `--units $'a\nb'` aborted `jq -R` with the
+# wrong exit code (1, the "append failed" code, instead of 2, the usage code).
+# ---------------------------------------------------------------------------
+
+r5_root="$TMPDIR_ROOT/r5"
+mkdir -p "$r5_root"
+(
+	cd "$r5_root"
+	git init -q
+	git config user.email "t@example.com"
+	git config user.name "T"
+	echo x >README.md
+	git add README.md
+	git commit -q -m init
+)
+COLLECT="$REPO_ROOT/scripts/collect-lens-results.sh"
+
+# r5_write <lens> <args...> -- one writer invocation, exit code on stdout.
+r5_write() {
+	local lens="$1"
+	shift
+	set +e
+	bash "$SCRIPT" --root "$r5_root" --skill deep-review --run-id r5 \
+		--lens "$lens" --attempt 1 "$@" >/dev/null 2>&1
+	local rc=$?
+	set -e
+	printf '%s' "$rc"
+}
+
+r5g1_dash_rc="$(r5_write dash --type start --units '-foo,src/$(id).ts')"
+if [[ "$r5g1_dash_rc" -eq 2 ]]; then
+	pass "(R5-G1) --units applies the argv unit rules (leading dash / shell metachar -> exit 2)"
+else
+	fail "(R5-G1) --units '-foo,src/\$(id).ts' must exit 2, got rc=$r5g1_dash_rc"
+fi
+
+r5g1_nl_rc="$(r5_write nl --type start --units "$(printf 'a\nb')")"
+if [[ "$r5g1_nl_rc" -eq 2 ]]; then
+	pass "(R5-G1) a newline in --units is a USAGE error (exit 2), not a jq abort (exit 1)"
+else
+	fail "(R5-G1) --units \$'a\\nb' must exit 2, got rc=$r5g1_nl_rc"
+fi
+
+r5g1_ok_rc="$(r5_write okcsv --type start --units 'a,b')"
+r5g1_ok_units="$(jq -c '.units' "$r5_root/.deep-review/lenses/r5/okcsv.1.jsonl" 2>/dev/null || true)"
+if [[ "$r5g1_ok_rc" -eq 0 && "$r5g1_ok_units" == '["a","b"]' ]]; then
+	pass "(R5-G1/control) --units 'a,b' still yields exactly [\"a\",\"b\"]"
+else
+	fail "(R5-G1/control) rc=$r5g1_ok_rc units=$r5g1_ok_units"
+fi
+
+# The invariant itself: writer and reader accept and reject the SAME CSV.
+r5g1_parity_ok=1
+r5g1_table=""
+r5g1_i=0
+for r5g1_csv in 'a,b' 'a,b,' 'a,,b' '-foo' "$(printf 'a\nb')"; do
+	r5g1_i=$((r5g1_i + 1))
+	r5g1_w="$(r5_write "parity$r5g1_i" --type start --units "$r5g1_csv")"
+	set +e
+	(cd "$r5_root" && bash "$COLLECT" --root "$r5_root" --skill deep-review \
+		--run-id r5collect --expected "logic:$r5g1_csv" >/dev/null 2>&1)
+	r5g1_r=$?
+	set -e
+	r5g1_table="$r5g1_table  csv=$(printf '%q' "$r5g1_csv") writer=$r5g1_w reader=$r5g1_r"$'\n'
+	[[ "$r5g1_w" -eq "$r5g1_r" ]] || r5g1_parity_ok=0
+done
+if [[ "$r5g1_parity_ok" -eq 1 ]]; then
+	pass "(R5-G1) writer and reader agree about the same --units/--expected CSV"
+else
+	fail "(R5-G1) writer/reader CSV disagreement:"$'\n'"$r5g1_table"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G2 — --json-file symlink refusal does not depend on the spelling.
+# ---------------------------------------------------------------------------
+
+mkdir -p "$r5_root/real"
+printf '%s' '{"type":"done","status":"completed"}' >"$r5_root/real/payload.json"
+ln -s "$r5_root/real/payload.json" "$r5_root/rel-linked.json"
+set +e
+(cd "$r5_root" && bash "$SCRIPT" --root "$r5_root" --skill deep-review --run-id r5 \
+	--lens relabs --attempt 1 --json-file "$r5_root/rel-linked.json" >/dev/null 2>&1)
+r5g2_abs_rc=$?
+(cd "$r5_root" && bash "$SCRIPT" --root "$r5_root" --skill deep-review --run-id r5 \
+	--lens relrel --attempt 1 --json-file "rel-linked.json" >/dev/null 2>&1)
+r5g2_rel_rc=$?
+set -e
+if [[ "$r5g2_abs_rc" -eq 2 && "$r5g2_rel_rc" -eq 2 ]]; then
+	pass "(R5-G2) a symlinked --json-file is refused through the absolute AND the relative spelling"
+else
+	fail "(R5-G2) spelling-dependent guard: absolute rc=$r5g2_abs_rc, relative rc=$r5g2_rel_rc (both must be 2)"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G3 — assign-then-report parity: every unit the ASSIGNMENT side
+# accepts must be REPORTABLE, and every unit it rejects must be unreportable.
+# The NUL row is the one that was broken: assignable, never reportable.
+# ---------------------------------------------------------------------------
+
+r5g3_matrix_ok=1
+r5g3_rows=""
+r5g3_j=0
+r5g3_check() { # <label> <units-json-array> <unit-json-string> <expected-rc>
+	local label="$1" arr="$2" unit="$3" want="$4"
+	r5g3_j=$((r5g3_j + 1))
+	local ef="$r5_root/r5g3-$r5g3_j.json"
+	jq -n -c --argjson u "$arr" '{logic:$u}' >"$ef"
+	set +e
+	(cd "$r5_root" && bash "$COLLECT" --root "$r5_root" --skill deep-review \
+		--run-id r5g3 --expected-file "$ef" >/dev/null 2>&1)
+	local assign_rc=$?
+	jq -n -c --argjson v "$unit" '{type:"progress",unit:$v}' >"$r5_root/r5g3-p-$r5g3_j.json"
+	bash "$SCRIPT" --root "$r5_root" --skill deep-review --run-id r5g3 \
+		--lens "rep$r5g3_j" --attempt 1 --json-file "$r5_root/r5g3-p-$r5g3_j.json" >/dev/null 2>&1
+	local report_rc=$?
+	set -e
+	r5g3_rows="$r5g3_rows  $label: assign=$assign_rc report=$report_rc want=$want"$'\n'
+	[[ "$assign_rc" -eq "$want" && "$report_rc" -eq "$want" ]] || r5g3_matrix_ok=0
+}
+r5g3_check comma '["a,b"]' '"a,b"' 0
+r5g3_check newline '["a\nb"]' '"a\nb"' 0
+r5g3_check leading-dash '["-foo"]' '"-foo"' 0
+r5g3_check NUL '["a\u0000b"]' '"a\u0000b"' 2
+if [[ "$r5g3_matrix_ok" -eq 1 ]]; then
+	pass "(R5-G3) assign/report parity holds for every row of the unit matrix (NUL rejected on BOTH sides)"
+else
+	fail "(R5-G3) assign/report parity broken:"$'\n'"$r5g3_rows"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G6 — persist_validate_unit owns the ARGV rules only. The `file`
+# arm was a second-language restatement of PERSIST_UNIT_JQ_GATE's per-element
+# rule that nothing called; deleting it leaves one owner per wire. A future
+# `file` caller must now fail LOUDLY rather than drift silently.
+# ---------------------------------------------------------------------------
+
+set +e
+r5g6_out="$(bash -c '. "$1/scripts/lib/auto-fix-common.sh"; . "$1/scripts/lib/persist-common.sh"; persist_validate_unit x label file' _ "$REPO_ROOT" 2>&1)"
+r5g6_rc=$?
+set -e
+if [[ "$r5g6_rc" -eq 2 && "$r5g6_out" == *"unknown source"* ]]; then
+	pass "(R5-G6) persist_validate_unit rejects source=file with exit 2 and an 'unknown source' diagnostic"
+else
+	fail "(R5-G6) source=file must exit 2 with 'unknown source', got rc=$r5g6_rc out='$r5g6_out'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R5-G7 — the writer's HEADER states the contract the code ships.
+#
+# r4 reversed the unit contract in code and updated the collector's doctrine
+# block and the shared gate's header, but not this script's own header, which
+# went on describing comma-joined unit lists. Comment drift survives every
+# behavioural test in this suite, so it needs its own assertion.
+# ---------------------------------------------------------------------------
+
+r5g7_header="$(awk '/^set -euo pipefail/{exit} {print}' "$SCRIPT")"
+r5g7_ok=1
+r5g7_why=""
+for r5g7_stale in 'must not contain commas' 'comma-joined'; do
+	if printf '%s' "$r5g7_header" | grep -Fq -- "$r5g7_stale"; then
+		r5g7_ok=0
+		r5g7_why="$r5g7_why stale:'$r5g7_stale'"
+	fi
+done
+if ! printf '%s' "$r5g7_header" | grep -Fq -- 'PERSIST_UNIT_JQ_GATE'; then
+	r5g7_ok=0
+	r5g7_why="$r5g7_why missing:PERSIST_UNIT_JQ_GATE"
+fi
+if [[ "$r5g7_ok" -eq 1 ]]; then
+	pass "(R5-G7) the header's unit contract matches the code (no comma-joined doctrine; the wire gate is named)"
+else
+	fail "(R5-G7) header/code contract drift:$r5g7_why"
+fi
+
 finish

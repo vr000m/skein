@@ -83,6 +83,13 @@ reconciliation-tests:
     ./scripts/check-report-templates.sh
     bash tests/reconciliation/test-check-report-templates.sh
 
+# Plus a grep lint for PREDICTABLE temp paths (`/tmp/foo.$$`, `/tmp/foo.$RANDOM`)
+# anywhere under scripts/, tests/ and plugins/. R5/R11: a lone
+# `2>/tmp/gauntlet-ledger-test-precompat.$$` in a suite where 18 sibling temp
+# files went through `mktemp` is followed by bash's `>` redirect if a symlink
+# is pre-planted there. A behavioural test asserting a test's own temp-path
+# construction would be circular, so the guard is a lint.
+#
 # shellcheck + shfmt over the canonical scripts/ tree AND review-gauntlet's
 # hand-authored lib/. The lib/ files have no canonical counterpart under
 # scripts/ (they are not bundled by bundle-appliers.sh), so without this line
@@ -93,6 +100,7 @@ reconciliation-tests:
 lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
     shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh
+    ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.
 # (tests/plugin/test_history_and_assets.sh is deliberately NOT listed: it is

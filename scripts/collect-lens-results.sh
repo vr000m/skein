@@ -106,12 +106,26 @@
 #
 # A UNIT IS A STRING, NOT A CSV FIELD. Units read from --expected-file are
 # held as a JSON array from jq to jq and are never joined, split, or passed
-# through a bash round-trip, so a comma, a newline or a NUL inside a unit is
-# just a byte in a name (round 4: F9/F10/F11). PERSIST_UNIT_JQ_GATE in
+# through a bash round-trip, so a comma or a newline inside a unit is just a
+# byte in a name (round 4: F10/F11). PERSIST_UNIT_JQ_GATE in
 # scripts/lib/persist-common.sh is the single source of that wire's rules and
 # persist-lens-result.sh enforces the same one on the writer side (F3). The
 # comma restriction survives only on --expected, where the comma genuinely is
 # the separator.
+#
+# A NUL is the exception, and round 5 (R4/R5) put it back. It is not a
+# splitting concern — it is a REPORTING one. persist-lens-result.sh's payload
+# extractor is a NUL-delimited jq -> `read -d ''` stream and a bash variable
+# cannot hold a NUL at all, so a NUL-bearing unit can be ASSIGNED here and
+# then never REPORTED, stranding its lens short of `completed` exactly as an
+# empty unit would. The rule therefore belongs on the assignment side, as a
+# loud exit 2, and lives in PERSIST_UNIT_JQ_GATE beside the non-empty rule it
+# shares a rationale with.
+#
+# The argv CSV spellings (--expected here, --units on the writer) are split by
+# exactly one helper, persist_units_csv_to_json, which runs every element it
+# produces through persist_validate_unit's argv rules. Nothing else in the
+# tree may split a units CSV.
 #
 # --expected-file and --expected are MUTUALLY EXCLUSIVE (exit 2 if both are
 # given): last-wins between two transports for the same list is too subtle a
@@ -218,9 +232,12 @@
 #
 #   --expected-file (the required transport for diff- or heading-derived
 #     units): a unit is a JSON string inside a JSON array. It is never a
-#     shell word and never an option position, so the only rule is
-#     non-empty. A comma, a newline, a NUL, a leading '-', a '$' or a
-#     backtick are all just bytes and survive verbatim.
+#     shell word and never an option position, so the rules are just the two
+#     that are properties of a UNIT: non-empty and NUL-free (both exist for
+#     one reason -- neither can ever be REPORTED, so either would strand its
+#     lens at `partial`; see PERSIST_UNIT_JQ_GATE). A comma, a newline, a
+#     leading '-', a '$' or a backtick are all just bytes and survive
+#     verbatim.
 #
 #   --expected (the hand-invocation transport): the comma really IS the
 #     separator here, so a comma-bearing unit would silently split and is
@@ -313,30 +330,22 @@ while [[ $# -gt 0 ]]; do
 		expected_lens_name="${entry%%:*}"
 		persist_validate_id "$expected_lens_name" collect-lens-results name || exit 2
 		expected_units_csv="${entry#*:}"
+		SAW_EXPECTED_ARGV=1
 		# G4 layer 2: every unit that arrives on ARGV is blacklist-checked
 		# (see persist_validate_unit). This is defence in depth, not the
 		# primary control: the orchestrator's shell has already performed
 		# any substitution before this script is entered, so a
 		# diff-derived unit must not reach argv in the first place — use
 		# --expected-file for those.
-		if [[ -n "$expected_units_csv" ]]; then
-			IFS=',' read -r -a expected_units_argv <<<"$expected_units_csv"
-			for expected_unit in "${expected_units_argv[@]}"; do
-				persist_validate_unit "$expected_unit" collect-lens-results argv || exit 2
-			done
-		fi
-		SAW_EXPECTED_ARGV=1
-		# CSV is THIS transport's own wire format, so the split stays
-		# here -- and every unit reaching it has already been through
-		# persist_validate_unit's argv rules, which forbid the newline
-		# `jq -R` cannot survive.
-		expected_units_json='[]'
-		if [[ -n "$expected_units_csv" ]]; then
-			expected_units_json="$(printf '%s' "$expected_units_csv" | jq -R -c 'split(",")')" || {
-				echo "collect-lens-results: could not parse --expected unit list for '$expected_lens_name'" >&2
-				exit 2
-			}
-		fi
+		#
+		# R5/R2: validation and construction used to be TWO separate splits
+		# of this one value (`IFS=',' read -a` here, `jq -R split(",")`
+		# below), and they disagreed on a single trailing comma — `read -a`
+		# dropped the empty field, jq kept it, so the element that got
+		# assigned was never the element that got validated. Both are now
+		# persist_units_csv_to_json, the tree's only units-CSV splitter, and
+		# the writer's `--units` goes through the same helper.
+		expected_units_json="$(persist_units_csv_to_json "$expected_units_csv" collect-lens-results)" || exit 2
 		EXPECTED_LENSES+=("$expected_lens_name")
 		EXPECTED_UNITS_JSON+=("$expected_units_json")
 		;;
@@ -457,7 +466,13 @@ fi
 # it inherits this check as well -- the two fixes reinforce each other.
 run_dir="$(persist_lens_run_dir "$ROOT" "$SKILL" "$RUN_ID")" || exit 2
 
-if [[ -e "$run_dir" ]]; then
+# R5/R6: `-e` DEREFERENCES, so a run dir that IS a dangling symlink (or whose
+# target has been removed) tests false and skips the guard entirely -- the
+# collector then reports the lens as ordinary `missing` work. A broken symlink
+# where a state directory should be is CORRUPTED state, not absent state, and
+# must be refused. `-L` tests the directory ENTRY, which is what the guard is
+# about; `-e || -L` together cover "exists" and "exists but does not resolve".
+if [[ -e "$run_dir" || -L "$run_dir" ]]; then
 	if ! af_assert_no_symlink "$run_dir" "$ROOT"; then
 		echo "collect-lens-results: refusing to read through a symlink at $run_dir" >&2
 		exit 2
@@ -516,9 +531,13 @@ if [[ -n "$EXPECTED_FILE" ]]; then
 	expected_units_filter='.[$lens] | '"$PERSIST_UNIT_JQ_GATE"
 	while IFS= read -r -d '' expected_file_lens; do
 		persist_validate_id "$expected_file_lens" collect-lens-results name || exit 2
+		# jq's stderr is captured alongside stdout so the diagnostic names the
+		# gate rule that actually rejected the list (the gate owns the rules;
+		# this script does not restate them). On success the capture is the JSON.
 		if ! expected_file_units_json="$(printf '%s' "$expected_file_json" |
-			jq -c --arg lens "$expected_file_lens" "$expected_units_filter" 2>/dev/null)"; then
-			echo "collect-lens-results: --expected-file: lens '$expected_file_lens' has an invalid unit list (units must be non-empty strings): $EXPECTED_FILE" >&2
+			jq -c --arg lens "$expected_file_lens" "$expected_units_filter" 2>&1)"; then
+			expected_file_gate_reason="$(printf '%s\n' "$expected_file_units_json" | sed 's/^jq: error (at [^)]*): //' | tail -n 1)"
+			echo "collect-lens-results: --expected-file: lens '$expected_file_lens' has an invalid unit list (${expected_file_gate_reason:-invalid units}): $EXPECTED_FILE" >&2
 			exit 2
 		fi
 		EXPECTED_LENSES+=("$expected_file_lens")

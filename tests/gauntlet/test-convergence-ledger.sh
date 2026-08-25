@@ -71,6 +71,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# One registered sink for the handful of places that run a command purely for
+# its exit status and discard its output. R5/R11: these used to be spelled
+# `/tmp/gauntlet-ledger-test-*.<pid>`, a PREDICTABLE path -- on a shared host a
+# pre-planted symlink there is followed by bash's `>` redirect, truncating
+# whatever the test-runner user can write, and the inline `rm -f` then removes
+# the evidence. Every other temp file in this file already goes through
+# `mktemp`; the asymmetry was the defect. Registered in TMP_LEDGERS so cleanup
+# is trap-driven and survives an early `fail`, which an inline `rm -f` does
+# not.
+TMP_SINK="$(mktemp)"
+TMP_LEDGERS+=("$TMP_SINK")
+
 new_ledger() {
 	local f
 	f="$(mktemp)"
@@ -104,12 +116,11 @@ assert_ne() {
 assert_nonzero_exit() {
 	local label="$1"
 	shift
-	if "$@" >/tmp/gauntlet-ledger-test-out.$$ 2>&1; then
+	if "$@" >"$TMP_SINK" 2>&1; then
 		fail "$label (expected non-zero exit, got 0)"
 	else
 		pass "$label"
 	fi
-	rm -f "/tmp/gauntlet-ledger-test-out.$$"
 }
 
 round() {
@@ -328,10 +339,9 @@ recorded_target="$(jq -r '.target' "$L")"
 assert_eq "$recorded_target" "branch:foo" "--target first-use: ledger persists the recorded target"
 
 set +e
-"$LEDGER_SCRIPT" --ledger "$L" --target "branch:bar" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+"$LEDGER_SCRIPT" --ledger "$L" --target "branch:bar" --count 0 --structural 0 --local 0 --pass-type full --quarantine 0 >"$TMP_SINK" 2>&1
 mismatch_exit=$?
 set -e
-rm -f "/tmp/gauntlet-ledger-test-out.$$"
 assert_eq "$mismatch_exit" "3" "--target mismatch on append exits 3 (distinct from usage-error exit 2)"
 
 L2="$(new_ledger)"
@@ -355,10 +365,9 @@ assert_eq "$tok" "success" "legacy (pre-target-field) ledger accepts any --targe
 L5="$(new_ledger)"
 "$LEDGER_SCRIPT" --ledger "$L5" --target "branch:foo" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
 set +e
-"$LEDGER_SCRIPT" --last-decision --ledger "$L5" --target "branch:bar" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+"$LEDGER_SCRIPT" --last-decision --ledger "$L5" --target "branch:bar" >"$TMP_SINK" 2>&1
 peek_mismatch_exit=$?
 set -e
-rm -f "/tmp/gauntlet-ledger-test-out.$$"
 assert_eq "$peek_mismatch_exit" "3" "--target mismatch on --last-decision peek path also exits 3"
 
 # --- 14. --last-decision: all seven tokens + no-rounds + not-found ------
@@ -418,10 +427,9 @@ assert_eq "$no_rounds_exit" "0" "--last-decision on a zero-round ledger exits 0,
 # Nonexistent ledger file -> distinct not-found exit code (4), different from no-rounds.
 NONEXISTENT="$(mktemp -u)"
 set +e
-"$LEDGER_SCRIPT" --last-decision --ledger "$NONEXISTENT" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+"$LEDGER_SCRIPT" --last-decision --ledger "$NONEXISTENT" >"$TMP_SINK" 2>&1
 not_found_exit=$?
 set -e
-rm -f "/tmp/gauntlet-ledger-test-out.$$"
 assert_eq "$not_found_exit" "4" "--last-decision on a genuinely nonexistent ledger file exits 4 (distinct from no-rounds/exit 0)"
 
 # --last-decision combined with a round-input flag is a usage error.
@@ -463,10 +471,9 @@ assert_eq "$init_counter" "0" "--init creates loop_counter == 0"
 assert_eq "$init_rounds" "0" "--init creates an empty rounds array"
 
 set +e
-"$LEDGER_SCRIPT" --init --ledger "$INIT_L" --target "branch:init-fresh" >/tmp/gauntlet-ledger-test-out.$$ 2>&1
+"$LEDGER_SCRIPT" --init --ledger "$INIT_L" --target "branch:init-fresh" >"$TMP_SINK" 2>&1
 reinit_exit=$?
 set -e
-rm -f "/tmp/gauntlet-ledger-test-out.$$"
 assert_eq "$reinit_exit" "6" "--init on an existing path without --force refuses with exit 6"
 
 # Populate the existing ledger with a round + distinct target, then --force
@@ -638,15 +645,16 @@ printf '{"target":"branch:precompat2","cap":10,"k":2,"loop_counter":2,"rounds":[
 
 present_keys_file="$(mktemp)"
 TMP_LEDGERS+=("$present_keys_file")
+precompat_err="$(mktemp)"
+TMP_LEDGERS+=("$precompat_err")
 printf 'some-regression-key\n' >"$present_keys_file"
 
 set +e
 precompat_resume_tok="$("$LEDGER_SCRIPT" --ledger "$PRECHANGE_LEDGER2" --target "branch:precompat2" \
 	--count 0 --structural 0 --local 0 --pass-type full --quarantine 0 \
-	--present-keys "$present_keys_file" 2>/tmp/gauntlet-ledger-test-precompat.$$)"
+	--present-keys "$present_keys_file" 2>"$precompat_err")"
 precompat_resume_exit=$?
 set -e
-rm -f /tmp/gauntlet-ledger-test-precompat.$$
 if [[ "$precompat_resume_exit" -eq 0 ]]; then
 	pass "backward compat: --resume append onto a pre-Phase-3 ledger (missing fixed_keys field) with --present-keys supplied does not crash, resolves normally ('$precompat_resume_tok')"
 else
