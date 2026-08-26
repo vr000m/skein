@@ -55,7 +55,10 @@
 #     is recorded there is a pgid only when the launched process is verified
 #     (at record time) to LEAD its group — the python3 shim by construction
 #     (it calls os.setsid), the `timeout`/`gtimeout` arms by an explicit
-#     `ps -o pgid=` probe. When it does not lead one, the sidecar is left
+#     `ps -o pgid=` probe — a BOUNDED POLL, not a single sample, because
+#     `timeout` calls setpgid(0,0) only after its exec and so is not yet a
+#     leader at the instant `$!` becomes known. When it does not lead one,
+#     within that deadline, the sidecar is left
 #     empty and a `.pid` sidecar carries the single pid instead, which expiry
 #     TERM/KILLs directly (`_gate_kill_single_pid`); see that block's comment
 #     for why this is not the round-3 sweep-time check returning. The sweep
@@ -203,7 +206,9 @@
 # unrelated LIVE group.
 #
 # So leadership is now PROBED AT RECORD TIME (`_gate_record_gate_pid`, below)
-# and the two cases are recorded distinguishably:
+# — as a bounded poll, since setpgid(0,0) happens after `timeout`'s exec and
+# a probe fired at `$!` can beat it; see that function's comment — and the
+# two cases are recorded distinguishably:
 #   - leader     -> <pgid-file> holds the pgid; expiry sweeps the group.
 #   - non-leader -> <pgid-file> is left EMPTY and <pgid-file>.pid holds the
 #                   single pid; expiry falls back to a plain TERM/KILL on it.
@@ -261,21 +266,65 @@ _gate_sweep_pgid() {
 # pipeline under the caller's `set -euo pipefail`, and a `ps` EPERM must
 # degrade to the fail-closed single-pid path, not abort the gate before it has
 # even run.
+#
+# WHY THE PROBE IS A BOUNDED POLL AND NOT A SINGLE `ps`.
+#
+# `$!` is known at FORK time; `timeout(1)` calls setpgid(0,0) only after bash
+# has exec'd it, i.e. strictly LATER. A single probe fired immediately after
+# `$!` therefore races the exec: it can legitimately observe the child still
+# carrying the PARENT shell's pgid, before `timeout` has made itself a leader.
+# That is not a non-setpgid `timeout`, it is a not-yet-setpgid one — but the
+# old one-shot probe could not tell them apart and recorded the weaker
+# single-pid fallback, under which a `trap "" TERM` grandchild survives
+# expiry. Measured at roughly 1 run in 4 by an interleaved 20-run A/B of
+# tests/gauntlet/test-gate-timeout.sh's process-group sweep cases.
+#
+# So the probe re-samples until one of three things is true:
+#   - pgid == pid            -> leader, record the pgid (the common case,
+#                               normally on the first or second sample);
+#   - the process is gone    -> nothing more will ever be observable; take
+#     (empty probe)             the fail-closed single-pid path immediately,
+#                               exactly as before. An EPERM `ps` is
+#                               indistinguishable from "gone" and lands here
+#                               too, which is the same fail-closed choice the
+#                               one-shot probe made;
+#   - the deadline elapses   -> a genuinely non-setpgid `timeout` (busybox,
+#     (~500ms)                  shim, wrapper) never becomes a leader, so the
+#                               single-pid sidecar path is the correct and
+#                               final answer for it.
+#
+# 500ms is ~4 orders of magnitude above a fork+exec and still invisible next
+# to any gate budget; only the genuinely-non-setpgid path ever pays it in
+# full. `sleep 0.025` is fractional-capable on both macOS and GNU coreutils;
+# if some PATH `sleep` rejects it, the fallback `sleep 1` already overshoots
+# the deadline, so that single sample ends the poll — degrading to the old
+# one-shot-plus-one behaviour rather than looping for 20 seconds.
 _gate_record_gate_pid() {
-	local gate_pid="$1" pgid_file="$2" gate_pgid
-	gate_pgid="$(ps -o pgid= -p "$gate_pid" 2>/dev/null | tr -d ' ' || true)"
-	if [[ -n "$gate_pgid" && "$gate_pgid" == "$gate_pid" ]]; then
-		# True group leader: the recorded number really is a pgid and the
-		# group sweep is sound.
-		printf '%s' "$gate_pid" >"$pgid_file"
-		: >"${pgid_file}.pid"
-	else
-		# Not a leader (or unprobeable). Record NOTHING as a pgid — an empty
-		# <pgid-file> makes _gate_sweep_pgid's `[[ -n ]]` guard a no-op by
-		# construction — and keep the single pid in a sidecar instead.
-		: >"$pgid_file"
-		printf '%s' "$gate_pid" >"${pgid_file}.pid"
-	fi
+	local gate_pid="$1" pgid_file="$2" gate_pgid _i
+	for _i in {1..20}; do
+		gate_pgid="$(ps -o pgid= -p "$gate_pid" 2>/dev/null | tr -d ' ' || true)"
+		# Gone (or unprobeable): no later sample can say more. Fail closed.
+		[[ -n "$gate_pgid" ]] || break
+		if [[ "$gate_pgid" == "$gate_pid" ]]; then
+			# True group leader: the recorded number really is a pgid and
+			# the group sweep is sound.
+			printf '%s' "$gate_pid" >"$pgid_file"
+			: >"${pgid_file}.pid"
+			return 0
+		fi
+		((_i < 20)) || break
+		# Still a plain group member — either pre-exec (retry wins) or a
+		# `timeout` that never calls setpgid (deadline wins).
+		sleep 0.025 2>/dev/null || {
+			sleep 1
+			break
+		}
+	done
+	# Not a leader within the deadline (or unprobeable). Record NOTHING as a
+	# pgid — an empty <pgid-file> makes _gate_sweep_pgid's `[[ -n ]]` guard a
+	# no-op by construction — and keep the single pid in a sidecar instead.
+	: >"$pgid_file"
+	printf '%s' "$gate_pid" >"${pgid_file}.pid"
 }
 
 # _gate_kill_single_pid <pid> — the non-leader fallback: TERM, a 5s polled
