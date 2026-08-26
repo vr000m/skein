@@ -190,6 +190,293 @@ assert_eq "$(jq -r '.substantive_findings | map(select(.file == "d.py")) | lengt
 assert_eq "$(jq -r '.substantive_findings[] | select(.file == "d.py") | has("auto_fix")' "$arch_route_out")" "false" \
 	"route strips the auto_fix proposal from the architecture-category finding entirely"
 
+# ---------------------------------------------------------------------------
+# R6-G1f — `normalize --autofix-cache` is a STATE-TREE WRITER and gets the
+# skill's one containment guard.
+#
+# SKILL.md composes --autofix-cache from the same $gate_out_dir that
+# gate_run_bounded writes its envelope into, and this command CREATES that
+# file (`printf '' >"$cache"`) and later APPENDS full findings to it. It was
+# the one `.gauntlet/` writer in the skill with no guard at all — found by
+# sweeping the mechanism, not reported.
+# ---------------------------------------------------------------------------
+
+r6g1f_root="$WORKDIR/r6g1f"
+mkdir -p "$r6g1f_root/repo" "$r6g1f_root/outside"
+git -C "$r6g1f_root/repo" init -q 2>/dev/null || git -C "$r6g1f_root/repo" init >/dev/null 2>&1
+ln -s "$r6g1f_root/outside" "$r6g1f_root/repo/.gauntlet"
+set +e
+r6g1f_err="$(cd "$r6g1f_root/repo" && printf '%s' '{"status":"approve","findings":[]}' |
+	"$RUN_GATE" normalize --gate demo --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>&1 >/dev/null)"
+r6g1f_rc=$?
+set -e
+if [[ "$r6g1f_rc" -eq 2 && "$r6g1f_err" == *"refusing to operate on symlink"* &&
+	! -e "$r6g1f_root/outside/auto-fix-cache.jsonl" ]]; then
+	pass "R6-G1f: normalize --autofix-cache under a symlinked ancestor exits 2 and creates nothing"
+else
+	fail "R6-G1f: rc=$r6g1f_rc err='$r6g1f_err' created=$([[ -e "$r6g1f_root/outside/auto-fix-cache.jsonl" ]] && echo yes || echo no)"
+fi
+
+# Control: the same command against an ordinary path still works.
+set +e
+(cd "$r6g1f_root/repo" && mkdir -p real && printf '%s' '{"status":"approve","findings":[]}' |
+	"$RUN_GATE" normalize --gate demo --autofix-cache real/cache.jsonl -) >/dev/null 2>&1
+r6g1f_ok_rc=$?
+set -e
+if [[ "$r6g1f_ok_rc" -eq 0 && -e "$r6g1f_root/repo/real/cache.jsonl" ]]; then
+	pass "R6-G1f/control: an ordinary --autofix-cache path is still created and normalize exits 0"
+else
+	fail "R6-G1f/control: rc=$r6g1f_ok_rc created=$([[ -e "$r6g1f_root/repo/real/cache.jsonl" ]] && echo yes || echo no)"
+fi
+
+# ---------------------------------------------------------------------------
+# R7-G5 — `route` READS the same state path `normalize` guards (round 7, F9).
+#
+# Round 6 guarded --autofix-cache in `normalize` and left `route` alone as
+# "read-only". But route's read is re-attached as `.auto_fix` objects that
+# apply-auto-fix-code.sh later applies to the WORKING TREE, so an
+# attacker-planted symlink at the cache path feeds chosen JSON into the
+# auto-fix proposal stream. Every access to a `.gauntlet/` state path — read
+# or write — passes the guard before the first filesystem effect.
+# ---------------------------------------------------------------------------
+
+r7g5_root="$WORKDIR/r7g5"
+mkdir -p "$r7g5_root/repo" "$r7g5_root/outside"
+git -C "$r7g5_root/repo" init -q 2>/dev/null || git -C "$r7g5_root/repo" init >/dev/null 2>&1
+ln -s "$r7g5_root/outside" "$r7g5_root/repo/.gauntlet"
+printf '%s\n' '{"file":"a.py","line":1,"category":"logic","auto_fix":{"kind":"planted"}}' \
+	>"$r7g5_root/outside/auto-fix-cache.jsonl"
+set +e
+r7g5a_out="$(cd "$r7g5_root/repo" && printf '%s' '{"findings":[]}' |
+	"$RUN_GATE" route --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>/dev/null)"
+r7g5a_rc=$?
+r7g5a_err="$(cd "$r7g5_root/repo" && printf '%s' '{"findings":[]}' |
+	"$RUN_GATE" route --autofix-cache .gauntlet/auto-fix-cache.jsonl - 2>&1 >/dev/null)"
+set -e
+if [[ "$r7g5a_rc" -eq 2 && "$r7g5a_err" == *"refusing to operate on symlink"* && -z "$r7g5a_out" ]]; then
+	pass "R7-G5a: route --autofix-cache under a symlinked ancestor exits 2, refuses loudly, and emits no envelope"
+else
+	fail "R7-G5a: rc=$r7g5a_rc err='$r7g5a_err' out='$r7g5a_out'"
+fi
+
+# R7-G5b/control: an ordinary (non-symlinked) cache path still routes and
+# re-attaches .auto_fix unchanged — the guard adds a refusal, not a behaviour
+# change. Reuses the section-4 fixtures, which are the real route wire.
+set +e
+r7g5b_out="$("$RUN_GATE" route --autofix-cache "$cache" "$reconciled" 2>/dev/null)"
+r7g5b_rc=$?
+set -e
+r7g5b_attached="$(printf '%s' "$r7g5b_out" | jq -r '[.substantive_findings[], (.trivial_envelope.findings[]?)] | map(select(.file == "b.py")) | any(has("auto_fix"))' 2>/dev/null)"
+if [[ "$r7g5b_rc" -eq 0 && "$r7g5b_attached" == "true" ]]; then
+	pass "R7-G5b/control: an ordinary --autofix-cache path still routes (rc 0) and re-attaches .auto_fix unchanged"
+else
+	fail "R7-G5b/control: rc=$r7g5b_rc attached='$r7g5b_attached'"
+fi
+
+# ---------------------------------------------------------------------------
+# Group R8-G2 — the TRAILING POSITIONAL is a state path, and it is guarded at
+# the single open (round 8, F3).
+#
+# `--autofix-cache` was guarded on both the write (round 6) and the read (round
+# 7, F9) side, but the positional envelope/pooled-findings path — a
+# `.gauntlet/` path composed by SKILL.md from the same `$gate_out_dir`, and the
+# file the `auto_fix` blocks ORIGINATE in — was read through unguarded by all
+# four subcommands. The guard now lives in `read_input`, so the SUBCOMMAND LIST
+# IS DERIVED FROM `usage()` rather than hardcoded here: a new subcommand joins
+# this matrix automatically and cannot inherit an unguarded read.
+r8g2_root="$WORKDIR/r8g2"
+mkdir -p "$r8g2_root/repo/.gauntlet"
+git -C "$r8g2_root/repo" init -q >/dev/null 2>&1 || git -C "$r8g2_root/repo" init >/dev/null 2>&1
+printf '%s' '{"gate":"demo","status":"approve","findings":[],"notes":"n"}' >"$r8g2_root/target.json"
+ln -s "$r8g2_root/target.json" "$r8g2_root/repo/.gauntlet/in.json"
+r8g2_link="$r8g2_root/repo/.gauntlet/in.json"
+r8g2_cache="$r8g2_root/repo/.gauntlet/cache.jsonl"
+
+# No `mapfile`: this repo holds itself to bash 3.2 portability (asserted for
+# scripts/ by tests/lenses/test-lens-collect.sh case (v)); the same discipline
+# applies here.
+r8g2_subcommands=()
+while IFS= read -r r8g2_line; do
+	[[ -n "$r8g2_line" ]] && r8g2_subcommands+=("$r8g2_line")
+done < <("$RUN_GATE" --help 2>&1 | awk '{for (i = 1; i < NF; i++) if ($i == "run-gate.sh") print $(i + 1)}' | sort -u)
+if [[ "${#r8g2_subcommands[@]}" -lt 4 ]]; then
+	fail "R8-G2a: could not parse the subcommand list out of usage() (got '${r8g2_subcommands[*]}')"
+else
+	pass "R8-G2a/setup: subcommand matrix derived from usage(): ${r8g2_subcommands[*]}"
+fi
+
+# Per-subcommand stdin payload: route wants a reconciled envelope, the others
+# a gate envelope. Only the READ PATH is under test here, not the schema.
+r8g2_stdin_for() {
+	case "$1" in
+	route) printf '%s' '{"schema_version":2,"findings":[]}' ;;
+	*) printf '%s' '{"gate":"demo","status":"approve","findings":[],"notes":"n"}' ;;
+	esac
+}
+
+r8g2_args_for() {
+	case "$1" in
+	normalize) printf '%s\n' --gate demo --autofix-cache "$r8g2_cache" ;;
+	route) printf '%s\n' --autofix-cache "$r8g2_cache" ;;
+	*) : ;;
+	esac
+}
+
+r8g2a_bad=""
+for r8g2_sub in "${r8g2_subcommands[@]}"; do
+	r8g2_flags=()
+	while IFS= read -r r8g2_a; do
+		[[ -n "$r8g2_a" ]] && r8g2_flags+=("$r8g2_a")
+	done < <(r8g2_args_for "$r8g2_sub")
+	set +e
+	r8g2_out="$("$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" "$r8g2_link" 2>"$r8g2_root/err.$r8g2_sub")"
+	r8g2_rc=$?
+	set -e
+	r8g2_err="$(cat "$r8g2_root/err.$r8g2_sub")"
+	if [[ "$r8g2_sub" == "status-row" ]]; then
+		# F4 is load-bearing here and is exactly why read_input RETURNS
+		# instead of exiting: a refused envelope must still account for its
+		# slot with exactly one `error` row, and exit 0.
+		#
+		# Round 9, F11: the STATUS is absorbed, the DIAGNOSTIC is not. The
+		# old `2>/dev/null || true` swallowed both, so a refused envelope
+		# rendered identically to a gate that produced nothing — the one
+		# condition an operator has to act on, made invisible. stderr was
+		# already captured here per subcommand and simply not asserted on.
+		r8g2_rows="$(printf '%s' "$r8g2_out" | grep -c . || true)"
+		if [[ "$r8g2_rc" -ne 0 || "$r8g2_rows" != "1" || "$r8g2_out" != *"error"* ||
+			"$r8g2_err" != *"refusing to operate on symlink"* ]]; then
+			r8g2a_bad="$r8g2a_bad [status-row rc=$r8g2_rc rows=$r8g2_rows out='$r8g2_out' err='$r8g2_err']"
+		fi
+	else
+		if [[ "$r8g2_rc" -ne 2 || "$r8g2_err" != *"refusing to operate on symlink"* || -n "$r8g2_out" ]]; then
+			r8g2a_bad="$r8g2a_bad [$r8g2_sub rc=$r8g2_rc err='$r8g2_err' out='$r8g2_out']"
+		fi
+	fi
+done
+if [[ -z "$r8g2a_bad" ]]; then
+	pass "R8-G2a: every subcommand refuses a SYMLINKED positional path — normalize/reconcile/route exit 2 with the diagnostic and emit nothing; status-row still prints exactly one error row and exits 0, and the refusal diagnostic still reaches stderr"
+else
+	fail "R8-G2a: unguarded or wrongly-handled positional read:$r8g2a_bad"
+fi
+
+# R8-G2b/control — the guard adds a refusal, not a behaviour change: `-` (and
+# an absent positional) still reads stdin for every subcommand.
+r8g2b_bad=""
+for r8g2_sub in "${r8g2_subcommands[@]}"; do
+	r8g2_flags=()
+	while IFS= read -r r8g2_a; do
+		[[ -n "$r8g2_a" ]] && r8g2_flags+=("$r8g2_a")
+	done < <(r8g2_args_for "$r8g2_sub")
+	for r8g2_pos in "-" ""; do
+		set +e
+		if [[ -n "$r8g2_pos" ]]; then
+			r8g2_out="$(r8g2_stdin_for "$r8g2_sub" |
+				"$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" "$r8g2_pos" 2>/dev/null)"
+		else
+			r8g2_out="$(r8g2_stdin_for "$r8g2_sub" |
+				"$RUN_GATE" "$r8g2_sub" "${r8g2_flags[@]+"${r8g2_flags[@]}"}" 2>/dev/null)"
+		fi
+		r8g2_rc=$?
+		set -e
+		[[ "$r8g2_rc" -eq 0 ]] || r8g2b_bad="$r8g2b_bad [$r8g2_sub pos='${r8g2_pos:-<absent>}' rc=$r8g2_rc]"
+		if [[ "$r8g2_sub" == "status-row" && "$r8g2_out" == *"envelope missing or unreadable"* ]]; then
+			r8g2b_bad="$r8g2b_bad [status-row pos='${r8g2_pos:-<absent>}' did not read stdin]"
+		fi
+	done
+done
+if [[ -z "$r8g2b_bad" ]]; then
+	pass "R8-G2b/control: '-' and an absent positional still read stdin unchanged, for every subcommand"
+else
+	fail "R8-G2b/control:$r8g2b_bad"
+fi
+
+# --- R11 F16: normalize validates the status ALPHABET before any side effect
+# The findings loop streams JSONL to stdout and APPENDS auto_fix-carrying
+# findings to the autofix cache, and the trailing `case "$status"` ran after
+# it — so an unrecognised status exited 2 having already half-populated the
+# cache that `route` later reads back into the auto-fix stream.
+#
+# INVARIANT: exit 2 (validation) never has side effects; only exit 4 does.
+# The assertion is therefore on BOTH the exit code and the cache: a test that
+# only checked rc=2 passed before the fix as well.
+
+r11f16_cache="$WORKDIR/r11f16-cache.jsonl"
+r11f16_raw="$WORKDIR/r11f16-raw.json"
+cat >"$r11f16_raw" <<'EOF'
+{"gate": "code-review", "status": "bogus-status",
+ "findings": [{"file": "d.py", "line": 7, "category": "correctness",
+               "severity": "high", "confidence": 0.9, "summary": "s",
+               "evidence": "e",
+               "auto_fix": {"kind": "docstring_typo", "before": "a",
+                            "after": "b", "scope": "7-7"}}],
+ "notes": null}
+EOF
+# Pre-create the cache with a known sentinel line so "untouched" is provable
+# by content, not merely by the file's absence.
+printf '{"sentinel":true}\n' >"$r11f16_cache"
+r11f16_before="$(cat "$r11f16_cache")"
+r11f16_out="$WORKDIR/r11f16.out"
+r11f16_rc=0
+"$RUN_GATE" normalize --gate code-review --autofix-cache "$r11f16_cache" "$r11f16_raw" \
+	>"$r11f16_out" 2>/dev/null || r11f16_rc=$?
+
+assert_eq "$r11f16_rc" "2" "R11-F16: an unrecognised gate status exits 2"
+assert_eq "$(cat "$r11f16_cache")" "$r11f16_before" \
+	"R11-F16: ...leaving the autofix cache byte-for-byte untouched (no half-populated side effect)"
+assert_eq "$(grep -c '^' "$r11f16_out" || true)" "0" \
+	"R11-F16: ...and emitting no findings to stdout"
+
+# CONTROL: the exit-4 path is the one that IS documented to emit partially,
+# and must keep doing so — the fix moved validation, it did not move the
+# clean/not-clean report.
+r11f16b_cache="$WORKDIR/r11f16b-cache.jsonl"
+r11f16b_raw="$WORKDIR/r11f16b-raw.json"
+cat >"$r11f16b_raw" <<'EOF'
+{"gate": "code-review", "status": "deferred",
+ "findings": [{"file": "d.py", "line": 7, "category": "correctness",
+               "severity": "high", "confidence": 0.9, "summary": "s",
+               "evidence": "e"}],
+ "notes": null}
+EOF
+r11f16b_out="$WORKDIR/r11f16b.out"
+r11f16b_rc=0
+"$RUN_GATE" normalize --gate code-review --autofix-cache "$r11f16b_cache" "$r11f16b_raw" \
+	>"$r11f16b_out" 2>/dev/null || r11f16b_rc=$?
+assert_eq "$r11f16b_rc" "4" "R11-F16/control: a recognised non-clean status still exits 4"
+assert_eq "$(grep -c '^' "$r11f16b_out")" "1" \
+	"R11-F16/control: ...and still emits its findings (partial emission is exit 4's documented behaviour)"
+
+# --- R11 F17: route shape-gates its reconciled input ----------------------
+# cmd_route fed `$reconciled` straight to `jq -n --argjson` with no check,
+# while normalize, reconcile and status-row all validated theirs. Empty or
+# non-object input surfaced as a raw `jq: Invalid JSON text passed to
+# --argjson`, naming neither the command nor the input.
+
+r11f17_cache="$WORKDIR/r11f17-cache.jsonl"
+: >"$r11f17_cache"
+r11f17_empty="$WORKDIR/r11f17-empty.json"
+: >"$r11f17_empty"
+r11f17_rc=0
+r11f17_err="$("$RUN_GATE" route --autofix-cache "$r11f17_cache" "$r11f17_empty" 2>&1 >/dev/null)" || r11f17_rc=$?
+assert_eq "$r11f17_rc" "2" "R11-F17: route on empty input exits 2"
+if [[ "$r11f17_err" == run-gate\ route:* ]]; then
+	pass "R11-F17: ...with a run-gate-prefixed diagnostic, not a raw jq --argjson error"
+else
+	fail "R11-F17: route on empty input should print a run-gate diagnostic (got '$r11f17_err')"
+fi
+
+r11f17_arr="$WORKDIR/r11f17-array.json"
+printf '[]\n' >"$r11f17_arr"
+r11f17b_rc=0
+r11f17b_err="$("$RUN_GATE" route --autofix-cache "$r11f17_cache" "$r11f17_arr" 2>&1 >/dev/null)" || r11f17b_rc=$?
+assert_eq "$r11f17b_rc" "2" "R11-F17: route on valid-but-non-object JSON ([]) exits 2"
+if [[ "$r11f17b_err" == run-gate\ route:* ]]; then
+	pass "R11-F17: ...also with a run-gate-prefixed diagnostic"
+else
+	fail "R11-F17: route on [] should print a run-gate diagnostic (got '$r11f17b_err')"
+fi
+
 echo ""
 echo "Results: $pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

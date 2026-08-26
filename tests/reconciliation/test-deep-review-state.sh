@@ -13,7 +13,8 @@
 #     positional lenses-path argument, or stdin when it is "-" or omitted.
 #     Root-anchors via git rev-parse --show-toplevel.
 #     Wraps the input as the `lenses` key of a new top-level object alongside
-#     schema_version (stamped 1 by the script) and the five run-metadata
+#     schema_version (stamped 2 by the script -- R11/F1 bumped it with the
+#     Phase-2 per-lens shape change) and the five run-metadata
 #     fields, writing atomically (temp file + rename) to
 #     .deep-review/latest-<harness>.json.
 #     Exit 0 on success; exit 2 on a usage error; exit 1 on a best-effort
@@ -172,10 +173,10 @@ if (
 			fi
 		done
 		if [[ -z "$missing_keys" ]]; then
-			if [[ "$(jq -r '.schema_version' "$target")" == "1" ]]; then
-				pass "(a) writes required top-level keys (schema_version=1, empty review_focus_hash tolerated)"
+			if [[ "$(jq -r '.schema_version' "$target")" == "2" ]]; then
+				pass "(a) writes required top-level keys (schema_version=2, empty review_focus_hash tolerated)"
 			else
-				fail "(a) writes required top-level keys (schema_version is not 1)"
+				fail "(a) writes required top-level keys (schema_version is not 2)"
 				sed 's/^/    /' "$target"
 			fi
 		else
@@ -482,6 +483,165 @@ EOF
 	else
 		pass "(h) SIGTERM mid-mv leaves no stray temp file"
 	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (i)/(j) Phase 2 extension: --from-collector
+#
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 2
+# ("`persist-deep-review-state.sh`: new `--from-collector` flag... persist
+# maps the collector shape to `.lenses`... existing positional `lenses.json`
+# input retained test-only"). New flag; ASSUMPTION (not yet implemented at
+# the time this suite was written, per the Phase 2 test-writer's scope):
+# `--from-collector` reads `scripts/collect-lens-results.sh`'s per-lens
+# object straight off stdin (no positional path allowed alongside it) and
+# writes it into the `lenses` key of the persisted envelope exactly as
+# received (the same wrap-and-stamp shape as positional input, i.e. schema
+# metadata added, `lenses` key populated verbatim from the collector JSON).
+# If the real flag's semantics differ, this case's assertions are the
+# concrete thing to revisit — the case is intentionally isolated so a
+# semantic mismatch fails only (i)/(j), not (a)-(h).
+# ---------------------------------------------------------------------------
+
+# Synthetic collect-lens-results.sh-shaped payload: object keyed by lens,
+# each value {status, reviewed, assigned, unreviewed[], findings[]} per the
+# plan's R4 collector contract.
+sample_collector_output() {
+	cat <<'JSON'
+{
+  "logic": {
+    "status": "completed",
+    "reviewed": 3,
+    "assigned": 3,
+    "unreviewed": [],
+    "findings": []
+  },
+  "security": {
+    "status": "partial",
+    "reviewed": 2,
+    "assigned": 5,
+    "unreviewed": ["u3", "u4", "u5"],
+    "findings": []
+  }
+}
+JSON
+}
+
+case_i_dir="$TMPDIR_ROOT/case-i"
+make_scratch_repo "$case_i_dir"
+
+if (
+	cd "$case_i_dir" && sample_collector_output | bash "$SCRIPT" --harness claude --run-id "cont-1" \
+		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
+) >"$case_i_dir/stdout" 2>"$case_i_dir/stderr"; then
+	target="$case_i_dir/.deep-review/latest-claude.json"
+	if [[ ! -f "$target" ]]; then
+		fail "(i) --from-collector writes a state file with the collector shape under .lenses (no file at $target)"
+	elif jq -e '.lenses.logic.status == "completed" and .lenses.security.status == "partial" and (.lenses.security.unreviewed | length) == 3' "$target" >/dev/null 2>&1; then
+		pass "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim"
+	else
+		fail "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim (unexpected shape)"
+		sed 's/^/    /' "$target"
+	fi
+else
+	fail "(i) --from-collector maps collect-lens-results.sh's per-lens shape into .lenses verbatim (script exited non-zero -- --from-collector may not be implemented yet)"
+	sed 's/^/    /' "$case_i_dir/stderr"
+fi
+
+# (j) regression: the pre-existing positional lenses.json path (no
+# --from-collector) must still work unchanged -- it is retained test-only
+# per the plan, but must not have been removed or broken by adding the flag.
+case_j_dir="$TMPDIR_ROOT/case-j"
+make_scratch_repo "$case_j_dir"
+sample_lenses >"$case_j_dir/lenses.json"
+
+if (
+	cd "$case_j_dir" && persist_state "$case_j_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:08Z" "abc1234" "def5678" "sha256:deadbeef" ""
+) >"$case_j_dir/stdout" 2>"$case_j_dir/stderr"; then
+	target="$case_j_dir/.deep-review/latest-claude.json"
+	if [[ -f "$target" ]] && jq -e '.lenses.logic.status == "completed"' "$target" >/dev/null 2>&1; then
+		pass "(j) positional lenses.json input still works after --from-collector is added (regression)"
+	else
+		fail "(j) positional lenses.json input still works after --from-collector is added (regression) (unexpected shape at $target)"
+	fi
+else
+	fail "(j) positional lenses.json input still works after --from-collector is added (regression) (script exited non-zero)"
+	sed 's/^/    /' "$case_j_dir/stderr"
+fi
+
+# ---------------------------------------------------------------------------
+# (R8-G4a) a duplicated LENS KEY in the input must be refused, not persisted.
+#
+# The duplicate-key rule was extracted into persist-common.sh in round 7 and
+# registered for all four callers, but only the two LENS callers were wired.
+# The two STATE-FILE callers are the worse case: this input is an externally
+# supplied per-lens KEYED document whose .lenses.<lens>.status entries drive
+# --continue resumption, so a hand-built lenses.json spelling one lens twice
+# silently lost the earlier lens's status. At a970c3a this persisted happily.
+# ---------------------------------------------------------------------------
+
+case_r8g4a_dir="$TMPDIR_ROOT/case-r8g4a"
+make_scratch_repo "$case_r8g4a_dir"
+cat >"$case_r8g4a_dir/lenses.json" <<'JSON'
+{
+  "logic": {"status": "completed", "model": "opus", "effort": "high", "findings": []},
+  "logic": {}
+}
+JSON
+
+if (
+	cd "$case_r8g4a_dir" && persist_state "$case_r8g4a_dir/lenses.json" \
+		"claude" "2026-07-15T00:00:09Z" "abc1234" "def5678" "sha256:deadbeef" ""
+) >"$case_r8g4a_dir/stdout" 2>"$case_r8g4a_dir/stderr"; then
+	fail "(R8-G4a) a duplicated lens key must exit 2 (script exited 0 and persisted)"
+else
+	r8g4a_err="$(cat "$case_r8g4a_dir/stderr")"
+	if [[ "$r8g4a_err" == *"duplicate key"* && "$r8g4a_err" == *"logic"* ]] &&
+		[[ ! -f "$case_r8g4a_dir/.deep-review/latest-claude.json" ]]; then
+		pass "(R8-G4a) a duplicated lens key exits 2, names the lens, and persists nothing"
+	else
+		fail "(R8-G4a) err='$r8g4a_err' target-exists=$([[ -f "$case_r8g4a_dir/.deep-review/latest-claude.json" ]] && echo yes || echo no)"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
+# (R8-G4c) STRUCTURAL: the duplicate-key rule is a WIRE rule, so the caller set
+# is DERIVED, never listed. Two mechanical assertions:
+#   1. every script that sources persist-common.sh calls
+#      persist_assert_no_duplicate_keys (the header's "all four" claim, checked
+#      rather than asserted). Since R11/F3 the two LENS callers reach
+#      persist-common.sh INDIRECTLY, through lib/lens-common.sh, so the
+#      sourcing probe accepts either spelling -- the rule is about which
+#      scripts have the helper in scope, and that set is unchanged at four.
+#      Matching only the direct spelling would have quietly dropped the two
+#      lens scripts out of the derived set and passed with a count of 2;
+#   2. every script that calls persist_validate_json_shape also calls the
+#      duplicate-key helper, so the shape/duplicate pairing cannot be half-added
+#      by a fifth caller.
+# ---------------------------------------------------------------------------
+
+r8g4c_sourcers=""
+r8g4c_missing_dup=""
+r8g4c_missing_pair=""
+for r8g4c_f in "$REPO_ROOT"/scripts/*.sh; do
+	# The SOURCING form only — a mention in a comment or a bundle map is not
+	# a caller.
+	grep -qE '^[[:space:]]*(\.|source)[[:space:]].*(persist|lens)-common\.sh' "$r8g4c_f" || continue
+	r8g4c_base="$(basename "$r8g4c_f")"
+	r8g4c_sourcers="$r8g4c_sourcers $r8g4c_base"
+	grep -q 'persist_assert_no_duplicate_keys "' "$r8g4c_f" ||
+		r8g4c_missing_dup="$r8g4c_missing_dup $r8g4c_base"
+	if grep -q 'persist_validate_json_shape "' "$r8g4c_f" &&
+		! grep -q 'persist_assert_no_duplicate_keys "' "$r8g4c_f"; then
+		r8g4c_missing_pair="$r8g4c_missing_pair $r8g4c_base"
+	fi
+done
+r8g4c_count="$(printf '%s' "$r8g4c_sourcers" | wc -w | tr -d ' ')"
+if [[ "$r8g4c_count" -eq 4 && -z "$r8g4c_missing_dup" && -z "$r8g4c_missing_pair" ]]; then
+	pass "(R8-G4c) all four persist-common.sh callers (two direct, two via lens-common.sh) enforce the duplicate-key rule, and every shape gate is paired with it:$r8g4c_sourcers"
+else
+	fail "(R8-G4c) callers=$r8g4c_count ($r8g4c_sourcers) missing-duplicate-rule:${r8g4c_missing_dup:- none} unpaired-shape-gate:${r8g4c_missing_pair:- none}"
 fi
 
 echo ""

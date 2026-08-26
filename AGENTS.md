@@ -10,9 +10,12 @@ just check-prompt-parity         # Claude vs Codex SKILL.md prompt parity (bundl
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just bundle-appliers             # Regenerate the bundled auto-fix pipeline inside each skill
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
-just gauntlet-tests               # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap
+just gauntlet-tests              # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap + gate-timeout (bounded-gate budget/expiry envelope) + lens-budget (size-scaled budget arithmetic) + regression-stop (terminal regression gate) + finding-key (stable finding hashing) + status-row (gate status-table rendering)
+just lens-tests                  # disk-first lens results: persist-lens-result + collect-lens-results + --from-collector state + deep-review/review-plan SKILL.md shape (both mirrors)
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
-just lint-scripts                # shellcheck + shfmt on scripts/
+just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/
+just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + manifest checks (incl. AGENTS.md recipe registration)
+just noqa-probe                  # Diagnostic (not a suite member): does ~/.claude/hooks/format-on-edit.sh strip `# noqa`? Hook is sync-computer-owned
 ```
 
 Requires: `brew install just jq shellcheck shfmt`
@@ -28,6 +31,7 @@ plugins/skein/.claude-plugin/plugin.json       Claude plugin manifest
 plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle
 scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh) and by the two persist-*.sh state-file scripts (persist-common.sh)
+plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
 tests/                       Reconciliation, parity, and auto-fix test harnesses
 docs/dev_plans/              Development plans
 docs/skills_architecture/    Skills architecture design docs (source; rendered via /plan-view --rich)
@@ -38,6 +42,16 @@ docs/_plan_view/             Gitignored generated HTML output from /plan-view (d
 _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
                              Deterministic and rich pages are cross-linked: forward links (plain → `.rich.html`) are emitted unconditionally; back-links (rich → plain/index, breadcrumb) are injected idempotently by `relink_rich_pages()` on every plain run, back-filling pre-existing rich pages.
 ```
+
+### review-gauntlet `lib/` (authored, mirror-parity-enforced)
+
+`plugins/*/skills/review-gauntlet/lib/` is hand-written, unlike the generated `scripts/` subtree beside it. Five files:
+
+- `gauntlet-common.sh` — the documented **anchor-divergent exclusion**: it resolves the harness-specific plugin-root anchor, which the two mirrors spell differently on purpose, so it is *not* byte-compared between them.
+- `state-path-guard.sh` — **the single state-path containment policy** for the skill. `gauntlet_assert_no_symlink <path> <label>` refuses a `.gauntlet/` path that contains a `..` component, or whose leaf or any ancestor strictly below its containment bound is a symlink. The bound is the **outermost checkout boundary on the path's own lexical ancestor chain**: the shallowest ancestor that is not itself a symlink and carries a `.git` entry. The verdict is a pure function of the path's spelling and the `-L`/`-e` state of the named components — **no subprocess, no environment variable, and no `cd`/`pwd -P` participates** (round 8: `git -C … rev-parse` read `GIT_DIR`/`GIT_WORK_TREE`, and an *innermost* bound let an attacker plant one below an escaping symlink). Every `lib/` state-path access — read or write, flag-borne or positional — goes through it. Three documented residuals: the guard→write TOCTOU; a checkout with no `.git` entry at its root (falls back to the leaf-plus-parent bound); and one deliberate widening — a symlinked ancestor *below* the bound (`~/proj -> …` with a `.git` in `$HOME`) is now refused fail-closed, pinned by `R8-G1c`. The orchestrator's per-round `mkdir -p` in SKILL.md remains the one unguarded state-tree effect: directory creation, with every write into that directory guarded. No other file in `lib/` carries symlink-resolution logic in any spelling, and `tests/gauntlet/test-gate-timeout.sh` sweeps the directory — for symlink logic *and* for unguarded state-path writers — to enforce that.
+- `gate-bounded.sh`, `convergence-ledger.sh`, `run-gate.sh` — callers of the guard above.
+
+All four non-anchor files are byte-identical across the two mirrors; the list is registered as `GAUNTLET_LIB_PARITY_FILES` in `tests/parity/test-applier-bundle-parity.sh`, which fails on any `lib/*.sh` basename that is neither registered nor the documented exclusion. A new file here must be registered there.
 
 ### Path-resolution idiom (harness-divergent)
 
@@ -86,7 +100,7 @@ The plugin tree is the authoritative source; install runs through the harness pl
 - Install target: each harness's plugin cache (`~/.claude/plugins/...` and `~/.codex/plugins/cache/...`), populated by the plugin CLI. The cache is not edited by hand.
 - The two skill copies are **not byte-identical** — the per-harness dispatch idiom (`Agent` vs `spawn_agent`) and the path-resolution idiom above are legitimate divergences. They must not be collapsed.
 - Content guidelines authority: repo-canonical file at `plugins/skein-codex/skills/content-review/references/content-guidelines.md`. Mirror at `plugins/skein/skills/content-review/references/content-guidelines.md`. Both ship inside the plugin tree on install — no separate references copy step is needed.
-- `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` are **owned by the `skills.md` repo, not skein** (one-way ownership split; the two repos are not synced). Do not edit them from skein and do not add a sync shim.
+- `~/.claude/CLAUDE.md` and `~/.claude/hooks/*` are **owned by the sync-computer repo** (`./scripts/sync.sh collect claude`); `~/.codex/AGENTS.md` is **owned by the `skills.md` repo**. Neither is owned by skein (one-way ownership split; the repos are not synced). Do not commit them from skein and do not add a sync shim.
 
 ## Plugin install
 
@@ -148,7 +162,9 @@ Format: `- **[Category] disposition**: description (YYYY-MM-DD)`
 
 - **Repo invariants are orthogonal to install mechanism.** `just check-sync` / `check-prompt-parity` / `check-trunk-snippet-parity` / `parity-tests` / `reconciliation-tests` operate inside the plugin tree (canonical `scripts/` ↔ bundled skill `scripts/`, Claude-mirror ↔ Codex-mirror SKILL.md parity, and `conduct/marker.py` byte-identity across both mirrors). Run them after editing canonical scripts or either mirror's SKILL.md.
 - **The review marker has one hashing authority: canonical `scripts/marker.py`.** Both `/conduct` (its own `conduct/marker.py` copy) and `/review-plan` (the bundled `review-plan/scripts/marker.py` + the `write-review-marker.py` CLI it ships) compute the byte-faithful marker hash from the same code; `tests/parity/test-marker-parity.sh` anchors every copy byte-identical to `scripts/marker.py`. **Never hand-compute the marker hash in SKILL.md prose** — an LLM following a prose recipe wrote `b'\n'.join(lines[:idx])`, dropped the newline above the marker, and produced false `/conduct` drift (the 0.2.3 fix). `/review-plan` Step 7 invokes the bundled `write-review-marker.py` and aborts if it is absent or if the plan has no divider; it does not append the marker at EOF.
-- **Do not edit `~/.claude/CLAUDE.md` or `~/.codex/AGENTS.md` from skein** — those globals are owned by the `skills.md` repo.
+- **Do not edit `~/.claude/CLAUDE.md` or `~/.claude/hooks/*` from skein** — those globals are owned by the sync-computer repo (`./scripts/sync.sh collect claude`). **Do not edit `~/.codex/AGENTS.md` from skein either** — that global is owned by the `skills.md` repo.
 - **Re-install after edits.** A `git pull` or local edit in this repo does not propagate to a live plugin install until you re-run `/plugin install skein@skein` (Claude) or `codex plugin add skein@skein` (Codex). If installed from GitHub, re-`marketplace add` first to refresh the cached commit.
 - **Bundled scripts are generated.** Edit the canonical files under `scripts/` (and `scripts/lib/`), then run `just bundle-appliers` to refresh each skill's `scripts/` subtree. `just check-sync` enforces canonical↔bundle byte-identity.
+- **New canonical `scripts/*` must be registered in `scripts/lib/bundle-map.sh` before they bundle anywhere.** A script added to `scripts/` but not listed in `BUNDLE_SHARED` or a skill's `bundle_extra_for` entry never reaches the plugin skills' `scripts/` subtrees, no matter how many times `scripts/bundle-appliers.sh` runs. `just check-sync` catches the resulting canonical↔bundle drift, but only after the fact — register first, then bundle (2026-08-24, `lens-budget.sh`/`finding-key.sh`/`persist-lens-result.sh`/`collect-lens-results.sh`).
+- **Lens state is one-writer-per-file.** Each lens subagent attempt writes only its own `<state-dir>/lenses/<run-id>/<lens>.<attempt>.jsonl` (`.deep-review/lenses/<run-id>/` or `.review-plan/lenses/<run-id>/`) via `persist-lens-result.sh` — never a shared file, never appended to by another attempt. `collect-lens-results.sh` is the sole reader/merger across attempts; it owns cross-attempt dedup and status derivation. Do not add a second writer to an attempt file or a second reader that bypasses the collector — both invariants (no locking needed, one source of truth for `--continue`) depend on this split (2026-08-24).
 - **Path anchors differ per mirror.** When editing `deep-review/SKILL.md` or `review-plan/SKILL.md`, keep the Claude mirror on `${CLAUDE_PLUGIN_ROOT}/skills/<name>/scripts/...` and the Codex mirror on `"$SKILL_DIR"/scripts/...`. The prompt-parity check tolerates this specific divergence.

@@ -133,6 +133,12 @@ fi
 # lookup itself error out non-zero, crashing the script uninformatively
 # under `set -e` instead of failing with a clear usage message.
 persist_validate_json_shape "$input" "persist-review-state" "envelope" || exit 2
+# Duplicate-key rule, on the STATE-FILE side of the wire too (round 8, F7).
+# Ordering is deliberate: shape first, so a non-object payload fails with the
+# clearer message; duplicates second. Both read the ALREADY-CAPTURED $input,
+# never a second read of the file (round 7, F7/F8), and both sit before any
+# use of the parsed document.
+persist_assert_no_duplicate_keys "$input" "persist-review-state" "envelope" || exit 2
 
 schema_version="$(printf '%s' "$input" | jq -r '.schema_version // empty')"
 if [[ "$schema_version" != "2" ]]; then
@@ -152,6 +158,20 @@ if ! printf '%s' "$input" | jq -e 'has("summary") and has("findings") and has("r
 fi
 
 ROOT_DIR="$(persist_root_dir)"
+# SKILL->STATE-DIR MAPPING (4 sites). The same skill -> state-directory mapping
+# (.deep-review for deep-review, .review-plan for review-plan) is spelled out in
+# FOUR places, deliberately NOT consolidated: they differ in root source
+# ($AF_COMMON_ROOT vs an explicit argument) and in failure exit code (2 vs
+# 1), so merging them would be a behaviour change at four call sites for no
+# functional gain. A NEW SKILL must therefore be registered in all four:
+#   scripts/lib/lens-common.sh         persist_lens_state_dir  (per-run lens attempt dirs)
+#   scripts/lib/auto-fix-common.sh     af_manifest_dir         (auto-fix manifests)
+#   scripts/persist-deep-review-state.sh  OUT_DIR
+#   scripts/persist-review-state.sh       OUT_DIR
+#
+# Guarded by tests/parity/test-state-dir-registration.sh (R11/F13): the four
+# sites must list an IDENTICAL skill set. The non-consolidation above is a
+# decision, not a licence to register a new skill in only three of them.
 OUT_DIR="$ROOT_DIR/.review-plan"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 

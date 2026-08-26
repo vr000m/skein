@@ -16,6 +16,10 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ## Current State
 
+### 2026-08-24 — no new exemptions from `review-skills-resilience` (Phases 1-4)
+
+Source: `docs/dev_plans/20260823-feature-review-skills-resilience.md`, Phase 5 backlog review (R10, narrowed). Checked every canonical script and both mirrors' `SKILL.md` for `review-gauntlet`, `deep-review`, and `review-plan` (`git diff --stat d06f82e..HEAD -- plugins/skein-codex/ plugins/skein/`): every canonical script added in Phases 1-4 (`lens-budget.sh`, `finding-key.sh`, `persist-lens-result.sh`, `collect-lens-results.sh`, `scripts/lib/persist-common.sh`) and every `lib/` file (`gate-bounded.sh`, `run-gate.sh`, `convergence-ledger.sh`) landed identically bundled into both `plugins/skein/skills/*` and `plugins/skein-codex/skills/*`; both `SKILL.md` files were edited in the same commit per phase (Codex prose adapted to `"$SKILL_DIR"` idiom and Codex sequential-mode wording, never transliterated). No behaviour introduced by this plan is harness-inexpressible on Codex — the one Codex-specific difference (sequential lens execution skips the one-respawn step, since there is no concurrent spawn to respawn) is a design decision recorded in the plan's Findings, not a capability gap, and needs no shape-test exemption. **No new backlog entries required; no shape-test assertion exempted.**
+
 ### 2026-07-12 — `plan-view` invocation-mode divergence (permanent, harness-imposed — not deferred drift)
 
 Source: PR #16 (`chore/skill-invocation-mode-audit`), plus a same-day follow-up commit on `chore/skill-invocation-audit-followups`. Plan: `docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md`.

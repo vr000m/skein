@@ -1,0 +1,380 @@
+#!/usr/bin/env bash
+# test-status-row.sh — Phase 3 acceptance: `run-gate.sh status-row <envelope>`
+# emits one gate-status table row from a gate envelope (script-emitted, per
+# R7 -- SKILL.md only says *where* to print rows, never how to build one).
+#
+# Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
+# R7. Envelope shape is the one `gate-bounded.sh`'s `gate_run_bounded` already
+# writes on every exit path: {status, notes, findings, gate, duration_s,
+# degraded_reason} -- see plugins/skein/skills/review-gauntlet/lib/gate-bounded.sh.
+# Row columns (plan order): gate, status, duration_s, findings, degraded_reason.
+# `-` renders any null duration_s/degraded_reason; the DEGRADED case additionally
+# renders findings as `-`/0.
+#
+# Interface assumption: `run-gate.sh status-row [<envelope.json>|-]`, matching
+# the `normalize`/`reconcile`/`route` subcommands' own positional-file-or-stdin
+# convention. If `status-row` does not exist yet, or emits a different shape,
+# this suite should read as RED (missing subcommand / wrong shape), not a
+# silent false pass -- a parallel implementer is landing it in this same phase.
+#
+# Exit codes: 0 all assertions pass, 1 any assertion fails.
+
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+RUN_GATE="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh"
+export CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/skein"
+
+pass_count=0
+fail_count=0
+
+pass() {
+	echo "PASS: $1"
+	pass_count=$((pass_count + 1))
+}
+
+fail() {
+	echo "FAIL: $1"
+	fail_count=$((fail_count + 1))
+}
+
+if [[ ! -x "$RUN_GATE" ]]; then
+	fail "run-gate.sh missing or not executable: $RUN_GATE"
+	echo ""
+	echo "Results: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+if ! command -v jq >/dev/null 2>&1; then
+	fail "jq is required to run this test"
+	echo ""
+	echo "Results: $pass_count passed, $fail_count failed"
+	exit 1
+fi
+
+WORKDIR="$(mktemp -d)"
+cleanup() { rm -rf "$WORKDIR"; }
+trap cleanup EXIT
+
+assert_contains() {
+	local haystack="$1" needle="$2" label="$3"
+	if [[ "$haystack" == *"$needle"* ]]; then
+		pass "$label"
+	else
+		fail "$label (expected to find '$needle' in: $haystack)"
+	fi
+}
+
+assert_not_contains() {
+	local haystack="$1" needle="$2" label="$3"
+	if [[ "$haystack" != *"$needle"* ]]; then
+		pass "$label"
+	else
+		fail "$label (did not expect to find '$needle' in: $haystack)"
+	fi
+}
+
+assert_eq() {
+	local actual="$1" expected="$2" label="$3"
+	if [[ "$actual" == "$expected" ]]; then
+		pass "$label"
+	else
+		fail "$label (expected '$expected', got '$actual')"
+	fi
+}
+
+# --- 1. Clean envelope: populated duration_s, `-` degraded_reason --------
+
+clean_envelope="$WORKDIR/clean.json"
+cat >"$clean_envelope" <<'EOF'
+{
+  "gate": "code-review",
+  "status": "approve",
+  "findings": [
+    {"file": "a.py", "line": 10, "category": "correctness", "severity": "high",
+     "confidence": 0.9, "summary": "off-by-one", "evidence": "loop bound"},
+    {"file": "b.py", "line": 3, "category": "style", "severity": "low",
+     "confidence": 0.5, "summary": "typo", "evidence": "teh"}
+  ],
+  "notes": null,
+  "duration_s": 42,
+  "degraded_reason": null
+}
+EOF
+
+clean_row="$WORKDIR/clean-row.out"
+clean_rc=0
+"$RUN_GATE" status-row "$clean_envelope" >"$clean_row" 2>/dev/null || clean_rc=$?
+clean_row_text="$(cat "$clean_row")"
+
+if [[ "$clean_rc" -eq 0 ]]; then
+	pass "status-row on a clean envelope exits 0"
+else
+	fail "status-row on a clean envelope exits 0 (got $clean_rc)"
+fi
+
+line_count="$(grep -c '^' "$clean_row" 2>/dev/null || echo 0)"
+if [[ "$line_count" -eq 1 ]]; then
+	pass "status-row emits exactly one table row (one line)"
+else
+	fail "status-row emits exactly one table row (got $line_count lines: $clean_row_text)"
+fi
+
+assert_contains "$clean_row_text" "code-review" "clean envelope row: includes the gate name"
+assert_contains "$clean_row_text" "approve" "clean envelope row: includes the status"
+assert_contains "$clean_row_text" "42" "clean envelope row: includes the populated duration_s (42)"
+assert_contains "$clean_row_text" "2" "clean envelope row: includes the findings count (2)"
+
+# degraded_reason must render as literal '-', not "null" and not empty-string.
+assert_not_contains "$clean_row_text" "null" "clean envelope row: does not render the raw JSON token 'null' anywhere"
+if [[ "$clean_row_text" == *"-"* ]]; then
+	pass "clean envelope row: renders '-' for the null degraded_reason"
+else
+	fail "clean envelope row: renders '-' for the null degraded_reason (got: $clean_row_text)"
+fi
+
+# --- 2. DEGRADED envelope: status skipped, degraded_reason populated,
+#        findings rendered as `-`/0 ------------------------------------------
+# Shape matches gate-bounded.sh's own expiry envelope verbatim.
+
+degraded_envelope="$WORKDIR/degraded.json"
+cat >"$degraded_envelope" <<'EOF'
+{
+  "status": "skipped",
+  "notes": "DEGRADED: timeout after 1200s",
+  "findings": [],
+  "gate": null,
+  "duration_s": 1200,
+  "degraded_reason": "DEGRADED: timeout after 1200s"
+}
+EOF
+
+degraded_row="$WORKDIR/degraded-row.out"
+degraded_rc=0
+"$RUN_GATE" status-row "$degraded_envelope" >"$degraded_row" 2>/dev/null || degraded_rc=$?
+degraded_row_text="$(cat "$degraded_row")"
+
+if [[ "$degraded_rc" -eq 0 ]]; then
+	pass "status-row on a DEGRADED envelope exits 0 (a degraded row is still a valid row, not a script error)"
+else
+	fail "status-row on a DEGRADED envelope exits 0 (got $degraded_rc)"
+fi
+
+degraded_line_count="$(grep -c '^' "$degraded_row" 2>/dev/null || echo 0)"
+assert_contains "$degraded_row_text" "skipped" "DEGRADED envelope row: includes status=skipped"
+assert_contains "$degraded_row_text" "1200" "DEGRADED envelope row: includes the populated duration_s (1200)"
+assert_contains "$degraded_row_text" "DEGRADED" "DEGRADED envelope row: includes the populated degraded_reason"
+
+if [[ "$degraded_row_text" == *"-"* || "$degraded_row_text" == *"0"* ]]; then
+	pass "DEGRADED envelope row: findings render as '-' or '0' (empty findings array)"
+else
+	fail "DEGRADED envelope row: findings render as '-' or '0' (got: $degraded_row_text)"
+fi
+if [[ "$degraded_line_count" -eq 1 ]]; then
+	pass "DEGRADED envelope row is still exactly one line"
+else
+	fail "DEGRADED envelope row is still exactly one line (got $degraded_line_count)"
+fi
+
+# --- 3. Null fields render as `-` when tested directly (not only via the
+#        gate-bounded.sh-shaped DEGRADED case above) -----------------------
+
+nullfields_envelope="$WORKDIR/nullfields.json"
+cat >"$nullfields_envelope" <<'EOF'
+{
+  "gate": "security-review",
+  "status": "approve",
+  "findings": [],
+  "notes": null,
+  "duration_s": null,
+  "degraded_reason": null
+}
+EOF
+
+nullfields_row="$WORKDIR/nullfields-row.out"
+nullfields_rc=0
+"$RUN_GATE" status-row "$nullfields_envelope" >"$nullfields_row" 2>/dev/null || nullfields_rc=$?
+nullfields_row_text="$(cat "$nullfields_row")"
+
+assert_eq_rc() {
+	local rc="$1"
+	if [[ "$rc" -eq 0 ]]; then
+		pass "status-row on an envelope with null duration_s/degraded_reason exits 0"
+	else
+		fail "status-row on an envelope with null duration_s/degraded_reason exits 0 (got $rc)"
+	fi
+}
+assert_eq_rc "$nullfields_rc"
+
+assert_not_contains "$nullfields_row_text" "null" "null-fields row: never renders the raw JSON token 'null'"
+assert_contains "$nullfields_row_text" "security-review" "null-fields row: still includes the gate name"
+if [[ "$nullfields_row_text" == *"-"* ]]; then
+	pass "null-fields row: renders '-' for null duration_s and/or degraded_reason"
+else
+	fail "null-fields row: renders '-' for null duration_s and/or degraded_reason (got: $nullfields_row_text)"
+fi
+
+# --- 4. F4: zero-byte / missing / non-object envelope -> one all-'-' row,
+#        status=error, exit 0. The row must always be emitted (row-count ==
+#        slot-count invariant) -- never nothing, never a non-zero exit. -----
+
+assert_error_fallback_row() {
+	local label="$1" invoke_desc="$2"
+	shift 2
+	local row_file="$WORKDIR/$label-row.out"
+	local rc=0
+	"$@" >"$row_file" 2>/dev/null || rc=$?
+	local row_text
+	row_text="$(cat "$row_file")"
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$label ($invoke_desc): exits 0"
+	else
+		fail "$label ($invoke_desc): exits 0 (got $rc)"
+	fi
+
+	local line_count
+	line_count="$(grep -c '^' "$row_file" 2>/dev/null || echo 0)"
+	if [[ "$line_count" -eq 1 ]]; then
+		pass "$label ($invoke_desc): emits exactly one row"
+	else
+		fail "$label ($invoke_desc): emits exactly one row (got $line_count lines: $row_text)"
+	fi
+
+	local col_count
+	col_count="$(awk -F'\t' '{print NF}' "$row_file" 2>/dev/null | head -1)"
+	if [[ "$col_count" -eq 5 ]]; then
+		pass "$label ($invoke_desc): row has 5 tab-separated columns"
+	else
+		fail "$label ($invoke_desc): row has 5 tab-separated columns (got $col_count: $row_text)"
+	fi
+
+	local status_col
+	status_col="$(awk -F'\t' '{print $2}' "$row_file" 2>/dev/null)"
+	assert_eq "$status_col" "error" "$label ($invoke_desc): status column is 'error'"
+}
+
+# 4a. Zero-byte envelope file.
+zero_byte_envelope="$WORKDIR/zero-byte.json"
+: >"$zero_byte_envelope"
+assert_error_fallback_row "zero-byte-envelope" "on-disk empty file" \
+	"$RUN_GATE" status-row "$zero_byte_envelope"
+
+zero_byte_row="$WORKDIR/zero-byte-envelope-row.out"
+"$RUN_GATE" status-row "$zero_byte_envelope" >"$zero_byte_row" 2>/dev/null || true
+zero_byte_row_text="$(cat "$zero_byte_row")"
+assert_contains "$zero_byte_row_text" "envelope missing or unreadable" \
+	"zero-byte envelope row: degraded_reason column explains the fallback"
+all_dash_count="$(awk -F'\t' '{n=0; for(i=1;i<=NF;i++) if ($i=="-") n++; print n}' "$zero_byte_row")"
+assert_eq "$all_dash_count" "3" "zero-byte envelope row: gate/duration_s/findings render '-' (status is 'error', degraded_reason carries the explanatory text)"
+
+# 4b. Non-existent path.
+nonexistent_envelope="$WORKDIR/does-not-exist.json"
+rm -f "$nonexistent_envelope"
+assert_error_fallback_row "nonexistent-path" "path does not exist on disk" \
+	"$RUN_GATE" status-row "$nonexistent_envelope"
+
+# 4c. Non-object payload ([]).
+nonobject_envelope="$WORKDIR/nonobject.json"
+printf '[]' >"$nonobject_envelope"
+assert_error_fallback_row "non-object-payload" "valid JSON but not an object ([])" \
+	"$RUN_GATE" status-row "$nonobject_envelope"
+
+# 4d. --gate <name> populates column 1 on the fallback row.
+gate_flag_row="$WORKDIR/gate-flag-row.out"
+"$RUN_GATE" status-row --gate codex-adversarial "$zero_byte_envelope" >"$gate_flag_row" 2>/dev/null || true
+gate_flag_row_text="$(cat "$gate_flag_row")"
+gate_col="$(awk -F'\t' '{print $1}' "$gate_flag_row")"
+assert_eq "$gate_col" "codex-adversarial" "F5: --gate codex-adversarial populates column 1 (gate) on the fallback row"
+assert_contains "$gate_flag_row_text" "error" "F5: --gate on a fallback row still reports status=error"
+
+
+# --- 5. Non-scalar field values still yield exactly one row, rc=0 --------
+#
+# r2 finding #8: the F4 fallback guards only `type == "object"`, so an
+# OBJECT envelope carrying a non-scalar `.status` / `.degraded_reason` /
+# `.gate` fell through to `@tsv`, which errors on a non-scalar column. Under
+# `set -euo pipefail` that killed the subcommand: rc != 0 and NO ROW — the
+# gate silently vanished from the operator's table, which is exactly what the
+# F4 fallback exists to prevent.
+#
+# Invariant, old -> new: "exactly one row, exit 0" held only for
+# scalar-valued envelopes; it must hold for ANY JSON object.
+
+# run_status_row <label> <envelope> -- run the subcommand, assert rc=0 and
+# exactly one row, and leave that row in the global NONSCALAR_ROW. Output is
+# NOT captured by the caller (pass/fail must run in this shell so the
+# counters survive).
+NONSCALAR_ROW=""
+run_status_row() {
+	local label="$1" envelope_path="$2"
+	local out_file="$WORKDIR/nonscalar-$label.out"
+	local err_file="$WORKDIR/nonscalar-$label.err"
+	local rc=0
+	"$RUN_GATE" status-row "$envelope_path" >"$out_file" 2>"$err_file" || rc=$?
+	local row_count
+	row_count="$(wc -l <"$out_file" | tr -d ' ')"
+	NONSCALAR_ROW="$(head -1 "$out_file")"
+	if [[ $rc -ne 0 ]]; then
+		fail "F6: non-scalar $label must not exit non-zero (got rc=$rc; stderr: $(tr '\n' ' ' <"$err_file"))"
+	elif [[ "$row_count" != "1" ]]; then
+		fail "F6: non-scalar $label must emit exactly one row (got $row_count)"
+	else
+		pass "F6: non-scalar $label emits exactly one row and exits 0"
+	fi
+}
+
+# col <n> -- print field <n> of NONSCALAR_ROW
+col() { printf '%s' "$NONSCALAR_ROW" | awk -F'\t' -v n="$1" '{print $n}'; }
+
+nonscalar_status="$WORKDIR/nonscalar-status.json"
+cat >"$nonscalar_status" <<'EOF'
+{"gate":"deep-review","status":{"a":1},"findings":[],"notes":null,
+ "duration_s":7,"degraded_reason":null}
+EOF
+run_status_row status "$nonscalar_status"
+assert_eq "$(col 2)" "error" "F6: a non-scalar status renders column 2 as 'error'"
+assert_contains "$(col 5)" "malformed envelope" \
+	"F6: a non-scalar status names itself in the degraded_reason column"
+
+nonscalar_reason="$WORKDIR/nonscalar-reason.json"
+cat >"$nonscalar_reason" <<'EOF'
+{"gate":"security-review","status":"degraded","findings":[],"notes":null,
+ "duration_s":3,"degraded_reason":["timeout","killed"]}
+EOF
+run_status_row degraded_reason "$nonscalar_reason"
+assert_eq "$(col 2)" "degraded" \
+	"F6: a scalar status survives even when degraded_reason is non-scalar"
+assert_eq "$(col 5)" "-" \
+	"F6: a non-scalar degraded_reason renders column 5 as '-', never a raw token"
+
+nonscalar_gate="$WORKDIR/nonscalar-gate.json"
+cat >"$nonscalar_gate" <<'EOF'
+{"gate":{"name":"x"},"status":"approve","findings":[],"notes":null,
+ "duration_s":1,"degraded_reason":null}
+EOF
+run_status_row gate "$nonscalar_gate"
+assert_eq "$(col 1)" "-" "F6: a non-scalar gate renders column 1 as '-'"
+
+nonscalar_duration="$WORKDIR/nonscalar-duration.json"
+cat >"$nonscalar_duration" <<'EOF'
+{"gate":"deep-review","status":"approve","findings":[],"notes":null,
+ "duration_s":{"s":9},"degraded_reason":null}
+EOF
+run_status_row duration_s "$nonscalar_duration"
+assert_eq "$(col 3)" "-" "F6: a non-scalar duration_s renders column 3 as '-'"
+# A13 (Codex addendum): scalar_or($d) is applied PER COLUMN, so a non-scalar
+# duration_s must degrade only its own column -- the surrounding scalar
+# columns still render their real values and the row is still a status row.
+assert_eq "$(col 1)" "deep-review" \
+	"A13: a non-scalar duration_s leaves the gate column intact (per-column degradation)"
+assert_eq "$(col 2)" "approve" \
+	"A13: a non-scalar duration_s leaves the status column intact (per-column degradation)"
+
+echo ""
+echo "Results: $pass_count passed, $fail_count failed"
+
+if [[ "$fail_count" -gt 0 ]]; then
+	exit 1
+fi
+
+exit 0

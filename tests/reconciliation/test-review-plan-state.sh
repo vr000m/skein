@@ -637,6 +637,45 @@ EOF
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# (R8-G4b) a duplicated TOP-LEVEL envelope key must be refused, not persisted.
+#
+# The other STATE-FILE caller of the duplicate-key wire rule (round 8, F7): the
+# helper was registered for all four persist-common.sh callers in round 7 and
+# wired into only the two LENS ones, so an externally supplied envelope
+# spelling a key twice silently lost the earlier assignment on the way in.
+# ---------------------------------------------------------------------------
+
+case_r8g4b_dir="$TMPDIR_ROOT/case-r8g4b"
+make_scratch_repo "$case_r8g4b_dir"
+cat >"$case_r8g4b_dir/envelope.json" <<'JSON'
+{
+  "schema_version": 2,
+  "summary": {"raw": 1, "merged": 0, "unique": 1, "related": 0, "dropped": 0},
+  "findings": [],
+  "findings": [{"severity": "Minor", "category": "naming", "file": "src/foo.py", "line": 12, "lenses": ["logic"], "summary": "s", "evidence": "e", "suggestion": "x"}],
+  "related": []
+}
+JSON
+
+if (
+	cd "$case_r8g4b_dir" && persist_state "$case_r8g4b_dir/envelope.json" \
+		"docs/dev_plans/example-plan.md" \
+		"deadbeefcafebabe0000000000000000000000" \
+		"20260714-000009" \
+		"claude"
+) >"$case_r8g4b_dir/stdout" 2>"$case_r8g4b_dir/stderr"; then
+	fail "(R8-G4b) a duplicated envelope key must exit 2 (script exited 0 and persisted)"
+else
+	r8g4b_err="$(cat "$case_r8g4b_dir/stderr")"
+	if [[ "$r8g4b_err" == *"duplicate key"* && "$r8g4b_err" == *"findings"* ]] &&
+		[[ ! -f "$case_r8g4b_dir/.review-plan/latest-claude.json" ]]; then
+		pass "(R8-G4b) a duplicated top-level envelope key exits 2, names the key, and persists nothing"
+	else
+		fail "(R8-G4b) err='$r8g4b_err' target-exists=$([[ -f "$case_r8g4b_dir/.review-plan/latest-claude.json" ]] && echo yes || echo no)"
+	fi
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 

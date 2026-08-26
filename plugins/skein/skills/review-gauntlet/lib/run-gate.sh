@@ -38,6 +38,26 @@
 #       reconcile-findings.sh, called without --skill. Emits the reconciled
 #       v2 envelope JSON on stdout.
 #
+#   run-gate.sh status-row [--gate <name>] [<envelope.json>|-]
+#       Reads one gate's ENVELOPE (the object `gate_run_bounded`/lib/
+#       gate-bounded.sh writes on every exit path: {status, notes, findings,
+#       gate, duration_s, degraded_reason} — NOT the raw tool-out) and emits
+#       exactly one tab-separated table row on stdout: `gate <TAB> status
+#       <TAB> duration_s <TAB> findings <TAB> degraded_reason`. `findings` is
+#       the length of the envelope's `.findings` array. `duration_s` and
+#       `degraded_reason` render as the literal `-` when null/absent — never
+#       the raw JSON token `null`, never empty. This is the ONLY thing that
+#       builds a gate-status row (SKILL.md only says where to print rows it
+#       gets by calling this — see R7 in the dev plan).
+#
+#       A zero-byte, missing, unreadable, or non-object envelope payload
+#       (e.g. `[]`) does NOT abort or emit nothing: it emits one all-`-` row
+#       with `status` = `error` and exits 0, so the gate still accounts for
+#       itself in the operator's table (row-count == slot-count is a
+#       SKILL.md-asserted invariant this subcommand exists to guarantee).
+#       Optional `--gate <name>` replaces column 1 on BOTH the normal and the
+#       fallback row, so even a zero-byte envelope can still name its slot.
+#
 #   run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
 #       Re-attaches any cached auto_fix proposal to each reconciled finding
 #       by matching (file, line, category), runs the bundled
@@ -71,21 +91,37 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh disable=SC1091
 . "$SCRIPT_DIR/gauntlet-common.sh"
+# shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
+. "$SCRIPT_DIR/state-path-guard.sh"
 
 usage() {
 	cat >&2 <<'EOF'
 usage: run-gate.sh normalize --gate <name> --autofix-cache <path> [<raw.json>|-]
        run-gate.sh reconcile [<pooled-findings.jsonl>|-]
        run-gate.sh route --autofix-cache <path> [<reconciled-envelope.json>|-]
+       run-gate.sh status-row [--gate <name>] [<envelope.json>|-]
 EOF
 }
 
 read_input() {
 	# Read the trailing positional (file path or "-"/absent for stdin).
+	#
+	# A NAMED PATH HERE IS A `.gauntlet/` STATE PATH (round 8, F3) — SKILL.md
+	# composes it from the same `$gate_out_dir` as --autofix-cache — and it is
+	# the file the `auto_fix` blocks ORIGINATE in (`normalize` strips them into
+	# the cache; `route` re-attaches them). Guarding the flag and not the
+	# positional was the same asymmetry round 7's F9 closed one hop
+	# downstream. The guard lives at the SINGLE open, not per subcommand, so a
+	# new subcommand cannot inherit an unguarded read. `-` is stdin: no path,
+	# nothing to guard.
+	#
+	# NEVER exits: `cmd_status_row` must still emit exactly one row (F4), so a
+	# refusal has to come back as a return status its caller can absorb.
 	local path="${1:--}"
 	if [[ "$path" == "-" ]]; then
 		cat
 	else
+		gauntlet_assert_no_symlink "$path" run-gate || return 1
 		cat "$path"
 	fi
 }
@@ -125,15 +161,51 @@ cmd_normalize() {
 		usage
 		exit 2
 	fi
+	# Same state tree, same containment policy (round 6, G1 sweep). SKILL.md
+	# composes --autofix-cache from the very `$gate_out_dir` gate_run_bounded
+	# writes its envelope into, and this command CREATES that file
+	# (`printf '' >"$cache"`) and later APPENDS to it — so it is a state-tree
+	# writer with exactly the exposure gate-bounded.sh has, and had no guard
+	# at all. It sits here: after the flags are known to be present (so it is
+	# not guarding a guess) and before the first filesystem effect.
+	gauntlet_assert_no_symlink "$cache" run-gate || exit 2
 	gc_have_jq
 
-	local raw status
-	raw="$(read_input "$input_path")"
+	local raw status duration_s degraded_reason
+	raw="$(read_input "$input_path")" || exit 2
 	status="$(printf '%s' "$raw" | jq -r '.status // empty')"
 	if [[ -z "$status" ]]; then
 		echo "run-gate normalize: gate '$gate' raw output missing .status" >&2
 		exit 2
 	fi
+	# R11/F16: the status ALPHABET is validated here, beside the presence
+	# check, not in the `case` after the findings loop.
+	#
+	# INVARIANT. Old: partial emission was documented for exit 4 only, but an
+	# unrecognised status also exited 2 from the trailing `case` — AFTER the
+	# loop had streamed findings to stdout and appended auto_fix entries to
+	# the cache, leaving a half-populated cache that `route` later reads.
+	# New: exit 2 (validation) has no side effects; only exit 4 does. Every
+	# exit-2 arm in this command now precedes the cache creation at
+	# `[[ -e "$cache" ]] || printf ''` below.
+	#
+	# The trailing `case` keeps only the clean/not-clean split, which is a
+	# post-emission REPORT (it needs duration_s/degraded_reason and the
+	# findings already emitted), not a validation.
+	case "$status" in
+	approve | needs-attention | error | skipped | deferred) ;;
+	*)
+		echo "run-gate normalize: gate '$gate' returned unrecognised status '$status'" >&2
+		exit 2
+		;;
+	esac
+	# gate_run_bounded (lib/gate-bounded.sh) stamps every envelope it
+	# writes with optional duration_s/degraded_reason — surface them here
+	# as a stderr note alongside the non-clean-status report below. stdout
+	# stays per-finding JSONL only; status-row (Phase 3) reads the
+	# envelope directly for the tabular form.
+	duration_s="$(printf '%s' "$raw" | jq -r '.duration_s // empty')"
+	degraded_reason="$(printf '%s' "$raw" | jq -r '.degraded_reason // empty')"
 
 	[[ -e "$cache" ]] || printf '' >"$cache"
 
@@ -154,15 +226,16 @@ cmd_normalize() {
 		fi
 	done
 
+	# Status is already known to be in the alphabet (validated above, before
+	# any side effect), so this is a two-way split with no error arm.
 	case "$status" in
 	approve | needs-attention) exit 0 ;;
-	error | skipped | deferred)
-		echo "run-gate normalize: gate '$gate' returned status=$status — not a clean pass, do not count toward convergence" >&2
-		exit 4
-		;;
 	*)
-		echo "run-gate normalize: gate '$gate' returned unrecognised status '$status'" >&2
-		exit 2
+		echo "run-gate normalize: gate '$gate' returned status=$status — not a clean pass, do not count toward convergence" >&2
+		if [[ -n "$duration_s" || -n "$degraded_reason" ]]; then
+			echo "run-gate normalize: gate '$gate' duration_s=${duration_s:-unknown} degraded_reason=${degraded_reason:-none}" >&2
+		fi
+		exit 4
 		;;
 	esac
 }
@@ -187,7 +260,18 @@ cmd_reconcile() {
 	# review-plan, and findings reaching this point are already
 	# auto_fix-free (stripped in `normalize`), so the reconciler never
 	# requires --skill here.
-	read_input "$input_path" | "$reconciler"
+	# Captured, not piped: a pipeline swallows read_input's status, so a
+	# refused (symlinked) envelope path would reconcile an empty stream and
+	# exit 0 (round 8, F3).
+	local pooled
+	pooled="$(read_input "$input_path")" || exit 2
+	if [[ -n "$pooled" ]]; then
+		# Re-terminate: command substitution stripped the trailing
+		# newline the reconciler's line reader needs on the last record.
+		printf '%s\n' "$pooled" | "$reconciler"
+	else
+		printf '' | "$reconciler"
+	fi
 }
 
 cmd_route() {
@@ -217,10 +301,31 @@ cmd_route() {
 		usage
 		exit 2
 	fi
+	# Round 7, F9: same state tree, same policy — and a READ is guarded too,
+	# because this file's content becomes `.auto_fix` proposals below, which
+	# apply-auto-fix-code.sh later applies to the working tree. An
+	# attacker-planted symlink at the cache path would otherwise feed chosen
+	# JSON into the auto-fix stream. `cmd_normalize` guards the same flag,
+	# composed from the same `$gate_out_dir`; guarding one and not the other
+	# was the whole defect.
+	gauntlet_assert_no_symlink "$cache" run-gate || exit 2
 	gc_have_jq
 
 	local reconciled cache_jsonl
-	reconciled="$(read_input "$input_path")"
+	reconciled="$(read_input "$input_path")" || exit 2
+	# R11/F17: shape-gate the reconciled envelope before it reaches
+	# `jq -n --argjson reconciled` below. `--argjson` on empty or non-JSON
+	# input fails inside jq, so the operator saw a raw
+	# `jq: Invalid JSON text passed to --argjson` with no indication of which
+	# run-gate command or which input produced it. `cmd_normalize` (:177) and
+	# `cmd_reconcile` (:249) already validate their input; `cmd_status_row`
+	# (:434) already uses exactly this `[[ -z ]] || ! jq -e 'type == "object"'`
+	# idiom. Route was the one reader with neither. Same exit-2 usage class,
+	# same `run-gate:`-prefixed diagnostic as its siblings.
+	if [[ -z "$reconciled" ]] || ! printf '%s' "$reconciled" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		echo "run-gate route: reconciled input is empty or not a JSON object" >&2
+		exit 2
+	fi
 	if [[ -e "$cache" ]]; then
 		cache_jsonl="$(cat "$cache")"
 	else
@@ -298,6 +403,85 @@ cmd_route() {
 	'
 }
 
+cmd_status_row() {
+	local input_path="-" gate=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--gate)
+			shift
+			[[ $# -gt 0 ]] || {
+				usage
+				exit 2
+			}
+			gate="$1"
+			;;
+		--help | -h)
+			usage
+			exit 0
+			;;
+		*)
+			input_path="$1"
+			;;
+		esac
+		shift
+	done
+	gc_have_jq
+
+	local envelope
+	# `|| true` (NOT `2>/dev/null || true`) — round 9, F11. The STATUS must
+	# be absorbed so F4 still holds: a refused or unreadable envelope prints
+	# exactly one `error` row and exits 0, so the slot never vanishes from
+	# the operator's table. The DIAGNOSTIC must not be: a symlink refusal
+	# from read_input's guard is the one condition an operator has to act on,
+	# and swallowing it rendered it identically to "the gate produced
+	# nothing". A missing-file `cat` error now also reaches stderr, naming
+	# the path the generic row cannot.
+	envelope="$(read_input "$input_path" || true)"
+
+	# F4: a zero-byte, missing/unreadable, or non-object envelope (including
+	# valid-but-wrong-shape JSON like `[]`) must still produce exactly one
+	# row — never nothing, never a non-zero exit — so the gate never
+	# vanishes from the operator's table. `--gate <name>`, when supplied,
+	# names the slot even on this fallback row.
+	if [[ -z "$envelope" ]] || ! printf '%s' "$envelope" | jq -e 'type == "object"' >/dev/null 2>&1; then
+		local gate_col="${gate:--}"
+		printf '%s\t%s\t%s\t%s\t%s\n' "$gate_col" "error" "-" "-" "envelope missing or unreadable"
+		return 0
+	fi
+
+	# `//"-"` covers both an absent key and an explicit JSON null — the one
+	# rendering rule this subcommand exists to guarantee: the raw token
+	# "null" must never appear in a printed row, and neither may an empty
+	# field silently stand in for "no value here". `scalar_or` extends the
+	# same guarantee to a non-scalar value (see F6 below). `--gate <name>`,
+	# when supplied, overrides column 1 (the orchestrator is authoritative on
+	# slot identity — same argument as gate_run_bounded's --gate).
+	printf '%s' "$envelope" | jq -r --arg gate_override "$gate" '
+		# F6: @tsv ERRORS on a non-scalar column, and under `set -euo
+		# pipefail` that error killed the subcommand -- rc != 0 and NO ROW,
+		# the exact disappearance the F4 fallback above exists to prevent.
+		# An envelope may be an object and still carry a non-scalar field
+		# (SKILL.md has the conductor hand-build the gate-2/gate-3
+		# envelopes), so every column is rendered total: a non-scalar value
+		# degrades to the column default instead of aborting the row.
+		def scalar_or($d):
+			if type == "string" or type == "number" or type == "boolean"
+			then tostring
+			else $d
+			end;
+		((.status // "-") | scalar_or(null)) as $status
+		| [
+			(if ($gate_override | length) > 0 then $gate_override
+			 else ((.gate // "-") | scalar_or("-")) end),
+			($status // "error"),
+			((.duration_s // "-") | scalar_or("-")),
+			(if (.findings | type) == "array" then (.findings | length | tostring) else "-" end),
+			(if $status == null then "malformed envelope: non-scalar status"
+			 else ((.degraded_reason // "-") | scalar_or("-")) end)
+		] | @tsv
+	'
+}
+
 if [[ $# -eq 0 ]]; then
 	usage
 	exit 2
@@ -309,6 +493,7 @@ case "$subcommand" in
 normalize) cmd_normalize "$@" ;;
 reconcile) cmd_reconcile "$@" ;;
 route) cmd_route "$@" ;;
+status-row) cmd_status_row "$@" ;;
 --help | -h)
 	usage
 	exit 0

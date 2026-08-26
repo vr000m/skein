@@ -1,9 +1,38 @@
 #!/usr/bin/env bash
-# auto-fix-common.sh — shared helpers for the deep-review and review-plan
-# auto-fix appliers (`scripts/apply-auto-fix-code.sh`,
-# `scripts/apply-auto-fix-plan.sh`).
+# auto-fix-common.sh — shared helpers for the auto-fix appliers AND for the
+# persistence scripts that reuse its root-anchor and symlink guard.
 #
-# Source this file from an applier; it does not run on its own.
+# SEVEN callers, not two (G8). Keep this list exact; `grep -rn '\.
+# .*auto-fix-common.sh"' scripts/*.sh` must return exactly these:
+#
+#   AUTO-FIX callers — the allowlist/manifest pipeline this file was
+#   written for:
+#     scripts/apply-auto-fix-code.sh
+#     scripts/apply-auto-fix-plan.sh
+#     scripts/audit-auto-fix-eligibility.sh
+#   STATE-FILE callers — source it for af_assert_no_symlink, which
+#   persist_atomic_write delegates to, and for af_manifest_dir:
+#     scripts/persist-review-state.sh
+#     scripts/persist-deep-review-state.sh
+#   LENS callers — Phase 2's disk-first streamed lens results; they source
+#   it for af_common_root / af_assert_no_symlink only, never for the
+#   allowlist helpers:
+#     scripts/persist-lens-result.sh
+#     scripts/collect-lens-results.sh
+#
+# Which helpers belong to whom:
+#   - af_assert_no_symlink  — the only helper ALL of the non-auto-fix
+#     callers want. The two LENS callers source this file for it and for
+#     nothing else.
+#   - $AF_COMMON_ROOT       — the AUTO-FIX and STATE-FILE callers (five).
+#     The LENS callers take their root from an explicit --root instead.
+#   - af_have_jq            — the two appliers.
+#   - af_manifest_dir       — the two STATE-FILE callers.
+#   - af_allowlist_* and the rest of the plan/code applier helpers —
+#     AUTO-FIX callers only. See the "SKILL->STATE-DIR MAPPING (4 sites)"
+#     block below for the four places a new skill must be registered.
+#
+# Source this file from a caller; it does not run on its own.
 #
 # Helpers provided:
 #   af_have_jq                 — exit 2 if jq is missing.
@@ -80,6 +109,18 @@ af_assert_no_symlink() {
 	# appliers omit the bound: their writes go via `git hash-object -w` which
 	# dereferences anywhere along the path, so they prefer the stricter walk.
 	local root="${2:-}"
+	# Normalise the spelling ONCE, before any test (round 9, F1/F2 — the same
+	# defect as gauntlet_assert_no_symlink's). `[[ -L "$p/" ]]` is ALWAYS
+	# false (a trailing slash forces bash to resolve the symlink), and a `//`
+	# run makes `${p%/*}` strip an EMPTY component. Unlike the gauntlet guard
+	# this one must NOT absolutise: resolve_path rejects absolute paths
+	# upstream, so relative spellings are the normal input here.
+	if [[ -z "$path" ]]; then
+		echo "auto-fix: refusing an empty path" >&2
+		return 6
+	fi
+	while [[ "$path" == *//* ]]; do path="${path//\/\///}"; done
+	while [[ "$path" == */ && "$path" != "/" ]]; do path="${path%/}"; done
 	if [[ -L "$path" ]]; then
 		echo "auto-fix: refusing to operate on symlink: $path" >&2
 		return 6
@@ -89,8 +130,14 @@ af_assert_no_symlink() {
 		root_canon="$(cd "$root" 2>/dev/null && pwd -P)" || root_canon=""
 	fi
 	# A symlinked parent dir is equally dangerous — git hash-object dereferences.
-	local parent parent_canon
-	parent="$(dirname "$path")"
+	local parent parent_canon next
+	# `${p%/*}` REPLACES `dirname` (round 9, F3): `dirname` is a PATH lookup,
+	# and a shadowing `dirname` that answers `/` collapses this walk. The
+	# `!= "$path"` arm is what makes it correct on the RELATIVE alphabet:
+	# `${p%/*}` on `foo` yields `foo`, where `dirname foo` is `.`.
+	parent="${path%/*}"
+	[[ "$parent" != "$path" ]] || parent="."
+	[[ -n "$parent" ]] || parent="/"
 	while [[ "$parent" != "/" && "$parent" != "." ]]; do
 		if [[ -L "$parent" ]]; then
 			echo "auto-fix: refusing to operate under symlinked parent: $parent" >&2
@@ -102,7 +149,11 @@ af_assert_no_symlink() {
 				break
 			fi
 		fi
-		parent="$(dirname "$parent")"
+		next="${parent%/*}"
+		[[ "$next" != "$parent" ]] || next="."
+		[[ -n "$next" ]] || next="/"
+		[[ "$next" != "$parent" ]] || break
+		parent="$next"
 	done
 	return 0
 }
@@ -179,6 +230,20 @@ af_commit_one() {
 	git rev-parse HEAD
 }
 
+# SKILL->STATE-DIR MAPPING (4 sites). The same skill -> state-directory mapping
+# (.deep-review for deep-review, .review-plan for review-plan) is spelled out in
+# FOUR places, deliberately NOT consolidated: they differ in root source
+# ($AF_COMMON_ROOT vs an explicit argument) and in failure exit code (2 vs
+# 1), so merging them would be a behaviour change at four call sites for no
+# functional gain. A NEW SKILL must therefore be registered in all four:
+#   scripts/lib/lens-common.sh         persist_lens_state_dir  (per-run lens attempt dirs)
+#   scripts/lib/auto-fix-common.sh     af_manifest_dir         (auto-fix manifests)
+#   scripts/persist-deep-review-state.sh  OUT_DIR
+#   scripts/persist-review-state.sh       OUT_DIR
+#
+# Guarded by tests/parity/test-state-dir-registration.sh (R11/F13): the four
+# sites must list an IDENTICAL skill set. The non-consolidation above is a
+# decision, not a licence to register a new skill in only three of them.
 af_manifest_dir() {
 	local skill="$1"
 	case "$skill" in

@@ -4,7 +4,7 @@
 # Usage:
 #   scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> \
 #       --base-commit <sha> --head-commit <sha> --diff-hash <sha> \
-#       --review-focus-hash <sha-or-empty> [lenses.json|-]
+#       --review-focus-hash <sha-or-empty> [--from-collector] [lenses.json|-]
 #
 # Reads the per-lens status/findings data the orchestrator assembles after
 # Step 2 completes (before Step 3.5's reconciliation) from the positional
@@ -20,6 +20,25 @@
 # pre-reconciliation per-lens data. Do not conflate the two schemas or their
 # scripts.
 #
+# --from-collector (Phase 2, disk-first streamed lens results): the
+# OPERATIVE input path. The orchestrator pipes `collect-lens-results.sh`
+# stdout directly into this script's stdin (positional argument, if any, is
+# ignored — --from-collector always reads stdin). This is a single
+# derivation path: disk attempt files -> collect-lens-results.sh ->
+# persist-deep-review-state.sh --from-collector -> `.lenses`, with no
+# second writer of the summary. Beyond the generic object-shape check
+# already performed below, --from-collector additionally requires every
+# top-level value to itself be an object carrying a `status` string field
+# (the collector's per-lens contract) — a clearer, earlier error than
+# discovering a malformed collector shape only when `--continue` later
+# tries to read `.lenses.<lens>.status`.
+#
+# The positional `lenses.json`/stdin input (no `--from-collector`) is
+# retained TEST-ONLY: existing tests construct the raw per-lens shape by
+# hand without running the collector. New callers should use
+# --from-collector; this script does not otherwise distinguish the two
+# input shapes beyond the extra check above.
+#
 # The only structural validation performed on the input is that it is valid
 # JSON and its top level is a JSON object (`type == "object"`). This script
 # does not enforce a fixed lens-name set or per-lens field shape — the
@@ -34,17 +53,29 @@
 # section:
 #
 #   {
-#     "schema_version": 1,
+#     "schema_version": 2,
 #     "run_id": "...", "base_commit": "...", "head_commit": "...",
 #     "diff_hash": "...", "review_focus_hash": "...",
 #     "lenses": <input>
 #   }
 #
-# `schema_version` is stamped by THIS script (always `1`) — unlike
+# `schema_version` is stamped by THIS script (always `2`) — unlike
 # persist-review-state.sh, which validates an already-stamped
 # `schema_version` from its upstream reconciler (`reconcile-findings.sh`),
 # nothing upstream of this script stamps a schema_version onto the raw
 # per-lens data, so this script owns it.
+#
+# v2 (R11/F1). v1 meant a per-lens object of
+# `{status, model, effort, reason, findings}` with a 3-value status enum.
+# The Phase-2 lens rework replaced that with
+# `{status, assigned, reviewed, unreviewed, findings}` and a 6-value enum
+# (completed|partial|timed_out|errored|skipped|missing) WITHOUT bumping the
+# version, so `schema_version == 1` briefly named two incompatible shapes.
+# A stale v1 file now fails deep-review SKILL.md's --continue compat gate and
+# falls back to --full, instead of being read as v2 and yielding lens objects
+# missing three keys. The version is asserted across the script and both
+# SKILL.md mirrors by tests/lenses/test-lens-skill-shape.sh (R11-F1), so the
+# NEXT shape change cannot skip the bump silently.
 #
 # `--review-focus-hash` accepts an empty string (`--review-focus-hash ""`)
 # for the common case where no plan file / `## Review Focus` section was
@@ -88,7 +119,7 @@ SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
+usage: scripts/persist-deep-review-state.sh [--from-collector] --harness claude|codex --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
 EOF
 }
 
@@ -100,6 +131,7 @@ DIFF_HASH=""
 REVIEW_FOCUS_HASH=""
 REVIEW_FOCUS_HASH_SET=0
 LENSES_PATH="-"
+FROM_COLLECTOR=0
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -133,6 +165,9 @@ while [[ $# -gt 0 ]]; do
 		persist_require_value "$@"
 		REVIEW_FOCUS_HASH="$1"
 		REVIEW_FOCUS_HASH_SET=1
+		;;
+	--from-collector)
+		FROM_COLLECTOR=1
 		;;
 	--help | -h)
 		usage
@@ -176,24 +211,63 @@ if ! command -v jq >/dev/null 2>&1; then
 	exit 2
 fi
 
-if [[ "$LENSES_PATH" == "-" ]]; then
+if [[ "$FROM_COLLECTOR" -eq 1 ]]; then
+	# --from-collector always reads stdin; a positional lenses.json is the
+	# test-only path and is ignored here (never silently mixed with a
+	# collector pipe).
 	input="$(cat)"
 else
-	if [[ ! -f "$LENSES_PATH" ]]; then
-		echo "persist-deep-review-state: lenses path '$LENSES_PATH' does not exist" >&2
-		exit 2
+	if [[ "$LENSES_PATH" == "-" ]]; then
+		input="$(cat)"
+	else
+		if [[ ! -f "$LENSES_PATH" ]]; then
+			echo "persist-deep-review-state: lenses path '$LENSES_PATH' does not exist" >&2
+			exit 2
+		fi
+		input="$(cat "$LENSES_PATH")"
 	fi
-	input="$(cat "$LENSES_PATH")"
 fi
 
 persist_validate_json_shape "$input" "persist-deep-review-state" "lenses input" " (one key per lens)" || exit 2
+# Duplicate-key rule, on the STATE-FILE side of the wire too (round 8, F7).
+# This payload is a per-lens KEYED object whose .lenses.<lens>.status entries
+# drive --continue resumption, so a hand-built lenses.json spelling one lens
+# twice would silently lose the earlier lens's status. Ordering is deliberate:
+# shape first (clearer message for a non-object), duplicates second, both over
+# the already-captured $input — never a second read (round 7, F7/F8).
+persist_assert_no_duplicate_keys "$input" "persist-deep-review-state" "lenses input" || exit 2
+
+if [[ "$FROM_COLLECTOR" -eq 1 ]]; then
+	# Collector contract: every top-level value must itself be an object
+	# carrying a "status" string field. This is a clearer, earlier error
+	# than discovering a malformed collector shape only when --continue
+	# later tries to read `.lenses.<lens>.status`.
+	if ! printf '%s' "$input" | jq -e 'all(.[]; type == "object" and (has("status")) and (.status | type == "string"))' >/dev/null 2>&1; then
+		echo "persist-deep-review-state: --from-collector input must have one object per lens, each with a string 'status' field (collector contract)" >&2
+		exit 2
+	fi
+fi
 
 ROOT_DIR="$(persist_root_dir)"
+# SKILL->STATE-DIR MAPPING (4 sites). The same skill -> state-directory mapping
+# (.deep-review for deep-review, .review-plan for review-plan) is spelled out in
+# FOUR places, deliberately NOT consolidated: they differ in root source
+# ($AF_COMMON_ROOT vs an explicit argument) and in failure exit code (2 vs
+# 1), so merging them would be a behaviour change at four call sites for no
+# functional gain. A NEW SKILL must therefore be registered in all four:
+#   scripts/lib/lens-common.sh         persist_lens_state_dir  (per-run lens attempt dirs)
+#   scripts/lib/auto-fix-common.sh     af_manifest_dir         (auto-fix manifests)
+#   scripts/persist-deep-review-state.sh  OUT_DIR
+#   scripts/persist-review-state.sh       OUT_DIR
+#
+# Guarded by tests/parity/test-state-dir-registration.sh (R11/F13): the four
+# sites must list an IDENTICAL skill set. The non-consolidation above is a
+# decision, not a licence to register a new skill in only three of them.
 OUT_DIR="$ROOT_DIR/.deep-review"
 OUT_PATH="$OUT_DIR/latest-$HARNESS.json"
 
 output="$(printf '%s' "$input" | jq \
-	--argjson schema_version 1 \
+	--argjson schema_version 2 \
 	--arg run_id "$RUN_ID" \
 	--arg base_commit "$BASE_COMMIT" \
 	--arg head_commit "$HEAD_COMMIT" \

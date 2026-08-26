@@ -11,6 +11,11 @@
 # deliberately excluded: it is the reference renderer (cited in prose, exercised
 # by tests/reconciliation/test-renderer.sh from the repo) and is never invoked
 # by an anchored "$SKILL_DIR"/scripts/... call, so it does not ship in the bundle.
+#
+# lens-budget.sh: canonical in scripts/, and BUNDLE_SHARED since Phase 2 (was
+# review-gauntlet-only via bundle_extra_for in Phase 1; promoted here once
+# deep-review and review-plan also invoke it for their per-lens budgets —
+# "bundled == operative" holds for all three skills again).
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_SHARED=(
 	reconcile-findings.sh
@@ -18,7 +23,22 @@ BUNDLE_SHARED=(
 	plan-scope-detect.sh
 	auto-fix-allowlist.json
 	lib/auto-fix-common.sh
+	lens-budget.sh
 )
+
+# The Phase 2 disk-first lens set, bundled into exactly the two skills that
+# spawn lens subagents. Deliberately NOT in BUNDLE_SHARED: review-gauntlet
+# spawns no lenses, so adding it there would ship three inoperative files into
+# its mirrors and break this file's `bundled == operative` rule (see the
+# BUNDLE_SHARED comment above and bundle_extra_for's review-gauntlet note
+# below). It is a named group rather than the same literals repeated in two
+# `bundle_extra_for` arms so that a new lens file is added ONCE, not twice
+# -- the two-arm duplication is exactly how a lens file would come to ship
+# into one skill and not the other. lib/lens-common.sh (R11/F3) is the first
+# file to arrive through that single edit; lib/persist-common.sh stays in the
+# group because lens-common.sh sources it.
+# shellcheck disable=SC2034  # consumed by sourcing scripts
+BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh)
 
 # Skills that receive a bundled pipeline.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
@@ -47,22 +67,64 @@ bundle_applier_for() {
 # different schema from review-plan's persist-review-state.sh — see each
 # script's header), so it ships only into deep-review's mirrors.
 # lib/persist-common.sh is sourced by both persist-*.sh scripts (root-anchor,
-# CLI required-value check, and guard+atomic-write helpers), so it ships
-# alongside each of them — never into review-gauntlet's mirrors, which bundle
-# neither persist script. Returns 0 with no output for review-gauntlet.
+# CLI required-value check, guard+atomic-write helpers, and the shared JSON
+# shape/duplicate-key validators), so it ships alongside each of them. Since
+# R11/F3 it no longer carries the Phase 2 lens path/charset/append helpers:
+# those live in lib/lens-common.sh, which sources it and ships with the two
+# lens scripts — which is why persist-common.sh reaches deep-review and
+# review-plan by BOTH routes. Neither file goes into review-gauntlet's
+# mirrors, which bundle no persist script and no lens script. review-gauntlet's gate 1 (Codex) invocation is wrapped in
+# `lens-budget.sh --kind codex` for its wall-clock budget (see
+# lib/gate-bounded.sh, an authored — not bundled — harness-neutral helper);
+# lens-budget.sh itself is canonical and now BUNDLE_SHARED (see above), so it
+# is no longer listed as a review-gauntlet-only extra here.
+#
+# persist-lens-result.sh (writer) and collect-lens-results.sh (reader) are
+# Phase 2's disk-first streamed lens results: canonical in scripts/, bundled
+# only into deep-review's and review-plan's mirrors (the two skills that spawn
+# lens subagents) — never review-gauntlet's, which spawns no lenses of its
+# own.
+#
+# finding-key.sh (Phase 3) and claimed-findings.sh (R11/F2): canonical in
+# scripts/, bundled only into review-gauntlet's mirrors via this function —
+# NOT BUNDLE_SHARED, since deep-review/review-plan have neither a
+# regression-key nor a CLAIM concept (they dedup on the reconciler's
+# line-anchored key only, and nothing in them promotes a finding into a
+# cumulative fixed set). finding-key.sh computes the ledger-owned regression
+# key the orchestrator feeds to convergence-ledger.sh's --present-keys/
+# --claimed-keys; see the script header for why it is deliberately distinct
+# from the reconciler's (file, line, category) dedup key. claimed-findings.sh
+# produces the finding objects that key list is derived FROM, merging the
+# applier-owned and fixer-owned claim sources under the unique-(file, line)
+# rule; it was ~45 lines of untested jq authored twice in SKILL.md prose
+# before R11 extracted it here.
+#
+# review-gauntlet DELIBERATELY does not receive lib/persist-common.sh (round
+# 7, F4). That is a decision, not an oversight: the gauntlet's state-path
+# containment policy is the AUTHORED lib/state-path-guard.sh in its own lib/
+# dir (byte-mirrored, parity-enforced), and adding persist-common.sh here to
+# reuse persist_path_is_inside_root would break this file's own
+# `bundled == operative` rule — a file is bundled into a skill iff that
+# skill's SKILL.md invokes it, and review-gauntlet's SKILL.md invokes no
+# persist script. The two containment implementations are related by an
+# asserted boundary (see state-path-guard.sh's header and R7-G2a in
+# tests/gauntlet/test-gate-timeout.sh), not by a shared source file.
 bundle_extra_for() {
 	case "$1" in
 	review-plan)
 		printf 'marker.py\n'
 		printf 'write-review-marker.py\n'
 		printf 'persist-review-state.sh\n'
-		printf 'lib/persist-common.sh\n'
+		printf '%s\n' "${BUNDLE_LENS[@]}"
 		;;
 	deep-review)
 		printf 'persist-deep-review-state.sh\n'
-		printf 'lib/persist-common.sh\n'
+		printf '%s\n' "${BUNDLE_LENS[@]}"
 		;;
-	review-gauntlet) ;;
+	review-gauntlet)
+		printf 'finding-key.sh\n'
+		printf 'claimed-findings.sh\n'
+		;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2
 		return 1

@@ -1,9 +1,61 @@
 #!/usr/bin/env bash
-# persist-common.sh — shared helpers for the state-file persistence scripts
-# (`scripts/persist-review-state.sh`, `scripts/persist-deep-review-state.sh`).
+# persist-common.sh — shared helpers for the persistence scripts.
 #
-# Source this file from a persist script; it does not run on its own.
-# Both callers already `source scripts/lib/auto-fix-common.sh` for
+# FOUR callers, in TWO groups that reach this file differently (R11/F3).
+# Keep this list exact: it is the only place that records which helpers exist
+# for whom, and `grep -rn 'persist-common.sh' scripts/ plugins/` must return
+# exactly these sourcing sites (plus the bundled copies, and
+# scripts/lib/lens-common.sh, which sources this file on the lens group's
+# behalf).
+#
+#   STATE-FILE callers — write one latest-state JSON document per harness.
+#   These source this file DIRECTLY:
+#     scripts/persist-review-state.sh
+#     scripts/persist-deep-review-state.sh
+#   LENS callers — Phase 2's disk-first streamed lens results, one
+#   append-only JSONL attempt file per (run-id, lens, attempt). These source
+#   scripts/lib/lens-common.sh, which sources this file, and must NOT source
+#   both:
+#     scripts/persist-lens-result.sh      (writer)
+#     scripts/collect-lens-results.sh     (reader/merge)
+#
+# The lens-only helpers that used to live here — persist_lens_state_dir,
+# persist_lens_run_dir, persist_path_is_inside_root,
+# persist_path_physical_match, persist_validate_id, persist_validate_unit,
+# persist_units_csv_to_json, persist_jsonl_append and PERSIST_UNIT_JQ_GATE —
+# moved to scripts/lib/lens-common.sh unchanged. The state scripts called
+# none of them. Do not move any of them back: what remains here is exactly
+# what at least one caller in EACH group uses.
+#
+# Which helpers belong to whom:
+#   - persist_root_dir                   — THREE callers, not four (round 9,
+#                                          F8/F9). persist-lens-result.sh
+#                                          takes `--root` from the
+#                                          orchestrator as a REQUIRED flag and
+#                                          derives no root of its own, so it
+#                                          must not fall back to a cwd the
+#                                          orchestrator did not choose.
+#   - persist_require_value,
+#     persist_validate_json_shape,
+#     persist_assert_no_duplicate_keys   — all four. On the STATE-FILE
+#                                          callers it runs directly AFTER the
+#                                          shape gate, over the same captured
+#                                          `$input`, so a non-object payload
+#                                          fails with the clearer shape
+#                                          message and neither helper ever
+#                                          re-reads the file (round 8, F7).
+#   - persist_atomic_write               — STATE-FILE callers only. The lens
+#                                          contract is append-only (see
+#                                          lens-common.sh's
+#                                          persist_jsonl_append), so an
+#                                          atomic replace-in-place would be
+#                                          the wrong primitive there.
+#                                          (persist_fail is internal to this
+#                                          file, used only by
+#                                          persist_atomic_write.)
+#
+# Source this file from a caller; it does not run on its own. All four
+# callers already `source scripts/lib/auto-fix-common.sh` for
 # af_assert_no_symlink; this file assumes that's already sourced too.
 #
 # Helpers provided:
@@ -17,6 +69,16 @@
 #                                exits 2 via the caller's own `usage`
 #                                function (which must already be defined) if
 #                                no value token remains.
+#   persist_assert_no_duplicate_keys <json-text> <label> <what>
+#                              — 0 when no object key repeats anywhere in
+#                                <json-text>, 1 with a diagnostic otherwise.
+#                                Detects a repeat for ANY pair of value
+#                                shapes by comparing jq --stream EVENT COUNTS
+#                                raw vs collapsed (round 8, F4/F5/F6), not by
+#                                comparing event paths. Takes TEXT, never a
+#                                path: the verdict has to come from the same
+#                                bytes the caller goes on to use (round 7,
+#                                F7/F8).
 #   persist_validate_json_shape <input> <label> <noun> [<object-suffix>]
 #                              — validate <input> is syntactically valid
 #                                JSON, exactly one top-level document, and a
@@ -64,10 +126,20 @@ persist_require_value() {
 # reflects only the last value) and then silently flow through as a
 # concatenated multi-object blob. Reject anything but exactly one top-level
 # document up front, then confirm it's an object.
+#
+# `jq empty` rather than `jq -e .` (round 10, F10): `-e` reports the
+# TRUTHINESS OF THE RESULT, not parse success, so it exits 1 on the valid
+# documents `false` and `null` — sending an operator to hunt a syntax error in
+# syntactically perfect input. `jq empty` is non-zero iff parsing failed,
+# which is the only question this gate asks; the type gate below is what
+# rejects a non-object, and with the right message. The multi-document
+# reasoning above is unchanged: `jq empty` likewise applies to each top-level
+# value independently, which is why the `jq -s 'length'` count gate still
+# stands between it and the type gate.
 persist_validate_json_shape() {
 	local input="$1" label="$2" noun="$3" object_suffix="${4:-}"
 
-	if ! printf '%s' "$input" | jq -e . >/dev/null 2>&1; then
+	if ! printf '%s' "$input" | jq empty >/dev/null 2>&1; then
 		echo "$label: $noun is not valid JSON" >&2
 		return 2
 	fi
@@ -85,6 +157,58 @@ persist_validate_json_shape() {
 	fi
 
 	return 0
+}
+
+# persist_assert_no_duplicate_keys <json-text> <label> <what>
+#
+# Refuse a duplicate object key ANYWHERE in <json-text>. jq collapses a
+# repeated key to the LAST occurrence before any filter runs, so
+# `keys_unsorted` can never see one.
+#
+# The rule is a COUNT, not a path comparison (round 8, F4/F5/F6).
+# `jq --stream` over the RAW text emits every assignment, including the ones
+# parsing is about to drop; `jq -c .` first collapses the document, so
+# streaming THAT emits only the survivors. A dropped assignment contributes at
+# least one event and removes none, so raw > collapsed IFF a key was collapsed
+# -- for every pair of value shapes, at every depth. Round 7 compared value-
+# event PATHS instead and so only caught duplicates whose two values happened
+# to emit a common leaf path: `{"logic":["a","b"],"logic":[]}` emits
+# ["logic",0],["logic",1] and ["logic"], shares nothing, and passed.
+#
+# Takes the payload as TEXT, never a path: the verdict must be computed
+# from the same bytes the caller already captured, or it is a TOCTOU
+# against a second read (round 7, F7/F8). Being depth-general, it is also
+# not order-coupled to any shape gate -- but the STATE-FILE callers still run
+# it immediately AFTER persist_validate_json_shape, so a non-object payload
+# fails with the clearer shape message first (round 8, F7).
+persist_assert_no_duplicate_keys() {
+	local json="$1" label="$2" what="$3" raw canon raw_n canon_n hint
+	if ! raw="$(printf '%s' "$json" | jq --stream -c '.[0]' 2>/dev/null)"; then
+		echo "$label: could not scan $what for duplicate keys" >&2
+		return 1
+	fi
+	if ! canon="$(printf '%s' "$json" | jq -c . 2>/dev/null |
+		jq --stream -c '.[0]' 2>/dev/null)"; then
+		echo "$label: could not scan $what for duplicate keys" >&2
+		return 1
+	fi
+	raw_n=0
+	if [[ -n "$raw" ]]; then
+		raw_n="$(printf '%s\n' "$raw" | wc -l | tr -d ' ')"
+	fi
+	canon_n=0
+	if [[ -n "$canon" ]]; then
+		canon_n="$(printf '%s\n' "$canon" | wc -l | tr -d ' ')"
+	fi
+	if [[ "$raw_n" -le "$canon_n" ]]; then
+		return 0
+	fi
+	# Name the offending key: the event paths present in the RAW stream but
+	# not in the collapsed one are exactly the dropped assignment's.
+	hint="$(comm -13 <(printf '%s\n' "$canon" | sort) <(printf '%s\n' "$raw" | sort) |
+		sort -u | tr '\n' ' ')"
+	echo "$label: $what has a duplicate key (a repeated key silently drops the earlier assignment): ${hint:-(key path unavailable)}" >&2
+	return 1
 }
 
 # Shared "Could not persist findings JSON: <reason>" stderr message used by
@@ -115,6 +239,17 @@ persist_atomic_write() {
 	# user-writable file. Delegates to auto-fix-common.sh's
 	# af_assert_no_symlink, which walks the full parent-directory chain
 	# (not just the immediate target).
+	#
+	# UNBOUNDED ON PURPOSE (round 7, F4). These two calls pass NO <root>, so
+	# the walk runs all the way up; the lens call sites
+	# (persist-lens-result.sh, collect-lens-results.sh) pass `--root` and are
+	# bounded. The asymmetry is one-directional and deliberate: unbounded is
+	# strictly stricter — it can only refuse more. These paths are composed
+	# by this file from the state root, so there is no caller-supplied
+	# fixture path that a longer walk could falsely refuse; the lens call
+	# sites DO accept caller-supplied paths (out-of-tree fixtures, payloads
+	# under $TMPDIR), which is why they need the bound. Do not "harmonise"
+	# these two by adding a root here — that would weaken them.
 	if ! af_assert_no_symlink "$out_dir"; then
 		persist_fail "" "refusing to write through a symlink at $out_dir"
 		return 1
