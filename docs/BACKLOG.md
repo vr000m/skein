@@ -27,4 +27,5 @@ Convention: group by originating feature. When an item lands, move it to the rel
 - Make the Codex "sequential" strategy a real two-step flow instead of spawning implementer and test-writer in the same iteration-0 pass with only a different summary label.
 - Unify the main success path and hook-retry completion path so handback strategy reporting cannot drift or lie after post-hook retries.
 - Route all outward-facing diagnostics through the same redaction helper; validation, lint, stalled-test, and hook-failure handbacks still bypass the scrubber.
-- Return `complete` directly when `/conduct` is re-run after all phases are already finished, instead of forcing an unnecessary `--resume` handback.
+
+<!-- DONE (verified 2026-09-02): re-running /conduct after all phases finish now returns `status="complete"` directly (plugins/skein/skills/conduct/conductor.py:1098-1101, 2038-2045), no forced --resume handback. -->

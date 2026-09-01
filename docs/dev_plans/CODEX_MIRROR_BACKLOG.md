@@ -146,6 +146,10 @@ Running the reactivation probe from a plain shell (not nested inside a codex ses
 - **Probe behavior (as of this commit):** exit 0 (confirm) is reserved for a future CLI that emits per-child billed usage at the requested effort — it cannot fire on 0.142.5. The observed "spawn ran + success sentinel fired, but no per-child billing/effort" case reports **INCONCLUSIVE (exit 2)**, *not* exit 1 — the topology did not fail, the tier just cannot be measured. Exit 1 is reserved for a `NESTED_SPAWN_FAILED` report or no real spawn evidence (echoed text is never acceptance).
 - **Status unchanged: Codex R6 stays gated.** The topology plausibly works, but (a) the tier is unverifiable and (b) availability is launch-context-dependent (blocked when nested). Reactivating the separate-subagent Codex topology still requires a Codex CLI that exposes per-child usage so the tier can be confirmed the way the Claude gate confirms it.
 
+#### 2026-09-02 — rerun on Codex CLI 0.151.0: same result, still gated
+
+Re-ran `plugins/skein-codex/skills/fan-out/tests/check-r6-gate-codex.sh` from a plain shell against the now-installed `codex-cli 0.151.0` (up from 0.142.5). Outcome unchanged: `NESTED_SPAWN_WORKED` fired, a distinct child thread was created via `spawn_agent` (`sender_thread_id` ≠ `receiver_thread_ids`), but the JSONL stream still carries no per-child billing or `reasoning_effort` echo — `nested_usage_evidence` empty. Script correctly reported **INCONCLUSIVE (exit 2)**, not a pass. Codex R6 remains gated pending a CLI that exposes per-child usage.
+
 ### 2026-05-23 — `feature/bundle-auto-fix-appliers` (Codex one-shot completed)
 
 Claude-side bundling of the auto-fix pipeline landed first; the `.codex` analogue has now landed in the same branch. This entry is retained as handoff history, not open drift.
