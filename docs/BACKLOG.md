@@ -17,9 +17,11 @@ Convention: group by originating feature. When an item lands, move it to the rel
 
 - Extract a shared `_fix_iteration(opts, state, phase, respawn_role, hook_output)` helper so `_run_phase` and `_retry_after_hook_failure` stop duplicating the spawn→parse→test→cap→reset body.
 - Replace the private `_CommitHookFailure` exception-as-control-flow with a `CommitOutcome` dataclass carrying `hook_failed` + `hook_output`, so `_commit_phase`'s documented return shape matches reality.
-- Encode the "reviewer role has no `flags`" asymmetry in `schema._ROLE_REQUIRED` (e.g., a `has_flags: bool`) rather than a comment.
-- Add a call-site comment in `_run_phase` that the parallel/sequential strategy string is advisory for the LLM orchestrator; the harness always issues both spawns sequentially.
-- Add a sweep in `scripts/check-sync.sh` (or a comment in all four sync scripts) warning when a global skill dir exists for a skill no longer listed in `MANAGED_SKILLS` / `CLAUDE_ONLY_SKILLS`.
+- Add a sweep in `scripts/check-sync.sh` (or a comment in all four sync scripts) warning when a global skill dir exists for a skill no longer listed in `MANAGED_SKILLS` / `CLAUDE_ONLY_SKILLS`. **Needs re-scoping (2026-09-02): those constants don't live in `check-sync.sh` — they're in `scripts/check-prompt-parity.sh` / `tests/parity/test-managed-skills-parity.sh`.**
+
+<!-- DONE (verified 2026-09-02): reviewer/ci-parity "no flags" asymmetry now encoded explicitly as `_ROLE_HAS_FLAGS: dict[str, bool]` in schema.py (both plugins/skein and plugins/skein-codex conduct/schema.py), with a module-level assert keeping it consistent with _ROLE_FLAGS_REQUIRED. Full conduct test suite (445 tests, both mirrors) passes unchanged. -->
+
+<!-- DONE (already landed pre-dating this backlog entry, confirmed 2026-09-02): the parallel/sequential strategy string's advisory-to-the-LLM nature is already documented at the exact call site in _run_phase (plugins/skein/skills/conduct/conductor.py:1587-1592, added in commit b8283d4) — this backlog entry was just never removed after that fix landed. -->
 
 ### Deferred follow-up from final branch `deep-review` (2026-04-23)
 

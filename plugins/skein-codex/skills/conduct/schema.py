@@ -65,6 +65,19 @@ _ROLE_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
     },
 }
 
+# Explicit per-role flag membership, instead of leaving "does this role emit
+# flags" to be inferred from which roles happen to appear in
+# _ROLE_FLAGS_REQUIRED. Reviewer and ci-parity are one-shot/advisory roles
+# with no flag-driven branching in the conductor; adding a new no-flags role
+# means adding `False` here, not just omitting it elsewhere and hoping the
+# omission reads as intentional.
+_ROLE_HAS_FLAGS: dict[str, bool] = {
+    "implementer": True,
+    "test-writer": True,
+    "reviewer": False,
+    "ci-parity": False,
+}
+
 # Role-specific flag substructure. Enforced only when the role emits flags
 # (implementer + test-writer). The conductor branches on these keys, so a
 # missing key is a real runtime failure — not an evolving-prompt edge case.
@@ -79,6 +92,11 @@ _ROLE_FLAGS_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
         "needs_impl_clarification": (str, type(None)),
     },
 }
+
+assert set(_ROLE_FLAGS_REQUIRED) <= {r for r, has in _ROLE_HAS_FLAGS.items() if has}, (
+    "_ROLE_FLAGS_REQUIRED has an entry for a role marked has_flags=False in "
+    "_ROLE_HAS_FLAGS — the two tables have drifted."
+)
 
 
 def extract_last_json_block(text: str) -> str:
@@ -121,6 +139,8 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
     """
     if expected_role not in _ROLE_REQUIRED:
         raise SchemaError(f"unknown expected_role: {expected_role!r}")
+    if expected_role not in _ROLE_HAS_FLAGS:
+        raise SchemaError(f"role {expected_role!r} missing from _ROLE_HAS_FLAGS")
     role_field = obj.get("role")
     if role_field != expected_role:
         raise SchemaError(
@@ -140,6 +160,8 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
         raise SchemaError(
             f"ci-parity status must be 'passed' or 'failed', got {obj.get('status')!r}"
         )
+    if not _ROLE_HAS_FLAGS[expected_role]:
+        return
     flag_schema = _ROLE_FLAGS_REQUIRED.get(expected_role)
     if flag_schema is not None:
         flags = obj["flags"]
