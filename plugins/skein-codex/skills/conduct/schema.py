@@ -93,9 +93,9 @@ _ROLE_FLAGS_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
     },
 }
 
-assert set(_ROLE_FLAGS_REQUIRED) <= {r for r, has in _ROLE_HAS_FLAGS.items() if has}, (
-    "_ROLE_FLAGS_REQUIRED has an entry for a role marked has_flags=False in "
-    "_ROLE_HAS_FLAGS — the two tables have drifted."
+assert set(_ROLE_FLAGS_REQUIRED) == {r for r, has in _ROLE_HAS_FLAGS.items() if has}, (
+    "_ROLE_FLAGS_REQUIRED and _ROLE_HAS_FLAGS have drifted: every role marked "
+    "has_flags=True must have a flag schema, and vice versa."
 )
 
 
