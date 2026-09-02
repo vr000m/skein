@@ -212,7 +212,26 @@ def test_validate_ci_parity_does_not_require_flags():
     validate_report(obj, "ci-parity")
 
 
-def test_validate_rejects_role_missing_from_role_has_flags(monkeypatch):
-    monkeypatch.delitem(schema._ROLE_HAS_FLAGS, "implementer")
-    with pytest.raises(SchemaError, match="missing from _ROLE_HAS_FLAGS"):
+def test_validate_rejects_role_removed_from_role_spec(monkeypatch):
+    # A role removed from the single _ROLE_SPEC registry is indistinguishable
+    # from an unknown role — there is no separate table it could still be
+    # present in, so this is the same "unknown expected_role" path a typo
+    # would hit, not a distinct internal-drift error.
+    monkeypatch.delitem(schema._ROLE_SPEC, "implementer")
+    with pytest.raises(SchemaError, match="unknown expected_role"):
         validate_report(_impl_report(), "implementer")
+
+
+def test_role_spec_flags_required_and_required_flags_key_agree():
+    # A role with a flag schema must require a "flags" key, and vice versa —
+    # co-located in one RoleSpec tuple, this is a data-shape fact to assert,
+    # not a cross-table invariant to check at import time.
+    for role, spec in schema._ROLE_SPEC.items():
+        if spec.flags_required is not None:
+            assert "flags" in spec.required, (
+                f"{role!r} has flags_required but no 'flags' in required"
+            )
+        else:
+            assert "flags" not in spec.required, (
+                f"{role!r} has no flags_required but requires a 'flags' key"
+            )
