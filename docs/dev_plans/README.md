@@ -19,6 +19,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-03 | docs | prompt-audit-findings | meta | — | none yet | [plan](20260903-docs-prompt-audit-findings.md) |
 
 ## Shipped
 
