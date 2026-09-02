@@ -93,10 +93,20 @@ _ROLE_FLAGS_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
     },
 }
 
-assert set(_ROLE_FLAGS_REQUIRED) == {r for r, has in _ROLE_HAS_FLAGS.items() if has}, (
-    "_ROLE_FLAGS_REQUIRED and _ROLE_HAS_FLAGS have drifted: every role marked "
-    "has_flags=True must have a flag schema, and vice versa."
-)
+# Plain `if`/`raise` rather than `assert`: `assert` is compiled out entirely
+# under `python -O`/`PYTHONOPTIMIZE=1`, which would silently defeat both
+# invariants below. Checked at import time, so drift is caught at test
+# collection, not the first time an affected role is actually validated.
+if set(_ROLE_REQUIRED) != set(_ROLE_HAS_FLAGS):
+    raise AssertionError(
+        "_ROLE_REQUIRED and _ROLE_HAS_FLAGS have drifted: every role must have "
+        "an explicit has_flags entry."
+    )
+if set(_ROLE_FLAGS_REQUIRED) != {r for r, has in _ROLE_HAS_FLAGS.items() if has}:
+    raise AssertionError(
+        "_ROLE_FLAGS_REQUIRED and _ROLE_HAS_FLAGS have drifted: every role marked "
+        "has_flags=True must have a flag schema, and vice versa."
+    )
 
 
 def extract_last_json_block(text: str) -> str:
@@ -162,18 +172,20 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
         )
     if not _ROLE_HAS_FLAGS[expected_role]:
         return
-    flag_schema = _ROLE_FLAGS_REQUIRED.get(expected_role)
-    if flag_schema is not None:
-        flags = obj["flags"]
-        for fkey, fexpected in flag_schema.items():
-            if fkey not in flags:
-                raise SchemaError(f"missing required flag: {fkey!r}")
-            if not isinstance(flags[fkey], fexpected):
-                actual = type(flags[fkey]).__name__
-                want = _type_name(fexpected)
-                raise SchemaError(
-                    f"flag {fkey!r} has wrong type: expected {want}, got {actual}"
-                )
+    # Guaranteed present by the module-level invariant check above (every
+    # has_flags=True role has a _ROLE_FLAGS_REQUIRED entry) — direct index,
+    # not .get(), since a None here would mean that invariant broke.
+    flag_schema = _ROLE_FLAGS_REQUIRED[expected_role]
+    flags = obj["flags"]
+    for fkey, fexpected in flag_schema.items():
+        if fkey not in flags:
+            raise SchemaError(f"missing required flag: {fkey!r}")
+        if not isinstance(flags[fkey], fexpected):
+            actual = type(flags[fkey]).__name__
+            want = _type_name(fexpected)
+            raise SchemaError(
+                f"flag {fkey!r} has wrong type: expected {want}, got {actual}"
+            )
 
 
 def _type_name(t: type | tuple[type, ...]) -> str:

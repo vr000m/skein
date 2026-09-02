@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-
+import schema
 from schema import (
     SchemaError,
     extract_last_json_block,
@@ -150,14 +150,18 @@ def test_parse_report_unknown_role_raises():
 def test_validate_rejects_missing_impl_flag_key():
     obj = _impl_report()
     del obj["flags"]["test_contract_mismatch"]
-    with pytest.raises(SchemaError, match="missing required flag: 'test_contract_mismatch'"):
+    with pytest.raises(
+        SchemaError, match="missing required flag: 'test_contract_mismatch'"
+    ):
         validate_report(obj, "implementer")
 
 
 def test_validate_rejects_wrong_type_impl_flag():
     obj = _impl_report()
     obj["flags"]["test_contract_mismatch"] = "nope"
-    with pytest.raises(SchemaError, match="flag 'test_contract_mismatch' has wrong type"):
+    with pytest.raises(
+        SchemaError, match="flag 'test_contract_mismatch' has wrong type"
+    ):
         validate_report(obj, "implementer")
 
 
@@ -194,3 +198,21 @@ def test_validate_reviewer_does_not_require_flags():
         "findings": [],
     }
     validate_report(obj, "reviewer")
+
+
+def test_validate_ci_parity_does_not_require_flags():
+    obj = {
+        "role": "ci-parity",
+        "schema_version": 1,
+        "plan_id": "plan-1",
+        "request_written_at_unix": 1234567890,
+        "status": "passed",
+        "command_run": "pytest -q",
+    }
+    validate_report(obj, "ci-parity")
+
+
+def test_validate_rejects_role_missing_from_role_has_flags(monkeypatch):
+    monkeypatch.delitem(schema._ROLE_HAS_FLAGS, "implementer")
+    with pytest.raises(SchemaError, match="missing from _ROLE_HAS_FLAGS"):
+        validate_report(_impl_report(), "implementer")
