@@ -16,6 +16,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ### Fixed
 - 159 findings from ten `review-gauntlet` rounds on the resilience branch (terminal status `cap`, see the plan's Findings); notable: PATH-dependent `dirname` bypass in the containment guard, innermost-`.git` bound regression, `jq -e` misdiagnosing `false`/`null` as invalid JSON, temp-path lint reading `grep`'s `path:line:` prefix instead of file content.
+- **`skein:conduct` backlog items closed (from `docs/dev_plans/20260422-feature-conduct-skill.md`, both mirrors unless noted).** Re-running `/conduct` after all phases are already finished now returns `status="complete"` directly instead of forcing an unnecessary `--resume` handback (`conductor.py`). The reviewer/ci-parity "no `flags`" asymmetry in `conduct/schema.py` is now an explicit `_ROLE_HAS_FLAGS: dict[str, bool]` table (both `plugins/skein` and `plugins/skein-codex`) rather than a comment, guarded by a module-level assert requiring full equality with `_ROLE_FLAGS_REQUIRED` so the two tables can't drift silently (tightened from a subset check to `==` after `/code-review xhigh` flagged the weaker form as letting a future `has_flags=True` role skip flag validation unnoticed). The parallel/sequential spawn-strategy string's advisory-to-the-LLM nature was already documented at its `_run_phase` call site (Claude mirror, landed earlier in `b8283d4`); confirmed still current. Full conduct suite: 445 tests pass, both mirrors.
 
 ## [0.6.0] - 2026-08-24
 
