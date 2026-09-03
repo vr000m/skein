@@ -265,8 +265,8 @@ assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*
 	"codex review-plan Assumptions high-effort rationale"
 assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*Plan-internal and cross-lens logical conflicts' \
 	"codex review-plan Contradiction Pass high-effort rationale"
-assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'R3 why: normative spec compliance is judgment work' \
-	"codex spec-compliance R3 why-comment"
+assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'Mapping normative spec requirements onto code is judgment work' \
+	"codex spec-compliance normative-requirements rationale"
 assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'Code review is judgment work, so the advisory reviewer gets the review tier' \
 	"codex conduct reviewer rationale"
 

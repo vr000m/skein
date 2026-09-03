@@ -42,7 +42,7 @@ Before delegating, read the code file(s) identified in Step 1 from the workspace
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=high` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). R3 why: normative spec compliance is judgment work that maps source evidence to RFC 2119 requirements. If delegation is unavailable, use the same prompt contract in the main context instead.
+Use `spawn_agent` with the harness-selected model and `reasoning_effort=high` to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). Mapping normative spec requirements onto code is judgment work, not a lookup, so it warrants the high tier. If `spawn_agent` is unavailable, run the same prompt contract in the main context.
 
 ````
 You are performing a spec compliance check — mapping normative requirements from a specification against code to produce a structured compliance report.
@@ -147,7 +147,7 @@ Return your findings in exactly this format (no other output):
 
 ### After execution
 
-Before presenting the compliance report to the user, verify it against [rubric.md](rubric.md). The rubric is both a local self-check and an outcome rubric if this skill is later run in a graded delegated flow.
+Before presenting the compliance report to the user, verify it against [rubric.md](rubric.md).
 
 ### Report Rules
 
@@ -157,14 +157,6 @@ Before presenting the compliance report to the user, verify it against [rubric.m
 - Group by requirement level (MUST first, then SHOULD, then MAY)
 - Include the summary table for quick scanning — always include all three rows (MUST, SHOULD, MAY) even if a level has zero requirements
 - Link to the spec section so the user can read the full context
-
-### What NOT to Do
-
-- Do NOT reproduce large blocks of spec text — quote only the normative statement
-- Do NOT mark a requirement as Met unless you can cite specific code evidence
-- Do NOT skip SHOULD/MAY requirements — they matter for interoperability even if not mandatory
-- Do NOT guess what the spec says — always fetch and verify
-- Do NOT attempt full-spec compliance without a section reference — ask the user to narrow scope
 
 ## Edge Cases
 

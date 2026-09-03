@@ -1,6 +1,6 @@
 # Spec Compliance Report Rubric
 
-Gradeable criteria for evaluating a completed compliance report. Doubles as a Managed Agents outcome rubric and a local self-check before presenting the report to the user.
+Criteria for evaluating a completed compliance report. Use it as a self-check before presenting the report to the user.
 
 ## Spec Resolution
 

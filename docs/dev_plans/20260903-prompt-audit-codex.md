@@ -383,7 +383,7 @@ sequenceDiagram
 - [x] Phase C5: Codex fan-out
 - [x] Phase C6: Codex review-gauntlet
 - [x] Phase C7: Codex release
-- [ ] Phase C8: Codex spec-compliance
+- [x] Phase C8: Codex spec-compliance
 - [ ] Phase C9: Codex delegation idiom
 - [ ] Phase C10: Codex misc skills
 
