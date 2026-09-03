@@ -292,7 +292,7 @@ Not a `/conduct` phase. Walk the flag list under "Flag only — decide with user
 
 ### Dependencies
 
-- `just`, `rg`, `bash` ≥ 4 for the parity tests; the fan-out normaliser is `sed`-only since Phase R. No new dependencies.
+- `just`, `rg`, `bash` ≥ 4 and `perl` for the parity tests (`tests/parity/test-spawn-tiers.sh` uses `perl -0777` in `assert_present_flat` because BSD grep caps interval repetition at 255); the fan-out normaliser itself is `sed`-only since Phase R. No new dependencies.
 
 ### Integration Seams
 
@@ -420,7 +420,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-04 @ 9acef4c68a9c9d5edae09aadc5f82022e0ca33ec -->
+<!-- reviewed: 2026-09-04 @ 77cedbaae10775f815baf5020d2f761110712d3f -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

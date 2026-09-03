@@ -266,7 +266,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 
 ### Dependencies
 
-- `just`, `rg`, `bash` ≥ 4 for the parity tests (`perl` was used by the fan-out normaliser until Phase R made it sed-only). No new dependencies.
+- `just`, `rg`, `bash` ≥ 4 and `perl` for the parity tests (`tests/parity/test-spawn-tiers.sh` uses `perl -0777` in `assert_present_flat`; the fan-out normaliser stopped using `perl` when Phase R made it sed-only). No new dependencies.
 
 ### Integration Seams
 
@@ -369,7 +369,7 @@ sequenceDiagram
 
 `none` — the gauntlet runs once, from the companion Claude plan, after its phase F.
 
-<!-- reviewed: 2026-09-04 @ 1cb8e12babc6be1fb708b88fa5aed64140023283 -->
+<!-- reviewed: 2026-09-04 @ b5ab95867a25e99dcfa6917a1a847e9d6ab8982f -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
