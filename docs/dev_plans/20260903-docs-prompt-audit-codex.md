@@ -1,12 +1,12 @@
 # Task: prompt-audit cleanup, Codex mirror — dated prompting patterns across skein skill prompts
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: meta
 **Assigned to**: unassigned
 **Priority**: Low
 **Branch**: `chore/prompt-audit-cleanup`
 **Created**: 2026-09-03
-**Completed**:
+**Completed**: 2026-09-03
 **Review Gates**: none
 
 ## Objective
@@ -31,7 +31,7 @@ Land the high- and medium-confidence findings of a fresh `/claude-api prompt-aud
 
 ## Requirements
 
-- Every hunk in the apply set lands in both mirrors where a twin exists: a Codex commit then a Claude commit per mirror pair, with parity green after the Claude commit.
+- Every hunk in the apply set lands in both mirrors where a twin exists: a Codex commit then a Claude commit per mirror pair. The per-pair gate is `tests/parity/test-spawn-tiers.sh` plus parity judged only on the files that pair owns; the mirror-comparing recipes (`just check-prompt-parity`, `just check-sync`) are expected to stay red until the last Claude twin lands and are asserted only at Phase F.
 - Harness ownership (AD-8): Claude implements only Claude-mirror (`plugins/skein/`) and project `.claude/CLAUDE.md` hunks. Every Codex-mirror hunk (`plugins/skein-codex/`), the Codex delegation-idiom set (AD-4), and any change that alters behaviour Codex derives from `AGENTS.md` is handed to Codex via `codex:rescue` for review and implementation; Claude does not apply those hunks itself.
 - Every literal a script or test greps for survives byte-exact, or the guard is edited in the same hunk and commit (see the guard map).
 - `tests/parity/test-spawn-tiers.sh` is the per-phase gate between a Codex phase and its Claude twin. The full six-recipe set (`just check-prompt-parity`, `just check-sync`, `just parity-tests`, `just gauntlet-tests`, `just lens-tests`, `just plugin-tests`) is required only at Phase F of the Claude plan (equivalently, at the end of the Codex plan's run).
@@ -142,7 +142,7 @@ Guard for all: `scripts/check-prompt-parity.sh:271-296` compares the two files a
 - **C-F4** Claude :165-171 + Codex :161-167 remove the `### What NOT to Do` section (heading, blank, five bullets) — Med, guard none; positives survive at `### Report Rules`, :31, :77, :107.
 - **C-F6** Claude :154 After `Present the compliance report to the user as-is. Before presenting, verify it against [rubric.md](rubric.md), which covers spec resolution, requirement extraction, per-requirement classification, report structure, and scope discipline.`; Codex :150 After `Before presenting the compliance report to the user, verify it against [rubric.md](rubric.md).`; `rubric.md:3` both mirrors `Gradeable criteria for evaluating a completed compliance report. Doubles as a Managed Agents outcome rubric and a local self-check before presenting the report to the user.` → `Criteria for evaluating a completed compliance report. Use it as a self-check before presenting the report to the user.` — Med, guard `check-prompt-parity.sh:61-88` byte-diffs `rubric.md` → same commit.
 
-### Codex delegation idiom (AD-4) — `content-draft:42,46`, `content-review:46,54`, `rfc-finder:29,33`, `update-docs:27,29`, `spec-compliance:37` (Codex mirror only)
+### Codex delegation idiom (AD-4) — `content-draft:42,46`, `content-review:46,54`, `rfc-finder:29,33`, `update-docs:27,29`, `spec-compliance:37`, `spec-compliance:45` (landed by C8 with C-F1) (Codex mirror only)
 
 - **C-F16** — Med, rewrite, guard `test-spawn-tiers.sh:233,235,237,239` pin one `reasoning_effort=low` per file (`:219` high for spec-compliance) — every After keeps exactly one. Canonical pair (rfc-finder): `:29` → `These steps involve multiple web lookups against Datatracker and RFC Editor. Delegate them to a subagent to keep the main context lean. If \`spawn_agent\` is unavailable in the current runtime, run the same steps in the main context.`; `:33` → `Use \`spawn_agent\` with the harness-selected model and \`reasoning_effort=low\` to run the following self-contained prompt (fill in \`{{PLACEHOLDERS}}\`). If \`spawn_agent\` is unavailable, run the same prompt contract in the main context.` Apply the same shape to the other files, preserving each file's subject, tool name and effort tier. Description-only for the eight non-canonical sites: write each against live text when the phase applies it.
 
@@ -180,7 +180,7 @@ Flag-only findings (not in the apply set) live in the Claude plan. If the user a
 
 Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-docs-prompt-audit-claude.md` runs after every phase here is ticked. Every phase below touches `plugins/skein-codex/` files (plus the two `tests/parity/test-spawn-tiers.sh` assertions that pin Codex-mirror text) and nothing the Claude plan touches. Branch creation is not a phase — `chore/prompt-audit-cleanup` already exists.
 
-**Lag window.** Between a Codex phase and its Claude twin the mirrors diverge on purpose, so `just check-prompt-parity` is red: the rubric byte-diff (`check-prompt-parity.sh:61-88`) and the fan-out prompt normalizer span comparison (`:173-184`) both fail while only one half has landed. Codex phases therefore run `bash tests/parity/test-spawn-tiers.sh`, which pins the spawn-tier strings and does not compare mirrors. Each mirror pair is two boundary commits, Codex then Claude; parity is green after the Claude commit.
+**Lag window.** Between a Codex phase and its Claude twin the mirrors diverge on purpose, so `just check-prompt-parity` is red: the rubric byte-diff (`check-prompt-parity.sh:61-88`) and the fan-out prompt normalizer span comparison (`:173-184`) both fail while only one half has landed. Codex phases therefore run `bash tests/parity/test-spawn-tiers.sh`, which pins the spawn-tier strings and does not compare mirrors. Each mirror pair is two boundary commits, Codex then Claude; the mirror-comparing recipes stay red until the last Claude twin lands and are asserted only at Phase F of the companion Claude plan.
 ### Phase 0: Baseline counts
 **Impl files:** docs/dev_plans/20260903-docs-prompt-audit-codex.md
 **Test files:** none
@@ -232,7 +232,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 ### Phase C9: Codex delegation idiom
 **Impl files:** plugins/skein-codex/skills/content-draft/SKILL.md, plugins/skein-codex/skills/content-review/SKILL.md, plugins/skein-codex/skills/rfc-finder/SKILL.md, plugins/skein-codex/skills/update-docs/SKILL.md, plugins/skein-codex/skills/spec-compliance/SKILL.md
 **Test command:** `bash tests/parity/test-spawn-tiers.sh`
-**Goal:** Runtime: codex. Re-verify each Before against live text first; adapt if drifted. Hunks: C-F16 at all ten sites in one phase per AD-4 — all or none. Keep anchors per AD-1/AD-2 — the per-file `reasoning_effort=*` count is unchanged. No Claude twin.
+**Goal:** Runtime: codex. Re-verify each Before against live text first; adapt if drifted. Hunks: C-F16 at the nine remaining sites in one phase per AD-4 — all or none (`spec-compliance:45` landed in C8). Keep anchors per AD-1/AD-2 — the per-file `reasoning_effort=*` count is unchanged. No Claude twin.
 
 ### Phase C10: Codex misc skills
 **Impl files:** plugins/skein-codex/skills/rfc-finder/SKILL.md, plugins/skein-codex/skills/grill/SKILL.md, plugins/skein-codex/skills/plan-view/SKILL.md, plugins/skein-codex/skills/plan-view/parser.md, plugins/skein-codex/skills/update-docs/SKILL.md
@@ -246,7 +246,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 - `plugins/skein-codex/skills/{conduct,deep-review,dev-plan,review-plan,fan-out,release,review-gauntlet,spec-compliance,content-draft,content-review,rfc-finder,update-docs,grill,plan-view}/SKILL.md` — the Codex halves of the hunks above.
 - `plugins/skein-codex/skills/fan-out/agent-prompt.md`, `…/fan-out/test-writer-prompt.md` — B-09, B-10, B-20.
 - `plugins/skein-codex/skills/review-plan/rubric.md` — A-F7. `plugins/skein-codex/skills/spec-compliance/rubric.md` — C-F6. `plugins/skein-codex/skills/plan-view/parser.md` — C-F14.
-- `tests/parity/test-spawn-tiers.sh` — the `:268` and `:270` pinned strings (C-F1, L2), rewritten in the same phase as the prose they pin.
+- `tests/parity/test-spawn-tiers.sh` — the `:268` and `:270` pinned strings (C-F1, L2), rewritten in the same phase as the prose they pin; the review-gauntlet added a write-containment assertion (`do not touch files outside your scope`, both mirrors, commit a8a09f7, review-gauntlet round 1) here after the C-phases landed — see Findings.
 - Not modified here: everything under `plugins/skein/`, `.claude/CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md`, `scripts/check-sync.sh`, `scripts/check-prompt-parity.sh`, `scripts/check-trunk-snippet-parity.sh`, `tests/plugin/test-claude-md-hygiene.sh`.
 
 ### New Files to Create
@@ -256,7 +256,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 ### Architecture Decisions
 
 - **AD-1 Machine anchors are kept verbatim by default.** Where a finding's clean fix would change a string a script or test greps for, the guard edit (script/test file and line) is part of the same hunk and commit, and that file is in Files to Modify. No guard edit is left implied. Old invariant = new invariant for every anchor not listed as edited.
-- **AD-2 R6 apparatus: rewrite prose, keep anchors.** The audit calls the whole apparatus a fossil. This pass removes the dates (`2026-07-04`), the retired model name (`claude-haiku-4-5`), and the CONFIRMED/GATED narratives, but keeps byte-exact: the openers `R6 status:` and `INTENDED DESIGN (currently GATED, not active):` (normalizer alternation at `check-prompt-parity.sh:178`), `**Status note (read first):**` and `Filled by the fan-out worker` (sed range :183 and `test-spawn-tiers.sh:387`), `reasoning_effort=medium` in the two Codex prompt files (`:276`, `:278`), the Codex `Filled by the fan-out worker before spawning the test-writer (once the nested-spawn\ngate is confirmed).` sentence (literal substitution at :178), and `### Phase 5` / the two `If … test framework` anchors (:381-386). Two-sided invariant: old = the Claude block is excised because its first line matches `R6 status:` and the Codex block because it matches `INTENDED DESIGN (…)`; new = the same, because both openers are unchanged. Full removal is Phase 6, off by default.
+- **AD-2 R6 apparatus: rewrite prose, keep anchors.** The audit calls the whole apparatus a fossil. This pass removes the dates (`2026-07-04`), the retired model name (`claude-haiku-4-5`), and the CONFIRMED/GATED narratives, but keeps byte-exact: the openers `R6 status:` and `INTENDED DESIGN (currently GATED, not active):` (normalizer alternation at `check-prompt-parity.sh:178`), `**Status note (read first):**` and `Filled by the fan-out worker` (sed range :183 and `test-spawn-tiers.sh:387`), `reasoning_effort=medium` in the two Codex prompt files (`:276`, `:278`), the Codex `Filled by the fan-out worker before spawning the test-writer (once the nested-spawn\ngate is confirmed).` sentence (literal substitution at :178), and `### Phase 5` / the two `If … test framework` anchors (:381-386). Two-sided invariant: old = the Claude block is excised because its first line matches `R6 status:` and the Codex block because it matches `INTENDED DESIGN (…)`; new = the same, because both openers are unchanged. Full removal is the deferred R6 apparatus removal, off by default.
 - **AD-3 Uniform fix shape for ID leaks.** State the rule content in prose in the same sentence and drop the bare ID. `AGENTS.md` Model/Effort Policy is a live section and stays as the pointer; `R1`/`R3` do not appear in that section, so the suffix is an undefined ID and goes. Never add an HTML why-comment to a Codex SKILL.md (the Codex idiom is inline prose); where `test-spawn-tiers.sh` pins an `R3 why:` string, its assertion moves to the new prose in the same commit. This overrides audit-A's "keep R1/R3" non-finding.
 - **AD-4 The Codex "if delegation is available and explicitly allowed" idiom is a hedge, not a permission gate.** No config key, env var or probe defines "explicitly allowed" (grep-verified). All ten occurrences across five files are rewritten in one commit, or none; effort-annotation counts per file are preserved.
 - **AD-5 Cause-neutral wording where the cause is unknown.** The review-gauntlet hang paragraph is removed rather than restated with a cause; if any restatement is wanted it says the gate has hung with no recoverable cause and the wall-clock budget is the sole defence. No flag combination is asserted anywhere.
@@ -347,8 +347,8 @@ sequenceDiagram
 
 ### Test Results
 
-- [ ] Phase 0 baseline green, residue 29 recorded.
-- [ ] `test-spawn-tiers.sh` green after each of C1…C10.
+- [x] Phase 0 baseline green, residue 29 recorded.
+- [x] `test-spawn-tiers.sh` green after each of C1…C10.
 
 ### Edge Cases Tested
 
@@ -358,7 +358,7 @@ sequenceDiagram
 ## Acceptance Criteria
 
 - Every Codex-side hunk in the apply set is applied in `plugins/skein-codex/`, one boundary commit per phase.
-- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed.
+- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed except the write-containment guardrail pin added during review.
 - `bash tests/parity/test-spawn-tiers.sh` exits 0 after every phase; `just gauntlet-tests` exits 0 after C6.
 - Every anchor listed in AD-1 and AD-2 is byte-unchanged, or its guard was edited in the same phase.
 - Each commit body carries one "kept:" line per hunk naming where the operative clause survives.
@@ -369,7 +369,7 @@ sequenceDiagram
 
 `none` — the gauntlet runs once, from the companion Claude plan, after its phase F.
 
-<!-- reviewed: 2026-09-03 @ 9cffcb72350ff9c137dda84ffea8e92911b47bb4 -->
+<!-- reviewed: 2026-09-03 @ 499b866cee12922c8c89ae6cc8203c8e33cee35c -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -391,6 +391,7 @@ sequenceDiagram
 
 - **Phase 0 baseline (2026-09-03):** `rg -n '\b[RC][0-9]\b' plugins/skein plugins/skein-codex --glob '*.md' | wc -l` returned **29** before any prompt-audit hunk landed.
 - **Phase 0 validation (2026-09-03):** All six required recipes passed: `just check-prompt-parity`, `just check-sync`, `just parity-tests`, `just gauntlet-tests`, `just lens-tests`, and `just plugin-tests`. The command used `PYTEST_ADDOPTS='-p no:cacheprovider'` because pytest's ignored `.pytest_cache/` directory is otherwise counted by the manifest guard as a fifteenth skill entry.
+- **Review-gauntlet addition (2026-09-03, commit a8a09f7):** the review gauntlet run from the companion Claude plan's Phase F added a write-containment assertion to `tests/parity/test-spawn-tiers.sh` (`do not touch files outside your scope`, both mirrors), outside this plan's originally declared Files to Modify scope. Recorded here per AD-1; no C-phase hunk touches the assertion text itself.
 
 ## Issues & Solutions
 
