@@ -34,7 +34,7 @@ If the code path is not specified, ask the user to provide it.
 
 ## Steps 2–5: Resolve Spec, Fetch Requirements, Analyse Code, Return Report
 
-These steps involve spec lookups and codebase inspection. If subagent delegation is available and explicitly allowed in the current Codex runtime, you may delegate them to keep the main context lean. Otherwise, run the same steps in the main context so the skill still works without delegation.
+These steps involve spec lookups and codebase inspection. Delegate them to a subagent to keep the main context lean. If `spawn_agent` is unavailable in the current runtime, run the same steps in the main context.
 
 ### Pre-flight (main context)
 

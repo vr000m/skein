@@ -39,11 +39,11 @@ Present this summary and ask the user to confirm or adjust before drafting. **Th
 
 ## Phases 3–4: Draft Content and De-LLM Pass
 
-The actual drafting and authenticity pass involve reading reference files and iterative writing. If subagent delegation is available and explicitly allowed in the current Codex runtime, you may delegate them to keep the main context lean. Otherwise, run the same steps in the main context so the skill still works without delegation.
+The actual drafting and authenticity pass involve reading reference files and iterative writing. Delegate them to a subagent to keep the main context lean. If `spawn_agent` is unavailable in the current runtime, run the same steps in the main context.
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+Use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If `spawn_agent` is unavailable, run the same prompt contract in the main context.
 
 ````
 You are drafting written content (a TIL or blog post) from a session summary provided below.

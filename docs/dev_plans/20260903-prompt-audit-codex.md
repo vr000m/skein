@@ -384,7 +384,7 @@ sequenceDiagram
 - [x] Phase C6: Codex review-gauntlet
 - [x] Phase C7: Codex release
 - [x] Phase C8: Codex spec-compliance
-- [ ] Phase C9: Codex delegation idiom
+- [x] Phase C9: Codex delegation idiom
 - [ ] Phase C10: Codex misc skills
 
 ## Findings

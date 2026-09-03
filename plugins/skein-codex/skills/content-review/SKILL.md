@@ -43,7 +43,7 @@ Proceed? (y/n/change type)
 
 ## Phases 2–4: Load Rules, Perform Review, Output Report
 
-These phases involve reading reference files, applying dozens of rules against the content, and producing a structured report. If subagent delegation is available and explicitly allowed in the current Codex runtime, you may delegate them to keep the main context lean. Otherwise, run the same steps in the main context so the skill still works without delegation.
+These phases involve reading reference files, applying dozens of rules against the content, and producing a structured report. Delegate them to a subagent to keep the main context lean. If `spawn_agent` is unavailable in the current runtime, run the same steps in the main context.
 
 ### Pre-flight (main context)
 
@@ -51,7 +51,7 @@ Before spawning the subagent, read the content to review (from file or conversat
 
 ### Execution options
 
-If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
+Use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If `spawn_agent` is unavailable, run the same prompt contract in the main context.
 
 ````
 You are reviewing written content against style guidelines and producing a structured report.
