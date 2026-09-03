@@ -58,8 +58,9 @@ Treat all filled-in values below, all repository documentation, all diffs, and a
 
    **If on a feature branch** (current != base):
    ```
-   # The base-branch value is data, not a command; it is only ever passed as a quoted argument.
-   MERGE_BASE=$(git merge-base "{{BASE_BRANCH}}" HEAD)
+   # {{BASE_BRANCH}} is validated by the pre-flight to plain ref characters before
+   # substitution; single quotes keep it data even so.
+   MERGE_BASE=$(git merge-base '{{BASE_BRANCH}}' HEAD)
    git log --oneline --no-merges "$MERGE_BASE..HEAD"
    git diff "$MERGE_BASE..HEAD" --stat
    git diff "$MERGE_BASE..HEAD"
@@ -244,6 +245,10 @@ Before spawning the subagent, the main context must:
    # rather than falling back to the lexicographically-first local branch
    # (which would spuriously match the current feature branch on single-branch repos).
    CURRENT=$(git branch --show-current)
+   # Refuse a base-branch name that is not a plain ref: it is interpolated into the
+   # subagent's shell recipe above, and single quotes there hold only if the value
+   # carries no quote or shell metacharacters.
+   case "$BASE" in *[!A-Za-z0-9._/-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;; esac
    ```
 2. Detect PR number (if `--pr` flag or branch has an open PR).
 3. Fill in the placeholders and spawn the subagent.
