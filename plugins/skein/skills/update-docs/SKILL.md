@@ -237,7 +237,7 @@ Before spawning the subagent, the main context must:
    # protects the shell, not git, which would parse '-a' as an option to merge-base.
    case "$BASE" in
      "") echo "update-docs: no base branch found (no origin/HEAD, main or master)" >&2; exit 1;;
-     -*|*[!A-Za-z0-9._/-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;;
+     -*|*[!A-Za-z0-9._/@+,-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;;
    esac
    ```
 2. Detect PR number (if `--pr` flag or branch has an open PR).
