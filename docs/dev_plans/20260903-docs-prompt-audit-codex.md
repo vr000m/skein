@@ -424,7 +424,7 @@ Phase 0 and C1–C10 landed as one boundary commit each (c26796c … 5733574), r
 
 ### Learnings
 
-- Every Codex-mirror hunk went through `codex:rescue` with a fresh-thread self-review; two Codex fixes were rejected on first pass (an indented heredoc terminator, a fabricated precedent) and redone, so the self-review step earned its cost.
+- Every Codex-mirror hunk through gauntlet round 9 went through `codex:rescue` with a fresh-thread self-review; two Codex fixes were rejected on first pass (an indented heredoc terminator, a fabricated precedent) and redone, so the self-review step earned its cost. From round 10 on the rescue workers reported the Codex CLI unavailable (`node` missing) and applied the hunks themselves with a Claude-side self-review, byte-verified before commit; the companion Claude plan's Learnings records the affected commits.
 - Mirror pairs landed Codex-first (C-phases) and Claude-aligned (L-phases) as separate boundary commits, with `check-prompt-parity` red inside that lag window by design (AD-8); the gauntlet's later mirror-pair fixes landed both halves in one commit because no lag window was open.
 
 ### Follow-up Work
