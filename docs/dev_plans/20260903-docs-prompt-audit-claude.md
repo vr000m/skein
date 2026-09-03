@@ -403,6 +403,7 @@ sequenceDiagram
 
 Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, then `./scripts/sync.sh collect claude`. Line numbers are as of 2026-09-03. None of these hunks touch a heading asserted by `test-claude-md-hygiene.sh` when `GLOBAL_CLAUDE_MD` is set.
 
+- **D-F05 (global half)** :37 drop `/review` from the hand-run gate list (`/code-review`, `/security-review`, `/deep-review`); no such command resolves, same as the project-file hunk.
 - **D-F06** :158 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.`
 - **D-F07** :161 remove ` Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.`
 - **D-F08 (global half)** :164 same rewrite as the project D-F08.
@@ -419,7 +420,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-04 @ 5477a71a293c33dcd27ca420ded431ef956ad875 -->
+<!-- reviewed: 2026-09-04 @ 9acef4c68a9c9d5edae09aadc5f82022e0ca33ec -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
