@@ -147,43 +147,6 @@ Check:
   Example reason: "not updated — no related changes in this diff".
 - When no candidates were surfaced, include no audit lines in the preamble.
 
-#### Sibling-plan audit — worked example
-
-**Primary plan:** `docs/dev_plans/20260504-feature-skill-improvements-from-usage-report.md`
-- Date-prefix stripped: `feature-skill-improvements-from-usage-report`
-- Type-token stripped: `skill-improvements-from-usage-report`
-- Tokens: `[skill, improvements, from, usage, report]`
-
-**Primary plan's `Files to Modify`:**
-```
-- .claude/skills/update-docs/SKILL.md
-- .claude/skills/deep-review/SKILL.md
-- .claude/skills/deep-review/rubric.md
-```
-
-**Candidate sibling A:** `docs/dev_plans/20260301-chore-usage-report-cleanup.md`
-- Stripped slug: `usage-report-cleanup`, tokens: `[usage, report, cleanup]`
-- Slug check: contiguous 3-token window `[usage, report]` is only 2 tokens — no 3-token window overlaps. **No slug match.**
-- Component check: body of sibling A contains the string `update-docs/SKILL.md` (case-insensitive). **Component match.**
-
-**Candidate sibling B:** `docs/dev_plans/20260210-feature-skill-improvements-deep-review.md`
-- Stripped slug: `skill-improvements-deep-review`, tokens: `[skill, improvements, deep, review]`
-- Slug check: primary tokens `[skill, improvements, from]` (3-token window) — not in sibling. Primary tokens `[skill, improvements]` — only 2 tokens. Try `[skill, improvements, from, usage, report]` substring in sibling's `[skill, improvements, deep, review]`: the 3-token window `[skill, improvements, from]` is not present. But `[skill, improvements]` matches the first two tokens of sibling — only 2, no match. **No slug match** (no 3-token contiguous overlap).
-- Component check: body of sibling B contains the path `.claude/skills/deep-review/rubric.md`. **Component match.**
-
-**Output printed:**
-```
-candidate sibling plans — also touch?
-  docs/dev_plans/20260301-chore-usage-report-cleanup.md  [component match]
-  docs/dev_plans/20260210-feature-skill-improvements-deep-review.md  [component match]
-```
-
-**Commit-message preamble lines appended (if neither sibling was updated):**
-```
-skipped: usage-report-cleanup (not updated — no related changes in this diff)
-skipped: skill-improvements-deep-review (not updated — no related changes in this diff)
-```
-
 ### Changelog (`CHANGELOG.md`)
 Check:
 - [ ] **Missing version section** — if the branch introduces a version bump (check `pyproject.toml`, `package.json`, `Cargo.toml`, `version.py`, etc.), is there a corresponding `## [x.y.z]` section?

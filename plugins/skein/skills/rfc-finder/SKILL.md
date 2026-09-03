@@ -99,13 +99,6 @@ When multiple RFCs are related to the query, rank them by how foundational they 
 3. Informational or experimental RFCs that provide additional context
 
 Pick the 3-5 most relevant — do not list every tangentially related RFC.
-
-### What NOT to Do
-
-- Do NOT paraphrase or reproduce the substance of RFC content — brief factual annotations (status, relevance, obsolescence) are fine; explaining what the RFC argues or specifies is not
-- Do NOT guess RFC numbers — always verify via search
-- Do NOT link to drafts when a published RFC exists for the same work (check the draft's Datatracker page — drafts often get renamed when they become RFCs)
-- Do NOT make ecosystem adoption claims unless you verified them from an authoritative source beyond Datatracker/RFC Editor
 ````
 
 ### After the subagent returns
