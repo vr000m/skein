@@ -182,7 +182,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 
 **Lag window.** Between a Codex phase and its Claude twin the mirrors diverge on purpose, so `just check-prompt-parity` is red: the rubric byte-diff (`check-prompt-parity.sh:61-88`) and the fan-out prompt normalizer span comparison (`:173-184`) both fail while only one half has landed. Codex phases therefore run `bash tests/parity/test-spawn-tiers.sh`, which pins the spawn-tier strings and does not compare mirrors. Each mirror pair is two boundary commits, Codex then Claude; parity is green after the Claude commit.
 ### Phase 0: Baseline counts
-**Impl files:** docs/dev_plans/20260903-docs-prompt-audit-findings.md
+**Impl files:** docs/dev_plans/20260903-prompt-audit-codex.md
 **Test files:** none
 **Test command:** `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests && just plugin-tests`
 **Goal:** Record in `## Findings` the ID-sweep baseline (`rg -n '\b[RC][0-9]\b' plugins/skein plugins/skein-codex --glob '*.md' | wc -l`, expected 29) and that all six recipes are green before any hunk lands.
