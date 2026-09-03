@@ -18,7 +18,7 @@ A fan-out-spawned Codex session may invoke `/conduct` as its top-level skill —
 
 The worker's Test phase (agent-prompt.md Phase 2) is designed to delegate test authoring to a **separate clean-context test-writer subagent**: inherit the harness-selected model, request `reasoning_effort=medium` when supported, and spawn with `fork_context=false`. This is one in-process `spawn_agent` level below the worker, does not start a new fan-out tier, and does not invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
 
-On this harness the separate-subagent topology is not available: a non-interactive `codex exec` worker cannot be shown to initialize the app-server client and spawn a nested `spawn_agent` test-writer with `reasoning_effort=medium` without unsafe bypass flags. The worker therefore keeps a single-context Test phase — it writes and runs its own tests, but tests to the same slice contract — and the anti-cheat rule below applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below), regardless of which Test-phase mode is active.
+This topology is gated: a non-interactive `codex exec` worker has not been shown to spawn a nested `spawn_agent` test-writer at `reasoning_effort=medium`, so the worker keeps a single-context Test phase until that gate is confirmed — it writes and runs its own tests, but tests to the same slice contract — and the anti-cheat rule below applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below), regardless of which Test-phase mode is active.
 
 ## Usage
 
@@ -94,7 +94,8 @@ For each approved task, run these steps using `fan-out.sh`.
 
 First, locate the skill directory and get repo info:
 ```bash
-SKILL_DIR="$(find ~/.codex/skills -maxdepth 1 -name 'fan-out' -type d | head -1)"
+# $SKILL_DIR is the skill's disclosed base directory, exported by the harness.
+SKILL_DIR="${SKILL_DIR:?}"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BASE_BRANCH="$(git branch --show-current)"
 ```

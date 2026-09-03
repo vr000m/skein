@@ -71,6 +71,8 @@ Some important specs never graduate to RFC status but may still be directly rele
 
 ## Step 3: Return Results
 
+**State adoption or deployment claims — for RFCs and drafts alike — only when verified from an authoritative source beyond Datatracker and the RFC Editor; otherwise omit them.**
+
 **Always verify RFC numbers and links via actual search. Never rely on memorized RFC numbers — they may be wrong or outdated.**
 
 Return your findings in exactly this format (no other output). For each published RFC:

@@ -71,10 +71,11 @@ test framework, spawn a separate clean-context test-writer subagent with
 authoring against an already-defined contract, not judgment work). The test-writer
 receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
 Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
-implementer's diff or internal code. That topology needs nested `spawn_agent` support from a
-non-interactive Codex worker, which this harness does not provide. The ACTIVE PATH
-below is single-context authoring: you write and run your own tests, but you author
-them to the same contract a separate test-writer would have used.
+implementer's diff or internal code. That topology is gated: a non-interactive
+`codex exec` worker has not been shown to spawn a nested `spawn_agent` test-writer,
+so until that gate is confirmed the ACTIVE PATH below stays single-context
+authoring: you write and run your own tests, but you author them to the same
+contract a separate test-writer would have used.
 -->
 
 If your task has an applicable test framework, write or update tests **to the slice

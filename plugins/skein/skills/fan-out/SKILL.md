@@ -98,7 +98,8 @@ For each approved task, run these steps using `fan-out.sh`.
 
 First, locate the skill directory and get repo info:
 ```bash
-SKILL_DIR="$(find ~/.claude/skills -maxdepth 1 -name 'fan-out' -type d | head -1)"
+# ${CLAUDE_PLUGIN_ROOT} is the plugin root supplied by the harness; fan-out.sh ships under it.
+SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/fan-out"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BASE_BRANCH="$(git branch --show-current)"
 ```
