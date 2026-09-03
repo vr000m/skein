@@ -378,7 +378,7 @@ sequenceDiagram
 ### Test Results
 
 - [ ] Phase 0 baseline green, residue 29 recorded.
-- [ ] Phase F all recipes green, residue 7 recorded.
+- [x] Phase F all recipes green, residue 7 recorded.
 - [ ] Dry runs complete.
 
 ### Edge Cases Tested
@@ -424,21 +424,28 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 ## Progress
 
-- [ ] Phase L1: Claude conduct
-- [ ] Phase L2: Claude deep-review
-- [ ] Phase L3: Claude dev-plan
-- [ ] Phase L4: Claude review-plan
-- [ ] Phase L5: Claude fan-out
-- [ ] Phase L6: Claude review-gauntlet
-- [ ] Phase L7: Claude release
-- [ ] Phase L8: Claude spec-compliance
-- [ ] Phase L9: Claude misc skills
-- [ ] Phase L10: Claude project CLAUDE.md
-- [ ] Phase F: Final gates
+- [x] Phase L1: Claude conduct
+- [x] Phase L2: Claude deep-review
+- [x] Phase L3: Claude dev-plan
+- [x] Phase L4: Claude review-plan
+- [x] Phase L5: Claude fan-out
+- [x] Phase L6: Claude review-gauntlet
+- [x] Phase L7: Claude release
+- [x] Phase L8: Claude spec-compliance
+- [x] Phase L9: Claude misc skills
+- [x] Phase L10: Claude project CLAUDE.md
+- [x] Phase F: Final gates
 
 ## Findings
 
-- (baseline counts, moved line numbers, flag decisions, "kept:" ledger go here)
+- **Run (2026-09-03):** Claude-driven `/conduct`, phases L1–L10 + F, one boundary commit per phase (cf268f2, 808338c, 9478eec, 91cc04d, 78a40a7, a8820dc, 3e9c5e5, d02e008, 22090da, 11faf8c). Each commit body carries the per-hunk `kept:` ledger. Test-writer subagents were skipped: every phase is prose-only with existing script/test guards and no `Test files:` slot.
+- **Alignment to Codex text:** every mirror pair aligned to the Codex mirror at HEAD. Divergences from the plan's proposed After: review-plan A-F4 took the Codex-form sentence (the plan cites "same Codex-form After as deep-review"); release B-12/B-13 landed as one combined paragraph, matching Codex's single hunk; fan-out SKILL.md also dropped a stray `2026-07-04` on the Codex-mirror asymmetry line adjacent to B-07.
+- **Parity lag window:** `just check-prompt-parity` went green at L8 (spec-compliance rubric was the last drift); the parity-comparing recipes were run per phase and judged on files owned by the phase only.
+- **Phase F gates:** `check-prompt-parity`, `check-sync`, `parity-tests`, `gauntlet-tests`, `lens-tests`, `plugin-tests` all exit 0 (`PYTEST_ADDOPTS='-p no:cacheprovider'` for plugin-tests, as in Phase 0). `gauntlet-tests` flaked once on `tests/gauntlet/test-gate-timeout.sh` A11 (1/50 timing race, green on re-run); the branch touches neither that test nor `lib/gate-bounded.sh`. Follow-up: stabilise A11.
+- **ID sweep:** residue 7 = allowlist exactly (`fan-out/agent-prompt.md:68` `R6 status:` opener; 2×2 `fixture-plan.md` lines; `release/SKILL.md` `C0/DEL` in each mirror). Baseline was 29.
+- **Phase-tag check:** zero hits.
+- **Dry runs:** fan-out worker-prompt template checked structurally — the rewritten `R6 status:` block (agent-prompt.md:67-75) carries no placeholders and passes the parity normalizer, so a filled prompt carries it verbatim; `--dry-run` stops before prompt assembly and would not exercise it further. review-gauntlet is exercised by the real auto-chain run from this plan rather than a separate dry run.
+- **Flag-only items:** none decided in this run; the list under "Flag only — decide with user" is untouched.
 
 ## Issues & Solutions
 
