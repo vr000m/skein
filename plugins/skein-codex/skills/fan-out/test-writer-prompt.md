@@ -1,10 +1,8 @@
 # Fan-Out Test-Writer Subagent Prompt Template
 
-**Status note (read first):** on this harness the worker consumes this contract single-context: it authors tests to the contract inside its own Phase 2 (see `agent-prompt.md`) rather than spawning a separate subagent, and it follows the anti-cheat rule in `agent-prompt.md` Phase 4 as if the two contexts were genuinely separate. The template below is the separate-subagent form, ready to use verbatim where nested `spawn_agent` with `fork_context=false` and `reasoning_effort=medium` is available.
-
-Filled by the fan-out worker before spawning the test-writer (once the nested-spawn
-gate is confirmed). The filled prompt is passed as the full subagent input — the
-subagent has no prior conversation history and never receives the worker's diff.
+Filled by the fan-out worker before spawning the test-writer. The filled prompt is
+passed as the full subagent input — the subagent has no prior conversation history
+and never receives the worker's diff.
 
 Placeholders: `{{TASK_DESCRIPTION}}`, `{{WRITER_SEAM_ROWS}}`, `{{EXISTING_TESTS}}`.
 

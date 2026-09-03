@@ -64,27 +64,14 @@ Write the code described in your task. Commit your work.
 
 ### Phase 2: Test
 
-<!--
-INTENDED DESIGN (currently GATED, not active): when your slice has an applicable
-test framework, spawn a separate clean-context test-writer subagent with
-`fork_context=false` and request `reasoning_effort=medium` when supported
-(mechanical test authoring against an already-defined contract, not judgment work).
-If the runtime does not support that effort request or the nested dispatch fails,
-stay on the ACTIVE PATH below. The test-writer
-receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
-Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
-implementer's diff or internal code. That topology is gated: a non-interactive
-`codex exec` worker has not been shown to spawn a nested `spawn_agent` test-writer,
-so until that gate is confirmed the ACTIVE PATH below stays single-context
-authoring: you write and run your own tests, but you author them to the same
-contract a separate test-writer would have used.
--->
-
 If your task has an applicable test framework, write or update tests **to the slice
 contract**: the `{{TASK_DESCRIPTION}}` above plus the Integration Seams rows in your
 Technical Context where you are listed as the Writer (concrete import paths, symbol
 names, function signatures). Treat that contract — not your own implementation — as
-the source of truth for what the tests assert.
+the source of truth for what the tests assert. You author these tests yourself,
+single-context, inside this Phase 2, rather than spawning a separate test-writer
+subagent, because a non-interactive `codex exec` worker has not been shown to spawn a
+nested `spawn_agent` test-writer.
 
 If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
 note that explicitly in your result file and continue; do not attempt to write

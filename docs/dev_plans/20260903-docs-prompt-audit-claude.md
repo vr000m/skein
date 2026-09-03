@@ -258,11 +258,11 @@ Runtime: Claude-driven `/conduct` only. Prerequisite: every phase in `docs/dev_p
 
 Not a `/conduct` phase. Walk the flag list under "Flag only — decide with user" with the user and record accept/decline per item in `## Findings`. Accepted items are applied per AD-1 (guard edit in the same commit) and AD-8 (Codex-side flags go to Codex), as extra phases appended to this checklist and to `## Progress` before the run that lands them.
 
-### Deferred: R6 apparatus removal (Codex-led)
-
-Not a `/conduct` phase. **Impl files:** `plugins/*/skills/fan-out/agent-prompt.md, plugins/*/skills/fan-out/test-writer-prompt.md, scripts/check-prompt-parity.sh`; **Test files:** `tests/parity/test-spawn-tiers.sh`; **Test command:** `just parity-tests`.
-
-- Delete both comment blocks and both status notes; delete the `perl` alternation and the test-writer sentence substitution at `check-prompt-parity.sh:178` and the `Status note` sed range at :183; delete `test-spawn-tiers.sh:276-278` (`reasoning_effort=medium` in the two Codex prompt files; `:274` on SKILL.md :19 stays); rewrite the Codex `Filled by the fan-out worker …` sentence to the Claude wording. Only with an explicit user go-ahead.
+### Phase R: R6 apparatus removal
+**Impl files:** plugins/skein/skills/fan-out/agent-prompt.md, plugins/skein/skills/fan-out/test-writer-prompt.md, plugins/skein-codex/skills/fan-out/agent-prompt.md, plugins/skein-codex/skills/fan-out/test-writer-prompt.md, scripts/check-prompt-parity.sh
+**Test files:** tests/parity/test-spawn-tiers.sh
+**Test command:** `just check-prompt-parity && just check-sync && just parity-tests`
+**Goal:** Runtime: Codex authors the Codex mirror, the normaliser and the test via codex:rescue; Claude aligns its mirror; one commit. Delete both agent-prompt.md comment blocks (`R6 status:` / `INTENDED DESIGN`) and both test-writer-prompt.md status notes; the Codex `Filled by the fan-out worker …` sentence takes the Claude wording; the Codex test-framework directive carries the single-context fact in prose. In `check-prompt-parity.sh` drop the perl comment-block alternation, the Filled-sentence substitution and the Status-note sed range, leaving the test-framework and anti-cheat excisions; rewrite the header comment without rule IDs, dates or gate narrative. In `test-spawn-tiers.sh` drop the `reasoning_effort=medium` pins on the two Codex prompt files (the SKILL.md pin stays) and rename R6-labelled assertions descriptively. Anchors kept: `Filled by the fan-out worker` (:387) and `### Phase 5`. The fan-out tests directory (seeded-divergence fixtures, gate probe scripts) and CODEX_MIRROR_BACKLOG.md history are out of scope.
 
 ## Technical Specifications
 
@@ -418,7 +418,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-03 @ b71e9409e919364c037fe196f3ef08972b8ac2cb -->
+<!-- reviewed: 2026-09-03 @ 310b922b432f538bf130c30593bc86271e3717f9 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -435,11 +435,13 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 - [x] Phase L9: Claude misc skills
 - [x] Phase L10: Claude project CLAUDE.md
 - [x] Phase F: Final gates
+- [x] Phase R: R6 apparatus removal
 
 ## Findings
 
 - **Run (2026-09-03):** Claude-driven `/conduct`, phases L1–L10 + F, one boundary commit per phase (cf268f2, 808338c, 9478eec, 91cc04d, 78a40a7, a8820dc, 3e9c5e5, d02e008, 22090da, 11faf8c). Each commit body carries the per-hunk `kept:` ledger. Test-writer subagents were skipped: every phase is prose-only with existing script/test guards and no `Test files:` slot.
-- **Alignment to Codex text:** every mirror pair aligned to the Codex mirror at HEAD. Divergences from the plan's proposed After: review-plan A-F4 took the Codex-form sentence (the plan cites "same Codex-form After as deep-review"); release B-12/B-13 landed as one combined paragraph, matching Codex's single hunk; fan-out SKILL.md also dropped a stray `2026-07-04` on the Codex-mirror asymmetry line adjacent to B-07; B-20 restored the prohibition clause dropped from the plan's proposed After (review gauntlet round 1, commit a8a09f7), and `tests/parity/test-spawn-tiers.sh` now pins that clause; D-F16's proposed After for `.claude/CLAUDE.md:96` is superseded by round 4's restored inline cutoff "(under about 30 lines)" (commit 247fc7a); A-F8a's proposed After for conduct:434 is superseded by round 4's conditional wording — schema_version writes 1 until any `ci_parity_*` field is set, then 2 (commit 247fc7a, matching conductor.py).
+- **Alignment to Codex text:** every mirror pair aligned to the Codex mirror at HEAD. Divergences from the plan's proposed After: review-plan A-F4 took the Codex-form sentence (the plan cites "same Codex-form After as deep-review"); release B-12/B-13 landed as one combined paragraph, matching Codex's single hunk; fan-out SKILL.md also dropped a stray `2026-07-04` on the Codex-mirror asymmetry line adjacent to B-07; B-20 restored the prohibition clause dropped from the plan's proposed After (review gauntlet round 1, commit a8a09f7), and `tests/parity/test-spawn-tiers.sh` now pins that clause; D-F16's proposed After for `.claude/CLAUDE.md:96` is superseded by round 4's restored inline cutoff "(under about 30 lines)" (commit 247fc7a); A-F8a's proposed After for conduct:434 is superseded by round 4's conditional wording — schema_version writes 1 until any `ci_parity_*` field is set, then 2 (commit 247fc7a, matching conductor.py). Intended divergence by user decision: the Codex delegation clause (C-F16 sites content-draft:42, content-review:46, rfc-finder:29, spec-compliance:37, update-docs:27) has no Claude twin; the harness enforces the same one-level-of-delegation invariant, so the clause is Codex-only (see the Codex plan's AD-4).
+- **Phase R (after the round-6 decisions):** both agent-prompt.md comment blocks and both test-writer-prompt.md status notes removed; the Codex Phase 2 directive states the single-context fact in prose; `check-prompt-parity.sh` keeps only the test-framework and anti-cheat excisions and its header names no rule IDs or dates; `test-spawn-tiers.sh` drops the two Codex prompt-file `reasoning_effort=medium` pins (SKILL.md pin stays) and labels the remaining assertions descriptively (115 tests). Codex authored its mirror, the normaliser and the test via codex:rescue; Claude aligned its mirror. Out of scope: fan-out tests fixtures, gate probe scripts, CODEX_MIRROR_BACKLOG.md history.
 - **Review-gauntlet rounds (post-Phase F):**
   - Round 1 — a8a09f7: `fan-out/agent-prompt.md:29` both mirrors restore the "do not touch files outside your scope" clause; `tests/parity/test-spawn-tiers.sh` pins it; Codex `fan-out/agent-prompt.md:73` restores "or internal code"; `rfc-finder` fence line both mirrors rewritten to "…brief factual annotations. Do not paraphrase, summarize, or reproduce the substance of RFC content — let the link do that work." 1443dfb: Codex `deep-review/SKILL.md` drops the stray "The respawn-exactly-once-per-invocation cap is unchanged" sentence (the cap is stated normatively elsewhere in the file). b89a130: plan renames to the `yyyymmdd-docs-*` convention.
   - Round 2 — b99576c: both conduct twins gain the plan-rename re-binds-the-state-file clause (conduct:106 Claude side); Codex conduct twin gains the `CONDUCT_LAGGING_MIRROR_OK` sentence; Codex `spec-compliance:45` restores "request `reasoning_effort=high` when supported". 896c677: orphan `SKILL_DIR="<the disclosed base directory for this skill>"` bind blocks dropped from Claude `deep-review/SKILL.md` and `review-plan/SKILL.md`. e23ecdf: docs.
@@ -471,8 +473,8 @@ Phases L1–L10 and F landed as one boundary commit each (cf268f2 … 11faf8c), 
 
 - Gauntlet rounds (reconciled / fixed / quarantined): R1 13/10/3, R2 14/11/3, R3 9/9/0, R4 8/7/1, R5 9/6/3, R6 13/6/7. Round commits: a8a09f7, b99576c, 22a85e9, 63db0ce, 247fc7a, 240a514, 54789c3, 2c86402, 69a34d8, 93c133e, df8ebc9, 96e6907.
 - Fixes landed by the gauntlet beyond the plan's hunks: rfc-finder adoption-claims rule; fan-out SKILL_DIR bind repaired (`${CLAUDE_PLUGIN_ROOT:?}` / `${SKILL_DIR:?}`); stale `.claude/skills` and `.codex/skills` paths replaced across conduct, dev-plan, plan-view (SKILL.md, generate.py comment, test fixture, ci-parity docstring) and `scripts/check-prompt-parity.sh`; plan-view rich-mode invocations use the harness path idiom; Codex update-docs recipe no longer reads an unassigned variable; project CLAUDE.md decision rule wording; conduct schema_version rule made conditional; flag-only C-F15 resolved.
-- Parity gates green at HEAD: `just check-prompt-parity`, `just check-sync`, `tests/parity/test-spawn-tiers.sh` (117), `tests/parity/test-prompt-parity-extended.sh` (29), plan-view and conduct test suites.
-- Awaiting user decision (re-reported every round, quarantined, not fixed): the C-F16 delegation and input-isolation clause the Codex mirror carries in content-draft, content-review, rfc-finder, spec-compliance and update-docs with no Claude twin, and the AD-4 sentence that still calls it a hedge; the `R6 status:` opener / deferred R6 apparatus removal; the Managed-Agents rubric vocabulary. Dismissed with evidence: the grill guard claim (round 4), the conduct rename-clause claim (round 5), the lag-window rule claim (round 6, the plan text already states the recipe is red inside the window).
+- Parity gates green at HEAD: `just check-prompt-parity`, `just check-sync`, `tests/parity/test-spawn-tiers.sh` (117 before Phase R, 115 after: two Codex prompt-file effort pins removed with the status apparatus), `tests/parity/test-prompt-parity-extended.sh` (29), plan-view and conduct test suites.
+- Decided after round 6: C-F16 recorded as an intended Codex-only divergence (AD-4 rewritten, no Claude twin); the R6 prompt apparatus removed on this branch (Phase R below); the Managed-Agents rubric vocabulary kept as descriptive wording. Dismissed with evidence: the grill guard claim (round 4), the conduct rename-clause claim (round 5), the lag-window rule claim (round 6, the plan text already states the recipe is red inside the window).
 
 ### Learnings
 
@@ -482,6 +484,4 @@ Phases L1–L10 and F landed as one boundary commit each (cf268f2 … 11faf8c), 
 
 ### Follow-up Work
 
-- User decision on C-F16 (add a Claude twin, drop the Codex clause, or record the divergence as intended); the Codex review prompt for the flagged items has been delivered.
-- Deferred R6 apparatus removal and rubric vocabulary cleanup (own plan).
 - The plan-view A11 snapshot test flaked once during Phase F; not reproduced, worth a look.

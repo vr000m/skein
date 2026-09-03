@@ -1,7 +1,5 @@
 # Fan-Out Test-Writer Subagent Prompt Template
 
-**Status note (read first):** on this harness the fan-out worker spawns a separate clean-context test-writer subagent with `model: sonnet`; effort is inherited from the worker's `--effort medium` session because the Task tool has no per-call effort argument. The test-writer never sees the implementer's diff.
-
 Filled by the fan-out worker before spawning the test-writer. The filled prompt is
 passed as the full subagent input — the subagent has no prior conversation history
 and never receives the worker's diff.

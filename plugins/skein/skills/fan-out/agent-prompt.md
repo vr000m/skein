@@ -64,16 +64,6 @@ Write the code described in your task. Commit your work.
 
 ### Phase 2: Test
 
-<!--
-R6 status: the separate clean-context test-writer topology is live on the Claude
-harness. A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset,
-exactly as fan-out.sh launches it) can spawn a nested Task subagent that honors a
-per-call model; re-check with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
-Caveat carried into the active directive below: the Task tool has NO per-call effort
-argument, so the test-writer's effort is inherited from this worker's session (which
-fan-out.sh runs at `--effort medium`), while its model IS set per-call.
--->
-
 If your task has an applicable test framework, delegate test authoring to a **separate
 clean-context test-writer subagent**: spawn it via the Task/Agent tool at
 `model: sonnet, effort: medium` (the model is set per-call and honored; effort has no
@@ -85,7 +75,7 @@ function signatures) — and **never your implementation diff or internal code**
 validates the contract rather than ratifying your code. It authors the test files and
 returns them (its own one-shot run is advisory); **you** then run those files verbatim
 as the authoritative pass/fail. See `test-writer-prompt.md` for the test-writer's
-contract. (Nested spawning is supported on this harness — see the status note above.)
+contract.
 
 If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
 note that explicitly in your result file and continue; do not attempt to write

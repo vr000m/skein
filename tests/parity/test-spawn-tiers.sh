@@ -201,9 +201,9 @@ echo
 # --- (7) Codex per-skill reasoning_effort counts ---
 # These counts intentionally use Codex's prose-hint idiom (`reasoning_effort=X`)
 # rather than Claude `model:`/`effort:` fields. They cover all Codex SKILL.md
-# spawns/lenses that declare a tier in the mirror, including the R6 fan-out
-# test-writer intended topology, even though that topology is gated/inactive
-# until the nested-spawn runtime gate is confirmed.
+# spawns/lenses that declare a tier in the mirror, including the fan-out
+# test-writer's documented tier for the clean-context spawn topology it would
+# use once a nested `spawn_agent` test-writer is shown to work.
 CODEX_HIGH_RE='reasoning_effort=high'
 CODEX_MEDIUM_RE='reasoning_effort=medium'
 CODEX_LOW_RE='reasoning_effort=low'
@@ -227,7 +227,7 @@ assert_count "$CODEX_SKILLS_DIR/dev-plan/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
 assert_count "$CODEX_SKILLS_DIR/plan-view/SKILL.md" "$CODEX_LOW_RE" 2 \
 	"codex plan-view reasoning_effort=low rich-render spawn count"
 assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 2 \
-	"codex fan-out reasoning_effort=medium test-writer gated-topology count"
+	"codex fan-out reasoning_effort=medium test-writer topology count"
 assert_count "$CODEX_SKILLS_DIR/review-gauntlet/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
 	"codex review-gauntlet reasoning_effort=medium fixer lifecycle count"
 assert_count "$CODEX_SKILLS_DIR/content-draft/SKILL.md" "$CODEX_LOW_RE" 1 \
@@ -270,13 +270,9 @@ assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'Mapping normative s
 assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'Code review is judgment work, so the advisory reviewer gets the review tier' \
 	"codex conduct reviewer rationale"
 
-# --- (9) Codex R6 and dispatch-idiom guards ---
+# --- (9) Codex fan-out test-writer tier and dispatch-idiom guards ---
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'reasoning_effort=medium.*fork_context=false' \
-	"codex fan-out R6 intended test-writer spawn carries medium effort and fork_context=false"
-assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/agent-prompt.md" 'reasoning_effort=medium' \
-	"codex fan-out agent-prompt documents gated test-writer reasoning_effort=medium"
-assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/test-writer-prompt.md" 'reasoning_effort=medium' \
-	"codex fan-out test-writer-prompt documents medium effort"
+	"codex fan-out documented test-writer spawn carries medium effort and fork_context=false"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'Codex does not pin model names' \
 	"codex fan-out documents no default model pin"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
@@ -356,25 +352,25 @@ assert_absent "$FANOUT_SH" 'DEFAULT_MODEL="opus"' "fan-out.sh DEFAULT_MODEL=opus
 assert_present "$FANOUT_SH" 'DEFAULT_EFFORT' "fan-out.sh DEFAULT_EFFORT present"
 assert_present "$FANOUT_SH" '\-\-effort' "fan-out.sh --effort flag handling present"
 
-# --- (6) R6: fan-out test-writer spawn documented at sonnet/medium ---
-# The test-writer topology is currently gated (see CODEX_MIRROR_BACKLOG.md,
-# 2026-07-04 entry) but its intended tier must still be documented in
-# agent-prompt.md so the annotation survives once the gate is confirmed. This
-# does not change the pinned opus/high total above (6) — sonnet/medium is a
-# mechanical tier, not a judgment tier.
+# --- (6) fan-out test-writer spawn documented at sonnet/medium ---
+# The test-writer topology's intended tier must be documented in
+# agent-prompt.md regardless of which harness is spawning it. This does not
+# change the pinned opus/high total above (6) — sonnet/medium is a mechanical
+# tier, not a judgment tier.
 FANOUT_AGENT_PROMPT="$SKILLS_DIR/fan-out/agent-prompt.md"
 assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
 	"fan-out agent-prompt.md test-writer spawn documented at model: sonnet, effort: medium"
 
-# --- (6b) R6 anti-cheat semantics floor (both mirrors) ---
-# scripts/check-prompt-parity.sh excises the R6 idiom spans (the anti-cheat
-# paragraph and the gated-topology block) before byte-comparing the two fan-out
-# prompt mirrors, so byte-parity no longer guards R6's load-bearing "contract
-# wins" anti-cheat rule. Assert its presence here in BOTH mirrors so the excised
-# span keeps an automated floor (deep-review Architecture finding, 2026-07-04).
+# --- (6b) anti-cheat "contract wins" semantics floor (both mirrors) ---
+# scripts/check-prompt-parity.sh excises the fan-out idiom spans (the anti-cheat
+# paragraph and the test-writer topology block) before byte-comparing the two
+# fan-out prompt mirrors, so byte-parity no longer guards the load-bearing
+# "contract wins" anti-cheat rule. Assert its presence here in BOTH mirrors so
+# the excised span keeps an automated floor (deep-review Architecture finding,
+# 2026-07-04).
 for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 	assert_present "$tree/fan-out/agent-prompt.md" 'contract wins' \
-		"fan-out agent-prompt.md ($tree) carries the R6 anti-cheat 'contract wins' rule"
+		"fan-out agent-prompt.md ($tree) carries the anti-cheat 'contract wins' rule"
 	# The parity normalizer's excision ranges end on these anchors; if a future
 	# edit drops an anchor in one mirror the sed range would run to EOF and
 	# over-excise, masking real drift (Logic finding, 2026-07-04). Pin them.
