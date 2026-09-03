@@ -622,11 +622,7 @@ After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before
 
 After every lens subagent has returned (Step 2) and before the report is emitted to the user (Step 5), run the reconciliation pass. This step is structural — **no LLM call is made inside Step 3.5**. Matching is performed entirely on the `(file, line, category)` signature defined by the GENERIC block above; the orchestrator never asks a model to decide whether two findings are the same defect.
 
-**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. At load the harness discloses this skill's absolute directory (the `Base directory for this skill:` line); bind it once and run every operative pipeline command from there:
-
-```
-SKILL_DIR="<the disclosed base directory for this skill>"
-```
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory.
 
 All operative invocations below use `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/…`. If `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (mandatory `--test-cmd`, one test run per fix, blob restore on failure without touching `HEAD`) holds only when the bundled applier runs.
 

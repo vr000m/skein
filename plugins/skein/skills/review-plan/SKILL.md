@@ -599,11 +599,7 @@ After every lens agent has returned (Step 2) and before the report is presented 
 
 The merge logic — schema, signature, severity policy, canonical sort, and related-findings cross-reference — is documented authoritatively in the GENERIC block. Read it as the binding contract; the prose around it walks through how the orchestrator applies it.
 
-**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory. At load the harness discloses this skill's absolute directory (the `Base directory for this skill:` line); bind it once and run every operative pipeline command from there:
-
-```
-SKILL_DIR="<the disclosed base directory for this skill>"
-```
+**Resolving the bundled pipeline.** The auto-fix pipeline ships *inside this skill* under `scripts/` (placed there by `bundle-appliers.sh`, byte-identical to the repo canonical) so it resolves wherever the skill is installed — never from the current working directory.
 
 All operative invocations below use `${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/…`. If `${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/` is absent, **abort with a clear error** — never fall back to applying fixes by hand or running an unbundled script. The gated applier's safety contract (the marker-hash check at Step 7, plus the per-fix blob restore) holds only when the bundled applier runs.
 
