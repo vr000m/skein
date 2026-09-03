@@ -340,10 +340,10 @@ sequenceDiagram
 
 ### Test Approach
 
-- [ ] `bash tests/parity/test-spawn-tiers.sh` — after every phase here. This is the only gate the Codex phases run: it pins the spawn-tier strings and does not compare mirrors, so it stays green through the lag window.
-- [ ] `just gauntlet-tests` — additionally in phase C6 (runs `tests/gauntlet/test-gauntlet-skill-shape.sh`, the only path to the B-01 XOR guard).
-- [ ] Phase 0 only: `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests && just plugin-tests`, all green, plus the ID-sweep baseline of 29.
-- [ ] Expected red during the lag window, not a failure: `just check-prompt-parity` and anything that wraps it, because only the Codex half of each pair has landed. The ID sweep, the phase-tag check and the dry runs are the Claude plan's phase F.
+- [x] `bash tests/parity/test-spawn-tiers.sh` — after every phase here. This is the only gate the Codex phases run: it pins the spawn-tier strings and does not compare mirrors, so it stays green through the lag window.
+- [x] `just gauntlet-tests` — additionally in phase C6 (runs `tests/gauntlet/test-gauntlet-skill-shape.sh`, the only path to the B-01 XOR guard).
+- [x] Phase 0 only: `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests && just plugin-tests`, all green, plus the ID-sweep baseline of 29.
+- [x] Expected red during the lag window, not a failure: `just check-prompt-parity` and anything that wraps it, because only the Codex half of each pair has landed. The ID sweep, the phase-tag check and the dry runs are the Claude plan's phase F.
 
 ### Test Results
 
@@ -352,8 +352,8 @@ sequenceDiagram
 
 ### Edge Cases Tested
 
-- [ ] Rewriting a pinned string without rewriting its assertion in the same phase fails `test-spawn-tiers.sh` (`:268`, `:270`) — the failure is the guard working.
-- [ ] Dropping a normalizer opener or an excision anchor fails `test-spawn-tiers.sh:381-388`.
+- [x] Rewriting a pinned string without rewriting its assertion in the same phase fails `test-spawn-tiers.sh` (`:268`, `:270`) — the failure is the guard working; seen live in C1/C4 when the `R3 why:` pins moved with the prose.
+- [x] Dropping a normalizer opener or an excision anchor fails `test-spawn-tiers.sh:381-388` — verified after the gauntlet on the Claude mirror (see the Claude plan's Edge Cases): the `Filled by the fan-out worker` anchor is the spawn-tiers pin, the `R6 status:` opener is caught by check-prompt-parity's normaliser.
 
 ## Acceptance Criteria
 
@@ -369,7 +369,7 @@ sequenceDiagram
 
 `none` — the gauntlet runs once, from the companion Claude plan, after its phase F.
 
-<!-- reviewed: 2026-09-03 @ 4e18641f9fc857895e3845e46896e992bfbd0c7e -->
+<!-- reviewed: 2026-09-03 @ 09ffb385aefb1a79e1342e5999f61d0265b4afb6 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

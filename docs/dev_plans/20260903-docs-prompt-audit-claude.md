@@ -383,8 +383,8 @@ sequenceDiagram
 
 ### Edge Cases Tested
 
-- [ ] A hunk applied to one mirror only fails `check-prompt-parity` (rubric, test-writer-prompt :1, agent-prompt :29) — deliberately verify once by staging a single-mirror edit and reverting.
-- [ ] Dropping an excision anchor fails `test-spawn-tiers.sh:381-388` — verify once the same way.
+- [x] A hunk applied to one mirror only fails `check-prompt-parity` (rubric, test-writer-prompt :1, agent-prompt :29) — verified after the gauntlet by appending a line to the Claude review-plan rubric.md (drift reported, recipe failed) and reverting.
+- [x] Dropping an excision anchor fails `test-spawn-tiers.sh:381-388` — verified the same way: altering `Filled by the fan-out worker` in the Claude test-writer-prompt.md fails the anchor assertion (116/117) and check-prompt-parity; renaming the `R6 status:` opener in agent-prompt.md is caught by check-prompt-parity's normaliser (spawn-tiers stays green, the opener is not a spawn-tiers pin).
 
 ## Acceptance Criteria
 
@@ -418,7 +418,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-03 @ de97b0c4b2b507eb0356257e909f2af33a96a3c3 -->
+<!-- reviewed: 2026-09-03 @ b71e9409e919364c037fe196f3ef08972b8ac2cb -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
