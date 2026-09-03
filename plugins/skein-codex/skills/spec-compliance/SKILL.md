@@ -42,7 +42,7 @@ Before delegating, read the code file(s) identified in Step 1 from the workspace
 
 ### Execution options
 
-Use `spawn_agent` with the harness-selected model and `reasoning_effort=high` to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). Mapping normative spec requirements onto code is judgment work, not a lookup, so it warrants the high tier. If `spawn_agent` is unavailable, run the same prompt contract in the main context.
+Use `spawn_agent` with the harness-selected model and request `reasoning_effort=high` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). Mapping normative spec requirements onto code is judgment work, not a lookup, so it warrants the high tier. If `spawn_agent` is unavailable, run the same prompt contract in the main context.
 
 ````
 You are performing a spec compliance check — mapping normative requirements from a specification against code to produce a structured compliance report.
