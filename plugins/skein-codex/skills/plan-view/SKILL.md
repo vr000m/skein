@@ -46,8 +46,7 @@ A `<plans-dir>/README.md` is treated as **authoritative** for status grouping if
 <out>/
 ├── index.html                  # dashboard
 ├── plan-<slug>.html            # one per plan
-├── plan-<slug>.rich.html       # one per plan, only after the --rich workflow runs
-└── _assets/                    # inline-only; this dir is currently unused
+└── plan-<slug>.rich.html       # one per plan, only after the --rich workflow runs
 ```
 
 The deterministic pages always link to their rich counterpart by the fixed `plan-<slug>.rich.html` name (a `rich →` link on each dashboard card, a `rich view →` link in each plan-page header), and the rich pages link back to `index.html` and `plan-<slug>.html`. The forward link is emitted unconditionally — the filename mapping is deterministic, so a rich view becomes navigable the moment it is generated; before then the link is a dead local file. The back-link breadcrumb is injected into existing rich pages by `relink_rich_pages()` on every plain run (idempotent; see the `--rich` workflow), so a plain regeneration is the only step needed to add navigation to rich pages — their LLM-rendered *content* is never touched, only the breadcrumb is added.
