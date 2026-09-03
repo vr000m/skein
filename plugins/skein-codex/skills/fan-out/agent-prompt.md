@@ -26,7 +26,7 @@ You are working in: {{WORKTREE_PATH}}
 Your branch: {{BRANCH_NAME}}
 Base branch: {{BASE_BRANCH}}
 
-IMPORTANT: Only modify files relevant to your task. Do not touch files outside your scope.
+Modify only files relevant to your task. Other agents are working in parallel worktrees, and every branch merges back into the same base.
 
 ## Project Conventions
 
@@ -67,18 +67,14 @@ Write the code described in your task. Commit your work.
 <!--
 INTENDED DESIGN (currently GATED, not active): when your slice has an applicable
 test framework, spawn a separate clean-context test-writer subagent with
-`fork_context=false` and request `reasoning_effort=medium` when supported
-(mechanical test authoring against an already-defined contract, not judgment work).
-The test-writer receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the
-Writer-designated Integration Seams rows (concrete import paths, symbol names,
-signatures) injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
-implementer's diff or internal code. That topology is gated on non-interactive
-Codex worker nested-`spawn_agent` support, which is UNCONFIRMED in this
-environment (the safe `codex exec` gate could not initialize its in-process
-app-server client; see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04
-Codex-track divergence entry). Until that gate is confirmed, the ACTIVE PATH
-below is single-context authoring: you write and run your own tests, but you
-author them to the same contract a separate test-writer would have used.
+`fork_context=false` and request `reasoning_effort=medium` (mechanical test
+authoring against an already-defined contract, not judgment work). The test-writer
+receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
+Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
+implementer's diff. That topology needs nested `spawn_agent` support from a
+non-interactive Codex worker, which this harness does not provide. The ACTIVE PATH
+below is single-context authoring: you write and run your own tests, but you author
+them to the same contract a separate test-writer would have used.
 -->
 
 If your task has an applicable test framework, write or update tests **to the slice

@@ -380,7 +380,7 @@ sequenceDiagram
 - [x] Phase C2: Codex deep-review
 - [x] Phase C3: Codex dev-plan
 - [x] Phase C4: Codex review-plan
-- [ ] Phase C5: Codex fan-out
+- [x] Phase C5: Codex fan-out
 - [ ] Phase C6: Codex review-gauntlet
 - [ ] Phase C7: Codex release
 - [ ] Phase C8: Codex spec-compliance

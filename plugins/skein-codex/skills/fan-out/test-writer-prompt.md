@@ -1,18 +1,6 @@
-# Fan-Out Test-Writer Subagent Prompt Template (R6 contract)
+# Fan-Out Test-Writer Subagent Prompt Template
 
-**Status note (read first):** under the current Codex-track fallback, this contract
-is consumed **single-context by the worker itself** — the worker authors tests to
-this same contract inside its own Phase 2 (see `agent-prompt.md`), rather than
-spawning a separate subagent to do it. The template below documents the **intended
-design**: a separate clean-context test-writer subagent, spawned by the worker with
-`fork_context=false` and a `reasoning_effort=medium` request, that never sees the
-implementer's diff. That separate-subagent topology is **gated** on runtime
-nested-`spawn_agent` support from a non-interactive Codex worker, which is
-unconfirmed in this environment (see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`,
-2026-07-04 Codex-track divergence entry). This file stays ready to use verbatim
-once the gate is confirmed; until then, the worker plays both roles but must still
-follow the anti-cheat rule (`agent-prompt.md` Phase 4) as if the two contexts were
-genuinely separate.
+**Status note (read first):** on this harness the worker consumes this contract single-context: it authors tests to the contract inside its own Phase 2 (see `agent-prompt.md`) rather than spawning a separate subagent, and it follows the anti-cheat rule in `agent-prompt.md` Phase 4 as if the two contexts were genuinely separate. The template below is the separate-subagent form, ready to use verbatim where nested `spawn_agent` with `fork_context=false` and `reasoning_effort=medium` is available.
 
 Filled by the fan-out worker before spawning the test-writer (once the nested-spawn
 gate is confirmed). The filled prompt is passed as the full subagent input — the
