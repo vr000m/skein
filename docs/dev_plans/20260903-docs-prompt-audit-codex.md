@@ -396,8 +396,10 @@ sequenceDiagram
 - **Review-gauntlet rounds (post-Phase F, Codex-relevant items):**
   - Round 1 — a8a09f7: `fan-out/agent-prompt.md:73` restores "or internal code" on the test-writer isolation boundary; `rfc-finder/SKILL.md` fence line rewritten to the no-paraphrase rule; `tests/parity/test-spawn-tiers.sh` gains the write-containment assertion. 1443dfb: `deep-review/SKILL.md` drops the stray "The respawn-exactly-once-per-invocation cap is unchanged" sentence (the cap is stated normatively elsewhere in the file).
   - Round 2 — b99576c: `conduct/SKILL.md` gains the `CONDUCT_LAGGING_MIRROR_OK` sentence and the rename/re-bind clause; `spec-compliance/SKILL.md` restores "request `reasoning_effort=high` when supported" on the dispatch line.
-  - Round 3 — 22a85e9: `rfc-finder/SKILL.md` adds the adoption/deployment-claims verification rule; `fan-out/SKILL.md` and `agent-prompt.md` replace the dead `find ~/.*/skills` SKILL_DIR bind with `${SKILL_DIR:?}` and harmonise the gated-topology wording to one certainty level.
+  - Round 3 — 22a85e9: `rfc-finder/SKILL.md` adds the adoption/deployment-claims verification rule; `fan-out/SKILL.md` replaces the dead `find ~/.*/skills` SKILL_DIR bind with `${SKILL_DIR:?}`; `fan-out/SKILL.md` and `agent-prompt.md` harmonise the gated-topology wording to one certainty level.
   - Round 4: no Codex-mirror hunks (247fc7a and 240a514 touch only the Claude mirror and docs). See the companion Claude plan's Findings for the Claude-side round list and round 4 detail.
+  - Round 5 — 54789c3: stale `.claude/skills` / `.codex/skills` mirror paths replaced in `conduct/SKILL.md:28`, `dev-plan/SKILL.md:111` and `plan-view/SKILL.md:22` (the last resolves flag-only C-F15 with `$SKILL_DIR/generate.py`; recorded in the Claude plan); 2c86402: this Findings ledger.
+  - Round 6 — 69a34d8: `plan-view/SKILL.md:82,139,141` use `$SKILL_DIR/generate.py`, `generate.py:1723-1724` and `tests/test_parser.py:89` name the plugin paths; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors (Codex authored both halves via codex:rescue; Claude aligned its twins).
 
 ## Issues & Solutions
 
