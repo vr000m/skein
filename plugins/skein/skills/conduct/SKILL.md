@@ -205,7 +205,7 @@ On zero exit, append `"validation passed"` to the phase warnings and continue to
 
 No classifier. On any failure (test failure OR pre-commit hook failure at the boundary commit in Step 8):
 
-- **Single source of truth for the increment.** The conductor's `_check_iteration_bound(state, opts, signature)` helper is the only call site that mutates `state.iteration_count`. All three fix-loop entry points (test-failure path in `_run_phase`, boundary-commit hook-failure path in `_commit_phase`, hook-retry path in `_retry_after_hook_failure`) call the helper after observing the failure signature. **Pre-implementation audit (Phase 1)**: today's three increments all fire AFTER the failure is observable to the conductor (lines 678, 792, 992 in the pre-refactor code); the helper is invoked at that same position so iteration_count at the bound-check point is byte-identical to today's iteration_count at the equivalent return point. This is asserted by `helper-is-single-increment-source-three-sites`.
+- **Single source of truth for the increment.** The conductor's `_check_iteration_bound(state, opts, signature)` helper is the only call site that mutates `state.iteration_count`. All three fix-loop entry points (test-failure path in `_run_phase`, boundary-commit hook-failure path in `_commit_phase`, hook-retry path in `_retry_after_hook_failure`) call the helper after observing the failure signature. Each of the three call sites invokes the helper only after the failure signature is observable to the conductor, so `iteration_count` at the bound-check point reflects the failure that triggered it. This is asserted by `helper-is-single-increment-source-three-sites`.
 
 - **Signature.** `progress.iteration_signature(failing_tests, staged_diff_stat)` returns SHA-1 over canonical JSON of `{"tests": sorted(failing_tests), "diff_stat_hash": sha1(staged_diff_stat)}`. For the test-failure path `failing_tests` is the sorted set of `FAILED <nodeid>` lines parsed from pytest output. For the hook-retry path `failing_tests` is the sorted set of failing hook ids parsed from pre-commit output (e.g. `["ruff", "ruff-format"]`); on parse failure it falls back to `[]` and the diff-stat carries the signal alone. `staged_diff_stat` comes from `progress.compute_staged_diff_stat(repo_root)`, which uses `git diff --cached --stat -w` when the installed git accepts it (probed once at module import) and falls back to `git diff --cached --name-only | sort` otherwise. The probe decision is sticky for the process lifetime; on fallback a one-shot warning is emitted.
 
@@ -226,7 +226,7 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 
 - **Respawn** the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = full runner output (or hook output, if the failure came from the boundary commit).
 
-- **`test_contract_mismatch` exception** is unchanged: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration, same inputs. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again).
+- **`test_contract_mismatch` exception**: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration, same inputs. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again).
 
 - **Phase-start reset is guarded.** On entering a new phase, `state.iteration_count`, `state.stall_signatures`, and `state.stall_count` are reset to their initial values ONLY when `state.current_phase_title != phase.title` (absent is treated as different). Without this guard, a mid-phase `--resume` would clobber the persisted counters and let the bound re-start at zero.
 
@@ -234,7 +234,7 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 
 Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff.
 
-<!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (R1) even though it is only advisory -->
+<!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (AGENTS.md Model/Effort Policy) even though it is only advisory -->
 `model: opus, effort: high`.
 
 Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
@@ -249,9 +249,9 @@ After tests pass (or were skipped with warning):
 4. **Hook retry (one-shot formatter retry).** If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). If `git diff --name-only` is non-empty at this point, run `git add -u` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings. If the retry also fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration via `_check_iteration_bound`. Do NOT use `--no-verify`.
 5. **Record `commit_sha`.** Capture the new HEAD as the phase's `commit_sha` in `state.completed_phases`. **This field is immutable once written.** If the user lands follow-up commits during handback — including the operator manually running `/deep-review` on a plan that has no `**Review Gates:**` opt-in, or the automated review-gauntlet auto-chain (see "Review Gauntlet Auto-Chain" below) landing its own fix commit on a plan that opts in — the `--resume` preflight absorbs them into `resume_base_sha` for the rogue-commit check. It does NOT rewrite the previous phase's `commit_sha`.
 
-**Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
+**Mirror parity is each runtime's own responsibility.** A claude-driven `/conduct` lands only `.claude/` files. The codex-driven `/conduct` lands `.codex/` in a separate run against the same plan. Repo-level mirror parity is verified at the end via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
 
-**Pre-commit hook scope.** `scripts/check-prompt-parity.sh` is verified to be invoked only from `justfile` recipes, never from `.pre-commit-config.yaml` or any other hook chain. The Phase 3 impl commit therefore lands cleanly with hooks enabled, even though `.codex/skills/conduct/ci-parity-prompt.md` is intentionally absent until the codex-side mirror commit lands. Contributors invoking `just check-prompt-parity` during the lagging-mirror window can pass `CONDUCT_LAGGING_MIRROR_OK="conduct/ci-parity-prompt.md"` to get a green exit with a stderr annotation.
+**Pre-commit hook scope.** `scripts/check-prompt-parity.sh` is invoked only from `justfile` recipes, never from `.pre-commit-config.yaml` or any other hook chain, so a boundary commit lands cleanly with hooks enabled even while one mirror's assets lag the other. Contributors invoking `just check-prompt-parity` during a lagging-mirror window can pass `CONDUCT_LAGGING_MIRROR_OK="<skill>/<prompt-file>"` to get a green exit with a stderr annotation.
 
 ### Step 9 — Phase transition
 
@@ -264,7 +264,7 @@ After a phase's boundary commit completes:
 1. **Legacy mode (no `--autonomous`).** Print a structured phase summary and the literal `Run: /conduct --resume <plan-path>` next-command line; set `state.status = "awaiting_user"`, persist, release lock, exit the skill. One phase per `--resume` invocation.
 2. **Autonomous mode (`--autonomous`).** Persist progress (already done inside the boundary-commit helper), do NOT release the lock, do NOT print a handback summary, and continue the conductor's explicit phase loop. The single `with lock:` acquisition spans every phase: a clean autonomous run from phase 1 → N acquires the state lock exactly **once**.
 
-Single-lock-acquisition property. In autonomous mode the conductor walks every unfinished phase inside one `with lock:` block. The `LockAcquisitionCounter` test fixture asserts this: a successful 3-phase autonomous run shows `lock_acquisitions == 1`. Legacy mode acquires the lock once per `--resume`, so an N-phase legacy run shows `lock_acquisitions == N`. The CI-parity gate (Phase 3) introduces a result-file path that releases the lock and re-enters on resume, producing `lock_acquisitions == 2` for the production gate flow — but Phase 2 itself does not exercise that path.
+Single-lock-acquisition property. In autonomous mode the conductor walks every unfinished phase inside one `with lock:` block. The `LockAcquisitionCounter` test fixture asserts this: a successful 3-phase autonomous run shows `lock_acquisitions == 1`. Legacy mode acquires the lock once per `--resume`, so an N-phase legacy run shows `lock_acquisitions == N`. The CI-parity gate's result-file path releases the lock and re-enters on resume, producing `lock_acquisitions == 2` for the production gate flow.
 
 #### Step 9b — Hard-stop handback
 
@@ -276,7 +276,7 @@ Hard-stops hand back regardless of `--autonomous`:
 - Stall-threshold hit (same `iteration_signature` N times).
 - Max-iterations-ceiling hit (autonomous-runway cap exceeded).
 - Max-phases cap hit (`--max-phases` ceiling reached).
-- (Phase 3) `awaiting_ci_parity` missing-result-after-3-resumes.
+- `awaiting_ci_parity` missing-result-after-3-resumes.
 
 On any hard-stop:
 
@@ -356,11 +356,11 @@ Between the conductor's lock release at `awaiting_ci_parity` and the orchestrato
 
 ## Review Gauntlet Auto-Chain
 
-After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (the Phase 3 marker; values `none | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
+After the CI-parity gate resolves (or is skipped/not activated), at the point where the conductor would otherwise set `status = complete`, conduct reads the plan's `**Review Gates:**` header field (values `none | full`, default `none`) and decides whether to auto-chain `review-gauntlet`.
 
 ### Activation
 
-- **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is byte-unchanged on every plan that does not explicitly opt in.
+- **Strictly opt-in.** Absent field or `none`: opt-in is off, so no `review-gauntlet` invocation, no additional dispatch, and no change to `status`.
 - **`full` → invoke `review-gauntlet --plan <this plan>` scoped to all logical gate slots**, with the up-to-10-loop convergence algorithm. There is no single-pass `quick` option — `review-gauntlet` has no gate `/code-review` can run through anymore (see its SKILL.md); run `/code-review xhigh --fix` yourself when you want that fast pass.
 - **Any other value (including the retired `quick`, or a typo)**: treat exactly like `none` — no invocation, no change to `status` — but surface a one-line warning to the operator naming the unrecognized value and the plan path, so a plan author who typed a stale `quick` (or a typo) is told their opt-in silently did not fire, instead of assuming it ran.
 
@@ -390,7 +390,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ## State File
 
-Path: `<repo-root>/.conduct/state-<plan-id>.json`, where `plan-id` is the basename plus a short SHA-1 digest of the repo-relative plan path. `.conduct/` is git-ignored (Phase 5). Pre-digest state files (`state-<basename>.json`) are migrated automatically on the next load when their recorded `plan_path` matches the active plan.
+Path: `<repo-root>/.conduct/state-<plan-id>.json`, where `plan-id` is the basename plus a short SHA-1 digest of the repo-relative plan path. `.conduct/` is git-ignored. Pre-digest state files (`state-<basename>.json`) are migrated automatically on the next load when their recorded `plan_path` matches the active plan.
 
 Schema:
 
@@ -431,9 +431,9 @@ Schema:
 - **`autonomous`** — diagnostic-only echo of the `--autonomous` flag, surfaced for state-file readers.
 - **`plan_id`** — stable 12-character digest of the absolute plan path (`sha1(abs(plan_path))[:12]`), computed via `_compute_cross_runtime_plan_id`. Computed once on first state write. Distinct from the state-file naming digest (which scopes to the repo-relative path inside a worktree); `plan_id` is filesystem-absolute so a future autonomous main-Claude orchestrator can re-derive it without re-loading state.
 - **`state_author`** — `"claude"` or `"codex"`. Diagnostic counterpart to the runtime-specific state filename prefix (`state-claude-…` / `state-codex-…`). The two runtimes MUST NOT share a state file; this field is a readable cross-check independent of `schema_version`.
-- **`schema_version`** — serialization-contract marker. Absent is treated as `1`. Phases 1–2 (Claude-side) write `1`; Phase 3 bumps Claude-side to `2` once the `ci_parity_*` fields land. Note: `schema_version` is NOT a runtime-author signal — runtime authorship is carried by `state_author` and the runtime-specific state filename.
+- **`schema_version`** — serialization-contract marker. Absent is treated as `1`. Claude-side writes `2`. Note: `schema_version` is NOT a runtime-author signal — runtime authorship is carried by `state_author` and the runtime-specific state filename.
 
-### Fields introduced for the CI-parity gate (Phase 3, schema_version 2)
+### Fields introduced for the CI-parity gate (schema_version 2)
 
 - **`ci_parity_request`** — dict with `{plan_path, base_sha, head_sha, ci_entrypoint_kind, ci_cmd, repo_root, plan_id, request_written_at_unix}`. Written on dispatch; read back by preflight to validate the result file (`plan_id` + `request_written_at_unix` echo).
 - **`ci_parity_request_written_at`** — float unix timestamp captured at dispatch. The mtime of the result file MUST be ≥ this value, otherwise the file is classified stale (sub-case 2).
