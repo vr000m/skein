@@ -1720,8 +1720,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Compute script_path relative to repo_root once — kept harness-neutral so
     # the generated HTML's "regenerate with …" footer points at the actual
-    # location (e.g. .claude/skills/plan-view/generate.py for Claude users,
-    # .codex/skills/plan-view/generate.py for Codex users).
+    # location (e.g. plugins/skein/skills/plan-view/generate.py for Claude
+    # users, plugins/skein-codex/skills/plan-view/generate.py for Codex users).
     try:
         script_path = str(Path(__file__).resolve().relative_to(repo_root))
     except ValueError:

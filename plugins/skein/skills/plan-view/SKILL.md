@@ -78,7 +78,7 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
 
 ### Flow
 
-1. **Generator emits a manifest** (`python3 generate.py <plans-dir> --rich`).
+1. **Generator emits a manifest** (`python3 "${CLAUDE_PLUGIN_ROOT}/skills/plan-view/generate.py" <plans-dir> --rich`).
    `_rich_manifest.json` schema:
    ```jsonc
    {
@@ -135,9 +135,9 @@ Rich rendering is **not** done by `generate.py`. The Python generator is determi
    - For each `strategy: "single"` pending entry: spawn one subagent (`model: sonnet, effort: low`) with the plan markdown + widget catalogue + output contract. Subagent writes a full HTML page to `output_path`, embedding `<meta name="plan-view-rich-source-sha256" content="<source_md_sha>">`.
    - For each `strategy: "sections"` entry: if `aggregate_status == "partial"`, spawn one subagent per `pending` section **in parallel** (no cap), each at `model: sonnet, effort: low` — each writes an HTML **fragment** (not a full page) to `section.fragment_path`, prefixed with `<!-- plan-view-rich-section-sha256: <section_md_sha> -->`. If `aggregate_status == "pending"`, all fragments are already fresh — skip directly to step 3.
 
-3. **Run `--rich-assemble`** (`python3 generate.py <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
+3. **Run `--rich-assemble`** (`python3 "${CLAUDE_PLUGIN_ROOT}/skills/plan-view/generate.py" <plans-dir> --rich-assemble`). The generator reads each `strategy: "sections"` plan, verifies all fragments exist with current per-section shas, and stitches them into the final `plan-<slug>.rich.html` using the `tabs.html` scaffold (one tab per section, page chrome + base CSS inlined). Plans missing fragments are skipped with a "have/need" diff in the output.
 
-   **Back-links are deterministic, not LLM-authored.** The `← Plan View · deterministic view` breadcrumb that makes a rich page navigable back to `index.html` and `plan-<slug>.html` is injected by `relink_rich_pages()`, which targets every `plan-<slug>.rich.html` on disk regardless of strategy. The breadcrumb is derived purely from the filename slug — no source markdown, no fragments, no LLM call — so it works the same for `single` and `sections` pages. Injection runs automatically at the end of `--rich-assemble` **and** on every plain deterministic run (`python3 generate.py <plans-dir>`); it is idempotent via the `<!-- plan-view-rich-backlink -->` marker. This means a rich page's content stays source-sha-cached (the LLM does not re-render to gain a back-link), while a plain regeneration is all that's needed to add or refresh the breadcrumb.
+   **Back-links are deterministic, not LLM-authored.** The `← Plan View · deterministic view` breadcrumb that makes a rich page navigable back to `index.html` and `plan-<slug>.html` is injected by `relink_rich_pages()`, which targets every `plan-<slug>.rich.html` on disk regardless of strategy. The breadcrumb is derived purely from the filename slug — no source markdown, no fragments, no LLM call — so it works the same for `single` and `sections` pages. Injection runs automatically at the end of `--rich-assemble` **and** on every plain deterministic run (`python3 "${CLAUDE_PLUGIN_ROOT}/skills/plan-view/generate.py" <plans-dir>`); it is idempotent via the `<!-- plan-view-rich-backlink -->` marker. This means a rich page's content stays source-sha-cached (the LLM does not re-render to gain a back-link), while a plain regeneration is all that's needed to add or refresh the breadcrumb.
 
 4. **Caching.**
    - Single-strategy pages regenerate only when the plan's own markdown sha changes.

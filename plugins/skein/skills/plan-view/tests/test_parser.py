@@ -86,7 +86,7 @@ def test_render_plan_page_escapes_component(tmp_path: Path) -> None:
         {plan.slug: plan},
         git_head_sha="",
         template="<code>{{COMPONENT}}</code>",
-        script_path=".claude/skills/plan-view/generate.py",
+        script_path="plugins/skein/skills/plan-view/generate.py",
         plans_dir_short="docs/dev_plans",
     )
     assert "<img" not in html
