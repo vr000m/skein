@@ -353,10 +353,11 @@ assert_present "$FANOUT_SH" 'DEFAULT_EFFORT' "fan-out.sh DEFAULT_EFFORT present"
 assert_present "$FANOUT_SH" '\-\-effort' "fan-out.sh --effort flag handling present"
 
 # --- (6) fan-out test-writer spawn documented at sonnet/medium ---
-# The test-writer topology's intended tier must be documented in
-# agent-prompt.md regardless of which harness is spawning it. This does not
-# change the pinned opus/high total above (6) — sonnet/medium is a mechanical
-# tier, not a judgment tier.
+# The Claude mirror documents the test-writer topology's intended tier in
+# agent-prompt.md; the Codex mirror documents its own intended tier in
+# SKILL.md instead (asserted in section (9)). This does not change the
+# pinned opus/high total above (6) — sonnet/medium is a mechanical tier,
+# not a judgment tier.
 FANOUT_AGENT_PROMPT="$SKILLS_DIR/fan-out/agent-prompt.md"
 assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
 	"fan-out agent-prompt.md test-writer spawn documented at model: sonnet, effort: medium"
@@ -371,17 +372,23 @@ assert_present "$FANOUT_AGENT_PROMPT" 'model: sonnet, effort: medium' \
 for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 	assert_present "$tree/fan-out/agent-prompt.md" 'contract wins' \
 		"fan-out agent-prompt.md ($tree) carries the anti-cheat 'contract wins' rule"
-	# The parity normalizer's excision ranges end on these anchors; if a future
-	# edit drops an anchor in one mirror the sed range would run to EOF and
-	# over-excise, masking real drift (Logic finding, 2026-07-04). Pin them.
+	# The parity normalizer's excision ranges end on these anchors: '### Phase 5'
+	# ends the anti-cheat-paragraph excision span, and 'If your task has an
+	# applicable test framework' / 'If no relevant test framework exists' bound
+	# the test-directive excision span. If a future edit drops an anchor in one
+	# mirror the sed range would run to EOF and over-excise, masking real drift.
+	# Pin them.
 	assert_present "$tree/fan-out/agent-prompt.md" '^### Phase 5' \
 		"fan-out agent-prompt.md ($tree) retains the '### Phase 5' excision anchor"
 	assert_present "$tree/fan-out/agent-prompt.md" '^If your task has an applicable test framework' \
 		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision start anchor"
 	assert_present "$tree/fan-out/agent-prompt.md" '^If no relevant test framework exists' \
 		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision end anchor"
+	# 'Filled by the fan-out worker' is not an excision-range boundary; it pins
+	# the opening line of the mirror-identical test-writer template sentence so
+	# a future prose edit cannot silently drift the two mirrors apart.
 	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
-		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
+		"fan-out test-writer-prompt.md ($tree) pins the 'Filled by the fan-out worker' template opener"
 	# Write-containment guardrail: pin "do not touch files outside your scope"
 	# in both mirrors so a future prose trim cannot drop the explicit
 	# prohibition again.

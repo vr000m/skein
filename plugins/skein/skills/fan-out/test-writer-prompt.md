@@ -1,6 +1,6 @@
 # Fan-Out Test-Writer Subagent Prompt Template
 
-Filled by the fan-out worker before spawning the test-writer. The filled prompt is
+Filled by the fan-out worker when a test-writer is spawned. The filled prompt is
 passed as the full subagent input — the subagent has no prior conversation history
 and never receives the worker's diff.
 

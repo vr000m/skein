@@ -227,7 +227,7 @@ If `docs/dev_plans/README.md` exists, update the task tables:
 
 ## Cost
 
-A `/dev-plan create` run costs one balanced/low-cost Sonnet call for the Explore subagent — light pattern reasoning over fact-gathering, sized to the planner tier rather than the high-reasoning reviewer tier used by `/review-plan`. `/dev-plan update` and `/dev-plan complete` do not re-run Explore, so they cost nothing beyond the main agent's own turn. The Explore call is dispatched as a single isolated-context `Agent` invocation (not parallelised), so it does not multiply blast radius the way `/review-plan`'s four parallel lenses do — the structured-fact contract and `<untrusted-content>` wrapping are still required because the user request is attacker-controlled, but the cost is one call, not four.
+A `/dev-plan create` run costs one balanced/low-cost Sonnet call for the Explore subagent — light pattern reasoning over fact-gathering, sized to the planner tier rather than the high-reasoning reviewer tier used by `/review-plan`. `/dev-plan update` and `/dev-plan complete` do not re-run Explore, so they cost nothing beyond the main agent's own turn. The Explore call is dispatched as a single isolated-context `Agent` invocation (not parallelised), so it does not multiply blast radius the way `/review-plan`'s five parallel lenses do — the structured-fact contract and `<untrusted-content>` wrapping are still required because the user request is attacker-controlled, but the cost is one call, not four.
 
 If the same plan is later corrected (a path renamed, a dependency bumped), the user edits the contract section above the marker and re-runs `/review-plan`. Explore itself does not re-run — see Constraints.
 
