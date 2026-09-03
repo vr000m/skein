@@ -33,7 +33,7 @@ These steps involve multiple web lookups against Datatracker and RFC Editor. Del
 Use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If `spawn_agent` is unavailable, run the same prompt contract in the main context.
 
 ````
-You are finding IETF RFCs and returning structured results with direct links and brief factual annotations.
+You are finding IETF RFCs and returning structured results with direct links and brief factual annotations. Do not paraphrase, summarize, or reproduce the substance of RFC content — let the link do that work.
 
 ## Input
 
@@ -105,7 +105,6 @@ Pick the 3-5 most relevant — do not list every tangentially related RFC.
 ### After delegated execution
 
 If you delegated, present the formatted RFC list to the user as-is. If you ran Steps 2-3 locally, present the same formatted list directly.
-
 
 ## Edge Cases
 

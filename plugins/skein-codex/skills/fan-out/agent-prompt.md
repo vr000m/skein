@@ -26,7 +26,7 @@ You are working in: {{WORKTREE_PATH}}
 Your branch: {{BRANCH_NAME}}
 Base branch: {{BASE_BRANCH}}
 
-Modify only files relevant to your task. Other agents are working in parallel worktrees, and every branch merges back into the same base.
+Modify only files relevant to your task; do not touch files outside your scope. Other agents are working in parallel worktrees, and every branch merges back into the same base.
 
 ## Project Conventions
 
@@ -71,7 +71,7 @@ test framework, spawn a separate clean-context test-writer subagent with
 authoring against an already-defined contract, not judgment work). The test-writer
 receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
 Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
-implementer's diff. That topology needs nested `spawn_agent` support from a
+implementer's diff or internal code. That topology needs nested `spawn_agent` support from a
 non-interactive Codex worker, which this harness does not provide. The ACTIVE PATH
 below is single-context authoring: you write and run your own tests, but you author
 them to the same contract a separate test-writer would have used.

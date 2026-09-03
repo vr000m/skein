@@ -386,6 +386,11 @@ for tree in "$SKILLS_DIR" "$CODEX_SKILLS_DIR"; do
 		"fan-out agent-prompt.md ($tree) retains the Phase-2 test-directive excision end anchor"
 	assert_present "$tree/fan-out/test-writer-prompt.md" '^Filled by the fan-out worker' \
 		"fan-out test-writer-prompt.md ($tree) retains the 'Filled by the fan-out worker' excision anchor"
+	# Write-containment guardrail: pin "do not touch files outside your scope"
+	# in both mirrors so a future prose trim cannot drop the explicit
+	# prohibition again.
+	assert_present "$tree/fan-out/agent-prompt.md" 'do not touch files outside your scope' \
+		"fan-out agent-prompt.md ($tree) retains the write-containment guardrail sentence"
 done
 
 echo
