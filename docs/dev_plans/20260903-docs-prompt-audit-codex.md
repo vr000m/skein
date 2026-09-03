@@ -369,7 +369,7 @@ sequenceDiagram
 
 `none` — the gauntlet runs once, from the companion Claude plan, after its phase F.
 
-<!-- reviewed: 2026-09-03 @ 74e3e1af3ba443656c711e7588f1c606f4084118 -->
+<!-- reviewed: 2026-09-04 @ 1cb8e12babc6be1fb708b88fa5aed64140023283 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -414,8 +414,19 @@ sequenceDiagram
 
 ### Summary
 
+Phase 0 and C1–C10 landed as one boundary commit each (c26796c … 5733574), rewriting `plugins/skein-codex/` per the audit findings with every machine anchor byte-exact. Phase R (e59543b, Codex-led) later removed the fan-out nested-spawn status apparatus. The Codex mirror's hunks from both review-gauntlet runs are listed under Findings; the runs' terminal decisions are recorded in the companion Claude plan's Summary, which is the single record for the gauntlet.
+
 ### Outcomes
+
+- C-F16 kept as an intended Codex-only divergence (AD-4): the delegation gate and untrusted-input clause at the five sites stay in the Codex mirror with no Claude twin.
+- `check-prompt-parity` green across the whole plugin; the fan-out normaliser is `sed`-only and excises just the test-framework directive and the anti-cheat rule.
+- `test-spawn-tiers.sh` pins reduced by the two prompt-file `reasoning_effort=medium` assertions Phase R deleted; 115 pass.
 
 ### Learnings
 
+- Every Codex-mirror hunk went through `codex:rescue` with a fresh-thread self-review; two Codex fixes were rejected on first pass (an indented heredoc terminator, a fabricated precedent) and redone, so the self-review step earned its cost.
+- Mirror pairs must land Codex-first, Claude-aligned, in one commit; a lagging half trips `check-prompt-parity` immediately.
+
 ### Follow-up Work
+
+- See the companion Claude plan's Follow-up Work (rubric aside in sibling rubrics, A11 flake); nothing Codex-only is outstanding.

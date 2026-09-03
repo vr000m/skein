@@ -390,7 +390,7 @@ sequenceDiagram
 ## Acceptance Criteria
 
 - Every apply-set hunk is applied in both mirrors where a twin exists: Codex commit first, then the Claude commit. The per-pair gate (`tests/parity/test-spawn-tiers.sh` plus parity judged only on the files that pair owns) passes after each Claude commit, per the Lag window rule; the mirror-comparing recipes are asserted whole-plugin only at Phase F.
-- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed.
+- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed except the write-containment guardrail pin added during review and, later, Phase R removing the two Codex fan-out prompt-file `reasoning_effort=medium` pins (the `SKILL.md` pin stays; see the Codex plan's Progress).
 - `just check-prompt-parity`, `just check-sync`, `just parity-tests`, `just gauntlet-tests`, `just lens-tests`, and `just plugin-tests` exit 0 on the final commit.
 - ID sweep residue equals the allowlist exactly (7 lines at Phase F; 6 after Phase R).
 - Phase-tag check returns zero hits for the listed strings.
@@ -419,7 +419,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-03 @ 86d26311426c2c768a4181c8b34f898d462d8f73 -->
+<!-- reviewed: 2026-09-04 @ 5477a71a293c33dcd27ca420ded431ef956ad875 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
