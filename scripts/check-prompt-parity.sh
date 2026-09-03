@@ -67,13 +67,13 @@ for skill in "${managed_skills[@]}"; do
 	fi
 
 	if [[ -f "$claude_rubric" && ! -f "$codex_rubric" ]]; then
-		echo "drift: $skill has .claude rubric but no .codex rubric"
+		echo "drift: $skill has a Claude rubric but no Codex rubric"
 		PARITY_DIFF=1
 		continue
 	fi
 
 	if [[ ! -f "$claude_rubric" && -f "$codex_rubric" ]]; then
-		echo "drift: $skill has .codex rubric but no .claude rubric"
+		echo "drift: $skill has a Codex rubric but no Claude rubric"
 		PARITY_DIFF=1
 		continue
 	fi
@@ -83,7 +83,7 @@ for skill in "${managed_skills[@]}"; do
 	else
 		diff_rc=$?
 		if [[ $diff_rc -eq 1 ]]; then
-			echo "drift: $skill rubric.md differs between .claude and .codex"
+			echo "drift: $skill rubric.md differs between the Claude and Codex mirrors"
 		else
 			echo "error: diff failed for $skill rubric.md (exit $diff_rc)"
 		fi
@@ -147,7 +147,7 @@ is_expected_drift() {
 # The R6 clean-context test-writer graft (see
 # docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md, R4) makes
 # fan-out/agent-prompt.md and fan-out/test-writer-prompt.md diverge between the
-# .claude and .codex mirrors ONLY inside four harness-divergent spans:
+# Claude and Codex mirrors ONLY inside four harness-divergent spans:
 #   - the R6 design/status block (Claude `model:`/`effort:` + `Agent`-in-
 #     `claude -p` vs Codex `reasoning_effort`/`fork_context=false` + `spawn_agent`
 #     in a `codex exec` worker), carried as an HTML comment in agent-prompt.md and
@@ -236,14 +236,14 @@ for skill in "${managed_skills[@]}"; do
 		drift_reason=""
 		if [[ -f "$claude_pf" && ! -f "$codex_pf" ]]; then
 			drifted=1
-			drift_reason="$skill/$pf present on .claude, missing on .codex"
+			drift_reason="$skill/$pf present on the Claude mirror, missing on the Codex mirror"
 		elif [[ ! -f "$claude_pf" && -f "$codex_pf" ]]; then
 			drifted=1
-			drift_reason="$skill/$pf present on .codex, missing on .claude"
+			drift_reason="$skill/$pf present on the Codex mirror, missing on the Claude mirror"
 		elif [[ -f "$claude_pf" && -f "$codex_pf" ]]; then
 			if ! prompt_files_match "$skill" "$pf" "$claude_pf" "$codex_pf"; then
 				drifted=1
-				drift_reason="$skill/$pf differs between .claude and .codex"
+				drift_reason="$skill/$pf differs between the Claude and Codex mirrors"
 			fi
 		fi
 		if [[ $drifted -eq 1 ]]; then
@@ -386,7 +386,7 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 	release_claude="$ROOT_DIR/plugins/skein/skills/release/SKILL.md"
 	release_codex="$ROOT_DIR/plugins/skein-codex/skills/release/SKILL.md"
 	if [[ ! -f "$release_claude" || ! -f "$release_codex" ]]; then
-		echo "drift: release SKILL.md missing from .claude or .codex mirror"
+		echo "drift: release SKILL.md missing from Claude or Codex mirror"
 		PARITY_DIFF=1
 	else
 		claude_disable_model_frontmatter_count="$(count_release_frontmatter_line \
@@ -450,7 +450,7 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 			else
 				diff_rc=$?
 				if [[ $diff_rc -eq 1 ]]; then
-					echo "drift: release SKILL.md normalized workflow differs between .claude and .codex"
+					echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
 				else
 					echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
 				fi
@@ -580,7 +580,7 @@ cr_claude="$ROOT_DIR/plugins/skein/skills/content-review/references"
 cr_codex="$ROOT_DIR/plugins/skein-codex/skills/content-review/references"
 if [[ -d "$cr_claude" || -d "$cr_codex" ]]; then
 	if ! diff -r "$cr_claude" "$cr_codex" >/dev/null 2>&1; then
-		echo "drift: content-review/references differs between .claude and .codex mirrors"
+		echo "drift: content-review/references differs between Claude and Codex mirrors"
 		diff -r "$cr_claude" "$cr_codex" || true
 		PARITY_DIFF=1
 	fi
