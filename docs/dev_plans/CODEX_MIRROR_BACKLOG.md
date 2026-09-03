@@ -91,7 +91,7 @@ fallback if the gate fails").
   implementations (proving a contract test fails on a divergent impl and passes on
   a conformant one), exit 0 confirmed locally.
 - What is deferred: the separate-subagent test-writer topology itself (documented
-  as gated in `fan-out/SKILL.md` "Clean-context test-writer graft (gated on this harness)" section and
+  as gated in the Claude `fan-out/SKILL.md` "Clean-context test-writer graft" section (the Codex mirror titles it "... (gated on this harness)") and
   `agent-prompt.md` Phase 2's test directive) — reactivate it once a `claude -p`
   nested-`Agent` spawn honoring its tier is confirmed in this environment.
 - Required result: **logged limitation, not mirrored end-to-end topology**, per the
