@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 # Matches a fenced ```json block. Non-greedy body so adjacent blocks parse
 # independently. We use re.findall + take the last match for "anchor on LAST".
@@ -32,52 +32,73 @@ _COMMON_REQUIRED = {
     "flags": dict,
 }
 
-_ROLE_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
-    "implementer": {
-        **_COMMON_REQUIRED,
-        "iteration": int,
-        "files_changed": list,
-        "summary": str,
-    },
-    "test-writer": {
-        **_COMMON_REQUIRED,
-        "iteration": int,
-        "test_files_added": list,
-        "test_commands": list,
-        "coverage_summary": str,
-    },
+
+class RoleSpec(NamedTuple):
+    """A role's schema in one place: required keys plus its flag substructure.
+
+    ``flags_required is None`` means the role does not emit a `flags` object
+    at all (reviewer, ci-parity — one-shot/advisory, no flag-driven branching
+    in the conductor). Co-locating both in one entry, rather than three
+    separate role-keyed dicts, means there is nothing to keep in sync: a role
+    with a flag schema but no ``"flags"`` key in ``required`` (or vice versa)
+    is a contradiction in the same tuple, not a cross-table drift that a
+    separate invariant has to police.
+    """
+
+    required: dict[str, type | tuple[type, ...]]
+    flags_required: dict[str, type | tuple[type, ...]] | None
+
+
+_ROLE_SPEC: dict[str, RoleSpec] = {
+    "implementer": RoleSpec(
+        required={
+            **_COMMON_REQUIRED,
+            "iteration": int,
+            "files_changed": list,
+            "summary": str,
+        },
+        flags_required={
+            "blocked": bool,
+            "test_contract_mismatch": bool,
+            "needs_test_coverage": list,
+        },
+    ),
+    "test-writer": RoleSpec(
+        required={
+            **_COMMON_REQUIRED,
+            "iteration": int,
+            "test_files_added": list,
+            "test_commands": list,
+            "coverage_summary": str,
+        },
+        flags_required={
+            "blocked": bool,
+            "needs_impl_clarification": (str, type(None)),
+        },
+    ),
     # Reviewer is one-shot and advisory: no flag-driven branching in the
     # conductor, and reviewer-prompt.md does not emit a flags object. Keep the
     # required set narrow so a well-formed reviewer report passes validation.
-    "reviewer": {
-        "role": str,
-        "phase_position": int,
-        "phase_label": str,
-        "findings": list,
-    },
-    "ci-parity": {
-        "role": str,
-        "schema_version": int,
-        "plan_id": str,
-        "request_written_at_unix": (int, float),
-        "status": str,
-        "command_run": str,
-    },
-}
-
-# Role-specific flag substructure. Enforced only when the role emits flags
-# (implementer + test-writer). The conductor branches on these keys, so a
-# missing key is a real runtime failure — not an evolving-prompt edge case.
-_ROLE_FLAGS_REQUIRED: dict[str, dict[str, type | tuple[type, ...]]] = {
-    "implementer": {
-        "blocked": bool,
-        "test_contract_mismatch": bool,
-        "needs_test_coverage": list,
-    },
-    "test-writer": {
-        "blocked": bool,
-        "needs_impl_clarification": (str, type(None)),
-    },
+    "reviewer": RoleSpec(
+        required={
+            "role": str,
+            "phase_position": int,
+            "phase_label": str,
+            "findings": list,
+        },
+        flags_required=None,
+    ),
+    "ci-parity": RoleSpec(
+        required={
+            "role": str,
+            "schema_version": int,
+            "plan_id": str,
+            "request_written_at_unix": (int, float),
+            "status": str,
+            "command_run": str,
+        },
+        flags_required=None,
+    ),
 }
 
 
@@ -119,15 +140,15 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
     allowed so prompts can evolve without breaking older conductors. Raises
     SchemaError on any violation.
     """
-    if expected_role not in _ROLE_REQUIRED:
+    if expected_role not in _ROLE_SPEC:
         raise SchemaError(f"unknown expected_role: {expected_role!r}")
     role_field = obj.get("role")
     if role_field != expected_role:
         raise SchemaError(
             f"role mismatch: expected {expected_role!r}, got {role_field!r}"
         )
-    schema = _ROLE_REQUIRED[expected_role]
-    for key, expected_type in schema.items():
+    spec = _ROLE_SPEC[expected_role]
+    for key, expected_type in spec.required.items():
         if key not in obj:
             raise SchemaError(f"missing required key: {key!r}")
         if not isinstance(obj[key], expected_type):
@@ -140,10 +161,12 @@ def validate_report(obj: dict[str, Any], expected_role: str) -> None:
         raise SchemaError(
             f"ci-parity status must be 'passed' or 'failed', got {obj.get('status')!r}"
         )
-    flag_schema = _ROLE_FLAGS_REQUIRED.get(expected_role)
-    if flag_schema is not None:
+    # Positive conditional, not an early return: a role with no flag schema
+    # still falls through to any check appended below this block in the
+    # future, instead of silently exempting reviewer/ci-parity from it.
+    if spec.flags_required is not None:
         flags = obj["flags"]
-        for fkey, fexpected in flag_schema.items():
+        for fkey, fexpected in spec.flags_required.items():
             if fkey not in flags:
                 raise SchemaError(f"missing required flag: {fkey!r}")
             if not isinstance(flags[fkey], fexpected):

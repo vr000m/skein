@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-
+import schema
 from schema import (
     SchemaError,
     extract_last_json_block,
@@ -150,14 +150,18 @@ def test_parse_report_unknown_role_raises():
 def test_validate_rejects_missing_impl_flag_key():
     obj = _impl_report()
     del obj["flags"]["test_contract_mismatch"]
-    with pytest.raises(SchemaError, match="missing required flag: 'test_contract_mismatch'"):
+    with pytest.raises(
+        SchemaError, match="missing required flag: 'test_contract_mismatch'"
+    ):
         validate_report(obj, "implementer")
 
 
 def test_validate_rejects_wrong_type_impl_flag():
     obj = _impl_report()
     obj["flags"]["test_contract_mismatch"] = "nope"
-    with pytest.raises(SchemaError, match="flag 'test_contract_mismatch' has wrong type"):
+    with pytest.raises(
+        SchemaError, match="flag 'test_contract_mismatch' has wrong type"
+    ):
         validate_report(obj, "implementer")
 
 
@@ -194,3 +198,40 @@ def test_validate_reviewer_does_not_require_flags():
         "findings": [],
     }
     validate_report(obj, "reviewer")
+
+
+def test_validate_ci_parity_does_not_require_flags():
+    obj = {
+        "role": "ci-parity",
+        "schema_version": 1,
+        "plan_id": "plan-1",
+        "request_written_at_unix": 1234567890,
+        "status": "passed",
+        "command_run": "pytest -q",
+    }
+    validate_report(obj, "ci-parity")
+
+
+def test_validate_rejects_role_removed_from_role_spec(monkeypatch):
+    # A role removed from the single _ROLE_SPEC registry is indistinguishable
+    # from an unknown role — there is no separate table it could still be
+    # present in, so this is the same "unknown expected_role" path a typo
+    # would hit, not a distinct internal-drift error.
+    monkeypatch.delitem(schema._ROLE_SPEC, "implementer")
+    with pytest.raises(SchemaError, match="unknown expected_role"):
+        validate_report(_impl_report(), "implementer")
+
+
+def test_role_spec_flags_required_and_required_flags_key_agree():
+    # A role with a flag schema must require a "flags" key, and vice versa —
+    # co-located in one RoleSpec tuple, this is a data-shape fact to assert,
+    # not a cross-table invariant to check at import time.
+    for role, spec in schema._ROLE_SPEC.items():
+        if spec.flags_required is not None:
+            assert "flags" in spec.required, (
+                f"{role!r} has flags_required but no 'flags' in required"
+            )
+        else:
+            assert "flags" not in spec.required, (
+                f"{role!r} has no flags_required but requires a 'flags' key"
+            )
