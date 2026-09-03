@@ -91,7 +91,7 @@ fallback if the gate fails").
   implementations (proving a contract test fails on a divergent impl and passes on
   a conformant one), exit 0 confirmed locally.
 - What is deferred: the separate-subagent test-writer topology itself (documented
-  as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft" section and
+  as gated in `fan-out/SKILL.md` "Clean-context test-writer graft (gated on this harness)" section and
   `agent-prompt.md` Phase 2's inline comment) — reactivate it once a `claude -p`
   nested-`Agent` spawn honoring its tier is confirmed in this environment.
 - Required result: **logged limitation, not mirrored end-to-end topology**, per the
@@ -128,7 +128,7 @@ failed before nested tools could be exercised:
   the R6 contract-divergence mechanism directly against two fixture implementations
   (proving a contract test fails on a divergent impl and passes on a conformant one).
 - What is deferred: the separate-subagent Codex test-writer topology itself
-  (documented as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft"
+  (documented as gated in `fan-out/SKILL.md` "Clean-context test-writer graft (gated on this harness)"
   section and `agent-prompt.md` Phase 2's inline comment) — reactivate it once a
   non-interactive Codex worker can initialize delegation and spawn a nested
   `spawn_agent` worker honoring `fork_context=false` and `reasoning_effort=medium`.
