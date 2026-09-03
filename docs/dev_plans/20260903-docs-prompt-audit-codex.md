@@ -399,7 +399,7 @@ sequenceDiagram
   - Round 3 — 22a85e9: `rfc-finder/SKILL.md` adds the adoption/deployment-claims verification rule; `fan-out/SKILL.md` replaces the dead `find ~/.*/skills` SKILL_DIR bind with `${SKILL_DIR:?}`; `fan-out/SKILL.md` and `agent-prompt.md` harmonise the gated-topology wording to one certainty level.
   - Round 4: no Codex-mirror hunks (247fc7a and 240a514 touch only the Claude mirror and docs). See the companion Claude plan's Findings for the Claude-side round list and round 4 detail.
   - Round 5 — 54789c3: stale `.claude/skills` / `.codex/skills` mirror paths replaced in `conduct/SKILL.md:28`, `dev-plan/SKILL.md:111` and `plan-view/SKILL.md:22` (the last resolves flag-only C-F15 with `$SKILL_DIR/generate.py`; recorded in the Claude plan); 2c86402: this Findings ledger.
-  - Round 6 — 69a34d8: `plan-view/SKILL.md:82,139,141` use `$SKILL_DIR/generate.py`, `generate.py:1723-1724` and `tests/test_parser.py:89` name the plugin paths; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors (Codex authored both halves via codex:rescue; Claude aligned its twins).
+  - Round 6 — 69a34d8: `plan-view/SKILL.md:82,139,141` use `$SKILL_DIR/generate.py`, `generate.py:1723-1724` and `tests/test_parser.py:89` name the plugin paths; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors (Codex authored both halves via codex:rescue; Claude aligned its twins); 96e6907: `update-docs/SKILL.md:60-61` passes the base branch as a quoted argument instead of an unassigned `BASE_BRANCH_REF`. Ledger decision: non-converge, driven by re-reports of the C-F16 delegation clause awaiting a user decision.
 
 ## Issues & Solutions
 

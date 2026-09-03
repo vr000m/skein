@@ -1,12 +1,12 @@
 # Task: prompt-audit cleanup, Claude mirror — dated prompting patterns across skein skill prompts + project CLAUDE.md
 
-**Status**: In Progress
+**Status**: Complete
 **Component**: meta
 **Assigned to**: unassigned
 **Priority**: Low
 **Branch**: `chore/prompt-audit-cleanup`
 **Created**: 2026-09-03
-**Completed**:
+**Completed**: 2026-09-03
 **Review Gates**: full
 
 ## Objective
@@ -418,7 +418,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-03 @ 83f8aa0e339f3c6b8a887975ef0646d94c4f3287 -->
+<!-- reviewed: 2026-09-03 @ de97b0c4b2b507eb0356257e909f2af33a96a3c3 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -446,7 +446,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
   - Round 3 — 22a85e9: `rfc-finder` both mirrors add the adoption/deployment-claims verification rule; `fan-out/SKILL.md` both mirrors replace the dead `find ~/.*/skills` SKILL_DIR bind (`${SKILL_DIR:?}` Codex, `${CLAUDE_PLUGIN_ROOT}/skills/fan-out` Claude); Codex fan-out gated-topology wording harmonised. 63db0ce: docs + CHANGELOG.
   - Round 4 — 247fc7a: Claude `conduct:434` schema_version rule made conditional (see Alignment bullet above); Claude `fan-out/SKILL.md` bind gains `:?` guard (`${CLAUDE_PLUGIN_ROOT:?}`); `.claude/CLAUDE.md:96` inline cutoff "(under about 30 lines)" restored (see Alignment bullet above). 240a514: docs + `CODEX_MIRROR_BACKLOG.md`.
   - Round 5 — 54789c3: stale `.claude/skills` / `.codex/skills` mirror paths replaced in conduct, dev-plan and plan-view (both mirrors; plan-view resolves flag-only C-F15, see the Flag-only bullet) and Claude conduct:252 names the mirrors each runtime lands; 2c86402: this Findings ledger.
-  - Round 6 — 69a34d8: plan-view rich-mode invocations use the harness path idiom at every call site in both mirrors, the generate.py footer comment, the plan-view test fixture and the ci-parity test docstring name the plugin paths, and fan-out `SKILL.md:21` says the seeded-divergence gate runs on demand; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors; this Findings ledger records C-F15 as resolved and the round-3 record in the Codex plan is corrected.
+  - Round 6 — 69a34d8: plan-view rich-mode invocations use the harness path idiom at every call site in both mirrors, the generate.py footer comment, the plan-view test fixture and the ci-parity test docstring name the plugin paths, and fan-out `SKILL.md:21` says the seeded-divergence gate runs on demand; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors; 96e6907: the Codex update-docs feature-branch recipe no longer reads an unassigned variable; this Findings ledger records C-F15 as resolved and the round-3 record in the Codex plan is corrected. Ledger decision: non-converge (reconciled 13 = 6 fixed + 7 re-reports of items awaiting a user decision, listed under Final Results); the loop stopped at the K=2 stall rule, not on an open actionable finding.
 - **Parity lag window:** `just check-prompt-parity` went green at L8 (spec-compliance rubric was the last drift); the parity-comparing recipes were run per phase and judged on files owned by the phase only.
 - **Phase F gates:** `check-prompt-parity`, `check-sync`, `parity-tests`, `gauntlet-tests`, `lens-tests`, `plugin-tests` all exit 0 (`PYTEST_ADDOPTS='-p no:cacheprovider'` for plugin-tests, as in Phase 0). `gauntlet-tests` flaked once on `tests/gauntlet/test-gate-timeout.sh` A11 (1/50 timing race, green on re-run); the branch touches neither that test nor `lib/gate-bounded.sh`. Follow-up: stabilise A11.
 - **ID sweep:** residue 7 = allowlist exactly (`fan-out/agent-prompt.md:68` `R6 status:` opener; 2×2 `fixture-plan.md` lines; `release/SKILL.md` `C0/DEL` in each mirror). Baseline was 29.
@@ -465,8 +465,23 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 ### Summary
 
+Phases L1–L10 and F landed as one boundary commit each (cf268f2 … 11faf8c), aligning `plugins/skein/` and `.claude/CLAUDE.md` to the Codex mirror text. The auto-chained review-gauntlet ran six rounds and stopped on the K=2 stall rule with decision non-converge. Every actionable finding was fixed; the stall is driven by re-reports of items the user has to decide.
+
 ### Outcomes
+
+- Gauntlet rounds (reconciled / fixed / quarantined): R1 13/10/3, R2 14/11/3, R3 9/9/0, R4 8/7/1, R5 9/6/3, R6 13/6/7. Round commits: a8a09f7, b99576c, 22a85e9, 63db0ce, 247fc7a, 240a514, 54789c3, 2c86402, 69a34d8, 93c133e, df8ebc9, 96e6907.
+- Fixes landed by the gauntlet beyond the plan's hunks: rfc-finder adoption-claims rule; fan-out SKILL_DIR bind repaired (`${CLAUDE_PLUGIN_ROOT:?}` / `${SKILL_DIR:?}`); stale `.claude/skills` and `.codex/skills` paths replaced across conduct, dev-plan, plan-view (SKILL.md, generate.py comment, test fixture, ci-parity docstring) and `scripts/check-prompt-parity.sh`; plan-view rich-mode invocations use the harness path idiom; Codex update-docs recipe no longer reads an unassigned variable; project CLAUDE.md decision rule wording; conduct schema_version rule made conditional; flag-only C-F15 resolved.
+- Parity gates green at HEAD: `just check-prompt-parity`, `just check-sync`, `tests/parity/test-spawn-tiers.sh` (117), `tests/parity/test-prompt-parity-extended.sh` (29), plan-view and conduct test suites.
+- Awaiting user decision (re-reported every round, quarantined, not fixed): the C-F16 delegation and input-isolation clause the Codex mirror carries in content-draft, content-review, rfc-finder, spec-compliance and update-docs with no Claude twin, and the AD-4 sentence that still calls it a hedge; the `R6 status:` opener / deferred R6 apparatus removal; the Managed-Agents rubric vocabulary. Dismissed with evidence: the grill guard claim (round 4), the conduct rename-clause claim (round 5), the lag-window rule claim (round 6, the plan text already states the recipe is red inside the window).
 
 ### Learnings
 
+- Two fixer blast-radius labels were overridden from structural to local with the reason recorded here: a plan-text edit (round 4) and a prompt-recipe edit (round 6). Neither can reintroduce a bug class the gates detect. Everything else used the fixer's own label.
+- A stale-path sweep must cover code, tests and script strings, not only markdown; the round-5 markdown-only sweep cost a round.
+- Items awaiting a human decision count against the stall rule every round; a gauntlet with standing quarantine cannot reach success, only non-converge, so decide quarantined items before re-running.
+
 ### Follow-up Work
+
+- User decision on C-F16 (add a Claude twin, drop the Codex clause, or record the divergence as intended); the Codex review prompt for the flagged items has been delivered.
+- Deferred R6 apparatus removal and rubric vocabulary cleanup (own plan).
+- The plan-view A11 snapshot test flaked once during Phase F; not reproduced, worth a look.
