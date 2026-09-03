@@ -26,7 +26,7 @@ You are working in: {{WORKTREE_PATH}}
 Your branch: {{BRANCH_NAME}}
 Base branch: {{BASE_BRANCH}}
 
-IMPORTANT: Only modify files relevant to your task. Do not touch files outside your scope.
+Modify only files relevant to your task. Other agents are working in parallel worktrees, and every branch merges back into the same base.
 
 ## Project Conventions
 
@@ -65,17 +65,13 @@ Write the code described in your task. Commit your work.
 ### Phase 2: Test
 
 <!--
-R6 status: the separate clean-context test-writer topology is CONFIRMED LIVE on the
-Claude harness as of 2026-07-04. A `claude -p --dangerously-skip-permissions` worker
-(with CLAUDECODE unset, exactly as fan-out.sh launches it) can spawn a nested Task
-subagent that honors a per-call model — verified end to end: the child actually ran
-on haiku (result.modelUsage billed claude-haiku-4-5 tokens), not just echoed the
-request. Re-check any time with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
+R6 status: the separate clean-context test-writer topology is live on the Claude
+harness. A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset,
+exactly as fan-out.sh launches it) can spawn a nested Task subagent that honors a
+per-call model; re-check with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
 Caveat carried into the active directive below: the Task tool has NO per-call effort
 argument, so the test-writer's effort is inherited from this worker's session (which
-fan-out.sh runs at `--effort medium`), while its model IS set per-call. The Codex
-mirror keeps this topology GATED (its non-interactive `codex exec` nested-`spawn_agent`
-gate is still unconfirmed — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04).
+fan-out.sh runs at `--effort medium`), while its model IS set per-call.
 -->
 
 If your task has an applicable test framework, delegate test authoring to a **separate
@@ -89,7 +85,7 @@ function signatures) — and **never your implementation diff or internal code**
 validates the contract rather than ratifying your code. It authors the test files and
 returns them (its own one-shot run is advisory); **you** then run those files verbatim
 as the authoritative pass/fail. See `test-writer-prompt.md` for the test-writer's
-contract. (Nested-spawn topology confirmed on Claude — see the R6 status note above.)
+contract. (Nested spawning is supported on this harness — see the status note above.)
 
 If no relevant test framework exists for this task (e.g. a doc/prose-only slice),
 note that explicitly in your result file and continue; do not attempt to write

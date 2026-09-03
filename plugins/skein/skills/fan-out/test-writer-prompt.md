@@ -1,12 +1,6 @@
-# Fan-Out Test-Writer Subagent Prompt Template (R6 contract)
+# Fan-Out Test-Writer Subagent Prompt Template
 
-**Status note (read first):** the Claude R6 topology is **CONFIRMED LIVE** as of
-2026-07-04: the fan-out worker spawns a separate clean-context test-writer subagent
-with `model: sonnet`; effort is inherited from the worker's `--effort medium`
-session because the Task tool has no per-call effort argument. The test-writer never
-sees the implementer's diff. The manual gate at `tests/check-r6-gate.sh` proved the
-child actually ran on the requested child model via `result.modelUsage`, not merely
-by echoing the spawn request.
+**Status note (read first):** on this harness the fan-out worker spawns a separate clean-context test-writer subagent with `model: sonnet`; effort is inherited from the worker's `--effort medium` session because the Task tool has no per-call effort argument. The test-writer never sees the implementer's diff.
 
 Filled by the fan-out worker before spawning the test-writer. The filled prompt is
 passed as the full subagent input — the subagent has no prior conversation history
