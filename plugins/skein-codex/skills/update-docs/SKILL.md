@@ -249,7 +249,10 @@ Before spawning the subagent, the main context must:
    # subagent's shell recipe above, and single quotes there hold only if the value
    # carries no quote or shell metacharacters. A leading '-' is refused too: quoting
    # protects the shell, not git, which would parse '-a' as an option to merge-base.
-   case "$BASE" in -*|*[!A-Za-z0-9._/-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;; esac
+   case "$BASE" in
+     "") echo "update-docs: no base branch found (no origin/HEAD, main or master)" >&2; exit 1;;
+     -*|*[!A-Za-z0-9._/-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;;
+   esac
    ```
 2. Detect PR number (if `--pr` flag or branch has an open PR).
 3. Fill in the placeholders and spawn the subagent.
