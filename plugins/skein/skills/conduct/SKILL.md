@@ -431,7 +431,7 @@ Schema:
 - **`autonomous`** — diagnostic-only echo of the `--autonomous` flag, surfaced for state-file readers.
 - **`plan_id`** — stable 12-character digest of the absolute plan path (`sha1(abs(plan_path))[:12]`), computed via `_compute_cross_runtime_plan_id`. Computed once on first state write. Distinct from the state-file naming digest (which scopes to the repo-relative path inside a worktree); `plan_id` is filesystem-absolute so a future autonomous main-Claude orchestrator can re-derive it without re-loading state.
 - **`state_author`** — `"claude"` or `"codex"`. Diagnostic counterpart to the runtime-specific state filename prefix (`state-claude-…` / `state-codex-…`). The two runtimes MUST NOT share a state file; this field is a readable cross-check independent of `schema_version`.
-- **`schema_version`** — serialization-contract marker. Absent is treated as `1`. Claude-side writes `2`. Note: `schema_version` is NOT a runtime-author signal — runtime authorship is carried by `state_author` and the runtime-specific state filename.
+- **`schema_version`** — serialization-contract marker. Absent is treated as `1`. Claude-side writes `1` until any `ci_parity_*` field is set on the state, then `2`. Note: `schema_version` is NOT a runtime-author signal — runtime authorship is carried by `state_author` and the runtime-specific state filename.
 
 ### Fields introduced for the CI-parity gate (schema_version 2)
 

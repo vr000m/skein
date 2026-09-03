@@ -93,7 +93,7 @@ Raw Bash/Read/Grep output lands in the transcript verbatim and stays for the res
 
 For pure lookups, prefer `subagent_type: Explore`. For verification/yes-no checks, use `general-purpose` with `model: "haiku"` — the overhead is worth it when raw output would otherwise be large.
 
-**3. Decision rule — inline vs delegate.** Run it inline when the narrowed output is small and I will act on the detail myself. Delegate when the raw output would be large or spread across files and I only need the conclusion. Two carve-outs are not obvious from that rule: verbose-but-single-purpose output (build, test, deploy logs) stays inline behind a filter pipe unless all I want is a verdict, and anything I will re-reference later in the session stays inline, because delegating discards the detail.
+**3. Decision rule — inline vs delegate.** Run it inline when the narrowed output is small (under about 30 lines) and I will act on the detail myself. Delegate when the raw output would be large or spread across files and I only need the conclusion. Two carve-outs are not obvious from that rule: verbose-but-single-purpose output (build, test, deploy logs) stays inline behind a filter pipe unless all I want is a verdict, and anything I will re-reference later in the session stays inline, because delegating discards the detail.
 
 **4. Reuse prior reads, but verify freshness first.** If I already read a file this session, reuse that content — *unless* it may have changed since. The Edit/Write tools track state for files **I** modified, so re-reading after my own successful Edit is wasted. But the file may have changed for other reasons:
 - A subagent or parallel Agent ran and may have edited it (worktree isolation aside).
