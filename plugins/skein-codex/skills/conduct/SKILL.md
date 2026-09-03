@@ -25,7 +25,7 @@ Helper modules for preflight and state handling:
 - `progress.py` — fix-loop progress signatures. It probes `git diff --cached --stat -w` once per process and falls back to sorted `--name-only` canonicalisation with a one-shot warning if local git rejects that flag combination.
 - `ci_parity.py` — local CI entrypoint detection for the end-of-plan parity gate. Detection priority: `just ci`, `make ci`, `npm run ci`, `cargo test --all`; workflow files are intentionally not detected.
 
-Deterministic tests under `tests/` (run via `uvx pytest .codex/skills/conduct/tests/ -v && bash .codex/skills/conduct/tests/test_skill_spawn_grep.sh`).
+Deterministic tests under `tests/` (run via `uvx pytest plugins/skein-codex/skills/conduct/tests/ -v && bash plugins/skein-codex/skills/conduct/tests/test_skill_spawn_grep.sh`).
 
 These helpers are a pure-Python library — there is no CLI entry point. Main Codex orchestrates the per-phase loop turn-by-turn per this SKILL.md: it calls helpers (preflight, phase parse, state read/write, pause/abort) for the pure-function steps, and invokes `spawn_agent`, `wait_agent`, and `close_agent` directly for each subagent lifecycle. Each worker must be spawned with `fork_context=false` so the filled template is the worker's entire context.
 

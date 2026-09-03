@@ -19,7 +19,7 @@ Distills a directory of markdown dev plans into a navigable HTML dashboard plus 
 ## Invocation
 
 ```bash
-python3 .claude/skills/plan-view/generate.py <plans-dir> [options]
+python3 "$SKILL_DIR/generate.py" <plans-dir> [options]
 ```
 
 Options:
