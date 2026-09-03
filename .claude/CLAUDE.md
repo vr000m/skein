@@ -27,7 +27,7 @@
 - Discuss and plan before implementing non-trivial features.
 - **If an approach is failing, stop and re-plan** — don't keep pushing on a broken path.
 - Update docs (AGENTS.md, README.md, dev plan) alongside code changes, not after.
-- When the skein plugin is available, run `skein:review-gauntlet` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run `/code-review`, `/security-review`, and `/deep-review` before merging.
+- When the skein plugin is available, run `skein:review-gauntlet` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run `/code-review` and `/security-review` before merging (`/deep-review` is a skein skill, so it is not available in that case either).
 - Once reviews have converged, run `/update-docs` — review-gauntlet does not do this itself, it only chains the review gates.
 - Fix all review findings before merge.
 - Update PR description to reflect final state of the work.

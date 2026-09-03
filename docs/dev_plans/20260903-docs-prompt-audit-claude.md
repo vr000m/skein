@@ -164,7 +164,7 @@ Guard for all: `scripts/check-prompt-parity.sh:271-296` compares the two files a
 
 Guard for all: `tests/plugin/test-claude-md-hygiene.sh:53-57` asserts the H2 headings `## Testing`, `## Facts vs Inference`, `## Security & Diff Reviews`; no hunk touches a heading.
 
-- **D-F05** :29 `- Run \`/update-docs\`, \`/review\`, \`/security-review\`, and \`/deep-review\` before merging.` → two lines: `- When the skein plugin is available, run \`skein:review-gauntlet\` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run \`/code-review\`, \`/security-review\`, and \`/deep-review\` before merging.` / `- Once reviews have converged, run \`/update-docs\` — review-gauntlet does not do this itself, it only chains the review gates.` — High (`/review` resolves nowhere; AD-6).
+- **D-F05** :29 `- Run \`/update-docs\`, \`/review\`, \`/security-review\`, and \`/deep-review\` before merging.` → two lines: `- When the skein plugin is available, run \`skein:review-gauntlet\` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run \`/code-review\` and \`/security-review\` before merging (\`/deep-review\` is a skein skill, so it is not available in that case either).` / `- Once reviews have converged, run \`/update-docs\` — review-gauntlet does not do this itself, it only chains the review gates.` — High (`/review` resolves nowhere; AD-6).
 - **D-F01** :18 — High, rewrite: drop `Reason: two consecutive fixes in one session (2026-07-12, … after the fact.`; insert after `those other call sites depend on` the parenthetical ` (pay special attention to encode/decode, escape/unescape, serialize/deserialize pairs — the reverse side is often built the same naive way and breaks in reverse)`; append `A fix that satisfies the reported line can silently break a second call site on the same mechanism, and the second break surfaces only in a later review round.`
 - **D-X** (old #38, AD-6) insert as the first `## Review Workflow` bullet: `- **When a review returns findings, don't patch reactively in the same pass.** Think through each reported issue first — root cause, not just the symptom. Where the fix is more than mechanical, delegate it as a sequence of clean-context subagents — architect, implement, test, verify against the original finding — rather than writing the diff inline. Reason: fixes written inline immediately after reading a finding tend to be shallow patches on the reported symptom; splitting architect/fix/test/verify across subagents forces the root-cause step instead of skipping straight to a diff.` — decision, user may decline.
 - **D-F02** :118 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.` — High.
@@ -403,7 +403,7 @@ sequenceDiagram
 
 Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, then `./scripts/sync.sh collect claude`. Line numbers are as of 2026-09-03. None of these hunks touch a heading asserted by `test-claude-md-hygiene.sh` when `GLOBAL_CLAUDE_MD` is set.
 
-- **D-F05 (global half)** :37 drop `/review` from the hand-run gate list (`/code-review`, `/security-review`, `/deep-review`); no such command resolves, same as the project-file hunk.
+- **D-F05 (global half)** :37 drop `/review` and `/deep-review` from the hand-run gate list, leaving `/code-review` and `/security-review`; `/review` resolves nowhere and `/deep-review` is a skein skill, so neither belongs in the no-plugin fallback (same as the project-file hunk after gauntlet round 14).
 - **D-F06** :158 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.`
 - **D-F07** :161 remove ` Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.`
 - **D-F08 (global half)** :164 same rewrite as the project D-F08.
@@ -420,7 +420,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-04 @ 77cedbaae10775f815baf5020d2f761110712d3f -->
+<!-- reviewed: 2026-09-04 @ ac99e9948d88d1621c764e64b96611626cf9c59c -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -496,6 +496,7 @@ Phases L1–L10 and F landed as one boundary commit each (cf268f2 … 11faf8c), 
 
 ### Follow-up Work
 
+- The `**Review Gates:**` token documented in `dev-plan/SKILL.md:58`, `conduct`, `review-gauntlet` and `fan-out` (both mirrors) differs from the form `template.md:16` writes and every plan carries (`**Review Gates**: value`, matching `**Status**:`). Pre-existing on `main` and pinned by `tests/gauntlet/test-review-gates-marker.sh`, `test-conduct-hook.sh` and `test-fanout-hook.sh`; the readers are prose agents, so it has not misrouted a run, but the two spellings should be unified in one Codex-led change (tests are Codex-owned under AD-8). Raised by gauntlet round 14.
 - The deep-review and review-plan lens prompts (both mirrors) wrap diffs and plan text in `<untrusted-content>` without the pre-substitution escaping rule round 13 added to the five Codex delegation clauses; a diff containing a literal closing tag can end the block early. Apply the same rule there in a follow-up (both mirrors, one commit).
 - C-F6 dropped the "Doubles as a Managed Agents outcome rubric" aside from `spec-compliance/rubric.md` only; `deep-review/rubric.md:3`, `review-plan/rubric.md:3` and `dev-plan/rubric.md` still carry it (out of this audit's finding set; gauntlet round 9 architecture lens). Drop it there in a follow-up, both mirrors.
 - `tests/gauntlet/test-gate-timeout.sh` case A11 (a `gate_run_bounded` timing race, not a plan-view test) flaked 1/50 in Phase F and again in gauntlet round 6; not reproduced on re-run, worth stabilising.
