@@ -151,7 +151,7 @@ Return your findings in exactly this format (no other output):
 
 ### After the subagent returns
 
-Present the compliance report to the user as-is. Before presenting, verify it against [rubric.md](rubric.md) — gradeable criteria covering spec resolution, requirement extraction, per-requirement classification, report structure, and scope discipline. The rubric also doubles as a Managed Agents outcome rubric if this skill is later run as a graded session.
+Present the compliance report to the user as-is. Before presenting, verify it against [rubric.md](rubric.md), which covers spec resolution, requirement extraction, per-requirement classification, report structure, and scope discipline.
 
 ### Report Rules
 
@@ -161,14 +161,6 @@ Present the compliance report to the user as-is. Before presenting, verify it ag
 - Group by requirement level (MUST first, then SHOULD, then MAY)
 - Include the summary table for quick scanning — always include all three rows (MUST, SHOULD, MAY) even if a level has zero requirements
 - Link to the spec section so the user can read the full context
-
-### What NOT to Do
-
-- Do NOT reproduce large blocks of spec text — quote only the normative statement
-- Do NOT mark a requirement as Met unless you can cite specific code evidence
-- Do NOT skip SHOULD/MAY requirements — they matter for interoperability even if not mandatory
-- Do NOT guess what the spec says — always fetch and verify
-- Do NOT attempt full-spec compliance without a section reference — ask the user to narrow scope
 
 ## Edge Cases
 
