@@ -19,8 +19,8 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-09-03 | docs | prompt-audit-codex | meta | — | none yet | [plan](20260903-prompt-audit-codex.md) |
-| 2026-09-03 | docs | prompt-audit-claude | meta | — | none yet | [plan](20260903-prompt-audit-claude.md) |
+| 2026-09-03 | docs | prompt-audit-codex | meta | — | none yet | [plan](20260903-docs-prompt-audit-codex.md) |
+| 2026-09-03 | docs | prompt-audit-claude | meta | — | none yet | [plan](20260903-docs-prompt-audit-claude.md) |
 
 ## Shipped
 
