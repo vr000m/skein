@@ -377,7 +377,7 @@ sequenceDiagram
 
 - [x] Phase 0: Baseline counts
 - [x] Phase C1: Codex conduct
-- [ ] Phase C2: Codex deep-review
+- [x] Phase C2: Codex deep-review
 - [ ] Phase C3: Codex dev-plan
 - [ ] Phase C4: Codex review-plan
 - [ ] Phase C5: Codex fan-out
