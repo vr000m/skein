@@ -358,7 +358,7 @@ sequenceDiagram
 ## Acceptance Criteria
 
 - Every Codex-side hunk in the apply set is applied in `plugins/skein-codex/`, one boundary commit per phase.
-- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed except the write-containment guardrail pin added during review.
+- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed except the write-containment guardrail pin added during review and, later, Phase R removing the two Codex fan-out prompt-file `reasoning_effort=medium` pins (the `SKILL.md` pin at `:274` stays; see Progress).
 - `bash tests/parity/test-spawn-tiers.sh` exits 0 after every phase; `just gauntlet-tests` exits 0 after C6.
 - Every anchor listed in AD-1 and AD-2 is byte-unchanged, or its guard was edited in the same phase.
 - Each commit body carries one "kept:" line per hunk naming where the operative clause survives.
@@ -401,6 +401,7 @@ sequenceDiagram
   - Round 4: no Codex-mirror hunks (247fc7a and 240a514 touch only the Claude mirror and docs). See the companion Claude plan's Findings for the Claude-side round list and round 4 detail.
   - Round 5 — 54789c3: stale `.claude/skills` / `.codex/skills` mirror paths replaced in `conduct/SKILL.md:28`, `dev-plan/SKILL.md:111` and `plan-view/SKILL.md:22` (the last resolves flag-only C-F15 with `$SKILL_DIR/generate.py`; recorded in the Claude plan); 2c86402: this Findings ledger.
   - Round 6 — 69a34d8: `plan-view/SKILL.md:82,139,141` use `$SKILL_DIR/generate.py`, `generate.py:1723-1724` and `tests/test_parser.py:89` name the plugin paths; 93c133e: `scripts/check-prompt-parity.sh` drift messages name the Claude and Codex mirrors (Codex authored both halves via codex:rescue; Claude aligned its twins); 96e6907: `update-docs/SKILL.md:60-61` passes the base branch as a quoted argument instead of an unassigned `BASE_BRANCH_REF`. Ledger decision: non-converge, driven by re-reports of the C-F16 delegation clause awaiting a user decision.
+  - Run 2 (after Phase R) — Round 7: 2e3d710 `fan-out/test-writer-prompt.md` opener made harness-neutral; b15fae9 `update-docs/SKILL.md` pre-flight base-branch allowlist and single-quoted recipe. Round 8: a5a46f6 `deep-review/SKILL.md` status-enum bullet lists six values with the absent-key case separated; `plan-view/SKILL.md` output tree drops `_assets/`. Terminal decision recorded in the companion Claude plan's Summary.
 
 ## Issues & Solutions
 
