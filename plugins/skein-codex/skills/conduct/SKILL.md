@@ -38,7 +38,7 @@ Subagents are spawned via `spawn_agent` with `fork_context=false`. Shared worksp
 Codex-native role routing:
 - Implementer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical implementation of a reviewed phase.
 - Test-writer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical test authoring against the phase contract.
-- Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported. R3 why: code review is judgment work, so the advisory reviewer gets the review tier.
+- Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported. Code review is judgment work, so the advisory reviewer gets the review tier.
 
 Do not use literal model names or a literal `reasoning:` field in these dispatches. Express the tier as the `reasoning_effort` request supported by the current Codex runtime, and always keep `fork_context=false`.
 
@@ -247,7 +247,7 @@ After tests pass (or were skipped with warning):
 3. If the pre-commit hook fails, first check whether the hook modified files in-place (formatters like black, ruff --fix, prettier). Only auto-restage when every modified tracked file is already in the original staged pathset for this phase; in that case, run `git add -u -- <staged-paths...>` and retry the commit **once** in-place with the same message. If the retry succeeds, append the warning `pre-commit hook modified files; re-staged and retrying` to the phase warnings and continue at step 4 as a normal success. If the hook modified tracked files outside the original staged pathset, hand back to the user instead of auto-staging unrelated edits. If the retry fails, or if the hook did not modify files, route the hook output back into Step 6 as a fix-loop iteration. Do NOT use `--no-verify`.
 4. On success, record the new `HEAD` SHA in `state.completed_phases[*].commit_sha`. This field is immutable once written. If the user lands follow-up commits during handback, or the automated review-gauntlet auto-chain below lands one or more fix commits after the terminal phase boundary, the next `--resume` absorbs them into `resume_base_sha`; it does not rewrite the prior phase's `commit_sha`.
 
-Pre-commit hook scope: `scripts/check-prompt-parity.sh` is invoked from `justfile` recipes only, not from `.pre-commit-config.yaml` or the hook chain. Phase 3 Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
+Pre-commit hook scope: `scripts/check-prompt-parity.sh` is invoked from `justfile` recipes only, not from `.pre-commit-config.yaml` or the hook chain. Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
 
 ### Step 9 — Phase Transition
 
@@ -342,7 +342,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ### Activation
 
-- **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation, no additional dispatch, and no change to `status`. Current behavior is unchanged for every plan that does not explicitly opt in.
+- **Strictly opt-in.** Absent field or `none`: no `review-gauntlet` invocation, no additional dispatch, and no change to `status`.
 - **`quick` -> invoke `review-gauntlet --plan <this plan>` scoped to Codex gate 1 only**, a single native code-review pass with no convergence loop.
 - **`full` -> invoke `review-gauntlet --plan <this plan>` through the Codex gate matrix**, with native supported gates run and unsupported/gated slots reported explicitly as `deferred` or `skipped`; do not claim Claude command parity for missing `/security-review` or `/codex:adversarial-review` commands.
 
@@ -375,7 +375,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ## State File
 
-Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where `digest` is `sha1(repo-relative plan path)[:12]`. `.conduct/` is git-ignored (Phase 5).
+Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where `digest` is `sha1(repo-relative plan path)[:12]`. `.conduct/` is git-ignored.
 
 Schema:
 

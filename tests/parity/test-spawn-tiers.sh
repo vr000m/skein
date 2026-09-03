@@ -267,8 +267,8 @@ assert_present "$CODEX_SKILLS_DIR/review-plan/SKILL.md" 'reasoning_effort=high.*
 	"codex review-plan Contradiction Pass high-effort rationale"
 assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'R3 why: normative spec compliance is judgment work' \
 	"codex spec-compliance R3 why-comment"
-assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'R3 why: code review is judgment work' \
-	"codex conduct reviewer R3 why-comment"
+assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'Code review is judgment work, so the advisory reviewer gets the review tier' \
+	"codex conduct reviewer rationale"
 
 # --- (9) Codex R6 and dispatch-idiom guards ---
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'reasoning_effort=medium.*fork_context=false' \
