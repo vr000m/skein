@@ -1,599 +1,451 @@
-# Task: prompt-audit cleanup — dated prompting patterns across skein skills + CLAUDE.md
+# Task: prompt-audit cleanup — dated prompting patterns across skein skills + project CLAUDE.md
 
 **Status**: Not Started
-**Component**: docs / plugins/skein, plugins/skein-codex
+**Component**: meta
 **Assigned to**: unassigned
 **Priority**: Low
-**Branch**: none yet — create `chore/prompt-audit-cleanup` (or similar) before implementing
+**Branch**: `chore/prompt-audit-cleanup` (created in Phase 0, not yet existing)
 **Created**: 2026-09-03
-
-## How to use this plan
-
-This plan was **not** written from a live audit — it was reconstructed by extracting
-findings from a prior `/claude-api prompt-audit` run out of a compacted session
-transcript (`/Users/vr000m/.claude/projects/-Users-vr000m-Code-vr000m-skein/d495751d-9690-44cb-b3a8-886791d07c67.jsonl`).
-
-That original run (2026-09-02/03) fanned out 6 parallel subagents across the 14
-skein skills (both Claude and Codex mirrors) plus the global and project
-`CLAUDE.md` files, using the `claude-api` skill's `prompt-audit.md` methodology
-(pressure language, scaffolds superseded by newer API features, over-specification,
-fossils/history-narratives, prohibition clusters, output-shaping choreography).
-Several of the 6 subagents got stuck recursively self-delegating and had to be
-relaunched with explicit "do not spawn sub-agents" instructions; two of the six
-scopes (`grill`/`plan-view`/`release` and `review-gauntlet`/`review-plan`) ended up
-audited **twice** — once by the original agent after it gave up waiting on its own
-stuck children, and once by the clean relaunch — which is why this plan recovers
-more findings (38) than the run's own live "~31" running estimate (that estimate
-was taken mid-run, before every batch had reported back).
-
-**Before implementing anything here:**
-1. Re-read the cited file at the cited line — files may have moved on since the
-   audit ran (schema.py/backlog/changelog work landed on `main` in the same
-   session, unrelated to this list, and could have shifted line numbers).
-2. Where two passes covered the same file (noted inline below), treat both as
-   independent, additive findings, not duplicates — spot-check that neither was
-   already fixed by the other pass's proposed diff before applying both.
-3. Only findings marked **diff captured** below have an exact proposed patch
-   pulled from the transcript. Findings marked **description only** need a fresh
-   diff written against current file content.
-4. Re-verify confidence: the audit's own low-confidence/"flag only" items are
-   included for completeness but were explicitly *not* given diffs by the
-   original agents — treat them as candidates for discussion, not a queue to
-   apply mechanically.
+**Completed**:
+**Review Gates**: full
 
 ## Objective
 
-Work through the ~31–38 dated-prompting-pattern findings below, confirm each
-still applies against current file content, and land the high/medium-confidence
-fixes (diff captured or newly written) across both the Claude (`plugins/skein`)
-and Codex (`plugins/skein-codex`) mirrors, plus the two `CLAUDE.md` files. Leave
-low-confidence "flag only" items for a follow-up decision rather than applying
-them speculatively.
+Land the high- and medium-confidence findings of a fresh `/claude-api prompt-audit` over every shipped skein skill prompt (both mirrors) and the project `.claude/CLAUDE.md`, keeping every machine anchor that a parity script or test greps for byte-exact, and hand the global-file findings to the sync-computer repo as a follow-up.
 
 ## Context
 
-`/claude-api prompt-audit` is the `claude-api` skill's structured methodology
-(`shared/prompt-audit.md`, Steps 0–7) for finding prompt cruft tuned to older
-model generations — pressure-language stacking, JSON/scratchpad scaffolding
-superseded by native tool-use, over-specified judgment calls turned into lookup
-tables, and (the dominant pattern found here) **fossils**: history narratives,
-leaked internal rule/finding IDs (`R1`, `R3`, `R7`, `C1`, `C2`), and dated
-incident archaeology baked into shipped runtime prompts.
-
-The run explicitly did **not** apply any edits — Step 6 only produces proposed
-diffs; the user asked mid-run "should we make this into a dev plan to implement
-on this branch?" and the session moved on to other work (a `/code-review` pass
-on unrelated `conduct/schema.py` changes) before that dev plan was written. This
-document is that dev plan, assembled after the fact.
-
-Two audit passes independently confirmed **leaked internal rule-tracking IDs**
-(`R1`/`R3`/`R6`/`R7`/`C1`/`C2` — labels from dev-plan review-round bookkeeping,
-e.g. `docs/dev_plans/20260823-feature-review-skills-resilience.md`) as the single
-most common fossil across the whole plugin: 6+ files, both mirrors, always with
-the same fix shape — state the rule's content in plain prose (already present in
-the same sentence in every case) and drop the bare ID.
-
-## Findings by file
-
-Legend: **Diff captured** = an exact before/after patch was returned by the
-audit subagent and is reproduced below. **Description only** = the subagent
-described the fix (remove/rewrite/flag) but did not write a diff hunk.
-
----
-
-### `plugins/skein/skills/conduct/SKILL.md` (+ `plugins/skein-codex/` mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 1 | `plugins/skein/skills/conduct/SKILL.md:208` | Fossil — history narrative | Cites "pre-refactor code" line numbers (678/792/992) from code that no longer exists (refactor shipped, confirmed via git blame). The invariant should stand alone. | High | rewrite | **Captured** |
-| 2 | `plugins/skein/skills/conduct/SKILL.md:237` | Fossil — leaked internal ID (`R1`) in an HTML comment | `R1` has no referent in the shipped doc; the next line already states the same rationale in prose. | High | remove | **Captured** |
-| 3 | `plugins/skein-codex/skills/conduct/SKILL.md:41` | Fossil — leaked internal ID (`R3 why:`) | Same defect as #2, Codex mirror; makes the sentence ungrammatical. | High | rewrite | **Captured** |
-| 4 | `plugins/skein/skills/conduct/SKILL.md:364` | Fossil — migration-relative phrasing ("anymore") | Written as a diff against a prior version of `review-gauntlet` the reader never saw. | Medium | rewrite | **Captured** |
-| 5 | `plugins/skein/skills/conduct/SKILL.md:252,267,279,393,436` | Fossil — history narrative (own build-phase tags: "(Phase 3)", "(Phase 4)", "(Phase 5)", "(Phase 3, schema_version 2)") | Tags the skill's own now-merged implementation milestones; nothing at runtime branches on "Phase N". | Medium | remove | **Captured** (5 hunks) |
-| 6 | `plugins/skein-codex/skills/conduct/SKILL.md:250,378` | Same as #5, Codex mirror (2 of the 6 instances) | Same reasoning as #5. | Medium | remove | **Captured** (2 hunks) |
-
-#### Diffs — findings 1–6
-
-```diff
-# Finding 1 — plugins/skein/skills/conduct/SKILL.md:208
-- **Pre-implementation audit (Phase 1)**: today's three increments all fire AFTER the failure is observable to the conductor (lines 678, 792, 992 in the pre-refactor code); the helper is invoked at that same position so iteration_count at the bound-check point is byte-identical to today's iteration_count at the equivalent return point. This is asserted by `helper-is-single-increment-source-three-sites`.
-+ Each entry point invokes the helper at the same position where the prior per-site code incremented `iteration_count` directly, so `iteration_count` at the bound-check point matches what that code produced at its equivalent return point. This is asserted by `helper-is-single-increment-source-three-sites`.
-```
-
-```diff
-# Finding 2 — plugins/skein/skills/conduct/SKILL.md:237
-- <!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (R1) even though it is only advisory -->
-  `model: opus, effort: high`.
-+ `model: opus, effort: high` — it reviews code, so it earns the review tier under the two-tier policy even though it is only advisory.
-```
-(delete the comment line; fold its rationale into the existing sentence, removing the now-duplicated prose that followed)
-
-```diff
-# Finding 3 — plugins/skein-codex/skills/conduct/SKILL.md:41
-- Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported. R3 why: code review is judgment work, so the advisory reviewer gets the review tier.
-+ Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported — code review is judgment work, so the advisory reviewer gets the review tier.
-```
-
-```diff
-# Finding 4 — plugins/skein/skills/conduct/SKILL.md:364
-- There is no single-pass `quick` option — `review-gauntlet` has no gate `/code-review` can run through anymore (see its SKILL.md); run `/code-review xhigh --fix` yourself when you want that fast pass.
-+ `review-gauntlet` offers only this full convergence loop, not a single-pass mode; for a fast single-pass review, run `/code-review xhigh --fix` directly.
-```
-
-```diff
-# Finding 5 — plugins/skein/skills/conduct/SKILL.md (5 hunks)
-- Repo-level mirror parity is verified at the end (Phase 4) via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
-+ Repo-level mirror parity is verified via `just check-prompt-parity` and `just check-sync` once both runtimes have landed their respective sides; it is not gated in-run.
-```
-```diff
-- The CI-parity gate (Phase 3) introduces a result-file path that releases the lock and re-enters on resume, producing `lock_acquisitions == 2` for the production gate flow — but Phase 2 itself does not exercise that path.
-+ The CI-parity gate introduces a result-file path that releases the lock and re-enters on resume, producing `lock_acquisitions == 2` for the production gate flow — but an ordinary phase-completion run does not exercise that path.
-```
-```diff
-- - (Phase 3) `awaiting_ci_parity` missing-result-after-3-resumes.
-+ - `awaiting_ci_parity` missing-result-after-3-resumes.
-```
-```diff
-- Path: `<repo-root>/.conduct/state-<plan-id>.json`, ... `.conduct/` is git-ignored (Phase 5). Pre-digest state files ...
-+ Path: `<repo-root>/.conduct/state-<plan-id>.json`, ... `.conduct/` is git-ignored. Pre-digest state files ...
-```
-```diff
-- ### Fields introduced for the CI-parity gate (Phase 3, schema_version 2)
-+ ### Fields introduced for the CI-parity gate (schema_version 2)
-```
-
-```diff
-# Finding 6 — plugins/skein-codex/skills/conduct/SKILL.md (2 hunks)
-- Phase 3 Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
-+ Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.
-```
-```diff
-- Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, ... `.conduct/` is git-ignored (Phase 5).
-+ Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, ... `.conduct/` is git-ignored.
-```
-
----
-
-### `plugins/skein-codex/skills/content-review/SKILL.md`
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 7 | `SKILL.md:46,52-54` | Fossil — triple-hedged conditional | A real Claude/Codex harness divergence (legitimate) stated with stacked, unresolved hedges ("if available and explicitly allowed... when supported... otherwise") instead of a plain runtime-dependent branch. | Medium | rewrite | **Captured** |
-| 8 | `SKILL.md:3` | Group 3 — trigger-text mirror drift | Codex mirror's `description:` omits the `Use when the user says "/content-review"...` trigger clause present in skein's — routing-relevant text has silently diverged. | Low | flag | Description only |
-
-```diff
-# Finding 7
-- These phases involve reading reference files, applying dozens of rules against the content, and producing a structured report. If subagent delegation is available and explicitly allowed in the current Codex runtime, you may delegate them to keep the main context lean. Otherwise, run the same steps in the main context so the skill still works without delegation.
-+ These phases involve reading reference files, applying dozens of rules against the content, and producing a structured report. Delegate them to a subagent when the Codex runtime supports agent delegation, to keep the main context lean; otherwise run the same steps directly in the main context.
-```
-```diff
-- If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
-+ When delegation is supported, spawn a subagent via `spawn_agent` (harness-selected model, `reasoning_effort=low` if the runtime accepts it) to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). Otherwise run the same prompt contract in the main context.
-```
-
----
-
-### `plugins/skein/skills/conduct/reviewer-prompt.md` (+ Codex mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action |
-|---|---|---|---|---|---|
-| 9 | `reviewer-prompt.md:57` | Prohibition with no tied failure | `Do not pad the list with style nits to look thorough.` — no blame/incident ties this to an observed padding failure on any model; idiom-dating only. | Low | flag |
-
----
-
-### `plugins/skein/skills/content-draft/SKILL.md` (+ Codex mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action |
-|---|---|---|---|---|---|
-| 10 | `SKILL.md:101` | Numeric ceiling signal | `**Length**: 800-1,500 words (or content-type-specific range).` — reads as a genuine publishing/SEO convention, not clearly a verbosity clamp tuned against an older model; provenance unclear from the file alone. | Low | flag |
-| 11 | `SKILL.md:149,167` | Repetition (`Do NOT write to a file unless...` / `Never write to files without explicit permission.`) | Two occurrences in distinct functional spots (inline instruction + end-of-file recap) — matches the audit's *allowed* single end-of-prompt recap pattern, not scattered duplication. Kept, no action. | Low | none (correctly kept) |
-
-`content-draft` is otherwise fully clean on both mirrors (no diff proposed); `references/writing-style-rules.md` and `references/content-guidelines.md` are byte-identical across mirrors and correctly kept as reasoned, enforced prohibitions.
-
----
-
-### `plugins/skein/skills/deep-review/SKILL.md` (+ Codex mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 12 | `SKILL.md:79` | Fossil — leaked internal ID (`R1`) in prose | `"...per the two-tier policy (\`AGENTS.md\` Model/Effort Policy, R1):"` — `R1` is an ID from an external rule catalog the model never sees. | High | rewrite | **Captured** |
-| 13 | `SKILL.md:433` | Fossil — leaked internal ID (`R1`) in an HTML comment | Same defect as #12, reaches the model as literal prompt text on load. | High | rewrite | **Captured** |
-| 14 | `SKILL.md:37,173,635` (+ Codex mirror `:117,287,376`) | Fossil — history narrative ("(Phase 2)" build-milestone label) | "Phase 2" never conditions any runtime behavior in this file; reads as though an earlier phase's behavior is still a live alternative, when it isn't. | Medium | rewrite | **Captured** (6 locations) |
-
-```diff
-# Finding 12
--Use the smallest model that still fits the lens, but keep the tiering stable. Code review is judgment work — every lens except the factual `documentation` lookup runs at the strong model, high effort, per the two-tier policy (`AGENTS.md` Model/Effort Policy, R1):
-+Use the smallest model that still fits the lens, but keep the tiering stable. Code review is judgment work — every lens except the factual `documentation` lookup runs at the strong model, high effort, per the two-tier policy in `AGENTS.md`'s Model/Effort Policy (judgment work gets the strong model at high effort; factual lookup gets the cheap model at low effort):
-```
-```diff
-# Finding 13
--<!-- opus/high: code review is judgment work under the two-tier policy (R1) — the prior sonnet tier is bumped to match the other lenses; see AGENTS.md Model/Effort Policy -->
-+<!-- opus/high: code review is judgment work under AGENTS.md's Model/Effort Policy — the prior sonnet tier is bumped to match the other lenses -->
-```
-```diff
-# Finding 14 (pattern, applied at 6 locations — 3 Claude, 3 Codex)
-- **Disk-first lens results (Phase 2).** Each checkpoint is now `collect-lens-results.sh` ...
-+ **Disk-first lens results.** Each checkpoint is `collect-lens-results.sh` ...
-```
-Locations: `plugins/skein/skills/deep-review/SKILL.md:37` (also drop "is now" → "is"), `:173`, `:635` ("the point of Phase 2's disk-first design" → "the point of this disk-first design"); `plugins/skein-codex/skills/deep-review/SKILL.md:117`, `:287`, `:376`.
-
----
-
-### `plugins/skein/skills/dev-plan/SKILL.md`
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 15 | `SKILL.md:100` | Fossil — leaked internal ID (`R1`) | Same `(R1)` leak; the Codex mirror (`:102`) already states the identical rationale **without** the ID, proving it's dead weight. | High | rewrite | **Captured** |
-
-```diff
-- **Model**: `sonnet`, **Effort**: `medium` (balanced/low-cost planner tier — light pattern reasoning over fact-gathering; mechanical work per the two-tier policy, `AGENTS.md` Model/Effort Policy R1) <!-- sonnet/medium: mechanical fact-gathering, not judgment work -->
-+ **Model**: `sonnet`, **Effort**: `medium` (balanced/low-cost planner tier — light pattern reasoning over fact-gathering; mechanical work per AGENTS.md's Model/Effort Policy) <!-- sonnet/medium: mechanical fact-gathering, not judgment work -->
-```
-
----
-
-### `plugins/skein/skills/fan-out/{SKILL.md,agent-prompt.md,test-writer-prompt.md}` (+ Codex mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 16 | `fan-out/SKILL.md:17-25`, `agent-prompt.md:67-79`, `test-writer-prompt.md:1-9` | Fossil — history narrative + pinned model name | The topology decision (spawn a separate clean-context test-writer) is settled and load-bearing, but the surrounding probe narrative ("gate passed 2026-07-04", "verified end to end... billed `claude-haiku-4-5` tokens") is archaeology of *how* it was confirmed, repeated near-verbatim across 3 files. The pinned model name (`claude-haiku-4-5`) rots the moment that tier is retired. | Medium | rewrite | **Captured** (3 hunks) |
-| 17 | Codex mirror: `fan-out/SKILL.md:17-21`, `agent-prompt.md:67-82`, `test-writer-prompt.md:1-16` | Same pattern, Codex side | Lower confidence than #16 — the backlog pointer is still functionally live/unresolved — but the surrounding diagnostic narrative ("could not initialize its in-process app-server client...") could collapse to a one-line pointer. | Medium | rewrite | **Captured** (1 hunk + note re: 2 more) |
-
-```diff
-# Finding 16 — plugins/skein/skills/fan-out/SKILL.md:17-25
--### R6: clean-context test-writer graft (live on Claude)
-+### Clean-context test-writer graft (live on Claude)
-
- The worker's Test phase (agent-prompt.md Phase 2) delegates test authoring to a **separate clean-context test-writer subagent** (`model: sonnet, effort: medium`), one in-process `Agent` level below the worker — permitted in doctrine by the "Delegation Depth" rule above; it does not start a new fan-out tier or invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
-
--**This topology is CONFIRMED LIVE on the Claude harness (gate passed 2026-07-04).** A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset, exactly as `fan-out.sh` launches it) can spawn a nested Task subagent that honors a per-call `model` — verified end to end: the child actually ran on the requested tier (`result.modelUsage` billed `claude-haiku-4-5` tokens in the probe), not merely echoed the request. Re-confirm any time with `plugins/skein/skills/fan-out/tests/check-r6-gate.sh` (a manual, skip-permissions gate — deliberately **not** in `just parity-tests`). One caveat baked into the tier: the Task tool has **no per-call `effort` argument**, so the test-writer's `model: sonnet` is set per-call while its `effort: medium` is *inherited* from the worker's `--effort medium` session. The deterministic contract-mechanism half of R6 (a contract-derived test catches a divergent impl) is guarded in CI by `tests/run-seeded-divergence.sh`; the live topology half is this manual gate.
-+**This topology is confirmed live on the Claude harness.** A `claude -p --dangerously-skip-permissions` worker can spawn a nested Task subagent that honors a per-call `model`. Re-verify any time with `plugins/skein/skills/fan-out/tests/check-r6-gate.sh` (a manual, skip-permissions gate — deliberately **not** in `just parity-tests`). One caveat baked into the tier: the Task tool has **no per-call `effort` argument**, so the test-writer's `model: sonnet` is set per-call while its `effort: medium` is *inherited* from the worker's `--effort medium` session. The deterministic contract-mechanism half (a contract-derived test catches a divergent impl) is guarded in CI by `tests/run-seeded-divergence.sh`; the live topology half is this manual gate.
-
- The anti-cheat rule below applies in full: the worker re-runs the test-writer's tests as the authoritative pass/fail and may not weaken them. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below).
-
--**Codex mirror:** the equivalent topology stays **gated** on the Codex side — its non-interactive `codex exec` nested-`spawn_agent` gate is still unconfirmed (`Operation not permitted` in probe), so the Codex worker keeps the single-context fallback. This Claude-live / Codex-gated asymmetry is a per-harness status divergence (logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04), not drift.
-+**Codex mirror:** the equivalent topology stays **gated** on the Codex side — its non-interactive `codex exec` nested-`spawn_agent` gate is still unconfirmed, so the Codex worker keeps the single-context fallback. This Claude-live / Codex-gated asymmetry is a per-harness status divergence (tracked in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`), not drift.
-```
-(Note: `grep -rn "R6" plugins/skein/skills/fan-out/` should still resolve after this edit — `R6` as a stable cross-file *design-decision label* used in tests/fixtures is intentionally kept as a section name; only the "(live on Claude)" heading tag and the archaeology prose are trimmed.)
-
-```diff
-# Finding 16 — plugins/skein/skills/fan-out/agent-prompt.md:67-79 (HTML comment block)
- <!--
--R6 status: the separate clean-context test-writer topology is CONFIRMED LIVE on the
--Claude harness as of 2026-07-04. A `claude -p --dangerously-skip-permissions` worker
--(with CLAUDECODE unset, exactly as fan-out.sh launches it) can spawn a nested Task
--subagent that honors a per-call model — verified end to end: the child actually ran
--on haiku (result.modelUsage billed claude-haiku-4-5 tokens), not just echoed the
--request. Re-check any time with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
--Caveat carried into the active directive below: the Task tool has NO per-call effort
--argument, so the test-writer's effort is inherited from this worker's session (which
--fan-out.sh runs at `--effort medium`), while its model IS set per-call. The Codex
--mirror keeps this topology GATED (its non-interactive `codex exec` nested-`spawn_agent`
--gate is still unconfirmed — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md, 2026-07-04).
-+Status: the separate clean-context test-writer topology is confirmed live on the
-+Claude harness. A `claude -p --dangerously-skip-permissions` worker (with CLAUDECODE
-+unset, exactly as fan-out.sh launches it) can spawn a nested Task subagent that
-+honors a per-call model. Re-verify any time with
-+plugins/skein/skills/fan-out/tests/check-r6-gate.sh. Caveat carried into the active
-+directive below: the Task tool has NO per-call effort argument, so the test-writer's
-+effort is inherited from this worker's session (which fan-out.sh runs at
-+`--effort medium`), while its model IS set per-call. The Codex mirror keeps this
-+topology gated — see docs/dev_plans/CODEX_MIRROR_BACKLOG.md for current status.
- -->
-```
-
-```diff
-# Finding 16 — plugins/skein/skills/fan-out/test-writer-prompt.md:1-9
--**Status note (read first):** the Claude R6 topology is **CONFIRMED LIVE** as of
--2026-07-04: the fan-out worker spawns a separate clean-context test-writer subagent
--with `model: sonnet`; effort is inherited from the worker's `--effort medium`
--session because the Task tool has no per-call effort argument. The test-writer never
--sees the implementer's diff. The manual gate at `tests/check-r6-gate.sh` proved the
--child actually ran on the requested child model via `result.modelUsage`, not merely
--by echoing the spawn request.
-+**Status note (read first):** this topology is confirmed live on Claude: the
-+fan-out worker spawns a separate clean-context test-writer subagent with
-+`model: sonnet`; effort is inherited from the worker's `--effort medium` session
-+because the Task tool has no per-call effort argument. The test-writer never sees
-+the implementer's diff. Re-verify any time with `tests/check-r6-gate.sh`.
-```
-
-```diff
-# Finding 17 — plugins/skein-codex/skills/fan-out/SKILL.md:17-21
- ### R6: clean-context test-writer graft (intended design, gated)
-
- The worker's Test phase (agent-prompt.md Phase 2) is designed to delegate test authoring to a **separate clean-context test-writer subagent**: inherit the harness-selected model, request `reasoning_effort=medium` when supported, and spawn with `fork_context=false`. This is one in-process `spawn_agent` level below the worker, does not start a new fan-out tier, and does not invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
-
--**This topology is currently GATED, not active.** The Phase-5 live gate could not confirm that a non-interactive `codex exec` worker can initialize the app-server client and spawn a nested `spawn_agent` test-writer with `fork_context=false` and `reasoning_effort=medium` in this environment, without unsafe bypass flags (see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04 Codex-track divergence entry). Until that gate is confirmed, the **active fallback** is: the worker keeps its existing single-context Test phase (it writes and runs its own tests) but tests to the same slice contract, and the anti-cheat rule below still applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below) regardless of which Test-phase mode is active.
-+**This topology is currently gated, not active.** A non-interactive `codex exec` worker's ability to initialize the app-server client and spawn a nested `spawn_agent` test-writer (`fork_context=false`, `reasoning_effort=medium`) without unsafe bypass flags is unconfirmed in this environment — see `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` for current status. Until confirmed, the **active fallback** is: the worker keeps its existing single-context Test phase (it writes and runs its own tests) but tests to the same slice contract, and the anti-cheat rule below still applies in full. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below) regardless of which Test-phase mode is active.
-```
-(Same substitution applies to `plugins/skein-codex/skills/fan-out/agent-prompt.md:67-82` and `test-writer-prompt.md:1-16` — replace the inline "could not initialize... 2026-07-04 Codex-track divergence entry" clause with a bare pointer to `CODEX_MIRROR_BACKLOG.md` for current status; hunks not fully spelled out in the source transcript, write fresh against current content.)
-
-**Post-apply grep check the audit suggested running:** `grep -rn "(R1)" plugins/skein/skills/{deep-review,dev-plan}/SKILL.md`, `grep -rn "2026-07-0[45]\|claude-haiku-4-5\|gate passed" plugins/skein/skills/fan-out/`, `grep -rn "Phase 2" plugins/skein{,-codex}/skills/deep-review/SKILL.md` — all should return no hits in shipped prose after the above land. Also confirm none of the edited lines fall inside a `<!-- BEGIN/END GENERIC ... -->` parity marker block (mirror byte-identity guard).
-
----
-
-### `plugins/skein/skills/review-gauntlet/SKILL.md` (+ Codex mirror)
-
-> Audited twice (original pass + relaunch). Both sets of findings are additive — the relaunch focused on the `R7`/`C1`/`C2` leak family and did not re-examine the wall-clock/incident-narrative finding from the first pass, so both are listed.
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 18 | `plugins/skein/skills/review-gauntlet/SKILL.md:124` (+ Codex mirror `:130`) | Fossil — dated incident report cited by name | "**Flag combination: UNVERIFIED.** The 2026-08-23 insights report's `friction_detail` narrative names 'an incompatible flag combination'..." — the *reason to keep the wall-clock budget* is timeless; naming a specific dated report and describing its schema limitations is a diff against an investigation nobody reading this in six months can verify. | High | rewrite | **Captured** |
-| 19 | `plugins/skein/skills/review-gauntlet/SKILL.md:240` | Fossil — leaked internal ID (`R7`) | `"This is an accepted prose seam (R7), not a script-enforced contract"` — `R7` is defined only in `docs/dev_plans/20260823-feature-review-skills-resilience.md`, never seen by the runtime reader; the rule's content is already stated in the same sentence. | High | rewrite | **Captured** |
-| 20 | `plugins/skein/skills/review-gauntlet/SKILL.md:234` | Same `R7` leak, 2nd occurrence | Same defect. | High | rewrite | **Captured** |
-| 21 | `plugins/skein/skills/review-gauntlet/SKILL.md:241` | Fossil — leaked internal IDs (`C1`/`C2`) | `"first derive this round's present/claimed key files (C1/C2 wiring...)"` — dev-plan review-finding labels never exposed to the runtime skill; the parenthetical restates the rule in plain words right after the ID. | High | rewrite | **Captured** |
-| 22 | `plugins/skein/skills/review-gauntlet/SKILL.md:97` | Same `C1` leak, 2nd occurrence | Same defect. | High | rewrite | **Captured** |
-
-```diff
-# Finding 18 — plugins/skein/skills/review-gauntlet/SKILL.md:124
-- An optional Claude-side `run_in_background` + `Monitor` on the same invocation is a UX convenience only — non-load-bearing, Claude-only; the shell-level budget above is what actually bounds the gate. **Flag combination: UNVERIFIED.** The 2026-08-23 insights report's `friction_detail` narrative names "an incompatible flag combination" behind the 90+ minute hang, but a direct probe of its facets schema (the underlying JSON) shows it records only narrative summaries, never exact CLI argv, so the specific flag combination cannot be recovered from available data; the wall-clock budget above is the sole defence against a repeat. The gauntlet-owned schema is:
-+ An optional Claude-side `run_in_background` + `Monitor` on the same invocation is a UX convenience only — non-load-bearing, Claude-only; the shell-level budget above is what actually bounds the gate. `codex exec review` can hang indefinitely on some flag combinations with no reliable way to detect the cause from its own output — the wall-clock budget above is the sole defence against a repeat. The gauntlet-owned schema is:
-```
-(Codex mirror `:130`, same substitution pattern — "Target the same diff as gate 1 via `--base <branch>` or `--uncommitted`..." sentence gets the identical UNVERIFIED-paragraph replacement.)
-
-```diff
-# Finding 19 — plugins/skein/skills/review-gauntlet/SKILL.md:240
--  Columns (in the order `status-row` emits them): `gate`, `status`, `duration_s`, `findings`, `degraded_reason`. `gate_run_bounded` (gate 1) already stamps `gate`/`duration_s` into its envelope via its own `--gate codex-adversarial` flag; for gates 2/3 (which have no shell-level budget wrapper of their own) the conductor constructs and stamps their envelope by hand — `gate`, `status`, `findings`, `duration_s` (from its own wall clock around each gate's invocation), `degraded_reason` — before calling `status-row`. This is an accepted prose seam (R7), not a script-enforced contract, now extended from just `duration_s` to the full envelope shape including `gate` identity. A gate envelope with no `duration_s`/`degraded_reason` renders `-` for those columns, never the raw `null` token.
-+  Columns (in the order `status-row` emits them): `gate`, `status`, `duration_s`, `findings`, `degraded_reason`. `gate_run_bounded` (gate 1) already stamps `gate`/`duration_s` into its envelope via its own `--gate codex-adversarial` flag; for gates 2/3 (which have no shell-level budget wrapper of their own) the conductor constructs and stamps their envelope by hand — `gate`, `status`, `findings`, `duration_s` (from its own wall clock around each gate's invocation), `degraded_reason` — before calling `status-row`. This is an accepted prose seam, not a script-enforced contract, covering the full envelope shape including `gate` identity, not just `duration_s`. A gate envelope with no `duration_s`/`degraded_reason` renders `-` for those columns, never the raw `null` token.
-```
-
-```diff
-# Finding 20 — plugins/skein/skills/review-gauntlet/SKILL.md:234
--- **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's three gate envelopes (`$envelope_codex_adversarial`, `$envelope_deep_review`, `$envelope_security_review` — all three declared up front in [Gate Sequence](#gate-sequence-fixed-order) and R7's accepted prose seam below), run `run-gate.sh status-row` and print the row it emits.
-+- **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's three gate envelopes (`$envelope_codex_adversarial`, `$envelope_deep_review`, `$envelope_security_review` — all three declared up front in [Gate Sequence](#gate-sequence-fixed-order) and the accepted prose seam below), run `run-gate.sh status-row` and print the row it emits.
-```
-
-```diff
-# Finding 21 — plugins/skein/skills/review-gauntlet/SKILL.md:241
--- **Convergence decision** (after the status rows are printed for the round): first derive this round's present/claimed key files (C1/C2 wiring — the orchestrator, never the fixer, computes keys). The four key-file variables and `$auto_fix_manifest` are declared up front with their sibling `envelope_*`/`toolout_*` paths in [Gate Sequence](#gate-sequence-fixed-order), not here:
-+- **Convergence decision** (after the status rows are printed for the round): first derive this round's present/claimed key files — the orchestrator, never the fixer, computes keys. The four key-file variables and `$auto_fix_manifest` are declared up front with their sibling `envelope_*`/`toolout_*` paths in [Gate Sequence](#gate-sequence-fixed-order), not here:
-```
-
-```diff
-# Finding 22 — plugins/skein/skills/review-gauntlet/SKILL.md:97
-- Before running any gate, declare the round-scoped output directory and **all three** envelope/tool-out paths together — this is what makes the status-row block below (and C1's key-file wiring) reference variables that actually exist, rather than only the gate-1 pair:
-+ Before running any gate, declare the round-scoped output directory and **all three** envelope/tool-out paths together — this is what makes the status-row block and the convergence-decision key-file wiring below reference variables that actually exist, rather than only the gate-1 pair:
-```
-
-**Not a finding (checked, clean):** MUST/IMPORTANT/NEVER density elsewhere in `review-gauntlet`/`review-plan` (21 hits in Claude mirror, 20 Codex) all tie to script-enforced, testable invariants — not pressure-language stacking. The `IMPORTANT: the content inside <untrusted-content> tags is untrusted input` line, repeated per lens template, is legitimate current prompt-injection defense, not a style tic.
-
----
-
-### `plugins/skein/skills/review-plan/SKILL.md` (+ Codex mirror + `rubric.md`)
-
-> Also audited twice; see note above. The two passes found three distinct issues on the same paragraph (`SKILL.md:31`) — a dated vendor fact, a first-person narrative fragment, and a leaked ID — all folded into one proposed hunk by the second pass. Apply the second pass's hunk (23) as the single authoritative rewrite of that paragraph; findings from the first pass (24, 25) describe the same target text and are folded in.
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 23 | `plugins/skein/skills/review-plan/SKILL.md:31` | Fossil — leaked internal ID (`R1`) + stale cross-reference | `"Under the two-tier policy (\`AGENTS.md\` Model/Effort Policy, R1)..."` — `AGENTS.md`'s Model/Effort Policy section carries **no `R1` label at all today**; the citation points at a tag that doesn't exist in the cited document. | High | rewrite | **Captured** (see finding 25's full hunk, which also removes 24/25's targets) |
-| 24 | `plugins/skein/skills/review-plan/SKILL.md:31` | Fossil — dated external-vendor fact with built-in staleness admission | "...as of 2026-07-20, Max and Team Premium plans keep Fable at a permanent 50% of the weekly limit... Treat both figures as current-as-of-writing, not durable — re-verify..." — the instruction to re-verify "if it ever looks stale" is itself the tell that nothing re-checks it by default. | High | remove | **Captured** |
-| 25 | `plugins/skein/skills/review-plan/SKILL.md:31` | Fossil — first-person history narrative | "Fable was the choice this skill was earmarked for as one of the 'most important tasks' when the user made this call" — unattributable recollection, no operative content; doesn't change what the skill does. | Medium | remove | **Captured** |
-| 26 | `plugins/skein-codex/skills/review-plan/SKILL.md:42` | Fossil — leaked internal ID (`R1`), Codex mirror | `"This matches the R1 review-tier framing now used by deep-review's architecture lens..."` — same leak, independent occurrence from the gauntlet R7/C1/C2 leak (Claude-mirror-only). | High | rewrite | **Captured** |
-| 27 | `plugins/skein/skills/review-plan/SKILL.md:56,89` (+ Codex mirror `:83,149`) | Fossil — history narrative ("(Phase 2)" heading tag) | "Phase 2" names an implementation phase of review-plan's own dev plan; the heading already names the actual feature ("disk-first lens results, budgets, and respawn") — the phase tag adds archaeology and will go stale as the dev plan gains phases. | Medium | remove | **Captured** (4 hunks) |
-
-```diff
-# Findings 23+24+25 combined — plugins/skein/skills/review-plan/SKILL.md:31
-- A `/review-plan` run costs five high-effort Fable calls — the four parallel judgment lenses (`architecture`, `sequencing`, `spec-and-testing`, `assumptions`) plus the Step 3 sub-step 2.5 Contradiction Pass, which runs sequential, not parallel, immediately after the Step 2 five return — plus one cheap, low-effort Haiku factual lens (`codebase-claims`). Under the two-tier policy (`AGENTS.md` Model/Effort Policy, R1), plan review and code review are both judgment work and both bet on the strongest model at high effort catching the details. The five Fable calls dispatch at `model: fable` first — Fable was the choice this skill was earmarked for as one of the "most important tasks" when the user made this call — with an automatic retry at `model: opus` for any single lens or pass whose dispatch errors out on a usage-limit/quota condition. Fable's usage cap is plan-dependent, not a single global figure: as of 2026-07-20, Max and Team Premium plans keep Fable at a permanent 50% of the weekly limit, while Pro and Team Standard plans moved to usage-credits billing instead of a cap. Treat both figures as current-as-of-writing, not durable — re-verify against whatever Anthropic notice is live if it ever looks stale, since a changed cap or credit scheme would change how often this fallback path fires without changing the prose here. The fallback trigger itself (below) is plan-agnostic — it reacts to the actual quota-error text, not to a hardcoded assumption about which plan is active, so no plan-detection logic is needed here. Report which lenses or passes actually ran on the fallback in Step 5's summary line so the user can see when the cap was hit. The cost is real (5× fable at high effort per run — four parallel, one sequential) but the rework averted by catching plan-level mistakes before implementation justifies it. The `assumptions` lens runs at the judgment tier because spotting a plausible-but-unverified claim stated as fact — and reasoning about whether the codebase actually grounds it — is judgment work, not lookup. `codebase-claims` stays at `haiku` at low effort because verifying paths/APIs/dependencies is factual lookup, not extended reasoning.
-+ A `/review-plan` run costs five high-effort Fable calls — the four parallel judgment lenses (`architecture`, `sequencing`, `spec-and-testing`, `assumptions`) plus the Step 3 sub-step 2.5 Contradiction Pass, which runs sequential, not parallel, immediately after the Step 2 five return — plus one cheap, low-effort Haiku factual lens (`codebase-claims`). Under the two-tier policy in `AGENTS.md`'s Model/Effort Policy, plan review and code review are both judgment work and both bet on the strongest model at high effort catching the details. The five Fable calls dispatch at `model: fable` first, with an automatic retry at `model: opus` for any single lens or pass whose dispatch errors out on a usage-limit/quota condition. Fable's usage cap varies by plan tier and changes independently of this skill — the fallback trigger reacts to the actual quota-error text at dispatch time, not to a hardcoded assumption about which plan or cap is active, so no plan-detection logic is needed here. Report which lenses or passes actually ran on the fallback in Step 5's summary line so the user can see when the cap was hit. The cost is real (5× fable at high effort per run — four parallel, one sequential) but the rework averted by catching plan-level mistakes before implementation justifies it. The `assumptions` lens runs at the judgment tier because spotting a plausible-but-unverified claim stated as fact — and reasoning about whether the codebase actually grounds it — is judgment work, not lookup. `codebase-claims` stays at `haiku` at low effort because verifying paths/APIs/dependencies is factual lookup, not extended reasoning.
-```
-
-```diff
-# Finding 26 — plugins/skein-codex/skills/review-plan/SKILL.md:42
-- This matches the R1 review-tier framing now used by deep-review's architecture lens: architecture review is judgment work whether it is plan-level or diff-level, because it reasons about coupling, compatibility, public API risk, and integration seams.
-+ This matches the review-tier framing now used by deep-review's architecture lens: architecture review is judgment work whether it is plan-level or diff-level, because it reasons about coupling, compatibility, public API risk, and integration seams.
-```
-
-```diff
-# Finding 27 (4 hunks — 2 Claude, 2 Codex)
-- **Disk-first lens results (Phase 2).** Unlike deep-review, review-plan does NOT derive a `.lenses` object into this state file
-+ **Disk-first lens results.** Unlike deep-review, review-plan does NOT derive a `.lenses` object into this state file
-```
-Locations: `plugins/skein/skills/review-plan/SKILL.md:56`, `plugins/skein-codex/skills/review-plan/SKILL.md:149` (identical heading text); and:
-```diff
-- **Disk-first lens results, budgets, and respawn (Phase 2).** Each lens subagent streams typed JSONL lines to its own per-attempt file **as it works**
-+ **Disk-first lens results, budgets, and respawn.** Each lens subagent streams typed JSONL lines to its own per-attempt file **as it works**
-```
-Locations: `plugins/skein/skills/review-plan/SKILL.md:89`, `plugins/skein-codex/skills/review-plan/SKILL.md:83`.
-
-**Not a finding (checked, clean):** `rubric.md` (both mirrors, byte-identical) — pure gradeable-criteria reference text, no pressure language. MUST/IMPORTANT density elsewhere (21 hits) all tie to script-enforced invariants (byte-identical reconciler output, marker-hash ordering, heredoc/JSON transport safety) — correctly kept.
-
----
-
-### `plugins/skein-codex/skills/plan-view/SKILL.md`
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 28 | `SKILL.md:7` | Fossil — history narrative (dated audit name in an HTML comment) | `<!-- invocation-mode divergence: ... as of 2026-07-12's skill-invocation-mode audit. ... See docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md. -->` — the harness-limitation rule itself is current and load-bearing; pinning it to a specific audit date adds no behavioral information and will read as stale once that date passes. | Medium | rewrite | **Captured** |
-
-```diff
---- a/plugins/skein-codex/skills/plan-view/SKILL.md
-+++ b/plugins/skein-codex/skills/plan-view/SKILL.md
-@@ -4,7 +4,7 @@
- disable-model-invocation: true
- ---
-
--<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true) as of 2026-07-12's skill-invocation-mode audit. Codex CLI has no equivalent front-matter suppression as of this writing, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md. -->
-+<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true). Codex CLI has no equivalent front-matter suppression, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md. -->
-```
-
-`grill` (both mirrors) and the rest of `plan-view` (both mirrors, including `parser.md` and `_widgets/README.md`) are fully clean — no findings, no diff proposed.
-
----
-
-### `plugins/skein/skills/release/SKILL.md` (+ Codex mirror)
-
-> `release` pushes git tags and publishes GitHub releases — an external, hard-to-reverse mutation. Both audit passes independently concluded its exhaustive security/TOCTOU hardening is **correctly** exact-scripted (traced via git blame to ~20 real `fix(release): harden/close TOCTOU/credential-leak` commits) and is not dated-model cruft, despite superficially matching the over-specification pattern. Only two low-confidence, flag-only items were raised; **no diff was proposed for either.**
-
-| # | Location | Pattern | Why dated | Confidence | Action |
-|---|---|---|---|---|---|
-| 29 | `plugins/skein/skills/release/SKILL.md:89` (+ Codex mirror `:90`, identical text) | Fossil / history narrative — ~250-word paragraph narrating a removed prior fetch mechanism ("An earlier revision ran a forced tag fetch... that fetch is now removed entirely, because...") | Surface-matches the anti-pattern, but the current rule *is* stated first in isolation, and the archaeology that follows is the load-bearing reason for a subtle security invariant (why omitting the fetch is safe). Traced via `git blame -S` to `cd0c44d` ("fix(release): harden workflow and parity gates") — a real, documented incident, not a stale mitigation. If trimmed at all, only the narrative framing ("An earlier revision ran...", "is now removed entirely") should compress to present-tense reasoning — the safety content itself must not be touched. | Low | flag — no diff proposed |
-| 30 | `plugins/skein/skills/release/SKILL.md:7` (+ Codex mirror, same line) | Fossil — migration-relative phrasing ("as of this writing") | Same shape as finding 28 but weaker — no specific date/audit-name attached, just a currency disclaimer on an external fact (Codex's own feature set). Idiom-dating only, no demonstrated behavioral cost. | Low | flag |
-
----
-
-### `plugins/skein-codex/skills/spec-compliance/SKILL.md`
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 31 | `SKILL.md:45` | Fossil — leaked internal ID (`R3 why:`) | `R3` is an internal dev-plan rule number (`docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`, "R3 — Why-comments on expensive spawns") naming a required *code-comment* form, pasted literally into model-facing prose, producing ungrammatical text. The sibling Claude file (`plugins/skein/skills/spec-compliance/SKILL.md:47`) implements the same requirement correctly, as a separate HTML comment. Also present verbatim in `plugins/skein-codex/skills/conduct/SKILL.md:41` (finding 3 above, same root cause). | High | rewrite | **Captured** |
-
-```diff
---- a/plugins/skein-codex/skills/spec-compliance/SKILL.md
-+++ b/plugins/skein-codex/skills/spec-compliance/SKILL.md
-@@ -42,7 +42,9 @@
- ### Execution options
-
--If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=high` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). R3 why: normative spec compliance is judgment work that maps source evidence to RFC 2119 requirements. If delegation is unavailable, use the same prompt contract in the main context instead.
-+<!-- reasoning_effort=high: normative spec compliance is judgment work that maps source evidence to RFC 2119 requirements -->
-+
-+If delegation is available and explicitly allowed, use `spawn_agent` with the harness-selected model and request `reasoning_effort=high` when supported to run the following self-contained prompt (fill in `{{PLACEHOLDERS}}`). If delegation is unavailable, use the same prompt contract in the main context instead.
-```
-
----
-
-### `plugins/skein/skills/rfc-finder/SKILL.md` (+ Codex mirror)
-
-| # | Location | Pattern | Why dated | Confidence | Action |
-|---|---|---|---|---|---|
-| 32 | `SKILL.md:74` and `:106` (identical in Codex mirror) | Repetition — same constraint stated twice (`**Always verify RFC numbers... Never rely on memorized RFC numbers**` vs. `Do NOT guess RFC numbers — always verify via search`) | Both lines police the same, still-real failure (hallucinated RFC numbers) — a legitimate current constraint restated rather than deduplicated. No evidence of a specific over-triggering effect, so kept out of the diff per the audit's own caution rule. | Low | flag — no edit proposed |
-
-`update-docs` (both mirrors) is fully clean — its long sibling-plan-matching algorithm and worked example are correctly treated as an exact, order-sensitive script, not choreography for its own sake.
-
----
-
-### `/Users/vr000m/.claude/CLAUDE.md` (global) + `/Users/vr000m/Code/vr000m/skein/.claude/CLAUDE.md` (project)
-
-| # | Location | Pattern | Why dated | Confidence | Action | Diff |
-|---|---|---|---|---|---|---|
-| 33 | `skein/.claude/CLAUDE.md:18` | Fossil — history narrative (PR number, dates) | `Reason: two consecutive fixes in one session (2026-07-12, skein:release skill, PR #18)...` — the rule itself is sound and stands on its own; the global file (`~/.claude/CLAUDE.md:26`) states the identical rule with no archaeology. The trailing clause also silently diverges the two files' copies of the same rule. | High | rewrite | **Captured** |
-| 34 | `skein/.claude/CLAUDE.md:131` | Fossil — history narrative + dead version pin (`v0.0.18`) | `Stale memories caused real friction (e.g., trusting a 32-day-old roadmap; assuming v0.0.18 was tagged when it wasn't).` — global file's `~/.claude/CLAUDE.md:154` states the same rule with no anecdote; `v0.0.18` is a dead tag reference. | High | rewrite | **Captured** |
-| 35 | `~/.claude/CLAUDE.md:111-118` (Tool Output Discipline, "Decision rule — inline vs delegate" table) | Over-specification — judgment call rendered as a 5-row if/else table with arbitrary numeric cutoffs | Current models make this delegate-or-not call well from the underlying principle (transcript-noise cost vs. need for raw detail later) without a rubric to compute against. | Medium | rewrite | **Captured** |
-| 36 | `~/.claude/CLAUDE.md:120-125` (Tool Output Discipline, "Reuse prior reads" bullets) | Over-specification — kitchen-sink edge-case list (5 enumerated cases for why a cached read might be stale) | A single governing principle ("anything other than my own last Edit/Write may have touched this file") covers all five cases; this list duplicates itself verbatim in the project file (`skein/.claude/CLAUDE.md:103-108`) — fix both in the same pass to stay in sync. | Medium | rewrite | **Captured** |
-| 37 | `skein/.claude/CLAUDE.md:25-32` (Workflow) vs `~/.claude/CLAUDE.md:33-41` | Factual drift, not a dated-model pattern per se | Project file says "Run `/update-docs`, `/review`, `/security-review`, and `/deep-review` before merging" — stale relative to the global file's `skein:review-gauntlet`-first guidance, and stale relative to this being *the skein repo itself*, where `skein:review-gauntlet` is definitionally available. | Medium | rewrite | **Captured** |
-| 38 | `skein/.claude/CLAUDE.md:16-20` vs `~/.claude/CLAUDE.md:24-28` | Drift — rule present in one file, missing in the other | Global's first Review Workflow bullet (architect/implement/test/verify subagent split for review findings, with its "Reason:") is absent from the project file entirely. Could be intentional (project prefers a lighter process) or an accidental drop — flag only, no clear resolution without asking the user. | Low | flag |
-
-```diff
-# Finding 33 — skein/.claude/CLAUDE.md:18
-- - **Sweep the blast radius before finalizing a fix for a reported finding.** Don't just patch the reported line — grep every other place in the touched file(s) that uses the same mechanism (command, flag, config key, shared state), and check whether the fix's mechanism conflicts with an invariant those other call sites depend on. State the old invariant and the new one side by side before committing, not just "does this fix the reported problem." Reason: two consecutive fixes in one session (2026-07-12, `skein:release` skill, PR #18) each broke a *different* code path that relied on the same mechanism the previous fix touched — a HEAD-equality tag check that broke re-sync, and a `--prune-tags` fetch fix that destroyed a documented local-only-tag recovery path — both would have been caught by this sweep before editing, not by a second adversarial-review round after the fact.
-+ - **Sweep the blast radius before finalizing a fix for a reported finding.** Don't just patch the reported line — grep every other place in the touched file(s) that uses the same mechanism (command, flag, config key, shared state), and check whether the fix's mechanism conflicts with an invariant those other call sites depend on (pay special attention to encode/decode, escape/unescape, serialize/deserialize pairs — the reverse side is often built the same naive way and breaks in reverse). State the old invariant and the new one side by side before committing, not just "does this fix the reported problem."
-```
-(brings the project file back into sync with `~/.claude/CLAUDE.md:26`, which already has the parenthetical about encode/decode pairs)
-
-```diff
-# Finding 34 — skein/.claude/CLAUDE.md:131
-- - Before relying on a memory whose `last_verified` is **>14 days old**, re-verify its top claims against live state (file existence, git tags, branch HEADs) and either refresh `last_verified` or remove the memory. Stale memories caused real friction (e.g., trusting a 32-day-old roadmap; assuming v0.0.18 was tagged when it wasn't).
-+ - Before relying on a memory whose `last_verified` is **>14 days old**, re-verify its top claims against live state (file existence, git tags, branch HEADs) and either refresh `last_verified` or remove the memory.
-```
-(matches `~/.claude/CLAUDE.md:154` exactly)
-
-```diff
-# Finding 35 — ~/.claude/CLAUDE.md:111-118
-- **3. Decision rule — inline vs delegate:**
-- | Situation | Choice |
-- |---|---|
-- | One-shot, output naturally <30 lines | Inline, narrowed |
-- | Verbose by nature (build, test, deploy logs) | Inline + filter pipe, OR delegate if I only need a verdict |
-- | >3 greps, multi-file audit, "where is X used" | Delegate to Explore |
-- | Need yes/no, don't care about raw data | Delegate to Haiku subagent, ask for boolean |
-- | Will re-reference the output later in this session | Inline (delegating discards the detail) |
-+ **3. Decision rule — inline vs delegate:** Delegate when a lookup spans multiple files or greps, or would flood the transcript with noise you won't reference again — otherwise keep it inline, narrowed. Keep it inline regardless when you'll want the raw detail again later in this session.
-```
-
-```diff
-# Finding 36 — ~/.claude/CLAUDE.md:120-125 (apply identically at skein/.claude/CLAUDE.md:103-108)
-  **4. Reuse prior reads, but verify freshness first.** If I already read a file this session, reuse that content — *unless* it may have changed since. The Edit/Write tools track state for files **I** modified, so re-reading after my own successful Edit is wasted. But the file may have changed for other reasons:
-- - A subagent or parallel Agent ran and may have edited it (worktree isolation aside).
-- - A PostToolUse hook rewrote it (e.g., `ruff format`, `prettier`, `eslint --fix`).
-- - The user edited it in their editor between turns.
-- - A build/codegen step (`tsc`, `protoc`, `cargo build`) regenerated it.
-- - A `git` operation changed working tree state (checkout, stash pop, rebase, merge).
-+ anything other than my own last Edit/Write can have touched it since — a subagent, a PostToolUse hook (formatter/linter), the user's own editor, a codegen/build step, or a git operation.
-```
-
-```diff
-# Finding 37 — skein/.claude/CLAUDE.md:25-32
-  ## Workflow
-  - Discuss and plan before implementing non-trivial features.
-  - **If an approach is failing, stop and re-plan** — don't keep pushing on a broken path.
-  - Update docs (AGENTS.md, README.md, dev plan) alongside code changes, not after.
-- - Run `/update-docs`, `/review`, `/security-review`, and `/deep-review` before merging.
-+ - Run `skein:review-gauntlet` (or set a dev-plan's **Review Gates:** field) before merging — it converges `/code-review`, adversarial Codex review, `/deep-review`, and `/security-review` into one loop with auto-fix and resume support.
-  - Fix all review findings before merge.
-+ - Once reviews have converged, run `/update-docs`.
-  - Update PR description to reflect final state of the work.
-  - **Verify before marking done** — run tests, check logs, demonstrate correctness. Don't claim a task is complete without proof.
-```
-
-**Not a finding (checked, clean):** both files' Git, Commit Hygiene, Pre-Push Checks, Permissions, Destructive Operations, Bug Fixing, Code Changes, MCP Tools, Security, and Facts vs Inference sections — low MUST/NEVER/ALWAYS/IMPORTANT density overall, and every instance carries a stated reason or an enforced mechanism (a PreToolUse hook, a deny-list).
-
-**⚠ Note for the implementer:** finding 37's diff text may already be partially stale — the project `.claude/CLAUDE.md` visible to *this* dev-plan-writing session (2026-09-03) already reads "Run `/update-docs`, `/review`, `/security-review`, and `/deep-review` before merging" verbatim as of this writing, so finding 37 likely still applies as-is, but re-diff against the live file before applying rather than trusting the hunk blindly (per the "How to use this plan" preamble).
-
----
-
-## Summary table — counts by confidence
-
-| Confidence | Count | Findings |
-|---|---|---|
-| High | 17 | 1, 2, 3, 12, 13, 15, 18, 19, 20, 21, 22, 23, 24, 26, 31, 33, 34 |
-| Medium | 13 | 4, 5, 6, 7, 14, 16, 17, 25, 27, 28, 35, 36, 37 |
-| Low (flag only / correctly-kept) | 8 | 8, 9, 10, 11, 29, 30, 32, 38 |
-| **Total findings extracted** | **38** | vs. the run's own live "~31" estimate — see "How to use this plan" for why this plan recovers more |
-
-## Files to Modify
-
-**Claude mirror (`plugins/skein/`):**
-- `skills/conduct/SKILL.md`
-- `skills/deep-review/SKILL.md`
-- `skills/dev-plan/SKILL.md`
-- `skills/fan-out/SKILL.md`, `skills/fan-out/agent-prompt.md`, `skills/fan-out/test-writer-prompt.md`
-- `skills/review-gauntlet/SKILL.md`
-- `skills/review-plan/SKILL.md`
-- `skills/release/SKILL.md` (low-confidence only — discuss before touching)
-- `skills/conduct/reviewer-prompt.md` (low-confidence only)
-
-**Codex mirror (`plugins/skein-codex/`):**
-- `skills/conduct/SKILL.md`
-- `skills/content-review/SKILL.md`
-- `skills/deep-review/SKILL.md`
-- `skills/fan-out/SKILL.md`, `skills/fan-out/agent-prompt.md`, `skills/fan-out/test-writer-prompt.md`
-- `skills/review-gauntlet/SKILL.md` (verify R7/C1/C2 leak presence before assuming Codex needs the same fix — audit only confirmed Claude-mirror occurrences)
-- `skills/review-plan/SKILL.md`
-- `skills/plan-view/SKILL.md`
-- `skills/spec-compliance/SKILL.md`
-
-**Repo/global config:**
-- `/Users/vr000m/.claude/CLAUDE.md`
-- `/Users/vr000m/Code/vr000m/skein/.claude/CLAUDE.md`
+**Provenance.** An earlier version of this plan was reconstructed from a compacted transcript of a 2026-09-02 audit run and carried 38 findings. On 2026-09-03 the audit was re-run cleanly in four scopes (A: conduct/deep-review/dev-plan/review-plan; B: fan-out/review-gauntlet/release; C: content-draft/content-review/spec-compliance/plan-view/rfc-finder/grill/update-docs; D: the two CLAUDE.md files) with exact before/after text and out-of-band guard greps. The fresh run is the sole finding source here. Old findings not reproduced by the fresh run are dropped: old #4 (conduct `anymore`, line 364 now reads as the `full`-only rule with no migration phrasing) and old #36 (global "Reuse prior reads" bullets, judged working context). Old #38 (project Review Workflow lacks the global's first bullet) is resolved as a decision (AD-6), not a finding.
+
+**Methodology.** The `claude-api` skill's `shared/prompt-audit.md` (bundled with Claude Code; invoke `/claude-api prompt-audit` to load it — the on-disk path is version-specific). Three of its rules govern every hunk below:
+
+1. Context is never cruft. Audience, environment facts, tool contracts and the *reasons* behind a constraint stay even when a grep pattern matches; only the dated wrapper (dates, retired model names, incident IDs, "now"/"the old X" framing) goes.
+2. A removal is complete only when everything that references the removed text goes too: a test assertion, a normalizer regex, a doc pointer. A prompt fixed while its guard still greps the old string is a broken build, not a cleanup.
+3. Rewrites beat bare deletions wherever the instruction has a live purpose: re-express it in present tense rather than dropping the concern.
+
+**Dominant pattern.** Leaked internal rule IDs (`R1`, `R3`, `R6`, `R7`, `C1`, `C2` — dev-plan review-round labels) and history narratives (dated gate results, incident reports, "before this skill existed"). Baseline `rg -n '\b[RC][0-9]\b' plugins/skein plugins/skein-codex --glob '*.md'` = 29 lines on 2026-09-03.
+
+**Ownership.** `~/.claude/CLAUDE.md` is owned by the sync-computer repo (`AGENTS.md:103`, `:165`) and is not modified here. The project `.claude/CLAUDE.md` is the source of truth for skein workflow rules in this plan.
+
+## Requirements
+
+- Every hunk in the apply set lands in both mirrors where a twin exists, in one commit per mirror pair.
+- Harness ownership (AD-8): Claude implements only Claude-mirror (`plugins/skein/`) and project `.claude/CLAUDE.md` hunks. Every Codex-mirror hunk (`plugins/skein-codex/`), the Codex delegation-idiom set (AD-4), and any change that alters behaviour Codex derives from `AGENTS.md` is handed to Codex via `codex:rescue` for review and implementation; Claude does not apply those hunks itself.
+- Every literal a script or test greps for survives byte-exact, or the guard is edited in the same hunk and commit (see the guard map).
+- `just check-prompt-parity`, `just check-sync`, `just parity-tests`, `just gauntlet-tests`, `just lens-tests` and `just plugin-tests` are green after every mirror pair and at the end.
+- No flag-only item is applied without a recorded user decision (Phase 4).
+- Nothing outside this repo is edited; global-file hunks are handed off verbatim.
+
+## Audit Findings
+
+Legend. **Conf** High/Med. **Guard** = script/test that greps the touched text (`none` = grepped `scripts/`, `tests/`, `justfile`, `plugins/*/skills/*/scripts/`, zero hits). **GENERIC** = inside a `<!-- BEGIN/END GENERIC -->` block (all findings: no; the only blocks are deep-review 591–619, review-plan 116–729, dev-plan 110–170, and no hunk falls inside one). **Mirror** = which mirrors change. After text is verbatim. Before text is verbatim when quoted inline; a paragraph-length Before is identified by line and its opening/closing words and must be re-diffed against live text in Phase 1.
+
+### `conduct/SKILL.md` (Claude + Codex)
+
+- **A-F2** Claude :208 — High, rewrite, guard none, Claude only. Before: the sentence `**Pre-implementation audit (Phase 1)**: today's three increments … equivalent return point.` After: `Each of the three call sites invokes the helper only after the failure signature is observable to the conductor, so \`iteration_count\` at the bound-check point reflects the failure that triggered it.` (next sentence, naming `helper-is-single-increment-source-three-sites`, unchanged).
+- **L1** Claude :237 — High, rewrite, guard `tests/parity/test-spawn-tiers.sh:295` pins `opus/high:` total = 6 (kept). Before: `<!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (R1) even though it is only advisory -->` After: `<!-- opus/high: it reviews code, so it earns the review tier under the two-tier policy (AGENTS.md Model/Effort Policy) even though it is only advisory -->`.
+- **L2** Codex :41 — High, rewrite, guard `test-spawn-tiers.sh:270` asserts `R3 why: code review is judgment work` → change the assertion to `code review is judgment work, so the advisory reviewer gets the review tier` in the same commit. Before: `… when supported. R3 why: code review is judgment work, so the advisory reviewer gets the review tier.` After: `… when supported. Code review is judgment work, so the advisory reviewer gets the review tier.`
+- **A-F8a** Claude :252 `(Phase 4)`, :254 (see A-F13), :267, :279 `(Phase 3)`, :359 `(the Phase 3 marker; …)`, :393 `(Phase 5)`, :434 `Phase 3 bumps Claude-side to \`2\``, :436; Codex :250 (see A-F13), :378 `(Phase 5)` — High, remove the tag, guard none. Two sites are rewrites: Claude :267 Before `The CI-parity gate (Phase 3) introduces a result-file path that releases the lock and re-enters on resume, producing \`lock_acquisitions == 2\` for the production gate flow — but Phase 2 itself does not exercise that path.` After `The CI-parity gate's result-file path releases the lock and re-enters on resume, producing \`lock_acquisitions == 2\` for the production gate flow.`; Claude :436 Before `### Fields introduced for the CI-parity gate (Phase 3, schema_version 2)` After `### Fields introduced for the CI-parity gate (schema_version 2)`. For :434 rewrite `Phases 1-2 (Claude-side) write 1; Phase 3 bumps Claude-side to \`2\`` as `Claude-side writes \`2\`` (re-diff in Phase 1; the schema_version value is the operative fact). Elsewhere delete the parenthetical only.
+- **A-F9** Claude :229 — Med, rewrite, guard none. Before `- **\`test_contract_mismatch\` exception** is unchanged: if the previous implementer report set` After `- **\`test_contract_mismatch\` exception**: if the previous implementer report set`.
+- **A-F10a** Claude :363 remove ` Current behavior is byte-unchanged on every plan that does not explicitly opt in.`; Codex :345 remove ` Current behavior is unchanged for every plan that does not explicitly opt in.` — Med, guard none (the `byte-unchanged` hits in `tests/auto-fix/test-review-plan-marker-write.sh` are that test's own text).
+- **A-F13** Claude :254 + Codex :250 — Med, rewrite, guard `scripts/check-prompt-parity.sh:120` reads env var `CONDUCT_LAGGING_MIRROR_OK` (name kept). Claude After: `**Pre-commit hook scope.** \`scripts/check-prompt-parity.sh\` is invoked only from \`justfile\` recipes, never from \`.pre-commit-config.yaml\` or any other hook chain, so a boundary commit lands cleanly with hooks enabled even while one mirror's assets lag the other. Contributors invoking \`just check-prompt-parity\` during a lagging-mirror window can pass \`CONDUCT_LAGGING_MIRROR_OK="<skill>/<prompt-file>"\` to get a green exit with a stderr annotation.` Codex After: `Pre-commit hook scope: \`scripts/check-prompt-parity.sh\` is invoked from \`justfile\` recipes only, not from \`.pre-commit-config.yaml\` or the hook chain. Codex mirror work can therefore land while shared prompt-parity assets are handled in their separate boundary.`
+
+### `deep-review/SKILL.md` (Claude + Codex)
+
+- **A-F3** Claude :38 + Codex :377 — High, rewrite, guard none. Before `- **Status enum is now the superset** \`completed | partial | timed_out | errored | skipped\` (absent key = missing),` After `- **Status enum** is \`completed | partial | timed_out | errored | skipped\` (absent key = missing),`.
+- **A-F4** Claude :51; Codex :298-300 (and review-plan below) — High, rewrite, guard none. Claude After: `\`collect-lens-results.sh\` also emits \`missing\`, and \`persist-deep-review-state.sh\` persists it verbatim; stated as a complement, any status added to the enum later is covered without editing this rule.` Codex After (two lines): `The collector also emits \`missing\`, and any status added to the enum later` / `is covered without editing this rule — which an enumerated list would not be.` Before in each case is the sentence naming `the old … allowlist` / `under the old … list … never ran.`
+- **A-F5** Claude :122 — High, rewrite, guard none. After: `Concurrent-worktree detection happens inline in §1a (single \`git worktree list\` call there) — do not split it across a section boundary, or the informational line is silently dropped when §1a is reordered or skipped.`
+- **A-F8b** Claude :37, :173, :635; Codex :117, :287, :376 — High, guard none. Claude :37 After: `- **Disk-first lens results.** Each checkpoint is \`collect-lens-results.sh\` (reads the per-lens attempt files under \`.deep-review/lenses/<run-id>/\`) piped into \`persist-deep-review-state.sh --from-collector\` (derives \`.lenses\` from the collector's shape) — a single derivation path. Never assemble a per-lens object by hand.` :635 `(recovering them is the point of Phase 2's disk-first design)` → `(recovering them is the point of the disk-first design)`. Codex :117 `(Phase 2, disk-first streamed lens results)` → `(disk-first streamed lens results)`. Others: delete ` (Phase 2)`.
+- **L3** Claude :79 — High, rewrite, guard none. `per the two-tier policy (\`AGENTS.md\` Model/Effort Policy, R1):` → `per the two-tier policy (\`AGENTS.md\` Model/Effort Policy):`.
+- **A-F11 + L4** Claude :433 — Med, rewrite, guard `test-spawn-tiers.sh:295` (`opus/high:` kept). After: `<!-- opus/high: code review is judgment work under the two-tier policy, same tier as the other review lenses; see AGENTS.md Model/Effort Policy -->`.
+- **A-F12a** Claude :181 — Med, remove ` The respawn-exactly-once-per-invocation cap is unchanged.`, guard none.
+- **Trunk snippet** (`scripts/check-trunk-snippet-parity.sh`) is anchored on `BASE=$(git symbolic-ref …` content, untouched by every hunk above.
+
+### `dev-plan/SKILL.md` (Claude + Codex)
+
+- **A-F6** Claude :230 + Codex :235 — High, rewrite, guard none. `so their cost is unchanged from before this skill grew an Explore step.` → `so they cost nothing beyond the main agent's own turn.`
+- **A-F10b** Claude :58 `Absent or \`none\` is a strict no-op — current behavior unchanged.` → `Absent or \`none\` is a strict no-op.`; Claude :62 + Codex :62 `Absent \`**Goal:**\` is a no-op: the phase behaves exactly as it does today.` → `Absent \`**Goal:**\` is a no-op: the phase runs with no design-intent directive injected.` (Codex uses an ASCII hyphen where Claude uses an em dash; match each file's bytes). Med, guard none.
+- **L5** Claude :100 — High, rewrite, guard none. `\`AGENTS.md\` Model/Effort Policy R1)` → `\`AGENTS.md\` Model/Effort Policy)`. The `<!-- sonnet/medium: … -->` comment on the same line is untouched.
+
+### `review-plan/SKILL.md` + `rubric.md` (Claude + Codex)
+
+- **A-F1 + L6** Claude :31 — High, rewrite, guard none (`fable/high:` is not in this paragraph). Two edits in one hunk: `(\`AGENTS.md\` Model/Effort Policy, R1)` → `(\`AGENTS.md\` Model/Effort Policy)`; and the three sentences from `The five Fable calls dispatch at` through `without changing the prose here.` → `The five Fable calls dispatch at \`model: fable\` first, with an automatic retry at \`model: opus\` for any single lens or pass whose dispatch errors out on a usage-limit/quota condition. The fallback trigger (below) reacts to the actual quota-error text, not to any assumption about which plan is active, so no plan-detection logic is needed here.` (the existing sentence beginning `The fallback trigger itself (below) is plan-agnostic` is subsumed — delete it; keep `Report which lenses …`).
+- **L7** Codex :42 — High, rewrite, guard none. `This matches the R1 review-tier framing now used by deep-review's architecture lens:` → `This matches the review-tier framing of deep-review's architecture lens (\`AGENTS.md\` Model/Effort Policy):`.
+- **A-F4** Claude :107 + Codex :114-116 — same Codex-form After as deep-review above.
+- **A-F8c** Claude :56, :89 delete ` (Phase 2)`; Claude :612 same rewrite as deep-review :635; Codex :83, :149 delete ` (Phase 2)` — High, guard none.
+- **A-F12b** Claude :97 remove ` The respawn-exactly-once-per-invocation cap is unchanged.`; Codex :102 remove the whole line — Med, guard none.
+- **A-F7** `rubric.md:85` both mirrors — High, rewrite, guard `scripts/check-prompt-parity.sh:61-88` byte-diffs `rubric.md` across mirrors → same commit, identical bytes. `- Marker write/validate logic is unchanged: hash-above-marker, idempotent rewrite, placeholder validation` → `- Marker write/validate logic holds: hash-above-marker, idempotent rewrite, placeholder validation`.
+
+### `fan-out/{SKILL.md,agent-prompt.md,test-writer-prompt.md}` (Claude + Codex) — see AD-2
+
+- **B-06** Claude SKILL :17 `### R6: clean-context test-writer graft (live on Claude)` → `### Clean-context test-writer graft`; Codex SKILL :17 `### R6: clean-context test-writer graft (intended design, gated)` → `### Clean-context test-writer graft (gated on this harness)`; both `test-writer-prompt.md:1` `# Fan-Out Test-Writer Subagent Prompt Template (R6 contract)` → `# Fan-Out Test-Writer Subagent Prompt Template` — High, guard: line 1 of test-writer-prompt.md is outside every excised span, so byte-parity-checked → same commit both mirrors.
+- **B-07** Claude SKILL :21 — High, rewrite, guard none (test :366 asserts `model: sonnet, effort: medium` against agent-prompt.md, not here). Before: the paragraph `**This topology is CONFIRMED LIVE … this manual gate.` After: `The Task tool has **no per-call \`effort\` argument**, so the test-writer's \`model: sonnet\` is set per-call while its \`effort: medium\` is *inherited* from the worker's \`--effort medium\` session. The contract mechanism — a contract-derived test catching a divergent implementation — is guarded in CI by \`plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh\`. The nested-spawn topology itself is checked by \`plugins/skein/skills/fan-out/tests/check-r6-gate.sh\`, a manual skip-permissions gate deliberately kept out of \`just parity-tests\`; re-run it if nested spawning ever appears to stop honoring a per-call model.`
+- **B-11** Codex SKILL :21 — High, rewrite, guard `test-spawn-tiers.sh:274` matches `reasoning_effort=medium.*fork_context=false` on line 19, which is untouched. Before: `**This topology is currently GATED, not active.** The Phase-5 live gate … which Test-phase mode is active.` After: `On this harness the separate-subagent topology is not available: a non-interactive \`codex exec\` worker cannot be shown to initialize the app-server client and spawn a nested \`spawn_agent\` test-writer without unsafe bypass flags. The worker therefore keeps a single-context Test phase — it writes and runs its own tests, but tests to the same slice contract — and the anti-cheat rule below applies in full. Full \`/conduct\` per slice remains available opt-in for genuinely multi-phase slices (see below), regardless of which Test-phase mode is active.`
+- **L8** Claude SKILL :119 + Codex SKILL :115 `(R6 contract source)` → `(the slice-contract source)`; Codex SKILL :241 `the gated R6 nested test-writer topology` → `the gated nested test-writer topology` — High, guard none.
+- **B-08** Claude `agent-prompt.md:67-79` — High, rewrite (not remove; AD-2), guard `scripts/check-prompt-parity.sh:178` excises the block only when it opens `<!--\nR6 status:`. After (the whole block, opener kept):
+  ```
+  <!--
+  R6 status: the separate clean-context test-writer topology is live on the Claude
+  harness. A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset,
+  exactly as fan-out.sh launches it) can spawn a nested Task subagent that honors a
+  per-call model; re-check with plugins/skein/skills/fan-out/tests/check-r6-gate.sh.
+  Caveat carried into the active directive below: the Task tool has NO per-call effort
+  argument, so the test-writer's effort is inherited from this worker's session (which
+  fan-out.sh runs at `--effort medium`), while its model IS set per-call.
+  -->
+  ```
+- **L9** Claude `agent-prompt.md:92` `(Nested-spawn topology confirmed on Claude — see the R6 status note above.)` → `(Nested spawning is supported on this harness — see the status note above.)` — High, guard: inside the Phase-2 directive span the normalizer excises, so Claude-only is parity-safe; confirm with `just check-prompt-parity`.
+- **B-09** Codex `agent-prompt.md:67-82` — High, rewrite (AD-2), guard `check-prompt-parity.sh:178` opener `INTENDED DESIGN (currently GATED, not active):` and `test-spawn-tiers.sh:276` asserts `reasoning_effort=medium` in this file (only occurrence is inside this block) — both kept. After:
+  ```
+  <!--
+  INTENDED DESIGN (currently GATED, not active): when your slice has an applicable
+  test framework, spawn a separate clean-context test-writer subagent with
+  `fork_context=false` and request `reasoning_effort=medium` (mechanical test
+  authoring against an already-defined contract, not judgment work). The test-writer
+  receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
+  Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
+  implementer's diff. That topology needs nested `spawn_agent` support from a
+  non-interactive Codex worker, which this harness does not provide. The ACTIVE PATH
+  below is single-context authoring: you write and run your own tests, but you author
+  them to the same contract a separate test-writer would have used.
+  -->
+  ```
+- **B-10** both `test-writer-prompt.md` status notes — High, rewrite (AD-2), guard `check-prompt-parity.sh:183` sed range from `**Status note (read first):**` to `^Filled by the fan-out worker` (both anchors kept; the latter is also pinned by `test-spawn-tiers.sh:387`), and `test-spawn-tiers.sh:278` asserts `reasoning_effort=medium` in the Codex file (kept). Claude :3-9 After: `**Status note (read first):** on this harness the fan-out worker spawns a separate clean-context test-writer subagent with \`model: sonnet\`; effort is inherited from the worker's \`--effort medium\` session because the Task tool has no per-call effort argument. The test-writer never sees the implementer's diff.` Codex :3-15 After: `**Status note (read first):** on this harness the worker consumes this contract single-context: it authors tests to the contract inside its own Phase 2 (see \`agent-prompt.md\`) rather than spawning a separate subagent, and it follows the anti-cheat rule in \`agent-prompt.md\` Phase 4 as if the two contexts were genuinely separate. The template below is the separate-subagent form, ready to use verbatim where nested \`spawn_agent\` with \`fork_context=false\` and \`reasoning_effort=medium\` is available.` The Codex sentence `Filled by the fan-out worker before spawning the test-writer (once the nested-spawn\ngate is confirmed). …` at :17-19 stays byte-exact (normalizer rewrites it literally).
+- **B-20** both `agent-prompt.md:29` — Med, rewrite, guard: byte-parity-checked span → same commit. `IMPORTANT: Only modify files relevant to your task. Do not touch files outside your scope.` → `Modify only files relevant to your task. Other agents are working in parallel worktrees, and every branch merges back into the same base.`
+
+### `review-gauntlet/SKILL.md` (Claude; Codex only for B-01)
+
+- **B-01** Claude :124 + Codex :130 — High, rewrite, guard `tests/gauntlet/test-gauntlet-skill-shape.sh:418-441` (`assert_r2_forbidden_flags_xor_for` requires each mirror to carry exactly one of the literal `Forbidden flags:` or an `UNVERIFIED` marker plus `budget` plus `(sole|only) defen[cs]e`; this sentence is the only source of that marker in either mirror, so a bare delete fails both assertions). Replace the sentence `**Flag combination: UNVERIFIED.** The 2026-08-23 insights report's … the sole defence against a repeat.` with, byte-identical in both mirrors: `**Flag combination: UNVERIFIED.** The gate has hung for 90+ minutes with no recoverable cause (the available record carries narrative only, never the exact CLI argv); the wall-clock budget above is the sole defence against a repeat.` Per AD-5 the wording is cause-neutral. Keeps the dated narrative out and the XOR guard satisfied without touching the test. Codex has no R7/C1/C2 text; this is its only hunk.
+- **B-02** :274 remove the paragraph `These bundled scripts and the convergence-decision helper are built in a later phase … once they exist.` — High, guard none (all scripts exist under `lib/` and `scripts/`).
+- **B-03** :240 `This is an accepted prose seam (R7), not a script-enforced contract, now extended from just \`duration_s\` to the full envelope shape including \`gate\` identity.` → `This is an accepted prose seam, not a script-enforced contract: the full envelope shape, \`gate\` identity included, is stamped by hand for gates 2/3.` — High, guard none.
+- **B-04** :234 `and R7's accepted prose seam below` → `and in the prose seam noted below` — High.
+- **B-05** :97 `(and C1's key-file wiring)` → `, and the key-file wiring,` (full: `this is what makes the status-row block below, and the key-file wiring, reference variables that actually exist, rather than only the gate-1 pair`); :241 `(C1/C2 wiring — the orchestrator, never the fixer, computes keys)` → `(the orchestrator, never the fixer, computes keys)` — High.
+- **B-19** :175 `specifically the phase's \`**Goal:**\` field (added by the sibling \`conduct\` phase-goal-field work) when the plan has reached that phase` → `specifically the phase's \`**Goal:**\` field when the plan has reached that phase` — Med.
+
+### `release/SKILL.md` (Claude; Codex line = Claude line + 1)
+
+Guard for all: `scripts/check-prompt-parity.sh:271-296` compares the two files after normalization and pins `RELEASE_*` exact lines (:287-296); none of the hunks below touch a pinned line, but every hunk lands in both mirrors in one commit.
+
+- **B-12** :89 — Med, rewrite. Before: `An earlier revision ran a forced tag fetch … both served without it:` (two sentences). After: `A forced tag fetch here would silently move **every** local tag that also exists on origin (not just the target \`vX.Y.Z\`) to match origin's position — an unannounced mutation during a read/preflight phase, one that fires immediately and can destroy an operator's intentional local tag divergence even on a run that then aborts for an unrelated reason (an ambiguous \`gh release view\` failure in Step 3.1, say). No fetch is needed, because the only two things one would serve are both served without it:`
+- **B-13** :89 later `— the stronger guarantee the earlier no-pruning rule was reaching for, since a fetch that never runs can neither prune a local-only tag nor force-move a diverged one.` → `— a fetch that never runs can neither prune a local-only tag nor force-move a diverged one.` — Med.
+- **B-14** :229 `**do not** run a forced tag fetch here: Step 2's pre-confirmation path no longer fetches local tags: a force-fetch silently overwrites` → `**do not** run a forced tag fetch here, and note that Step 2's pre-confirmation path does not fetch local tags either. A force-fetch silently overwrites` — Med.
+- **B-15** :10 `This is the single owner of skein's release-note shape — before this skill existed, … (see \`docs/dev_plans/20260712-feature-release-skill.md\`).` → `This is the single owner of skein's release-note shape: hand-typed \`gh release create --notes "..."\` calls drift into inconsistent shapes across releases, so every release goes through here.` — Med.
+- **B-16** :221 remove ` — this is the workflow that manually found skein's own three-shapes drift and its missing \`v0.5.1\` release, folded into the skill instead of repeated by hand.` (sentence ends at `one named version.`) — Med.
+- **B-17** :262 `If it is absent, this is a genuine \`missing-tag\`: (Skein's own \`v0.5.1\` before this session's first fix.) Fixable` → `If it is absent, this is a genuine \`missing-tag\`. Fixable` — Med.
+- **B-18** :300 `This skill's own canonical format was established … chooses to add a summary:` → `An illustrative release in the canonical shape, shown without a \`## What's New\` paragraph. An ordinary re-sync preserves that absence unless the user explicitly chooses to add a summary:` — Med.
+
+### `spec-compliance` (Claude + Codex)
+
+- **C-F1 + C-F16** Codex SKILL :45 — High, rewrite, guard `test-spawn-tiers.sh:268` asserts `R3 why: normative spec compliance is judgment work` → change to `Mapping normative spec requirements onto code is judgment work` in the same commit; `:219` pins exactly one `reasoning_effort=high` (kept). After: `Use \`spawn_agent\` with the harness-selected model and \`reasoning_effort=high\` to run the following self-contained prompt (fill in \`{{PLACEHOLDERS}}\`). Mapping normative spec requirements onto code is judgment work, not a lookup, so it warrants the high tier. If \`spawn_agent\` is unavailable, run the same prompt contract in the main context.`
+- **C-F4** Claude :165-171 + Codex :161-167 remove the `### What NOT to Do` section (heading, blank, five bullets) — Med, guard none; positives survive at `### Report Rules`, :31, :77, :107.
+- **C-F6** Claude :154 After `Present the compliance report to the user as-is. Before presenting, verify it against [rubric.md](rubric.md), which covers spec resolution, requirement extraction, per-requirement classification, report structure, and scope discipline.`; Codex :150 After `Before presenting the compliance report to the user, verify it against [rubric.md](rubric.md).`; `rubric.md:3` both mirrors `Gradeable criteria for evaluating a completed compliance report. Doubles as a Managed Agents outcome rubric and a local self-check before presenting the report to the user.` → `Criteria for evaluating a completed compliance report. Use it as a self-check before presenting the report to the user.` — Med, guard `check-prompt-parity.sh:61-88` byte-diffs `rubric.md` → same commit.
+
+### Codex delegation idiom (AD-4) — `content-draft:42,46`, `content-review:46,54`, `rfc-finder:29,33`, `update-docs:27,29`, `spec-compliance:37` (Codex mirror only)
+
+- **C-F16** — Med, rewrite, guard `test-spawn-tiers.sh:233,235,237,239` pin one `reasoning_effort=low` per file (`:219` high for spec-compliance) — every After keeps exactly one. Canonical pair (rfc-finder): `:29` → `These steps involve multiple web lookups against Datatracker and RFC Editor. Delegate them to a subagent to keep the main context lean. If \`spawn_agent\` is unavailable in the current runtime, run the same steps in the main context.`; `:33` → `Use \`spawn_agent\` with the harness-selected model and \`reasoning_effort=low\` to run the following self-contained prompt (fill in \`{{PLACEHOLDERS}}\`). If \`spawn_agent\` is unavailable, run the same prompt contract in the main context.` Apply the same shape to the other files, preserving each file's subject, tool name and effort tier. Description-only for the eight non-canonical sites: write each against live text in Phase 1.
+
+### `rfc-finder`, `grill`, `plan-view`, `update-docs` (Claude + Codex unless noted)
+
+- **C-F5** rfc-finder :103-108 both mirrors remove `### What NOT to Do` (heading, blank, four bullets) — Med, guard none; positives at :36 (subagent prompt: do not reproduce RFC substance), :60, :68, :74 stay.
+- **C-F11** grill :11 both mirrors remove `This skill is inspired by mattpocock/skills' \`grilling\` skill, … not a port.` plus following blank — Med.
+- **C-F12** grill Claude :44-46 — Med, rewrite: replace the three-line two-harness choice with `2. Present a fixed three-way choice for that recommendation: \`AskUserQuestion\` with exactly three options — **accept**, **propose an alternative**, **waive**.` Codex :44 already carries only its own branch. Guard none; grill has no wholesale parity.
+- **C-F13** grill Claude :75 / Codex :73 → `Below-marker workspace edits (\`## Progress\`, \`## Findings\`) are always fine and never trigger this check; only above-marker contract content is guarded.` — Med.
+- **C-F2 + C-F7** plan-view Claude :207-213 / Codex :208-214 remove the `## What's deferred to v2` section (heading, blank, five bullets incl. the struck-through `.plan-view.yml` line, trailing blank) — High for the struck line, Med for the section, guard none.
+- **C-F3** plan-view Codex :7 comment: drop ` as of 2026-07-12's skill-invocation-mode audit` and ` as of this writing` (After: `<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true). Codex CLI has no equivalent front-matter suppression, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260711-chore-skill-invocation-mode-audit.md. -->`) — High, guard: `RELEASE_CODEX_INVOCATION_DIVERGENCE` pins only the *release* file's comment; plan-view is unguarded.
+- **C-F8** plan-view Claude :219 / Codex :220 → `- **\`/update-docs\`** — keeps READMEs/CHANGELOGs in sync with code.` — Med.
+- **C-F9** plan-view :66/:67 drop ` (e.g. the rich cross-links added here)`; :140/:141 `and it back-fills rich pages generated before back-links existed.` → `and it adds the breadcrumb to any rich page on disk that lacks one.` — Med.
+- **C-F14** plan-view `parser.md:117` both mirrors drop `v1 used a koda-specific \`COMPONENT_PATTERNS\` slug matcher; it was removed before shipping. ` from the parenthetical — Med, guard none (`parser.md` not parity-checked; apply identically anyway).
+- **C-F17** plan-view :201/:202 `~51 plans render in well under a second.` → `a whole corpus renders in well under a second.` (joined with `; `); :49/:50 `# inline-only; this dir is empty in v1` → `# inline-only; this dir is currently unused` (keep column alignment) — Med.
+- **C-F10** update-docs :150-185 both mirrors remove the `#### Sibling-plan audit — worked example` block through the closing fence of the commit-preamble example — Med, guard: `check-trunk-snippet-parity.sh` extracts :259-263 by content anchor, unaffected.
+
+### Project `.claude/CLAUDE.md` (skein-owned)
+
+Guard for all: `tests/plugin/test-claude-md-hygiene.sh:53-57` asserts the H2 headings `## Testing`, `## Facts vs Inference`, `## Security & Diff Reviews`; no hunk touches a heading.
+
+- **D-F05** :29 `- Run \`/update-docs\`, \`/review\`, \`/security-review\`, and \`/deep-review\` before merging.` → two lines: `- When the skein plugin is available, run \`skein:review-gauntlet\` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run \`/code-review\`, \`/security-review\`, and \`/deep-review\` before merging.` / `- Once reviews have converged, run \`/update-docs\` — review-gauntlet does not do this itself, it only chains the review gates.` — High (`/review` resolves nowhere; AD-6).
+- **D-F01** :18 — High, rewrite: drop `Reason: two consecutive fixes in one session (2026-07-12, … after the fact.`; insert after `those other call sites depend on` the parenthetical ` (pay special attention to encode/decode, escape/unescape, serialize/deserialize pairs — the reverse side is often built the same naive way and breaks in reverse)`; append `A fix that satisfies the reported line can silently break a second call site on the same mechanism, and the second break surfaces only in a later review round.`
+- **D-X** (old #38, AD-6) insert as the first `## Review Workflow` bullet: `- **When a review returns findings, don't patch reactively in the same pass.** Think through each reported issue first — root cause, not just the symptom. Where the fix is more than mechanical, delegate it as a sequence of clean-context subagents — architect, implement, test, verify against the original finding — rather than writing the diff inline. Reason: fixes written inline immediately after reading a finding tend to be shallow patches on the reported symptom; splitting architect/fix/test/verify across subagents forces the root-cause step instead of skipping straight to a diff.` — decision, user may decline.
+- **D-F02** :118 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.` — High.
+- **D-F03** :121 remove ` Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.` — High.
+- **D-F04** :131 remove ` Stale memories caused real friction (e.g., trusting a 32-day-old roadmap; assuming v0.0.18 was tagged when it wasn't).` — High (line becomes identical to global :154).
+- **D-F08** :124 ` Reason: 2026-08-23 insights report, 3 security-review sessions were interrupted mid-exploration before any finding was delivered.` → ` A review held to the end delivers nothing at all if the session is interrupted mid-exploration.` — Med (the reason is kept; only the date and tally go).
+- **D-F09** :6 `do not hand-run the old \`git tag\` + \`gh release create\` procedure.` → `do not hand-run \`git tag\` + \`gh release create\`.` — Med.
+- **D-F16** :94-101 replace the `**3. Decision rule — inline vs delegate:**` table with the paragraph `**3. Decision rule — inline vs delegate.** Run it inline when the narrowed output is small and I will act on the detail myself. Delegate when the raw output would be large or spread across files and I only need the conclusion. Two carve-outs are not obvious from that rule: verbose-but-single-purpose output (build, test, deploy logs) stays inline behind a filter pipe unless all I want is a verdict, and anything I will re-reference later in the session stays inline, because delegating discards the detail.` — Med, most declinable hunk; take last. The global half is in Follow-ups; until it lands the two files' wording differs while the rule does not.
+
+### Flag only — decide with user (not in the apply set)
+
+- **A-F14** dev-plan :230 says `/review-plan` has four lenses; it has five. Fix if taken: `four` → `five`, `not four` → `not five`.
+- **A-F15** conduct `reviewer-prompt.md:57` third statement of "no style nits" (byte-parity file; both mirrors if taken).
+- **A-F16** conduct :267 names the `LockAcquisitionCounter` fixture; verify it still exists under `plugins/skein/skills/conduct/tests/` before deciding.
+- **B-21** fan-out `agent-prompt.md:50` `You MUST complete all phases before finishing.` — rigidity is the intent for an unattended worker; probe before softening.
+- **B-22** review-gauntlet :29 `there is no single-pass mode anymore` — interacts with the stale-`quick` warning at :243.
+- **B-23** review-gauntlet :272 `pre-Phase-3` is a named schema shape in `tests/gauntlet/test-convergence-ledger.sh` (8 assertions); rename both surfaces or neither.
+- **B-24** Codex release :7 `as of this writing` is pinned byte-exact by `RELEASE_CODEX_INVOCATION_DIVERGENCE` (`check-prompt-parity.sh:287`, `test-prompt-parity-extended.sh:158`); leave unless the constant is being edited anyway.
+- **C-F15** Codex plan-view :22 invocation path `.claude/skills/plan-view/generate.py` should probably be `.codex/skills/…`; confirm the Codex install path before editing.
+- **C-F18** `description:` trigger-clause drift in content-draft/content-review (Codex omits `Use when the user says "/…"`); needs a fact about Codex slash routing.
+- **C-F19** rfc-finder :124-161 worked examples carry memorized RFC facts the file forbids relying on.
+- **C-F20** plan-view :220/:221 references `/playground`, a skill outside this plugin.
+- **C-F21** plan-view :70/:71 duplicate "inspired by" attribution.
+- **C-F22** update-docs :115-128 deterministic slug matching could move to `scripts/plan-scope-detect.sh` (code change, not a prompt edit).
+- **C-F23** content-draft :101, :149, :167 examined; no action (working recap, publishing convention).
 
 ## Implementation Checklist
 
-### Phase 1: Re-verify findings against current content
-- [ ] For each finding above, re-read the cited file:line and confirm the quoted "before" text still matches. Note any that have already been fixed, moved, or no longer apply.
-- [ ] Re-run the audit's own post-apply grep checks (see fan-out section) as pre-checks to get a current baseline count of `(R#)`/`(C#)` leaks and `Phase N` tags across both mirrors.
+Phases are not `/conduct`-driven (prose edits with script gates); slots are given for the record.
 
-### Phase 2: Apply high-confidence fixes (diff captured)
-- [ ] Apply findings 1, 2, 3, 12, 13, 15, 18, 19, 20, 21, 22, 23/24/25 (combined hunk), 26, 31, 33, 34 — the leaked-ID and dated-incident-narrative fixes. Run `just check-prompt-parity` / `just check-sync` after each mirror pair to confirm sanctioned-divergence rules aren't broken.
+### Phase 0: Branch and baseline
 
-### Phase 3: Apply medium-confidence fixes (diff captured)
-- [ ] Apply findings 4, 5, 6, 7, 14, 16, 17, 27, 28, 35, 36, 37.
-- [ ] For finding 17 (Codex fan-out, agent-prompt.md/test-writer-prompt.md hunks not fully spelled out in the source transcript), write the diff fresh against current content, following the same substitution pattern as the captured `SKILL.md` hunk.
+**Impl files:** none
+**Test files:** none
+**Test command:** `just parity-tests`
 
-### Phase 4: Decide on low-confidence / flag-only items
-- [ ] Discuss findings 8, 9, 10, 29, 30, 32, 38 with the user — none have a captured diff, and several (29, 32) were explicitly recommended to leave alone or barely touch. Do not apply mechanically.
-- [ ] Finding 38 in particular needs a user decision: was the missing Review Workflow bullet in the project CLAUDE.md an intentional simplification or an accidental drop during a past sync?
+- `git switch -c chore/prompt-audit-cleanup` from current `main`.
+- Record baselines in `## Findings` (workspace): `rg -n '\b[RC][0-9]\b' plugins/skein plugins/skein-codex --glob '*.md' | wc -l` (expected 29), and a green `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests && just plugin-tests`.
 
-### Phase 5: Parity and regression checks
-- [ ] `just check-prompt-parity` (mirror byte-identity where required)
-- [ ] `just check-sync`
-- [ ] Confirm no edit landed inside a `<!-- BEGIN/END GENERIC ... -->` parity marker block
-- [ ] Grep sweep: no `(R1)`, `(R3)`, `(R6)`, `(R7)`, `(C1)`, `(C2)` leaks remain in shipped prose (git history/dev-plans are fine; runtime skill text should be clean)
-- [ ] `/update-docs` after fixes land
+### Phase 1: Re-verify every hunk against live text
+
+**Impl files:** none
+**Test files:** none
+**Test command:** `just check-prompt-parity`
+
+- For each finding, open the cited line; if the text moved, update the line in the workspace notes, not the contract. Write fresh exact text for the description-only sites (C-F16 non-canonical pairs, A-F8a :434).
+- Confirm the guard map below against the live scripts (`sed -n 178p scripts/check-prompt-parity.sh`, `sed -n 265,300p tests/parity/test-spawn-tiers.sh`, `sed -n 378,390p` same file).
+
+### Phase 2: High-confidence hunks, one commit per mirror pair, guards in the same commit
+
+**Impl files:** `plugins/skein/skills/*/SKILL.md, plugins/skein-codex/skills/*/SKILL.md, plugins/*/skills/fan-out/*-prompt.md, plugins/*/skills/review-plan/rubric.md, .claude/CLAUDE.md`
+**Test files:** `tests/parity/test-spawn-tiers.sh`
+**Test command:** `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests`
+
+- Commit order: conduct (A-F2, L1, L2 + test :270, A-F8a) → deep-review (A-F3, A-F4, A-F5, A-F8b, L3, A-F11+L4) → dev-plan (A-F6, L5) → review-plan (A-F1+L6, L7, A-F4, A-F8c, A-F7 rubric both mirrors) → fan-out (B-06, B-07, B-11, L8, B-08, L9, B-09, B-10) → review-gauntlet (B-01, B-02, B-03, B-04, B-05) → spec-compliance (C-F1+C-F16 + test :268) → plan-view (C-F2+C-F7, C-F3) → project CLAUDE.md (D-F05, D-F01, D-X, D-F02, D-F03, D-F04).
+- Per pair, follow AD-8: Codex half first via `codex:rescue` (review + implement + guard edits, then a fresh-thread self-review call), Claude half second and aligned to what Codex landed, gates, one commit.
+- Run the test command after every commit; a red `check-prompt-parity` after the fan-out or rubric commit means a mirror half or an anchor was missed.
+- Commit body per hunk: one "kept:" line naming where the operative clause survives (see Acceptance Criteria).
+
+### Phase 3: Medium-confidence hunks
+
+**Impl files:** as Phase 2 plus `plugins/*/skills/plan-view/parser.md`
+**Test files:** none
+**Test command:** `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests`
+
+- conduct (A-F9, A-F10a, A-F13) → deep-review/review-plan (A-F12a/b) → dev-plan (A-F10b) → fan-out (B-20) → review-gauntlet (B-19) → release (B-12–B-18, one commit, both mirrors) → spec-compliance (C-F4, C-F6 rubric both mirrors) → Codex idiom (C-F16 remaining 8 sites, one commit) → rfc-finder/grill/plan-view/update-docs (C-F5, C-F11, C-F12, C-F13, C-F8, C-F9, C-F14, C-F17, C-F10) → project CLAUDE.md (D-F08, D-F09, D-F16).
+- Same AD-8 sequence per pair as Phase 2. The Codex idiom commit (C-F16, all sites) is Codex-only: Claude's part is running the gates and committing.
+- Run the test command after each commit.
+
+### Phase 4: Flag-only decisions
+
+**Impl files:** per decision
+**Test files:** per decision
+**Test command:** `just parity-tests`
+
+- Walk the flag list with the user; record accept/decline per item in `## Findings`. Applied items follow the same guard rule (AD-1) and the same ownership rule (AD-8): accepted Codex-side flags go to Codex to implement.
+
+### Phase 5: Gates
+
+**Impl files:** none
+**Test files:** none
+**Test command:** `just check-prompt-parity && just check-sync && just parity-tests && just gauntlet-tests && just lens-tests && just plugin-tests`
+
+- Run the test command; then the ID sweep and the phase-tag check from Testing Notes; then dry-run `/review-gauntlet --plan <this plan>` and `/fan-out` on a scratch plan to confirm the edited text still sits correctly next to script contracts (envelope columns, excision anchors).
+- Run `skein:review-gauntlet` (Review Gates) and fix all findings.
+- After the gates converge, run `/update-docs` (this is the order D-F05 installs).
+
+### Phase 6 (optional, off by default, Codex-led per AD-8): remove the R6 apparatus
+
+**Impl files:** `plugins/*/skills/fan-out/agent-prompt.md, plugins/*/skills/fan-out/test-writer-prompt.md, scripts/check-prompt-parity.sh`
+**Test files:** `tests/parity/test-spawn-tiers.sh`
+**Test command:** `just parity-tests`
+
+- Delete both comment blocks and both status notes; delete the `perl` alternation and the test-writer sentence substitution at `check-prompt-parity.sh:178` and the `Status note` sed range at :183; delete `test-spawn-tiers.sh:276-278` (`reasoning_effort=medium` in the two Codex prompt files; `:274` on SKILL.md :19 stays); rewrite the Codex `Filled by the fan-out worker …` sentence to the Claude wording. Only with an explicit user go-ahead.
+
+## Technical Specifications
+
+### Files to Modify
+
+- `plugins/skein/skills/{conduct,deep-review,dev-plan,review-plan,fan-out,review-gauntlet,release,spec-compliance,rfc-finder,grill,plan-view,update-docs}/SKILL.md` — hunks above.
+- `plugins/skein-codex/skills/{conduct,deep-review,dev-plan,review-plan,fan-out,release,review-gauntlet,spec-compliance,content-draft,content-review,rfc-finder,update-docs,grill,plan-view}/SKILL.md` — mirror hunks above. **Codex-implemented (AD-8).**
+- `plugins/{skein,skein-codex}/skills/fan-out/agent-prompt.md`, `…/fan-out/test-writer-prompt.md` — B-08, B-09, B-10, B-20, L9.
+- `plugins/{skein,skein-codex}/skills/review-plan/rubric.md` — A-F7. `plugins/{skein,skein-codex}/skills/spec-compliance/rubric.md` — C-F6. `plugins/{skein,skein-codex}/skills/plan-view/parser.md` — C-F14.
+- `tests/parity/test-spawn-tiers.sh` — :268 and :270 pinned strings (L2, C-F1). Phase 6 only: :276-278. **Codex-implemented (AD-8): these assertions pin Codex-mirror text.**
+- `.claude/CLAUDE.md` — D-F01, D-F02, D-F03, D-F04, D-F05, D-F08, D-F09, D-F16, D-X.
+- Phase 6 only: `scripts/check-prompt-parity.sh`.
+- Not modified: `AGENTS.md` (Codex/ChatGPT's file; nothing here changes it), `~/.claude/CLAUDE.md` (see Follow-ups), `scripts/check-sync.sh`, `scripts/check-trunk-snippet-parity.sh`, `tests/plugin/test-claude-md-hygiene.sh`.
+
+### New Files to Create
+
+- none
+
+### Architecture Decisions
+
+- **AD-1 Machine anchors are kept verbatim by default.** Where a finding's clean fix would change a string a script or test greps for, the guard edit (script/test file and line) is part of the same hunk and commit, and that file is in Files to Modify. No guard edit is left implied. Old invariant = new invariant for every anchor not listed as edited.
+- **AD-2 R6 apparatus: rewrite prose, keep anchors.** The audit calls the whole apparatus a fossil. This pass removes the dates (`2026-07-04`), the retired model name (`claude-haiku-4-5`), and the CONFIRMED/GATED narratives, but keeps byte-exact: the openers `R6 status:` and `INTENDED DESIGN (currently GATED, not active):` (normalizer alternation at `check-prompt-parity.sh:178`), `**Status note (read first):**` and `Filled by the fan-out worker` (sed range :183 and `test-spawn-tiers.sh:387`), `reasoning_effort=medium` in the two Codex prompt files (`:276`, `:278`), the Codex `Filled by the fan-out worker before spawning the test-writer (once the nested-spawn\ngate is confirmed).` sentence (literal substitution at :178), and `### Phase 5` / the two `If … test framework` anchors (:381-386). Two-sided invariant: old = the Claude block is excised because its first line matches `R6 status:` and the Codex block because it matches `INTENDED DESIGN (…)`; new = the same, because both openers are unchanged. Full removal is Phase 6, off by default.
+- **AD-3 Uniform fix shape for ID leaks.** State the rule content in prose in the same sentence and drop the bare ID. `AGENTS.md` Model/Effort Policy is a live section and stays as the pointer; `R1`/`R3` do not appear in that section, so the suffix is an undefined ID and goes. Never add an HTML why-comment to a Codex SKILL.md (the Codex idiom is inline prose); where `test-spawn-tiers.sh` pins an `R3 why:` string, its assertion moves to the new prose in the same commit. This overrides audit-A's "keep R1/R3" non-finding.
+- **AD-4 The Codex "if delegation is available and explicitly allowed" idiom is a hedge, not a permission gate.** No config key, env var or probe defines "explicitly allowed" (grep-verified). All ten occurrences across five files are rewritten in one commit, or none; effort-annotation counts per file are preserved.
+- **AD-5 Cause-neutral wording where the cause is unknown.** The review-gauntlet hang paragraph is removed rather than restated with a cause; if any restatement is wanted it says the gate has hung with no recoverable cause and the wall-clock budget is the sole defence. No flag combination is asserted anywhere.
+- **AD-6 Project CLAUDE.md aligns to the global file's workflow wording.** Line 29 is replaced by the global's review-gauntlet + `/update-docs`-after-convergence bullets (D-F05), and the global's first Review Workflow bullet is added to the project file in its de-hedged form (D-X). The project file remains the source of truth for skein-specific rules (the `skein:release` bullet stays). The user may override D-X.
+- **AD-7 `/update-docs` runs after the review gates converge**, matching the rule D-F05 installs.
+- **AD-8 Harness ownership split.** `AGENTS.md` and the Codex mirror are Codex/ChatGPT's surface; Claude must not change material behaviour of the other harness. Per mirror pair: (1) Claude hands Codex the Codex-side hunk list (before/after text, guard hits, the AD-1 anchor rule) via `codex:rescue` with a review-and-implement mandate — Codex may modify or decline a hunk, and its decision is recorded in `## Findings`; (2) a second fresh-thread `codex:rescue` call self-reviews what Codex landed; (3) Claude applies the Claude-mirror twin aligned to the text Codex actually landed (not to the plan's proposed text if they differ); (4) Claude runs the gates and commits both halves in one commit. Guards that pin Codex strings (`tests/parity/test-spawn-tiers.sh:268`, `:270`, `:276`, `:278`) are updated by Codex in step (1), in the same working-tree change. Findings with no Claude twin (L7, C-F16 Codex-only sites, B-01 Codex half wording) are Codex-only tasks. Phase 6 (R6 apparatus) touches Codex prompt files and the normalizer that reads them, so it is Codex-led end to end if ever taken.
+
+### Dependencies
+
+- `just`, `rg`, `perl` (used by the normalizer), `bash` ≥ 4 for the parity tests. No new dependencies.
+
+### Integration Seams
+
+| Seam | Writer (task) | Caller (task) | Contract |
+|------|---------------|---------------|----------|
+| fan-out prompt normalizer | fan-out hunks (B-08, B-09, B-10, L9, B-20) | `scripts/check-prompt-parity.sh:173-184` via `just check-prompt-parity` | Openers, sed anchors and the Codex `Filled by …` sentence byte-exact; non-excised spans identical across mirrors |
+| spawn-tier census | L1, L2, A-F11, C-F1, C-F16, B-09, B-10, B-11 | `tests/parity/test-spawn-tiers.sh` via `just parity-tests` | `opus/high:` total 6; `fable/high:` total 5; one `reasoning_effort=*` per Codex file; `:268`/`:270` strings updated with the prose |
+| rubric / prompt byte parity | A-F7, C-F6, B-06 (test-writer-prompt :1), B-20, A-F15 if taken | `check-prompt-parity.sh:61-120` | identical bytes in both mirrors, same commit |
+| release normalized parity | B-12–B-18 | `check-prompt-parity.sh:271-296` | `RELEASE_*` pinned lines untouched; both mirrors edited together |
+| CLAUDE.md hygiene | D-* hunks | `tests/plugin/test-claude-md-hygiene.sh:53-57` | H2 headings `## Testing`, `## Facts vs Inference`, `## Security & Diff Reviews` present |
+| trunk-snippet parity | A-F* deep-review, C-F10 update-docs | `scripts/check-trunk-snippet-parity.sh` | `BASE=$(git symbolic-ref …` five-line block unchanged |
+| sync check | every mirror pair | `scripts/check-sync.sh` via `just check-sync` | mirror trees agree on the files it compares |
+
+## Architecture & Call Flow
+
+Guard map — for every file touched, which script/test reads it and which literal it depends on.
+
+| File | Guard | Literal / rule depended on | Status after this plan |
+|---|---|---|---|
+| `fan-out/agent-prompt.md` (both) | `check-prompt-parity.sh:178,181-183`; `test-spawn-tiers.sh:276,366,376,381-386` | `R6 status:` / `INTENDED DESIGN (currently GATED, not active):` openers; `^If your task has an applicable test framework`, `^If no relevant test framework exists`, `^### Phase 5`; `reasoning_effort=medium` (Codex); `model: sonnet, effort: medium` (Claude); `contract wins` | all kept |
+| `fan-out/test-writer-prompt.md` (both) | `check-prompt-parity.sh:178,183`; `test-spawn-tiers.sh:278,387` | `**Status note (read first):**`, `^Filled by the fan-out worker`, Codex `(once the nested-spawn\ngate is confirmed).` sentence, `reasoning_effort=medium` (Codex); line 1 byte-parity | all kept |
+| `fan-out/SKILL.md` (Codex) | `test-spawn-tiers.sh:274,280` | `reasoning_effort=medium.*fork_context=false` (line 19), `Codex does not pin model names` | kept (line 19 untouched) |
+| `conduct/SKILL.md` (Claude) | `test-spawn-tiers.sh:295` | `opus/high:` count contributes 1 | kept |
+| `conduct/SKILL.md` (Codex) | `test-spawn-tiers.sh:270` | `R3 why: code review is judgment work` | **assertion rewritten** (L2) |
+| `deep-review/SKILL.md` (Claude) | `test-spawn-tiers.sh:295,323`; `check-trunk-snippet-parity.sh` | `opus/high:` ×4, `effort: high` ×4, trunk snippet | kept |
+| `spec-compliance/SKILL.md` (Codex) | `test-spawn-tiers.sh:219,268` | one `reasoning_effort=high`; `R3 why: normative spec compliance is judgment work` | count kept; **assertion rewritten** (C-F1) |
+| `{content-draft,content-review,rfc-finder,update-docs}/SKILL.md` (Codex) | `test-spawn-tiers.sh:233-239` | one `reasoning_effort=low` each | kept |
+| `review-plan/rubric.md`, `spec-compliance/rubric.md` | `check-prompt-parity.sh:61-88` | byte-identical across mirrors | kept (same commit) |
+| `release/SKILL.md` (both) | `check-prompt-parity.sh:271-296`; `test-prompt-parity-extended.sh:158` | `RELEASE_*` exact lines incl. the Codex invocation-divergence comment | kept (B-24 not applied) |
+| `update-docs/SKILL.md` (both) | `check-trunk-snippet-parity.sh` | `BASE=$(git symbolic-ref …` block | kept |
+| `.claude/CLAUDE.md` | `test-claude-md-hygiene.sh:53-57` | three H2 headings | kept |
+| `review-gauntlet/SKILL.md` (both) | `tests/gauntlet/test-gauntlet-skill-shape.sh:418-441` via `just gauntlet-tests` | XOR: `Forbidden flags:` or UNVERIFIED+budget+sole-defence marker (B-01 keeps the marker) | kept |
+| `dev-plan`, `grill`, `plan-view`, `parser.md` | none found | — | — |
+
+```mermaid
+graph LR
+    E["prompt hunk (SKILL.md / *-prompt.md / rubric.md)"] -->|"same commit"| G["guard edit (test-spawn-tiers.sh :268 :270)"]
+    E --> P["just check-prompt-parity"]
+    E --> S["just check-sync"]
+    G --> T["just parity-tests"]
+    E --> T
+    C[".claude/CLAUDE.md hunk"] --> H["tests/plugin/test-claude-md-hygiene.sh"]
+    T --> R["skein:review-gauntlet"]
+    P --> R
+    H --> R
+    R --> U["/update-docs"]
+```
+
+```mermaid
+sequenceDiagram
+    participant I as Implementer
+    participant M as Mirror pair
+    participant J as just recipes
+    participant RG as review-gauntlet
+    I->>M: apply hunk (+ guard edit if listed)
+    I->>J: check-prompt-parity, check-sync, parity-tests
+    J-->>I: green / drift report
+    I->>I: commit with "kept:" line
+    I->>RG: Phase 5 gates
+    RG-->>I: converged
+    I->>I: /update-docs
+```
+
+| Step | Trigger | Enters context | Cleared/persisted | Turn boundary |
+|------|---------|----------------|-------------------|---------------|
+| 1 | Phase 1 re-verify | live file text at cited lines | notes persist under `## Findings` | per file |
+| 2 | Phase 2/3 hunk | before/after text, guard line | commit | per mirror pair |
+| 3 | Phase 5 gates | recipe output, sweep residue | `## Findings` baseline vs final | end of plan |
 
 ## Testing Notes
 
-There is no automated test suite for prompt wording — verification here is `just check-prompt-parity`, `just check-sync`, and manual re-read of each edited file for sense and tone, plus the grep sweeps listed in Phase 5. Consider running the affected skills once each (e.g., a small `/review-gauntlet` or `/deep-review` dry run) to confirm no rewritten sentence broke an operative instruction the model relies on at runtime.
+### Test Approach
+
+- [ ] `just check-prompt-parity` — after every mirror-pair commit and in Phase 5.
+- [ ] `just check-sync` — same cadence.
+- [ ] `just parity-tests` — same cadence (runs `test-spawn-tiers.sh` and `test-prompt-parity-extended.sh`, the only path to the pinned-string assertions).
+- [ ] `just gauntlet-tests` — after every review-gauntlet commit and in Phase 5 (runs `tests/gauntlet/test-gauntlet-skill-shape.sh`, the only path to the B-01 XOR guard).
+- [ ] `just lens-tests` — Phase 0 and Phase 5.
+- [ ] `just plugin-tests` — Phase 0 and Phase 5.
+- [ ] ID sweep: `rg -n '\b[RC][0-9]\b' plugins/skein plugins/skein-codex --glob '*.md'`. Baseline 29. Allowlist after Phase 3: `plugins/skein/skills/fan-out/agent-prompt.md` `R6 status:` opener (1 line); `plugins/{skein,skein-codex}/skills/fan-out/tests/seeded-divergence/fixture-plan.md` (4 lines, test fixture docs, out of scope); `plugins/{skein,skein-codex}/skills/release/SKILL.md` `C0/DEL` (2 lines). Expected residue: 7 lines, all on the allowlist.
+- [ ] Phase-tag check: each string listed in A-F8a/b/c and B-11 returns zero hits (`rg -n '\(Phase [0-9]\)|Phase 2.s disk-first|Phase-5 live gate|Phase 3 impl commit|Phase 3 Codex mirror' plugins/*/skills/{conduct,deep-review,review-plan,fan-out}`); `### Phase N` user-plan references in conduct and the fan-out `### Phase 5` anchor are legitimate and stay.
+- [ ] Dry runs: `/review-gauntlet --plan <scratch plan>` and `/fan-out` on a scratch plan after the fan-out and review-gauntlet commits; confirm the status-row table renders and the worker prompt is written with the rewritten comment block intact.
+
+### Test Results
+
+- [ ] Phase 0 baseline green, residue 29 recorded.
+- [ ] Phase 5 all recipes green, residue 7 recorded.
+- [ ] Dry runs complete.
+
+### Edge Cases Tested
+
+- [ ] A hunk applied to one mirror only fails `check-prompt-parity` (rubric, test-writer-prompt :1, agent-prompt :29) — deliberately verify once by staging a single-mirror edit and reverting.
+- [ ] Dropping an excision anchor fails `test-spawn-tiers.sh:381-388` — verify once the same way.
+
+## Acceptance Criteria
+
+- Every apply-set hunk is applied in both mirrors where a twin exists, each mirror pair in one commit.
+- `tests/parity/test-spawn-tiers.sh:268` and `:270` assert the new prose and pass; no other pinned string or count changed.
+- `just check-prompt-parity`, `just check-sync`, `just parity-tests`, `just gauntlet-tests`, `just lens-tests`, and `just plugin-tests` exit 0 on the final commit.
+- ID sweep residue equals the allowlist exactly (7 lines).
+- Phase-tag check returns zero hits for the listed strings.
+- Each commit body carries one "kept:" line per hunk naming where the operative clause survives, e.g. A-F2 kept: helper-after-failure invariant in the rewritten sentence plus the named assertion; A-F4 kept: complement rule in the same bullet; A-F13 kept: `CONDUCT_LAGGING_MIRROR_OK` mechanism in the same paragraph; B-01 kept: wall-clock budget rule two sentences earlier; B-07 kept: effort-inheritance caveat and both gate-script paths in the rewrite; B-08/B-09/B-10 kept: openers and effort/model facts in the rewritten blocks; B-12 kept: no-fetch rule and its consequence in present tense; C-F4/C-F5 kept: each prohibition's positive statement at the cited lines; C-F16 kept: the delegate/fallback branch pair in every rewritten sentence; D-F01 kept: blast-radius sweep rule plus its mechanism sentence; D-F08 kept: the streaming reason; D-F16 kept: both carve-outs in the paragraph.
+- No `~/.claude/CLAUDE.md` change is in the diff.
+- `/review-gauntlet` and `/fan-out` dry runs complete without a parity or anchor error.
+- `skein:review-gauntlet` converged with all findings fixed; `/update-docs` run afterwards.
+
+## Follow-ups outside this repo
+
+Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, then `./scripts/sync.sh collect claude`. Line numbers are as of 2026-09-03. None of these hunks touch a heading asserted by `test-claude-md-hygiene.sh` when `GLOBAL_CLAUDE_MD` is set.
+
+- **D-F06** :158 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.`
+- **D-F07** :161 remove ` Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.`
+- **D-F08 (global half)** :164 same rewrite as the project D-F08.
+- **D-F10** :40 `- Update PR description to reflect final state of the work. **Do this yourself with \`gh pr edit\` — the PR description is in your mandate, not off-limits. Don't wait for me to update it or ask permission.**` → `- Update the PR description to reflect the final state of the work. **Do it yourself with \`gh pr edit\` — the PR description is in your mandate.**`
+- **D-F11** :4 `- Be terse. No preamble, no filler ("Great question!", "Let me know if..."), no restating the task.` → `- Be terse. No preamble, no filler, no restating the task.`
+- **D-F12** :8 `- After finishing a task, state what changed in one line — don't recap the approach taken to get there.` → `- After finishing a task, say what changed rather than recapping how you got there. Length follows the change: one line for a one-line edit, a short list for a multi-file one.`
+- **D-F13** :142-143 remove the blank line and `  Don't run Opus/Fable on work Haiku or Sonnet handles well.` (the tier table above carries the rule).
+- **D-F14** :146 `Skills like Skein's \`conduct\` / \`deep-review\` / \`fan-out\` / \`review-plan\` engineer their per-lens/per-phase tiers on purpose;` → `A skill that sets per-lens or per-phase tiers engineered them on purpose;`.
+- **D-F15** :24 rewrite the Review Workflow bullet to the D-X wording above (scopes the four-subagent pipeline to non-mechanical fixes; keeps the `Reason:` trailer). Declinable; if declined, also decline D-X here so the two files agree.
+- **D-F16 (global half)** :111-118 same table → paragraph rewrite as the project D-F16. Apply both halves or neither.
+- Flags: **D-F17** :62 `refines, not contradicts` (keep; it reconciles two rules), **D-F18** :9 `/skein:grill` name pin (keep; single live pointer), **D-F19** fourteen byte-identical sections load twice per session (no action; working redundancy).
 
 ## Review Gates
 
-Standard: `skein:review-gauntlet` before merge. Given the low blast radius (prose-only changes, no code), a lighter manual `/code-review` pass focused on "did any rewrite silently drop operative content" may suffice, but the repo's stated default (`skein:review-gauntlet`) should still be run.
+`skein:review-gauntlet`
+
+<!-- reviewed: 2026-09-03 @ 801d48a65e7b0cd1603094dd89065b02f4c35a09 -->
+
+<!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
+
+## Progress
+
+- [ ] Phase 0: Branch and baseline
+- [ ] Phase 1: Re-verify every hunk against live text
+- [ ] Phase 2: High-confidence hunks
+- [ ] Phase 3: Medium-confidence hunks
+- [ ] Phase 4: Flag-only decisions
+- [ ] Phase 5: Gates
+- [ ] Phase 6 (optional): remove the R6 apparatus
+
+## Findings
+
+- (baseline counts, moved line numbers, flag decisions, "kept:" ledger go here)
+
+## Issues & Solutions
+
+### Issue 1: [Brief description]
+- **Problem**:
+- **Solution**:
+- **Files affected**:
+
+## Final Results
+
+### Summary
+
+### Outcomes
+
+### Learnings
+
+### Follow-up Work
