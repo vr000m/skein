@@ -381,7 +381,7 @@ sequenceDiagram
 - [x] Phase C3: Codex dev-plan
 - [x] Phase C4: Codex review-plan
 - [x] Phase C5: Codex fan-out
-- [ ] Phase C6: Codex review-gauntlet
+- [x] Phase C6: Codex review-gauntlet
 - [ ] Phase C7: Codex release
 - [ ] Phase C8: Codex spec-compliance
 - [ ] Phase C9: Codex delegation idiom
