@@ -247,7 +247,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 - `plugins/skein-codex/skills/fan-out/agent-prompt.md`, `…/fan-out/test-writer-prompt.md` — B-09, B-10, B-20.
 - `plugins/skein-codex/skills/review-plan/rubric.md` — A-F7. `plugins/skein-codex/skills/spec-compliance/rubric.md` — C-F6. `plugins/skein-codex/skills/plan-view/parser.md` — C-F14.
 - `tests/parity/test-spawn-tiers.sh` — the `:268` and `:270` pinned strings (C-F1, L2), rewritten in the same phase as the prose they pin; the review-gauntlet added a write-containment assertion (`do not touch files outside your scope`, both mirrors, commit a8a09f7, review-gauntlet round 1) here after the C-phases landed — see Findings.
-- Not modified here: everything under `plugins/skein/`, `.claude/CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md`, `scripts/check-sync.sh`, `scripts/check-prompt-parity.sh`, `scripts/check-trunk-snippet-parity.sh`, `tests/plugin/test-claude-md-hygiene.sh`.
+- Not modified by Phases 0 and C1–C10: everything under `plugins/skein/`, `.claude/CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md`, `scripts/check-sync.sh`, `scripts/check-prompt-parity.sh` (modified later by gauntlet round 6 wording fixes and Phase R, see Progress), `scripts/check-trunk-snippet-parity.sh`, `tests/plugin/test-claude-md-hygiene.sh`.
 
 ### New Files to Create
 
@@ -266,7 +266,7 @@ Runtime: Codex-driven `/conduct` only. Companion plan: `docs/dev_plans/20260903-
 
 ### Dependencies
 
-- `just`, `rg`, `perl` (used by the normalizer), `bash` ≥ 4 for the parity tests. No new dependencies.
+- `just`, `rg`, `bash` ≥ 4 for the parity tests (`perl` was used by the fan-out normaliser until Phase R made it sed-only). No new dependencies.
 
 ### Integration Seams
 
@@ -369,7 +369,7 @@ sequenceDiagram
 
 `none` — the gauntlet runs once, from the companion Claude plan, after its phase F.
 
-<!-- reviewed: 2026-09-03 @ 936875beb7e7f835d354b87ca3fc37adb2b67bc7 -->
+<!-- reviewed: 2026-09-03 @ 74e3e1af3ba443656c711e7588f1c606f4084118 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -386,6 +386,7 @@ sequenceDiagram
 - [x] Phase C8: Codex spec-compliance
 - [x] Phase C9: Codex delegation idiom
 - [x] Phase C10: Codex misc skills
+- [x] Phase R (recorded in the Claude plan): Codex halves of the fan-out status-apparatus removal — `plugins/skein-codex/skills/fan-out/{agent-prompt.md,test-writer-prompt.md}`, `scripts/check-prompt-parity.sh`, `tests/parity/test-spawn-tiers.sh` (e59543b); the C5/C9 per-file `reasoning_effort=medium` pins on the two Codex prompt files are gone with it, the SKILL.md pin stays.
 
 ## Findings
 

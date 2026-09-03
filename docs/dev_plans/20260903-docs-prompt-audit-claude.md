@@ -397,7 +397,7 @@ sequenceDiagram
 - Each commit body carries one "kept:" line per hunk naming where the operative clause survives, e.g. A-F2 kept: helper-after-failure invariant in the rewritten sentence plus the named assertion; A-F4 kept: complement rule in the same bullet; A-F13 kept: `CONDUCT_LAGGING_MIRROR_OK` mechanism in the same paragraph; B-01 kept: wall-clock budget rule two sentences earlier; B-07 kept: effort-inheritance caveat and both gate-script paths in the rewrite; B-08/B-09/B-10 kept: openers and effort/model facts in the rewritten blocks; B-12 kept: no-fetch rule and its consequence in present tense; C-F4/C-F5 kept: each prohibition's positive statement at the cited lines; C-F16 kept: the delegate/fallback branch pair in every rewritten sentence; D-F01 kept: blast-radius sweep rule plus its mechanism sentence; D-F08 kept: the streaming reason; D-F16 kept: both carve-outs in the paragraph.
 - No `~/.claude/CLAUDE.md` change is in the diff.
 - `/review-gauntlet` and `/fan-out` dry runs complete without a parity or anchor error.
-- `skein:review-gauntlet` converged with all findings fixed; `/update-docs` run afterwards.
+- `skein:review-gauntlet` run to a terminal decision with every actionable finding fixed and every non-fixed finding quarantined with a recorded reason; `/update-docs` run afterwards. (Run 1, six rounds, ended non-converge on re-reports of items awaiting a user decision; those decisions are recorded above and a second run follows Phase R.)
 
 ## Follow-ups outside this repo
 
@@ -419,7 +419,7 @@ Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, t
 
 `skein:review-gauntlet`
 
-<!-- reviewed: 2026-09-03 @ db11cd2f5634e7f806e0495accf414c24f7c8881 -->
+<!-- reviewed: 2026-09-03 @ 86d26311426c2c768a4181c8b34f898d462d8f73 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
