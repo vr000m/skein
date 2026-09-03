@@ -67,8 +67,10 @@ Write the code described in your task. Commit your work.
 <!--
 INTENDED DESIGN (currently GATED, not active): when your slice has an applicable
 test framework, spawn a separate clean-context test-writer subagent with
-`fork_context=false` and request `reasoning_effort=medium` (mechanical test
-authoring against an already-defined contract, not judgment work). The test-writer
+`fork_context=false` and request `reasoning_effort=medium` when supported
+(mechanical test authoring against an already-defined contract, not judgment work).
+If the runtime does not support that effort request or the nested dispatch fails,
+stay on the ACTIVE PATH below. The test-writer
 receives ONLY the slice contract — `{{TASK_DESCRIPTION}}` plus the Writer-designated
 Integration Seams rows injected via `{{TECHNICAL_SPECIFICATIONS}}` — and never the
 implementer's diff or internal code. That topology is gated: a non-interactive
