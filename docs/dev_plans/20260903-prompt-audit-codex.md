@@ -385,7 +385,7 @@ sequenceDiagram
 - [x] Phase C7: Codex release
 - [x] Phase C8: Codex spec-compliance
 - [x] Phase C9: Codex delegation idiom
-- [ ] Phase C10: Codex misc skills
+- [x] Phase C10: Codex misc skills
 
 ## Findings
 

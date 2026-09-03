@@ -8,8 +8,6 @@ argument-hint: "[path/to/plan.md] | [freeform description]"
 
 Grill a plan, design, or freeform idea one question at a time. Every candidate question is first sorted into a **fact** (verifiable from the codebase — look it up, never ask) or a **decision** (a genuine judgment call with no single correct answer — must go to the human). For each decision, propose exactly one recommended resolution and block until the user answers before moving to the next one. No batching, no undifferentiated option lists.
 
-This skill is inspired by mattpocock/skills' `grilling` skill, as described in conversation — its upstream source is not present in this codebase and has not been verified directly; this is a freshly authored implementation of that idea, not a port.
-
 This document has two independently-anchored sections:
 
 - **§ Interview Mechanics** — the reusable interview protocol (fact/decision split, one recommendation per decision, strict serial pacing, three-way accept/override/waive outcome). `/review-plan` Step 6.4 references this section inline, in-session, for the findings it classifies as grill-eligible — it does not activate this skill or spawn a subagent to do so.
