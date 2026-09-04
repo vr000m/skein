@@ -99,8 +99,10 @@ For each approved task, run these steps using `fan-out.sh`.
 First, locate the skill directory and get repo info:
 ```bash
 # ${CLAUDE_PLUGIN_ROOT} is the plugin root supplied by the harness; fan-out.sh ships under it.
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/fan-out"
-[ -f "$SKILL_DIR/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (SKILL_DIR=$SKILL_DIR)" >&2; exit 1; }
+# Every fan-out.sh call below spells the full path: shell variables do not survive
+# from one Bash tool call to the next, so a SKILL_DIR bound here would be empty
+# in the Monitoring, Cleanup and Cancel commands.
+[ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BASE_BRANCH="$(git branch --show-current)"
 ```
@@ -109,13 +111,13 @@ Then for each task:
 
 1. **Create worktree**:
    ```bash
-   WORKTREE=$("${SKILL_DIR}/fan-out.sh" setup "$BASE_BRANCH" "<task-id>-<task-slug>" "$REPO_ROOT")
+   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" "<task-id>-<task-slug>" "$REPO_ROOT")
    ```
    Always prefix the slug with the task ID (e.g., `"1-add-api-endpoint"`, `"2-add-migration"`) to prevent collisions when different tasks slugify to the same string.
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
 
-2. **Build agent prompt**: Read the template from `$SKILL_DIR/agent-prompt.md` (the anchor bound above). Replace placeholders:
+2. **Build agent prompt**: Read the template from `${CLAUDE_PLUGIN_ROOT}/skills/fan-out/agent-prompt.md`. Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
    - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (the slice-contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
@@ -136,7 +138,7 @@ Then for each task:
 
 3. **Spawn agent**:
    ```bash
-   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
+   PID=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
    ```
 
 4. **Record state**: After spawning all agents, write `.fan-out-state.json` in the repo root:
@@ -180,7 +182,7 @@ Then for each task:
 
 Run:
 ```bash
-"${SKILL_DIR}/fan-out.sh" status .fan-out-state.json
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" status .fan-out-state.json
 ```
 
 Also check each worktree for `.fan-out-result.md` to see if agents wrote their summaries.
@@ -252,7 +254,7 @@ If `review-gauntlet` applies fixes, it lands them as one or more commits on the 
 
 Run:
 ```bash
-"${SKILL_DIR}/fan-out.sh" cleanup .fan-out-state.json
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" cleanup .fan-out-state.json
 ```
 
 This removes worktrees, deletes merged branches, and removes the state file.
@@ -267,7 +269,7 @@ tail -100 <worktree>/fan-out.log
 ### Canceling (on `/fan-out cancel [N]`)
 
 ```bash
-"${SKILL_DIR}/fan-out.sh" cancel .fan-out-state.json [N]
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" cancel .fan-out-state.json [N]
 ```
 
 ## Defaults

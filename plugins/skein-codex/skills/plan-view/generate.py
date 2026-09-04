@@ -987,9 +987,9 @@ def render_dashboard(
 
     substitutions = {
         "{{CORPUS_SHA}}": corpus_digest,
-        "{{PLANS_DIR}}": str(plans_dir),
-        "{{PLANS_DIR_SHORT}}": plans_dir_short,
-        "{{SCRIPT_PATH}}": script_path,
+        "{{PLANS_DIR}}": _esc(str(plans_dir)),
+        "{{PLANS_DIR_SHORT}}": _esc(plans_dir_short),
+        "{{SCRIPT_PATH}}": _esc(script_path),
         "{{GIT_HEAD}}": git_head_sha,
         "{{GIT_HEAD_SHORT}}": git_head_sha[:7] if git_head_sha else "—",
         "{{GENERATED_AT}}": now_iso,
@@ -1122,8 +1122,8 @@ def render_plan_page(
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
         "{{SOURCE_PATH}}": source_path_short,
         "{{RICH_HREF}}": _rich_href(plan.slug),
-        "{{SCRIPT_PATH}}": script_path,
-        "{{PLANS_DIR_SHORT}}": plans_dir_short,
+        "{{SCRIPT_PATH}}": _esc(script_path),
+        "{{PLANS_DIR_SHORT}}": _esc(plans_dir_short),
         "{{GIT_HEAD}}": git_head_sha,
         "{{GENERATED_AT}}": now_iso,
         "{{GENERATED_AT_SHORT}}": now_short,

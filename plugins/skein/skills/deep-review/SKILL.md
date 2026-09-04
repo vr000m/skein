@@ -119,7 +119,7 @@ Before doing anything else — and **before writing or updating `.deep-review/la
    ```
    The halt fires **before** any `.deep-review/latest-claude.json` write. A subsequent `--continue` from a feature branch must not be poisoned by a prior aborted trunk invocation.
 
-Concurrent-worktree detection happens inline in §1a (single `git worktree list` call there) — do not split it across a section boundary, or the informational line is silently dropped when §1a is reordered or skipped.
+Concurrent-worktree detection happens inline in §1a (single `git worktree list` call there) so the informational line is produced in the same step as the banner it annotates; do not split it across a section boundary.
 
 ### 1. Announce the Run
 
