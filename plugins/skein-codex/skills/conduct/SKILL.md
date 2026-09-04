@@ -375,7 +375,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 
 ## State File
 
-Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where `digest` is `sha1(repo-relative plan path)[:12]`. `.conduct/` is git-ignored. Renaming a plan changes both the stem and the digest, so under the state lock move the state file to the new plan path's name, update `state.plan_path`, and independently recompute `state.plan_id = sha1(abs(new plan path))[:12]` (do not reuse the state-file digest). If `ci_parity_request` is an object, do not carry its old `plan_path`/`plan_id` binding across the rename: clear `ci_parity_request`, `ci_parity_request_written_at`, and `ci_parity_result`, set `ci_parity_dispatched = false` and `ci_parity_missing_resume_count = 0`, and change `status` back to `running`; leave old-plan-id result files untouched and resume with the same CI-parity option so a fresh request/result is dispatched under the new namespace.
+Path: `<repo-root>/.conduct/state-codex-<plan-stem>-<digest>.json`, where `digest` is `sha1(repo-relative plan path)[:12]`. `.conduct/` is git-ignored. Renaming a plan changes both the stem and the digest, and conduct does not discover or atomically migrate the old state file. Do not auto-resume a renamed plan from old state: abort/close the old run before starting a new run. Never reuse the old `plan_id` or CI-parity request/result bindings; start the new run with a fresh state namespace and fresh CI-parity request/result.
 
 Schema:
 

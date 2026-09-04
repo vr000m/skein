@@ -166,12 +166,12 @@ class Plan:
     )
     render_sha: str = ""  # set by compute_render_shas after link_edges + apply_stranded
 
-    def compute_render_sha(self) -> str:
+    def compute_render_sha(self, script_path: str = "") -> str:
         # Covers everything that affects this plan's rendered HTML:
         # own markdown, backfilled edges_in (corpus state), fixed_by pointer,
         # the (possibly stranded-recoloured) status bucket, AND the git-derived
         # fields embedded in the page (commit list, timeline SVG, created,
-        # last_touched). Folding git fields in means a rebase/amend that changes
+        # last_touched), and the rendered footer script path. Folding git fields in means a rebase/amend that changes
         # a commit subject or date — with the markdown bytes unchanged — shifts
         # render_sha, so the drift guard takes the "source changed, overwrite
         # freely" path instead of falsely flagging a hand-edit.
@@ -184,13 +184,14 @@ class Plan:
             + ",".join(f"{c.sha}:{c.date}:{c.subject}" for c in self.commits),
             f"|created={self.created}",
             f"|last_touched={self.last_touched}",
+            f"|script_path={script_path}",
         ]
         return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
 
 
-def compute_render_shas(plans: dict[str, "Plan"]) -> None:
+def compute_render_shas(plans: dict[str, "Plan"], script_path: str = "") -> None:
     for p in plans.values():
-        p.render_sha = p.compute_render_sha()
+        p.render_sha = p.compute_render_sha(script_path)
 
 
 def corpus_sha(plans: dict[str, "Plan"]) -> str:
@@ -1619,7 +1620,10 @@ def footer_script_path(script: Path, repo_root: Path) -> str:
     try:
         return str(resolved.relative_to(repo_root))
     except ValueError:
-        return str(resolved).replace(str(Path.home()), "~")
+        try:
+            return "~" + str(resolved.relative_to(Path.home()))
+        except ValueError:
+            return str(resolved)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1724,18 +1728,18 @@ def main(argv: list[str] | None = None) -> int:
 
     # Stranded detection
     apply_stranded(plans.values(), args.stale_days)
+    script_path = footer_script_path(Path(__file__), repo_root)
     # Note: link_edges runs immediately below; compute_render_shas must come after.
 
     # Edge linking
     link_edges(plans)
-    compute_render_shas(plans)
+    compute_render_shas(plans, script_path)
 
     # Render
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.gitignore:
         (out_dir / ".gitignore").write_text("*\n", encoding="utf-8")
 
-    script_path = footer_script_path(Path(__file__), repo_root)
     plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
 
     # Dashboard

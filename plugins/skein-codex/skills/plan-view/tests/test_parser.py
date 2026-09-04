@@ -295,6 +295,15 @@ def test_render_sha_reflects_commit_changes(tmp_path: Path) -> None:
     assert before != after, "render_sha must change when a commit subject changes"
 
 
+def test_render_sha_reflects_rendered_script_path(tmp_path: Path) -> None:
+    p = tmp_path / "20260521-feature-script-path.md"
+    p.write_text("# C\n\n**Status:** Shipped\n", encoding="utf-8")
+    plan = G.parse_plan(p)
+    before = plan.compute_render_sha("~/old/generate.py")
+    after = plan.compute_render_sha("~/new/generate.py")
+    assert before != after, "render_sha must change with the rendered script path"
+
+
 def test_render_markdown_code_fence_keeps_language_class() -> None:
     # Regression: a section-scanner fence regex once shadowed the markdown
     # renderer's _FENCE_RE (module-global name collision), making fenced code
@@ -363,3 +372,16 @@ def test_footer_script_path_outside_repo_hides_home(
     out = G.footer_script_path(script, repo)
     assert out.startswith("~/"), out
     assert str(home) not in out
+
+
+def test_footer_script_path_does_not_shorten_home_prefix_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "alice"
+    sibling = tmp_path / "alice2" / "cache" / "generate.py"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("", encoding="utf-8")
+    repo = tmp_path / "elsewhere"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert G.footer_script_path(sibling, repo) == str(sibling.resolve())
