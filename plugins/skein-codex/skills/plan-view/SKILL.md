@@ -210,3 +210,9 @@ Cost note: rich rendering costs one LLM call per plan (single) or per section (s
 - **`/review-plan`** — audits a single plan. `/plan-view` shows where that plan sits in the corpus.
 - **`/update-docs`** — keeps READMEs/CHANGELOGs in sync with code.
 - **`/playground`** — different contract (interactive single-file with controls). Do not compose: `--rich` deliberately uses its own constrained widget toolkit rather than routing through `playground`, because `--rich` needs deterministic-up-to-LLM-variance output gated on source-sha, while `playground` is exploratory and user-prompted.
+`Plan.compute_render_sha()` hashes the plan markdown sha plus the rendered
+state and git-derived fields, including `source_path`, `plans_dir_short`, and
+`script_path`. `source_path` uses the home-shortened spelling where
+applicable, and `plans_dir_short` is likewise the home-shortened plans
+directory spelling passed by the renderer. Keep this composition aligned with
+`parser.md` and the implementation when changing render inputs.

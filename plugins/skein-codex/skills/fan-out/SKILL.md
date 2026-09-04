@@ -114,6 +114,22 @@ BASE_BRANCH="$(git branch --show-current)"
 
 Then for each task:
 
+Before running the setup snippet, derive and bind `TASK_ID`, `TASK_SLUG`, and
+`TASK_SLUG_B64` from the current task's validated approved-task record (the
+trusted control-plane object), not from ambient variables or raw plan text.
+`TASK_ID` is the record's validated numeric id; `TASK_SLUG` is the record's
+validated complete task-ID-prefixed slug; and `TASK_SLUG_B64` is a portable
+base64 encoding of that complete slug. Establish these bindings inside the
+per-task loop before the setup snippet — they are not expected to arrive from
+an inherited shell environment. For example, after the record fields have
+already been validated:
+
+```bash
+TASK_ID="${validated_task_id}"
+TASK_SLUG="${validated_task_slug}"
+TASK_SLUG_B64="$(printf '%s' "$TASK_SLUG" | base64 | tr -d '\n')"
+```
+
 1. **Create worktree**:
    ```bash
    # The conductor supplies TASK_ID and TASK_SLUG_B64 as trusted control-plane
