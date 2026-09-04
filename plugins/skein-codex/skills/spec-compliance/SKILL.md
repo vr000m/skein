@@ -169,6 +169,14 @@ Before presenting the compliance report to the user, verify it against [rubric.m
 - Include the summary table for quick scanning — always include all three rows (MUST, SHOULD, MAY) even if a level has zero requirements
 - Link to the spec section so the user can read the full context
 
+### What NOT to Do
+
+- Do NOT reproduce large blocks of spec text — quote only the normative statement
+- Do NOT mark a requirement as Met unless you can cite specific code evidence
+- Do NOT skip SHOULD/MAY requirements — they matter for interoperability even if not mandatory
+- Do NOT guess what the spec says — always fetch and verify
+- Do NOT attempt full-spec compliance without a section reference — ask the user to narrow scope
+
 ## Edge Cases
 
 - **Spec section not found**: Report the error, suggest checking the section number or searching for the topic. Offer to use `rfc-finder` to locate the right document.

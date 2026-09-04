@@ -156,7 +156,7 @@ From the phase block, extract:
 - `**Test files:**` — comma-separated paths, globs allowed.
 - `` **Test command:** `<cmd>` `` — parsed with `^\*\*Test command:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
 - `` **Validation cmd:** `<cmd>` `` — optional, parsed with `^\*\*Validation cmd:\*\*\s+\x60([^\x60]+)\x60\s*$`; first match wins; additional matches emit a warning.
-- `**Goal:**` — optional. A 1-2 line design-intent/invariant statement for the phase, sitting in the phase contract block alongside the slots above (above the review marker; editing it invalidates the marker like any other contract edit). Separator may be `:`, `—`, or `–`, matching the phase-heading tolerance. Captured verbatim (including embedded newlines for a 2-line goal) as `{{PHASE_GOAL}}`'s source text. Absent slot -> `{{PHASE_GOAL}}` substitutes to the empty string everywhere it is used (Step 3).
+- `**Goal:**` — optional. A 1-2 line design-intent/invariant statement for the phase, sitting in the phase contract block alongside the slots above (above the review marker; editing it invalidates the marker like any other contract edit). Separator may be `:`, `—`, or `–`, matching the phase-heading tolerance. Captured verbatim (including embedded newlines for a 2-line goal) as `{{PHASE_GOAL}}`'s source text. Before inserting it into either worker prompt, escape every literal `</untrusted-content>` as `<\/untrusted-content>`; the templates wrap the escaped value in a warned, data-only `<untrusted-content>` block. Absent slot -> `{{PHASE_GOAL}}` substitutes to the empty string everywhere it is used (Step 3), preserving the byte-identical no-goal prompt form.
 
 Any slot may be absent; see Fallbacks below.
 
@@ -184,7 +184,7 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 | `{{PRIOR_DIFF}}` | staged diff from previous attempt, else empty | string |
 | `{{TEST_FAILURES}}` | redacted failure summary from the test runner or pre-commit hook, else empty | string |
 
-`{{PHASE_GOAL}}` is substituted the same way on every implementer/test-writer spawn: first attempt (iteration 0) AND every fix-loop respawn (Step 6), since it is re-read from the same phase contract block on each respawn - it is not carried over from a prior iteration's prompt. When the phase's `**Goal:**` slot is present, substitute the directive text (see `implementer-prompt.md` / `test-writer-prompt.md` for the exact wording each template expects); when absent, substitute the empty string so the sentence the placeholder is appended to renders byte-identical to a plan with no `**Goal:**` slot.
+`{{PHASE_GOAL}}` is substituted the same way on every implementer/test-writer spawn: first attempt (iteration 0) AND every fix-loop respawn (Step 6), since it is re-read from the same phase contract block on each respawn - it is not carried over from a prior iteration's prompt. When the phase's `**Goal:**` slot is present, substitute the warned data-block directive described in `implementer-prompt.md` / `test-writer-prompt.md`, after escaping its closing marker; when absent, substitute the empty string so the sentence the placeholder is appended to renders byte-identical to a plan with no `**Goal:**` slot.
 
 Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, phase goal, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
