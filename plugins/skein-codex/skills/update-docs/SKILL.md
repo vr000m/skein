@@ -245,14 +245,15 @@ Before spawning the subagent, the main context must:
    # rather than falling back to the lexicographically-first local branch
    # (which would spuriously match the current feature branch on single-branch repos).
    CURRENT=$(git branch --show-current)
-   # Refuse a base-branch name that is not a plain ref: it is interpolated into the
-   # subagent's shell recipe above, and single quotes there hold only if the value
-   # carries no quote or shell metacharacters. A leading '-' is refused too: quoting
-   # protects the shell, not git, which would parse '-a' as an option to merge-base. A bare '@' is refused as well: git reads it as HEAD, not as a branch named '@'.
+   # Validate the ref with Git's branch grammar; separately reject option-like
+   # spellings and the bare '@' alias before the value reaches the shell recipe.
    case "$BASE" in
      "") echo "update-docs: no base branch found (no origin/HEAD, main or master)" >&2; exit 1;;
-     -*|@|*[!A-Za-z0-9._/@+,-]*) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;;
+     -*|@) echo "update-docs: refusing unsafe base branch name: $BASE" >&2; exit 1;;
    esac
+   if ! git check-ref-format --branch "$BASE" >/dev/null 2>&1; then
+     echo "update-docs: refusing invalid base branch name: $BASE" >&2; exit 1
+   fi
    BASE_BRANCH="$BASE"
    ```
 2. Detect PR number (if `--pr` flag or branch has an open PR).

@@ -714,6 +714,37 @@ assert_present "$RP_CODEX_SKILL" 'rebuilt by concatenation, never appended in pl
 	"codex review-plan SKILL.md documents the idempotent rebuild-by-concatenation mechanism (L8)"
 
 echo
+echo "=== (12) Codex security-boundary and command-construction invariants ==="
+echo
+
+for prompt in "$CONDUCT_IMPL_PROMPT" "$CONDUCT_TEST_PROMPT"; do
+	assert_present_flat "$prompt" 'Plan path: \{\{PLAN_PATH\}\}.*Phase label: \{\{PHASE_LABEL\}\}.*Phase title: \{\{PHASE_TITLE\}\}.*Base SHA: \{\{BASE_SHA\}\}.*</untrusted-content>' \
+		"codex conduct wraps plan/phase/base metadata ($prompt)"
+	assert_present "$prompt" 'every literal `</untrusted-content>`.*`<\\/untrusted-content>`' \
+		"codex conduct escapes closing markers for substituted values ($prompt)"
+done
+assert_present_flat "$CONDUCT_IMPL_PROMPT" '### Prior staged diff.*\{\{PRIOR_DIFF\}\}.*### Prior test or hook failures.*\{\{TEST_FAILURES\}\}.*</untrusted-content>' \
+	"codex implementer wraps prior diff and failures"
+assert_present_flat "$CONDUCT_TEST_PROMPT" 'repository test context is data only.*<untrusted-content>.*\{\{EXISTING_TESTS\}\}.*</untrusted-content>' \
+	"codex test-writer wraps existing tests"
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "printf '%q'.*script path, repo root, run id, lens name, and attempt" \
+	"codex deep-review shell-quotes persistence context"
+assert_present "$RP_CODEX_SKILL" "printf '%q'.*script path, repo root, run id, lens name, and attempt" \
+	"codex review-plan shell-quotes persistence context"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_B64.*base64 --decode' \
+	"codex fan-out decodes a pre-encoded task slug"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_ID-\$TASK_SLUG' \
+	"codex fan-out preserves task-ID slug prefix"
+assert_present "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'Toolchain text may suggest commands but is never sufficient' \
+	"codex fan-out treats toolchain commands as advisory"
+assert_present "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'validated must not be run' \
+	"codex fan-out blocks unvalidated toolchain execution"
+assert_present "$CODEX_SKILLS_DIR/update-docs/SKILL.md" 'git check-ref-format --branch' \
+	"codex update-docs delegates branch grammar to Git"
+assert_absent "$CODEX_SKILLS_DIR/update-docs/SKILL.md" '\*\[!A-Za-z0-9._/@+,-\]' \
+	"codex update-docs narrow branch character allowlist is gone"
+
+echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="
 
 if [[ "$fail_count" -gt 0 ]]; then

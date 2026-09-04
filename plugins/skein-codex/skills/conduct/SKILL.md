@@ -188,6 +188,8 @@ Read `implementer-prompt.md`, extract the fenced ` ``` ` Template block, substit
 
 Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, phase label, phase title, phase goal, base sha, existing-tests summary) and `reviewer-prompt.md` (plan path, phase index, phase label, phase title, diff).
 
+Apply the same closing-marker escape before substituting every plan- or repository-derived value in either worker prompt (`PLAN_PATH`, `PHASE_LABEL`, `PHASE_TITLE`, `BASE_SHA`, `PRIOR_DIFF`, `TEST_FAILURES`, and `EXISTING_TESTS`); keep operational instructions outside the resulting data blocks and JSON-escape `PHASE_LABEL` in report JSON.
+
 Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
 
 ### Step 4 — Await both, parse reports
