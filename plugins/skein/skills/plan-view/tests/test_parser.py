@@ -99,6 +99,22 @@ def _write(tmp_path: Path, name: str, body: str) -> Path:
     return p
 
 
+def test_render_plan_page_escapes_source_path(tmp_path: Path) -> None:
+    p = tmp_path / '20260101-feature-"<img>.md'
+    p.write_text("# A\n\n**Status**: Planned\n", encoding="utf-8")
+    plan = G.parse_plan(p)
+    html = G.render_plan_page(
+        plan,
+        {plan.slug: plan},
+        git_head_sha="",
+        template='<meta content="{{SOURCE_PATH}}">',
+        script_path="plugins/skein/skills/plan-view/generate.py",
+        plans_dir_short="docs/dev_plans",
+    )
+    assert "<img" not in html
+    assert "&quot;&lt;img&gt;" in html
+
+
 def test_parse_plan_basic_status_and_title(tmp_path: Path) -> None:
     path = _write(
         tmp_path,
@@ -288,6 +304,58 @@ def test_render_markdown_code_fence_keeps_language_class() -> None:
     assert "lang-```" not in out
 
 
+def test_render_sha_reflects_rendered_script_path(tmp_path: Path) -> None:
+    p = tmp_path / "20260521-feature-script-path.md"
+    p.write_text("# C\n\n**Status:** Shipped\n", encoding="utf-8")
+    plan = G.parse_plan(p)
+    before = plan.compute_render_sha("~/old/generate.py")
+    after = plan.compute_render_sha("~/new/generate.py")
+    assert before != after, "render_sha must change with the rendered script path"
+
+
+def test_render_sha_reflects_relocated_source_and_plans_directory(
+    tmp_path: Path,
+) -> None:
+    first_dir = tmp_path / "first" / "docs" / "dev_plans"
+    second_dir = tmp_path / "second" / "docs" / "dev_plans"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+    body = "# C\n\n**Status**: Shipped\n"
+    first_path = _write(first_dir, "20260521-feature-relocation.md", body)
+    second_path = _write(second_dir, "20260521-feature-relocation.md", body)
+    first = G.parse_plan(first_path)
+    second = G.parse_plan(second_path)
+    first_plans = {first.slug: first}
+    second_plans = {second.slug: second}
+    G.compute_render_shas(first_plans, plans_dir_short="~/first/docs/dev_plans")
+    G.compute_render_shas(second_plans, plans_dir_short="~/second/docs/dev_plans")
+    assert first.render_sha != second.render_sha
+    assert G.corpus_sha(first_plans, first_dir) != G.corpus_sha(
+        second_plans, second_dir
+    )
+
+
+def test_dashboard_embedded_corpus_sha_matches_drift_guard_on_second_render(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The dashboard hash and guard hash must share the plans-directory input."""
+    plans_dir = tmp_path / "relocated" / "docs" / "dev_plans"
+    plans_dir.mkdir(parents=True)
+    (plans_dir / "20260521-feature-dashboard.md").write_text(
+        "# Dashboard\n\n**Status**: Shipped\n", encoding="utf-8"
+    )
+    out_dir = tmp_path / "rendered"
+
+    assert G.main([str(plans_dir), "--out", str(out_dir)]) == 0
+    capsys.readouterr()
+
+    # An unchanged second render must take the guard's no-op path. Before the
+    # fix, render_dashboard embedded corpus_sha(plans) while main() guarded
+    # with corpus_sha(plans, plans_dir), so this was reported as a rewrite.
+    assert G.main([str(plans_dir), "--out", str(out_dir)]) == 0
+    assert "unchanged index.html" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "src",
     [
@@ -371,3 +439,28 @@ def test_footer_script_path_outside_repo_hides_home(
     out = G.footer_script_path(script, repo)
     assert out.startswith("~/"), out
     assert str(home) not in out
+    assert out == "~/.claude/plugins/cache/skein/skills/plan-view/generate.py"
+
+
+def test_footer_script_path_home_root_is_tilde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "elsewhere"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert G.footer_script_path(home, repo) == "~"
+
+
+def test_footer_script_path_does_not_shorten_home_prefix_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "alice"
+    sibling = tmp_path / "alice2" / "cache" / "generate.py"
+    sibling.parent.mkdir(parents=True)
+    sibling.write_text("", encoding="utf-8")
+    repo = tmp_path / "elsewhere"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert G.footer_script_path(sibling, repo) == str(sibling.resolve())
