@@ -1,7 +1,7 @@
 ---
 name: spec-compliance
 description: "Checks whether code complies with a referenced specification section by extracting normative RFC 2119 requirements (MUST/SHOULD/MAY) and mapping each against the code as Met/Missing/Partial/N/A. Use when the user asks to 'check compliance', 'verify against spec', 'does this implement RFC X', 'conformance check', 'check against W3C', or references RFC 2119 requirements in the context of code review."
-argument-hint: "[file-path] [spec-reference] [section]"
+argument-hint: "[--delegate] [file-path] [spec-reference] [section]"
 ---
 
 # Spec Compliance Check
@@ -13,6 +13,7 @@ Supports IETF RFCs, IETF Internet-Drafts, W3C specifications, WHATWG specs, and 
 ## Usage
 
 - `/spec-compliance src/nack.py RFC 4585 Section 6.2.1` — Check code against an RFC section
+- `/spec-compliance --delegate src/nack.py RFC 4585 Section 6.2.1` — Delegate a top-level check
 - `/spec-compliance src/peer.js "W3C WebRTC 1.0" Section 4.4.1` — Check against a W3C spec
 - `/spec-compliance src/quic.rs https://www.rfc-editor.org/rfc/rfc9000#section-17.2` — Check against a direct URL
 - `/spec-compliance src/handler.go draft-ietf-httpbis-message-signatures Section 3` — Check against an IETF draft
@@ -34,7 +35,7 @@ If the code path is not specified, ask the user to provide it.
 
 ## Steps 2–5: Resolve Spec, Fetch Requirements, Analyse Code, Return Report
 
-These steps involve spec lookups and codebase inspection. Delegation is allowed only with explicit `--delegate`, `SKEIN_WORKER_CONTEXT` not exactly `1`, and `SKEIN_DELEGATION_TOKEN=authorised-worker`; otherwise run inline and fail closed for worker contexts.
+These steps involve spec lookups and codebase inspection. Delegation is allowed only when `SKEIN_WORKER_CONTEXT` is not exactly `1` and either the top-level invocation includes explicit `--delegate` or `SKEIN_DELEGATION_TOKEN` is exactly `authorised-worker`. `SKEIN_WORKER_CONTEXT=1` always forces inline execution, even when the flag or token is present; with neither trusted signal, run inline and fail closed for worker contexts.
 
 ### Pre-flight (main context)
 

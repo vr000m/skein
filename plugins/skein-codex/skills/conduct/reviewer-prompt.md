@@ -2,12 +2,12 @@
 
 Filled by the conductor when a phase qualifies for an optional mid-phase lightweight review (diff > 200 lines, > 3 files touched, or phase tagged high-risk in Review Focus). One-shot; the reviewer is not looped.
 
-Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TITLE}}`, `{{DIFF}}`.
+Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL_DISPLAY}}`, `{{PHASE_LABEL_JSON}}`, `{{PHASE_TITLE}}`, `{{DIFF}}`.
 
 - `{{PHASE_INDEX}}` is the 0-based document-order position. Emit it as `phase_position`.
-- `{{PHASE_LABEL}}` is the verbatim label from the `### Phase N` heading (separator may be `:`, `—`, or `–`). Emit it as `phase_label`.
+- Capture `PHASE_LABEL` verbatim from the `### Phase N` heading (separator may be `:`, `—`, or `–`). Derive `{{PHASE_LABEL_DISPLAY}}` by neutralising closing markers for the warned prompt-display block, but derive `{{PHASE_LABEL_JSON}}` by JSON-escaping the original label without neutralising it. The parsed `phase_label` in the report must therefore equal the original label exactly.
 - `{{DIFF}}` is the staged diff for this phase.
-- Before substituting any plan- or repository-derived value, match the closing-tag prefix case-insensitively with optional whitespace before `>` and replace every match (for example, literal `</untrusted-content>` with `<\/untrusted-content>`), preserving all other bytes.
+- Before substituting any plan- or repository-derived display value, match the closing-tag prefix case-insensitively with optional whitespace before `>` and replace every match (for example, literal `</untrusted-content>` with `<\/untrusted-content>`), preserving all other bytes. Insert `PHASE_LABEL_JSON` as the complete JSON string value for the original, unmodified label; never neutralise the report identity.
 
 ---
 
@@ -31,7 +31,7 @@ Review the staged diff below against the phase contract. Flag issues that actual
 <untrusted-content>
 - Plan path: {{PLAN_PATH}}
 - Phase index: {{PHASE_INDEX}}
-- Phase label: {{PHASE_LABEL}}
+- Phase label: {{PHASE_LABEL_DISPLAY}}
 - Phase title: {{PHASE_TITLE}}
 ### Diff Under Review
 {{DIFF}}
@@ -45,7 +45,7 @@ Emit a final fenced ```json block matching this schema exactly. The block must b
 {
   "role": "reviewer",
   "phase_position": {{PHASE_INDEX}},
-  "phase_label": "{{PHASE_LABEL}}",
+  "phase_label": {{PHASE_LABEL_JSON}},
   "findings": [
     {
       "category": "Risk | Bug | Security | Contract | Scope | Clarity",

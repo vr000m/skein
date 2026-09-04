@@ -322,6 +322,27 @@ def test_render_sha_reflects_relocated_source_and_plans_directory(tmp_path: Path
     assert G.corpus_sha(first_plans, first_dir) != G.corpus_sha(second_plans, second_dir)
 
 
+def test_dashboard_embedded_corpus_sha_matches_drift_guard_on_second_render(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The dashboard hash and guard hash must share the plans-directory input."""
+    plans_dir = tmp_path / "relocated" / "docs" / "dev_plans"
+    plans_dir.mkdir(parents=True)
+    (plans_dir / "20260521-feature-dashboard.md").write_text(
+        "# Dashboard\n\n**Status**: Shipped\n", encoding="utf-8"
+    )
+    out_dir = tmp_path / "rendered"
+
+    assert G.main([str(plans_dir), "--out", str(out_dir)]) == 0
+    capsys.readouterr()
+
+    # An unchanged second render must take the guard's no-op path. Before the
+    # fix, render_dashboard embedded corpus_sha(plans) while main() guarded
+    # with corpus_sha(plans, plans_dir), so this was reported as a rewrite.
+    assert G.main([str(plans_dir), "--out", str(out_dir)]) == 0
+    assert "unchanged index.html" in capsys.readouterr().out
+
+
 def test_render_markdown_code_fence_keeps_language_class() -> None:
     # Regression: a section-scanner fence regex once shadowed the markdown
     # renderer's _FENCE_RE (module-global name collision), making fenced code

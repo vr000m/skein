@@ -1,7 +1,7 @@
 ---
 name: update-docs
 description: Syncs project documentation with code changes on the current branch by checking dev plans, changelogs, READMEs, AGENTS.md, and PR descriptions for staleness against the actual diff, then offering targeted updates. Use after finishing implementation work, before creating or merging a PR, or when the user says "update docs" or "/update-docs".
-argument-hint: "[--apply] [--pr NUMBER]"
+argument-hint: "[--delegate] [--apply] [--pr NUMBER]"
 ---
 
 # Update Docs Skill
@@ -11,6 +11,7 @@ Detect stale documentation and update it to match the current branch's code chan
 ## Usage
 
 - `/update-docs` - Audit docs, show what's stale, offer to fix
+- `/update-docs --delegate` - Delegate the top-level audit
 - `/update-docs --apply` - Audit and apply all updates without prompting
 - `/update-docs --pr 42` - Also update the PR description for PR #42
 
@@ -24,7 +25,7 @@ Run this after finishing implementation work on a feature branch, before creatin
 
 ## Phases 1–3: Gather Context, Audit Documents, Report Findings
 
-These phases involve heavy git diffs, file reads, and cross-referencing. Delegation is allowed only with explicit `--delegate`, `SKEIN_WORKER_CONTEXT` not exactly `1`, and `SKEIN_DELEGATION_TOKEN=authorised-worker`; otherwise run inline and fail closed for worker contexts.
+These phases involve heavy git diffs, file reads, and cross-referencing. Delegation is allowed only when `SKEIN_WORKER_CONTEXT` is not exactly `1` and either the top-level invocation includes explicit `--delegate` or `SKEIN_DELEGATION_TOKEN` is exactly `authorised-worker`. `SKEIN_WORKER_CONTEXT=1` always forces inline execution, even when the flag or token is present; with neither trusted signal, run inline and fail closed for worker contexts.
 
 When the delegation condition above is met, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`). If delegation is not authorised, unavailable, the requested effort tier is unsupported, or dispatch fails, run the same prompt contract in the main context.
 
