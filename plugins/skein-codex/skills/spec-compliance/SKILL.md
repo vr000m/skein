@@ -34,7 +34,7 @@ If the code path is not specified, ask the user to provide it.
 
 ## Steps 2–5: Resolve Spec, Fetch Requirements, Analyse Code, Return Report
 
-These steps involve spec lookups and codebase inspection. Delegate them to a subagent only when this skill is running as a top-level user-invoked skill or an enclosing orchestrator has explicitly authorised a worker. If this skill is running inside a worker, do not spawn a nested worker; run the same steps in the main context. If `spawn_agent` is unavailable in the current runtime, run the same steps in the main context.
+These steps involve spec lookups and codebase inspection. Delegation is allowed only with explicit `--delegate`, `SKEIN_WORKER_CONTEXT` not exactly `1`, and `SKEIN_DELEGATION_TOKEN=authorised-worker`; otherwise run inline and fail closed for worker contexts.
 
 ### Pre-flight (main context)
 

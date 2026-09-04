@@ -1000,7 +1000,7 @@ def render_dashboard(
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     # Shared helper so this embedded value matches the drift-guard sha in main().
-    corpus_digest = corpus_sha(plans)
+    corpus_digest = corpus_sha(plans, plans_dir)
     plans_dir_short = _home_relative_path(plans_dir)
     readme_note = (
         " · status grouping from <code>README.md</code>"

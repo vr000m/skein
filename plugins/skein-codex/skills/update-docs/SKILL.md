@@ -24,7 +24,7 @@ Run this after finishing implementation work on a feature branch, before creatin
 
 ## Phases 1–3: Gather Context, Audit Documents, Report Findings
 
-These phases involve heavy git diffs, file reads, and cross-referencing. Delegate them to a subagent only when this skill is running as a top-level user-invoked skill or an enclosing orchestrator has explicitly authorised a worker. If this skill is running inside a worker, do not spawn a nested worker; run the same steps in the main context. If `spawn_agent` is unavailable in the current runtime, run the same steps in the main context.
+These phases involve heavy git diffs, file reads, and cross-referencing. Delegation is allowed only with explicit `--delegate`, `SKEIN_WORKER_CONTEXT` not exactly `1`, and `SKEIN_DELEGATION_TOKEN=authorised-worker`; otherwise run inline and fail closed for worker contexts.
 
 When the delegation condition above is met, use `spawn_agent` with the harness-selected model and request `reasoning_effort=low` when supported to run the following self-contained prompt (fill in the `{{PLACEHOLDERS}}`). If delegation is not authorised, unavailable, the requested effort tier is unsupported, or dispatch fails, run the same prompt contract in the main context.
 
