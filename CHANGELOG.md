@@ -11,6 +11,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 - Skill-shape assertions (R10-A1a/A1b) pinning the `run-gate.sh normalize → reconcile → route → status-row` recipe in both `review-gauntlet` SKILL.md mirrors to files `gate_run_bounded` actually writes.
 
 ### Changed
+- **Prompt audit across both plugin mirrors (`plugins/skein`, `plugins/skein-codex`) and the project `.claude/CLAUDE.md`.** Leaked rule IDs, phase tags, dated incident narratives, negative-rule lists, and history framing removed from skill prompts, with every operative rule, machine anchor, and mirror-parity span preserved; the Codex delegation idiom drops its "explicitly allowed" hedge; the fan-out worker prompt carries a write-containment pin in `tests/parity/test-spawn-tiers.sh`.
+- Fan-out prompt files drop the nested-spawn status apparatus: the HTML design/status comment blocks and the test-writer status notes are gone from both mirrors, the harness facts live in the Phase 2 test directive, and `scripts/check-prompt-parity.sh` excises only the two remaining harness-divergent spans (the test-framework directive and the anti-cheat rule). The Codex delegation clause in five skills is recorded as an intended Codex-only divergence.
 - Lens-state `units` wire is JSON-array-only (the CSV-string arm was dropped); `persist_path_is_inside_root` absolutises and matches physical paths.
 - `run-gate.sh`: positional envelope guard on `normalize`/`status-row`, `route` guarded by the state-path guard, `status-row` stderr passthrough.
 

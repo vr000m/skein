@@ -114,7 +114,7 @@ If `total > 0`, surface as a `done/total` chip on the card.
 
 Read from each plan's `**Component**` bold-field header (parsed by `_find_field_string`, the same helper used for `**Status**` — both the `**Component**: value` inline form and the `| **Component** | value |` field-table row are accepted). The value is case-normalised and whitespace-collapsed (`_normalise_component`); for a comma-separated list the first entry is the primary group (multi-membership deferred). A plan with no `**Component**` field falls into `(uncategorized)`.
 
-There is **no slug heuristic and no config file** — the plan markdown is the source of truth. (v1 used a koda-specific `COMPONENT_PATTERNS` slug matcher; it was removed before shipping. See `docs/dev_plans/20260521-feature-plan-view-skill.md` "Component grouping" for the per-field ownership model: `dev-plan` emits the field, `update-docs` reconciles it into `dev_plans/README.md`, plan-view renders it.)
+There is **no slug heuristic and no config file** — the plan markdown is the source of truth. See `docs/dev_plans/20260521-feature-plan-view-skill.md` "Component grouping" for the per-field ownership model: `dev-plan` emits the field, `update-docs` reconciles it into `dev_plans/README.md`, plan-view renders it.
 
 Group display order is derived from the corpus — plan count descending, alphabetical tiebreak, `(uncategorized)` last. There is no fixed component order.
 
@@ -142,7 +142,7 @@ For each generated HTML file, the generator embeds:
 <meta name="plan-view-generated-at" content="<iso8601 UTC>">
 ```
 
-The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket) and the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`). The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
+The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket), the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`), and the rendered path inputs `source_path`, `plans_dir_short`, and `script_path`. `source_path` and `plans_dir_short` use their home-shortened spellings where applicable. The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
 
 On regen, for each existing HTML output:
 1. Read its embedded `plan-view-source-sha256` (the previous render sha).

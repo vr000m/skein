@@ -3,7 +3,7 @@
 ## Git
 - **Never squash merge PRs.** Use regular merge (`gh pr merge --merge --delete-branch`) to preserve individual commit history.
 - **Always work on feature branches** — never commit directly to main. Create branch, dev plan, update docs, then PR.
-- **Cut and re-sync releases through `skein:release`.** Use `/release X.Y.Z` after the release-bearing PR is merged and local `main` is current; do not hand-run the old `git tag` + `gh release create` procedure.
+- **Cut and re-sync releases through `skein:release`.** Use `/release X.Y.Z` after the release-bearing PR is merged and local `main` is current; do not hand-run `git tag` + `gh release create`.
 
 ## Commit Hygiene
 - **Never use `git add -A`, `git add --all`, or `git add .`** — they sweep untracked scratch/dev-plan files into commits. A PreToolUse hook blocks these. Stage explicit paths.
@@ -14,8 +14,9 @@
 - Run the full test suite locally before opening or updating a PR.
 
 ## Review Workflow
+- **When a review returns findings, don't patch reactively in the same pass.** Think through each reported issue first — root cause, not just the symptom. Where the fix is more than mechanical, delegate it as a sequence of clean-context subagents — architect, implement, test, verify against the original finding — rather than writing the diff inline. Reason: fixes written inline immediately after reading a finding tend to be shallow patches on the reported symptom; splitting architect/fix/test/verify across subagents forces the root-cause step instead of skipping straight to a diff.
 - **Verify the invariant, not just the tests.** Before declaring a structural fix complete (hashing, dedup, parity, state-machine), state the invariant and show concrete evidence (assertion, diff, log) that it holds across all call sites. Tests passing ≠ fix correct.
-- **Sweep the blast radius before finalizing a fix for a reported finding.** Don't just patch the reported line — grep every other place in the touched file(s) that uses the same mechanism (command, flag, config key, shared state), and check whether the fix's mechanism conflicts with an invariant those other call sites depend on. State the old invariant and the new one side by side before committing, not just "does this fix the reported problem." Reason: two consecutive fixes in one session (2026-07-12, `skein:release` skill, PR #18) each broke a *different* code path that relied on the same mechanism the previous fix touched — a HEAD-equality tag check that broke re-sync, and a `--prune-tags` fetch fix that destroyed a documented local-only-tag recovery path — both would have been caught by this sweep before editing, not by a second adversarial-review round after the fact.
+- **Sweep the blast radius before finalizing a fix for a reported finding.** Don't just patch the reported line — grep every other place in the touched file(s) that uses the same mechanism (command, flag, config key, shared state), and check whether the fix's mechanism conflicts with an invariant those other call sites depend on (pay special attention to encode/decode, escape/unescape, serialize/deserialize pairs — the reverse side is often built the same naive way and breaks in reverse). State the old invariant and the new one side by side before committing, not just "does this fix the reported problem." A fix that satisfies the reported line can silently break a second call site on the same mechanism, and the second break surfaces only in a later review round.
 - After applying review fixes, re-verify the review-marker / plan-file hash before delegating further phases.
 - Before running adversarial / Codex / multi-lens review, confirm the diff scope: print `git diff <base>...HEAD --stat` and confirm it matches the feature branch, not the local worktree diff.
 
@@ -26,7 +27,8 @@
 - Discuss and plan before implementing non-trivial features.
 - **If an approach is failing, stop and re-plan** — don't keep pushing on a broken path.
 - Update docs (AGENTS.md, README.md, dev plan) alongside code changes, not after.
-- Run `/update-docs`, `/review`, `/security-review`, and `/deep-review` before merging.
+- When the skein plugin is available, run `skein:review-gauntlet` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run `/code-review` and `/security-review` before merging (`/deep-review` is a skein skill, so it is not available in that case either).
+- Once reviews have converged, run `/update-docs` — review-gauntlet does not do this itself, it only chains the review gates.
 - Fix all review findings before merge.
 - Update PR description to reflect final state of the work.
 - **Verify before marking done** — run tests, check logs, demonstrate correctness. Don't claim a task is complete without proof.
@@ -91,14 +93,7 @@ Raw Bash/Read/Grep output lands in the transcript verbatim and stays for the res
 
 For pure lookups, prefer `subagent_type: Explore`. For verification/yes-no checks, use `general-purpose` with `model: "haiku"` — the overhead is worth it when raw output would otherwise be large.
 
-**3. Decision rule — inline vs delegate:**
-| Situation | Choice |
-|---|---|
-| One-shot, output naturally <30 lines | Inline, narrowed |
-| Verbose by nature (build, test, deploy logs) | Inline + filter pipe, OR delegate if I only need a verdict |
-| >3 greps, multi-file audit, "where is X used" | Delegate to Explore |
-| Need yes/no, don't care about raw data | Delegate to Haiku subagent, ask for boolean |
-| Will re-reference the output later in this session | Inline (delegating discards the detail) |
+**3. Decision rule — inline vs delegate.** Run it inline when the narrowed output is small (under about 30 lines) and I will act on the detail myself. Delegate when the raw output would be large or spread across files and I only need the conclusion. Two carve-outs are not obvious from that rule: verbose-but-single-purpose output (build, test, deploy logs) stays inline behind a filter pipe unless all I want is a verdict, and anything I will re-reference later in the session stays inline, because delegating discards the detail.
 
 **4. Reuse prior reads, but verify freshness first.** If I already read a file this session, reuse that content — *unless* it may have changed since. The Edit/Write tools track state for files **I** modified, so re-reading after my own successful Edit is wasted. But the file may have changed for other reasons:
 - A subagent or parallel Agent ran and may have edited it (worktree isolation aside).
@@ -115,18 +110,18 @@ Before relying on a cached read for a non-trivial decision (an Edit, a claim abo
 Rule of thumb: **read-then-edit in the same turn is safe; read-then-edit across a subagent call, hook fire, or user turn is not.**
 
 ## Testing
-- Background the full test suite (`run_in_background` + Monitor) rather than running it in the foreground — a full run can exceed the foreground Bash timeout and abort mid-suite. Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.
+- Background the full test suite (`run_in_background` + Monitor) rather than running it in the foreground — a full run can exceed the foreground Bash timeout and abort mid-suite.
 
 ## Facts vs Inference
-- Never infer CI/approval-gate state (e.g. whether a manual-approval step still exists) from indirect signals like workflow run duration. Confirm from the primary source — `gh run view`, `gh api`, or the workflow YAML itself — before acting on it or writing it into a file. Reason: 2026-08-23 insights report, a PyPI manual-approval gate was wrongly concluded gone from run duration alone; two files had to be corrected.
+- Never infer CI/approval-gate state (e.g. whether a manual-approval step still exists) from indirect signals like workflow run duration. Confirm from the primary source — `gh run view`, `gh api`, or the workflow YAML itself — before acting on it or writing it into a file.
 
 ## Security & Diff Reviews
-- Post a scope summary before diving in, cap orienting exploration at 3 calls, then stream findings severity-first as they're found rather than batching to the end. Reason: 2026-08-23 insights report, 3 security-review sessions were interrupted mid-exploration before any finding was delivered.
+- Post a scope summary before diving in, cap orienting exploration at 3 calls, then stream findings severity-first as they're found rather than batching to the end. A review held to the end delivers nothing at all if the session is interrupted mid-exploration.
 
 ## Security
 - Before committing, check staged files for PII, private keys, secrets, and credentials. Never commit these.
 
 ## Auto-Memory Hygiene
 - When writing a memory file, include a `last_verified: YYYY-MM-DD` field in the frontmatter (today's date).
-- Before relying on a memory whose `last_verified` is **>14 days old**, re-verify its top claims against live state (file existence, git tags, branch HEADs) and either refresh `last_verified` or remove the memory. Stale memories caused real friction (e.g., trusting a 32-day-old roadmap; assuming v0.0.18 was tagged when it wasn't).
+- Before relying on a memory whose `last_verified` is **>14 days old**, re-verify its top claims against live state (file existence, git tags, branch HEADs) and either refresh `last_verified` or remove the memory.
 - Memory snapshots of repo activity (logs, architecture summaries) are frozen in time — for "current state" questions prefer `git log` / live reads over recall.

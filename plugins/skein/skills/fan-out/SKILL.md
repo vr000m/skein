@@ -14,15 +14,15 @@ Spawned agents are one level deep — they implement their assigned task and mus
 
 A fan-out-spawned Claude subprocess may invoke `/conduct` as its top-level skill — the subprocess boundary in `fan-out.sh` starts a new orchestrator tree, so `fan-out → (subprocess) → conduct → {implementer, test-writer}` stays within the per-tree one-level rule. `/conduct` itself does not fan out; keep parallelism at the outer layer.
 
-### R6: clean-context test-writer graft (live on Claude)
+### Clean-context test-writer graft
 
 The worker's Test phase (agent-prompt.md Phase 2) delegates test authoring to a **separate clean-context test-writer subagent** (`model: sonnet, effort: medium`), one in-process `Agent` level below the worker — permitted in doctrine by the "Delegation Depth" rule above; it does not start a new fan-out tier or invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
 
-**This topology is CONFIRMED LIVE on the Claude harness (gate passed 2026-07-04).** A `claude -p --dangerously-skip-permissions` worker (CLAUDECODE unset, exactly as `fan-out.sh` launches it) can spawn a nested Task subagent that honors a per-call `model` — verified end to end: the child actually ran on the requested tier (`result.modelUsage` billed `claude-haiku-4-5` tokens in the probe), not merely echoed the request. Re-confirm any time with `plugins/skein/skills/fan-out/tests/check-r6-gate.sh` (a manual, skip-permissions gate — deliberately **not** in `just parity-tests`). One caveat baked into the tier: the Task tool has **no per-call `effort` argument**, so the test-writer's `model: sonnet` is set per-call while its `effort: medium` is *inherited* from the worker's `--effort medium` session. The deterministic contract-mechanism half of R6 (a contract-derived test catches a divergent impl) is guarded in CI by `tests/run-seeded-divergence.sh`; the live topology half is this manual gate.
+The Task tool has **no per-call `effort` argument**, so the test-writer's `model: sonnet` is set per-call while its `effort: medium` is *inherited* from the worker's `--effort medium` session. The contract mechanism — a contract-derived test catching a divergent implementation — is guarded by `plugins/skein/skills/fan-out/tests/run-seeded-divergence.sh`, run on demand (no CI runs it). The nested-spawn topology itself is checked by `plugins/skein/skills/fan-out/tests/check-r6-gate.sh`, a manual skip-permissions gate deliberately kept out of `just parity-tests`; re-run it if nested spawning ever appears to stop honoring a per-call model.
 
 The anti-cheat rule below applies in full: the worker re-runs the test-writer's tests as the authoritative pass/fail and may not weaken them. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below).
 
-**Codex mirror:** the equivalent topology stays **gated** on the Codex side — its non-interactive `codex exec` nested-`spawn_agent` gate is still unconfirmed (`Operation not permitted` in probe), so the Codex worker keeps the single-context fallback. This Claude-live / Codex-gated asymmetry is a per-harness status divergence (logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`, 2026-07-04), not drift.
+**Codex mirror:** the equivalent topology stays **gated** on the Codex side — its non-interactive `codex exec` nested-`spawn_agent` gate cannot be confirmed (`Operation not permitted` in probe), so the Codex worker keeps the single-context fallback. This Claude-live / Codex-gated asymmetry is a per-harness status divergence (logged in `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`), not drift.
 
 ## Usage
 
@@ -98,7 +98,11 @@ For each approved task, run these steps using `fan-out.sh`.
 
 First, locate the skill directory and get repo info:
 ```bash
-SKILL_DIR="$(find ~/.claude/skills -maxdepth 1 -name 'fan-out' -type d | head -1)"
+# ${CLAUDE_PLUGIN_ROOT} is the plugin root supplied by the harness; fan-out.sh ships under it.
+# Every fan-out.sh call below spells the full path: shell variables do not survive
+# from one Bash tool call to the next, so a SKILL_DIR bound here would be empty
+# in the Monitoring, Cleanup and Cancel commands.
+[ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 BASE_BRANCH="$(git branch --show-current)"
 ```
@@ -107,16 +111,16 @@ Then for each task:
 
 1. **Create worktree**:
    ```bash
-   WORKTREE=$("${SKILL_DIR}/fan-out.sh" setup "$BASE_BRANCH" "<task-id>-<task-slug>" "$REPO_ROOT")
+   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" "<task-id>-<task-slug>" "$REPO_ROOT")
    ```
    Always prefix the slug with the task ID (e.g., `"1-add-api-endpoint"`, `"2-add-migration"`) to prevent collisions when different tasks slugify to the same string.
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
 
-2. **Build agent prompt**: Read the template from `agent-prompt.md` in this skill directory. Replace placeholders:
+2. **Build agent prompt**: Read the template from `${CLAUDE_PLUGIN_ROOT}/skills/fan-out/agent-prompt.md`. Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
-   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (R6 contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
+   - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (the slice-contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.
    - `{{WORKTREE_PATH}}` — Absolute path to worktree
    - `{{BRANCH_NAME}}` — Git branch for this agent
    - `{{BASE_BRANCH}}` — The base branch
@@ -134,7 +138,7 @@ Then for each task:
 
 3. **Spawn agent**:
    ```bash
-   PID=$("${SKILL_DIR}/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
+   PID=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" spawn "$WORKTREE" "$PROMPT_FILE" "$WORKTREE/fan-out.log" --model sonnet --effort medium)
    ```
 
 4. **Record state**: After spawning all agents, write `.fan-out-state.json` in the repo root:
@@ -178,7 +182,7 @@ Then for each task:
 
 Run:
 ```bash
-"${SKILL_DIR}/fan-out.sh" status .fan-out-state.json
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" status .fan-out-state.json
 ```
 
 Also check each worktree for `.fan-out-result.md` to see if agents wrote their summaries.
@@ -250,7 +254,7 @@ If `review-gauntlet` applies fixes, it lands them as one or more commits on the 
 
 Run:
 ```bash
-"${SKILL_DIR}/fan-out.sh" cleanup .fan-out-state.json
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" cleanup .fan-out-state.json
 ```
 
 This removes worktrees, deletes merged branches, and removes the state file.
@@ -265,7 +269,7 @@ tail -100 <worktree>/fan-out.log
 ### Canceling (on `/fan-out cancel [N]`)
 
 ```bash
-"${SKILL_DIR}/fan-out.sh" cancel .fan-out-state.json [N]
+"${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" cancel .fan-out-state.json [N]
 ```
 
 ## Defaults

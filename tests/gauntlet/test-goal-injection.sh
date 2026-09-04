@@ -170,10 +170,10 @@ assert_grep_i "$TEST_WRITER_PROMPT" 'byte-identical' \
 # Guard the actual byte-identity invariant, not just its documentation: the
 # {{PHASE_GOAL}} placeholder MUST be glued directly to the preceding sentence
 # with no leading whitespace, else empty substitution leaves a trailing space.
-assert_grep "$IMPLEMENTER_PROMPT" 'restate\.\{\{PHASE_GOAL\}\}' \
+assert_grep "$IMPLEMENTER_PROMPT" 'authoritative\.\{\{PHASE_GOAL\}\}' \
 	"implementer-prompt.md glues {{PHASE_GOAL}} to the preceding sentence with no leading space (byte-identity invariant on empty goal)"
 
-assert_grep "$TEST_WRITER_PROMPT" 'means\.\{\{PHASE_GOAL\}\}' \
+assert_grep "$TEST_WRITER_PROMPT" 'authoritative\.\{\{PHASE_GOAL\}\}' \
 	"test-writer-prompt.md glues {{PHASE_GOAL}} to the preceding sentence with no leading space (byte-identity invariant on empty goal)"
 
 # --- Criterion 3: SKILL.md parses **Goal:** and substitutes at every ---

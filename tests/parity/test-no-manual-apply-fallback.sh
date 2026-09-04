@@ -9,7 +9,9 @@
 #      at the anchored path (the runtime hard-fail the prose mandates).
 #
 # Claude mirrors (plugins/skein/skills/) anchor on ${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/
-# because the Claude Code plugin runtime exports CLAUDE_PLUGIN_ROOT at load.
+# because the Claude Code harness substitutes the literal ${CLAUDE_PLUGIN_ROOT} token at
+# prompt render (it is not exported to the shell; see AGENTS.md "Path-resolution idiom
+# (harness-divergent)").
 # Codex mirrors (plugins/skein-codex/skills/) anchor on "$SKILL_DIR"/scripts/
 # because Codex env-exports SKILL_DIR to the loaded skill directory.
 

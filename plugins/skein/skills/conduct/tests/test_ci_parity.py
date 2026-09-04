@@ -1497,7 +1497,7 @@ def test_ci_parity_resume_different_plan_id_unaffected(repo, tmp_path_factory):
 def test_ci_parity_prompt_placeholder_rendering(repo):
     """A fully-populated CIParitySpawnRequest can substitute every placeholder.
 
-    The CI-parity prompt template lives at ``.claude/skills/conduct/ci-parity-prompt.md``.
+    The CI-parity prompt template lives at ``plugins/skein/skills/conduct/ci-parity-prompt.md``.
     Substituting each ``{{NAME}}`` with the matching request field must remove
     every ``{{`` substring from the rendered output.
     """

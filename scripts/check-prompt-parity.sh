@@ -67,13 +67,13 @@ for skill in "${managed_skills[@]}"; do
 	fi
 
 	if [[ -f "$claude_rubric" && ! -f "$codex_rubric" ]]; then
-		echo "drift: $skill has .claude rubric but no .codex rubric"
+		echo "drift: $skill has a Claude rubric but no Codex rubric"
 		PARITY_DIFF=1
 		continue
 	fi
 
 	if [[ ! -f "$claude_rubric" && -f "$codex_rubric" ]]; then
-		echo "drift: $skill has .codex rubric but no .claude rubric"
+		echo "drift: $skill has a Codex rubric but no Claude rubric"
 		PARITY_DIFF=1
 		continue
 	fi
@@ -83,7 +83,7 @@ for skill in "${managed_skills[@]}"; do
 	else
 		diff_rc=$?
 		if [[ $diff_rc -eq 1 ]]; then
-			echo "drift: $skill rubric.md differs between .claude and .codex"
+			echo "drift: $skill rubric.md differs between the Claude and Codex mirrors"
 		else
 			echo "error: diff failed for $skill rubric.md (exit $diff_rc)"
 		fi
@@ -142,45 +142,35 @@ is_expected_drift() {
 	return 1
 }
 
-# fan-out R6 idiom-divergence normalizer.
+# fan-out idiom-divergence normalizer.
 #
-# The R6 clean-context test-writer graft (see
-# docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md, R4) makes
 # fan-out/agent-prompt.md and fan-out/test-writer-prompt.md diverge between the
-# .claude and .codex mirrors ONLY inside four harness-divergent spans:
-#   - the R6 design/status block (Claude `model:`/`effort:` + `Agent`-in-
-#     `claude -p` vs Codex `reasoning_effort`/`fork_context=false` + `spawn_agent`
-#     in a `codex exec` worker), carried as an HTML comment in agent-prompt.md and
-#     as a "Status note (read first)" paragraph in test-writer-prompt.md;
+# Claude and Codex mirrors ONLY inside two harness-divergent spans:
 #   - the Phase-2 "If your task has an applicable test framework" directive, which
-#     now diverges by CONFIRMED-LIVE status too, not just idiom: the Claude gate
-#     passed (2026-07-04, see fan-out/tests/check-r6-gate.sh) so the Claude worker
-#     spawns a separate clean-context test-writer, while the Codex worker keeps the
-#     single-context fallback (its gate is still unconfirmed); and
+#     is single-context test authoring on the Codex worker (a non-interactive
+#     `codex exec` worker has not been shown to spawn a nested `spawn_agent`
+#     test-writer) versus a spawned clean-context test-writer subagent on the
+#     Claude worker; and
 #   - the anti-cheat-rule paragraph (same rule, harness-tuned wording).
-# This divergence is sanctioned per R4 / CODEX_MIRROR_BACKLOG.md:15 (idiom, not
+# This divergence is sanctioned per CODEX_MIRROR_BACKLOG.md:15 (idiom, not
 # drift). This normalizer excises exactly those spans between stable structural
 # anchors and byte-compares the entire remainder, so any real (non-idiom) drift
 # elsewhere in the files is still caught.
 #
 # The excised spans are NOT left unguarded: tests/parity/test-spawn-tiers.sh
-# guards the test-writer *tier* annotation, the R6 anti-cheat "contract wins"
-# rule, and the presence of the excision anchors themselves (`### Phase 5`,
-# `Filled by the fan-out worker`) in BOTH mirrors — so a dropped anchor or a
-# weakened anti-cheat rule fails the census even though byte-parity here would
-# still pass. Deeper R4 semantic alignment of the span wording is the plan's
-# Phase 6 manual enumeration.
+# guards the test-writer *tier* annotation, the anti-cheat "contract wins" rule,
+# and the presence of the excision anchors themselves (`### Phase 5`, `Filled by
+# the fan-out worker`) in BOTH mirrors — so a dropped anchor or a weakened
+# anti-cheat rule fails the census even though byte-parity here would still pass.
 normalize_fanout_prompt() {
 	sed \
 		-e 's/spawned Claude agent/spawned Codex agent/g' \
 		-e 's/{{CLAUDE_MD_CONTENT}}/{{AGENTS_MD_CONTENT}}/g' \
 		"$1" |
-		perl -0pe 's/^<!--\n(?:R6 status:|INTENDED DESIGN \(currently GATED, not active\):).*?^-->\n//msg; s/Filled by the fan-out worker before spawning the test-writer \(once the nested-spawn\ngate is confirmed\)\. The filled prompt is passed as the full subagent input — the\nsubagent has no prior conversation history and never receives the worker'\''s diff\./Filled by the fan-out worker before spawning the test-writer. The filled prompt is\npassed as the full subagent input — the subagent has no prior conversation history\nand never receives the worker'\''s diff./msg' |
 		sed \
 			-e '/^If your task has an applicable test framework/,/^If no relevant test framework exists/{/^If no relevant test framework exists/!d;}' \
 			-e '/^\*\*Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
-			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}' \
-			-e '/\*\*Status note (read first):\*\*/,/^Filled by the fan-out worker/{/^Filled by the fan-out worker/!d;}'
+			-e '/^Anti-cheat rule/,/^### Phase 5/{/^### Phase 5/!d;}'
 }
 
 prompt_files_match() {
@@ -236,14 +226,14 @@ for skill in "${managed_skills[@]}"; do
 		drift_reason=""
 		if [[ -f "$claude_pf" && ! -f "$codex_pf" ]]; then
 			drifted=1
-			drift_reason="$skill/$pf present on .claude, missing on .codex"
+			drift_reason="$skill/$pf present on the Claude mirror, missing on the Codex mirror"
 		elif [[ ! -f "$claude_pf" && -f "$codex_pf" ]]; then
 			drifted=1
-			drift_reason="$skill/$pf present on .codex, missing on .claude"
+			drift_reason="$skill/$pf present on the Codex mirror, missing on the Claude mirror"
 		elif [[ -f "$claude_pf" && -f "$codex_pf" ]]; then
 			if ! prompt_files_match "$skill" "$pf" "$claude_pf" "$codex_pf"; then
 				drifted=1
-				drift_reason="$skill/$pf differs between .claude and .codex"
+				drift_reason="$skill/$pf differs between the Claude and Codex mirrors"
 			fi
 		fi
 		if [[ $drifted -eq 1 ]]; then
@@ -386,7 +376,7 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 	release_claude="$ROOT_DIR/plugins/skein/skills/release/SKILL.md"
 	release_codex="$ROOT_DIR/plugins/skein-codex/skills/release/SKILL.md"
 	if [[ ! -f "$release_claude" || ! -f "$release_codex" ]]; then
-		echo "drift: release SKILL.md missing from .claude or .codex mirror"
+		echo "drift: release SKILL.md missing from Claude or Codex mirror"
 		PARITY_DIFF=1
 	else
 		claude_disable_model_frontmatter_count="$(count_release_frontmatter_line \
@@ -450,7 +440,7 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 			else
 				diff_rc=$?
 				if [[ $diff_rc -eq 1 ]]; then
-					echo "drift: release SKILL.md normalized workflow differs between .claude and .codex"
+					echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
 				else
 					echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
 				fi
@@ -580,7 +570,7 @@ cr_claude="$ROOT_DIR/plugins/skein/skills/content-review/references"
 cr_codex="$ROOT_DIR/plugins/skein-codex/skills/content-review/references"
 if [[ -d "$cr_claude" || -d "$cr_codex" ]]; then
 	if ! diff -r "$cr_claude" "$cr_codex" >/dev/null 2>&1; then
-		echo "drift: content-review/references differs between .claude and .codex mirrors"
+		echo "drift: content-review/references differs between Claude and Codex mirrors"
 		diff -r "$cr_claude" "$cr_codex" || true
 		PARITY_DIFF=1
 	fi

@@ -82,6 +82,6 @@ Gradeable criteria for Step 6.4's Clarify sub-step and its delegation to `skein:
 
 ## Review Marker
 
-- Marker write/validate logic is unchanged: hash-above-marker, idempotent rewrite, placeholder validation
+- Marker write/validate logic holds: hash-above-marker, idempotent rewrite, placeholder validation
 - Marker is written only after the merged report is presented and the run is otherwise clean
 - A plan whose hash does not match the marker forces re-review before `/conduct` accepts it

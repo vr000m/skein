@@ -19,12 +19,13 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-09-03 | docs | prompt-audit-findings | meta | — | none yet | [plan](20260903-docs-prompt-audit-findings.md) |
 
 ## Shipped
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-03 | docs | prompt-audit-claude | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-claude.md) |
+| 2026-09-03 | docs | prompt-audit-codex | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-codex.md) |
 | 2026-07-12 | feature | release-skill | meta | [#18](https://github.com/vr000m/skein/pull/18) | feature/skein-release-skill | [plan](20260712-feature-release-skill.md) |
 | 2026-07-12 | feature | deep-review-review-plan-compact-output | review-skills | [#19](https://github.com/vr000m/skein/pull/19) | feature/deep-review-compact-output | [plan](20260712-feature-deep-review-compact-output.md) |
 | 2026-07-11 | chore | skill-invocation-mode-audit | meta | [#16](https://github.com/vr000m/skein/pull/16) | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |

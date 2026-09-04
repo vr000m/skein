@@ -12,7 +12,7 @@ When a Claude skill change has no Codex equivalent yet, append an entry with:
 - Whether the required result is byte-identical parity or Codex-native adaptation.
 - Gating checks the Codex maintainer must clear.
 
-Do not list ordinary harness-specific wording as drift. `SKILL.md` files may legitimately differ where Claude uses Agent/subagent wording and Codex uses `spawn_agent`, Codex model names, or Codex state-file names. Rubrics that declare parity must remain byte-identical.
+Do not list ordinary harness-specific wording as drift. `SKILL.md` files may legitimately differ where Claude uses Agent/subagent wording and Codex uses `spawn_agent`, Codex model names, or Codex state-file names. Rubrics that declare parity must remain byte-identical. Sanctioned Codex-only divergence: the delegation clause in content-draft, content-review, rfc-finder, spec-compliance and update-docs (delegate only at top level or under explicit orchestrator authorisation, never spawn a nested worker, fall back to the main context when `spawn_agent` is unavailable) has no Claude twin by decision; the Claude harness enforces one-level delegation structurally. The `<untrusted-content>` wrapping of supplied inputs in those five prompts is shared by both mirrors and must stay byte-identical.
 
 ## Current State
 
@@ -91,8 +91,8 @@ fallback if the gate fails").
   implementations (proving a contract test fails on a divergent impl and passes on
   a conformant one), exit 0 confirmed locally.
 - What is deferred: the separate-subagent test-writer topology itself (documented
-  as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft" section and
-  `agent-prompt.md` Phase 2's inline comment) — reactivate it once a `claude -p`
+  as gated in the Claude `fan-out/SKILL.md` "Clean-context test-writer graft" section (the Codex mirror titles it "... (gated on this harness)") and
+  `agent-prompt.md` Phase 2's test directive) — reactivate it once a `claude -p`
   nested-`Agent` spawn honoring its tier is confirmed in this environment.
 - Required result: **logged limitation, not mirrored end-to-end topology**, per the
   plan's fallback clause. No Codex-side action is owed by this entry; Phase 5
@@ -128,8 +128,8 @@ failed before nested tools could be exercised:
   the R6 contract-divergence mechanism directly against two fixture implementations
   (proving a contract test fails on a divergent impl and passes on a conformant one).
 - What is deferred: the separate-subagent Codex test-writer topology itself
-  (documented as gated in `fan-out/SKILL.md` "R6: clean-context test-writer graft"
-  section and `agent-prompt.md` Phase 2's inline comment) — reactivate it once a
+  (documented as gated in `fan-out/SKILL.md` "Clean-context test-writer graft (gated on this harness)"
+  section and `agent-prompt.md` Phase 2's test directive) — reactivate it once a
   non-interactive Codex worker can initialize delegation and spawn a nested
   `spawn_agent` worker honoring `fork_context=false` and `reasoning_effort=medium`.
 - Required result: **logged limitation, not mirrored end-to-end topology**, per the

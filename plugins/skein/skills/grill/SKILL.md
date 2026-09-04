@@ -8,8 +8,6 @@ argument-hint: "[path/to/plan.md] | [freeform description]"
 
 Grill a plan, design, or freeform idea one question at a time. Every candidate question is first sorted into a **fact** (verifiable from the codebase — look it up, never ask) or a **decision** (a genuine judgment call with no single correct answer — must go to the human). For each decision, propose exactly one recommended resolution and block until the user answers before moving to the next one. No batching, no undifferentiated option lists.
 
-This skill is inspired by mattpocock/skills' `grilling` skill, as described in conversation — its upstream source is not present in this codebase and has not been verified directly; this is a freshly authored implementation of that idea, not a port.
-
 This document has two independently-anchored sections:
 
 - **§ Interview Mechanics** — the reusable interview protocol (fact/decision split, one recommendation per decision, strict serial pacing, three-way accept/override/waive outcome). `/review-plan` Step 6.4 references this section inline, in-session, for the findings it classifies as grill-eligible — it does not activate this skill or spawn a subagent to do so.
@@ -41,9 +39,7 @@ Candidates handed over by a caller that has already pre-classified them as decis
 For each decision, in a fixed, stable order (the order the candidates were enumerated in, or the order Step 6.4 hands them over):
 
 1. Propose **exactly one** recommended resolution — not a menu of options. State the recommendation and a one-sentence rationale grounded in what was actually found in the codebase or the target text.
-2. Present a fixed three-way choice for that recommendation:
-   - **Claude**: `AskUserQuestion` with exactly three options — **accept**, **propose an alternative**, **waive**.
-   - **Codex**: an equivalent plain-text three-way prompt (no `AskUserQuestion`-equivalent widget exists on Codex), per the harness-divergence precedent already established for `/review-plan`'s Clarify sub-step (Standard findings path — the fixed-option-picker vs. plain-text-prompt divergence documented there).
+2. Present a fixed three-way choice for that recommendation: `AskUserQuestion` with exactly three options — **accept**, **propose an alternative**, **waive**.
 3. If the user picks **propose an alternative**, follow up with a free-text prompt to capture the override — mirroring Clarify's existing free-text path for findings with no clear fixed options.
 4. Record the outcome for that decision as one of: `accept` (the recommendation as proposed), `override` (the user's free-text alternative), or `waive`.
 5. **Block until this decision is answered before presenting the next one.** Do not batch multiple decisions into a single prompt, and do not advance past an unanswered decision.
@@ -72,7 +68,7 @@ This section runs only for a standalone `/grill` invocation. `/review-plan` Step
 
 If the target is a `docs/dev_plans/*.md` file, check whether `/review-plan` has already written its review marker (`<!-- reviewed: YYYY-MM-DD @ <hash> -->`, per `plugins/skein/skills/review-plan/SKILL.md`'s marker format) above the `## Progress` divider.
 
-- **Marker present**: refuse to run the interview by default. Tell the user the plan has already been reviewed and accepted, and that grilling it now would silently reopen a contract that's already been signed off. Require an explicit acknowledgement from the user (e.g. "yes, re-open it anyway") before proceeding. This is a deliberate design choice for grill itself, not a mirror of any existing `/review-plan` refusal behavior — below-marker workspace edits (`## Progress`, `## Findings`) are always fine and never trigger this check; it is only above-marker contract content this guards.
+- **Marker present**: refuse to run the interview by default. Tell the user the plan has already been reviewed and accepted, and that grilling it now would silently reopen a contract that's already been signed off. Require an explicit acknowledgement from the user (e.g. "yes, re-open it anyway") before proceeding. This is a deliberate design choice for grill itself, not a mirror of any existing `/review-plan` refusal behavior — below-marker workspace edits (`## Progress`, `## Findings`) are always fine and never trigger this check; only above-marker contract content is guarded.
 - **No marker yet** (or a template placeholder divider with no marker): proceed directly to § Interview Mechanics, Step 1, using the plan's candidate list (Requirements, Technical Specifications, Architecture Decisions, or — for a fresh plan with no prior findings — topics the user names or that stand out on a read-through).
 
 ### Step 3: Run the interview
