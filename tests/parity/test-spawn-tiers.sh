@@ -202,8 +202,8 @@ echo
 # These counts intentionally use Codex's prose-hint idiom (`reasoning_effort=X`)
 # rather than Claude `model:`/`effort:` fields. They cover all Codex SKILL.md
 # spawns/lenses that declare a tier in the mirror, including the fan-out
-# test-writer's documented tier for the clean-context spawn topology it would
-# use once a nested `spawn_agent` test-writer is shown to work.
+# dormant test-writer template's documented tier for the gated clean-context
+# contract; the active worker test phase is single-context.
 CODEX_HIGH_RE='reasoning_effort=high'
 CODEX_MEDIUM_RE='reasoning_effort=medium'
 CODEX_LOW_RE='reasoning_effort=low'
@@ -226,8 +226,8 @@ assert_count "$CODEX_SKILLS_DIR/dev-plan/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
 	"codex dev-plan reasoning_effort=medium Explore count"
 assert_count "$CODEX_SKILLS_DIR/plan-view/SKILL.md" "$CODEX_LOW_RE" 2 \
 	"codex plan-view reasoning_effort=low rich-render spawn count"
-assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 2 \
-	"codex fan-out reasoning_effort=medium test-writer topology count"
+assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
+	"codex fan-out reasoning_effort=medium dormant test-writer template count"
 assert_count "$CODEX_SKILLS_DIR/review-gauntlet/SKILL.md" "$CODEX_MEDIUM_RE" 1 \
 	"codex review-gauntlet reasoning_effort=medium fixer lifecycle count"
 assert_count "$CODEX_SKILLS_DIR/content-draft/SKILL.md" "$CODEX_LOW_RE" 1 \
@@ -241,8 +241,8 @@ assert_count "$CODEX_SKILLS_DIR/rfc-finder/SKILL.md" "$CODEX_LOW_RE" 1 \
 
 assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_HIGH_RE" 12 \
 	"codex total reasoning_effort=high occurrences across SKILL.md"
-assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 9 \
-	"codex total reasoning_effort=medium occurrences across SKILL.md"
+assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_MEDIUM_RE" 8 \
+	"codex total reasoning_effort=medium occurrences across SKILL.md (active single-context worker plus dormant templates)"
 assert_count_total "$CODEX_SKILLS_DIR/*/SKILL.md" "$CODEX_LOW_RE" 8 \
 	"codex total reasoning_effort=low occurrences across SKILL.md"
 
@@ -270,9 +270,9 @@ assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'Mapping normative s
 assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'Code review is judgment work, so the advisory reviewer gets the review tier' \
 	"codex conduct reviewer rationale"
 
-# --- (9) Codex fan-out test-writer tier and dispatch-idiom guards ---
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'reasoning_effort=medium.*fork_context=false' \
-	"codex fan-out documented test-writer spawn carries medium effort and fork_context=false"
+# --- (9) Codex fan-out dormant test-writer template and dispatch-idiom guards ---
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'fork_context=false.*reasoning_effort=medium' \
+	"codex fan-out dormant test-writer template documents fork_context=false and medium effort"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'Codex does not pin model names' \
 	"codex fan-out documents no default model pin"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
