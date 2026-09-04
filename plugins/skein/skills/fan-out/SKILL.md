@@ -115,7 +115,7 @@ Then for each task:
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
 
-2. **Build agent prompt**: Read the template from `agent-prompt.md` in this skill directory. Replace placeholders:
+2. **Build agent prompt**: Read the template from `$SKILL_DIR/agent-prompt.md` (the anchor bound above). Replace placeholders:
    - `{{TASK_DESCRIPTION}}` — Full task text from the plan
    - `{{TASK_NAME}}` — Short task name
    - `{{TECHNICAL_SPECIFICATIONS}}` — Files to modify, architecture decisions from plan, **plus the Integration Seams rows where this task is the Writer** (the slice-contract source). If the plan's Integration Seams table has a `Writer` column, extract every row where `Writer == <this task's id/slug>` — import paths, symbol names, function signatures verbatim — and append them under a `### Integration Seams (you are Writer)` heading. This is the slice contract the worker's Test phase (agent-prompt.md Phase 2) authors tests against; a seam row that under-specifies a signature yields noisy tests, not signal, so prefer the plan's most concrete wording. If the table has no `Writer` column or no row names this task, state that explicitly (`No seam rows list this task as Writer`) rather than omitting the section — the worker's Phase 2 escape hatch depends on knowing the contract is genuinely empty versus missing.

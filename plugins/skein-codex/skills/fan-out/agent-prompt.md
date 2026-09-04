@@ -26,7 +26,7 @@ You are working in: {{WORKTREE_PATH}}
 Your branch: {{BRANCH_NAME}}
 Base branch: {{BASE_BRANCH}}
 
-Modify only files relevant to your task; do not touch files outside your scope. Other agents are working in parallel worktrees, and every branch merges back into the same base.
+IMPORTANT: Modify only files relevant to your task; do not touch files outside your scope. Other agents are working in parallel worktrees, and every branch merges back into the same base.
 
 ## Project Conventions
 
