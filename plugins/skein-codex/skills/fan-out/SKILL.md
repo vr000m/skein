@@ -14,11 +14,23 @@ Spawned agents are one level deep — they implement their assigned task and mus
 
 A fan-out-spawned Codex session may invoke `/conduct` as its top-level skill — the process/worktree boundary starts a new orchestrator tree, so `fan-out → conduct → {implementer, test-writer}` stays within the per-tree one-level rule. `/conduct` itself does not fan out; keep parallelism at the outer layer.
 
-### Clean-context test-writer graft (gated on this harness)
+### Current worker test topology
 
-The worker's Test phase (agent-prompt.md Phase 2) is designed to delegate test authoring to a **separate clean-context test-writer subagent**: inherit the harness-selected model, request `reasoning_effort=medium` when supported, and spawn with `fork_context=false`. This is one in-process `spawn_agent` level below the worker, does not start a new fan-out tier, and does not invoke full `/conduct`. The test-writer receives only the slice contract (`{{TASK_DESCRIPTION}}` + the Writer-designated Integration Seams rows, never the implementer's diff) and is conditional on the slice having an applicable test framework.
+The worker's Test phase (agent-prompt.md Phase 2) is currently **single-context**:
+when a slice has an applicable test framework, the worker writes and runs its own
+tests against the slice contract (`{{TASK_DESCRIPTION}}` plus the Writer-designated
+Integration Seams rows). The worker must not spawn a nested test-writer subagent.
+The anti-cheat rule below applies in full.
 
-This topology is gated: a non-interactive `codex exec` worker has not been shown to spawn a nested `spawn_agent` test-writer at `reasoning_effort=medium`, so the worker keeps a single-context Test phase until that gate is confirmed — it writes and runs its own tests, but tests to the same slice contract — and the anti-cheat rule below applies in full. The gate is checked by `plugins/skein-codex/skills/fan-out/tests/check-r6-gate-codex.sh`, a manual probe deliberately kept out of `just parity-tests`; re-run it if nested spawning is ever expected to work. Full `/conduct` per slice remains available opt-in for genuinely multi-phase slices (see below), regardless of which Test-phase mode is active.
+`test-writer-prompt.md` is **dormant/gated documentation**, not part of the active
+worker topology. It records the possible future clean-context test-writer contract
+(`fork_context=false`, with `reasoning_effort=medium` when supported) for use only
+after the nested-spawn gate is confirmed. The gate is checked by
+`plugins/skein-codex/skills/fan-out/tests/check-r6-gate-codex.sh`, a manual probe
+deliberately kept out of `just parity-tests`; re-run it if nested spawning is ever
+expected to work. Full `/conduct` per slice remains available opt-in for genuinely
+multi-phase slices: that process/worktree boundary starts a new orchestrator tree,
+and `/conduct` retains its own implementer/test-writer topology.
 
 ## Usage
 
@@ -239,7 +251,7 @@ After post-merge integration-seam verification finishes on option 1, read the pl
 - **`quick` -> invoke `review-gauntlet` scoped to Codex gate 1 only**, a single native code-review pass with no convergence loop.
 - **`full` -> invoke `review-gauntlet` through the Codex gate matrix**, with native supported gates run and unsupported/gated slots reported explicitly as `deferred` or `skipped`; do not claim Claude command parity for missing `/security-review` or `/codex:adversarial-review` commands.
 
-**Dispatch:** `review-gauntlet` is a conductor in its own right. Fan-out invokes it directly as a top-level skill against the merged feature branch, not as a fan-out worker and not as another fan-out tier. This does not activate the gated nested test-writer topology; that topology remains gated exactly as documented above. Await the gauntlet terminal report before continuing to Phase 7.
+**Dispatch:** `review-gauntlet` is a conductor in its own right. Fan-out invokes it directly as a top-level skill against the merged feature branch, not as a fan-out worker and not as another fan-out tier. This does not change the active single-context worker Test phase or activate the dormant/gated `test-writer-prompt.md` contract documented above. Await the gauntlet terminal report before continuing to Phase 7.
 
 If `review-gauntlet` applies fixes, it lands them as one or more commits on the merged branch over the course of its loop — never a follow-up PR. If it hands back a non-clean terminal state (`success_with_quarantine`, loop cap, non-convergence/design-conflict halt), report that to the user instead of proceeding silently to cleanup.
 
