@@ -372,6 +372,18 @@ def test_footer_script_path_outside_repo_hides_home(
     out = G.footer_script_path(script, repo)
     assert out.startswith("~/"), out
     assert str(home) not in out
+    assert out == "~/.claude/plugins/cache/skein/skills/plan-view/generate.py"
+
+
+def test_footer_script_path_home_root_is_tilde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    repo = tmp_path / "elsewhere"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert G.footer_script_path(home, repo) == "~"
 
 
 def test_footer_script_path_does_not_shorten_home_prefix_sibling(

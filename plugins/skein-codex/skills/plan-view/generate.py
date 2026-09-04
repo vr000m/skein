@@ -1621,7 +1621,7 @@ def footer_script_path(script: Path, repo_root: Path) -> str:
         return str(resolved.relative_to(repo_root))
     except ValueError:
         try:
-            return "~" + str(resolved.relative_to(Path.home()))
+            return str(Path("~") / resolved.relative_to(Path.home().resolve()))
         except ValueError:
             return str(resolved)
 
