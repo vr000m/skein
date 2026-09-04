@@ -26,6 +26,7 @@ from typing import Iterable
 # Constants — status lexicon + component heuristic + edge patterns
 # ---------------------------------------------------------------------------
 
+
 def _home_relative_path(path: Path) -> str:
     """Return the same stable home-shortened spelling used in rendered HTML."""
     text = str(path)
@@ -34,6 +35,7 @@ def _home_relative_path(path: Path) -> str:
         return "~"
     prefix = home + "/"
     return "~" + text[len(home) :] if text.startswith(prefix) else text
+
 
 # Status lexicon. Order matters — first match wins.
 # (regex, bucket, chip-colour-class)
@@ -226,14 +228,12 @@ def corpus_sha(plans: dict[str, "Plan"], plans_dir: str | Path = "") -> str:
     refuse*. Over-writing harmless gitignored output beats false refusals.
     """
     path_parts = [
-        f"|plans_dir={_home_relative_path(Path(plans_dir))}"
-        if plans_dir
-        else ""
+        f"|plans_dir={_home_relative_path(Path(plans_dir))}" if plans_dir else ""
     ]
     return hashlib.sha256(
-        ("".join(sorted(p.render_sha for p in plans.values())) + "".join(path_parts)).encode(
-            "utf-8"
-        )
+        (
+            "".join(sorted(p.render_sha for p in plans.values())) + "".join(path_parts)
+        ).encode("utf-8")
     ).hexdigest()
 
 

@@ -304,7 +304,9 @@ def test_render_sha_reflects_rendered_script_path(tmp_path: Path) -> None:
     assert before != after, "render_sha must change with the rendered script path"
 
 
-def test_render_sha_reflects_relocated_source_and_plans_directory(tmp_path: Path) -> None:
+def test_render_sha_reflects_relocated_source_and_plans_directory(
+    tmp_path: Path,
+) -> None:
     first_dir = tmp_path / "first" / "docs" / "dev_plans"
     second_dir = tmp_path / "second" / "docs" / "dev_plans"
     first_dir.mkdir(parents=True)
@@ -319,7 +321,9 @@ def test_render_sha_reflects_relocated_source_and_plans_directory(tmp_path: Path
     G.compute_render_shas(first_plans, plans_dir_short="~/first/docs/dev_plans")
     G.compute_render_shas(second_plans, plans_dir_short="~/second/docs/dev_plans")
     assert first.render_sha != second.render_sha
-    assert G.corpus_sha(first_plans, first_dir) != G.corpus_sha(second_plans, second_dir)
+    assert G.corpus_sha(first_plans, first_dir) != G.corpus_sha(
+        second_plans, second_dir
+    )
 
 
 def test_dashboard_embedded_corpus_sha_matches_drift_guard_on_second_render(
