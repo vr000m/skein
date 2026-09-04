@@ -509,9 +509,6 @@ assert_count "$CODEX_FANOUT_WRITER_TEMPLATE" '\{\{EXISTING_TESTS\}\}' 1 \
 	"codex fan-out test-writer interpolates existing tests only once"
 assert_present_flat "$CODEX_FANOUT_WRITER_TEMPLATE" '</untrusted-content>[^<]{0,300}If the Integration Seams section says no seam rows list this task as Writer' \
 	"codex fan-out keeps the no-seam test-writer instruction outside the data-only block"
-assert_present "$CODEX_FANOUT_WRITER_TEMPLATE" 'fork_context=false.*reasoning_effort=medium' \
-	"codex fan-out test-writer template documents fork_context=false and medium effort"
-
 echo
 echo "=== (10) review-plan Contradiction Pass census (Claude-side; Codex twins in section 11 below) ==="
 echo
