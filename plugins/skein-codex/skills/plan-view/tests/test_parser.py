@@ -93,6 +93,22 @@ def test_render_plan_page_escapes_component(tmp_path: Path) -> None:
     assert "&lt;img src=x onerror=alert(1)&gt;" in html
 
 
+def test_render_plan_page_escapes_source_path(tmp_path: Path) -> None:
+    p = tmp_path / '20260101-feature-"<img>.md'
+    p.write_text("# A\n\n**Status**: Planned\n", encoding="utf-8")
+    plan = G.parse_plan(p)
+    html = G.render_plan_page(
+        plan,
+        {plan.slug: plan},
+        git_head_sha="",
+        template='<meta content="{{SOURCE_PATH}}">',
+        script_path="plugins/skein-codex/skills/plan-view/generate.py",
+        plans_dir_short="docs/dev_plans",
+    )
+    assert "<img" not in html
+    assert "&quot;&lt;img&gt;" in html
+
+
 def _write(tmp_path: Path, name: str, body: str) -> Path:
     p = tmp_path / name
     p.write_text(body, encoding="utf-8")

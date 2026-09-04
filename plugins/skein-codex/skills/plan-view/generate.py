@@ -1120,7 +1120,7 @@ def render_plan_page(
     substitutions = {
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
         "{{SOURCE_SHA_SHORT}}": (plan.render_sha or plan.sha256)[:12],
-        "{{SOURCE_PATH}}": source_path_short,
+        "{{SOURCE_PATH}}": _esc(source_path_short),
         "{{RICH_HREF}}": _rich_href(plan.slug),
         "{{SCRIPT_PATH}}": _esc(script_path),
         "{{PLANS_DIR_SHORT}}": _esc(plans_dir_short),
