@@ -320,3 +320,30 @@ def test_templates_load_mermaid_runtime() -> None:
         assert 'type="module"' in before_head, (
             f"{name}: module script tag missing before </head>"
         )
+
+
+def test_footer_script_path_is_repo_relative_inside_repo(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    script = repo / "plugins" / "skein" / "skills" / "plan-view" / "generate.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("", encoding="utf-8")
+    assert (
+        G.footer_script_path(script, repo)
+        == "plugins/skein/skills/plan-view/generate.py"
+    )
+
+
+def test_footer_script_path_outside_repo_hides_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    cache = home / ".claude" / "plugins" / "cache" / "skein" / "skills" / "plan-view"
+    cache.mkdir(parents=True)
+    script = cache / "generate.py"
+    script.write_text("", encoding="utf-8")
+    repo = tmp_path / "elsewhere"
+    repo.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    out = G.footer_script_path(script, repo)
+    assert out.startswith("~/"), out
+    assert str(home) not in out

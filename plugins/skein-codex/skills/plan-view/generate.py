@@ -1605,6 +1605,23 @@ footer.plan-foot {{ margin-top: 64px; padding-top: 16px; border-top: 1px solid v
 # ---------------------------------------------------------------------------
 
 
+def footer_script_path(script: Path, repo_root: Path) -> str:
+    """Path shown in the generated HTML's "regenerate with …" footer.
+
+    Kept harness-neutral: inside the plans repo it is the repo-relative
+    location (plugins/skein/skills/plan-view/generate.py for Claude users,
+    plugins/skein-codex/skills/plan-view/generate.py for Codex users). Run
+    from a plugin cache outside the repo, the absolute path is used with the
+    home directory shortened to ``~`` so no page bakes in a user-specific
+    absolute prefix.
+    """
+    resolved = script.resolve()
+    try:
+        return str(resolved.relative_to(repo_root))
+    except ValueError:
+        return str(resolved).replace(str(Path.home()), "~")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Generate an HTML dashboard from a dev-plan corpus.",
@@ -1718,14 +1735,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.gitignore:
         (out_dir / ".gitignore").write_text("*\n", encoding="utf-8")
 
-    # Compute script_path relative to repo_root once — kept harness-neutral so
-    # the generated HTML's "regenerate with …" footer points at the actual
-    # location (e.g. plugins/skein/skills/plan-view/generate.py for Claude
-    # users, plugins/skein-codex/skills/plan-view/generate.py for Codex users).
-    try:
-        script_path = str(Path(__file__).resolve().relative_to(repo_root))
-    except ValueError:
-        script_path = str(Path(__file__).resolve())
+    script_path = footer_script_path(Path(__file__), repo_root)
     plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
 
     # Dashboard

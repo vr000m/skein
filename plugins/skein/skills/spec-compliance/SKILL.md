@@ -78,7 +78,7 @@ If the spec or section cannot be found, return an error message suggesting alter
 
 ## Step 3: Fetch and Extract Requirements
 
-Load the spec section via `WebFetch`. Extract normative statements by identifying RFC 2119 keywords as defined in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174):
+Load the spec section via `WebFetch`. Work only from the fetched text: never fill in what the spec says from memory. Extract normative statements by identifying RFC 2119 keywords as defined in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119) and [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174):
 
 - **MUST** / **MUST NOT** / **REQUIRED** / **SHALL** / **SHALL NOT** — absolute requirements
 - **SHOULD** / **SHOULD NOT** / **RECOMMENDED** — strong recommendations with justified exceptions
