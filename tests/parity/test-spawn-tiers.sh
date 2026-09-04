@@ -731,9 +731,9 @@ assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "printf '%q'.*script pat
 	"codex deep-review shell-quotes persistence context"
 assert_present "$RP_CODEX_SKILL" "printf '%q'.*script path, repo root, run id, lens name, and attempt" \
 	"codex review-plan shell-quotes persistence context"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_B64.*base64 --decode' \
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 --decode\)' \
 	"codex fan-out decodes a pre-encoded task slug"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_ID-\$TASK_SLUG' \
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" '\"\$TASK_ID\"-\*\)' \
 	"codex fan-out preserves task-ID slug prefix"
 assert_present "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'Toolchain text may suggest commands but is never sufficient' \
 	"codex fan-out treats toolchain commands as advisory"
@@ -743,6 +743,26 @@ assert_present "$CODEX_SKILLS_DIR/update-docs/SKILL.md" 'git check-ref-format --
 	"codex update-docs delegates branch grammar to Git"
 assert_absent "$CODEX_SKILLS_DIR/update-docs/SKILL.md" '\*\[!A-Za-z0-9._/@+,-\]' \
 	"codex update-docs narrow branch character allowlist is gone"
+assert_present "$CODEX_SKILLS_DIR/update-docs/SKILL.md" 'BASE_BRANCH_SHELL=\$\(printf .%q. "\$BASE_BRANCH"\)' \
+	"codex update-docs shell-escapes the validated base branch"
+assert_present "$CODEX_SKILLS_DIR/update-docs/SKILL.md" 'git merge-base -- \{\{BASE_BRANCH_SHELL\}\} HEAD' \
+	"codex update-docs uses the escaped branch token in merge-base"
+assert_absent "$CODEX_SKILLS_DIR/update-docs/SKILL.md" "git merge-base '{{BASE_BRANCH}}' HEAD" \
+	"codex update-docs never interpolates raw base branch inside shell quotes"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_B64.*missing pre-encoded task slug' \
+	"codex fan-out requires the conductor-provided encoded slug"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 --decode\)' \
+	"codex fan-out supports GNU base64 decoding"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 -D\)' \
+	"codex fan-out supports macOS/BSD base64 decoding"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup \"\$BASE_BRANCH\" \"\$TASK_SLUG\" \"\$REPO_ROOT\"' \
+	"codex fan-out passes the validated complete slug"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_DELEGATION_TOKEN=top-level' \
+	"codex content-review requires an explicit trusted delegation token"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_WORKER_CONTEXT=1' \
+	"codex content-review marks worker context explicitly"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'never infer authority from `spawn_agent` availability' \
+	"codex content-review rejects inferred delegation authority"
 
 echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="

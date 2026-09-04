@@ -116,15 +116,30 @@ Then for each task:
 
 1. **Create worktree**:
    ```bash
-   # Decode and conservatively validate a pre-encoded slug; never paste a raw
-   # plan slug into shell source.
-   TASK_SLUG=$(printf '%s' "$TASK_SLUG_B64" | base64 --decode)
+   # The conductor supplies TASK_ID and TASK_SLUG_B64 as trusted control-plane
+   # values for this approved task. TASK_SLUG_B64 encodes the complete slug,
+   # including the task-ID prefix; neither value may be omitted or plan-pasted.
+   TASK_ID="${TASK_ID:?fan-out: missing task ID}"
+   TASK_SLUG_B64="${TASK_SLUG_B64:?fan-out: missing pre-encoded task slug}"
+   if base64 --decode </dev/null >/dev/null 2>&1; then
+     TASK_SLUG_DECODER=(base64 --decode)
+   else
+     TASK_SLUG_DECODER=(base64 -D)
+   fi
+   TASK_SLUG=$(printf '%s' "$TASK_SLUG_B64" | "${TASK_SLUG_DECODER[@]}")
    case "$TASK_SLUG" in
      ''|*[!a-z0-9-]*) echo "fan-out: refusing unsafe task slug" >&2; exit 1;;
    esac
-   WORKTREE=$("${SKILL_DIR}/fan-out.sh" setup "$BASE_BRANCH" "$TASK_ID-$TASK_SLUG" "$REPO_ROOT")
+   case "$TASK_SLUG" in
+     "$TASK_ID"-*) :;;
+     *) echo "fan-out: refusing task slug with mismatched task-ID prefix" >&2; exit 1;;
+   esac
+   WORKTREE=$("${SKILL_DIR}/fan-out.sh" setup "$BASE_BRANCH" "$TASK_SLUG" "$REPO_ROOT")
    ```
-   Always prefix the slug with the task ID (e.g., `"1-add-api-endpoint"`, `"2-add-migration"`) to prevent collisions when different tasks slugify to the same string.
+   The conductor must base64-encode the complete task-ID-prefixed slug (e.g.,
+   `"1-add-api-endpoint"`, `"2-add-migration"`) before supplying `TASK_SLUG_B64`.
+   The validated complete slug is passed unchanged to `fan-out.sh`, preserving
+   collision prevention when different tasks slugify to the same string.
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
 
