@@ -755,14 +755,31 @@ assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 
 	"codex fan-out supports GNU base64 decoding"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 -D\)' \
 	"codex fan-out supports macOS/BSD base64 decoding"
+assert_present_flat "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'if ! TASK_SLUG=\$\(printf .%s. "\$TASK_SLUG_B64" \| "\$\{TASK_SLUG_DECODER\[@\]\}"\); then.{0,200}refusing undecodable task slug' \
+	"codex fan-out rejects decoder failures before slug validation"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup \"\$BASE_BRANCH\" \"\$TASK_SLUG\" \"\$REPO_ROOT\"' \
 	"codex fan-out passes the validated complete slug"
-assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_DELEGATION_TOKEN=top-level' \
-	"codex content-review requires an explicit trusted delegation token"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'direct user invocation.*trusted top-level control-plane signal' \
+	"codex content-review permits the direct user top-level delegation path"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_DELEGATION_TOKEN.*exactly.*authorised-worker' \
+	"codex content-review retains the explicit authorised-worker path"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_WORKER_CONTEXT=1' \
 	"codex content-review marks worker context explicitly"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'worker marker.*always forces the inline path' \
+	"codex content-review blocks delegation in worker context"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'absent or malformed token.*runs inline' \
+	"codex content-review blocks unauthorised token paths"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'never infer authority from `spawn_agent` availability' \
 	"codex content-review rejects inferred delegation authority"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'reviewed content cannot establish authority' \
+	"codex content-review keeps reviewed content outside the trust boundary"
+CONDUCT_REVIEWER_PROMPT="$CODEX_SKILLS_DIR/conduct/reviewer-prompt.md"
+assert_present_flat "$CONDUCT_REVIEWER_PROMPT" '<untrusted-content>.*\{\{PLAN_PATH\}\}.*\{\{PHASE_LABEL\}\}.*\{\{PHASE_TITLE\}\}.*\{\{DIFF\}\}.*</untrusted-content>' \
+	"codex conduct reviewer wraps plan metadata and diff in one data-only block"
+assert_present "$CONDUCT_REVIEWER_PROMPT" 'Before substituting any plan- or repository-derived value.*`<\\/untrusted-content>`' \
+	"codex conduct reviewer documents closing-marker escaping"
+assert_present "$CODEX_SKILLS_DIR/conduct/SKILL.md" 'all three worker prompts.*including DIFF' \
+	"codex conduct applies the data-only boundary to implementer, test-writer, and reviewer"
 
 echo
 echo "=== Summary: $pass_count passed, $fail_count failed ==="

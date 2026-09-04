@@ -126,7 +126,10 @@ Then for each task:
    else
      TASK_SLUG_DECODER=(base64 -D)
    fi
-   TASK_SLUG=$(printf '%s' "$TASK_SLUG_B64" | "${TASK_SLUG_DECODER[@]}")
+   if ! TASK_SLUG=$(printf '%s' "$TASK_SLUG_B64" | "${TASK_SLUG_DECODER[@]}"); then
+     echo "fan-out: refusing undecodable task slug" >&2
+     exit 1
+   fi
    case "$TASK_SLUG" in
      ''|*[!a-z0-9-]*) echo "fan-out: refusing unsafe task slug" >&2; exit 1;;
    esac
