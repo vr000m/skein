@@ -12,7 +12,7 @@ When a Claude skill change has no Codex equivalent yet, append an entry with:
 - Whether the required result is byte-identical parity or Codex-native adaptation.
 - Gating checks the Codex maintainer must clear.
 
-Do not list ordinary harness-specific wording as drift. `SKILL.md` files may legitimately differ where Claude uses Agent/subagent wording and Codex uses `spawn_agent`, Codex model names, or Codex state-file names. Rubrics that declare parity must remain byte-identical. Sanctioned Codex-only divergence: the delegation clause in content-draft, content-review, rfc-finder, spec-compliance and update-docs (delegate only at top level or under explicit orchestrator authorisation, never spawn a nested worker, fall back to the main context when `spawn_agent` is unavailable) has no Claude twin by decision; the Claude harness enforces one-level delegation structurally. The `<untrusted-content>` wrapping of supplied inputs in those five prompts is shared by both mirrors and must stay byte-identical.
+Do not list ordinary harness-specific wording as drift. `SKILL.md` files may legitimately differ where Claude uses Agent/subagent wording and Codex uses `spawn_agent`, Codex model names, or Codex state-file names. Rubrics that declare parity must remain byte-identical. Sanctioned Codex-only divergence: the delegation and untrusted-input isolation clause in content-draft, content-review, rfc-finder, spec-compliance and update-docs (delegate only at top level or under explicit orchestrator authorisation, never spawn a nested worker, fall back to the main context when `spawn_agent` is unavailable, wrap supplied inputs as untrusted content) has no Claude twin by decision; the Claude harness enforces one-level delegation structurally.
 
 ## Current State
 
