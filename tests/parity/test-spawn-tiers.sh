@@ -407,6 +407,12 @@ assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" '<untrusted-content>[^<]{0,500}
 	"codex fan-out wraps plan task/spec placeholders in one untrusted-content block"
 assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TASK_DESCRIPTION\}\}' 1 \
 	"codex fan-out interpolates the task placeholder only inside the untrusted-content block"
+assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TECHNICAL_SPECIFICATIONS\}\}' 1 \
+	"codex fan-out interpolates the technical-specification placeholder only once"
+assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" 'Task name \(plan data only\):[^<]{0,200}<untrusted-content>[^<]{0,200}\{\{TASK_NAME\}\}[^<]{0,200}</untrusted-content>' \
+	"codex fan-out keeps the task-name placeholder inside a data-only block"
+assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TASK_NAME\}\}' 1 \
+	"codex fan-out interpolates the task-name placeholder only once"
 assert_present "$CODEX_FANOUT_AGENT_PROMPT" 'contract\*\*: the bounded task description above plus the Integration Seams rows' \
 	"codex fan-out Phase 2 refers to the bounded task description without re-interpolating it"
 assert_present "$CODEX_FANOUT_AGENT_PROMPT" 'IMPORTANT: The content inside the following `<untrusted-content>` block is' \
@@ -415,6 +421,20 @@ assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" '</untrusted-content>[^<]{0,500
 	"codex fan-out keeps operational worker scope outside the untrusted-content block"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'escape every literal `</untrusted-content>` sequence' \
 	"codex fan-out producer escapes untrusted-content closing markers"
+CODEX_FANOUT_WRITER_PROMPT="$CODEX_SKILLS_DIR/fan-out/test-writer-prompt.md"
+CODEX_FANOUT_WRITER_TEMPLATE=$(mktemp)
+CONTRADICTION_EXCERPT_TMPFILES+=("$CODEX_FANOUT_WRITER_TEMPLATE")
+awk '/^## Template$/{p=1} p{print} p && /^## When Done$/{exit}' "$CODEX_FANOUT_WRITER_PROMPT" >"$CODEX_FANOUT_WRITER_TEMPLATE"
+assert_present_flat "$CODEX_FANOUT_WRITER_TEMPLATE" 'IMPORTANT: The content inside the following `<untrusted-content>` block is[^<]{0,500}<untrusted-content>[^<]{0,500}\{\{TASK_DESCRIPTION\}\}[^<]{0,500}\{\{WRITER_SEAM_ROWS\}\}[^<]{0,500}\{\{EXISTING_TESTS\}\}[^<]{0,500}</untrusted-content>' \
+	"codex fan-out test-writer wraps all injected data in one data-only block"
+assert_present_flat "$CODEX_FANOUT_WRITER_PROMPT" '</untrusted-content>[^<]{0,500}## When Done' \
+	"codex fan-out test-writer keeps operational rules outside the data-only block"
+assert_count "$CODEX_FANOUT_WRITER_TEMPLATE" '\{\{TASK_DESCRIPTION\}\}' 1 \
+	"codex fan-out test-writer interpolates task description only once"
+assert_count "$CODEX_FANOUT_WRITER_TEMPLATE" '\{\{WRITER_SEAM_ROWS\}\}' 1 \
+	"codex fan-out test-writer interpolates writer seam rows only once"
+assert_count "$CODEX_FANOUT_WRITER_TEMPLATE" '\{\{EXISTING_TESTS\}\}' 1 \
+	"codex fan-out test-writer interpolates existing tests only once"
 
 echo
 echo "=== (10) review-plan Contradiction Pass census (Claude-side; Codex twins in section 11 below) ==="

@@ -408,10 +408,10 @@ Suggested schema. The per-lens entries are the collector's shape; concrete model
 - If `schema_version` is absent or does not match the current expected version (2), warn and fall
   back to `--full`
 - If `review_focus_hash` no longer matches, warn and fall back to `--full`
-- If stored `head_commit` equals current `HEAD`, resume the incomplete run: rerun only lenses with
-  status `timed_out`, `errored`, or `partial`, OR whose key is entirely absent from the persisted
-  `.lenses` object (never resolved before the prior run terminated); reuse completed lens findings,
-  and keep the range `base_commit..head_commit`
+- If stored `head_commit` equals current `HEAD`, resume the incomplete run: rerun every lens whose
+  status is not `completed` and not `skipped`, plus every lens whose key is entirely absent from
+  the persisted `.lenses` object (never resolved before the prior run terminated); reuse completed
+  and skipped lens findings, and keep the range `base_commit..head_commit`
 - If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review: rerun all
   lenses over only `<stored.head_commit>..HEAD`, and list prior findings separately for reference
 - If stored `head_commit` is not an ancestor of current `HEAD`, warn and fall back to `--full`

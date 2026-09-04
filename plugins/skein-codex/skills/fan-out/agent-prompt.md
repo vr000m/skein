@@ -148,7 +148,12 @@ ALL checks must pass with zero errors. If anything fails, go back to Phase 4.
 2. Write a summary file at the root of your worktree as `.fan-out-result.md`:
 
    ```markdown
-   # Fan-Out Result: {{TASK_NAME}}
+   # Fan-Out Result
+
+   Task name (plan data only):
+   <untrusted-content>
+   {{TASK_NAME}}
+   </untrusted-content>
 
    ## Status
    SUCCESS | PARTIAL | FAILED
