@@ -304,6 +304,24 @@ def test_render_sha_reflects_rendered_script_path(tmp_path: Path) -> None:
     assert before != after, "render_sha must change with the rendered script path"
 
 
+def test_render_sha_reflects_relocated_source_and_plans_directory(tmp_path: Path) -> None:
+    first_dir = tmp_path / "first" / "docs" / "dev_plans"
+    second_dir = tmp_path / "second" / "docs" / "dev_plans"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+    body = "# C\n\n**Status**: Shipped\n"
+    first_path = _write(first_dir, "20260521-feature-relocation.md", body)
+    second_path = _write(second_dir, "20260521-feature-relocation.md", body)
+    first = G.parse_plan(first_path)
+    second = G.parse_plan(second_path)
+    first_plans = {first.slug: first}
+    second_plans = {second.slug: second}
+    G.compute_render_shas(first_plans, plans_dir_short="~/first/docs/dev_plans")
+    G.compute_render_shas(second_plans, plans_dir_short="~/second/docs/dev_plans")
+    assert first.render_sha != second.render_sha
+    assert G.corpus_sha(first_plans, first_dir) != G.corpus_sha(second_plans, second_dir)
+
+
 def test_render_markdown_code_fence_keeps_language_class() -> None:
     # Regression: a section-scanner fence regex once shadowed the markdown
     # renderer's _FENCE_RE (module-global name collision), making fenced code

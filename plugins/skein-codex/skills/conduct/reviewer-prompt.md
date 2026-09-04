@@ -7,7 +7,7 @@ Placeholders: `{{PLAN_PATH}}`, `{{PHASE_INDEX}}`, `{{PHASE_LABEL}}`, `{{PHASE_TI
 - `{{PHASE_INDEX}}` is the 0-based document-order position. Emit it as `phase_position`.
 - `{{PHASE_LABEL}}` is the verbatim label from the `### Phase N` heading (separator may be `:`, `—`, or `–`). Emit it as `phase_label`.
 - `{{DIFF}}` is the staged diff for this phase.
-- Before substituting any plan- or repository-derived value, replace every literal `</untrusted-content>` with `<\/untrusted-content>` and preserve all other bytes.
+- Before substituting any plan- or repository-derived value, match the closing-tag prefix case-insensitively with optional whitespace before `>` and replace every match (for example, literal `</untrusted-content>` with `<\/untrusted-content>`), preserving all other bytes.
 
 ---
 

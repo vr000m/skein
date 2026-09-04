@@ -26,6 +26,15 @@ from typing import Iterable
 # Constants — status lexicon + component heuristic + edge patterns
 # ---------------------------------------------------------------------------
 
+def _home_relative_path(path: Path) -> str:
+    """Return the same stable home-shortened spelling used in rendered HTML."""
+    text = str(path)
+    home = str(Path.home().resolve())
+    if text == home:
+        return "~"
+    prefix = home + "/"
+    return "~" + text[len(home) :] if text.startswith(prefix) else text
+
 # Status lexicon. Order matters — first match wins.
 # (regex, bucket, chip-colour-class)
 STATUS_LEXICON: list[tuple[re.Pattern[str], str, str]] = [
@@ -166,7 +175,9 @@ class Plan:
     )
     render_sha: str = ""  # set by compute_render_shas after link_edges + apply_stranded
 
-    def compute_render_sha(self, script_path: str = "") -> str:
+    def compute_render_sha(
+        self, script_path: str = "", plans_dir_short: str = ""
+    ) -> str:
         # Covers everything that affects this plan's rendered HTML:
         # own markdown, backfilled edges_in (corpus state), fixed_by pointer,
         # the (possibly stranded-recoloured) status bucket, AND the git-derived
@@ -184,17 +195,21 @@ class Plan:
             + ",".join(f"{c.sha}:{c.date}:{c.subject}" for c in self.commits),
             f"|created={self.created}",
             f"|last_touched={self.last_touched}",
+            f"|source_path={_home_relative_path(self.path)}",
+            f"|plans_dir_short={plans_dir_short}",
             f"|script_path={script_path}",
         ]
         return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
 
 
-def compute_render_shas(plans: dict[str, "Plan"], script_path: str = "") -> None:
+def compute_render_shas(
+    plans: dict[str, "Plan"], script_path: str = "", plans_dir_short: str = ""
+) -> None:
     for p in plans.values():
-        p.render_sha = p.compute_render_sha(script_path)
+        p.render_sha = p.compute_render_sha(script_path, plans_dir_short)
 
 
-def corpus_sha(plans: dict[str, "Plan"]) -> str:
+def corpus_sha(plans: dict[str, "Plan"], plans_dir: str | Path = "") -> str:
     """Stable hash of the whole corpus, used as the dashboard's drift-guard sha.
 
     Single source of truth so `render_dashboard` (which embeds it) and `main`
@@ -210,8 +225,15 @@ def corpus_sha(plans: dict[str, "Plan"]) -> str:
     findings #1/#7 removed, where a forgotten field makes the guard *falsely
     refuse*. Over-writing harmless gitignored output beats false refusals.
     """
+    path_parts = [
+        f"|plans_dir={_home_relative_path(Path(plans_dir))}"
+        if plans_dir
+        else ""
+    ]
     return hashlib.sha256(
-        "".join(sorted(p.render_sha for p in plans.values())).encode("utf-8")
+        ("".join(sorted(p.render_sha for p in plans.values())) + "".join(path_parts)).encode(
+            "utf-8"
+        )
     ).hexdigest()
 
 
@@ -979,7 +1001,7 @@ def render_dashboard(
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     # Shared helper so this embedded value matches the drift-guard sha in main().
     corpus_digest = corpus_sha(plans)
-    plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
+    plans_dir_short = _home_relative_path(plans_dir)
     readme_note = (
         " · status grouping from <code>README.md</code>"
         if readme_used
@@ -1116,7 +1138,7 @@ def render_plan_page(
     markdown_html = render_markdown(plan.raw)
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    source_path_short = str(plan.path).replace(str(Path.home()), "~")
+    source_path_short = _home_relative_path(plan.path)
 
     substitutions = {
         "{{SOURCE_SHA}}": plan.render_sha or plan.sha256,
@@ -1729,18 +1751,17 @@ def main(argv: list[str] | None = None) -> int:
     # Stranded detection
     apply_stranded(plans.values(), args.stale_days)
     script_path = footer_script_path(Path(__file__), repo_root)
+    plans_dir_short = _home_relative_path(plans_dir)
     # Note: link_edges runs immediately below; compute_render_shas must come after.
 
     # Edge linking
     link_edges(plans)
-    compute_render_shas(plans, script_path)
+    compute_render_shas(plans, script_path, plans_dir_short)
 
     # Render
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.gitignore:
         (out_dir / ".gitignore").write_text("*\n", encoding="utf-8")
-
-    plans_dir_short = str(plans_dir).replace(str(Path.home()), "~")
 
     # Dashboard
     dashboard_html = render_dashboard(
@@ -1752,7 +1773,7 @@ def main(argv: list[str] | None = None) -> int:
         readme_used,
         script_path,
     )
-    dashboard_corpus_sha = corpus_sha(plans)
+    dashboard_corpus_sha = corpus_sha(plans, plans_dir)
     refused = 0
     written = 0
     wrote, msg = write_with_drift_guard(

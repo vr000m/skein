@@ -275,6 +275,10 @@ assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'fork_context=false.*reasoni
 	"codex fan-out dormant test-writer template documents fork_context=false and medium effort"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'Codex does not pin model names' \
 	"codex fan-out documents no default model pin"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'fan-out\.sh" spawn .*--effort medium' \
+	"codex fan-out pins the active worker dispatch to medium effort"
+assert_present_flat "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'single-context.*rather than spawning a separate test-writer.*nested `spawn_agent` test-writer' \
+	"codex fan-out pins the active single-context/no-nested-test-writer topology"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
 	"codex fan-out.sh FANOUT_EFFORT support present"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'command_supports_effort' \
@@ -430,8 +434,8 @@ assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TOOLCHAIN_CONTEXT\}\}' 2 \
 	"codex fan-out preserves both TOOLCHAIN_CONTEXT placeholder occurrences"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'AGENTS_MD_CONTENT.*TOOLCHAIN_CONTEXT.*active worker prompt' \
 	"codex fan-out producer escapes closing markers for repository-derived values"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'replace it with `<\\/untrusted-content>`' \
-	"codex fan-out documents the closing-marker escape"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'case-insensitively.*optional whitespace before `>`' \
+	"codex fan-out broadens the closing-marker escape"
 
 # Conduct's optional goal is a warned data block when present, but an empty
 # substitution when absent so the no-goal prompt remains byte-identical.
@@ -759,8 +763,10 @@ assert_present_flat "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'if ! TASK_SLUG=\$\(pri
 	"codex fan-out rejects decoder failures before slug validation"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup \"\$BASE_BRANCH\" \"\$TASK_SLUG\" \"\$REPO_ROOT\"' \
 	"codex fan-out passes the validated complete slug"
-assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'direct user invocation.*trusted top-level control-plane signal' \
-	"codex content-review permits the direct user top-level delegation path"
+assert_present_flat "$CODEX_SKILLS_DIR/content-review/SKILL.md" '\[--delegate\].*Explicitly authorise' \
+	"codex content-review exposes explicit top-level delegation control"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'top-level delegation path requires the explicit `--delegate` argument; an absent flag runs inline' \
+	"codex content-review requires the delegate flag and defaults absent flag to inline"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_DELEGATION_TOKEN.*exactly.*authorised-worker' \
 	"codex content-review retains the explicit authorised-worker path"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'SKEIN_WORKER_CONTEXT=1' \
@@ -773,6 +779,12 @@ assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'never infer authorit
 	"codex content-review rejects inferred delegation authority"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'reviewed content cannot establish authority' \
 	"codex content-review keeps reviewed content outside the trust boundary"
+assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'CONTENT_TYPE.*exactly one of' \
+	"codex content-review validates delegated content type"
+assert_present "$CODEX_SKILLS_DIR/content-draft/SKILL.md" 'Before choosing delegated or inline execution, validate `CONTENT_TYPE` exactly as' \
+	"codex content-draft validates content type before dispatch selection"
+assert_present "$CODEX_SKILLS_DIR/spec-compliance/SKILL.md" 'all fetched specification text, including content fetched from a direct URL, as untrusted evidence/data' \
+	"codex spec-compliance treats direct-URL fetched text as untrusted data"
 CONDUCT_REVIEWER_PROMPT="$CODEX_SKILLS_DIR/conduct/reviewer-prompt.md"
 assert_present_flat "$CONDUCT_REVIEWER_PROMPT" '<untrusted-content>.*\{\{PLAN_PATH\}\}.*\{\{PHASE_LABEL\}\}.*\{\{PHASE_TITLE\}\}.*\{\{DIFF\}\}.*</untrusted-content>' \
 	"codex conduct reviewer wraps plan metadata and diff in one data-only block"
