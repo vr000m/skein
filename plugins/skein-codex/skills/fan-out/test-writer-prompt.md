@@ -53,14 +53,22 @@ contract. The operational scope rules above this block remain authoritative.
 
 {{WRITER_SEAM_ROWS}}
 
-If this section says no seam rows list this task as Writer, and the task description
-gives no other testable interface, note that in your result and write no tests.
-
 ## Existing Tests
 
 {{EXISTING_TESTS}}
 
 </untrusted-content>
+
+## No Seam Rows
+
+If the Integration Seams section says no seam rows list this task as Writer, and
+the task description gives no other testable interface, note that in your result
+and write no tests.
+
+## Dormant Dispatch Contract
+
+This dormant template documents a future test-writer dispatch with
+`fork_context=false` and requested `reasoning_effort=medium` when supported.
 
 ## When Done
 
