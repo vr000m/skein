@@ -7,13 +7,14 @@ import os
 import subprocess
 import textwrap
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
-import conduct.conductor as conductor
+from conduct import conductor
 from conduct.conductor import ConductOptions, SpawnRequest, _state_path, conduct
 from conduct.marker import compute_plan_hash, write_marker
 from conduct.runner import TestResult as _TestResult

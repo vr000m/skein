@@ -25,7 +25,6 @@ from conduct.marker import (
     write_marker,
 )
 
-
 requires_git = pytest.mark.skipif(
     shutil.which("git") is None, reason="git not available"
 )

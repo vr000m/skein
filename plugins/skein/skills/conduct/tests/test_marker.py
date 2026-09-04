@@ -15,7 +15,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from marker import (
     MARKER_RE,
     compute_plan_hash,
@@ -24,7 +23,6 @@ from marker import (
     strip_marker_for_hashing,
     write_marker,
 )
-
 
 requires_git = pytest.mark.skipif(
     shutil.which("git") is None, reason="git not available"

@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from marker import write_marker, _marker_line_span  # noqa: E402
+from marker import _marker_line_span, write_marker
 
 
 def main(argv: list[str]) -> int:

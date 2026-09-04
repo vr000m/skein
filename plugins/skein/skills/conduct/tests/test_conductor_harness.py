@@ -28,12 +28,11 @@ import os
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 import pytest
-
 from conductor import (
     ConductOptions,
     SpawnRequest,
@@ -1408,10 +1407,10 @@ def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
 # Phase 1: progress-aware iteration bound + forward-compat loader
 # ---------------------------------------------------------------------------
 
-import inspect  # noqa: E402
-import warnings as _warnings  # noqa: E402
+import inspect
+import warnings as _warnings
 
-import conductor as _conductor_mod  # noqa: E402
+import conductor as _conductor_mod
 
 
 def _stalling_attempt(req, r):

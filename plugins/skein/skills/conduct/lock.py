@@ -86,7 +86,7 @@ class StateLock:
                 pass
             self._lockdir = None
 
-    def __enter__(self) -> "StateLock":
+    def __enter__(self) -> StateLock:
         self.acquire()
         return self
 

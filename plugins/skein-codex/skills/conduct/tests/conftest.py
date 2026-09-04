@@ -10,8 +10,8 @@ _SKILLS_DIR = Path(__file__).resolve().parents[2]
 if str(_SKILLS_DIR) not in sys.path:
     sys.path.insert(0, str(_SKILLS_DIR))
 
-import conduct.conductor as conductor  # noqa: E402
-from conduct.lock import StateLock as _RealStateLock  # noqa: E402
+from conduct import conductor
+from conduct.lock import StateLock as _RealStateLock
 
 
 class LockAcquisitionCounter:

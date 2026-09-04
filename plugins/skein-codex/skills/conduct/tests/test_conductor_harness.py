@@ -28,22 +28,22 @@ import os
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Callable
 
 import pytest
 
-import conduct.conductor as conductor
+from conduct import conductor
 from conduct.conductor import (
     ConductOptions,
     SpawnRequest,
-    _state_path,
     _repo_default_test_cmd,
+    _state_path,
     abort_run,
     conduct,
-    delegation_unavailable_result,
     default_lint_check,
+    delegation_unavailable_result,
     detect_lint_command,
     pause_phase,
 )
@@ -52,7 +52,6 @@ from conduct.marker import compute_plan_hash, marker_is_stale, write_marker
 from conduct.runner import (
     TestResult as _TestResult,
 )  # rename — pytest tries to collect any class named Test*
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

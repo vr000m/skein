@@ -31,13 +31,15 @@ import subprocess
 import sys
 import time
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 from ci_parity import detect_ci_entrypoint
 from fileutil import (
     atomic_write_result_file as _atomic_write_result_file,
+)
+from fileutil import (
     ensure_under_directory,
     read_result_file,
     validate_plan_id,
@@ -48,7 +50,6 @@ from parser import Phase, files_overlap, parse_phases
 from progress import compute_staged_diff_stat, iteration_signature
 from runner import TestResult, run_tests
 from schema import SchemaError, parse_report
-
 
 # Plan-id derivations in this module are intentionally divergent:
 #   _state_path()                       digests rel(plan_path, repo_root)  -> state-file naming, repo-scoped
@@ -173,7 +174,7 @@ class CIParitySpawnRequest:
 
 SpawnFn = Callable[[SpawnRequest], str]
 TestRunnerFn = Callable[[str, float], TestResult]
-LintCheckFn = Callable[[], Optional[str]]
+LintCheckFn = Callable[[], str | None]
 HandbackFn = Callable[[dict], None]
 CIParitySpawnFn = Callable[[CIParitySpawnRequest], str]
 
@@ -187,8 +188,8 @@ class ConductOptions:
     # If None, run_preflight runs ``default_lint_check(repo_root)`` — which
     # probes for pre-commit / make lint / npm run lint / ruff per SKILL.md
     # Step 3. Tests inject a stub to bypass real subprocess work.
-    lint_check: Optional[LintCheckFn] = None
-    test_cmd_override: Optional[str] = None
+    lint_check: LintCheckFn | None = None
+    test_cmd_override: str | None = None
     test_timeout: float = 300.0
     max_iterations: int = 3
     # Progress-aware autonomous-runway cap. Default 8 leaves headroom for a
@@ -204,7 +205,7 @@ class ConductOptions:
     # still computed but never counted as stalls.
     no_progress_detection: bool = False
     resume: bool = False
-    on_handback: Optional[HandbackFn] = None
+    on_handback: HandbackFn | None = None
     # Autonomous mode: when True, ``conduct()`` walks every unfinished phase in
     # a single Python process under one lock acquisition, only handing back on
     # a hard-stop (rogue commit, schema error, validation-cmd failure, stall,
@@ -217,7 +218,7 @@ class ConductOptions:
     # phase would enter ``_run_phase``). Resolution happens inline at
     # ``conduct()`` entry — NOT in ``__post_init__`` — because parsed phase
     # count is not known until after preflight + plan parsing.
-    max_phases: Optional[int] = None
+    max_phases: int | None = None
     # Phase 3 ci-parity gate flags.
     #   run_ci_parity: enable the gate explicitly. Implied by autonomous=True.
     #   ci_cmd: override the detected CI entrypoint (e.g. "just ci", "make ci",
@@ -229,9 +230,9 @@ class ConductOptions:
     #     same Python turn (no lock release). Production runs leave this None
     #     and rely on the main-runtime orchestrator + result-file handoff.
     run_ci_parity: bool = False
-    ci_cmd: Optional[str] = None
+    ci_cmd: str | None = None
     skip_ci_parity: bool = False
-    ci_parity_spawn: Optional[CIParitySpawnFn] = None
+    ci_parity_spawn: CIParitySpawnFn | None = None
 
 
 @dataclass
@@ -239,13 +240,13 @@ class ConductResult:
     status: str  # 'awaiting_user' | 'blocked' | 'schema_error' | 'complete' | 'preflight_fail' | 'awaiting_ci_parity'
     state: dict
     summary: str
-    next_command: Optional[str] = None
-    diagnostic: Optional[str] = None
+    next_command: str | None = None
+    diagnostic: str | None = None
     # Phase 3 ci-parity gate handoff fields (reserved now; populated only when
     # status == 'awaiting_ci_parity'). Defined here so the runtime orchestrator
     # can read them directly off the result without round-tripping state.
-    next_action: Optional[str] = None  # e.g. 'dispatch_ci_parity'
-    request: Optional[dict] = None  # ci-parity request payload (see Phase 3 spec)
+    next_action: str | None = None  # e.g. 'dispatch_ci_parity'
+    request: dict | None = None  # ci-parity request payload (see Phase 3 spec)
 
 
 def _validate_options(opts: ConductOptions) -> None:
@@ -270,7 +271,7 @@ def _check_iteration_bound(
     state: dict,
     opts: ConductOptions,
     signature: str,
-) -> Optional[ConductResult]:
+) -> ConductResult | None:
     """Single source of truth for ``iteration_count += 1`` and the dual-cap +
     stall check across all three fix-loop call sites.
 
@@ -437,7 +438,7 @@ def _reset_index(repo_root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
+def run_preflight(opts: ConductOptions) -> ConductResult | None:
     """Returns None on success, else a ConductResult describing the hard stop."""
     if not opts.plan_path.exists():
         return ConductResult(
@@ -537,7 +538,7 @@ def _ensure_safe_conduct_dir(repo_root: Path) -> Path:
     return conduct_dir
 
 
-def _ensure_safe_fs_path(path: Path, *, expect_dir: Optional[bool] = None) -> None:
+def _ensure_safe_fs_path(path: Path, *, expect_dir: bool | None = None) -> None:
     try:
         path.lstat()
     except FileNotFoundError:
@@ -586,7 +587,7 @@ def _safe_read_state_text(path: Path) -> str:
         os.close(fd)
 
 
-def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
+def _safe_read_legacy_state(path: Path) -> bytes | None:
     """Open the legacy state file refusing to follow symlinks, capped at
     `_MAX_LEGACY_STATE_BYTES`. Returns None if the file is missing, a symlink,
     or exceeds the cap — all of which mean migration must abort silently."""
@@ -644,7 +645,7 @@ def _pre_partition_state_path(opts: ConductOptions) -> Path:
     return opts.repo_root / ".conduct" / f"state-{opts.plan_path.stem}-{digest}.json"
 
 
-def _bootstrap_from_legacy_state(opts: ConductOptions) -> Optional[dict]:
+def _bootstrap_from_legacy_state(opts: ConductOptions) -> dict | None:
     """Non-destructively load a legacy state file as bootstrap input.
 
     Tries the pre-runtime-partition path first, then the pre-digest path.
@@ -1220,7 +1221,7 @@ def _dispatch_ci_parity_if_eligible(
 def _preflight_ci_parity_resume(
     opts: ConductOptions,
     state: dict,
-) -> Optional[ConductResult]:
+) -> ConductResult | None:
     """Handle ``awaiting_ci_parity`` state at re-invocation.
 
     Returns a ConductResult when one of the five sub-cases fires; returns None
@@ -1399,7 +1400,7 @@ def _spawn_strategy(phase: Phase) -> tuple[str, str]:
     return "parallel", "disjoint paths"
 
 
-def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> Optional[str]:
+def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> str | None:
     if opts.test_cmd_override:
         return opts.test_cmd_override
     if phase.test_command:
@@ -1407,7 +1408,7 @@ def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> Optional[str]:
     return _repo_default_test_cmd(opts.repo_root)
 
 
-def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
+def detect_lint_command(repo_root: Path) -> list[str] | None:
     """SKILL.md Preflight Step 3 probe.
 
     Returns the argv of the first available lint check that applies to this
@@ -1454,7 +1455,7 @@ def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
     return None
 
 
-def default_lint_check(repo_root: Path) -> Optional[str]:
+def default_lint_check(repo_root: Path) -> str | None:
     """Run the first available lint check; return its diagnostic on failure.
 
     Returns ``None`` when no lint tool is available (skip per SKILL.md) OR
@@ -1474,7 +1475,7 @@ def default_lint_check(repo_root: Path) -> Optional[str]:
     return f"{cmd} (exit {proc.returncode}):\n{output[-2000:]}"
 
 
-def _repo_default_test_cmd(repo_root: Path) -> Optional[str]:
+def _repo_default_test_cmd(repo_root: Path) -> str | None:
     """SKILL.md Step 5 fallback chain step 3.
 
     Probes in this order:
@@ -1580,8 +1581,8 @@ def _run_phase(
         # On the first iteration we may also spawn the test-writer (parallel
         # or sequential per strategy). For fix-loop iterations we only respawn
         # one role per the SKILL.md algorithm.
-        impl_text: Optional[str] = None
-        test_text: Optional[str] = None
+        impl_text: str | None = None
+        test_text: str | None = None
 
         if iteration == 0:
             # In an LLM-driven run the parallel-vs-sequential signal tells main

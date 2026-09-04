@@ -16,13 +16,9 @@ PHASE_HEADING_RE = re.compile(
     r"^###\s+Phase\s+(\S+?)\s*[:—–]\s*(.+?)\s*(\([^)]*\))?\s*$"
 )
 
-TEST_COMMAND_RE = re.compile(
-    r"^\*\*Test command:\*\*\s+`([^`]+)`\s*$"
-)
+TEST_COMMAND_RE = re.compile(r"^\*\*Test command:\*\*\s+`([^`]+)`\s*$")
 
-VALIDATION_COMMAND_RE = re.compile(
-    r"^\*\*Validation cmd:\*\*\s+`([^`]+)`\s*$"
-)
+VALIDATION_COMMAND_RE = re.compile(r"^\*\*Validation cmd:\*\*\s+`([^`]+)`\s*$")
 
 IMPL_FILES_RE = re.compile(r"^\*\*Impl files:\*\*\s+(.+?)\s*$")
 TEST_FILES_RE = re.compile(r"^\*\*Test files:\*\*\s+(.+?)\s*$")
@@ -170,7 +166,9 @@ def parse_phases(plan_text: str) -> list[Phase]:
     return phases
 
 
-def _parse_file_list(body_lines: list[str], pattern: re.Pattern[str]) -> list[str] | None:
+def _parse_file_list(
+    body_lines: list[str], pattern: re.Pattern[str]
+) -> list[str] | None:
     for line in body_lines:
         match = pattern.match(line)
         if match:

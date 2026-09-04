@@ -16,8 +16,15 @@ from pathlib import Path
 
 import pytest
 
-from conduct.lock import STALE_SECONDS, LockError, StateLock, lock_is_held, main as lock_main
-
+from conduct.lock import (
+    STALE_SECONDS,
+    LockError,
+    StateLock,
+    lock_is_held,
+)
+from conduct.lock import (
+    main as lock_main,
+)
 
 STATE_REQUIRED_KEYS = {
     "schema_version",

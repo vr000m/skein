@@ -32,7 +32,6 @@ import tempfile
 import warnings
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Module-level --stat -w probe (sticky for process lifetime)
 # ---------------------------------------------------------------------------

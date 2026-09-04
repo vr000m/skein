@@ -33,9 +33,10 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from .ci_parity import detect_ci_entrypoint
 from .fileutil import (
@@ -51,7 +52,6 @@ from .parser import Phase, files_overlap, parse_phases
 from .progress import compute_staged_diff_stat, iteration_signature
 from .runner import TestResult, run_tests
 from .schema import SchemaError, parse_report
-
 
 # Plan-id derivations in this module are intentionally different:
 #   _state_path()                    digests rel(plan_path, repo_root) -> Codex state filename
@@ -105,7 +105,7 @@ class CIParitySpawnRequest:
 
 SpawnFn = Callable[[SpawnRequest], str]
 TestRunnerFn = Callable[[str, float], TestResult]
-LintCheckFn = Callable[[], Optional[str]]
+LintCheckFn = Callable[[], str | None]
 HandbackFn = Callable[[dict], None]
 CIParitySpawnFn = Callable[[CIParitySpawnRequest], str]
 
@@ -119,8 +119,8 @@ class ConductOptions:
     # If None, run_preflight runs ``default_lint_check(repo_root)`` — which
     # probes for pre-commit / make lint / npm run lint / ruff per SKILL.md
     # Step 3. Tests inject a stub to bypass real subprocess work.
-    lint_check: Optional[LintCheckFn] = None
-    test_cmd_override: Optional[str] = None
+    lint_check: LintCheckFn | None = None
+    test_cmd_override: str | None = None
     test_timeout: float = 300.0
     max_iterations: int = 3
     max_iterations_ceiling: int = 8
@@ -130,16 +130,16 @@ class ConductOptions:
     # Autonomous mode safety cap. None resolves at conduct() entry to
     # len(parsed_phases) + 1 because the parsed phase count is unavailable when
     # options are constructed.
-    max_phases: Optional[int] = None
+    max_phases: int | None = None
     run_ci_parity: bool = False
-    ci_cmd: Optional[str] = None
+    ci_cmd: str | None = None
     skip_ci_parity: bool = False
     # Test-only synchronous dispatch seam. Production orchestration leaves this
     # unset, reads ConductResult.request, runs the worker, then persists the
     # worker JSON through _write_ci_parity_result before resuming conduct.
-    ci_parity_spawn: Optional[CIParitySpawnFn] = None
+    ci_parity_spawn: CIParitySpawnFn | None = None
     resume: bool = False
-    on_handback: Optional[HandbackFn] = None
+    on_handback: HandbackFn | None = None
 
 
 @dataclass
@@ -147,10 +147,10 @@ class ConductResult:
     status: str  # awaiting_user | blocked | schema_error | complete | preflight_fail | awaiting_ci_parity | ci_failed
     state: dict
     summary: str
-    next_command: Optional[str] = None
-    diagnostic: Optional[str] = None
-    next_action: Optional[str] = None
-    request: Optional[dict] = None
+    next_command: str | None = None
+    diagnostic: str | None = None
+    next_action: str | None = None
+    request: dict | None = None
 
 
 DELEGATION_UNAVAILABLE_MESSAGE = (
@@ -179,7 +179,7 @@ def _check_iteration_bound(
     state: dict,
     opts: ConductOptions,
     signature: str,
-) -> Optional[ConductResult]:
+) -> ConductResult | None:
     """Single source of truth for iteration_count increments and stall bounds."""
     state["iteration_count"] = state.get("iteration_count", 0) + 1
 
@@ -327,7 +327,7 @@ def _diagnostic_tail(output: str, *, max_chars: int = 2000) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run_preflight(opts: ConductOptions) -> Optional[ConductResult]:
+def run_preflight(opts: ConductOptions) -> ConductResult | None:
     """Returns None on success, else a ConductResult describing the hard stop."""
     if not opts.plan_path.exists():
         return ConductResult(
@@ -409,7 +409,7 @@ def _legacy_state_paths(opts: ConductOptions) -> list[Path]:
     ]
 
 
-def _safe_read_legacy_state(path: Path) -> Optional[bytes]:
+def _safe_read_legacy_state(path: Path) -> bytes | None:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(str(path), flags)
@@ -604,9 +604,7 @@ def _init_state(opts: ConductOptions, plan_hash: str) -> dict:
     }
 
 
-def _bootstrap_from_legacy_state(
-    opts: ConductOptions, plan_hash: str
-) -> Optional[dict]:
+def _bootstrap_from_legacy_state(opts: ConductOptions, plan_hash: str) -> dict | None:
     for legacy_path in _legacy_state_paths(opts):
         raw = _safe_read_legacy_state(legacy_path)
         if raw is None:
@@ -1149,7 +1147,7 @@ def _stash_ref_for_rev(repo_root: Path, rev: str) -> str | None:
     return None
 
 
-def _restore_paused_stash(opts: ConductOptions, state: dict) -> Optional[ConductResult]:
+def _restore_paused_stash(opts: ConductOptions, state: dict) -> ConductResult | None:
     if state.get("status") != "paused":
         return None
     stash_rev = state.get("paused_stash_rev")
@@ -1201,7 +1199,7 @@ def _spawn_strategy(phase: Phase) -> tuple[str, str]:
     return "parallel", "disjoint paths"
 
 
-def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> Optional[str]:
+def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> str | None:
     if opts.test_cmd_override:
         return opts.test_cmd_override
     if phase.test_command:
@@ -1211,7 +1209,7 @@ def _resolve_test_cmd(opts: ConductOptions, phase: Phase) -> Optional[str]:
 
 def _run_validation_if_present(
     opts: ConductOptions, state: dict, phase: Phase, warnings: list[str]
-) -> Optional[ConductResult]:
+) -> ConductResult | None:
     if not phase.validation_command:
         return None
     validation = opts.test_runner(phase.validation_command, opts.test_timeout)
@@ -1229,7 +1227,7 @@ def _run_validation_if_present(
     return None
 
 
-def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
+def detect_lint_command(repo_root: Path) -> list[str] | None:
     """SKILL.md Preflight Step 3 probe.
 
     Returns the argv of the first available lint check that applies to this
@@ -1276,7 +1274,7 @@ def detect_lint_command(repo_root: Path) -> Optional[list[str]]:
     return None
 
 
-def default_lint_check(repo_root: Path) -> Optional[str]:
+def default_lint_check(repo_root: Path) -> str | None:
     """Run the first available lint check; return its diagnostic on failure.
 
     Returns ``None`` when no lint tool is available (skip per SKILL.md) OR
@@ -1296,7 +1294,7 @@ def default_lint_check(repo_root: Path) -> Optional[str]:
     return f"{cmd} (exit {proc.returncode}):\n{output[-2000:]}"
 
 
-def _repo_default_test_cmd(repo_root: Path) -> Optional[str]:
+def _repo_default_test_cmd(repo_root: Path) -> str | None:
     """SKILL.md Step 5 fallback chain step 3.
 
     Probes in this order:
@@ -1360,9 +1358,9 @@ def _worker_blocker_result(
     state: dict,
     phase: Phase,
     *,
-    impl_report: Optional[dict[str, Any]] = None,
-    test_report: Optional[dict[str, Any]] = None,
-) -> Optional[ConductResult]:
+    impl_report: dict[str, Any] | None = None,
+    test_report: dict[str, Any] | None = None,
+) -> ConductResult | None:
     if impl_report is not None:
         flags = impl_report.get("flags", {})
         if flags.get("blocked") is True:
@@ -1409,7 +1407,7 @@ def _run_phase(
     opts: ConductOptions,
     state: dict,
     phase: Phase,
-    initial_warnings: Optional[list[str]] = None,
+    initial_warnings: list[str] | None = None,
     autonomous: bool = False,
 ) -> ConductResult:
     if state.get("current_phase_title") != phase.title:
@@ -1448,8 +1446,8 @@ def _run_phase(
         # On the first iteration we may also spawn the test-writer (parallel
         # or sequential per strategy). For fix-loop iterations we only respawn
         # one role per the SKILL.md algorithm.
-        impl_text: Optional[str] = None
-        test_text: Optional[str] = None
+        impl_text: str | None = None
+        test_text: str | None = None
 
         if iteration == 0:
             impl_text = opts.spawn(req)
@@ -1941,7 +1939,7 @@ def _retry_after_hook_failure(
     state: dict,
     phase: Phase,
     hook_output: str,
-    initial_warnings: Optional[list[str]] = None,
+    initial_warnings: list[str] | None = None,
     autonomous: bool = False,
 ) -> ConductResult:
     """Respawn implementer with hook output as test_failures, then re-enter.

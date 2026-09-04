@@ -28,25 +28,25 @@ def _expected_signature(failing_tests: list[str], staged_diff_stat: str) -> str:
 def test_iteration_signature_is_order_insensitive_for_failing_tests():
     progress = _progress_module()
 
-    assert progress.iteration_signature(["b", "a"], " src/a.py | 1 +\n") == progress.iteration_signature(
-        ["a", "b"], " src/a.py | 1 +\n"
-    )
+    assert progress.iteration_signature(
+        ["b", "a"], " src/a.py | 1 +\n"
+    ) == progress.iteration_signature(["a", "b"], " src/a.py | 1 +\n")
 
 
 def test_iteration_signature_changes_when_failing_tests_change():
     progress = _progress_module()
 
-    assert progress.iteration_signature(["tests/test_a.py::test_a"], "same") != progress.iteration_signature(
-        ["tests/test_b.py::test_b"], "same"
-    )
+    assert progress.iteration_signature(
+        ["tests/test_a.py::test_a"], "same"
+    ) != progress.iteration_signature(["tests/test_b.py::test_b"], "same")
 
 
 def test_iteration_signature_changes_when_diff_stat_changes():
     progress = _progress_module()
 
-    assert progress.iteration_signature(["same"], " src/a.py | 1 +\n") != progress.iteration_signature(
-        ["same"], " src/a.py | 2 ++\n"
-    )
+    assert progress.iteration_signature(
+        ["same"], " src/a.py | 1 +\n"
+    ) != progress.iteration_signature(["same"], " src/a.py | 2 ++\n")
 
 
 def test_iteration_signature_hashes_canonical_json_payload():
@@ -54,9 +54,9 @@ def test_iteration_signature_hashes_canonical_json_payload():
     staged_diff_stat = " src/a.py | 2 ++\n"
     failing_tests = ["z", "a"]
 
-    assert progress.iteration_signature(failing_tests, staged_diff_stat) == _expected_signature(
+    assert progress.iteration_signature(
         failing_tests, staged_diff_stat
-    )
+    ) == _expected_signature(failing_tests, staged_diff_stat)
 
 
 def test_iteration_signature_handles_empty_failure_list():
@@ -82,9 +82,18 @@ def test_iteration_signature_stat_w_fallback_warns_once_and_uses_name_only(
             "--cached",
             "--name-only",
         ]:
-            return subprocess.CompletedProcess(args, 0, stdout="b.py\na.py\n", stderr="")
-        if args[:2] == ["git", "-C"] and args[3:] == ["diff", "--cached", "--stat", "-w"]:
-            return subprocess.CompletedProcess(args, 129, stdout="", stderr="error: unknown option `w'")
+            return subprocess.CompletedProcess(
+                args, 0, stdout="b.py\na.py\n", stderr=""
+            )
+        if args[:2] == ["git", "-C"] and args[3:] == [
+            "diff",
+            "--cached",
+            "--stat",
+            "-w",
+        ]:
+            return subprocess.CompletedProcess(
+                args, 129, stdout="", stderr="error: unknown option `w'"
+            )
         raise AssertionError(f"unexpected command: {args!r}")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -99,4 +108,7 @@ def test_iteration_signature_stat_w_fallback_warns_once_and_uses_name_only(
     assert first == "a.py\nb.py\n"
     assert second == "a.py\nb.py\n"
     assert sum(call[3:] == ["diff", "--cached", "--stat", "-w"] for call in calls) == 1
-    assert calls.count(["git", "-C", str(tmp_path), "diff", "--cached", "--name-only"]) == 2
+    assert (
+        calls.count(["git", "-C", str(tmp_path), "diff", "--cached", "--name-only"])
+        == 2
+    )

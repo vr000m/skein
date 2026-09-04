@@ -21,7 +21,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from conductor import ConductOptions, run_preflight
 from marker import (
     compute_plan_hash,
@@ -211,7 +210,7 @@ def test_preflight_workspace_edits_below_marker_do_not_invalidate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _opts(plan: Path, *, resume: bool, repo: Path) -> "ConductOptions":
+def _opts(plan: Path, *, resume: bool, repo: Path) -> ConductOptions:
     return ConductOptions(
         plan_path=plan,
         repo_root=repo,

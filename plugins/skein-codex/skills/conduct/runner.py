@@ -55,10 +55,16 @@ def run_tests(command: str, timeout: float = 300.0) -> TestResult:
         _terminate_process_group(proc)
         stdout, stderr = proc.communicate()
         # exc.stdout/stderr are bytes-or-None even with text=True (Python quirk).
-        out = _decode(exc.stdout) + _decode(stdout) + _decode(exc.stderr) + _decode(stderr)
+        out = (
+            _decode(exc.stdout)
+            + _decode(stdout)
+            + _decode(exc.stderr)
+            + _decode(stderr)
+        )
         return TestResult(
             returncode=-1,
-            output=out + f"\n[conduct] test command exceeded {timeout:.0f}s wall clock; killed.\n",
+            output=out
+            + f"\n[conduct] test command exceeded {timeout:.0f}s wall clock; killed.\n",
             timed_out=True,
             duration_seconds=elapsed,
         )

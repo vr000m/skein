@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 import subprocess
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
 
 from conductor import SpawnRequest
 from marker import write_marker

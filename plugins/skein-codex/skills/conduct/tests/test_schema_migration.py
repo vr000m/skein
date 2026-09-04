@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import conduct.conductor as conductor
+from conduct import conductor
 from conduct.conductor import ConductOptions, _state_path
 from conduct.marker import compute_plan_hash, write_marker
 

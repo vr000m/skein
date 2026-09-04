@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 
 def _justfile_has_ci(path: Path) -> bool:
@@ -38,7 +37,7 @@ def _package_json_has_ci(path: Path) -> bool:
     return '"scripts"' in text and '"ci"' in text
 
 
-def detect_ci_entrypoint(repo_root: Path) -> Optional[tuple[str, str]]:
+def detect_ci_entrypoint(repo_root: Path) -> tuple[str, str] | None:
     """Return ``(kind, cmd)`` for the first detected local CI entrypoint."""
     justfile = repo_root / "justfile"
     if justfile.exists() and _justfile_has_ci(justfile):
