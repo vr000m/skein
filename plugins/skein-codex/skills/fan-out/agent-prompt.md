@@ -75,7 +75,7 @@ Write the code described in your task. Commit your work.
 ### Phase 2: Test
 
 If your task has an applicable test framework, write or update tests **to the slice
-contract**: the `{{TASK_DESCRIPTION}}` above plus the Integration Seams rows in your
+contract**: the bounded task description above plus the Integration Seams rows in your
 Technical Context where you are listed as the Writer (concrete import paths, symbol
 names, function signatures). Treat that contract — not your own implementation — as
 the source of truth for what the tests assert. You author these tests yourself,

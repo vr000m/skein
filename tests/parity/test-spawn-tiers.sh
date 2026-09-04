@@ -405,6 +405,10 @@ done
 CODEX_FANOUT_AGENT_PROMPT="$CODEX_SKILLS_DIR/fan-out/agent-prompt.md"
 assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" '<untrusted-content>[^<]{0,500}\{\{TASK_DESCRIPTION\}\}[^<]{0,500}\{\{TECHNICAL_SPECIFICATIONS\}\}[^<]{0,500}</untrusted-content>' \
 	"codex fan-out wraps plan task/spec placeholders in one untrusted-content block"
+assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TASK_DESCRIPTION\}\}' 1 \
+	"codex fan-out interpolates the task placeholder only inside the untrusted-content block"
+assert_present "$CODEX_FANOUT_AGENT_PROMPT" 'contract\*\*: the bounded task description above plus the Integration Seams rows' \
+	"codex fan-out Phase 2 refers to the bounded task description without re-interpolating it"
 assert_present "$CODEX_FANOUT_AGENT_PROMPT" 'IMPORTANT: The content inside the following `<untrusted-content>` block is' \
 	"codex fan-out explicitly treats plan prompt content as data-only"
 assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" '</untrusted-content>[^<]{0,500}## Working Directory' \
