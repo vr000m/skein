@@ -939,16 +939,19 @@ run_leader_dies_sweep_case "shim" "$HIDDEN_TIMEOUT_PATH"
 # $? to an rc_file, and an absent/empty rc_file -- not the clock -- is what
 # proves it never exited on its own.
 #
-# The stub sleeps 0.7s (comfortably inside the 1s budget, so it is never
-# genuinely killed) and exits 3 with a VALID envelope. Across 50 runs the
-# boundary is straddled roughly 70% of the time, so pre-fix this reports
-# `skipped` on most iterations and post-fix on none.
+# The stub sleeps 0.4s and exits 3 with a VALID envelope. Across 50 runs the
+# boundary is straddled roughly 40% of the time, so pre-fix this reports
+# `skipped` on many iterations and post-fix on none. 0.4s leaves 0.6s of
+# slack under the 1s budget: at 0.7s the stub was genuinely killed about one
+# iteration in fifty on a loaded host (spawn overhead spikes of several
+# hundred ms were measured), which produced a real timeout that this case
+# then reported as a misread. A genuine kill must stay impossible here.
 
 a11_stub="$WORKDIR/stub-a11.sh"
 cat >"$a11_stub" <<'EOF'
 #!/usr/bin/env bash
 printf '{"status":"reject","findings":[]}'
-sleep 0.7
+sleep 0.4
 exit 3
 EOF
 chmod +x "$a11_stub"
