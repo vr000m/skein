@@ -44,11 +44,21 @@
 # refused before any destructive command runs. That belongs here because it is
 # the same "never trust a value the tree can author" boundary as the slug file.
 #
-# CLEANUP BRANCH. The same file names a `branch` per agent, and that name used
-# to reach `git branch -d` verbatim. It no longer does: the branch to delete is
-# the one `git worktree list --porcelain` attaches to the owned worktree, and
-# the state file's value is consulted only for a worktree that is already gone,
-# and then only in the `fanout/<slugify-normal-form>` shape `setup` produces.
+# CLEANUP TARGETS. The same file names a `worktree` and a `branch` per agent,
+# and both used to reach git. Neither does now. `git worktree list --porcelain`
+# is the only authority: an entry is a target iff its path is a sibling of the
+# repo root named `<repo-name>-fanout-*` AND git has it attached to a branch
+# under `refs/heads/fanout/`, and the branch deleted is the one git attached to
+# it. That listing keeps a hand-deleted worktree (marked `prunable`) with its
+# `branch` line, which is why no state-file fallback is needed. `agents[]` is
+# read for a diagnostic only: a worktree it names that git does not attribute
+# to fan-out is warned about and left alone, with no git call.
+#
+# CLEANUP REPO ROOT SPELLING. `setup` normalises its repo-root argument once
+# and builds the worktree path from that single value, so the path the script
+# creates is the path its own guards judged: a root spelled `<repo>/.` used to
+# yield basename `.` and a worktree nested inside the checkout that cleanup
+# then refused to remove.
 
 set -euo pipefail
 
@@ -394,9 +404,10 @@ else
 	fail "(m1) rc=$m1_rc out='$m1_out'"
 fi
 
-# expect_cleanup_skips_branch <label> <branch-value> — the worktree is gone, so
-# the state file is the only source left for the branch; a value fan-out could
-# not have created must be skipped, with cleanup still succeeding.
+# expect_cleanup_skips_branch <label> <branch-value> — the worktree the state
+# file names is not one git attributes to fan-out, so it is warned about and
+# left alone, and its `branch` value is not consulted at all. Cleanup still
+# succeeds and the branch the state file named survives.
 GONE_WT="$WORKDIR/repo-fanout-9-gone"
 expect_cleanup_skips_branch() {
 	local label="$1" branch="$2" state out rc
@@ -415,7 +426,7 @@ PYEOF
 	out="$(bash "$FANOUT_SH" cleanup "$state" 2>&1)"
 	rc=$?
 	set -e
-	if [[ "$rc" -eq 0 && "$out" == *"skipping branch"* ]] &&
+	if [[ "$rc" -eq 0 && "$out" == *"git does not attribute to fan-out"* ]] &&
 		git -C "$SCRATCH" rev-parse --verify --quiet refs/heads/main >/dev/null; then
 		pass "$label"
 	else
@@ -425,11 +436,147 @@ PYEOF
 
 # (m2) a state file naming an ordinary branch: `main` is not a branch fan-out
 # creates, so cleanup must not delete it.
-expect_cleanup_skips_branch "(m2) cleanup skips a state-file branch fan-out could not have created" 'main'
+expect_cleanup_skips_branch "(m2) cleanup leaves a state-file branch fan-out could not have created" 'main'
 
-# (m3) an option-like value: skipped before any git call, so it can never be
-# parsed as a flag.
-expect_cleanup_skips_branch "(m3) cleanup skips an option-like state-file branch" '-D'
+# (m3) an option-like value: never consulted, so it can never reach git as a
+# flag.
+expect_cleanup_skips_branch "(m3) cleanup leaves an option-like state-file branch" '-D'
+
+# --- (n) git's worktree listing is the ONLY authority for cleanup's targets --
+# A path that merely LOOKS like a fan-out worktree is not one, a worktree whose
+# directory was deleted by hand is still one, and a `fanout/`-shaped branch the
+# state file names is not one. All three are decided from
+# `git worktree list --porcelain`, never from `agents[]`.
+
+# (n1) a sibling directory named like a fan-out worktree, registered by hand as
+# a worktree on a NON-`fanout/` branch and named in the state file: the naming
+# pattern alone is not ownership, so it survives with a warning.
+N1_WT="$WORKDIR/repo-fanout-zzz"
+git -C "$SCRATCH" worktree add -q -b not-a-fanout-branch "$N1_WT" main
+N1_STATE="$WORKDIR/n1-state.json"
+python3 - "$N1_STATE" "$SCRATCH" "$N1_WT" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 8, "worktree": sys.argv[3], "branch": "fanout/main-8-x"}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+set +e
+n1_out="$(bash "$FANOUT_SH" cleanup "$N1_STATE" 2>&1)"
+n1_rc=$?
+set -e
+if [[ "$n1_rc" -eq 0 && "$n1_out" == *"git does not attribute to fan-out"* && -d "$N1_WT" ]] &&
+	git -C "$SCRATCH" rev-parse --verify --quiet refs/heads/not-a-fanout-branch >/dev/null; then
+	pass "(n1) a sibling worktree on a non-fanout/ branch survives cleanup with a warning"
+else
+	fail "(n1) rc=$n1_rc out='$n1_out' (dir survived: $([[ -d "$N1_WT" ]] && echo yes || echo no))"
+fi
+git -C "$SCRATCH" worktree remove --force "$N1_WT" >/dev/null 2>&1 || true
+git -C "$SCRATCH" branch -D not-a-fanout-branch >/dev/null 2>&1 || true
+
+# (n2) the real worktree directory deleted by hand before cleanup. git still
+# lists the entry (marked `prunable`) with its `branch` line, so the branch is
+# still deleted with no state-file fallback in play.
+n2_wt="$(bash "$FANOUT_SH" setup main 7-rmrf "$SCRATCH")"
+rm -rf "$n2_wt"
+N2_STATE="$WORKDIR/n2-state.json"
+python3 - "$N2_STATE" "$SCRATCH" "$n2_wt" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 7, "worktree": sys.argv[3], "branch": "main"}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+set +e
+n2_out="$(bash "$FANOUT_SH" cleanup "$N2_STATE" 2>&1)"
+n2_rc=$?
+set -e
+if [[ "$n2_rc" -eq 0 ]] &&
+	! git -C "$SCRATCH" rev-parse --verify --quiet 'refs/heads/fanout/main-7-rmrf' >/dev/null &&
+	git -C "$SCRATCH" rev-parse --verify --quiet refs/heads/main >/dev/null; then
+	pass "(n2) a hand-deleted worktree's fanout/ branch is still deleted from git's listing"
+else
+	fail "(n2) rc=$n2_rc out='$n2_out'"
+fi
+
+# (n3) a real `fanout/`-namespaced branch with no worktree, named by the state
+# file: the branch regex fallback is gone, so it survives.
+git -C "$SCRATCH" branch fanout/production main
+N3_STATE="$WORKDIR/n3-state.json"
+python3 - "$N3_STATE" "$SCRATCH" "$GONE_WT" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 6, "worktree": sys.argv[3], "branch": "fanout/production"}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+set +e
+n3_out="$(bash "$FANOUT_SH" cleanup "$N3_STATE" 2>&1)"
+n3_rc=$?
+set -e
+if [[ "$n3_rc" -eq 0 ]] &&
+	git -C "$SCRATCH" rev-parse --verify --quiet 'refs/heads/fanout/production' >/dev/null; then
+	pass "(n3) a fanout/-shaped branch named only by the state file survives cleanup"
+else
+	fail "(n3) rc=$n3_rc out='$n3_out'"
+fi
+git -C "$SCRATCH" branch -D fanout/production >/dev/null 2>&1 || true
+
+# --- (o) setup normalises its repo-root argument once -----------------------
+# A root spelled `<repo>/.` has basename `.`, so an unnormalised build put the
+# worktree INSIDE the checkout, where cleanup (which does normalise) then
+# refused to touch it. The printed path must be a sibling, and cleanup must
+# remove it.
+mkdir -p "$FANOUT_DIR"
+printf '4-dot-root\n' >"$SLUG_FILE"
+set +e
+o_wt="$(bash "$FANOUT_SH" setup main --slug-file "$SLUG_FILE" "$SCRATCH/." 2>&1)"
+o_rc=$?
+set -e
+O_STATE="$WORKDIR/o-state.json"
+python3 - "$O_STATE" "$SCRATCH" "$o_wt" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 4, "worktree": sys.argv[3], "branch": "main"}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+set +e
+o_out="$(bash "$FANOUT_SH" cleanup "$O_STATE" 2>&1)"
+set -e
+if [[ "$o_rc" -eq 0 && "$o_wt" == "$WORKDIR/repo-fanout-4-dot-root" && ! -d "$o_wt" ]] &&
+	! git -C "$SCRATCH" rev-parse --verify --quiet 'refs/heads/fanout/main-4-dot-root' >/dev/null; then
+	pass "(o) setup with a repo root spelled '<repo>/.' builds a sibling worktree cleanup can remove"
+else
+	fail "(o) rc=$o_rc wt='$o_wt' cleanup='$o_out'"
+fi
+
+# (o2) a relative repo root is refused outright: `git -C` makes it meaningless
+# and every guard reasons about absolute paths.
+mkdir -p "$FANOUT_DIR"
+printf '4-relative\n' >"$SLUG_FILE"
+set +e
+o2_out="$(bash "$FANOUT_SH" setup main --slug-file "$SLUG_FILE" "relative/repo" 2>&1)"
+o2_rc=$?
+set -e
+if [[ "$o2_rc" -ne 0 && "$o2_out" == *"refusing repo root"* ]]; then
+	pass "(o2) setup refuses a relative repo root"
+else
+	fail "(o2) rc=$o2_rc out='$o2_out'"
+fi
+rm -f "$SLUG_FILE"
 
 # --- Summary -----------------------------------------------------------------
 echo

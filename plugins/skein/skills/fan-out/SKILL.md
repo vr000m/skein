@@ -104,12 +104,17 @@ First, locate the skill directory and get repo info:
 # from one Bash tool call to the next, so every fan-out.sh call below spells the
 # full path and re-binds what it needs itself.
 [ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
+[ -L "$(git rev-parse --show-toplevel)/.fanout" ] && { echo "fan-out: refusing symlinked .fanout/" >&2; exit 1; }
 mkdir -p "$(git rev-parse --show-toplevel)/.fanout"
 ```
 
 This preamble runs once per fan-out and is what creates `<repo-root>/.fanout/`; Phase 7's
 cleanup removes it. `fan-out.sh` deliberately does not create it — `setup --slug-file` must
 fail closed on a missing file, so the directory belongs to the caller that writes into it.
+The symlink refusal comes first because `mkdir -p` treats an existing symlink-to-directory
+as success: a tracked `.fanout` symlink in a hostile clone would take the slug write at the
+link target, and the read side of `fan-out.sh` refuses symlinked components anyway, so the
+preamble must not create a path the script will then refuse.
 
 Then for each task:
 
@@ -307,7 +312,12 @@ Run:
 
 This removes every artifact the skill creates: the worktrees, the merged branches,
 `<repo-root>/.fanout/` (the slug transport directory), and `.fan-out-state.json` itself.
-The `.fanout/` removal is skipped with a diagnostic if that path is a symlink.
+Which worktrees and branches those are is decided by `git worktree list`, not by the state
+file: a worktree qualifies only if it is a sibling of the repo root named
+`<repo-name>-fanout-*` AND git has it attached to a branch under `fanout/`, and the branch
+deleted is the one git attached to it. A worktree the state file names that git does not
+attribute to fan-out is reported and left alone. The `.fanout/` removal is skipped with a
+diagnostic if that path is a symlink.
 
 ### Viewing Logs (on `/fan-out logs N`)
 

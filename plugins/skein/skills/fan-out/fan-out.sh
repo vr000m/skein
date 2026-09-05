@@ -132,11 +132,12 @@ fanout_assert_inside_repo() {
 }
 
 # Does <worktree> carry the name cmd_setup would have given it under <repo-root>?
-# cleanup reads worktree paths out of the state file, so before handing one to
-# `git worktree remove --force` it must be a path this script could itself have
-# created: absolute, no '..', a sibling of the repo root, and named
-# `<repo-name>-fanout-*`. Anything else is a path the state file chose, not one
-# fan-out made, and is skipped rather than removed.
+# One half of cleanup's ownership test: before a path from `git worktree list`
+# can be a removal target it must be one this script could itself have created
+# -- absolute, no '..', a sibling of the repo root, and named
+# `<repo-name>-fanout-*`. The other half is the branch namespace check at the
+# call site; a path passing this alone is not a target. Both operands are
+# expected in the same spelling (see fanout_canonical_worktree).
 fanout_worktree_is_ours() {
   local wt="$1" root="$2"
 
@@ -166,21 +167,19 @@ fanout_canonical_path() {
   fi
 }
 
-# Which branch does THIS checkout have attached to <worktree>? <map> is the
-# tab-separated `<path>\t<ref>` listing built once from `git worktree list
-# --porcelain`. Prints the short branch name and returns 0 on a hit, returns 1
-# otherwise. This is how cleanup learns a branch name from git rather than from
-# the state file.
-fanout_branch_for_worktree() {
-  local wt="$1" map="$2" path ref
-  wt="$(fanout_canonical_path "$wt")"
-  while IFS=$'\t' read -r path ref; do
-    [[ -n "$path" && -n "$ref" ]] || continue
-    [[ "$(fanout_canonical_path "$path")" == "$wt" ]] || continue
-    printf '%s' "${ref#refs/heads/}"
-    return 0
-  done <<<"$map"
-  return 1
+# Spell a WORKTREE path the way git spells it. Same purpose as
+# fanout_canonical_path, but the physical resolution is taken on the PARENT and
+# the basename re-appended, so the answer does not change when the worktree
+# directory itself is missing -- which is exactly the case cleanup has to handle
+# (a worktree deleted by hand is still listed by git, marked `prunable`). git
+# prints physical paths, while the state file may name the same worktree through
+# a symlinked parent, so both sides go through this before being compared.
+fanout_canonical_worktree() {
+  local p parent
+  p="$(fanout_normalise_path "$1")"
+  parent="$(fanout_canonical_path "$(dirname "$p")")"
+  [[ "$parent" != "/" ]] || parent=""
+  printf '%s/%s' "$parent" "$(basename "$p")"
 }
 
 # --- setup: create branch + worktree ---
@@ -203,6 +202,35 @@ cmd_setup() {
     task_slug="${1:-}"
     repo_root="${2:-}"
   fi
+
+  # NORMALISE repo_root ONCE, and reason about that single value everywhere
+  # below. Every guard in this file normalises before judging, so if
+  # `basename`, `dirname` and `git -C` kept the caller's raw spelling the
+  # script would build a path the guards never looked at: `<repo>/.` has
+  # basename `.` and dirname `<repo>`, which puts the worktree INSIDE the
+  # checkout while the guards reason about the sibling -- and cleanup, which
+  # does normalise, then refuses to remove it. Refuse the two shapes cleanup
+  # refuses, for the same reason it does: a relative path is meaningless once
+  # `git -C` has changed directory, and lexical reasoning is unsound with '..'
+  # in play.
+  #
+  # Deliberately LEXICAL only -- no `cd -P`/`pwd -P`. Resolving to the physical
+  # path here would spell the root differently from the slug file the caller
+  # names through the same symlinked parent (macOS puts $TMPDIR under
+  # /var -> /private/var), and `fanout_assert_inside_repo` would then reject a
+  # containment that holds. Identity comparisons that DO need the physical form
+  # use `fanout_canonical_path` at the point of comparison instead.
+  if [[ -z "$repo_root" || "$repo_root" != /* ]]; then
+    echo "fan-out: refusing repo root (must be an absolute path): $repo_root" >&2
+    exit 1
+  fi
+  case "/$repo_root/" in
+  */../*)
+    echo "fan-out: refusing repo root (contains '..'): $repo_root" >&2
+    exit 1
+    ;;
+  esac
+  repo_root="$(fanout_normalise_path "$repo_root")"
 
   if [[ -n "$slug_file" ]]; then
     # Guard the transport before touching it: `.fanout/` is gitignored, but a
@@ -609,12 +637,22 @@ PYEOF
     exit 1
   fi
 
-  # THE BRANCH NAME COMES FROM GIT, NOT FROM THE STATE FILE. `repo_root` and
-  # `worktree` are already anchored above; `branch` was not, and it reached
-  # `git branch -d` verbatim, so a state file authored anywhere in the tree
-  # could name any merged local branch (or an option-like value). Read git's own
-  # worktree listing ONCE, before any removal makes it stale, and derive each
-  # branch from the owned worktree it is attached to.
+  # THE STATE FILE IS UNTRUSTED, SO IT CHOOSES NOTHING. Every worktree cleanup
+  # removes and every branch it deletes comes from git's own worktree listing
+  # for THIS checkout, filtered to what `setup` can produce: a path
+  # `fanout_worktree_is_ours` accepts (absolute, no '..', a sibling of the repo
+  # root, named `<repo-name>-fanout-*`) that git has attached to a branch under
+  # `refs/heads/fanout/`. Both halves must hold, so a worktree that merely
+  # borrows the sibling naming pattern, or one sitting on an unrelated branch,
+  # is not a target however the state file describes it. There is no second
+  # authority: `agents[]` is read for a diagnostic only, and naming a path there
+  # cannot make cleanup run a git command against it.
+  #
+  # Read the listing ONCE, before any removal makes it stale. It is also the
+  # whole authority for branch names -- a worktree whose directory was deleted
+  # by hand is still listed (git marks the entry `prunable`) and still carries
+  # its `branch` line, so there is nothing left for a state-file branch
+  # fallback to do and none is kept.
   local owned_map
   owned_map="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null |
     awk '
@@ -623,52 +661,63 @@ PYEOF
       /^$/         { wt = "" }
     ')"
 
-  # Remove worktrees and branches
-  python3 - "$state_file" <<'PYEOF' | while IFS='|' read -r worktree branch; do
+  # Judge each entry in the spelling git printed it in, against the checkout
+  # root in the same physical spelling ($repo_root_phys, resolved above): a
+  # `/var` vs `/private/var` difference between the two sides is a spelling
+  # difference, never a different directory, and must not decide ownership.
+  local owned="" owned_canon="" map_path map_ref map_canon
+  while IFS=$'\t' read -r map_path map_ref; do
+    [[ -n "$map_path" && -n "$map_ref" ]] || continue
+    [[ "$map_ref" == refs/heads/fanout/* ]] || continue
+    map_canon="$(fanout_canonical_worktree "$map_path")"
+    fanout_worktree_is_ours "$map_canon" "$repo_root_phys" || continue
+    owned+="$map_path"$'\t'"${map_ref#refs/heads/}"$'\n'
+    owned_canon+="$map_canon"$'\n'
+  done <<<"$owned_map"
+
+  # Diagnostic pass over the state file. Anything it names that git does not
+  # attribute to fan-out is reported and left exactly as it is; no git command
+  # runs for it, and nothing here can add a target to the loop below.
+  local named_worktrees named named_canon
+  named_worktrees="$(python3 - "$state_file" <<'PYEOF'
 import json, sys
 
 with open(sys.argv[1]) as f:
     state = json.load(f)
 for a in state.get('agents', []):
-    print(a.get('worktree', '') + '|' + a.get('branch', ''))
+    print(a.get('worktree', ''))
 PYEOF
-    # Resolve the branch BEFORE the worktree is removed: once it is gone git has
-    # no listing left to derive it from.
-    local branch_to_delete=""
-    if [[ -n "$worktree" ]] && fanout_worktree_is_ours "$worktree" "$repo_root"; then
-      branch_to_delete="$(fanout_branch_for_worktree "$worktree" "$owned_map")" || branch_to_delete=""
-    fi
+)"
+  while IFS= read -r named; do
+    [[ -n "$named" ]] || continue
+    named_canon="$(fanout_canonical_worktree "$named")"
+    case $'\n'"$owned_canon" in
+    *$'\n'"$named_canon"$'\n'*) continue ;;
+    esac
+    echo "WARNING: state file names a worktree git does not attribute to fan-out; left alone: $named" >&2
+  done <<<"$named_worktrees"
 
-    if [[ -n "$worktree" && -d "$worktree" ]]; then
-      if fanout_worktree_is_ours "$worktree" "$repo_root"; then
-        echo "Removing worktree: $worktree"
-        git -C "$repo_root" worktree remove "$worktree" --force 2>/dev/null || true
-      else
-        echo "WARNING: skipping worktree the state file names but fan-out could not have created: $worktree" >&2
-      fi
-    fi
+  # Drop stale registrations FIRST. A worktree whose directory was deleted by
+  # hand is still registered, and git refuses `branch -d` on a branch it thinks
+  # is checked out somewhere, so without this the very case the state-file
+  # fallback used to cover would leave the branch behind. Safe here because
+  # $owned_map was read above and nothing below re-reads the listing.
+  git -C "$repo_root" worktree prune 2>/dev/null || true
 
-    if [[ -z "$branch_to_delete" && -n "$branch" ]]; then
-      # No owned worktree carries this branch any more (the usual case: the
-      # worktree was already removed by hand). The state file's own value is
-      # usable only in the shape `setup` can produce -- `fanout/` plus a slugify
-      # normal-form tail -- so a name fan-out could not have created, including
-      # anything option-like, is skipped rather than deleted.
-      if [[ "$branch" =~ ^fanout/[a-z0-9-]+$ ]]; then
-        branch_to_delete="$branch"
-      else
-        echo "WARNING: skipping branch the state file names but fan-out could not have created: $branch" >&2
-      fi
+  # Remove worktrees and branches
+  local worktree branch
+  while IFS=$'\t' read -r worktree branch; do
+    [[ -n "$worktree" && -n "$branch" ]] || continue
+    if [[ -d "$worktree" ]]; then
+      echo "Removing worktree: $worktree"
+      git -C "$repo_root" worktree remove "$worktree" --force 2>/dev/null || true
     fi
-
-    if [[ -n "$branch_to_delete" ]]; then
-      echo "Removing branch: $branch_to_delete"
-      # `--` so a name that survived the checks above is still never parsed as
-      # an option by git itself.
-      git -C "$repo_root" branch -d -- "$branch_to_delete" 2>/dev/null || \
-        echo "  Branch $branch_to_delete not fully merged; use -D to force delete" >&2
-    fi
-  done
+    echo "Removing branch: $branch"
+    # `--` so a name that survived the checks above is still never parsed as an
+    # option by git itself.
+    git -C "$repo_root" branch -d -- "$branch" 2>/dev/null ||
+      echo "  Branch $branch not fully merged; use -D to force delete" >&2
+  done <<<"$owned"
 
   # Prune worktree references
   git -C "$repo_root" worktree prune 2>/dev/null || true
