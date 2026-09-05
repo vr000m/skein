@@ -1,6 +1,7 @@
 .env
 **/.DS_Store
 .deep-review/
+.fanout/
 .conduct/
 __pycache__/
 .pytest_cache/

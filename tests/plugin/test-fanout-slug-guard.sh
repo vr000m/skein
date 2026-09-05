@@ -5,14 +5,19 @@
 # WHY THIS FILE EXISTS. fan-out's SKILL.md used to carry a ~25-line inline
 # decode-and-validate block that re-implemented the slug boundary in prose,
 # with a contract that differed from the script's own slugify(). The prose was
-# replaced by a short "validate before you substitute" rule, which moves the
-# enforcing boundary into cmd_setup: the script must fail closed on any slug
-# that is not <task-id>-<lowercase-slug>, so a plan-derived string that skipped
-# the caller's check never reaches `git worktree add`.
+# replaced by a short "validate, then hand the slug over in a file" rule, which
+# moves the enforcing boundary into cmd_setup: the script must fail closed on
+# any slug that is not <task-id>-<lowercase-slug>, so a plan-derived string that
+# skipped the caller's check never reaches `git worktree add`.
 #
 # The invariant asserted here: cmd_setup accepts a slug iff it matches
-# ^[0-9]+-[a-z0-9-]+$, and refuses everything else with a non-zero exit and a
-# "refusing task slug" message on stderr.
+# ^[0-9]+-[a-z0-9-]+$ AND is a fixed point of the script's own slugify() -- no
+# doubled hyphen, no leading or trailing hyphen, 50 characters or fewer. The
+# regex alone is not enough: slugify() collapses '--', strips edge hyphens and
+# truncates, so without the fixed-point half two distinct slugs that both match
+# the regex (1-foo--bar and 1-foo-bar) would map to one branch and one worktree.
+# Everything else is refused with a non-zero exit and a "refusing task slug"
+# message on stderr.
 
 set -euo pipefail
 
@@ -88,6 +93,49 @@ if [[ "$c_rc" -ne 0 && "$c_out" == *"refusing task slug"* ]]; then
 else
 	fail "(c) rc=$c_rc out='$c_out'"
 fi
+
+# expect_accepted <label> <slug> — slug is taken verbatim, a worktree is made.
+expect_accepted() {
+	local label="$1" slug="$2" raw rc out
+	raw="$(run_setup "$slug")"
+	rc="$(printf '%s' "$raw" | head -1)"
+	out="$(printf '%s' "$raw" | tail -n +2)"
+	if [[ "$rc" -eq 0 && -d "$out" ]]; then
+		pass "$label"
+		git -C "$SCRATCH" worktree remove --force "$out" >/dev/null 2>&1 || true
+	else
+		fail "$label (rc=$rc out='$out')"
+	fi
+}
+
+# expect_refused <label> <slug> — non-zero exit AND the guard's own message.
+expect_refused() {
+	local label="$1" slug="$2" raw rc out
+	raw="$(run_setup "$slug")"
+	rc="$(printf '%s' "$raw" | head -1)"
+	out="$(printf '%s' "$raw" | tail -n +2)"
+	if [[ "$rc" -ne 0 && "$out" == *"refusing task slug"* ]]; then
+		pass "$label"
+	else
+		fail "$label (rc=$rc out='$out')"
+	fi
+}
+
+# --- (d) the minimal well-formed slug is accepted ---------------------------
+expect_accepted "(d) slug '12-a' is accepted" '12-a'
+
+# --- (e) the task-ID-prefix half of the regex is exercised ------------------
+expect_refused "(e) slug 'add-thing' with no numeric task-ID prefix is refused" 'add-thing'
+expect_refused "(f) an empty slug is refused" ''
+expect_refused "(g) slug '1-' with an empty suffix is refused" '1-'
+
+# --- (h) slugify fixed-point half: shapes slugify would rewrite -------------
+expect_refused "(h1) slug '1--a' (slugify collapses '--') is refused" '1--a'
+expect_refused "(h2) slug '1-a-' (slugify strips the trailing '-') is refused" '1-a-'
+
+# --- (i) 51 characters: slugify truncates at 50, so two long slugs collide --
+LONG_SLUG="1-$(printf 'a%.0s' $(seq 1 49))"
+expect_refused "(i) a 51-character slug (slugify truncates to 50) is refused" "$LONG_SLUG"
 
 # --- Summary -----------------------------------------------------------------
 echo

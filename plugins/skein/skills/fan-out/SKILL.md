@@ -111,16 +111,23 @@ Then for each task:
 
 This skill derives each task's slug from the approved task record, not from raw plan
 text: lowercase, `[a-z0-9-]` only, prefixed with the numeric task ID and a hyphen (e.g.
-`1-add-api-endpoint`). Check the derived string against that shape BEFORE it is written
-into any shell command, and pass it as a single-quoted literal so no shell metacharacter
-in it can expand. `fan-out.sh setup` refuses anything that does not match, so a
-plan-derived string that skipped the check fails closed instead of reaching git; the
-complete task-ID-prefixed slug is passed through unchanged, which is what prevents two
-tasks that slugify alike from colliding.
+`1-add-api-endpoint`). Check the derived string against that shape BEFORE it goes
+anywhere, and never paste it into a shell command: write it with your file-write tool
+to `$REPO_ROOT/.fanout/<task-id>.slug` (that directory is gitignored) and let the
+snippet below read the file back. Command-substitution output is never re-parsed as
+shell, and the quoted expansion is a single argv word, so a slug carrying a quote or
+any other metacharacter reaches `fan-out.sh setup` as bytes rather than as syntax.
+`fan-out.sh setup` then validates those bytes and refuses anything that is not
+`<task-id>-<slug>` in slugify's normal form — no `--`, no leading or trailing hyphen,
+50 characters or fewer — so a plan-derived string that skipped the check fails closed
+instead of reaching git. Because the guard refuses everything slugify would alter, the
+complete task-ID-prefixed slug is used unchanged for the branch and worktree names,
+which is what prevents two tasks that slugify alike from colliding.
 
 1. **Create worktree**:
    ```bash
-   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" '<task-id>-<task-slug>' "$REPO_ROOT")
+   TASK_ID=<task-id>   # digits only, checked before it is written here
+   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" "$(tr -d '\n' < "$REPO_ROOT/.fanout/$TASK_ID.slug")" "$REPO_ROOT")
    ```
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.

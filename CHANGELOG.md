@@ -7,6 +7,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 ### Added
 - `scripts/lib/state-path-guard.sh` (bundled into `review-gauntlet/lib/`): `gauntlet_assert_no_symlink` refuses symlinked `.gauntlet/` state paths via one lexical loop bounded at the shallowest non-symlink ancestor carrying `.git`; wired into `convergence-ledger.sh`, `gate-bounded.sh`, `run-gate.sh`.
 - `scripts/lint-temp-paths.sh` + `tests/plugin/test-lint-temp-paths.sh`: static lint against hard-coded `/tmp`/`$RANDOM` temp paths, run by `just lint-scripts`.
+- Task-slug and base-branch guards in `plugins/skein/skills/fan-out/fan-out.sh` `cmd_setup`: a slug is accepted only as `<task-id>-<slug>` that is already a `slugify` fixed point (so two tasks can no longer collide on one branch/worktree), the base branch is checked with `git check-ref-format`, and the orchestrator hands the slug over through a gitignored `.fanout/<task-id>.slug` file instead of a shell literal; covered by `tests/plugin/test-fanout-slug-guard.sh`, run by `just plugin-tests` and linted by `just lint-scripts`.
 - `persist_assert_no_duplicate_keys` (duplicate JSON keys detected via `jq --stream` event count) and `persist_validate_json_shape` in `lib/persist-common.sh`.
 - Skill-shape assertions (R10-A1a/A1b) pinning the `run-gate.sh normalize → reconcile → route → status-row` recipe in both `review-gauntlet` SKILL.md mirrors to files `gate_run_bounded` actually writes.
 

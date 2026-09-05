@@ -114,8 +114,8 @@ reconciliation-tests:
 # Cleaning that up is its own change with its own diff; adopt a new file here
 # only together with the fix that makes it pass.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh
     ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.

@@ -13,6 +13,10 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
+          <task-slug> must be <task-id>-<slug>: digits, then '-', then
+          [a-z0-9-]; and already in slugify normal form (no '--', no leading
+          or trailing '-', 50 characters or fewer). Anything slugify would
+          rewrite is refused.
   spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch claude -p
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
@@ -43,8 +47,27 @@ cmd_setup() {
     exit 1
   fi
 
+  # The regex alone is not enough: slugify() collapses runs of '-', strips edge
+  # hyphens and truncates to 50 chars, so two distinct slugs that pass the regex
+  # (1-foo--bar and 1-foo-bar) can still map to one branch and one worktree.
+  # Require the slug to be a slugify fixed point, so the value the caller passed
+  # is literally the value used for the branch and the worktree path.
   local slug
   slug="$(slugify "$task_slug")"
+  if [[ "$slug" != "$task_slug" ]]; then
+    echo "fan-out: refusing task slug (would be rewritten by slugify to '$slug'): $task_slug" >&2
+    exit 1
+  fi
+
+  # The base branch reaches `git worktree add` as a revision argument; validate it
+  # at the same boundary rather than trusting the caller.
+  # A leading '-' is rejected outright: `git worktree add` would parse it as an
+  # option, and the prefixed check-ref-format call cannot see it.
+  if [[ "$base_branch" == -* ]] || ! git check-ref-format "refs/heads/$base_branch" >/dev/null 2>&1; then
+    echo "fan-out: refusing base branch: $base_branch" >&2
+    exit 1
+  fi
+
   local base_slug
   base_slug="$(slugify "$base_branch")"
   local branch_name="fanout/${base_slug}-${slug}"
