@@ -1,6 +1,8 @@
 .env
 **/.DS_Store
 .deep-review/
+# Codex fan-out mirror only; the Claude mirror derives slugs from the plan.
+# Remove once plugins/skein-codex/skills/fan-out is ported.
 .fanout/
 .fan-out-state.json
 .conduct/

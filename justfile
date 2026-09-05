@@ -116,7 +116,7 @@ reconciliation-tests:
 # only together with the fix that makes it pass.
 #
 # plugins/skein*/skills/fan-out/fan-out.sh are SHELLCHECK-ONLY, not shfmt: they
-# carry the slug-file and base-branch guards, so their correctness belongs
+# carry the task-binding and base-branch guards, so their correctness belongs
 # under lint, but they are indented with spaces and reformatting them to tabs is
 # a whole-file diff that would bury this change. Move them to the shfmt list in
 # the commit that reformats them.

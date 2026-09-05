@@ -42,7 +42,7 @@ docs/skills_architecture/    Skills architecture design docs (source; rendered v
 justfile                     Task runner config
 .deep-review/                Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
 .review-plan/                Gitignored auto-fix manifests + latest-<harness>.json reconciled-envelope state for /review-plan (per-run)
-.fanout/                     Gitignored slug transport for /fan-out (next.slug, written per task and consumed by fan-out.sh setup --slug-file)
+.fanout/                     Gitignored slug transport for the CODEX /fan-out mirror only (next.slug, written per task and consumed by fan-out.sh setup --slug-file). The Claude mirror no longer uses it: fan-out.sh derives each task's slug from the plan itself (tasks / setup --plan --task-id --plan-sha256). Drop this entry and the .gitignore line once the Codex mirror is ported.
 .fan-out-state.json          Gitignored per-run state for /fan-out (repo_root plus one record per agent: pid, branch, worktree, log); read by fan-out.sh status/cancel/cleanup and removed by cleanup
 docs/_plan_view/             Gitignored generated HTML output from /plan-view (default out dir; sibling of docs/dev_plans/)
 _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
