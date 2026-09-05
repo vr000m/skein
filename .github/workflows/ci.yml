@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      PYTEST_ADDOPTS: -p no:cacheprovider
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - uses: extractions/setup-just@v3
+      - name: Install lint toolchain
+        run: |
+          uv tool install ruff==0.16.6
+          sudo apt-get update -q
+          sudo apt-get install -y -q shellcheck jq
+          curl -sSL -o /usr/local/bin/shfmt \
+            https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64
+          sudo chmod +x /usr/local/bin/shfmt
+      - name: just ci
+        run: just ci
