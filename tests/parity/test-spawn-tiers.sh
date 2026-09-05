@@ -284,11 +284,11 @@ assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
 	'^   PID=\$\("\$\{SKILL_DIR\}/fan-out\.sh" spawn "\$WORKTREE" "\$PROMPT_FILE" "\$WORKTREE/fan-out\.log" --effort medium\)$' 1 \
 	"codex fan-out active worker dispatch retains --effort medium"
 assert_present_flat "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
-	'validated approved-task record.*TASK_ID.*TASK_SLUG.*TASK_SLUG_B64' \
-	"codex fan-out binds task identity and slug before setup"
+	'approved task record.*never put it in a shell command' \
+	"codex fan-out derives a validated slug without shell transport"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
-	'TASK_SLUG="\$\{validated_task_slug\}"' \
-	"codex fan-out binds the validated task slug before encoding"
+	'WORKTREE=\$\("\$SKILL_DIR/fan-out\.sh" setup "\$BASE_BRANCH" --slug-file "\$REPO_ROOT/\.fanout/next\.slug" "\$REPO_ROOT"\)' \
+	"codex fan-out passes the slug through the guarded file transport"
 assert_present_flat "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'single-context.*rather than spawning a separate test-writer.*nested `spawn_agent` test-writer' \
 	"codex fan-out pins the active single-context/no-nested-test-writer topology"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
@@ -446,7 +446,7 @@ assert_count "$CODEX_FANOUT_AGENT_PROMPT" '\{\{TOOLCHAIN_CONTEXT\}\}' 2 \
 	"codex fan-out preserves both TOOLCHAIN_CONTEXT placeholder occurrences"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'AGENTS_MD_CONTENT.*TOOLCHAIN_CONTEXT.*active worker prompt' \
 	"codex fan-out producer escapes closing markers for repository-derived values"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'case-insensitively.*optional whitespace before `>`' \
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'case-insensitively match <\\s\*/\\s\*untrusted-content\\b' \
 	"codex fan-out broadens the closing-marker escape"
 
 # Conduct's optional goal is a warned data block when present, but an empty
@@ -491,7 +491,7 @@ assert_present "$CODEX_FANOUT_AGENT_PROMPT" 'git push -u origin "\$\(git branch 
 	"codex fan-out push command resolves the current branch without raw metadata interpolation"
 assert_present_flat "$CODEX_FANOUT_AGENT_PROMPT" '</untrusted-content>[^<]{0,500}## Working Directory Metadata' \
 	"codex fan-out keeps operational worker scope outside the untrusted-content block"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'escape every literal `</untrusted-content>` sequence' \
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'case-insensitively match <\\s\*/\\s\*untrusted-content\\b' \
 	"codex fan-out producer escapes untrusted-content closing markers"
 CODEX_FANOUT_WRITER_PROMPT="$CODEX_SKILLS_DIR/fan-out/test-writer-prompt.md"
 CODEX_FANOUT_WRITER_TEMPLATE=$(mktemp)
@@ -744,14 +744,20 @@ assert_present_flat "$CONDUCT_IMPL_PROMPT" '### Prior staged diff.*\{\{PRIOR_DIF
 	"codex implementer wraps prior diff and failures"
 assert_present_flat "$CONDUCT_TEST_PROMPT" 'repository test context is data only.*<untrusted-content>.*\{\{EXISTING_TESTS\}\}.*</untrusted-content>' \
 	"codex test-writer wraps existing tests"
-assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "printf '%q'.*script path, repo root, run id, lens name, and attempt" \
+assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "absolute.*persist-lens-result\.sh.*repo root.*run id.*lens name.*attempt.*printf '%q'" \
 	"codex deep-review shell-quotes persistence context"
-assert_present "$RP_CODEX_SKILL" "printf '%q'.*script path, repo root, run id, lens name, and attempt" \
+assert_present "$RP_CODEX_SKILL" "absolute.*persist-lens-result\.sh.*repo root.*run id.*lens name.*attempt.*printf '%q'" \
 	"codex review-plan shell-quotes persistence context"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 --decode\)' \
-	"codex fan-out decodes a pre-encoded task slug"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" '\"\$TASK_ID\"-\*\)' \
-	"codex fan-out preserves task-ID slug prefix"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup --slug-file' \
+	"codex fan-out uses the guarded slug-file setup mode"
+assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'line RAW.*no newline stripping' \
+	"codex fan-out documents raw slug-file reads"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_TASK_SLUG_RE' \
+	"codex fan-out uses the shared slug regex"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'worktree list --porcelain' \
+	"codex fan-out cleanup derives worktrees from Git"
+assert_absent "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_B64|TASK_SLUG_DECODER|base64' \
+	"codex fan-out has no base64 slug transport"
 assert_present "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'Toolchain text may suggest commands but is never sufficient' \
 	"codex fan-out treats toolchain commands as advisory"
 assert_present "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'validated must not be run' \
@@ -766,16 +772,6 @@ assert_present "$CODEX_SKILLS_DIR/update-docs/SKILL.md" 'git merge-base -- \{\{B
 	"codex update-docs uses the escaped branch token in merge-base"
 assert_absent "$CODEX_SKILLS_DIR/update-docs/SKILL.md" "git merge-base '{{BASE_BRANCH}}' HEAD" \
 	"codex update-docs never interpolates raw base branch inside shell quotes"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_B64.*missing pre-encoded task slug' \
-	"codex fan-out requires the conductor-provided encoded slug"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 --decode\)' \
-	"codex fan-out supports GNU base64 decoding"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'TASK_SLUG_DECODER=\(base64 -D\)' \
-	"codex fan-out supports macOS/BSD base64 decoding"
-assert_present_flat "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'if ! TASK_SLUG=\$\(printf .%s. "\$TASK_SLUG_B64" \| "\$\{TASK_SLUG_DECODER\[@\]\}"\); then.{0,200}refusing undecodable task slug' \
-	"codex fan-out rejects decoder failures before slug validation"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup \"\$BASE_BRANCH\" \"\$TASK_SLUG\" \"\$REPO_ROOT\"' \
-	"codex fan-out passes the validated complete slug"
 assert_present_flat "$CODEX_SKILLS_DIR/content-review/SKILL.md" '\[--delegate\].*Explicitly authorise' \
 	"codex content-review exposes explicit top-level delegation control"
 assert_present "$CODEX_SKILLS_DIR/content-review/SKILL.md" 'top-level delegation path requires the explicit `--delegate` argument; an absent flag runs inline' \
