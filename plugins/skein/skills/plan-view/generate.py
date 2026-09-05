@@ -18,7 +18,7 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -581,16 +581,14 @@ def apply_stranded(plans: Iterable[Plan], stale_days: int) -> None:
     """Re-colour in-progress / partial plans red if last-touched > stale_days ago."""
     if stale_days <= 0:
         return
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for plan in plans:
         if plan.bucket not in ("in-progress", "partial"):
             continue
         if not plan.last_touched:
             continue
         try:
-            last = datetime.fromisoformat(plan.last_touched).replace(
-                tzinfo=timezone.utc
-            )
+            last = datetime.fromisoformat(plan.last_touched).replace(tzinfo=UTC)
         except ValueError:
             continue
         age = (now - last).days
@@ -1003,8 +1001,8 @@ def render_dashboard(
         '<button class="reset" type="button" title="Clear filters">clear</button>'
     )
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_short = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     # Shared helper so this embedded value matches the drift-guard sha in main().
     corpus_digest = corpus_sha(plans, plans_dir)
     plans_dir_short = _home_relative_path(plans_dir)
@@ -1142,8 +1140,8 @@ def render_plan_page(
     timeline_svg = _render_timeline_svg(plan.commits)
     edges_html = _render_edges_section(plan, plans)
     markdown_html = render_markdown(plan.raw)
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_short = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     source_path_short = _home_relative_path(plan.path)
 
     substitutions = {
@@ -1826,7 +1824,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "schema_version": 2,
-                    "generated_at": datetime.now(timezone.utc)
+                    "generated_at": datetime.now(UTC)
                     .isoformat()
                     .replace("+00:00", "Z"),
                     "git_head": git_head_sha,

@@ -1,0 +1,8 @@
+# Ruff configuration for the whole repo. The rule set is ruff's default for
+# the pinned version (0.16.6, see .pre-commit-config.yaml and
+# .github/workflows/ci.yml); this file only fixes the interpreter target and
+# keeps the formatter out of docs/, where reflowing a fenced Python block in a
+# dev plan would silently invalidate the plan's review marker.
+target-version = "py312"
+line-length = 88
+extend-exclude = ["docs"]
