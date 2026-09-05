@@ -30,7 +30,8 @@ Commands:
           actually holds in that exact plan revision.
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
           Test-only call shape: the slug is spelled on the command line, so it
-          derives nothing and pins nothing. The skill always uses the --plan
+          derives nothing and pins nothing. Refused unless
+          FANOUT_TEST_LITERAL_SLUG=1 is set. The skill always uses the --plan
           form. <task-slug> must be <task-id>-<slug>: digits, then '-', then
           [a-z0-9-]; and already in slugify normal form (no '--', no leading
           or trailing '-', 50 characters or fewer). Anything slugify would
@@ -444,6 +445,14 @@ cmd_setup() {
       exit 1
     fi
   else
+    # The positional form spells the slug on the command line, which is exactly
+    # what the derived form exists to prevent. It stays only so the guard tests
+    # can drive the regex and fixed-point branches directly, and it is refused
+    # unless the caller opts in with FANOUT_TEST_LITERAL_SLUG=1.
+    if [[ "${FANOUT_TEST_LITERAL_SLUG:-}" != "1" ]]; then
+      echo "fan-out: refusing positional slug form (test-only; set FANOUT_TEST_LITERAL_SLUG=1). The skill uses: setup <base-branch> --plan <path> --task-id N --plan-sha256 <hex> <repo-root>" >&2
+      exit 1
+    fi
     task_slug="${1:-}"
     repo_root="${2:-}"
   fi

@@ -75,6 +75,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FANOUT_SH="$REPO_ROOT/plugins/skein-codex/skills/fan-out/fan-out.sh"
+# The positional setup form is test-only; opt in so the guard cases can drive it.
+export FANOUT_TEST_LITERAL_SLUG=1
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -775,6 +777,21 @@ else
 fi
 
 # --- Summary -----------------------------------------------------------------
+# --- (p) positional slug form is refused without the test-only opt-in ------
+# The derived form is the only one the skill documents. The positional form
+# stays for these guard tests, so it must be inert in the shipped script unless
+# FANOUT_TEST_LITERAL_SLUG=1 is set explicitly.
+set +e
+p1_out="$(env -u FANOUT_TEST_LITERAL_SLUG bash "$FANOUT_SH" setup main 7-delete-api "$SCRATCH" 2>&1)"
+p1_rc=$?
+set -e
+if [[ "$p1_rc" -ne 0 && "$p1_out" == *"refusing positional slug form"* && ! -d "$WORKDIR/repo-fanout-7-delete-api" ]] &&
+	! git -C "$SCRATCH" show-ref --quiet "refs/heads/fanout/main-7-delete-api"; then
+	pass "(p1) positional slug form refused without FANOUT_TEST_LITERAL_SLUG=1; no worktree or branch created"
+else
+	fail "(p1) positional slug form must be refused without FANOUT_TEST_LITERAL_SLUG=1 (rc=$p1_rc): $p1_out"
+fi
+
 echo
 echo "test-fanout-slug-guard-codex.sh: $PASS_COUNT passed, $FAIL_COUNT failed"
 
