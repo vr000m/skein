@@ -113,12 +113,20 @@ reconciliation-tests:
 # pre-existing style debt.
 # Cleaning that up is its own change with its own diff; adopt a new file here
 # only together with the fix that makes it pass.
+#
+# plugins/skein/skills/fan-out/fan-out.sh is SHELLCHECK-ONLY, not shfmt: it
+# carries the slug-file and base-branch guards, so its correctness belongs
+# under lint, but it is indented with spaces and reformatting it to tabs is a
+# whole-file diff that would bury this change. Move it to the shfmt list in the
+# commit that reformats it.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh
     shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh
     ./scripts/lint-temp-paths.sh
 
-# Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.
+# Plugin-level guards and skill-script guard suites: CLAUDE.md hygiene rules,
+# the manifest checks, and the regression suites for guards that live in a
+# skill's own scripts (the temp-path lint, fan-out's slug/base-branch guards).
 # (tests/plugin/test_history_and_assets.sh is deliberately NOT listed: it is
 # a one-off migration-commit assertion that only holds against the specific
 # commit it was written for, not a suite member that can run against

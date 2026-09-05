@@ -709,7 +709,7 @@ After the applier returns, proceed to Step 5. Findings that landed as commits sh
 
 ```
 "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...] \
-  | ${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/persist-deep-review-state.sh --harness claude --run-id "$RUN_ID" --base-commit "$BASE_COMMIT" --head-commit "$HEAD_COMMIT" --diff-hash "$DIFF_HASH" --review-focus-hash "$REVIEW_FOCUS_HASH" --from-collector
+  | "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/persist-deep-review-state.sh --harness claude --run-id "$RUN_ID" --base-commit "$BASE_COMMIT" --head-commit "$HEAD_COMMIT" --diff-hash "$DIFF_HASH" --review-focus-hash "$REVIEW_FOCUS_HASH" --from-collector
 ```
 
 `persist-deep-review-state.sh`'s positional `<lenses.json>` input is **test-only** (documented as such in the script's own header) and must never be used by the skill — the collector's stdout piped through `--from-collector` is the only supported source for this write.

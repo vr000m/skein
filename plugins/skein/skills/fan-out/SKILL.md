@@ -112,23 +112,38 @@ Then for each task:
 This skill derives each task's slug from the approved task record, not from raw plan
 text: lowercase, `[a-z0-9-]` only, prefixed with the numeric task ID and a hyphen (e.g.
 `1-add-api-endpoint`). Check the derived string against that shape BEFORE it goes
-anywhere, and never paste it into a shell command: write it with your file-write tool
-to `$REPO_ROOT/.fanout/<task-id>.slug` (that directory is gitignored) and let the
-snippet below read the file back. Command-substitution output is never re-parsed as
-shell, and the quoted expansion is a single argv word, so a slug carrying a quote or
-any other metacharacter reaches `fan-out.sh setup` as bytes rather than as syntax.
-`fan-out.sh setup` then validates those bytes and refuses anything that is not
-`<task-id>-<slug>` in slugify's normal form — no `--`, no leading or trailing hyphen,
-50 characters or fewer — so a plan-derived string that skipped the check fails closed
-instead of reaching git. Because the guard refuses everything slugify would alter, the
-complete task-ID-prefixed slug is used unchanged for the branch and worktree names,
-which is what prevents two tasks that slugify alike from colliding.
+anywhere, and never put it in a shell command in any form — not as a literal, not as a
+variable, not inside a command substitution. Immediately before each task's setup call,
+write the slug and nothing else, followed by a single newline, with your file-write tool
+to the fixed path `$REPO_ROOT/.fanout/next.slug` (that directory is gitignored), then
+run the snippet below. The path is fixed and the tasks are set up one at a time, so each
+call overwrites the previous task's file; `fan-out.sh` deletes the file as soon as it
+reads it, so a run that forgets to write a fresh one fails closed with `missing slug
+file` rather than reusing a slug from an earlier task, an earlier run, or an earlier
+plan.
+
+`fan-out.sh setup --slug-file` reads that file itself, so no plan-derived byte is ever
+spelled in a shell command and there is nothing for the shell to re-parse. It refuses a
+slug file reached through a symlink or sitting outside the repo root, reads the first
+line RAW — no newline stripping, since stripping would splice a hostile `1-foo\n-bar`
+into a slug the guard accepts — and refuses any file that is not exactly one line. It
+then validates those bytes and refuses anything that is not `<task-id>-<slug>` in
+slugify's normal form — no `--`, no leading or trailing hyphen, 50 characters or fewer —
+so a plan-derived string that skipped the check fails closed instead of reaching git.
+Because the guard refuses everything slugify would alter, the complete task-ID-prefixed
+slug is used unchanged for the branch and worktree names, which is what prevents two
+tasks that slugify alike from colliding.
 
 1. **Create worktree**:
    ```bash
-   TASK_ID=<task-id>   # digits only, checked before it is written here
-   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" "$(tr -d '\n' < "$REPO_ROOT/.fanout/$TASK_ID.slug")" "$REPO_ROOT")
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
+   BASE_BRANCH="$(git branch --show-current)"
+   WORKTREE=$("${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" setup "$BASE_BRANCH" --slug-file "$REPO_ROOT/.fanout/next.slug" "$REPO_ROOT")
    ```
+
+   This snippet re-binds `REPO_ROOT` and `BASE_BRANCH` on purpose: shell variables do not
+   survive from one Bash tool call to the next, so it has to be self-contained. Every
+   token in it is fixed text — the only per-task value travels in the file.
 
    This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
 
@@ -273,7 +288,9 @@ Run:
 "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" cleanup .fan-out-state.json
 ```
 
-This removes worktrees, deletes merged branches, and removes the state file.
+This removes every artifact the skill creates: the worktrees, the merged branches,
+`<repo-root>/.fanout/` (the slug transport directory), and `.fan-out-state.json` itself.
+The `.fanout/` removal is skipped with a diagnostic if that path is a symlink.
 
 ### Viewing Logs (on `/fan-out logs N`)
 
@@ -316,7 +333,7 @@ Integration seams are surfaced at three points in the workflow:
 - Agents run non-interactively with `--dangerously-skip-permissions` — only use on trusted code
 - Agents cannot ask clarifying questions — task descriptions must be self-contained
 - No shared state between agents — if task B needs output from task A, they cannot be parallelized
-- `.fan-out-state.json` should be in `.gitignore`
+- `.fan-out-state.json` and `.fanout/` are both in this repo's `.gitignore`; a project adopting the skill should ignore them too
 
 ## Integration with `/dev-plan`
 

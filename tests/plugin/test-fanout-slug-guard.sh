@@ -10,14 +10,32 @@
 # any slug that is not <task-id>-<lowercase-slug>, so a plan-derived string that
 # skipped the caller's check never reaches `git worktree add`.
 #
-# The invariant asserted here: cmd_setup accepts a slug iff it matches
-# ^[0-9]+-[a-z0-9-]+$ AND is a fixed point of the script's own slugify() -- no
-# doubled hyphen, no leading or trailing hyphen, 50 characters or fewer. The
-# regex alone is not enough: slugify() collapses '--', strips edge hyphens and
-# truncates, so without the fixed-point half two distinct slugs that both match
-# the regex (1-foo--bar and 1-foo-bar) would map to one branch and one worktree.
-# Everything else is refused with a non-zero exit and a "refusing task slug"
-# message on stderr.
+# The invariant asserted here has three parts.
+#
+# SLUG. cmd_setup accepts a slug iff it matches ^[0-9]+-[a-z0-9-]+$ AND is a
+# fixed point of the script's own slugify() -- no doubled hyphen, no leading or
+# trailing hyphen, 50 characters or fewer. The regex alone is not enough:
+# slugify() collapses '--', strips edge hyphens and truncates, so without the
+# fixed-point half two distinct slugs that both match the regex (1-foo--bar and
+# 1-foo-bar) would map to one branch and one worktree. Everything else is
+# refused with a non-zero exit and a "refusing task slug" message on stderr.
+# Acceptance is asserted the other way round too: an accepted slug is used
+# VERBATIM, so the worktree path ends in -fanout-<slug> and the branch is
+# refs/heads/fanout/main-<slug>. Without that half the fixed-point guard's
+# anti-collision purpose would be untested.
+#
+# BASE BRANCH. The base branch reaches `git worktree add` as a revision
+# argument, so it is validated at the same boundary: a leading '-' (which git
+# would parse as an option) and anything `git check-ref-format` rejects are
+# refused with "refusing base branch".
+#
+# SLUG FILE. `setup --slug-file <path> <repo-root>` is the transport the skill
+# uses, so no plan-derived byte is ever spelled in a shell command. The file
+# must sit inside the repo root and must not be reached through a symlink; it
+# must hold exactly one line, read raw (a normalising read such as `tr -d '\n'`
+# would rewrite a hostile `1-foo\n-bar` into a shape the slug guard accepts);
+# and it is consumed -- deleted -- on every path, so a stale file from an
+# earlier run can never be picked up.
 
 set -euo pipefail
 
@@ -50,26 +68,67 @@ printf 'seed\n' >"$SCRATCH/README.md"
 git -C "$SCRATCH" add README.md
 git -C "$SCRATCH" commit -q -m "seed"
 
-# run_setup <slug> — echo rc on line 1, combined output on the rest.
-run_setup() {
+# run_setup_base <base-branch> <slug> — echo rc on line 1, output on the rest.
+run_setup_base() {
 	local out rc
 	set +e
-	out="$(bash "$FANOUT_SH" setup main "$1" "$SCRATCH" 2>&1)"
+	out="$(bash "$FANOUT_SH" setup "$1" "$2" "$SCRATCH" 2>&1)"
 	rc=$?
 	set -e
 	printf '%s\n%s\n' "$rc" "$out"
 }
 
-# --- (a) a well-formed slug is accepted -------------------------------------
-a_raw="$(run_setup '1-ok-slug')"
-a_rc="$(printf '%s' "$a_raw" | head -1)"
-a_out="$(printf '%s' "$a_raw" | tail -n +2)"
-if [[ "$a_rc" -eq 0 && -d "$a_out" ]]; then
-	pass "(a) slug '1-ok-slug' is accepted and a worktree path is printed"
-	git -C "$SCRATCH" worktree remove --force "$a_out" >/dev/null 2>&1 || true
-else
-	fail "(a) rc=$a_rc out='$a_out'"
-fi
+# run_setup <slug> — the same against the scratch repo's own branch, main.
+run_setup() {
+	run_setup_base main "$1"
+}
+
+# run_setup_slug_file <path> — the --slug-file transport form.
+run_setup_slug_file() {
+	local out rc
+	set +e
+	out="$(bash "$FANOUT_SH" setup main --slug-file "$1" "$SCRATCH" 2>&1)"
+	rc=$?
+	set -e
+	printf '%s\n%s\n' "$rc" "$out"
+}
+
+# assert_verbatim <label> <slug> <printed-path> — the accepted slug is the one
+# git actually saw: the worktree basename ends in -fanout-<slug> and the branch
+# is refs/heads/fanout/<base-slug>-<slug>. This is the half that makes the
+# fixed-point guard's anti-collision claim testable.
+assert_verbatim() {
+	local label="$1" slug="$2" path="$3"
+	if [[ "$path" != *"-fanout-$slug" ]]; then
+		fail "$label: worktree path '$path' does not end in -fanout-$slug"
+		return 1
+	fi
+	if ! git -C "$SCRATCH" rev-parse --verify --quiet "refs/heads/fanout/main-$slug" >/dev/null; then
+		fail "$label: branch refs/heads/fanout/main-$slug was not created"
+		return 1
+	fi
+	return 0
+}
+
+# expect_accepted <label> <slug> — slug is taken verbatim, a worktree is made.
+expect_accepted() {
+	local label="$1" slug="$2" raw rc out
+	raw="$(run_setup "$slug")"
+	rc="$(printf '%s' "$raw" | head -1)"
+	out="$(printf '%s' "$raw" | tail -n +2)"
+	if [[ "$rc" -eq 0 && -d "$out" ]] && assert_verbatim "$label" "$slug" "$out"; then
+		pass "$label"
+	elif [[ "$rc" -ne 0 || ! -d "$out" ]]; then
+		fail "$label (rc=$rc out='$out')"
+	fi
+	if [[ -n "$out" && -d "$out" ]]; then
+		git -C "$SCRATCH" worktree remove --force "$out" >/dev/null 2>&1 || true
+		git -C "$SCRATCH" branch -D "fanout/main-$slug" >/dev/null 2>&1 || true
+	fi
+}
+
+# --- (a) a well-formed slug is accepted and used verbatim -------------------
+expect_accepted "(a) slug '1-ok-slug' is accepted and used verbatim" '1-ok-slug'
 
 # --- (b) command substitution in a slug is refused, never expanded ----------
 # The literal string below is single-quoted here and passed as one argv value:
@@ -93,20 +152,6 @@ if [[ "$c_rc" -ne 0 && "$c_out" == *"refusing task slug"* ]]; then
 else
 	fail "(c) rc=$c_rc out='$c_out'"
 fi
-
-# expect_accepted <label> <slug> — slug is taken verbatim, a worktree is made.
-expect_accepted() {
-	local label="$1" slug="$2" raw rc out
-	raw="$(run_setup "$slug")"
-	rc="$(printf '%s' "$raw" | head -1)"
-	out="$(printf '%s' "$raw" | tail -n +2)"
-	if [[ "$rc" -eq 0 && -d "$out" ]]; then
-		pass "$label"
-		git -C "$SCRATCH" worktree remove --force "$out" >/dev/null 2>&1 || true
-	else
-		fail "$label (rc=$rc out='$out')"
-	fi
-}
 
 # expect_refused <label> <slug> — non-zero exit AND the guard's own message.
 expect_refused() {
@@ -136,6 +181,114 @@ expect_refused "(h2) slug '1-a-' (slugify strips the trailing '-') is refused" '
 # --- (i) 51 characters: slugify truncates at 50, so two long slugs collide --
 LONG_SLUG="1-$(printf 'a%.0s' $(seq 1 49))"
 expect_refused "(i) a 51-character slug (slugify truncates to 50) is refused" "$LONG_SLUG"
+
+# expect_refused_base <label> <base-branch> — the base-branch guard fires.
+expect_refused_base() {
+	local label="$1" base="$2" raw rc out
+	raw="$(run_setup_base "$base" '1-ok-base')"
+	rc="$(printf '%s' "$raw" | head -1)"
+	out="$(printf '%s' "$raw" | tail -n +2)"
+	if [[ "$rc" -ne 0 && "$out" == *"refusing base branch"* ]]; then
+		pass "$label"
+	else
+		fail "$label (rc=$rc out='$out')"
+	fi
+}
+
+# --- (j) base-branch guard ---------------------------------------------------
+# A leading '-' is the case `git check-ref-format` cannot see: git would parse
+# it as an option to `worktree add`, so it is rejected on its own.
+expect_refused_base "(j1) base branch '-main' is refused" '-main'
+expect_refused_base "(j2) base branch 'ma in' is refused" 'ma in'
+expect_refused_base "(j3) base branch 'a..b' is refused" 'a..b'
+expect_refused_base "(j4) an empty base branch is refused" ''
+
+# --- (k) --slug-file transport ----------------------------------------------
+FANOUT_DIR="$SCRATCH/.fanout"
+mkdir -p "$FANOUT_DIR"
+SLUG_FILE="$FANOUT_DIR/next.slug"
+
+# (k1) a one-line file is accepted, the slug is used verbatim, and the file is
+# consumed by the call that read it.
+printf '1-from-file\n' >"$SLUG_FILE"
+k1_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k1_rc="$(printf '%s' "$k1_raw" | head -1)"
+k1_out="$(printf '%s' "$k1_raw" | tail -n +2)"
+if [[ "$k1_rc" -eq 0 && -d "$k1_out" ]] && assert_verbatim "(k1)" '1-from-file' "$k1_out"; then
+	if [[ -e "$SLUG_FILE" ]]; then
+		fail "(k1) the slug file survived the call that read it"
+	else
+		pass "(k1) a one-line slug file is accepted, used verbatim and consumed"
+	fi
+elif [[ "$k1_rc" -ne 0 || ! -d "$k1_out" ]]; then
+	fail "(k1) rc=$k1_rc out='$k1_out'"
+fi
+if [[ -n "$k1_out" && -d "$k1_out" ]]; then
+	git -C "$SCRATCH" worktree remove --force "$k1_out" >/dev/null 2>&1 || true
+	git -C "$SCRATCH" branch -D 'fanout/main-1-from-file' >/dev/null 2>&1 || true
+fi
+
+# expect_refused_slug_file <label> <needle> — write the caller's exact bytes,
+# expect a refusal carrying <needle>, and expect the file to be gone either way.
+expect_refused_slug_file() {
+	local label="$1" needle="$2" raw rc out
+	raw="$(run_setup_slug_file "$SLUG_FILE")"
+	rc="$(printf '%s' "$raw" | head -1)"
+	out="$(printf '%s' "$raw" | tail -n +2)"
+	if [[ "$rc" -eq 0 || "$out" != *"$needle"* ]]; then
+		fail "$label (rc=$rc out='$out')"
+	elif [[ -e "$SLUG_FILE" && -f "$SLUG_FILE" ]]; then
+		fail "$label: the slug file survived a refused call"
+	else
+		pass "$label"
+	fi
+}
+
+# (k2) two lines: the transport carries one slug, never a list.
+printf '1-one\n2-two\n' >"$SLUG_FILE"
+expect_refused_slug_file "(k2) a two-line slug file is refused" "refusing task slug"
+
+# (k3) the validation-bypass fixture. A normalising read (`tr -d '\n'`) would
+# splice these two lines into the valid slug '1-foo-bar'; a raw read must not.
+printf '1-foo\n-bar\n' >"$SLUG_FILE"
+expect_refused_slug_file "(k3) a slug file holding '1-foo\\n-bar' is refused" "refusing task slug"
+
+# (k4) no file at all: fail closed, never fall back to some other slug.
+rm -f "$SLUG_FILE"
+k4_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k4_rc="$(printf '%s' "$k4_raw" | head -1)"
+k4_out="$(printf '%s' "$k4_raw" | tail -n +2)"
+if [[ "$k4_rc" -ne 0 && "$k4_out" == *"missing slug file"* ]]; then
+	pass "(k4) a missing slug file is refused"
+else
+	fail "(k4) rc=$k4_rc out='$k4_out'"
+fi
+
+# (k5) a symlinked slug file is refused without being read: a tracked symlink
+# at a gitignored path still materialises on checkout.
+printf '1-linked\n' >"$WORKDIR/outside.slug"
+ln -s "$WORKDIR/outside.slug" "$SLUG_FILE"
+k5_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k5_rc="$(printf '%s' "$k5_raw" | head -1)"
+k5_out="$(printf '%s' "$k5_raw" | tail -n +2)"
+if [[ "$k5_rc" -ne 0 && "$k5_out" == *"symlink"* && -e "$WORKDIR/outside.slug" ]]; then
+	pass "(k5) a symlinked slug file is refused and its target is untouched"
+else
+	fail "(k5) rc=$k5_rc out='$k5_out'"
+fi
+rm -f "$SLUG_FILE"
+
+# (k6) a slug file outside the repo root is refused: the transport is a repo
+# path by contract, so an out-of-tree one is a caller error, not a shortcut.
+printf '1-outside\n' >"$WORKDIR/outside.slug"
+k6_raw="$(run_setup_slug_file "$WORKDIR/outside.slug")"
+k6_rc="$(printf '%s' "$k6_raw" | head -1)"
+k6_out="$(printf '%s' "$k6_raw" | tail -n +2)"
+if [[ "$k6_rc" -ne 0 && "$k6_out" == *"outside the repo root"* && -e "$WORKDIR/outside.slug" ]]; then
+	pass "(k6) a slug file outside the repo root is refused"
+else
+	fail "(k6) rc=$k6_rc out='$k6_out'"
+fi
 
 # --- Summary -----------------------------------------------------------------
 echo

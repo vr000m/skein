@@ -2,6 +2,7 @@
 **/.DS_Store
 .deep-review/
 .fanout/
+.fan-out-state.json
 .conduct/
 __pycache__/
 .pytest_cache/

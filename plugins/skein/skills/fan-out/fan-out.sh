@@ -13,6 +13,14 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
+  setup   <base-branch> --slug-file <path> <repo-root>
+          Same, with the slug read from <path> instead of from the command
+          line, so no plan-derived byte is ever spelled in a shell command.
+          The file must sit inside <repo-root>, must not be reached through a
+          symlink, and must hold exactly one line (one optional trailing
+          newline, nothing after it). It is deleted as soon as it is read, so
+          every call consumes a file its own caller has just written and a
+          stale file from an earlier run cannot be picked up.
           <task-slug> must be <task-id>-<slug>: digits, then '-', then
           [a-z0-9-]; and already in slugify normal form (no '--', no leading
           or trailing '-', 50 characters or fewer). Anything slugify would
@@ -20,7 +28,9 @@ Commands:
   spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch claude -p
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
-  cleanup <state-file>                              Remove worktrees and branches
+  cleanup <state-file>                              Remove worktrees, branches,
+                                                    <repo-root>/.fanout/ and the
+                                                    state file
   help                                              Show this message
 
 Environment:
@@ -33,11 +43,124 @@ slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-50
 }
 
+# --- containment guard for the slug-file transport and .fanout/ ------------
+# Refuses a path that is not lexically inside <repo-root>, that contains a
+# '..' component, or that is reached through a symlink at any component
+# strictly below <repo-root>.
+#
+# WHY A LOCAL WALK AND NOT review-gauntlet's lib/state-path-guard.sh: that file
+# is the single owner of the `.gauntlet/` tree's policy and ships in THAT
+# skill's lib/ directory, which fan-out does not carry; sourcing it across skill
+# directories would make this skill's runtime depend on another skill's bundle
+# layout. The question asked here is also the narrower one -- a fixed path under
+# a repo root the caller already named -- so the walk is bounded at <repo-root>
+# instead of at a discovered checkout boundary. Bounding there is also what
+# keeps ordinary platform symlinks ABOVE the repo (macOS puts $TMPDIR under
+# /var -> /private/var) from turning into a false refusal.
+fanout_assert_inside_repo() {
+  local path="$1" root="$2" label="$3"
+
+  [[ "$path" == /* ]] || path="$PWD/$path"
+  [[ "$root" == /* ]] || root="$PWD/$root"
+  # Normalise the spelling before any test: `[[ -L "$p/" ]]` is always false,
+  # and a '//' run makes `${p%/*}` strip an empty component instead of a real
+  # one, so the verdict must not depend on how the caller typed the path.
+  while [[ "$path" == *//* ]]; do path="${path//\/\///}"; done
+  while [[ "$path" == */ && "$path" != "/" ]]; do path="${path%/}"; done
+  while [[ "$root" == *//* ]]; do root="${root//\/\///}"; done
+  while [[ "$root" == */ && "$root" != "/" ]]; do root="${root%/}"; done
+
+  # Every check below is lexical, and lexical reasoning is unsound once '..' is
+  # in play: `$root/link/../.fanout` with `link` a symlink names a directory
+  # beside link's TARGET, not a child of $root. Reject the shape.
+  case "/$path/" in
+  */../*)
+    echo "fan-out: refusing $label containing '..': $path" >&2
+    return 1
+    ;;
+  esac
+
+  if [[ "$path" != "$root"/* ]]; then
+    echo "fan-out: refusing $label outside the repo root $root: $path" >&2
+    return 1
+  fi
+
+  local cur="$path" next
+  while [[ "$cur" != "$root" && "$cur" != "/" ]]; do
+    if [[ -L "$cur" ]]; then
+      echo "fan-out: refusing $label reached through a symlink: $cur" >&2
+      return 1
+    fi
+    next="${cur%/*}"
+    [[ -n "$next" ]] || next="/"
+    # Textual-progress backstop: on the normalised alphabet each step drops at
+    # least one component, so this can only fire on a violated premise.
+    [[ "$next" != "$cur" ]] || break
+    cur="$next"
+  done
+
+  return 0
+}
+
 # --- setup: create branch + worktree ---
 cmd_setup() {
-  local base_branch="$1"
-  local task_slug="$2"
-  local repo_root="$3"
+  local base_branch="${1:-}"
+  shift || true
+
+  # Two call shapes: the positional `<task-slug> <repo-root>` form, and the
+  # `--slug-file <path> <repo-root>` form the skill uses, where the slug never
+  # appears in a shell command at all.
+  local task_slug="" slug_file="" repo_root=""
+  if [[ "${1:-}" == "--slug-file" ]]; then
+    if [[ $# -lt 3 ]]; then
+      echo "fan-out: setup --slug-file requires <path> <repo-root>" >&2
+      exit 1
+    fi
+    slug_file="$2"
+    repo_root="$3"
+  else
+    task_slug="${1:-}"
+    repo_root="${2:-}"
+  fi
+
+  if [[ -n "$slug_file" ]]; then
+    # Guard the transport before touching it: `.fanout/` is gitignored, but a
+    # TRACKED symlink at that path still materialises on checkout, and reading
+    # through it would let a malicious clone choose which file is consumed.
+    fanout_assert_inside_repo "$slug_file" "$repo_root" "slug file" || exit 1
+    fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory" || exit 1
+
+    if [[ ! -f "$slug_file" ]]; then
+      # Fail closed rather than falling back: the file is written immediately
+      # before this call, so a missing one means no fresh slug exists.
+      echo "fan-out: missing slug file: $slug_file" >&2
+      exit 1
+    fi
+
+    # Read the FIRST LINE RAW -- no `tr -d`, no trimming. Normalising here
+    # would rewrite a hostile value (`1-foo\n-bar`) into a shape the guard
+    # below accepts, which is the validation bypass this transport exists to
+    # avoid. Instead the file's whole content must BE the slug, with at most
+    # one trailing newline; anything else is refused.
+    local one_line=1
+    # `read` returns non-zero on a file with no trailing newline while still
+    # assigning the value, so the failure is tolerated, never used to clear it.
+    IFS= read -r task_slug <"$slug_file" || true
+    if printf '%s\n' "$task_slug" | cmp -s - "$slug_file" ||
+      printf '%s' "$task_slug" | cmp -s - "$slug_file"; then
+      one_line=0
+    fi
+
+    # Consume once, before either verdict: the file must not survive this call,
+    # so a re-run that did not write a fresh one fails closed above instead of
+    # silently reusing a slug from an earlier run or an earlier plan.
+    rm -f "$slug_file"
+
+    if [[ "$one_line" -ne 0 ]]; then
+      echo "fan-out: refusing task slug (slug file must hold exactly one line): $slug_file" >&2
+      exit 1
+    fi
+  fi
 
   # Fail closed on any slug that is not <task-id>-<lowercase-slug>. The caller is
   # expected to validate before substituting, so this is the boundary that stops a
@@ -354,6 +477,16 @@ PYEOF
 
   # Prune worktree references
   git -C "$repo_root" worktree prune 2>/dev/null || true
+
+  # Remove the slug transport directory. `setup --slug-file` consumes each file
+  # it reads, so this only ever removes an aborted run's leftovers -- but the
+  # skill creates the directory, so cleanup owns removing it.
+  if [[ -n "$repo_root" ]] && fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory"; then
+    if [[ -d "$repo_root/.fanout" ]]; then
+      echo "Removing slug directory: $repo_root/.fanout"
+      rm -rf "$repo_root/.fanout"
+    fi
+  fi
 
   # Remove state file
   rm -f "$state_file"
