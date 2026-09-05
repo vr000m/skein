@@ -210,32 +210,32 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 - **Gate normalization** (once per gate, before dedup): converts one gate's raw JSON into the common finding schema and strips any `auto_fix` block aside into the cache. The positional argument is the gate's **envelope** — the same `$gate_out_dir/<name>.envelope.json` declared in the paths block above, the file `gate_run_bounded` writes on every exit path. There is no separate raw-JSON file: `normalize` reads only the envelope, never the tool-out (that is what makes a killed gate unmistakable for a clean pass). Normalized findings go to **stdout**, so every invocation redirects into its own per-gate `.normalized.jsonl`; the `auto_fix` blocks it strips aside go to `--autofix-cache`, which `route` reads back later.
   ```
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh normalize \
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh normalize \
     --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" \
     "$gate_out_dir/<name>.envelope.json" > "$gate_out_dir/<name>.normalized.jsonl"
   ```
 - **Cross-gate dedup**: pool every gate's normalized JSON-Lines findings and pass the pooled file to `run-gate.sh reconcile`, which is the bundled reconciler invoked **without** `--skill` (the reconciler rejects any `--skill` value other than `deep-review`/`review-plan` with exit 2, and this gauntlet is neither of those) plus the positional path's symlink guard:
   ```
   cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings.jsonl"
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh reconcile \
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh reconcile \
     "$gate_out_dir/findings.jsonl" > "$gate_out_dir/reconciled.json"
   ```
   Pool every gate's `.normalized.jsonl` into `findings.jsonl` first — `reconcile`'s input is the concatenation across **all** gates, which is what makes cross-gate corroboration possible at all. Pass it as a **positional path**, not on stdin: the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
   Gate findings passed into reconcile **must not** carry `auto_fix` blocks — the reconciler only requires `--skill` when `auto_fix` is present, and trivial-fix proposals are handled by the fixer's route logic (Guardrail 2), not by the reconcile stage.
 - **Trivial-fix apply**: `run-gate.sh route` already delegates to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — **do not run a separate eligibility audit before applying; route already did it.** `trivial_envelope` is the ready-to-apply annotated envelope; extract it and feed it to the applier:
   ```
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh route \
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh route \
     --autofix-cache "$gate_out_dir/autofix-cache.jsonl" "$gate_out_dir/reconciled.json" > route_output.json
   jq -c '.trivial_envelope' route_output.json > annotated-envelope.json
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" annotated-envelope.json
   ```
   **Never pipe `route`'s raw stdout directly into the applier** — the applier reads a top-level `.findings[]` (see `apply-auto-fix-code.sh`), but route's raw output has no top-level `.findings` key (it's nested under `.trivial_envelope.findings`); doing so silently applies zero fixes every round (the applier reports "no would_apply findings" and exits 0), and every allowlisted trivial fix reappears next gate pass, stalling convergence exactly like the fixer-before-applier ordering bug above.
 
 - **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's three gate envelopes (`$envelope_codex_adversarial`, `$envelope_deep_review`, `$envelope_security_review` — all three declared up front in [Gate Sequence](#gate-sequence-fixed-order) and in the prose seam noted below), run `run-gate.sh status-row` and print the row it emits. This is the ONLY gate-status table this skill ever shows the operator — the rows are script-emitted, not hand-authored in this file. **One row per gate slot, every round, including slots that were skipped, deferred, or errored — the table's row count always equals the slot count (3 here)**; `run-gate.sh status-row` guarantees this even for a zero-byte/unreadable/non-object envelope by emitting an all-`-` row with `status: error` rather than nothing:
   ```
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_codex_adversarial"
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_deep_review"
-  ${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_security_review"
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_codex_adversarial"
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_deep_review"
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/run-gate.sh status-row "$envelope_security_review"
   ```
   Columns (in the order `status-row` emits them): `gate`, `status`, `duration_s`, `findings`, `degraded_reason`. `gate_run_bounded` (gate 1) already stamps `gate`/`duration_s` into its envelope via its own `--gate codex-adversarial` flag; for gates 2/3 (which have no shell-level budget wrapper of their own) the conductor constructs and stamps their envelope by hand — `gate`, `status`, `findings`, `duration_s` (from its own wall clock around each gate's invocation), `degraded_reason` — before calling `status-row`. This is an accepted prose seam, not a script-enforced contract: the full envelope shape, `gate` identity included, is stamped by hand for gates 2/3. A gate envelope with no `duration_s`/`degraded_reason` renders `-` for those columns, never the raw `null` token.
 - **Convergence decision** (after the status rows are printed for the round): first derive this round's present/claimed key files (the orchestrator, never the fixer, computes keys). The four key-file variables and `$auto_fix_manifest` are declared up front with their sibling `envelope_*`/`toolout_*` paths in [Gate Sequence](#gate-sequence-fixed-order), not here:

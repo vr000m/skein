@@ -11,7 +11,8 @@
 #
 # Covers:
 #   (a) static: no operative `${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/<x>`
-#       invocation is left unquoted in the deep-review / review-plan SKILL.md.
+#       invocation is left unquoted in the deep-review / review-plan /
+#       review-gauntlet SKILL.md (lib/ and scripts/ paths).
 #   (b) runtime: the deep-review Step 5 collector -> persist pipeline, taken
 #       VERBATIM from SKILL.md, runs under a plugin root and repo root with
 #       spaces and writes .deep-review/latest-claude.json.
@@ -42,11 +43,11 @@ fail() {
 }
 
 # --- (a) static: no unquoted operative anchor -------------------------------
-for skill in deep-review review-plan; do
+for skill in deep-review review-plan review-gauntlet; do
 	file="$REPO_ROOT/plugins/skein/skills/$skill/SKILL.md"
 	# An operative invocation starts a line / follows a pipe or space and names a
 	# script file. Prose mentions wrapped in backticks are not invocations.
-	bad="$(grep -nE '(^|[ |])\$\{CLAUDE_PLUGIN_ROOT\}/skills/(deep-review|review-plan)/scripts/[a-z-]+\.(sh|py)' "$file" || true)"
+	bad="$(grep -nE '(^|[ |])\$\{CLAUDE_PLUGIN_ROOT\}/skills/(deep-review|review-plan|review-gauntlet)/(scripts|lib)/[a-z-]+\.(sh|py)' "$file" || true)"
 	if [[ -z "$bad" ]]; then
 		pass "(a) $skill: every operative \${CLAUDE_PLUGIN_ROOT} invocation is quoted"
 	else
