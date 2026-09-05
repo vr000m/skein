@@ -613,7 +613,7 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh` (reconciliation pass A).** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Pass A serves two jobs: fail-fast validation of the five-lens JSON-Lines before Step 3.5's Fable/opus call is dispatched, and producing the designated fallback envelope if Step 3.5 errors, times out, or degrades the stream (see Architecture Decisions, "Decision (grilled): pass A is fail-fast validation and the Step 3.5 fallback envelope"). Invoke it with the literal command, reading the immutable `findings-lenses.jsonl` and redirecting the envelope to `reconciled-pass-a.json`:
 
    ```
-   cat findings-lenses.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/reconcile-findings.sh --skill review-plan > reconciled-pass-a.json
+   cat findings-lenses.jsonl | "${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/reconcile-findings.sh --skill review-plan > reconciled-pass-a.json
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
@@ -670,7 +670,7 @@ Procedure:
    Wire the re-reconciliation (**never by hand**): write the Step 3.5 agent's JSON-Lines to `findings-contradiction.jsonl` (`>`, never `>>` — overwritten fresh every run, empty on a clean pass), rebuild `findings.jsonl` by concatenation (`cat findings-lenses.jsonl findings-contradiction.jsonl > findings.jsonl`), then re-run the literal pass-B command:
 
    ```
-   cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/reconcile-findings.sh --skill review-plan
+   cat findings.jsonl | "${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/reconcile-findings.sh --skill review-plan
    ```
 
    Reconciliation therefore runs twice per invocation. `plan_hash` and `run_id` are untouched by either pass — the orchestrator computes both once, immediately before pass A, and passes them to `persist-review-state.sh` unchanged at Step 5.
@@ -684,7 +684,7 @@ Procedure:
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, on pass B's envelope (or pass A's, under the fallback above), using the literal command:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
+   "${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/audit-auto-fix-eligibility.sh --skill review-plan --plan <reviewed-plan> <envelope>
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist, path binding, drift, and scope-forbid gates the applier will use.
@@ -739,7 +739,7 @@ Before presenting findings to the user, verify the merged report against [rubric
 **Persist the post-audit annotated envelope before rendering.** Immediately before presenting findings, invoke the bundled persistence script on Step 3's post-audit annotated envelope (the output of sub-step 3's `audit-auto-fix-eligibility.sh`, carrying `auto_fix_status` — not the raw pre-audit `reconcile-findings.sh` output):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/persist-review-state.sh --harness claude --plan-path <reviewed-plan> --plan-hash <git hash-object of the plan file computed immediately before Step 3 sub-step 2, reconciliation pass A> --run-id <timestamp> <path to the Step 3 post-audit annotated envelope, or pipe it on stdin>
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/persist-review-state.sh --harness claude --plan-path <reviewed-plan> --plan-hash <git hash-object of the plan file computed immediately before Step 3 sub-step 2, reconciliation pass A> --run-id <timestamp> <path to the Step 3 post-audit annotated envelope, or pipe it on stdin>
 ```
 
 Branch on the script's exit code:
@@ -843,7 +843,7 @@ Preconditions:
 Invocation:
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/apply-auto-fix-plan.sh --plan <reviewed-plan> <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):
@@ -890,7 +890,7 @@ Procedure:
 The marker is written by the bundled deterministic entrypoint — **never** by hand-computing the hash in prose-following Python. Hand-rolling the split (`splitlines`/`b'\n'.join`) silently drops the newline immediately above the marker, producing a hash `/conduct` will reject as false drift. The entrypoint performs the byte-faithful slice and the write in one shot:
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/review-plan/scripts/write-review-marker.py <reviewed-plan>
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-plan/scripts/write-review-marker.py <reviewed-plan>
 ```
 
 Capture its stdout — the 40-character SHA-1 it recorded. The entrypoint locates the marker divider (the last unfenced, column-zero real marker or template placeholder), hashes the bytes above it **verbatim** (trailing blank line and original line endings preserved, never trimmed or normalized), composes the marker with today's date and that hash, and writes the plan back. `/conduct` validates with the same byte-faithful slice, so the two agree.

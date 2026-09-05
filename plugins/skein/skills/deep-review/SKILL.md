@@ -636,14 +636,14 @@ Procedure:
 2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
 
    ```
-   cat findings.jsonl | ${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/reconcile-findings.sh --skill deep-review
+   cat findings.jsonl | "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/reconcile-findings.sh --skill deep-review
    ```
 
    The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
+   "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope>
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
@@ -680,7 +680,7 @@ Preconditions:
 Invocation:
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
+"${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/apply-auto-fix-code.sh --test-cmd "<cmd>" <annotated-envelope.json>
 ```
 
 Per-fix gating (the applier re-verifies even what the auditor already checked):

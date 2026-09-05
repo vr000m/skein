@@ -22,8 +22,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # entry: <mirror-dir>|<skill>|<applier-basename>|<anchor-form>
 # anchor-form is the literal prefix-up-to-/scripts/ that grep matches in SKILL.md.
 ANCHORED=(
-	"plugins/skein|deep-review|apply-auto-fix-code.sh|\${CLAUDE_PLUGIN_ROOT}/skills/deep-review"
-	"plugins/skein|review-plan|apply-auto-fix-plan.sh|\${CLAUDE_PLUGIN_ROOT}/skills/review-plan"
+	"plugins/skein|deep-review|apply-auto-fix-code.sh|\"\${CLAUDE_PLUGIN_ROOT}\"/skills/deep-review"
+	"plugins/skein|review-plan|apply-auto-fix-plan.sh|\"\${CLAUDE_PLUGIN_ROOT}\"/skills/review-plan"
 	"plugins/skein-codex|deep-review|apply-auto-fix-code.sh|\"\$SKILL_DIR\""
 	"plugins/skein-codex|review-plan|apply-auto-fix-plan.sh|\"\$SKILL_DIR\""
 )
