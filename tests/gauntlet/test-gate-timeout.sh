@@ -122,10 +122,21 @@ gate_run_bounded "\$@"
 EOF
 chmod +x "$RUNNER"
 
-# PATH with GNU/Homebrew \`timeout\` (and \`gtimeout\`) hidden — this matches
-# the plan's stated host facts (timeout is Homebrew coreutils only; no
-# \`setsid(1)\`), so this is the "shim" fallback path.
-HIDDEN_TIMEOUT_PATH="/usr/bin:/bin:/sbin"
+# PATH with GNU/Homebrew \`timeout\` (and \`gtimeout\`) hidden, so the cases
+# below exercise the python shim fallback. A fixed "/usr/bin:/bin:/sbin" only
+# hides them on macOS (Homebrew coreutils live elsewhere); on Linux coreutils
+# ships /usr/bin/timeout. So mirror those system dirs into a scratch bin dir,
+# minus the two names, and use that as the whole PATH — portable either way.
+HIDDEN_TIMEOUT_BIN="$WORKDIR/hidden-timeout-bin"
+mkdir -p "$HIDDEN_TIMEOUT_BIN"
+for sysdir in /usr/bin /bin /sbin; do
+	for exe in "$sysdir"/*; do
+		name="${exe##*/}"
+		case "$name" in timeout | gtimeout) continue ;; esac
+		[ -e "$HIDDEN_TIMEOUT_BIN/$name" ] || ln -s "$exe" "$HIDDEN_TIMEOUT_BIN/$name"
+	done
+done
+HIDDEN_TIMEOUT_PATH="$HIDDEN_TIMEOUT_BIN"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
 	if PATH="$HIDDEN_TIMEOUT_PATH" command -v timeout >/dev/null 2>&1 ||
 		PATH="$HIDDEN_TIMEOUT_PATH" command -v gtimeout >/dev/null 2>&1; then
