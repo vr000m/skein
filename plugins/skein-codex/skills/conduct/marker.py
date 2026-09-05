@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 import subprocess
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 MARKER_RE = re.compile(r"^<!-- reviewed: (\d{4}-\d{2}-\d{2}) @ ([0-9a-f]{40}) -->\s*$")
@@ -211,7 +211,7 @@ def write_marker(plan_path: str | Path, when: date | None = None) -> str:
         above_text += "\n"
 
     sha = _hash_stripped(above_text)
-    iso = (when or date.today()).isoformat()
+    iso = (when or datetime.now(UTC).date()).isoformat()
     marker_line = f"<!-- reviewed: {iso} @ {sha} -->"
 
     if below:

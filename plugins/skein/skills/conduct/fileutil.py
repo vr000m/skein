@@ -17,7 +17,6 @@ import stat
 import tempfile
 from pathlib import Path
 
-
 _PLAN_ID_RE = re.compile(r"^[a-f0-9]{12}$")
 MAX_RESULT_FILE_BYTES = 1024 * 1024
 

@@ -29,7 +29,6 @@ from _scaffold import (
 from conductor import ConductOptions, SpawnRequest, conduct
 from runner import TestResult as _TestResult
 
-
 # ---------------------------------------------------------------------------
 # Autonomous-mode-only helpers (validation cmd + failing test result)
 # ---------------------------------------------------------------------------

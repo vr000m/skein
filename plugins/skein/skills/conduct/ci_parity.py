@@ -19,7 +19,6 @@ be detected. ``--ci-cmd CMD`` on ``ConductOptions`` bypasses this detection.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 
 def _justfile_has_ci(path: Path) -> bool:
@@ -33,11 +32,12 @@ def _justfile_has_ci(path: Path) -> bool:
         # introduce a new recipe. Matching only column-zero ``ci:`` /
         # ``ci <args>:`` avoids false positives from ``define``-style
         # blocks or commented-out examples that happen to contain ``ci:``.
-        if line.startswith("ci:") or line.startswith("ci "):
-            # The "ci " form must be followed eventually by a colon on the
-            # same line for it to be a recipe header.
-            if line.startswith("ci:") or ":" in line.split(" ", 1)[-1]:
-                return True
+        # The "ci " form must be followed eventually by a colon on the
+        # same line for it to be a recipe header.
+        if line.startswith(("ci:", "ci ")) and (
+            line.startswith("ci:") or ":" in line.split(" ", 1)[-1]
+        ):
+            return True
     return False
 
 
@@ -51,7 +51,7 @@ def _makefile_has_ci(path: Path) -> bool:
         # Restricting to column zero prevents matching ``ci:`` inside a
         # ``define``/``endef`` block, a here-doc, or any other indented
         # context where the literal would not be a real CI target.
-        if line.startswith("ci:") or line.startswith("ci :"):
+        if line.startswith(("ci:", "ci :")):
             return True
     return False
 
@@ -67,7 +67,7 @@ def _package_json_has_ci(path: Path) -> bool:
     return '"scripts"' in text and '"ci"' in text
 
 
-def detect_ci_entrypoint(repo_root: Path) -> Optional[tuple[str, str]]:
+def detect_ci_entrypoint(repo_root: Path) -> tuple[str, str] | None:
     """Return ``(kind, cmd)`` for the first CI entrypoint detected, else None.
 
     ``kind`` is one of ``"just"``, ``"make"``, ``"npm"``, ``"cargo"``. ``cmd``

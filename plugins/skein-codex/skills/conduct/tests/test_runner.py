@@ -52,7 +52,7 @@ def test_run_tests_timeout_kills_descendant_processes(tmp_path: Path):
     )
     command = (
         f"{shlex.quote(sys.executable)} -c "
-        f"{shlex.quote(f'import subprocess, sys, time; subprocess.Popen([sys.executable, \"-c\", {child!r}]); time.sleep(10)')}"
+        f"{shlex.quote(f'import subprocess, sys, time; subprocess.Popen([sys.executable, "-c", {child!r}]); time.sleep(10)')}"
     )
     result = run_tests(command, timeout=0.2)
     assert result.timed_out is True

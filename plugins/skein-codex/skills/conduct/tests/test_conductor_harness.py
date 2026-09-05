@@ -28,22 +28,22 @@ import os
 import shutil
 import subprocess
 import textwrap
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Callable
 
 import pytest
 
-import conduct.conductor as conductor
+from conduct import conductor
 from conduct.conductor import (
     ConductOptions,
     SpawnRequest,
-    _state_path,
     _repo_default_test_cmd,
+    _state_path,
     abort_run,
     conduct,
-    delegation_unavailable_result,
     default_lint_check,
+    delegation_unavailable_result,
     detect_lint_command,
     pause_phase,
 )
@@ -52,7 +52,6 @@ from conduct.marker import compute_plan_hash, marker_is_stale, write_marker
 from conduct.runner import (
     TestResult as _TestResult,
 )  # rename — pytest tries to collect any class named Test*
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -2607,9 +2606,11 @@ def test_runtime_specific_locks_do_not_collide(repo):
     )
 
     assert codex_state != claude_state
-    with StateLock(codex_state.with_suffix(codex_state.suffix + ".lock")):
-        with StateLock(claude_state.with_suffix(claude_state.suffix + ".lock")):
-            pass
+    with (
+        StateLock(codex_state.with_suffix(codex_state.suffix + ".lock")),
+        StateLock(claude_state.with_suffix(claude_state.suffix + ".lock")),
+    ):
+        pass
 
 
 def test_stall_threshold_greater_than_max_iterations_warns(

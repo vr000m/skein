@@ -15,7 +15,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from marker import (
     MARKER_RE,
     compute_plan_hash,
@@ -24,7 +23,6 @@ from marker import (
     strip_marker_for_hashing,
     write_marker,
 )
-
 
 requires_git = pytest.mark.skipif(
     shutil.which("git") is None, reason="git not available"
@@ -152,7 +150,7 @@ def test_write_marker_replaces_template_placeholder(tmp_path: Path):
     text = plan_path.read_text()
 
     assert "<!-- reviewed: YYYY-MM-DD @ <hash> -->" not in text
-    iso, recorded_sha = read_marker(plan_path)
+    _iso, recorded_sha = read_marker(plan_path)
     assert recorded_sha == sha
     assert text.index("<!-- reviewed:") < text.index("## Progress")
     assert marker_is_stale(plan_path) is False

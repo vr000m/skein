@@ -29,9 +29,8 @@ if str(_TESTS_DIR) not in sys.path:
 # referenced inside ``conductor`` so the wrapper sees every acquisition the
 # conductor performs, regardless of how the underlying lock module is
 # implemented (flock / mkdir fallback / etc.).
-import pytest  # noqa: E402
-
-from conductor import StateLock as _RealStateLock  # noqa: E402
+import pytest
+from conductor import StateLock as _RealStateLock
 
 
 class LockAcquisitionCounter:
@@ -93,7 +92,7 @@ def lock_counter(monkeypatch) -> LockAcquisitionCounter:
 # ``_scaffold.py``.
 
 
-from _scaffold import _git as _scaffold_git  # noqa: E402
+from _scaffold import _git as _scaffold_git
 
 
 @pytest.fixture

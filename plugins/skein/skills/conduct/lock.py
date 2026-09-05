@@ -28,6 +28,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Self
 
 try:
     import fcntl  # POSIX only
@@ -86,7 +87,7 @@ class StateLock:
                 pass
             self._lockdir = None
 
-    def __enter__(self) -> "StateLock":
+    def __enter__(self) -> Self:
         self.acquire()
         return self
 

@@ -28,6 +28,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Self
 
 try:
     import fcntl  # POSIX only
@@ -86,7 +87,7 @@ class StateLock:
                 pass
             self._lockdir = None
 
-    def __enter__(self) -> "StateLock":
+    def __enter__(self) -> Self:
         self.acquire()
         return self
 
@@ -129,9 +130,7 @@ class StateLock:
             return
         if _lockdir_pid_is_running(lockdir):
             return
-        sys.stderr.write(
-            f"conduct: breaking stale lock {lockdir} (age={int(age)}s)\n"
-        )
+        sys.stderr.write(f"conduct: breaking stale lock {lockdir} (age={int(age)}s)\n")
         for child in lockdir.iterdir():
             child.unlink()
         lockdir.rmdir()

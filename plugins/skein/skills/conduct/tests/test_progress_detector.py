@@ -16,10 +16,8 @@ import importlib
 import subprocess
 import warnings
 
-
 import progress
 from progress import iteration_signature
-
 
 # ---------------------------------------------------------------------------
 # iteration_signature: cases (a)-(e)

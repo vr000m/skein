@@ -16,11 +16,10 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
-
 
 # ---------------------------------------------------------------------------
 # Constants — status lexicon + component heuristic + edge patterns
@@ -41,22 +40,24 @@ def _home_relative_path(path: Path) -> str:
 # (regex, bucket, chip-colour-class)
 STATUS_LEXICON: list[tuple[re.Pattern[str], str, str]] = [
     (
-        re.compile(r"\bphases?\s+\d+\s*[-–]\s*\d+\s+(shipped|landed|complete)\b", re.I),
+        re.compile(
+            r"\bphases?\s+\d+\s*[-–]\s*\d+\s+(shipped|landed|complete)\b", re.IGNORECASE
+        ),
         "partial",
         "amber",
     ),
-    (re.compile(r"\bphase\s+\d+\s+shipped\b", re.I), "partial", "amber"),
-    (re.compile(r"\bpartially\s+shipped\b", re.I), "partial", "amber"),
-    (re.compile(r"\bin\s+progress\b", re.I), "in-progress", "amber"),
-    (re.compile(r"\bin\s+review\b", re.I), "in-progress", "amber"),
-    (re.compile(r"\bnot\s+started\b", re.I), "planned", "blue"),
-    (re.compile(r"\bplanned\b", re.I), "planned", "blue"),
-    (re.compile(r"\bpaused\b", re.I), "paused", "grey"),
-    (re.compile(r"\babandoned\b", re.I), "paused", "grey"),
-    (re.compile(r"\bblocked\b", re.I), "blocked", "red"),
-    (re.compile(r"\bshipped\b", re.I), "shipped", "green"),
-    (re.compile(r"\bcomplete\b", re.I), "shipped", "green"),
-    (re.compile(r"\bmerged\b", re.I), "shipped", "green"),
+    (re.compile(r"\bphase\s+\d+\s+shipped\b", re.IGNORECASE), "partial", "amber"),
+    (re.compile(r"\bpartially\s+shipped\b", re.IGNORECASE), "partial", "amber"),
+    (re.compile(r"\bin\s+progress\b", re.IGNORECASE), "in-progress", "amber"),
+    (re.compile(r"\bin\s+review\b", re.IGNORECASE), "in-progress", "amber"),
+    (re.compile(r"\bnot\s+started\b", re.IGNORECASE), "planned", "blue"),
+    (re.compile(r"\bplanned\b", re.IGNORECASE), "planned", "blue"),
+    (re.compile(r"\bpaused\b", re.IGNORECASE), "paused", "grey"),
+    (re.compile(r"\babandoned\b", re.IGNORECASE), "paused", "grey"),
+    (re.compile(r"\bblocked\b", re.IGNORECASE), "blocked", "red"),
+    (re.compile(r"\bshipped\b", re.IGNORECASE), "shipped", "green"),
+    (re.compile(r"\bcomplete\b", re.IGNORECASE), "shipped", "green"),
+    (re.compile(r"\bmerged\b", re.IGNORECASE), "shipped", "green"),
 ]
 
 BUCKET_LABELS = {
@@ -86,24 +87,27 @@ EDGE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "structural-fix-of",
         re.compile(
             rf"structurally\s+(?:fixed|addressed)\s+by\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)",
-            re.I,
+            re.IGNORECASE,
         ),
     ),
     (
         "supersedes",
         re.compile(
             rf"(?:superseded\s+by|replaced\s+by|replaces)\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)",
-            re.I,
+            re.IGNORECASE,
         ),
     ),
     (
         "tracked-in",
-        re.compile(rf"tracked\s+(?:as|in)\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)", re.I),
+        re.compile(
+            rf"tracked\s+(?:as|in)\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)", re.IGNORECASE
+        ),
     ),
     (
         "follows",
         re.compile(
-            rf"^\*\*Follows:?\*\*:?\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)", re.I | re.M
+            rf"^\*\*Follows:?\*\*:?\s*{_SLUG_PREFIX}(\d{{8}}-[\w-]+)",
+            re.IGNORECASE | re.MULTILINE,
         ),
     ),
     ("references", re.compile(r"(\d{8}-[\w-]+)\.md")),
@@ -205,13 +209,13 @@ class Plan:
 
 
 def compute_render_shas(
-    plans: dict[str, "Plan"], script_path: str = "", plans_dir_short: str = ""
+    plans: dict[str, Plan], script_path: str = "", plans_dir_short: str = ""
 ) -> None:
     for p in plans.values():
         p.render_sha = p.compute_render_sha(script_path, plans_dir_short)
 
 
-def corpus_sha(plans: dict[str, "Plan"], plans_dir: str | Path = "") -> str:
+def corpus_sha(plans: dict[str, Plan], plans_dir: str | Path = "") -> str:
     """Stable hash of the whole corpus, used as the dashboard's drift-guard sha.
 
     Single source of truth so `render_dashboard` (which embeds it) and `main`
@@ -267,16 +271,16 @@ def _strip_frontmatter(text: str) -> tuple[dict[str, str], str]:
 def _find_title(body: str, frontmatter: dict[str, str]) -> str:
     if "title" in frontmatter:
         return frontmatter["title"]
-    m = re.search(r"^#\s+(.+?)$", body, re.M)
+    m = re.search(r"^#\s+(.+?)$", body, re.MULTILINE)
     return m.group(1).strip() if m else "(untitled)"
 
 
-_STATUS_LINE_RE = re.compile(r"^\*\*Status:?\*\*[:\s]*(.+?)$", re.M)
+_STATUS_LINE_RE = re.compile(r"^\*\*Status:?\*\*[:\s]*(.+?)$", re.MULTILINE)
 # Accepts BOTH `**Field:** value` (colon inside bold) AND the more common
 # `**Field**: value` (colon outside bold, then space). The `[:\s]*` after `**`
 # eats any trailing colon and whitespace so it doesn't leak into the value.
 _FIELD_LINE_RE = re.compile(
-    r"^\*\*(?P<field>[\w\s-]+?):?\*\*[:\s]*(?P<value>.+?)$", re.M
+    r"^\*\*(?P<field>[\w\s-]+?):?\*\*[:\s]*(?P<value>.+?)$", re.MULTILINE
 )
 
 
@@ -293,7 +297,7 @@ def _find_field_string(body: str, field: str, *, strip_backticks: bool = False) 
         value = value.strip()
         return value.strip("`") if strip_backticks else value
 
-    inline = re.compile(rf"^\*\*{re.escape(field)}:?\*\*[:\s]*(.+?)$", re.M)
+    inline = re.compile(rf"^\*\*{re.escape(field)}:?\*\*[:\s]*(.+?)$", re.MULTILINE)
     m = inline.search(body)
     if m:
         return _clean(m.group(1))
@@ -341,7 +345,7 @@ def _classify_status(status_raw: str) -> tuple[str, str]:
 def _find_pr_numbers(text: str) -> list[str]:
     nums = re.findall(r"PRs?\s*#(\d+)", text)
     # Also catch standalone "#42" inside parens or after commas in a PR list
-    pr_list_re = re.compile(r"PRs?\s*((?:#\d+[,\s]*)+)", re.I)
+    pr_list_re = re.compile(r"PRs?\s*((?:#\d+[,\s]*)+)", re.IGNORECASE)
     for m in pr_list_re.finditer(text):
         nums.extend(re.findall(r"#(\d+)", m.group(1)))
     # Deduplicate, preserve order
@@ -368,10 +372,10 @@ def _find_edges(body: str) -> list[Edge]:
 
 
 def _count_phases(body: str) -> int:
-    return len(re.findall(r"^###\s+Phase\s+\d+", body, re.M))
+    return len(re.findall(r"^###\s+Phase\s+\d+", body, re.MULTILINE))
 
 
-_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[([ x])\]", re.M)
+_CHECKBOX_RE = re.compile(r"^\s*[-*]\s+\[([ x])\]", re.MULTILINE)
 
 
 def _count_checkboxes(body: str) -> tuple[int, int]:
@@ -379,7 +383,7 @@ def _count_checkboxes(body: str) -> tuple[int, int]:
     # Restrict scan to sections named ## Progress / ## Acceptance Criteria
     section_re = re.compile(
         r"^##\s+(?:Progress|Acceptance Criteria)\b(.*?)(?=^##\s|\Z)",
-        re.M | re.S | re.I,
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
     )
     done = total = 0
     for section in section_re.finditer(body):
@@ -409,7 +413,9 @@ def parse_plan(path: Path) -> Plan:
     phases_total = _count_phases(body)
     # Refinement: a "Phases N-M shipped" where M == phases_total means fully shipped.
     rng = re.search(
-        r"phases?\s+(\d+)\s*[-–]\s*(\d+)\s+(shipped|landed|complete)", status_raw, re.I
+        r"phases?\s+(\d+)\s*[-–]\s*(\d+)\s+(shipped|landed|complete)",
+        status_raw,
+        re.IGNORECASE,
     )
     if rng and phases_total and int(rng.group(2)) >= phases_total:
         bucket, chip = "shipped", "green"
@@ -575,16 +581,14 @@ def apply_stranded(plans: Iterable[Plan], stale_days: int) -> None:
     """Re-colour in-progress / partial plans red if last-touched > stale_days ago."""
     if stale_days <= 0:
         return
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for plan in plans:
         if plan.bucket not in ("in-progress", "partial"):
             continue
         if not plan.last_touched:
             continue
         try:
-            last = datetime.fromisoformat(plan.last_touched).replace(
-                tzinfo=timezone.utc
-            )
+            last = datetime.fromisoformat(plan.last_touched).replace(tzinfo=UTC)
         except ValueError:
             continue
         age = (now - last).days
@@ -601,7 +605,7 @@ _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
 _BOLD_RE = re.compile(r"\*\*([^*\n]+)\*\*")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-_SAFE_URL_RE = re.compile(r"^(?:https?://|mailto:|/|\.{0,2}/|[^:]*$)", re.I)
+_SAFE_URL_RE = re.compile(r"^(?:https?://|mailto:|/|\.{0,2}/|[^:]*$)", re.IGNORECASE)
 
 
 def _safe_href(url: str) -> str:
@@ -997,8 +1001,8 @@ def render_dashboard(
         '<button class="reset" type="button" title="Clear filters">clear</button>'
     )
 
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_short = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     # Shared helper so this embedded value matches the drift-guard sha in main().
     corpus_digest = corpus_sha(plans, plans_dir)
     plans_dir_short = _home_relative_path(plans_dir)
@@ -1136,8 +1140,8 @@ def render_plan_page(
     timeline_svg = _render_timeline_svg(plan.commits)
     edges_html = _render_edges_section(plan, plans)
     markdown_html = render_markdown(plan.raw)
-    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    now_short = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_iso = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_short = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     source_path_short = _home_relative_path(plan.path)
 
     substitutions = {
@@ -1173,7 +1177,7 @@ def render_plan_page(
 
 _META_SHA_RE = re.compile(
     r'<meta\s+name="plan-view-source-sha256"\s+content="([0-9a-f]{64})"',
-    re.I,
+    re.IGNORECASE,
 )
 
 # Lines that vary by render-time and must be excluded from hand-edit detection.
@@ -1218,8 +1222,10 @@ def write_with_drift_guard(
             # an index.html, an architecture doc, or other content here.
             return (
                 False,
-                f"refused: {path.name} exists with no plan-view-source-sha256 meta "
-                f"(likely a non-plan-view file); pass --force to overwrite",
+                (
+                    f"refused: {path.name} exists with no plan-view-source-sha256 meta "
+                    f"(likely a non-plan-view file); pass --force to overwrite"
+                ),
             )
         if existing_sha_m.group(1) == source_sha:
             existing_stable = _stable_content(existing)
@@ -1228,8 +1234,10 @@ def write_with_drift_guard(
                 return (True, f"unchanged {path.name}")
             return (
                 False,
-                f"refused: {path.name} differs from regen but source markdown unchanged "
-                f"(hand-edit suspected); pass --force to overwrite",
+                (
+                    f"refused: {path.name} differs from regen but source markdown unchanged "
+                    f"(hand-edit suspected); pass --force to overwrite"
+                ),
             )
         # else: file has plan-view meta but source-sha differs → source changed,
         # overwrite freely.
@@ -1816,7 +1824,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "schema_version": 2,
-                    "generated_at": datetime.now(timezone.utc)
+                    "generated_at": datetime.now(UTC)
                     .isoformat()
                     .replace("+00:00", "Z"),
                     "git_head": git_head_sha,

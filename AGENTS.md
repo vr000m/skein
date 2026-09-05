@@ -16,9 +16,13 @@ just reconciliation-tests        # Reconciliation parity + fixture + renderer + 
 just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/
 just plugin-tests                # Plugin-level guards: CLAUDE.md hygiene + manifest checks (incl. AGENTS.md recipe registration)
 just noqa-probe                  # Diagnostic (not a suite member): does ~/.claude/hooks/format-on-edit.sh strip `# noqa`? Hook is sync-computer-owned
+just lint-python                 # ruff format --check + ruff check (rule set = ruff 0.16.6 defaults; docs/ excluded, see ruff.toml)
+just lint                        # lint-python + lint-scripts
+just pytest-tests                # conduct + plan-view pytest suites, one invocation per skill per mirror
+just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on every PR
 ```
 
-Requires: `brew install just jq shellcheck shfmt`
+Requires: `brew install just jq shellcheck shfmt ruff uv`. Optional: `brew install pre-commit && pre-commit install` runs ruff, shellcheck and shfmt on every commit (`.pre-commit-config.yaml`); pin the ruff rev there and in `.github/workflows/ci.yml` to the same version.
 
 ## Architecture
 

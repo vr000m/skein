@@ -44,6 +44,7 @@ def run_tests(command: str, timeout: float = 300.0) -> TestResult:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         elapsed = time.monotonic() - start
@@ -51,7 +52,8 @@ def run_tests(command: str, timeout: float = 300.0) -> TestResult:
         out = _decode(exc.stdout) + _decode(exc.stderr)
         return TestResult(
             returncode=-1,
-            output=out + f"\n[conduct] test command exceeded {timeout:.0f}s wall clock; killed.\n",
+            output=out
+            + f"\n[conduct] test command exceeded {timeout:.0f}s wall clock; killed.\n",
             timed_out=True,
             duration_seconds=elapsed,
         )

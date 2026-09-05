@@ -138,5 +138,28 @@ plugin-tests:
 # would therefore fail the suite for a defect in another repo. Run it by hand
 # when investigating a stripped `# noqa`; override the target with
 # HOOK_PATH=/path/to/format-on-edit.sh.
+# Python lint: ruff format --check + ruff check over the whole repo (docs/ is
+# excluded in ruff.toml so the formatter never touches a dev plan).
+lint-python:
+    ruff format --check .
+    ruff check .
+
+# Every linter: Python (ruff) and shell (shellcheck + shfmt + temp-path guard).
+lint: lint-python lint-scripts
+
+# conduct + plan-view pytest suites, one invocation per skill per mirror: every
+# tests/ dir ships its own conftest.py under the same module name, so a
+# combined run collides (ImportPathMismatchError).
+pytest-tests:
+    uv run --with pytest pytest plugins/skein/skills/conduct -q
+    uv run --with pytest pytest plugins/skein/skills/plan-view -q
+    uv run --with pytest pytest plugins/skein-codex/skills/conduct -q
+    uv run --with pytest pytest plugins/skein-codex/skills/plan-view -q
+
+# Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
+# (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
+# runs on every pull request.
+ci: lint check-sync check-trunk-snippet-parity parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
+
 noqa-probe:
     bash tests/plugin/noqa-probe.sh

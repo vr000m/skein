@@ -29,7 +29,10 @@ def _probe_stat_w() -> bool:
                 text=True,
                 check=False,
             )
-            return proc.returncode == 0 and "unknown option" not in (proc.stderr or "").lower()
+            return (
+                proc.returncode == 0
+                and "unknown option" not in (proc.stderr or "").lower()
+            )
     except (OSError, subprocess.SubprocessError):
         return False
 

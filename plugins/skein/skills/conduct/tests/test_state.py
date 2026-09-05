@@ -14,9 +14,7 @@ import time
 from pathlib import Path
 
 import pytest
-
 from lock import STALE_SECONDS, LockError, StateLock
-
 
 STATE_REQUIRED_KEYS = {
     "plan_path",

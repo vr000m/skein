@@ -122,10 +122,21 @@ gate_run_bounded "\$@"
 EOF
 chmod +x "$RUNNER"
 
-# PATH with GNU/Homebrew \`timeout\` (and \`gtimeout\`) hidden — this matches
-# the plan's stated host facts (timeout is Homebrew coreutils only; no
-# \`setsid(1)\`), so this is the "shim" fallback path.
-HIDDEN_TIMEOUT_PATH="/usr/bin:/bin:/sbin"
+# PATH with GNU/Homebrew \`timeout\` (and \`gtimeout\`) hidden, so the cases
+# below exercise the python shim fallback. A fixed "/usr/bin:/bin:/sbin" only
+# hides them on macOS (Homebrew coreutils live elsewhere); on Linux coreutils
+# ships /usr/bin/timeout. So mirror those system dirs into a scratch bin dir,
+# minus the two names, and use that as the whole PATH — portable either way.
+HIDDEN_TIMEOUT_BIN="$WORKDIR/hidden-timeout-bin"
+mkdir -p "$HIDDEN_TIMEOUT_BIN"
+for sysdir in /usr/bin /bin /sbin; do
+	for exe in "$sysdir"/*; do
+		name="${exe##*/}"
+		case "$name" in timeout | gtimeout) continue ;; esac
+		[ -e "$HIDDEN_TIMEOUT_BIN/$name" ] || ln -s "$exe" "$HIDDEN_TIMEOUT_BIN/$name"
+	done
+done
+HIDDEN_TIMEOUT_PATH="$HIDDEN_TIMEOUT_BIN"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
 	if PATH="$HIDDEN_TIMEOUT_PATH" command -v timeout >/dev/null 2>&1 ||
 		PATH="$HIDDEN_TIMEOUT_PATH" command -v gtimeout >/dev/null 2>&1; then
@@ -928,16 +939,19 @@ run_leader_dies_sweep_case "shim" "$HIDDEN_TIMEOUT_PATH"
 # $? to an rc_file, and an absent/empty rc_file -- not the clock -- is what
 # proves it never exited on its own.
 #
-# The stub sleeps 0.7s (comfortably inside the 1s budget, so it is never
-# genuinely killed) and exits 3 with a VALID envelope. Across 50 runs the
-# boundary is straddled roughly 70% of the time, so pre-fix this reports
-# `skipped` on most iterations and post-fix on none.
+# The stub sleeps 0.4s and exits 3 with a VALID envelope. Across 50 runs the
+# boundary is straddled roughly 40% of the time, so pre-fix this reports
+# `skipped` on many iterations and post-fix on none. 0.4s leaves 0.6s of
+# slack under the 1s budget: at 0.7s the stub was genuinely killed about one
+# iteration in fifty on a loaded host (spawn overhead spikes of several
+# hundred ms were measured), which produced a real timeout that this case
+# then reported as a misread. A genuine kill must stay impossible here.
 
 a11_stub="$WORKDIR/stub-a11.sh"
 cat >"$a11_stub" <<'EOF'
 #!/usr/bin/env bash
 printf '{"status":"reject","findings":[]}'
-sleep 0.7
+sleep 0.4
 exit 3
 EOF
 chmod +x "$a11_stub"

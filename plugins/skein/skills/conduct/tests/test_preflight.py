@@ -21,7 +21,6 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from conductor import ConductOptions, run_preflight
 from marker import (
     compute_plan_hash,
@@ -133,7 +132,7 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
     plan = _scratch_plan(tmp_path, body)
     write_marker(plan)
     assert marker_is_stale(plan) is False
-    iso, sha = read_marker(plan)
+    _iso, sha = read_marker(plan)
     # Sanity: the recorded sha matches the recomputed hash of the stripped body.
     assert sha == compute_plan_hash(plan)
 
@@ -211,7 +210,7 @@ def test_preflight_workspace_edits_below_marker_do_not_invalidate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _opts(plan: Path, *, resume: bool, repo: Path) -> "ConductOptions":
+def _opts(plan: Path, *, resume: bool, repo: Path) -> ConductOptions:
     return ConductOptions(
         plan_path=plan,
         repo_root=repo,

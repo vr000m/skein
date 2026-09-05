@@ -18,9 +18,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 import progress
+import pytest
 
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:

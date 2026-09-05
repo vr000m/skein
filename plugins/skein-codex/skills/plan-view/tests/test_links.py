@@ -116,7 +116,7 @@ def test_relink_only_touches_rich_html(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         "<html><body>dash</body></html>", encoding="utf-8"
     )
-    relinked, skipped = G.relink_rich_pages(tmp_path)
+    relinked, _skipped = G.relink_rich_pages(tmp_path)
     assert relinked == 0
     assert G.RICH_BACKLINK_MARKER not in (
         tmp_path / "plan-20260101-feature-x.html"

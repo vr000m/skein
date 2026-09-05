@@ -18,7 +18,6 @@ import warnings
 from pathlib import Path
 
 import pytest
-
 from conductor import (
     ConductOptions,
     _load_or_init_state,
