@@ -151,6 +151,38 @@ fanout_worktree_is_ours() {
   return 0
 }
 
+# Spell a path the way every other spelling of the same directory spells it:
+# physical form when it exists (a checkout reached through a symlinked parent --
+# macOS puts $TMPDIR under /var -> /private/var -- is listed by git in physical
+# form while the state file may name the symlinked one), normalised form when it
+# does not. Only used to compare two paths for identity, never to open one.
+fanout_canonical_path() {
+  local p
+  p="$(fanout_normalise_path "$1")"
+  if [[ -d "$p" ]]; then
+    (cd -P "$p" 2>/dev/null && pwd -P) || printf '%s' "$p"
+  else
+    printf '%s' "$p"
+  fi
+}
+
+# Which branch does THIS checkout have attached to <worktree>? <map> is the
+# tab-separated `<path>\t<ref>` listing built once from `git worktree list
+# --porcelain`. Prints the short branch name and returns 0 on a hit, returns 1
+# otherwise. This is how cleanup learns a branch name from git rather than from
+# the state file.
+fanout_branch_for_worktree() {
+  local wt="$1" map="$2" path ref
+  wt="$(fanout_canonical_path "$wt")"
+  while IFS=$'\t' read -r path ref; do
+    [[ -n "$path" && -n "$ref" ]] || continue
+    [[ "$(fanout_canonical_path "$path")" == "$wt" ]] || continue
+    printf '%s' "${ref#refs/heads/}"
+    return 0
+  done <<<"$map"
+  return 1
+}
+
 # --- setup: create branch + worktree ---
 cmd_setup() {
   local base_branch="${1:-}"
@@ -577,6 +609,20 @@ PYEOF
     exit 1
   fi
 
+  # THE BRANCH NAME COMES FROM GIT, NOT FROM THE STATE FILE. `repo_root` and
+  # `worktree` are already anchored above; `branch` was not, and it reached
+  # `git branch -d` verbatim, so a state file authored anywhere in the tree
+  # could name any merged local branch (or an option-like value). Read git's own
+  # worktree listing ONCE, before any removal makes it stale, and derive each
+  # branch from the owned worktree it is attached to.
+  local owned_map
+  owned_map="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null |
+    awk '
+      /^worktree / { wt = substr($0, 10) }
+      /^branch /   { if (wt != "") print wt "\t" substr($0, 8) }
+      /^$/         { wt = "" }
+    ')"
+
   # Remove worktrees and branches
   python3 - "$state_file" <<'PYEOF' | while IFS='|' read -r worktree branch; do
 import json, sys
@@ -586,6 +632,13 @@ with open(sys.argv[1]) as f:
 for a in state.get('agents', []):
     print(a.get('worktree', '') + '|' + a.get('branch', ''))
 PYEOF
+    # Resolve the branch BEFORE the worktree is removed: once it is gone git has
+    # no listing left to derive it from.
+    local branch_to_delete=""
+    if [[ -n "$worktree" ]] && fanout_worktree_is_ours "$worktree" "$repo_root"; then
+      branch_to_delete="$(fanout_branch_for_worktree "$worktree" "$owned_map")" || branch_to_delete=""
+    fi
+
     if [[ -n "$worktree" && -d "$worktree" ]]; then
       if fanout_worktree_is_ours "$worktree" "$repo_root"; then
         echo "Removing worktree: $worktree"
@@ -594,10 +647,26 @@ PYEOF
         echo "WARNING: skipping worktree the state file names but fan-out could not have created: $worktree" >&2
       fi
     fi
-    if [[ -n "$branch" ]]; then
-      echo "Removing branch: $branch"
-      git -C "$repo_root" branch -d "$branch" 2>/dev/null || \
-        echo "  Branch $branch not fully merged; use -D to force delete" >&2
+
+    if [[ -z "$branch_to_delete" && -n "$branch" ]]; then
+      # No owned worktree carries this branch any more (the usual case: the
+      # worktree was already removed by hand). The state file's own value is
+      # usable only in the shape `setup` can produce -- `fanout/` plus a slugify
+      # normal-form tail -- so a name fan-out could not have created, including
+      # anything option-like, is skipped rather than deleted.
+      if [[ "$branch" =~ ^fanout/[a-z0-9-]+$ ]]; then
+        branch_to_delete="$branch"
+      else
+        echo "WARNING: skipping branch the state file names but fan-out could not have created: $branch" >&2
+      fi
+    fi
+
+    if [[ -n "$branch_to_delete" ]]; then
+      echo "Removing branch: $branch_to_delete"
+      # `--` so a name that survived the checks above is still never parsed as
+      # an option by git itself.
+      git -C "$repo_root" branch -d -- "$branch_to_delete" 2>/dev/null || \
+        echo "  Branch $branch_to_delete not fully merged; use -D to force delete" >&2
     fi
   done
 

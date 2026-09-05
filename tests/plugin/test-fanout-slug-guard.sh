@@ -43,6 +43,12 @@
 # trust anchor is git: a repo_root that is not the root of a real checkout is
 # refused before any destructive command runs. That belongs here because it is
 # the same "never trust a value the tree can author" boundary as the slug file.
+#
+# CLEANUP BRANCH. The same file names a `branch` per agent, and that name used
+# to reach `git branch -d` verbatim. It no longer does: the branch to delete is
+# the one `git worktree list --porcelain` attaches to the owned worktree, and
+# the state file's value is consulted only for a worktree that is already gone,
+# and then only in the `fanout/<slugify-normal-form>` shape `setup` produces.
 
 set -euo pipefail
 
@@ -351,6 +357,79 @@ if [[ "$l_rc" -ne 0 && "$l_out" == *"refusing repo_root"* ]] &&
 else
 	fail "(l) rc=$l_rc out='$l_out' (.fanout survived: $([[ -d "$NOT_A_REPO/.fanout" ]] && echo yes || echo no))"
 fi
+
+# --- (m) cleanup derives the branch to delete from git, not the state file ---
+# The state file is an ordinary file in the tree, so a `branch` value in it is
+# not evidence fan-out ever created that branch. cleanup reads
+# `git worktree list --porcelain` once and deletes the branch git has attached
+# to the OWNED worktree; the state file's own value is used only when the
+# worktree is already gone, and then only in the `fanout/<slugify-normal-form>`
+# shape `setup` can produce. Anything else is skipped with a warning and no git
+# call, so an option-like value never reaches `git branch` as a flag either.
+
+# (m1) happy path, with the state file LYING about the branch: a real
+# setup-made worktree whose entry names `main`. The worktree goes, the branch
+# git actually attached to it goes, and `main` is untouched.
+m1_wt="$(bash "$FANOUT_SH" setup main 3-cleanup-ok "$SCRATCH")"
+M1_STATE="$WORKDIR/m1-state.json"
+python3 - "$M1_STATE" "$SCRATCH" "$m1_wt" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 3, "worktree": sys.argv[3], "branch": "main"}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+set +e
+m1_out="$(bash "$FANOUT_SH" cleanup "$M1_STATE" 2>&1)"
+m1_rc=$?
+set -e
+if [[ "$m1_rc" -eq 0 && ! -d "$m1_wt" ]] &&
+	! git -C "$SCRATCH" rev-parse --verify --quiet 'refs/heads/fanout/main-3-cleanup-ok' >/dev/null &&
+	git -C "$SCRATCH" rev-parse --verify --quiet refs/heads/main >/dev/null; then
+	pass "(m1) cleanup deletes the branch git attached to the worktree, not the one the state file named"
+else
+	fail "(m1) rc=$m1_rc out='$m1_out'"
+fi
+
+# expect_cleanup_skips_branch <label> <branch-value> — the worktree is gone, so
+# the state file is the only source left for the branch; a value fan-out could
+# not have created must be skipped, with cleanup still succeeding.
+GONE_WT="$WORKDIR/repo-fanout-9-gone"
+expect_cleanup_skips_branch() {
+	local label="$1" branch="$2" state out rc
+	state="$WORKDIR/m-skip-state.json"
+	python3 - "$state" "$SCRATCH" "$GONE_WT" "$branch" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 9, "worktree": sys.argv[3], "branch": sys.argv[4]}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+	set +e
+	out="$(bash "$FANOUT_SH" cleanup "$state" 2>&1)"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 && "$out" == *"skipping branch"* ]] &&
+		git -C "$SCRATCH" rev-parse --verify --quiet refs/heads/main >/dev/null; then
+		pass "$label"
+	else
+		fail "$label (rc=$rc out='$out')"
+	fi
+}
+
+# (m2) a state file naming an ordinary branch: `main` is not a branch fan-out
+# creates, so cleanup must not delete it.
+expect_cleanup_skips_branch "(m2) cleanup skips a state-file branch fan-out could not have created" 'main'
+
+# (m3) an option-like value: skipped before any git call, so it can never be
+# parsed as a flag.
+expect_cleanup_skips_branch "(m3) cleanup skips an option-like state-file branch" '-D'
 
 # --- Summary -----------------------------------------------------------------
 echo

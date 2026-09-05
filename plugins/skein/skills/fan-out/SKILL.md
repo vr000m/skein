@@ -99,11 +99,17 @@ For each approved task, run these steps using `fan-out.sh`.
 First, locate the skill directory and get repo info:
 ```bash
 # ${CLAUDE_PLUGIN_ROOT} is the plugin root supplied by the harness; fan-out.sh ships under it.
-# This block only checks that the script is there. It binds nothing for later steps:
-# shell variables do not survive from one Bash tool call to the next, so every
-# fan-out.sh call below spells the full path and re-binds what it needs itself.
+# This block checks that the script is there and creates the slug transport
+# directory. It binds nothing for later steps: shell variables do not survive
+# from one Bash tool call to the next, so every fan-out.sh call below spells the
+# full path and re-binds what it needs itself.
 [ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
+mkdir -p "$(git rev-parse --show-toplevel)/.fanout"
 ```
+
+This preamble runs once per fan-out and is what creates `<repo-root>/.fanout/`; Phase 7's
+cleanup removes it. `fan-out.sh` deliberately does not create it — `setup --slug-file` must
+fail closed on a missing file, so the directory belongs to the caller that writes into it.
 
 Then for each task:
 
@@ -223,7 +229,17 @@ Also check each worktree for `.fan-out-result.md` to see if agents wrote their s
 
 When all agents have finished (no PIDs running):
 
-1. For each agent, read `.fan-out-result.md` from the worktree
+First re-derive the worktree and branch names from git, not from `.fan-out-state.json`:
+run `git -C <repo-root> worktree list --porcelain` and keep only the entries whose worktree
+path is a sibling of the repo root named `<repo>-fanout-*` and whose branch line starts with
+`refs/heads/fanout/`. Those two values — and no others — are what the commands below
+substitute. `.fan-out-state.json` supplies only the task label used in the summary, because
+it is an ordinary file any writer in the tree can author, and a `branch` or `worktree` value
+read out of it is expanded by YOUR shell before git ever sees it. `<base>` is the base branch
+you resolved yourself with `git branch --show-current` in Phase 2 and still know; it is never
+read back out of the state file into a shell command.
+
+1. For each agent, read `.fan-out-result.md` from the git-derived worktree
 2. Check if commits were made: `git -C <worktree> log <base>..HEAD --oneline`
 3. Push unpushed branches: `git -C <worktree> push -u origin <branch>`
 4. Present summary:
