@@ -265,6 +265,8 @@ Options:
 
 ### Phase 6: Merge (on `/fan-out merge` or user choosing option 1)
 
+The `<task-branch>` values below are the git-derived branch names from Phase 5, never read back out of `.fan-out-state.json`.
+
 For each successful task branch, in order:
 ```bash
 git merge --no-ff <task-branch> -m "Merge fan-out task: <name>"
