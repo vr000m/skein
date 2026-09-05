@@ -67,9 +67,7 @@ def _probe_stat_w() -> bool:
             )
             if proc.returncode != 0:
                 return False
-            if "unknown option" in (proc.stderr or "").lower():
-                return False
-            return True
+            return "unknown option" not in (proc.stderr or "").lower()
     except (OSError, subprocess.SubprocessError, FileNotFoundError):
         return False
 

@@ -24,7 +24,7 @@ def _makefile_has_ci(path: Path) -> bool:
     except OSError:
         return False
     for line in text.splitlines():
-        if line.startswith("ci:") or line.startswith("ci :"):
+        if line.startswith(("ci:", "ci :")):
             return True
     return False
 

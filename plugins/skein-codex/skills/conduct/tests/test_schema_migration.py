@@ -36,21 +36,16 @@ def _plan(repo: Path) -> Path:
     plan_dir.mkdir(parents=True, exist_ok=True)
     plan = plan_dir / "20260513-schema-migration.md"
     plan.write_text(
-        "\n".join(
-            [
-                "# Scratch",
-                "## Implementation Checklist",
-                "",
-                "### Phase 1: Phase 1",
-                "",
-                "**Impl files:** src/p1.py",
-                "**Test files:** tests/test_p1.py",
-                "**Test command:** `true`",
-                "",
-                "- [ ] task 1",
-                "",
-            ]
-        )
+        "# Scratch\n"
+        "## Implementation Checklist\n"
+        "\n"
+        "### Phase 1: Phase 1\n"
+        "\n"
+        "**Impl files:** src/p1.py\n"
+        "**Test files:** tests/test_p1.py\n"
+        "**Test command:** `true`\n"
+        "\n"
+        "- [ ] task 1\n"
     )
     write_marker(plan)
     return plan

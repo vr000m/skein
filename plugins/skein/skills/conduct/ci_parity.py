@@ -32,11 +32,12 @@ def _justfile_has_ci(path: Path) -> bool:
         # introduce a new recipe. Matching only column-zero ``ci:`` /
         # ``ci <args>:`` avoids false positives from ``define``-style
         # blocks or commented-out examples that happen to contain ``ci:``.
-        if line.startswith("ci:") or line.startswith("ci "):
-            # The "ci " form must be followed eventually by a colon on the
-            # same line for it to be a recipe header.
-            if line.startswith("ci:") or ":" in line.split(" ", 1)[-1]:
-                return True
+        # The "ci " form must be followed eventually by a colon on the
+        # same line for it to be a recipe header.
+        if line.startswith(("ci:", "ci ")) and (
+            line.startswith("ci:") or ":" in line.split(" ", 1)[-1]
+        ):
+            return True
     return False
 
 
@@ -50,7 +51,7 @@ def _makefile_has_ci(path: Path) -> bool:
         # Restricting to column zero prevents matching ``ci:`` inside a
         # ``define``/``endef`` block, a here-doc, or any other indented
         # context where the literal would not be a real CI target.
-        if line.startswith("ci:") or line.startswith("ci :"):
+        if line.startswith(("ci:", "ci :")):
             return True
     return False
 

@@ -1436,7 +1436,7 @@ def detect_lint_command(repo_root: Path) -> list[str] | None:
             # Column-zero check only — matches the `_makefile_has_ci` convention
             # so `lint:` tokens inside recipe bodies or define/endef blocks are
             # not mistaken for a real target.
-            if line.startswith("lint:") or line.startswith("lint :"):
+            if line.startswith(("lint:", "lint :")):
                 return ["make", "lint"]
 
     pkg = repo_root / "package.json"
@@ -1448,9 +1448,10 @@ def detect_lint_command(repo_root: Path) -> list[str] | None:
         if '"scripts"' in text and '"lint"' in text:
             return ["npm", "run", "lint"]
 
-    if shutil.which("ruff"):
-        if (repo_root / "pyproject.toml").exists() or any(repo_root.glob("*.py")):
-            return ["ruff", "check", "."]
+    if shutil.which("ruff") and (
+        (repo_root / "pyproject.toml").exists() or any(repo_root.glob("*.py"))
+    ):
+        return ["ruff", "check", "."]
 
     return None
 
@@ -1513,7 +1514,7 @@ def _repo_default_test_cmd(repo_root: Path) -> str | None:
             text = ""
         for line in text.splitlines():
             # Column-zero only; see `detect_lint_command` for the rationale.
-            if line.startswith("test:") or line.startswith("test :"):
+            if line.startswith(("test:", "test :")):
                 return "make test"
     return None
 
@@ -2196,7 +2197,9 @@ def abort_run(opts: ConductOptions) -> ConductResult:
         try:
             with StateLock(str(lockfile)):
                 sp.unlink()
-        except Exception:
+        except (OSError, RuntimeError):
+            # StateLock.acquire/release raise only OSError or LockError
+            # (a RuntimeError subclass); sp.unlink() raises only OSError.
             if sp.exists():
                 sp.unlink()
     elif sp.exists():

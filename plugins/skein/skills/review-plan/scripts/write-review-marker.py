@@ -40,7 +40,8 @@ def main(argv: list[str]) -> int:
     plan_path = argv[1]
 
     try:
-        text = open(plan_path, "rb").read().decode("utf-8")
+        with open(plan_path, "rb") as fh:
+            text = fh.read().decode("utf-8")
     except OSError as exc:
         print(f"write-review-marker: cannot read {plan_path}: {exc}", file=sys.stderr)
         return 1

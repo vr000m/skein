@@ -132,7 +132,7 @@ def test_preflight_marker_after_in_body_examples_is_the_one_that_counts(tmp_path
     plan = _scratch_plan(tmp_path, body)
     write_marker(plan)
     assert marker_is_stale(plan) is False
-    iso, sha = read_marker(plan)
+    _iso, sha = read_marker(plan)
     # Sanity: the recorded sha matches the recomputed hash of the stripped body.
     assert sha == compute_plan_hash(plan)
 

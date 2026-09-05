@@ -2606,9 +2606,11 @@ def test_runtime_specific_locks_do_not_collide(repo):
     )
 
     assert codex_state != claude_state
-    with StateLock(codex_state.with_suffix(codex_state.suffix + ".lock")):
-        with StateLock(claude_state.with_suffix(claude_state.suffix + ".lock")):
-            pass
+    with (
+        StateLock(codex_state.with_suffix(codex_state.suffix + ".lock")),
+        StateLock(claude_state.with_suffix(claude_state.suffix + ".lock")),
+    ):
+        pass
 
 
 def test_stall_threshold_greater_than_max_iterations_warns(

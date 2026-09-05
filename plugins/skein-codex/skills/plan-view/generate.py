@@ -1224,8 +1224,10 @@ def write_with_drift_guard(
             # an index.html, an architecture doc, or other content here.
             return (
                 False,
-                f"refused: {path.name} exists with no plan-view-source-sha256 meta "
-                f"(likely a non-plan-view file); pass --force to overwrite",
+                (
+                    f"refused: {path.name} exists with no plan-view-source-sha256 meta "
+                    f"(likely a non-plan-view file); pass --force to overwrite"
+                ),
             )
         if existing_sha_m.group(1) == source_sha:
             existing_stable = _stable_content(existing)
@@ -1234,8 +1236,10 @@ def write_with_drift_guard(
                 return (True, f"unchanged {path.name}")
             return (
                 False,
-                f"refused: {path.name} differs from regen but source markdown unchanged "
-                f"(hand-edit suspected); pass --force to overwrite",
+                (
+                    f"refused: {path.name} differs from regen but source markdown unchanged "
+                    f"(hand-edit suspected); pass --force to overwrite"
+                ),
             )
         # else: file has plan-view meta but source-sha differs → source changed,
         # overwrite freely.

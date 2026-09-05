@@ -44,6 +44,7 @@ def run_tests(command: str, timeout: float = 300.0) -> TestResult:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
     except subprocess.TimeoutExpired as exc:
         elapsed = time.monotonic() - start
