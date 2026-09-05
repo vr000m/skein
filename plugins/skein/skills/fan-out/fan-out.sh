@@ -46,6 +46,14 @@ slugify() {
   echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-50
 }
 
+# The ONE definition of an accepted task slug: <task-id>-<slug> -- digits, then
+# '-', then [a-z0-9-]. Two call sites share it on purpose. cmd_setup validates
+# the incoming slug against it, and fanout_worktree_is_ours applies it to the
+# suffix of a worktree basename, so cleanup's ownership test can never be
+# broader than the names setup is able to produce. Keeping one definition is
+# what makes that equality checkable rather than a convention.
+FANOUT_TASK_SLUG_RE='^[0-9]+-[a-z0-9-]+$'
+
 # --- containment guard for the slug-file transport and .fanout/ ------------
 # Refuses a path that is not lexically inside <repo-root>, that contains a
 # '..' component, or that is reached through a symlink at any component
@@ -135,11 +143,17 @@ fanout_assert_inside_repo() {
 # One half of cleanup's ownership test: before a path from `git worktree list`
 # can be a removal target it must be one this script could itself have created
 # -- absolute, no '..', a sibling of the repo root, and named
-# `<repo-name>-fanout-*`. The other half is the branch namespace check at the
-# call site; a path passing this alone is not a target. Both operands are
-# expected in the same spelling (see fanout_canonical_worktree).
+# `<repo-name>-fanout-<task-id>-<slug>`. The suffix is tested with
+# $FANOUT_TASK_SLUG_RE, the same expression cmd_setup accepts a slug by, so the
+# set of names cleanup will act on is exactly the set setup can create. A
+# trailing `-fanout-*` glob was broader than that: it also matched an empty
+# suffix (`<repo>-fanout-`) and arbitrary hand-made siblings such as
+# `<repo>-fanout-private`, which setup never produces and cleanup must not
+# remove. The other half is the branch namespace check at the call site; a path
+# passing this alone is not a target. Both operands are expected in the same
+# spelling (see fanout_canonical_worktree).
 fanout_worktree_is_ours() {
-  local wt="$1" root="$2"
+  local wt="$1" root="$2" wt_base root_base suffix
 
   [[ "$wt" == /* ]] || return 1
   case "/$wt/" in
@@ -148,7 +162,11 @@ fanout_worktree_is_ours() {
   wt="$(fanout_normalise_path "$wt")"
   root="$(fanout_normalise_path "$root")"
   [[ "$(dirname "$wt")" == "$(dirname "$root")" ]] || return 1
-  [[ "$(basename "$wt")" == "$(basename "$root")-fanout-"* ]] || return 1
+  wt_base="$(basename "$wt")"
+  root_base="$(basename "$root")"
+  [[ "$wt_base" == "$root_base-fanout-"* ]] || return 1
+  suffix="${wt_base#"$root_base-fanout-"}"
+  [[ "$suffix" =~ $FANOUT_TASK_SLUG_RE ]] || return 1
   return 0
 }
 
@@ -310,7 +328,7 @@ cmd_setup() {
   # the value is file-derived, and echoing it would hand a writer inside the
   # checkout a read-back oracle for bytes this process refused to use. The
   # positional form may still echo its argv value, which the caller already has.
-  if [[ ! "$task_slug" =~ ^[0-9]+-[a-z0-9-]+$ ]]; then
+  if [[ ! "$task_slug" =~ $FANOUT_TASK_SLUG_RE ]]; then
     if [[ -n "$slug_file" ]]; then
       echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$) from slug file: $slug_file" >&2
     else
@@ -653,7 +671,7 @@ PYEOF
   # removes and every branch it deletes comes from git's own worktree listing
   # for THIS checkout, filtered to what `setup` can produce: a path
   # `fanout_worktree_is_ours` accepts (absolute, no '..', a sibling of the repo
-  # root, named `<repo-name>-fanout-*`) that git has attached to a branch under
+  # root, named `<repo-name>-fanout-<task-id>-<slug>`) that git has attached to a branch under
   # `refs/heads/fanout/`. Both halves must hold, so a worktree that merely
   # borrows the sibling naming pattern, or one sitting on an unrelated branch,
   # is not a target however the state file describes it. There is no second

@@ -47,8 +47,10 @@
 # CLEANUP TARGETS. The same file names a `worktree` and a `branch` per agent,
 # and both used to reach git. Neither does now. `git worktree list --porcelain`
 # is the only authority: an entry is a target iff its path is a sibling of the
-# repo root named `<repo-name>-fanout-*` AND git has it attached to a branch
-# under `refs/heads/fanout/`, and the branch deleted is the one git attached to
+# repo root named `<repo-name>-fanout-<task-id>-<slug>` -- the suffix tested with
+# the same expression cmd_setup accepts a slug by, so a hand-made sibling with an
+# empty or arbitrary suffix is not a target -- AND git has it attached to a
+# branch under `refs/heads/fanout/`, and the branch deleted is the one git attached to
 # it. That listing keeps a hand-deleted worktree (marked `prunable`) with its
 # `branch` line, which is why no state-file fallback is needed. `agents[]` is
 # read for a diagnostic only: a worktree it names that git does not attribute
@@ -369,6 +371,58 @@ fi
 rm -f "$FANOUT_DIR"
 mkdir -p "$FANOUT_DIR"
 
+# (k11) the documented pre-write unlink protects the WRITE, which the read-side
+# guard structurally cannot. The orchestrator writes the slug with a file-write
+# tool, and a file-write tool follows an existing symlink at the leaf: by the
+# time `setup --slug-file` refuses the symlinked path, the outside target has
+# already been clobbered. So SKILL.md's preamble and its per-task step both run
+# `rm -f "$root/.fanout/next.slug"` first -- `rm -f` unlinks the link, never the
+# target. This exercises that exact line against a planted leaf symlink.
+#
+# The control half comes first and is what makes the assertion non-vacuous: an
+# identical symlink written through WITHOUT the unlink must clobber its target,
+# proving the fixture's symlink is genuinely followed by the write.
+K11_CONTROL="$WORKDIR/k11-control.txt"
+printf 'control-untouched\n' >"$K11_CONTROL"
+K11_CONTROL_LINK="$FANOUT_DIR/control.slug"
+ln -s "$K11_CONTROL" "$K11_CONTROL_LINK"
+printf '1-clobber\n' >"$K11_CONTROL_LINK"
+rm -f "$K11_CONTROL_LINK"
+if [[ "$(cat "$K11_CONTROL")" == "1-clobber" ]]; then
+	pass "(k11 control) a write through an unremoved leaf symlink does clobber its target"
+else
+	fail "(k11 control) the fixture symlink was not followed by the write; k11 would be vacuous"
+fi
+
+K11_OUTSIDE="$WORKDIR/k11-outside.txt"
+printf 'outside-secret\n' >"$K11_OUTSIDE"
+cp "$K11_OUTSIDE" "$K11_OUTSIDE.orig"
+rm -f "$SLUG_FILE"
+ln -s "$K11_OUTSIDE" "$SLUG_FILE"
+# The exact line SKILL.md tells the orchestrator to run before each slug write.
+(cd "$SCRATCH" && root="$(git rev-parse --show-toplevel)" && [ -n "$root" ] && rm -f "$root/.fanout/next.slug")
+# Then the write the orchestrator's file-write tool performs.
+printf '1-preunlink\n' >"$SLUG_FILE"
+k11_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k11_rc="$(printf '%s' "$k11_raw" | head -1)"
+k11_out="$(printf '%s' "$k11_raw" | tail -n +2)"
+if [[ "$k11_rc" -eq 0 && -d "$k11_out" ]] && assert_verbatim "(k11)" '1-preunlink' "$k11_out"; then
+	if [[ -L "$SLUG_FILE" ]]; then
+		fail "(k11) the leaf is still a symlink after the pre-write unlink"
+	elif ! cmp -s "$K11_OUTSIDE" "$K11_OUTSIDE.orig"; then
+		fail "(k11) the outside symlink target was modified by the slug write"
+	else
+		pass "(k11) the pre-write unlink keeps the slug write off a planted leaf symlink"
+	fi
+elif [[ "$k11_rc" -ne 0 || ! -d "$k11_out" ]]; then
+	fail "(k11) rc=$k11_rc out='$k11_out'"
+fi
+if [[ -n "$k11_out" && -d "$k11_out" ]]; then
+	git -C "$SCRATCH" worktree remove --force "$k11_out" >/dev/null 2>&1 || true
+	git -C "$SCRATCH" branch -D 'fanout/main-1-preunlink' >/dev/null 2>&1 || true
+fi
+rm -f "$SLUG_FILE"
+
 # --- (l) cleanup anchors repo_root at a real git checkout -------------------
 # The state file is an ordinary file in the tree, so cleanup must not take its
 # repo_root on trust: the containment guard alone would be asking whether that
@@ -552,6 +606,44 @@ else
 	fail "(n3) rc=$n3_rc out='$n3_out'"
 fi
 git -C "$SCRATCH" branch -D fanout/production >/dev/null 2>&1 || true
+
+# (n4/n5) the sibling NAME must be one setup could have produced, not merely one
+# that starts with `<repo>-fanout-`. Both fixtures sit on a real `fanout/`
+# branch, so the branch half of the ownership test passes and the basename is
+# the only thing left to refuse them: an EMPTY suffix (`repo-fanout-`) and an
+# arbitrary hand-made one (`repo-fanout-private`). setup only ever emits
+# `<task-id>-<slug>`, so neither is a cleanup target and both must survive.
+n45_idx=0
+for n45_suffix in "" "private"; do
+	n45_idx=$((n45_idx + 1))
+	n45_wt="$WORKDIR/repo-fanout-$n45_suffix"
+	n45_branch="fanout/hand-made-$n45_idx"
+	git -C "$SCRATCH" worktree add -q -b "$n45_branch" "$n45_wt" main
+	n45_state="$WORKDIR/n45-$n45_idx-state.json"
+	python3 - "$n45_state" "$SCRATCH" "$n45_wt" "$n45_branch" <<'PYEOF'
+import json, sys
+
+state = {
+    "repo_root": sys.argv[2],
+    "agents": [{"task_id": 9, "worktree": sys.argv[3], "branch": sys.argv[4]}],
+}
+with open(sys.argv[1], "w") as f:
+    json.dump(state, f)
+PYEOF
+	set +e
+	n45_out="$(bash "$FANOUT_SH" cleanup "$n45_state" 2>&1)"
+	n45_rc=$?
+	set -e
+	if [[ "$n45_rc" -eq 0 && -d "$n45_wt" ]] &&
+		git -C "$SCRATCH" rev-parse --verify --quiet "refs/heads/$n45_branch" >/dev/null; then
+		pass "(n$((3 + n45_idx))) a sibling named 'repo-fanout-$n45_suffix' on a fanout/ branch survives cleanup"
+	else
+		fail "(n$((3 + n45_idx))) rc=$n45_rc out='$n45_out' (dir survived: $([[ -d "$n45_wt" ]] && echo yes || echo no))"
+	fi
+	git -C "$SCRATCH" worktree remove --force "$n45_wt" >/dev/null 2>&1 || true
+	git -C "$SCRATCH" branch -D "$n45_branch" >/dev/null 2>&1 || true
+done
+mkdir -p "$FANOUT_DIR"
 
 # --- (o) setup normalises its repo-root argument once -----------------------
 # A root spelled `<repo>/.` has basename `.`, so an unnormalised build put the

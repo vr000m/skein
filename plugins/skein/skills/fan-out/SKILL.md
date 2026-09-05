@@ -108,6 +108,7 @@ root="$(git rev-parse --show-toplevel)" || exit 1
 [ -n "$root" ] || { echo "fan-out: repo root did not resolve" >&2; exit 1; }
 [ -L "$root/.fanout" ] && { echo "fan-out: refusing symlinked .fanout/" >&2; exit 1; }
 mkdir -p "$root/.fanout"
+rm -f "$root/.fanout/next.slug"
 ```
 
 This preamble runs once per fan-out and is what creates `<repo-root>/.fanout/`; Phase 7's
@@ -120,6 +121,11 @@ The symlink refusal comes first because `mkdir -p` treats an existing symlink-to
 as success: a tracked `.fanout` symlink in a hostile clone would take the slug write at the
 link target, and the read side of `fan-out.sh` refuses symlinked components anyway, so the
 preamble must not create a path the script will then refuse.
+The `rm -f` of the leaf is the same refusal one level down, applied as an unlink rather
+than a test: `mkdir -p` leaves an existing `.fanout/next.slug` alone, and a tracked
+symlink at that leaf materialises on checkout inside a real `.fanout` directory the `-L`
+test above passes. `rm -f` unlinks the link itself, never its target, so the first slug
+write lands on a fresh regular file.
 
 Then for each task:
 
@@ -128,6 +134,16 @@ text: lowercase, `[a-z0-9-]` only, prefixed with the numeric task ID and a hyphe
 `1-add-api-endpoint`). Check the derived string against that shape BEFORE it goes
 anywhere, and never put it in a shell command in any form — not as a literal, not as a
 variable, not inside a command substitution. Immediately before each task's setup call,
+and in its own Bash call before the write, run:
+
+```bash
+root="$(git rev-parse --show-toplevel)" && [ -n "$root" ] && rm -f "$root/.fanout/next.slug"
+```
+
+Run this per task, because a file-write tool follows an existing symlink and the read-side
+guard in `fan-out.sh` cannot protect the write — it refuses a symlinked leaf only after the
+write has already landed on the link target, and the preamble's own `rm -f` runs once per
+fan-out while a worker in the tree can re-plant the leaf between tasks. Then
 write the slug and nothing else, followed by a single newline, with your file-write tool
 to the fixed path `<repo-root>/.fanout/next.slug`, where `<repo-root>` is the absolute
 repository root — the path `git rev-parse --show-toplevel` prints. Give the file-write
@@ -249,7 +265,7 @@ When all agents have finished (no PIDs running):
 
 First re-derive the worktree and branch names from git, not from `.fan-out-state.json`:
 run `git -C <repo-root> worktree list --porcelain` and keep only the entries whose worktree
-path is a sibling of the repo root named `<repo>-fanout-*` and whose branch line starts with
+path is a sibling of the repo root named `<repo>-fanout-<task-id>-<slug>` and whose branch line starts with
 `refs/heads/fanout/`. Those two values — and no others — are what the commands below
 substitute. `.fan-out-state.json` supplies only the task label used in the summary, because
 it is an ordinary file any writer in the tree can author, and a `branch` or `worktree` value
@@ -329,7 +345,9 @@ This removes every artifact the skill creates: the worktrees, the merged branche
 `<repo-root>/.fanout/` (the slug transport directory), and `.fan-out-state.json` itself.
 Which worktrees and branches those are is decided by `git worktree list`, not by the state
 file: a worktree qualifies only if it is a sibling of the repo root named
-`<repo-name>-fanout-*` AND git has it attached to a branch under `fanout/`, and the branch
+`<repo-name>-fanout-<task-id>-<slug>` (the same `<task-id>-<slug>` shape `setup` accepts, so
+cleanup can never act on a name setup could not have created) AND git has it attached to a
+branch under `fanout/`, and the branch
 deleted is the one git attached to it. A worktree the state file names that git does not
 attribute to fan-out is reported and left alone. The `.fanout/` removal is skipped with a
 diagnostic if that path is a symlink.
