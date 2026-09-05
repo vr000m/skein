@@ -142,7 +142,7 @@ For each generated HTML file, the generator embeds:
 <meta name="plan-view-generated-at" content="<iso8601 UTC>">
 ```
 
-The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket) the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`), and the rendered path inputs `source_path`, `plans_dir_short`, and `script_path`. `source_path` and `plans_dir_short` use their home-shortened spellings where applicable. The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
+The `plan-view-source-sha256` value is a **render sha** (`Plan.compute_render_sha()`), *not* a raw `sha256(markdown)`. It folds the plan's own markdown sha together with everything else that affects its rendered HTML: corpus-derived state (backfilled `edges_in`, `fixed_by`, the possibly-recoloured status bucket), the git-derived fields embedded in the page (commit list sha/date/subject, timeline SVG, `created`, `last_touched`), and the rendered path inputs `source_path`, `plans_dir_short`, and `script_path`. `source_path` and `plans_dir_short` use their home-shortened spellings where applicable. The index page embeds an aggregate (`corpus_sha`) of all per-plan render shas. See SKILL.md's render-sha section for the full composition and rationale.
 
 On regen, for each existing HTML output:
 1. Read its embedded `plan-view-source-sha256` (the previous render sha).
