@@ -104,13 +104,18 @@ First, locate the skill directory and get repo info:
 # from one Bash tool call to the next, so every fan-out.sh call below spells the
 # full path and re-binds what it needs itself.
 [ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
-[ -L "$(git rev-parse --show-toplevel)/.fanout" ] && { echo "fan-out: refusing symlinked .fanout/" >&2; exit 1; }
-mkdir -p "$(git rev-parse --show-toplevel)/.fanout"
+root="$(git rev-parse --show-toplevel)" || exit 1
+[ -n "$root" ] || { echo "fan-out: repo root did not resolve" >&2; exit 1; }
+[ -L "$root/.fanout" ] && { echo "fan-out: refusing symlinked .fanout/" >&2; exit 1; }
+mkdir -p "$root/.fanout"
 ```
 
 This preamble runs once per fan-out and is what creates `<repo-root>/.fanout/`; Phase 7's
 cleanup removes it. `fan-out.sh` deliberately does not create it — `setup --slug-file` must
 fail closed on a missing file, so the directory belongs to the caller that writes into it.
+The repo root is bound once and refused when empty, for the same reason the plugin-root
+check exists: `git rev-parse --show-toplevel` prints nothing outside a checkout, and both
+the `-L` test and the `mkdir -p` would then act on `/.fanout` at the filesystem root.
 The symlink refusal comes first because `mkdir -p` treats an existing symlink-to-directory
 as success: a tracked `.fanout` symlink in a hostile clone would take the slug write at the
 link target, and the read side of `fan-out.sh` refuses symlinked components anyway, so the
@@ -138,7 +143,10 @@ plan.
 spelled in a shell command and there is nothing for the shell to re-parse. It refuses a
 slug file reached through a symlink or sitting outside the repo root, reads the first
 line RAW — no newline stripping, since stripping would splice a hostile `1-foo\n-bar`
-into a slug the guard accepts — and refuses any file that is not exactly one line. It
+into a slug the guard accepts — and refuses any file that is not exactly one line. Every
+component of the path is walked before the read and walked again after it, so an
+ancestor directory swapped for a symlink mid-read is refused; on that path the file is
+left in place rather than unlinked through the swapped component. It
 then validates those bytes and refuses anything that is not `<task-id>-<slug>` in
 slugify's normal form — no `--`, no leading or trailing hyphen, 50 characters or fewer —
 so a plan-derived string that skipped the check fails closed instead of reaching git.
@@ -190,7 +198,7 @@ tasks that slugify alike from colliding.
      "plan_file": "<path>",
      "base_branch": "<branch>",
      "base_commit": "<sha>",
-     "repo_root": "<path>",
+     "repo_root": "<absolute path: git rev-parse --show-toplevel>",
      "started_at": "<ISO timestamp>",
      "agents": [
        {
@@ -205,6 +213,11 @@ tasks that slugify alike from colliding.
      ]
    }
    ```
+
+   `repo_root` must be the absolute repository root, exactly as
+   `git rev-parse --show-toplevel` prints it. `fan-out.sh cleanup` re-reads this field and
+   refuses a value that is relative or empty, so a run that writes a relative root sets up
+   normally and then cannot be cleaned up.
 
 5. **Print summary**:
    ```

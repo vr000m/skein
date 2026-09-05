@@ -260,29 +260,41 @@ cmd_setup() {
       one_line=0
     fi
 
-    # Re-check for a symlink AFTER the read. bash cannot open with O_NOFOLLOW,
-    # so the pre-read guard and the read are two operations with a window
-    # between them; re-testing here narrows that window to the read itself and
-    # refuses a file that became a symlink across it. The residual race needs a
-    # writer already inside the checkout, and all it can win is a refusal:
-    # nothing read from the file is echoed on any slug-file refusal path, so an
-    # attacker who wins the window learns neither the bytes nor whether they
-    # would have been accepted.
-    local raced=0
-    if [[ -L "$slug_file" ]]; then
-      raced=1
-    fi
-
-    # Consume once, before either verdict: the file must not survive this call,
-    # so a re-run that did not write a fresh one fails closed above instead of
-    # silently reusing a slug from an earlier run or an earlier plan. `rm -f`
-    # on a symlink unlinks the link itself, never the target.
-    rm -f "$slug_file"
-
-    if [[ "$raced" -ne 0 ]]; then
-      echo "fan-out: refusing task slug (slug file became a symlink while it was read): $slug_file" >&2
+    # Re-run the FULL containment walk AFTER the read. bash cannot open with
+    # O_NOFOLLOW, so the pre-read guard and the read are two operations with a
+    # window between them. A leaf-only `[[ -L "$slug_file" ]]` does not close
+    # it: an attacker who renames an ANCESTOR (`.fanout` itself) and drops a
+    # symlink in its place leaves the leaf a regular file, so the leaf test
+    # passes and the consume-once `rm -f` below then resolves through the
+    # swapped ancestor and unlinks <target>/next.slug outside the checkout.
+    # Walking every component of both paths again is what the pre-read guard
+    # checked, so a swap anywhere on either path is caught.
+    #
+    # This runs BEFORE `rm -f`, and refuses without unlinking: once a component
+    # of the path is attacker-controlled, the unlink would be performed through
+    # the attacker's link, which is the deletion this guard exists to prevent.
+    # A slug file left behind on this path is not a fallback -- the next call
+    # re-walks the same path and refuses again until the swapped component is
+    # gone.
+    #
+    # What a winner of the residual window actually gets: nothing read from the
+    # file is echoed on any slug-file refusal path, no unlink is performed
+    # through a swapped ancestor, and the slug value itself is never used
+    # because the call refuses before reaching the slug guard, git, or the
+    # worktree. So the window yields neither the bytes, nor a verdict on them,
+    # nor a deletion.
+    if ! fanout_assert_inside_repo "$slug_file" "$repo_root" "slug file" ||
+      ! fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory"; then
+      echo "fan-out: refusing task slug (the slug file's path stopped being contained while it was read; leaving it in place rather than unlinking through the swapped path): $slug_file" >&2
       exit 1
     fi
+
+    # Consume once, before the remaining verdict: the file must not survive
+    # this call, so a re-run that did not write a fresh one fails closed above
+    # instead of silently reusing a slug from an earlier run or an earlier
+    # plan. `rm -f` on a symlink unlinks the link itself, never the target --
+    # and by here every component of the path has just been re-walked.
+    rm -f "$slug_file"
 
     if [[ "$one_line" -ne 0 ]]; then
       echo "fan-out: refusing task slug (slug file must hold exactly one line): $slug_file" >&2

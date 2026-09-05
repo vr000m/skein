@@ -347,6 +347,28 @@ expect_refused_slug_file "(k8) a slug file with two trailing newlines is refused
 printf '1-foo\r\n' >"$SLUG_FILE"
 expect_refused_slug_file "(k9) a CRLF-terminated slug file is refused" "refusing task slug"
 
+# (k10) a symlinked slug DIRECTORY is refused. The leaf stays a regular file in
+# this fixture, so a leaf-only `-L` test would pass it; the containment walk
+# checks every component, which is what stops the consume-once `rm -f` from
+# resolving through the swapped ancestor and unlinking a file outside the
+# checkout. Both halves are asserted: the call is refused, and the outside
+# target still exists afterwards.
+mkdir -p "$WORKDIR/elsewhere"
+printf '1-outside-dir\n' >"$WORKDIR/elsewhere/next.slug"
+rm -f "$SLUG_FILE"
+rmdir "$FANOUT_DIR"
+ln -s "$WORKDIR/elsewhere" "$FANOUT_DIR"
+k10_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k10_rc="$(printf '%s' "$k10_raw" | head -1)"
+k10_out="$(printf '%s' "$k10_raw" | tail -n +2)"
+if [[ "$k10_rc" -ne 0 && "$k10_out" == *"symlink"* && -f "$WORKDIR/elsewhere/next.slug" ]]; then
+	pass "(k10) a symlinked slug directory is refused and the outside target survives"
+else
+	fail "(k10) rc=$k10_rc out='$k10_out'"
+fi
+rm -f "$FANOUT_DIR"
+mkdir -p "$FANOUT_DIR"
+
 # --- (l) cleanup anchors repo_root at a real git checkout -------------------
 # The state file is an ordinary file in the tree, so cleanup must not take its
 # repo_root on trust: the containment guard alone would be asking whether that
