@@ -128,6 +128,7 @@ plugin-tests:
     bash tests/plugin/test-claude-md-hygiene.sh
     bash tests/plugin/test_manifests.sh
     bash tests/plugin/test-lint-temp-paths.sh
+    bash tests/plugin/test-fanout-slug-guard.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but

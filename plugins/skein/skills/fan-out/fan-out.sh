@@ -35,6 +35,14 @@ cmd_setup() {
   local task_slug="$2"
   local repo_root="$3"
 
+  # Fail closed on any slug that is not <task-id>-<lowercase-slug>. The caller is
+  # expected to validate before substituting, so this is the boundary that stops a
+  # plan-derived string from reaching git.
+  if [[ ! "$task_slug" =~ ^[0-9]+-[a-z0-9-]+$ ]]; then
+    echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$): $task_slug" >&2
+    exit 1
+  fi
+
   local slug
   slug="$(slugify "$task_slug")"
   local base_slug
