@@ -36,6 +36,13 @@
 # would rewrite a hostile `1-foo\n-bar` into a shape the slug guard accepts);
 # and it is consumed -- deleted -- on every path, so a stale file from an
 # earlier run can never be picked up.
+#
+# CLEANUP REPO ROOT. `cleanup` drives worktree removal, branch deletion and an
+# `rm -rf` from a repo_root parsed out of the state file, which is an ordinary
+# file in the tree. Checking that value against itself proves nothing, so the
+# trust anchor is git: a repo_root that is not the root of a real checkout is
+# refused before any destructive command runs. That belongs here because it is
+# the same "never trust a value the tree can author" boundary as the slug file.
 
 set -euo pipefail
 
@@ -288,6 +295,61 @@ if [[ "$k6_rc" -ne 0 && "$k6_out" == *"outside the repo root"* && -e "$WORKDIR/o
 	pass "(k6) a slug file outside the repo root is refused"
 else
 	fail "(k6) rc=$k6_rc out='$k6_out'"
+fi
+
+# --- (k7-k9) the "exactly one line" rule at its three boundaries -------------
+# The single-line test is a byte comparison against the read value with and
+# without one trailing newline, so its edges are: no trailing newline at all
+# (accepted -- the value IS the whole file), a second trailing newline
+# (refused -- a blank line is a second line), and CRLF (refused -- the \r is a
+# byte of the slug, which the slug guard then rejects).
+
+# (k7) no trailing newline: accepted and used verbatim.
+printf '1-no-newline' >"$SLUG_FILE"
+k7_raw="$(run_setup_slug_file "$SLUG_FILE")"
+k7_rc="$(printf '%s' "$k7_raw" | head -1)"
+k7_out="$(printf '%s' "$k7_raw" | tail -n +2)"
+if [[ "$k7_rc" -eq 0 && -d "$k7_out" ]] && assert_verbatim "(k7)" '1-no-newline' "$k7_out"; then
+	if [[ -e "$SLUG_FILE" ]]; then
+		fail "(k7) the slug file survived the call that read it"
+	else
+		pass "(k7) a slug file with no trailing newline is accepted and consumed"
+	fi
+elif [[ "$k7_rc" -ne 0 || ! -d "$k7_out" ]]; then
+	fail "(k7) rc=$k7_rc out='$k7_out'"
+fi
+if [[ -n "$k7_out" && -d "$k7_out" ]]; then
+	git -C "$SCRATCH" worktree remove --force "$k7_out" >/dev/null 2>&1 || true
+	git -C "$SCRATCH" branch -D 'fanout/main-1-no-newline' >/dev/null 2>&1 || true
+fi
+
+# (k8) two trailing newlines: the blank second line is a second line.
+printf '1-foo\n\n' >"$SLUG_FILE"
+expect_refused_slug_file "(k8) a slug file with two trailing newlines is refused" "refusing task slug"
+
+# (k9) CRLF: the '\r' is part of the value, so the slug guard refuses it.
+printf '1-foo\r\n' >"$SLUG_FILE"
+expect_refused_slug_file "(k9) a CRLF-terminated slug file is refused" "refusing task slug"
+
+# --- (l) cleanup anchors repo_root at a real git checkout -------------------
+# The state file is an ordinary file in the tree, so cleanup must not take its
+# repo_root on trust: the containment guard alone would be asking whether that
+# value is inside itself. A repo_root naming a directory that is not a git
+# checkout root is refused before anything is removed.
+NOT_A_REPO="$WORKDIR/not-a-repo"
+mkdir -p "$NOT_A_REPO/.fanout"
+printf 'decoy\n' >"$NOT_A_REPO/.fanout/next.slug"
+L_STATE="$WORKDIR/l-state.json"
+printf '{"repo_root": "%s", "agents": []}\n' "$NOT_A_REPO" >"$L_STATE"
+set +e
+l_out="$(bash "$FANOUT_SH" cleanup "$L_STATE" 2>&1)"
+l_rc=$?
+set -e
+if [[ "$l_rc" -ne 0 && "$l_out" == *"refusing repo_root"* ]] &&
+	[[ -d "$NOT_A_REPO/.fanout" && -f "$NOT_A_REPO/.fanout/next.slug" && -f "$L_STATE" ]]; then
+	pass "(l) cleanup refuses a state-file repo_root that is not a git checkout root"
+else
+	fail "(l) rc=$l_rc out='$l_out' (.fanout survived: $([[ -d "$NOT_A_REPO/.fanout" ]] && echo yes || echo no))"
 fi
 
 # --- Summary -----------------------------------------------------------------

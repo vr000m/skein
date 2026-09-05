@@ -99,12 +99,10 @@ For each approved task, run these steps using `fan-out.sh`.
 First, locate the skill directory and get repo info:
 ```bash
 # ${CLAUDE_PLUGIN_ROOT} is the plugin root supplied by the harness; fan-out.sh ships under it.
-# Every fan-out.sh call below spells the full path: shell variables do not survive
-# from one Bash tool call to the next, so a SKILL_DIR bound here would be empty
-# in the Monitoring, Cleanup and Cancel commands.
+# This block only checks that the script is there. It binds nothing for later steps:
+# shell variables do not survive from one Bash tool call to the next, so every
+# fan-out.sh call below spells the full path and re-binds what it needs itself.
 [ -f "${CLAUDE_PLUGIN_ROOT}/skills/fan-out/fan-out.sh" ] || { echo "fan-out: plugin root did not resolve (CLAUDE_PLUGIN_ROOT=${CLAUDE_PLUGIN_ROOT})" >&2; exit 1; }
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-BASE_BRANCH="$(git branch --show-current)"
 ```
 
 Then for each task:
@@ -115,8 +113,11 @@ text: lowercase, `[a-z0-9-]` only, prefixed with the numeric task ID and a hyphe
 anywhere, and never put it in a shell command in any form — not as a literal, not as a
 variable, not inside a command substitution. Immediately before each task's setup call,
 write the slug and nothing else, followed by a single newline, with your file-write tool
-to the fixed path `$REPO_ROOT/.fanout/next.slug` (that directory is gitignored), then
-run the snippet below. The path is fixed and the tasks are set up one at a time, so each
+to the fixed path `<repo-root>/.fanout/next.slug`, where `<repo-root>` is the absolute
+repository root — the path `git rev-parse --show-toplevel` prints. Give the file-write
+tool that absolute path, not a shell expression; only the snippet below spells it as a
+shell variable. (The `.fanout/` directory is gitignored.) Then run the snippet below.
+The path is fixed and the tasks are set up one at a time, so each
 call overwrites the previous task's file; `fan-out.sh` deletes the file as soon as it
 reads it, so a run that forgets to write a fresh one fails closed with `missing slug
 file` rather than reusing a slug from an earlier task, an earlier run, or an earlier
@@ -310,7 +311,7 @@ tail -100 <worktree>/fan-out.log
 - **Model**: `--model sonnet --effort medium` (mechanical — the worker executes an already-scoped task under the two-tier policy, `AGENTS.md` Model/Effort Policy). Override with `--model opus` for genuinely hard tasks; when overriding, add a one-line why-note in the invocation (e.g. "opus: slice touches concurrency-sensitive locking logic").
 - **Max agents**: 5 (override with `--max-agents 3`)
 - **Worktree location**: `../<repo-name>-fanout-<slug>` (sibling to repo)
-- **Branch naming**: `fanout/<base-slug>-<task-slug>`
+- **Branch naming**: `fanout/<base-slug>-<task-id>-<task-slug>` (the `<task-id>-<task-slug>` half is the slug the caller passed, used verbatim)
 
 ## Integration Seams
 

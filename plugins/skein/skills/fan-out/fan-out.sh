@@ -13,6 +13,9 @@ Usage: fan-out.sh <command> [options]
 
 Commands:
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
+          Compatibility/test-only call shape: the slug is spelled on the
+          command line, so it skips the slug-file containment and
+          consume-once guarantees. The skill always uses --slug-file.
   setup   <base-branch> --slug-file <path> <repo-root>
           Same, with the slug read from <path> instead of from the command
           line, so no plan-derived byte is ever spelled in a shell command.
@@ -57,18 +60,39 @@ slugify() {
 # instead of at a discovered checkout boundary. Bounding there is also what
 # keeps ordinary platform symlinks ABOVE the repo (macOS puts $TMPDIR under
 # /var -> /private/var) from turning into a false refusal.
+#
+# WHY NOT scripts/lib/ EITHER: this repo does share bash helpers by copying
+# scripts/lib/*.sh into each skill bundle through scripts/lib/bundle-map.sh.
+# Routing this walk through that mechanism would add fan-out to the bundle map
+# and to the mirror sync gate for the sake of one function that only fan-out
+# calls, so it is deliberately deferred until a second skill needs a
+# repo-root-bounded walk. Do not promote it before then.
+
+# Normalise a path's spelling so every later test is spelling-independent:
+# collapse '//' runs and '/./' components, and strip a trailing '/' or '/.'.
+# `[[ -L "$p/" ]]` is always false and a '//' run makes `${p%/*}` strip an
+# empty component instead of a real one, so the verdict must not depend on how
+# the caller typed the path. A '.' component is likewise inert, and leaving it
+# in place turned a repo root spelled `/a/./b` into a false refusal.
+fanout_normalise_path() {
+  local p="$1"
+  while [[ "$p" == *//* ]]; do p="${p//\/\///}"; done
+  while [[ "$p" == *"/./"* ]]; do p="${p//\/.\///}"; done
+  while [[ "$p" == */. ]]; do
+    p="${p%/.}"
+    [[ -n "$p" ]] || p="/"
+  done
+  while [[ "$p" == */ && "$p" != "/" ]]; do p="${p%/}"; done
+  printf '%s' "$p"
+}
+
 fanout_assert_inside_repo() {
   local path="$1" root="$2" label="$3"
 
   [[ "$path" == /* ]] || path="$PWD/$path"
   [[ "$root" == /* ]] || root="$PWD/$root"
-  # Normalise the spelling before any test: `[[ -L "$p/" ]]` is always false,
-  # and a '//' run makes `${p%/*}` strip an empty component instead of a real
-  # one, so the verdict must not depend on how the caller typed the path.
-  while [[ "$path" == *//* ]]; do path="${path//\/\///}"; done
-  while [[ "$path" == */ && "$path" != "/" ]]; do path="${path%/}"; done
-  while [[ "$root" == *//* ]]; do root="${root//\/\///}"; done
-  while [[ "$root" == */ && "$root" != "/" ]]; do root="${root%/}"; done
+  path="$(fanout_normalise_path "$path")"
+  root="$(fanout_normalise_path "$root")"
 
   # Every check below is lexical, and lexical reasoning is unsound once '..' is
   # in play: `$root/link/../.fanout` with `link` a symlink names a directory
@@ -80,7 +104,12 @@ fanout_assert_inside_repo() {
     ;;
   esac
 
-  if [[ "$path" != "$root"/* ]]; then
+  # Containment by prefix STRIP, not by pattern match: `[[ $path != "$root"/* ]]`
+  # relies on the reader knowing the quoted operand is literal while the trailing
+  # `/*` is a pattern. Stripping is unambiguous -- if removing "$root/" from the
+  # front changes nothing, the prefix was not there -- and no byte of $root is
+  # ever read as a glob metacharacter.
+  if [[ "${path#"$root"/}" == "$path" ]]; then
     echo "fan-out: refusing $label outside the repo root $root: $path" >&2
     return 1
   fi
@@ -99,6 +128,26 @@ fanout_assert_inside_repo() {
     cur="$next"
   done
 
+  return 0
+}
+
+# Does <worktree> carry the name cmd_setup would have given it under <repo-root>?
+# cleanup reads worktree paths out of the state file, so before handing one to
+# `git worktree remove --force` it must be a path this script could itself have
+# created: absolute, no '..', a sibling of the repo root, and named
+# `<repo-name>-fanout-*`. Anything else is a path the state file chose, not one
+# fan-out made, and is skipped rather than removed.
+fanout_worktree_is_ours() {
+  local wt="$1" root="$2"
+
+  [[ "$wt" == /* ]] || return 1
+  case "/$wt/" in
+  */../*) return 1 ;;
+  esac
+  wt="$(fanout_normalise_path "$wt")"
+  root="$(fanout_normalise_path "$root")"
+  [[ "$(dirname "$wt")" == "$(dirname "$root")" ]] || return 1
+  [[ "$(basename "$wt")" == "$(basename "$root")-fanout-"* ]] || return 1
   return 0
 }
 
@@ -151,10 +200,29 @@ cmd_setup() {
       one_line=0
     fi
 
+    # Re-check for a symlink AFTER the read. bash cannot open with O_NOFOLLOW,
+    # so the pre-read guard and the read are two operations with a window
+    # between them; re-testing here narrows that window to the read itself and
+    # refuses a file that became a symlink across it. The residual race needs a
+    # writer already inside the checkout, and all it can win is a refusal:
+    # nothing read from the file is echoed on any slug-file refusal path, so an
+    # attacker who wins the window learns neither the bytes nor whether they
+    # would have been accepted.
+    local raced=0
+    if [[ -L "$slug_file" ]]; then
+      raced=1
+    fi
+
     # Consume once, before either verdict: the file must not survive this call,
     # so a re-run that did not write a fresh one fails closed above instead of
-    # silently reusing a slug from an earlier run or an earlier plan.
+    # silently reusing a slug from an earlier run or an earlier plan. `rm -f`
+    # on a symlink unlinks the link itself, never the target.
     rm -f "$slug_file"
+
+    if [[ "$raced" -ne 0 ]]; then
+      echo "fan-out: refusing task slug (slug file became a symlink while it was read): $slug_file" >&2
+      exit 1
+    fi
 
     if [[ "$one_line" -ne 0 ]]; then
       echo "fan-out: refusing task slug (slug file must hold exactly one line): $slug_file" >&2
@@ -165,8 +233,17 @@ cmd_setup() {
   # Fail closed on any slug that is not <task-id>-<lowercase-slug>. The caller is
   # expected to validate before substituting, so this is the boundary that stops a
   # plan-derived string from reaching git.
+  #
+  # In slug-file mode the refusal names the FILE and the rule, never the value:
+  # the value is file-derived, and echoing it would hand a writer inside the
+  # checkout a read-back oracle for bytes this process refused to use. The
+  # positional form may still echo its argv value, which the caller already has.
   if [[ ! "$task_slug" =~ ^[0-9]+-[a-z0-9-]+$ ]]; then
-    echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$): $task_slug" >&2
+    if [[ -n "$slug_file" ]]; then
+      echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$) from slug file: $slug_file" >&2
+    else
+      echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$): $task_slug" >&2
+    fi
     exit 1
   fi
 
@@ -178,7 +255,11 @@ cmd_setup() {
   local slug
   slug="$(slugify "$task_slug")"
   if [[ "$slug" != "$task_slug" ]]; then
-    echo "fan-out: refusing task slug (would be rewritten by slugify to '$slug'): $task_slug" >&2
+    if [[ -n "$slug_file" ]]; then
+      echo "fan-out: refusing task slug (not in slugify normal form) from slug file: $slug_file" >&2
+    else
+      echo "fan-out: refusing task slug (would be rewritten by slugify to '$slug'): $task_slug" >&2
+    fi
     exit 1
   fi
 
@@ -451,9 +532,50 @@ import json, sys
 
 with open(sys.argv[1]) as f:
     state = json.load(f)
-print(state.get('repo_root', '.'))
+print(state.get('repo_root', ''))
 PYEOF
 )
+
+  # ANCHOR TRUST AT THE CHECKOUT, NOT AT THE rm. Everything below -- worktree
+  # removal, branch deletion, `rm -rf "$repo_root/.fanout"` -- is driven by a
+  # value parsed out of a JSON file that any writer in the tree can author.
+  # Passing that value as BOTH operands of the containment guard asks whether it
+  # is inside itself, which is always true, so the guard has to be anchored
+  # against something the state file does not control: git's own idea of where
+  # the checkout root is. A repo_root that is not a git checkout, or that names
+  # a directory whose checkout root is somewhere else, is refused before any
+  # destructive command runs.
+  if [[ -z "$repo_root" || "$repo_root" != /* ]]; then
+    echo "fan-out: refusing repo_root from state file (must be an absolute path): $repo_root" >&2
+    exit 1
+  fi
+  case "/$repo_root/" in
+  */../*)
+    echo "fan-out: refusing repo_root from state file (contains '..'): $repo_root" >&2
+    exit 1
+    ;;
+  esac
+
+  local resolved repo_root_phys resolved_phys
+  resolved="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -z "$resolved" ]]; then
+    # Checked before the `cd -P` below because `cd ""` succeeds and leaves $PWD
+    # alone, which would silently compare the caller's cwd instead of a root.
+    echo "fan-out: refusing repo_root from state file (not the root of a git checkout): $repo_root" >&2
+    exit 1
+  fi
+  # Compare in physical form so a checkout reached through a symlinked parent
+  # (macOS $TMPDIR under /var -> /private/var) still matches itself, and run
+  # both sides through the guard's own normalisation so the verdict cannot turn
+  # on a '//', '/./' or trailing-'/' spelling difference.
+  repo_root_phys="$(cd -P "$repo_root" 2>/dev/null && pwd -P || true)"
+  resolved_phys="$(cd -P "$resolved" 2>/dev/null && pwd -P || true)"
+  repo_root_phys="$(fanout_normalise_path "$repo_root_phys")"
+  resolved_phys="$(fanout_normalise_path "$resolved_phys")"
+  if [[ -z "$resolved_phys" || -z "$repo_root_phys" || "$resolved_phys" != "$repo_root_phys" ]]; then
+    echo "fan-out: refusing repo_root from state file (not the root of a git checkout): $repo_root" >&2
+    exit 1
+  fi
 
   # Remove worktrees and branches
   python3 - "$state_file" <<'PYEOF' | while IFS='|' read -r worktree branch; do
@@ -465,8 +587,12 @@ for a in state.get('agents', []):
     print(a.get('worktree', '') + '|' + a.get('branch', ''))
 PYEOF
     if [[ -n "$worktree" && -d "$worktree" ]]; then
-      echo "Removing worktree: $worktree"
-      git -C "$repo_root" worktree remove "$worktree" --force 2>/dev/null || true
+      if fanout_worktree_is_ours "$worktree" "$repo_root"; then
+        echo "Removing worktree: $worktree"
+        git -C "$repo_root" worktree remove "$worktree" --force 2>/dev/null || true
+      else
+        echo "WARNING: skipping worktree the state file names but fan-out could not have created: $worktree" >&2
+      fi
     fi
     if [[ -n "$branch" ]]; then
       echo "Removing branch: $branch"

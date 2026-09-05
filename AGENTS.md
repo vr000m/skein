@@ -43,6 +43,7 @@ justfile                     Task runner config
 .deep-review/                Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
 .review-plan/                Gitignored auto-fix manifests + latest-<harness>.json reconciled-envelope state for /review-plan (per-run)
 .fanout/                     Gitignored slug transport for /fan-out (next.slug, written per task and consumed by fan-out.sh setup --slug-file)
+.fan-out-state.json          Gitignored per-run state for /fan-out (repo_root plus one record per agent: pid, branch, worktree, log); read by fan-out.sh status/cancel/cleanup and removed by cleanup
 docs/_plan_view/             Gitignored generated HTML output from /plan-view (default out dir; sibling of docs/dev_plans/)
 _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
                              Deterministic and rich pages are cross-linked: forward links (plain → `.rich.html`) are emitted unconditionally; back-links (rich → plain/index, breadcrumb) are injected idempotently by `relink_rich_pages()` on every plain run, back-filling pre-existing rich pages.
