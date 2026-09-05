@@ -61,13 +61,37 @@ When invoked, follow these phases in order:
    - Otherwise, find the most recent `In Progress` plan in `docs/dev_plans/`
    - If none found, ask the user
 2. Read the plan file
-3. Extract tasks from the **Implementation Checklist** section (lines matching `- [ ] ...`)
+3. Enumerate the tasks with `fan-out.sh tasks`, and pin the plan revision. Do NOT
+   number the checklist yourself — the ordinals this call prints are the only ones
+   `setup` will accept, and a number you derived by reading the plan is not
+   checkable against anything.
+
+   ```bash
+   # $SKILL_DIR is the skill's disclosed base directory, exported by the harness; fan-out.sh ships under it.
+   [ -f "${SKILL_DIR:?}/fan-out.sh" ] || { echo "fan-out: skill directory did not resolve (SKILL_DIR=$SKILL_DIR)" >&2; exit 1; }
+   REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 1
+   [ -n "$REPO_ROOT" ] || { echo "fan-out: repo root did not resolve" >&2; exit 1; }
+   PLAN="$REPO_ROOT/<plan-path-relative-to-the-repo-root>"
+   PLAN_SHA256="$(shasum -a 256 "$PLAN" | awk '{print $1}')"
+   echo "PLAN_SHA256=$PLAN_SHA256"
+   "$SKILL_DIR/fan-out.sh" tasks --plan "$PLAN" --plan-sha256 "$PLAN_SHA256" "$REPO_ROOT"
+   ```
+
+   Run this ONCE per fan-out and **write the printed `PLAN_SHA256` value down in
+   your reply**: shell variables do not survive from one Bash tool call to the
+   next, so every `setup` call below has to spell that digest as a literal. Each
+   output line is `<task-id>\t<task-slug>\t<title>`, one per `- [ ]` **and**
+   `- [x]` line under the plan's `Implementation Checklist` heading, numbered
+   1-based in file order. Ticked boxes are counted so that a worker ticking one
+   mid-run cannot renumber the tasks still to be set up.
 4. Extract file mappings from the **Technical Specifications > Files to Modify** section
 5. Extract any architecture context from the plan
 
 ### Phase 2: Dependency Analysis
 
-For each task, determine which files it likely touches (from Technical Specifications or by inferring from the task description). Classify tasks:
+Work from the records Phase 1's `tasks` call printed — the task IDs and titles in
+the analysis below are those records, not a numbering of your own. For each task,
+determine which files it likely touches (from Technical Specifications or by inferring from the task description). Classify tasks:
 
 - **Independent**: Touch different files, no logical dependency
 - **Potentially conflicting**: Modify the same files
@@ -104,93 +128,51 @@ If the user says "edit", let them adjust. If `--dry-run` was specified, stop her
 
 For each approved task, run these steps using `fan-out.sh`.
 
-First, locate the skill directory and get repo info:
-```bash
-# $SKILL_DIR is the skill's disclosed base directory, exported by the harness.
-# This block checks that the script is there and creates the slug transport
-# directory. It binds nothing for later steps: shell variables do not survive
-# from one Bash tool call to the next, so every fan-out.sh call below spells the
-# full path and re-binds what it needs itself.
-SKILL_DIR="${SKILL_DIR:?}"
-[ -f "$SKILL_DIR/fan-out.sh" ] || { echo "fan-out: skill directory did not resolve (SKILL_DIR=$SKILL_DIR)" >&2; exit 1; }
-root="$(git rev-parse --show-toplevel)" || exit 1
-[ -n "$root" ] || { echo "fan-out: repo root did not resolve" >&2; exit 1; }
-[ -L "$root/.fanout" ] && { echo "fan-out: refusing symlinked .fanout/" >&2; exit 1; }
-mkdir -p "$root/.fanout"
-rm -f "$root/.fanout/next.slug"
-```
+Phase 1 already checked that `$SKILL_DIR/fan-out.sh` resolves and printed the plan's task
+records and `PLAN_SHA256`. That check binds nothing for the steps below: shell variables do
+not survive from one Bash tool call to the next, so every `fan-out.sh` call spells the full
+`$SKILL_DIR` path and re-binds what it needs itself.
 
-This preamble runs once per fan-out and is what creates `<repo-root>/.fanout/`; Phase 7's
-cleanup removes it. `fan-out.sh` deliberately does not create it — `setup --slug-file` must
-fail closed on a missing file, so the directory belongs to the caller that writes into it.
-The repo root is bound once and refused when empty, for the same reason the skill-directory
-check exists: `git rev-parse --show-toplevel` prints nothing outside a checkout, and both
-the `-L` test and the `mkdir -p` would then act on `/.fanout` at the filesystem root.
-The symlink refusal comes first because `mkdir -p` treats an existing symlink-to-directory
-as success: a tracked `.fanout` symlink in a hostile clone would take the slug write at the
-link target, and the read side of `fan-out.sh` refuses symlinked components anyway, so the
-preamble must not create a path the script will then refuse.
-The `rm -f` of the leaf is the same refusal one level down, applied as an unlink rather
-than a test: `mkdir -p` leaves an existing `.fanout/next.slug` alone, and a tracked
-symlink at that leaf materialises on checkout inside a real `.fanout` directory the `-L`
-test above passes. `rm -f` unlinks the link itself, never its target, so the first slug
-write lands on a fresh regular file.
+**Never derive a task slug yourself, and never spell one on a command line.** The only
+per-task value you supply is the ordinal `N` from Phase 1's `tasks` output, together with
+the `PLAN_SHA256` digest of the plan those ordinals were read from. `fan-out.sh setup`
+re-derives task `N`'s slug from the plan's own bytes with the same function `tasks` used,
+so the branch and worktree can only ever carry the title that ordinal actually holds in
+that exact plan revision. A slug you wrote by hand is unfalsifiable — `7-delete-api` and
+`7-add-api` are equally well-formed, and setup force-removes whatever worktree already
+stands at the path it derives. Letting the script derive it is what makes task identity
+checkable rather than a convention.
 
-Then for each task:
+The digest is what binds the ordinal to a revision. If the plan is edited between Phase 1
+and a task's setup call, `setup` refuses with `refusing plan (sha256 mismatch)` rather than
+silently setting up whatever task now sits at that ordinal. On that refusal, re-run Phase
+1's `tasks` call, re-confirm the analysis with the user, and use the new digest — do not
+re-hash the plan just to get past the guard.
 
-This skill derives each task's slug from the approved task record, not from raw plan
-text: lowercase, `[a-z0-9-]` only, prefixed with the numeric task ID and a hyphen (e.g.
-`1-add-api-endpoint`). Check the derived string against that shape BEFORE it goes
-anywhere, and never put it in a shell command in any form — not as a literal, not as a
-variable, not inside a command substitution. Immediately before each task's setup call,
-and in its own Bash call before the write, run:
-
-```bash
-root="$(git rev-parse --show-toplevel)" && [ -n "$root" ] && rm -f "$root/.fanout/next.slug"
-```
-
-Run this per task, because a file-write tool follows an existing symlink and the read-side
-guard in `fan-out.sh` cannot protect the write — it refuses a symlinked leaf only after the
-write has already landed on the link target, and the preamble's own `rm -f` runs once per
-fan-out while a worker in the tree can re-plant the leaf between tasks. Then
-write the slug and nothing else, followed by a single newline, with your file-write tool
-to the fixed path `<repo-root>/.fanout/next.slug`, where `<repo-root>` is the absolute
-repository root — the path `git rev-parse --show-toplevel` prints. Give the file-write
-tool that absolute path, not a shell expression; only the snippet below spells it as a
-shell variable. (The `.fanout/` directory is gitignored.) Then run the snippet below.
-The path is fixed and the tasks are set up one at a time, so each
-call overwrites the previous task's file; `fan-out.sh` deletes the file as soon as it
-reads it, so a run that forgets to write a fresh one fails closed with `missing slug
-file` rather than reusing a slug from an earlier task, an earlier run, or an earlier
-plan.
-
-`fan-out.sh setup --slug-file` reads that file itself, so no plan-derived byte is ever
-spelled in a shell command and there is nothing for the shell to re-parse. It refuses a
-slug file reached through a symlink or sitting outside the repo root, reads the first
-line RAW — no newline stripping, since stripping would splice a hostile `1-foo\n-bar`
-into a slug the guard accepts — and refuses any file that is not exactly one line. Every
-component of the path is walked before the read and walked again after it, so an
-ancestor directory swapped for a symlink mid-read is refused; on that path the file is
-left in place rather than unlinked through the swapped component. It
-then validates those bytes and refuses anything that is not `<task-id>-<slug>` in
-slugify's normal form — no `--`, no leading or trailing hyphen, 50 characters or fewer —
-so a plan-derived string that skipped the check fails closed instead of reaching git.
-Because the guard refuses everything slugify would alter, the complete task-ID-prefixed
-slug is used unchanged for the branch and worktree names, which is what prevents two
-tasks that slugify alike from colliding.
-
-1. **Create worktree**:
+1. **Create worktree** (`N` is the ordinal, `<plan-sha256>` the digest from Phase 1, both
+   spelled as literals):
    ```bash
    REPO_ROOT="$(git rev-parse --show-toplevel)"
    BASE_BRANCH="$(git branch --show-current)"
-   WORKTREE=$("$SKILL_DIR/fan-out.sh" setup "$BASE_BRANCH" --slug-file "$REPO_ROOT/.fanout/next.slug" "$REPO_ROOT")
+   WORKTREE=$("$SKILL_DIR/fan-out.sh" setup "$BASE_BRANCH" --plan "$REPO_ROOT/<plan-path-relative-to-the-repo-root>" --task-id N --plan-sha256 <plan-sha256> "$REPO_ROOT")
    ```
 
    This snippet re-binds `REPO_ROOT` and `BASE_BRANCH` on purpose: shell variables do not
-   survive from one Bash tool call to the next, so it has to be self-contained. Every
-   token in it is fixed text — the only per-task value travels in the file.
+   survive from one Bash tool call to the next, so it has to be self-contained. The only
+   per-task token is the bare integer `N`; the plan path and the digest are the same on
+   every call in the run.
 
-   This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string passed by the caller.
+   `setup` refuses a `--task-id` that is not a bare positive integer, refuses a plan path
+   that leaves the repo root or is reached through a symlink below it, hashes the plan
+   only after that containment walk, and refuses an ordinal the checklist does not hold.
+   The derived slug then goes through the same two guards a hand-written one used to: it
+   must match `<task-id>-<slug>` (digits, `-`, then `[a-z0-9-]`) and be a slugify fixed
+   point — no `--`, no leading or trailing hyphen, 50 characters or fewer. Because
+   nothing slugify would alter is accepted, the complete task-ID-prefixed slug is used
+   unchanged for the branch and worktree names, which is what prevents two tasks that
+   slugify alike from colliding.
+
+   This creates branch `fanout/<base-slug>-<slug>` and worktree at `../<repo>-fanout-<slug>`, where `<slug>` is the `<task-id>-<task-slug>` string the script derived for task `N`.
 
 
 2. **Build agent prompt**: Read `$SKILL_DIR/agent-prompt.md` and extract only the fenced `Template` block before replacing placeholders; discard the preamble and trailing text. This prevents preamble occurrences such as `{{TOOLCHAIN_CONTEXT}}` from becoming a second operational prompt region.
@@ -351,16 +333,15 @@ Run:
 "${SKILL_DIR}/fan-out.sh" cleanup .fan-out-state.json
 ```
 
-This removes every artifact the skill creates: the worktrees, the merged branches,
-`<repo-root>/.fanout/` (the slug transport directory), and `.fan-out-state.json` itself.
+This removes every artifact the skill creates: the worktrees, the merged branches, and
+`.fan-out-state.json` itself.
 Which worktrees and branches those are is decided by `git worktree list`, not by the state
 file: a worktree qualifies only if it is a sibling of the repo root named
 `<repo-name>-fanout-<task-id>-<slug>` (the same `<task-id>-<slug>` shape `setup` accepts, so
 cleanup can never act on a name setup could not have created) AND git has it attached to a
 branch under `fanout/`, and the branch
 deleted is the one git attached to it. A worktree the state file names that git does not
-attribute to fan-out is reported and left alone. The `.fanout/` removal is skipped with a
-diagnostic if that path is a symlink.
+attribute to fan-out is reported and left alone.
 
 ### Viewing Logs (on `/fan-out logs N`)
 
@@ -421,7 +402,7 @@ export FANOUT_PROMPT_MODE=file
 - Agents run non-interactively — configure permission flags via `FANOUT_PERMS_FLAG`
 - Agents cannot ask clarifying questions — task descriptions must be self-contained
 - No shared state between agents — if task B needs output from task A, they cannot be parallelized
-- `.fan-out-state.json` and `.fanout/` are both in this repo's `.gitignore`; a project adopting the skill should ignore them too
+- `.fan-out-state.json` is in this repo's `.gitignore`; a project adopting the skill should ignore it too
 
 ## Integration with `/dev-plan`
 

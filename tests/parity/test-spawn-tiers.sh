@@ -284,11 +284,11 @@ assert_count "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
 	'^   PID=\$\("\$\{SKILL_DIR\}/fan-out\.sh" spawn "\$WORKTREE" "\$PROMPT_FILE" "\$WORKTREE/fan-out\.log" --effort medium\)$' 1 \
 	"codex fan-out active worker dispatch retains --effort medium"
 assert_present_flat "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
-	'approved task record.*never put it in a shell command' \
+	'Never derive a task slug yourself.*never spell one on a command line' \
 	"codex fan-out derives a validated slug without shell transport"
 assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" \
-	'WORKTREE=\$\("\$SKILL_DIR/fan-out\.sh" setup "\$BASE_BRANCH" --slug-file "\$REPO_ROOT/\.fanout/next\.slug" "\$REPO_ROOT"\)' \
-	"codex fan-out passes the slug through the guarded file transport"
+	'WORKTREE=\$\("\$SKILL_DIR/fan-out\.sh" setup "\$BASE_BRANCH" --plan "\$REPO_ROOT/<plan-path-relative-to-the-repo-root>" --task-id N --plan-sha256 <plan-sha256> "\$REPO_ROOT"\)' \
+	"codex fan-out passes the task ordinal and plan digest, not a hand-written slug"
 assert_present_flat "$CODEX_SKILLS_DIR/fan-out/agent-prompt.md" 'single-context.*rather than spawning a separate test-writer.*nested `spawn_agent` test-writer' \
 	"codex fan-out pins the active single-context/no-nested-test-writer topology"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_EFFORT' \
@@ -748,10 +748,10 @@ assert_present "$CODEX_SKILLS_DIR/deep-review/SKILL.md" "absolute.*persist-lens-
 	"codex deep-review shell-quotes persistence context"
 assert_present "$RP_CODEX_SKILL" "absolute.*persist-lens-result\.sh.*repo root.*run id.*lens name.*attempt.*printf '%q'" \
 	"codex review-plan shell-quotes persistence context"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'setup --slug-file' \
-	"codex fan-out uses the guarded slug-file setup mode"
-assert_present "$CODEX_SKILLS_DIR/fan-out/SKILL.md" 'line RAW.*no newline stripping' \
-	"codex fan-out documents raw slug-file reads"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'setup   <base-branch> --plan <path> --task-id N --plan-sha256 <hex> <repo-root>' \
+	"codex fan-out uses the guarded plan-derived setup mode"
+assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'fanout_plan_sha256' \
+	"codex fan-out.sh pins the plan revision by digest before deriving a slug"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'FANOUT_TASK_SLUG_RE' \
 	"codex fan-out uses the shared slug regex"
 assert_present "$ROOT_DIR/plugins/skein-codex/skills/fan-out/fan-out.sh" 'worktree list --porcelain' \

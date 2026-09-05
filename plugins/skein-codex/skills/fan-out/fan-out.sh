@@ -16,28 +16,30 @@ usage() {
 Usage: fan-out.sh <command> [options]
 
 Commands:
+  tasks   --plan <path> [--plan-sha256 <hex>] <repo-root>
+          Print one record per Implementation Checklist item as
+          <task-id>\t<task-slug>\t<title>. Items are numbered 1-based in file
+          order, counting both '- [ ]' and '- [x]' lines, so an ordinal does
+          not move when a worker ticks a box mid-run. <path> must sit inside
+          <repo-root> with no '..' component and no symlink below the root.
+          With --plan-sha256 the plan's shasum -a 256 digest must match.
+  setup   <base-branch> --plan <path> --task-id N --plan-sha256 <hex> <repo-root>
+          Create branch + worktree for checklist task N. The slug is DERIVED
+          here from the plan the caller pinned by digest, never spelled by the
+          caller, so a task id can only ever name the task that ordinal
+          actually holds in that exact plan revision.
   setup   <base-branch> <task-slug> <repo-root>    Create branch + worktree
-          Compatibility/test-only call shape: the slug is spelled on the
-          command line, so it skips the slug-file containment and
-          consume-once guarantees. The skill always uses --slug-file.
-  setup   <base-branch> --slug-file <path> <repo-root>
-          Same, with the slug read from <path> instead of from the command
-          line, so no plan-derived byte is ever spelled in a shell command.
-          The file must sit inside <repo-root>, must not be reached through a
-          symlink, and must hold exactly one line (one optional trailing
-          newline, nothing after it). It is deleted as soon as it is read, so
-          every call consumes a file its own caller has just written and a
-          stale file from an earlier run cannot be picked up.
-          <task-slug> must be <task-id>-<slug>: digits, then '-', then
+          Test-only call shape: the slug is spelled on the command line, so it
+          derives nothing and pins nothing. The skill always uses the --plan
+          form. <task-slug> must be <task-id>-<slug>: digits, then '-', then
           [a-z0-9-]; and already in slugify normal form (no '--', no leading
           or trailing '-', 50 characters or fewer). Anything slugify would
-          rewrite is refused.
+          rewrite is refused. The same two guards apply to the derived slug.
   spawn   <worktree-path> <prompt-file> <log-file> [--model MODEL] [--effort LEVEL]  Launch codex
   status  <state-file>                              Check agent PIDs
   cancel  <state-file> [task-id]                    Kill agent(s)
-  cleanup <state-file>                              Remove worktrees, branches,
-                                                    <repo-root>/.fanout/ and the
-                                                    state file
+  cleanup <state-file>                              Remove worktrees, branches
+                                                    and the state file
   help                                              Show this message
 
 Environment:
@@ -56,8 +58,87 @@ that request reasoning effort in that Codex CLI version.
 EOF
 }
 
+# `printf '%s\n'` and not `echo`: slugify's input is now plan-derived TITLE text,
+# and bash's `echo` eats a leading `-n`/`-e`/`-E` as an option instead of
+# printing it. A title such as `-e do the thing` would then slugify from the
+# wrong bytes. printf takes its operand as data whatever it starts with. The
+# output alphabet is unchanged, so every existing caller sees the same answer.
 slugify() {
-  echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-50
+  printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-50
+}
+
+# --- task identity: derive the slug, never accept one ----------------------
+#
+# WHY THIS EXISTS. The slug used to be derived by the MODEL and handed to this
+# script, which meant the script could only check the slug's SHAPE, never its
+# MEANING. A slug that passed every shape guard but named a different task than
+# the one the user approved -- `7-delete-api` for approved task `7-add-api` --
+# was accepted, and setup then force-removes any worktree already standing at
+# the derived path. Task identity has to be executable, so the caller now names
+# an ORDINAL in a plan revision it pins by digest, and the mapping from ordinal
+# to slug is computed here from the plan's own bytes.
+#
+# ORDINALS COUNT BOTH BOX STATES on purpose. A worker ticking `- [ ]` to `- [x]`
+# mid-run must not renumber the tasks still to be set up; numbering only the
+# unticked lines would do exactly that.
+
+# Print `<ordinal>\t<title>` for every checklist item in <plan-path>.
+#
+# The region is the one after a heading whose text contains `Implementation
+# Checklist`, ending at the next heading of the same or a higher level (a `###`
+# subsection inside a `##` checklist stays in the region; the next `##` ends
+# it). Tabs inside a title are folded to spaces because the record itself is
+# tab-separated.
+fanout_checklist_lines() {
+  awk '
+    function heading_level(s,   i) {
+      if (s !~ /^#+[ \t]/) return 0
+      i = 0
+      while (substr(s, i + 1, 1) == "#") i++
+      return i
+    }
+    {
+      hl = heading_level($0)
+      if (!in_region) {
+        if (hl > 0 && index($0, "Implementation Checklist") > 0) {
+          in_region = 1
+          level = hl
+        }
+        next
+      }
+      if (hl > 0 && hl <= level) exit
+      if ($0 ~ /^[ \t]*- \[[ xX]\][ \t]+/) {
+        n++
+        title = $0
+        sub(/^[ \t]*- \[[ xX]\][ \t]+/, "", title)
+        sub(/[ \t]+$/, "", title)
+        gsub(/\t/, " ", title)
+        printf "%d\t%s\n", n, title
+      }
+    }
+  ' "$1"
+}
+
+# Print `<task-id>\t<task-slug>\t<title>` for task <task-id> in <plan-path>.
+# Returns non-zero (printing nothing) when the plan has no such ordinal.
+#
+# The title is UNTRUSTED plan text throughout: it is carried in shell variables
+# and printf OPERANDS only, never spelled into a command line, never eval'd, and
+# never used as a printf FORMAT.
+fanout_task_record() {
+  local plan="$1" want="$2" id title
+  while IFS=$'\t' read -r id title; do
+    [[ "$id" == "$want" ]] || continue
+    printf '%s\t%s\t%s\n' "$id" "$id-$(slugify "$title")" "$title"
+    return 0
+  done < <(fanout_checklist_lines "$plan")
+  return 1
+}
+
+# Digest a plan file the way `tasks --plan-sha256` and `setup --plan-sha256`
+# both expect it. Called only AFTER the containment walk has passed.
+fanout_plan_sha256() {
+  shasum -a 256 "$1" | awk '{print $1}'
 }
 
 # The ONE definition of an accepted task slug: <task-id>-<slug> -- digits, then
@@ -68,7 +149,7 @@ slugify() {
 # what makes that equality checkable rather than a convention.
 FANOUT_TASK_SLUG_RE='^[0-9]+-[a-z0-9-]+$'
 
-# --- containment guard for the slug-file transport and .fanout/ ------------
+# --- containment guard for the plan path -----------------------------------
 # Refuses a path that is not lexically inside <repo-root>, that contains a
 # '..' component, or that is reached through a symlink at any component
 # strictly below <repo-root>.
@@ -117,7 +198,7 @@ fanout_assert_inside_repo() {
   root="$(fanout_normalise_path "$root")"
 
   # Every check below is lexical, and lexical reasoning is unsound once '..' is
-  # in play: `$root/link/../.fanout` with `link` a symlink names a directory
+  # in play: `$root/link/../plan.md` with `link` a symlink names a file
   # beside link's TARGET, not a child of $root. Reject the shape.
   case "/$path/" in
   */../*)
@@ -214,22 +295,154 @@ fanout_canonical_worktree() {
   printf '%s/%s' "$parent" "$(basename "$p")"
 }
 
+# --- tasks: print the plan's checklist as <id>\t<slug>\t<title> ---
+#
+# The ONE place the ordinal-to-slug mapping is published. The skill calls this
+# once per fan-out, shows the user those records, and then names ordinals from
+# it -- so the identity the user approves and the identity `setup` re-derives
+# come from the same function over the same bytes.
+cmd_tasks() {
+  local plan_path="" plan_sha="" repo_root=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --plan)
+        if [[ $# -lt 2 ]]; then
+          echo "fan-out: tasks --plan requires a value" >&2
+          exit 1
+        fi
+        plan_path="$2"
+        shift 2
+        ;;
+      --plan-sha256)
+        if [[ $# -lt 2 ]]; then
+          echo "fan-out: tasks --plan-sha256 requires a value" >&2
+          exit 1
+        fi
+        plan_sha="$2"
+        shift 2
+        ;;
+      -*)
+        echo "fan-out: tasks: unknown option: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "$repo_root" ]]; then
+          echo "fan-out: tasks takes exactly one <repo-root>" >&2
+          exit 1
+        fi
+        repo_root="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$plan_path" ]]; then
+    echo "fan-out: tasks requires --plan <path> [--plan-sha256 <hex>] <repo-root>" >&2
+    exit 1
+  fi
+
+  # Same repo-root discipline as cmd_setup, for the same reason: every guard
+  # below reasons lexically about an absolute, '..'-free, normalised root.
+  if [[ -z "$repo_root" || "$repo_root" != /* ]]; then
+    echo "fan-out: refusing repo root (must be an absolute path): $repo_root" >&2
+    exit 1
+  fi
+  case "/$repo_root/" in
+  */../*)
+    echo "fan-out: refusing repo root (contains '..'): $repo_root" >&2
+    exit 1
+    ;;
+  esac
+  repo_root="$(fanout_normalise_path "$repo_root")"
+
+  fanout_assert_inside_repo "$plan_path" "$repo_root" "plan file" || exit 1
+
+  if [[ ! -f "$plan_path" ]]; then
+    echo "fan-out: missing plan file: $plan_path" >&2
+    exit 1
+  fi
+
+  # Optional here and mandatory on `setup`: this call is what the caller uses to
+  # LEARN the digest, so requiring one would be circular. `setup` is the call
+  # that acts, and that one always pins.
+  if [[ -n "$plan_sha" ]]; then
+    local actual_sha
+    actual_sha="$(fanout_plan_sha256 "$plan_path")"
+    if [[ -z "$actual_sha" || "$actual_sha" != "$plan_sha" ]]; then
+      echo "fan-out: refusing plan (sha256 mismatch; the plan changed since it was read): $plan_path" >&2
+      exit 1
+    fi
+  fi
+
+  local id title
+  while IFS=$'\t' read -r id title; do
+    [[ -n "$id" ]] || continue
+    printf '%s\t%s\t%s\n' "$id" "$id-$(slugify "$title")" "$title"
+  done < <(fanout_checklist_lines "$plan_path")
+}
+
 # --- setup: create branch + worktree ---
 cmd_setup() {
   local base_branch="${1:-}"
   shift || true
 
-  # Two call shapes: the positional `<task-slug> <repo-root>` form, and the
-  # `--slug-file <path> <repo-root>` form the skill uses, where the slug never
-  # appears in a shell command at all.
-  local task_slug="" slug_file="" repo_root=""
-  if [[ "${1:-}" == "--slug-file" ]]; then
-    if [[ $# -lt 3 ]]; then
-      echo "fan-out: setup --slug-file requires <path> <repo-root>" >&2
+  # Two call shapes: the derived `--plan <path> --task-id N --plan-sha256 <hex>
+  # <repo-root>` form the skill uses, where the caller names an ordinal and the
+  # slug is computed here; and the positional `<task-slug> <repo-root>` form,
+  # kept for the guard tests that drive the slug regex and fixed-point branches
+  # directly.
+  local task_slug="" repo_root=""
+  local plan_path="" task_id="" plan_sha="" derived=0
+  if [[ "${1:-}" == "--plan" ]]; then
+    derived=1
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --plan)
+          if [[ $# -lt 2 ]]; then
+            echo "fan-out: setup --plan requires a value" >&2
+            exit 1
+          fi
+          plan_path="$2"
+          shift 2
+          ;;
+        --task-id)
+          if [[ $# -lt 2 ]]; then
+            echo "fan-out: setup --task-id requires a value" >&2
+            exit 1
+          fi
+          task_id="$2"
+          shift 2
+          ;;
+        --plan-sha256)
+          if [[ $# -lt 2 ]]; then
+            echo "fan-out: setup --plan-sha256 requires a value" >&2
+            exit 1
+          fi
+          plan_sha="$2"
+          shift 2
+          ;;
+        -*)
+          echo "fan-out: setup: unknown option: $1" >&2
+          exit 1
+          ;;
+        *)
+          if [[ -n "$repo_root" ]]; then
+            echo "fan-out: setup takes exactly one <repo-root>" >&2
+            exit 1
+          fi
+          repo_root="$1"
+          shift
+          ;;
+      esac
+    done
+    # All three are mandatory together: the digest is what makes the ordinal
+    # mean anything, so an unpinned --plan is not a lesser form of this call, it
+    # is the vulnerability this call shape exists to close.
+    if [[ -z "$plan_path" || -z "$task_id" || -z "$plan_sha" ]]; then
+      echo "fan-out: setup --plan requires --plan <path> --task-id N --plan-sha256 <hex> <repo-root>" >&2
       exit 1
     fi
-    slug_file="$2"
-    repo_root="$3"
   else
     task_slug="${1:-}"
     repo_root="${2:-}"
@@ -264,87 +477,62 @@ cmd_setup() {
   esac
   repo_root="$(fanout_normalise_path "$repo_root")"
 
-  if [[ -n "$slug_file" ]]; then
-    # Guard the transport before touching it: `.fanout/` is gitignored, but a
-    # TRACKED symlink at that path still materialises on checkout, and reading
-    # through it would let a malicious clone choose which file is consumed.
-    fanout_assert_inside_repo "$slug_file" "$repo_root" "slug file" || exit 1
-    fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory" || exit 1
-
-    if [[ ! -f "$slug_file" ]]; then
-      # Fail closed rather than falling back: the file is written immediately
-      # before this call, so a missing one means no fresh slug exists.
-      echo "fan-out: missing slug file: $slug_file" >&2
+  if [[ "$derived" -eq 1 ]]; then
+    # A BARE POSITIVE INTEGER and nothing else. This value is compared against
+    # awk's own ordinal, which is printed with %d, so anything that is not the
+    # same spelling of the same number (`07`, `1 `, `+1`, `1e0`) could only ever
+    # fail to match -- refusing it outright says so, instead of reporting the
+    # task as absent from the plan.
+    if [[ ! "$task_id" =~ ^[1-9][0-9]*$ ]]; then
+      echo "fan-out: refusing task id (must be a positive integer): $task_id" >&2
       exit 1
     fi
 
-    # Read the FIRST LINE RAW -- no `tr -d`, no trimming. Normalising here
-    # would rewrite a hostile value (`1-foo\n-bar`) into a shape the guard
-    # below accepts, which is the validation bypass this transport exists to
-    # avoid. Instead the file's whole content must BE the slug, with at most
-    # one trailing newline; anything else is refused.
-    local one_line=1
-    # `read` returns non-zero on a file with no trailing newline while still
-    # assigning the value, so the failure is tolerated, never used to clear it.
-    IFS= read -r task_slug <"$slug_file" || true
-    if printf '%s\n' "$task_slug" | cmp -s - "$slug_file" ||
-      printf '%s' "$task_slug" | cmp -s - "$slug_file"; then
-      one_line=0
-    fi
+    # Contain the plan path before reading it, for the same reason the slug
+    # transport used to be contained: the path is caller-supplied, and a `..`
+    # component or a symlinked directory below the root would let a call name a
+    # "plan" outside the checkout the digest was computed against.
+    fanout_assert_inside_repo "$plan_path" "$repo_root" "plan file" || exit 1
 
-    # Re-run the FULL containment walk AFTER the read. bash cannot open with
-    # O_NOFOLLOW, so the pre-read guard and the read are two operations with a
-    # window between them. A leaf-only `[[ -L "$slug_file" ]]` does not close
-    # it: an attacker who renames an ANCESTOR (`.fanout` itself) and drops a
-    # symlink in its place leaves the leaf a regular file, so the leaf test
-    # passes and the consume-once `rm -f` below then resolves through the
-    # swapped ancestor and unlinks <target>/next.slug outside the checkout.
-    # Walking every component of both paths again is what the pre-read guard
-    # checked, so a swap anywhere on either path is caught.
-    #
-    # This runs BEFORE `rm -f`, and refuses without unlinking: once a component
-    # of the path is attacker-controlled, the unlink would be performed through
-    # the attacker's link, which is the deletion this guard exists to prevent.
-    # A slug file left behind on this path is not a fallback -- the next call
-    # re-walks the same path and refuses again until the swapped component is
-    # gone.
-    #
-    # What a winner of the residual window actually gets: nothing read from the
-    # file is echoed on any slug-file refusal path, no unlink is performed
-    # through a swapped ancestor, and the slug value itself is never used
-    # because the call refuses before reaching the slug guard, git, or the
-    # worktree. So the window yields neither the bytes, nor a verdict on them,
-    # nor a deletion.
-    if ! fanout_assert_inside_repo "$slug_file" "$repo_root" "slug file" ||
-      ! fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory"; then
-      echo "fan-out: refusing task slug (the slug file's path stopped being contained while it was read; leaving it in place rather than unlinking through the swapped path): $slug_file" >&2
+    if [[ ! -f "$plan_path" ]]; then
+      echo "fan-out: missing plan file: $plan_path" >&2
       exit 1
     fi
 
-    # Consume once, before the remaining verdict: the file must not survive
-    # this call, so a re-run that did not write a fresh one fails closed above
-    # instead of silently reusing a slug from an earlier run or an earlier
-    # plan. `rm -f` on a symlink unlinks the link itself, never the target --
-    # and by here every component of the path has just been re-walked.
-    rm -f "$slug_file"
-
-    if [[ "$one_line" -ne 0 ]]; then
-      echo "fan-out: refusing task slug (slug file must hold exactly one line): $slug_file" >&2
+    # DIGEST AFTER THE WALK, never before: hashing first would open the file
+    # through a path the guard has not accepted yet. The digest is what binds
+    # the ordinal to a plan REVISION -- without it, editing the checklist
+    # between the `tasks` call the user approved and this call would silently
+    # re-point every ordinal at a different task.
+    local actual_sha
+    actual_sha="$(fanout_plan_sha256 "$plan_path")"
+    if [[ -z "$actual_sha" || "$actual_sha" != "$plan_sha" ]]; then
+      echo "fan-out: refusing plan (sha256 mismatch; the plan changed since it was read): $plan_path" >&2
       exit 1
     fi
+
+    local record
+    if ! record="$(fanout_task_record "$plan_path" "$task_id")"; then
+      echo "fan-out: no task $task_id in the plan's Implementation Checklist: $plan_path" >&2
+      exit 1
+    fi
+    # Field 2 of `<id>\t<slug>\t<title>`. The title (field 3) is deliberately
+    # not used for anything but the record itself.
+    task_slug="$(printf '%s' "$record" | cut -f2)"
   fi
 
-  # Fail closed on any slug that is not <task-id>-<lowercase-slug>. The caller is
-  # expected to validate before substituting, so this is the boundary that stops a
-  # plan-derived string from reaching git.
+  # Fail closed on any slug that is not <task-id>-<lowercase-slug>. In the
+  # derived form this is a backstop rather than the primary boundary -- slugify
+  # already emits only [a-z0-9-] -- and it is what catches a title that
+  # slugifies to nothing (`- [ ] ???` would derive `7-`, which has an empty
+  # suffix and must not become a branch).
   #
-  # In slug-file mode the refusal names the FILE and the rule, never the value:
-  # the value is file-derived, and echoing it would hand a writer inside the
-  # checkout a read-back oracle for bytes this process refused to use. The
-  # positional form may still echo its argv value, which the caller already has.
+  # Echoing the value is safe on both paths: the positional form's value came
+  # from the caller's own argv, and the derived form's came out of slugify, so
+  # its alphabet is already [0-9a-z-].
   if [[ ! "$task_slug" =~ $FANOUT_TASK_SLUG_RE ]]; then
-    if [[ -n "$slug_file" ]]; then
-      echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$) from slug file: $slug_file" >&2
+    if [[ "$derived" -eq 1 ]]; then
+      echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$) derived for task $task_id of $plan_path: $task_slug" >&2
     else
       echo "fan-out: refusing task slug (must match ^[0-9]+-[a-z0-9-]+\$): $task_slug" >&2
     fi
@@ -359,11 +547,7 @@ cmd_setup() {
   local slug
   slug="$(slugify "$task_slug")"
   if [[ "$slug" != "$task_slug" ]]; then
-    if [[ -n "$slug_file" ]]; then
-      echo "fan-out: refusing task slug (not in slugify normal form) from slug file: $slug_file" >&2
-    else
-      echo "fan-out: refusing task slug (would be rewritten by slugify to '$slug'): $task_slug" >&2
-    fi
+    echo "fan-out: refusing task slug (would be rewritten by slugify to '$slug'): $task_slug" >&2
     exit 1
   fi
 
@@ -647,8 +831,8 @@ print(state.get('repo_root', ''))
 PYEOF
 )
 
-  # ANCHOR TRUST AT THE CHECKOUT, NOT AT THE rm. Everything below -- worktree
-  # removal, branch deletion, `rm -rf "$repo_root/.fanout"` -- is driven by a
+  # ANCHOR TRUST AT THE CHECKOUT, NOT AT THE git CALL. Everything below --
+  # worktree removal, branch deletion -- is driven by a
   # value parsed out of a JSON file that any writer in the tree can author.
   # Passing that value as BOTH operands of the containment guard asks whether it
   # is inside itself, which is always true, so the guard has to be anchored
@@ -773,16 +957,6 @@ PYEOF
   # Prune worktree references
   git -C "$repo_root" worktree prune 2>/dev/null || true
 
-  # Remove the slug transport directory. `setup --slug-file` consumes each file
-  # it reads, so this only ever removes an aborted run's leftovers -- but the
-  # skill creates the directory, so cleanup owns removing it.
-  if [[ -n "$repo_root" ]] && fanout_assert_inside_repo "$repo_root/.fanout" "$repo_root" "slug directory"; then
-    if [[ -d "$repo_root/.fanout" ]]; then
-      echo "Removing slug directory: $repo_root/.fanout"
-      rm -rf "$repo_root/.fanout"
-    fi
-  fi
-
   # Remove state file
   rm -f "$state_file"
   echo "Cleanup complete. State file removed."
@@ -793,6 +967,7 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
+  tasks)   cmd_tasks "$@" ;;
   setup)   cmd_setup "$@" ;;
   spawn)   cmd_spawn "$@" ;;
   status)  cmd_status "$@" ;;
