@@ -115,14 +115,12 @@ reconciliation-tests:
 # Cleaning that up is its own change with its own diff; adopt a new file here
 # only together with the fix that makes it pass.
 #
-# plugins/skein*/skills/fan-out/fan-out.sh are SHELLCHECK-ONLY, not shfmt: they
-# carry the task-binding and base-branch guards, so their correctness belongs
-# under lint, but they are indented with spaces and reformatting them to tabs is
-# a whole-file diff that would bury this change. Move them to the shfmt list in
-# the commit that reformats them.
+# plugins/skein*/skills/fan-out/fan-out.sh carry the task-binding and
+# base-branch guards, so they sit under both shellcheck and shfmt like every
+# other bundled script.
 lint-scripts:
     shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
     ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards and skill-script guard suites: CLAUDE.md hygiene rules,
