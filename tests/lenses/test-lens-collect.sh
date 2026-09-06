@@ -798,7 +798,7 @@ fi
 #     scripts/ -- the repo floor is macOS bash 3.2.
 # ---------------------------------------------------------------------------
 
-if grep -rn 'mapfile' "$REPO_ROOT/scripts" 2>/dev/null | grep -q .; then
+if grep -q . <<<"$(grep -rn 'mapfile' "$REPO_ROOT/scripts" 2>/dev/null)"; then
 	fail "(v) no 'mapfile' anywhere in scripts/ (bash 3.2 portability)"
 	grep -rn 'mapfile' "$REPO_ROOT/scripts" 2>/dev/null | sed 's/^/    /'
 else

@@ -48,7 +48,7 @@ else
 fi
 
 # Error message must reference the missing test command requirement.
-if echo "$LAST_OUT" | grep -Eqi 'test[-_ ]cmd|AUTO_FIX_TEST_CMD|test command'; then
+if grep -Eqi 'test[-_ ]cmd|AUTO_FIX_TEST_CMD|test command' <<<"$LAST_OUT"; then
 	pass "missing --test-cmd: error mentions test command requirement"
 else
 	fail "missing --test-cmd: error did not mention test-cmd / AUTO_FIX_TEST_CMD"

@@ -38,7 +38,7 @@ assert_rejected() {
 	else
 		fail "$label: HEAD advanced"
 	fi
-	if git -C "$repo" log -1 --format=%s | grep -q '^auto-fix(review-plan):'; then
+	if grep -q '^auto-fix(review-plan):' <<<"$(git -C "$repo" log -1 --format=%s)"; then
 		fail "$label: auto-fix commit was created"
 	else
 		pass "$label: no auto-fix commit"

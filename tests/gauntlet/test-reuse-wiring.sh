@@ -85,7 +85,7 @@ assert_grep() {
 # mention in a comment doesn't cause a false failure.
 assert_not_grep_in_code() {
 	local file="$1" pattern="$2" label="$3"
-	if code_lines "$file" | grep -Eq -- "$pattern"; then
+	if grep -Eq -- "$pattern" <<<"$(code_lines "$file")"; then
 		fail "$label (forbidden pattern found in CODE, not just comments: $pattern in $file)"
 	else
 		pass "$label"
@@ -100,7 +100,7 @@ assert_not_grep_in_code() {
 # legitimately prints that path in its abort message).
 assert_not_used_as_path() {
 	local file="$1" pattern="$2" label="$3"
-	if code_lines "$file" | grep -Ev '\becho\b|\bprintf\b' | grep -Eq -- "$pattern"; then
+	if grep -Eq -- "$pattern" <<<"$(code_lines "$file" | grep -Ev '\becho\b|\bprintf\b')"; then
 		fail "$label (forbidden pattern found used as an actual path, not just in a diagnostic message: $pattern in $file)"
 	else
 		pass "$label"
@@ -139,7 +139,7 @@ assert_not_grep_in_code "$LEDGER" '\.\./\.\./deep-review/scripts' \
 assert_grep "$RUN_GATE" 'gc_bundled_script reconcile-findings\.sh' \
 	"run-gate.sh resolves reconcile-findings.sh via the bundled-script helper (not a hand-copied fork)"
 
-if code_lines "$RUN_GATE" | grep -E '\$\{?reconciler\}?' | grep -Eq -- '--skill'; then
+if grep -Eq -- '--skill' <<<"$(code_lines "$RUN_GATE" | grep -E '\$\{?reconciler\}?')"; then
 	fail "run-gate.sh's reconciler invocation line carries --skill (forbidden: it rejects any skill other than deep-review/review-plan)"
 else
 	pass "run-gate.sh's reconciler invocation line does not carry --skill"
@@ -150,7 +150,7 @@ fi
 assert_grep "$COMMON" 'gc_normalize_finding' \
 	"gauntlet-common.sh defines the finding-normalization helper used to strip auto_fix before reconcile"
 
-if code_lines "$COMMON" | grep -A8 'gc_normalize_finding()' | grep -q 'auto_fix'; then
+if grep -q 'auto_fix' <<<"$(code_lines "$COMMON" | grep -A8 'gc_normalize_finding()')"; then
 	fail "gc_normalize_finding's emitted schema still includes an auto_fix key (should be stripped, not passed through)"
 else
 	pass "gc_normalize_finding's emitted schema omits auto_fix (findings reaching reconcile are auto_fix-free)"
@@ -166,7 +166,7 @@ assert_grep "$RUN_GATE" 'gc_bundled_script audit-auto-fix-eligibility\.sh' \
 	"run-gate.sh delegates eligibility classification to the bundled audit-auto-fix-eligibility.sh"
 
 for category in docstring_typo unused_import unused_var mechanical_replace import_sort; do
-	if code_lines "$RUN_GATE" | grep -Fq -- "$category"; then
+	if grep -Fq -- "$category" <<<"$(code_lines "$RUN_GATE")"; then
 		fail "run-gate.sh re-lists allowlist category '$category' inline (duplicated allowlist logic instead of delegating to audit-auto-fix-eligibility.sh)"
 	else
 		pass "run-gate.sh does not re-list allowlist category '$category' inline"
@@ -186,13 +186,13 @@ assert_grep "$RUN_GATE" 'apply-auto-fix-code\.sh' \
 assert_grep "$COMMON" 'never falling back to a hand copy' \
 	"gauntlet-common.sh documents that it never falls back to a hand copy when the bundled dir is missing"
 
-if extract_function "$COMMON" "gc_bundled_scripts_dir" | grep -q 'return 3'; then
+if grep -q 'return 3' <<<"$(extract_function "$COMMON" "gc_bundled_scripts_dir")"; then
 	pass "gc_bundled_scripts_dir aborts with a non-zero return when the bundled dir is absent"
 else
 	fail "gc_bundled_scripts_dir does not appear to abort (expected a non-zero 'return' guarded by a directory-existence check)"
 fi
 
-if extract_function "$COMMON" "gc_bundled_script" | grep -q 'return 3'; then
+if grep -q 'return 3' <<<"$(extract_function "$COMMON" "gc_bundled_script")"; then
 	pass "gc_bundled_script aborts with a non-zero return when the bundled script/asset is absent"
 else
 	fail "gc_bundled_script does not appear to abort (expected a non-zero 'return' guarded by a file-existence check)"
@@ -220,7 +220,7 @@ fi
 
 for f in "$RUN_GATE" "$LEDGER" "$COMMON"; do
 	name="$(basename "$f")"
-	if head -n1 "$f" | grep -Eq '^#!.*\b(bash|sh)\b'; then
+	if grep -Eq '^#!.*\b(bash|sh)\b' <<<"$(head -n1 "$f")"; then
 		pass "$name has a bash/sh shebang"
 	else
 		fail "$name is missing a bash/sh shebang on line 1"

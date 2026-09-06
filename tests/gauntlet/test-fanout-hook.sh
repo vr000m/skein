@@ -89,19 +89,19 @@ assert_grep "$SKILL_MD" '^### Phase 7: Cleanup' \
 # The hook content must appear between the Phase 6 and Phase 7 headings.
 phase6_to_7=$(sed -n '/^### Phase 6: Merge/,/^### Phase 7: Cleanup/p' "$SKILL_MD")
 
-if echo "$phase6_to_7" | grep -Eq -- '\*\*Review Gates:\*\*'; then
+if grep -Eq -- '\*\*Review Gates:\*\*' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents reading the \`**Review Gates:**\` field"
 else
 	fail "Phase 6 section does not document reading the \`**Review Gates:**\` field"
 fi
 
-if echo "$phase6_to_7" | grep -Eq -- 'review-gauntlet'; then
+if grep -Eq -- 'review-gauntlet' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents invoking \`review-gauntlet\`"
 else
 	fail "Phase 6 section does not document invoking \`review-gauntlet\`"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'merged (feature )?branch'; then
+if grep -Eqi -- 'merged (feature )?branch' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents running the gauntlet on the merged feature branch"
 else
 	fail "Phase 6 section does not document running the gauntlet on the merged feature branch"
@@ -112,19 +112,19 @@ fi
 assert_not_grep "$SKILL_MD" 'quick.*scoped to the code-review gate|code-review gate only' \
 	"SKILL.md does not document a \`quick\` = code-review gate mapping (removed)"
 
-if echo "$phase6_to_7" | grep -Eqi -- 'full.*gate slots?|gate slots?.*full'; then
+if grep -Eqi -- 'full.*gate slots?|gate slots?.*full' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents \`full\` scoped to gate slots"
 else
 	fail "Phase 6 section does not document \`full\` scoped to gate slots"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'all (logical )?gate slots?'; then
+if grep -Eqi -- 'all (logical )?gate slots?' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents \`full\` = all (logical) gate slots"
 else
 	fail "Phase 6 section does not document \`full\` = all (logical) gate slots"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'unrecognized value'; then
+if grep -Eqi -- 'unrecognized value' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents the unrecognized-value guard (retired \`quick\`/typo -> treated as \`none\`, with a warning)"
 else
 	fail "Phase 6 section does not document the unrecognized-value guard"
@@ -132,19 +132,19 @@ fi
 
 # --- Criterion 3: no-op on the PR-per-task exit path ---------------------
 
-if echo "$phase6_to_7" | grep -Eqi -- 'option 2|individual PRs|PR-per-task'; then
+if grep -Eqi -- 'option 2|individual PRs|PR-per-task' <<<"$phase6_to_7"; then
 	pass "Phase 6 section references the PR-per-task / option 2 exit path"
 else
 	fail "Phase 6 section does not reference the PR-per-task / option 2 exit path"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'no.op|no op|skip'; then
+if grep -Eqi -- 'no.op|no op|skip' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents the hook no-ops / skips on that path"
 else
 	fail "Phase 6 section does not document the hook no-ops / skips on that path"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'option 1|single merged branch|merge into'; then
+if grep -Eqi -- 'option 1|single merged branch|merge into' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents the hook runs only on the merged-branch path (option 1)"
 else
 	fail "Phase 6 section does not document the hook running only on the merged-branch path"
@@ -152,13 +152,13 @@ fi
 
 # --- Criterion 4: strict opt-in -------------------------------------------
 
-if echo "$phase6_to_7" | grep -Eqi -- 'absent|none'; then
+if grep -Eqi -- 'absent|none' <<<"$phase6_to_7"; then
 	pass "Phase 6 section references the absent-field / \`none\` case"
 else
 	fail "Phase 6 section does not reference the absent-field / \`none\` case"
 fi
 
-if echo "$phase6_to_7" | grep -Eqi -- 'no gauntlet|unchanged|opt.in'; then
+if grep -Eqi -- 'no gauntlet|unchanged|opt.in' <<<"$phase6_to_7"; then
 	pass "Phase 6 section documents strict opt-in: no gauntlet / unchanged behaviour"
 else
 	fail "Phase 6 section does not document strict opt-in behaviour"

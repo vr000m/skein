@@ -30,7 +30,7 @@ latest_manifest() {
 # Assert no `auto_fix(...)` commit exists in the repo's history.
 assert_no_apply_commit() {
 	local repo="$1" tag="$2"
-	if git -C "$repo" log --oneline | grep -q '^[0-9a-f]\+ auto-fix('; then
+	if grep -q '^[0-9a-f]\+ auto-fix(' <<<"$(git -C "$repo" log --oneline)"; then
 		fail "$tag: an auto-fix commit landed (expected HEAD unchanged)"
 		git -C "$repo" log --oneline | sed 's/^/  /' >&2
 	else

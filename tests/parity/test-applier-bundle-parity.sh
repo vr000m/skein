@@ -238,12 +238,12 @@ if [[ -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
 	else
 		fail "G9: a Codex-only lib file must make the enumeration fail (got rc=0)"
 	fi
-	if printf '%s\n' "$g9_out" | grep -q 'orphan.sh'; then
+	if grep -q 'orphan.sh' <<<"$g9_out"; then
 		pass "G9: the failure names the offending Codex-only basename"
 	else
 		fail "G9: the failure does not name orphan.sh"
 	fi
-	if printf '%s\n' "$g9_out" | grep -q 'mirror presence: orphan.sh exists only in plugins/skein-codex'; then
+	if grep -q 'mirror presence: orphan.sh exists only in plugins/skein-codex' <<<"$g9_out"; then
 		pass "G9: the Codex-only file is reported as a mirror-presence failure"
 	else
 		fail "G9: no mirror-presence failure was reported for orphan.sh"
@@ -329,12 +329,12 @@ if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]];
 	else
 		fail "R9-G8a: a SKILL.md-referenced but unbundled script must make §7 fail (got rc=0)"
 	fi
-	if printf '%s\n' "$r9g8_out" | grep -q 'bundle reference: skills/deep-review/scripts/not-bundled.sh is named by a SKILL.md'; then
+	if grep -q 'bundle reference: skills/deep-review/scripts/not-bundled.sh is named by a SKILL.md' <<<"$r9g8_out"; then
 		pass "R9-G8a: the failure names the unbundled script"
 	else
 		fail "R9-G8a: the failure does not name not-bundled.sh"
 	fi
-	if printf '%s\n' "$r9g8_out" | grep -q 'bundle reference: skills/deep-review/scripts/present.sh resolves in both mirrors'; then
+	if grep -q 'bundle reference: skills/deep-review/scripts/present.sh resolves in both mirrors' <<<"$r9g8_out"; then
 		pass "R9-G8a: a genuinely bundled reference still passes in the same fixture"
 	else
 		fail "R9-G8a: present.sh should have passed in the fixture"

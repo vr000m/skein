@@ -86,7 +86,7 @@ if [[ ! -f "$HOOK_PATH" ]]; then
 else
 	# The `ruff check --fix` line must carry `--ignore RUF100` so the hook
 	# stops stripping `# noqa` comments that select RUF100 (unused noqa).
-	if grep -F -- "ruff check --fix" "$HOOK_PATH" | grep -q -F -- "--ignore RUF100"; then
+	if grep -q -F -- "--ignore RUF100" <<<"$(grep -F -- "ruff check --fix" "$HOOK_PATH")"; then
 		pass "$HOOK_PATH: ruff check --fix line carries --ignore RUF100"
 	else
 		fail "$HOOK_PATH: ruff check --fix line missing --ignore RUF100"
