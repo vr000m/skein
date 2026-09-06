@@ -164,7 +164,7 @@ else
 fi
 
 for post_migration_skill in grill release review-gauntlet; do
-	if echo "$delete_sorted" | grep -qx "$post_migration_skill"; then
+	if grep -qx "$post_migration_skill" <<<"$delete_sorted"; then
 		fail "post-migration $post_migration_skill skill must not be recursively deleted as a legacy flat copy"
 	else
 		pass "post-migration $post_migration_skill skill excluded from destructive legacy cleanup"

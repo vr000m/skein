@@ -33,7 +33,7 @@ assert_guarded() {
 	else
 		fail "$label: HEAD advanced"
 	fi
-	if git -C "$repo" log -1 --format=%s | grep -q '^auto-fix(deep-review):'; then
+	if grep -q '^auto-fix(deep-review):' <<<"$(git -C "$repo" log -1 --format=%s)"; then
 		fail "$label: auto-fix commit was created"
 	else
 		pass "$label: no auto-fix commit"
@@ -79,7 +79,7 @@ before="$(head_sha "$d2")"
 expected="$(status_without_manifest "$d2")"
 run_applier "$d2" --test-cmd "true" "$FIXTURES_DIR/unused_import-accept.jsonl"
 assert_guarded "staged-unrelated" "$d2" "$before" "$expected"
-if git -C "$d2" diff --cached -- b.txt | grep -Fq "+staged operator work"; then
+if grep -Fq "+staged operator work" <<<"$(git -C "$d2" diff --cached -- b.txt)"; then
 	pass "staged-unrelated: staged content preserved"
 else
 	fail "staged-unrelated: staged content changed"
@@ -105,12 +105,12 @@ before="$(head_sha "$d3")"
 expected="$(status_without_manifest "$d3")"
 run_applier "$d3" --test-cmd "true" "$d3/findings.json"
 assert_guarded "mixed-dirty" "$d3" "$before" "$expected"
-if git -C "$d3" diff --cached -- a.txt | grep -Fq "+a staged"; then
+if grep -Fq "+a staged" <<<"$(git -C "$d3" diff --cached -- a.txt)"; then
 	pass "mixed-dirty: staged A preserved"
 else
 	fail "mixed-dirty: staged A changed"
 fi
-if git -C "$d3" diff -- b.txt | grep -Fq "+b unstaged"; then
+if grep -Fq "+b unstaged" <<<"$(git -C "$d3" diff -- b.txt)"; then
 	pass "mixed-dirty: unstaged B preserved"
 else
 	fail "mixed-dirty: unstaged B changed"

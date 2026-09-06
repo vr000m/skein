@@ -341,9 +341,9 @@ assert_count "$SKILLS_DIR/spec-compliance/SKILL.md" "$EFFORT_HIGH_RE" 1 \
 arch_line=$(grep -nE '^#### Architecture Lens' "$SKILLS_DIR/deep-review/SKILL.md" || true)
 if [[ -z "$arch_line" ]]; then
 	fail "deep-review Architecture Lens header not found"
-elif echo "$arch_line" | grep -q 'model: opus'; then
+elif grep -q 'model: opus' <<<"$arch_line"; then
 	pass "deep-review Architecture Lens header carries model: opus"
-elif echo "$arch_line" | grep -q 'model: sonnet'; then
+elif grep -q 'model: sonnet' <<<"$arch_line"; then
 	fail "deep-review Architecture Lens header still carries model: sonnet (must be opus)"
 else
 	fail "deep-review Architecture Lens header has neither model: opus nor model: sonnet: $arch_line"

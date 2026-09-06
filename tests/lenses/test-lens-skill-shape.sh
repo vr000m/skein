@@ -488,7 +488,7 @@ for skill_md in "${SKILLS[@]}"; do
 	glabel="$g_plugin/$g_skill"
 
 	# G4(a): every collector invocation prescribes --expected-file.
-	if grep -oE 'collect-lens-results\.sh[^`]*' "$skill_md" | grep -q -- '--expected-file'; then
+	if grep -q -- '--expected-file' <<<"$(grep -oE 'collect-lens-results\.sh[^`]*' "$skill_md")"; then
 		pass "G4(a) ($glabel): a collector invocation prescribes --expected-file"
 	else
 		fail "G4(a) ($glabel): no collector invocation prescribes --expected-file"

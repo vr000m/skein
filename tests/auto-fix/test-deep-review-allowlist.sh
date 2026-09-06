@@ -49,7 +49,7 @@ else
 		else
 			pass "unused_import-accept: subject matches"
 		fi
-		if echo "$body" | grep -Fq "Auto-Fixed-By: deep-review"; then
+		if grep -Fq "Auto-Fixed-By: deep-review" <<<"$body"; then
 			pass "unused_import-accept: trailer present"
 		else
 			fail "unused_import-accept: missing 'Auto-Fixed-By: deep-review' trailer"

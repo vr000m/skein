@@ -110,7 +110,7 @@ else
 	fail "check-report-templates.sh silently exited 0 despite the real footer line being missing -- bug still present"
 fi
 
-if echo "$mutated_output" | grep -q "no footer line matching"; then
+if grep -q "no footer line matching" <<<"$mutated_output"; then
 	pass "failure message names the missing footer line explicitly"
 else
 	fail "failure output did not mention the missing footer line:"
@@ -170,7 +170,7 @@ else
 	fail "check-report-templates.sh silently exited 0 despite deep-review naming review-plan's '.findings' key -- mirror-image gap still present"
 fi
 
-if echo "$mutated_output2" | grep -qF "jq '.findings'"; then
+if grep -qF "jq '.findings'" <<<"$mutated_output2"; then
 	pass "failure message names the offending jq '.findings' footer example explicitly"
 else
 	fail "failure output did not mention the offending jq key:"

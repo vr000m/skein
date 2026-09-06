@@ -52,7 +52,7 @@ fi
 # We re-implement that exact predicate as a function.
 handoff_matches() {
 	local body="$1" runtime="$2"
-	echo "$body" | grep -q "Conducted-By: $runtime"
+	grep -q "Conducted-By: $runtime" <<<"$body"
 }
 
 runtime="claude"

@@ -69,7 +69,7 @@ finish() {
 # want the strictest possible check for a traversal write).
 no_jsonl_anywhere() {
 	local root="$1"
-	! find "$root" -name '*.jsonl' 2>/dev/null | grep -q .
+	! grep -q . <<<"$(find "$root" -name '*.jsonl' 2>/dev/null)"
 }
 
 if [[ ! -f "$SCRIPT" ]]; then
@@ -214,7 +214,7 @@ set -e
 
 if [[ $case3_exit -eq 0 ]]; then
 	fail "(3) missing required flag exits non-zero (script exited 0 with --lens omitted)"
-elif find "$case3_root" -name '*.jsonl' 2>/dev/null | grep -q .; then
+elif grep -q . <<<"$(find "$case3_root" -name '*.jsonl' 2>/dev/null)"; then
 	fail "(3) missing required flag exits non-zero, no file written (a .jsonl file was written despite the missing flag)"
 else
 	pass "(3) missing required flag (--lens) exits non-zero and writes no file"
@@ -242,7 +242,7 @@ set -e
 if [[ $case4_exit -ne 2 ]]; then
 	fail "(4) an unrecognised payload type must exit 2 (got $case4_exit)"
 	sed 's/^/    /' "$case4_root/stderr"
-elif find "$case4_root" -name '*.jsonl' 2>/dev/null | grep -q .; then
+elif grep -q . <<<"$(find "$case4_root" -name '*.jsonl' 2>/dev/null)"; then
 	fail "(4) an unrecognised payload type exits 2, no file written (a .jsonl file was written anyway)"
 elif ! grep -q "start|progress|finding|done" "$case4_root/stderr"; then
 	fail "(4) the rejection must come from the type ENUM, naming the alphabet (stderr: $(cat "$case4_root/stderr"))"
@@ -352,7 +352,7 @@ else
 	if [[ $case6_exit -eq 0 ]]; then
 		fail "(6) symlinked lenses dir is refused (script exited 0)"
 		sed 's/^/    /' "$case6_root/stdout"
-	elif find "$outside6" -name '*.jsonl' 2>/dev/null | grep -q .; then
+	elif grep -q . <<<"$(find "$outside6" -name '*.jsonl' 2>/dev/null)"; then
 		fail "(6) symlinked lenses dir is refused (a file was written through the symlink into $outside6)"
 	else
 		pass "(6) symlinked lenses dir is refused, nothing written through the link (exit=$case6_exit)"

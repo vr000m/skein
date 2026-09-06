@@ -79,7 +79,7 @@ scope_detect_resolves_to() {
 		echo "$out" | sed 's/^/  /'
 		return
 	fi
-	if echo "$out" | grep -Fq "$needle"; then
+	if grep -Fq "$needle" <<<"$out"; then
 		pass "scope-detect $label: resolved to '$needle'"
 	else
 		fail "scope-detect $label: expected '$needle', got '$out'"
@@ -95,7 +95,7 @@ scope_detect_NOT_resolves_to() {
 	local out
 	out="$(bash "$PLAN_SCOPE_DETECT" "$d/plan.md" "$line" 2>&1)"
 	set -e
-	if echo "$out" | grep -Fq "$needle"; then
+	if grep -Fq "$needle" <<<"$out"; then
 		fail "scope-detect $label: FALSE positive '$needle' (got '$out')"
 	else
 		pass "scope-detect $label: correctly did NOT resolve to '$needle'"
