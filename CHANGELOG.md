@@ -4,6 +4,12 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- `review-gauntlet` Guardrail 5 (both mirrors): every fixer brief must require `just ci`, and the conductor re-runs it after each fixer and applier commit before appending to the ledger, so a suite the touched files are wired into elsewhere cannot go red unnoticed for rounds and feed the stall rule. Pinned by `tests/gauntlet/test-gauntlet-skill-shape.sh`.
+
+### Fixed
+- The pre-commit `shellcheck`/`shfmt` hooks now cover both mirrors' `fan-out.sh` and the fan-out guard suites, matching the `just lint-scripts` lists; they previously skipped every script under `plugins/` with "no files to check".
+
 ## [0.7.0] - 2026-09-06
 
 ### Added

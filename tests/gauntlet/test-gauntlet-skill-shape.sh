@@ -195,6 +195,12 @@ assert_grep_i "$SKILL_MD" 'guardrail 4' \
 assert_grep "$SKILL_MD" 'git status --short' \
 	"documents verifying the fixer's claims against live repo state"
 
+assert_grep_i "$SKILL_MD" 'guardrail 5' \
+	"documents Guardrail 5 heading/label"
+
+assert_grep "$SKILL_MD" 'just ci' \
+	"documents the full-CI requirement on every fixer brief and after every fixer commit"
+
 # --- Invocation modes ------------------------------------------------------
 
 assert_grep_i "$SKILL_MD" 'standalone' \
