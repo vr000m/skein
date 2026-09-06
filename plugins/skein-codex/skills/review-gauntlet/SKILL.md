@@ -259,6 +259,12 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
+### Guardrail 5 - run the full CI recipe after every fixer round
+
+Every fixer brief's Constraints section must require `just ci` (the whole lint + test recipe, backgrounded so it cannot hit the foreground timeout), not a hand-picked subset of `just` recipes chosen from the touched files' directories. The conductor also runs `just ci` itself after the fixer's commit (and after the trivial-fix applier's commit) and treats a non-zero exit as an incomplete round: fix or revert before appending to the ledger, never append a count tally on top of a red suite.
+
+The loop verifies each fix against the reported finding and against whichever checks the brief happened to list, but nothing else in the round re-runs suites the touched files are wired into elsewhere. A fixer that unquotes an inline placeholder in a SKILL.md can break a lens-shape assertion two directories away; with a subset brief that regression stays invisible until a later gate happens to run that suite, at which point it arrives as a "new" finding, resets nothing, and feeds the K=2 stall rule toward `non-converge`.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.

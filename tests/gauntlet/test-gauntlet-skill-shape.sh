@@ -195,6 +195,7 @@ assert_grep_i "$SKILL_MD" 'guardrail 4' \
 assert_grep "$SKILL_MD" 'git status --short' \
 	"documents verifying the fixer's claims against live repo state"
 
+
 # --- Invocation modes ------------------------------------------------------
 
 assert_grep_i "$SKILL_MD" 'standalone' \
@@ -706,6 +707,23 @@ assert_phase3_deferred_and_gate_stamp_for "$SKILL_MD" "Claude mirror"
 assert_phase3_deferred_and_gate_stamp_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
+# Guardrail 5: every fixer brief requires `just ci`, and the conductor re-runs
+# it after each fixer/applier commit. Pinned on BOTH mirrors so a section
+# dropped from one twin cannot leave the suite green.
+# ---------------------------------------------------------------------------
+
+assert_guardrail5_for() {
+	local file="$1" label="$2"
+	assert_grep_i "$file" 'guardrail 5' \
+		"$label: documents Guardrail 5 heading/label"
+	assert_grep "$file" 'just ci' \
+		"$label: documents the full-CI requirement on every fixer brief and after every fixer commit"
+}
+
+assert_guardrail5_for "$SKILL_MD" "Claude mirror"
+assert_guardrail5_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
 # `pipefail`.
 #
@@ -733,21 +751,21 @@ g11_check_block() {
 	local g11_code
 	g11_code="$(grep -v '^[[:space:]]*#' "$file")"
 
-	if printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\$auto_fix_manifest" \]\]'; then
+	if grep -q '\[\[ -s "\$auto_fix_manifest" \]\]' <<<"$g11_code"; then
 		fail "G11(a) ($label): an UNGUARDED \$auto_fix_manifest test remains (unbound-variable abort under set -u)"
-	elif printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\${auto_fix_manifest:-}" \]\]'; then
+	elif grep -q '\[\[ -s "\${auto_fix_manifest:-}" \]\]' <<<"$g11_code"; then
 		pass "G11(a) ($label): the \$auto_fix_manifest test carries a :- default"
 	else
 		fail "G11(a) ($label): no recognisable \$auto_fix_manifest guard found"
 	fi
 
-	if printf '%s\n' "$g11_code" | grep -q 'auto_fix_manifest=""'; then
+	if grep -q 'auto_fix_manifest=""' <<<"$g11_code"; then
 		pass "G11(b) ($label): \$auto_fix_manifest is initialised in the keys setup block (it has an owner)"
 	else
 		fail "G11(b) ($label): \$auto_fix_manifest is never initialised -- only defensively read"
 	fi
 
-	if printf '%s\n' "$g11_code" | grep -qF "jq -c '.findings[]' reconciled-envelope.json"; then
+	if grep -qF "jq -c '.findings[]' reconciled-envelope.json" <<<"$g11_code"; then
 		fail "G11(c) ($label): an UNGUARDED .findings[] expansion remains (exits non-zero on a null/absent .findings, aborting the round under pipefail)"
 	else
 		pass "G11(c) ($label): the present-keys extraction is optional (.findings[]?), matching 2a"

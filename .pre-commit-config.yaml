@@ -12,9 +12,9 @@ repos:
     rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        files: ^(scripts/.*\.sh|scripts/lib/.*\.sh|plugins/skein/skills/review-gauntlet/lib/.*\.sh|tests/plugin/test-lint-temp-paths\.sh)$
+        files: ^(scripts/.*\.sh|scripts/lib/.*\.sh|plugins/skein/skills/review-gauntlet/lib/.*\.sh|plugins/skein(-codex)?/skills/fan-out/fan-out\.sh|tests/plugin/test-lint-temp-paths\.sh|tests/plugin/test-fanout-slug-guard(-codex)?\.sh)$
   - repo: https://github.com/scop/pre-commit-shfmt
     rev: v3.12.0-2
     hooks:
       - id: shfmt
-        files: ^(scripts/.*\.sh|scripts/lib/.*\.sh|plugins/skein/skills/review-gauntlet/lib/.*\.sh|tests/plugin/test-lint-temp-paths\.sh)$
+        files: ^(scripts/.*\.sh|scripts/lib/.*\.sh|plugins/skein/skills/review-gauntlet/lib/.*\.sh|plugins/skein(-codex)?/skills/fan-out/fan-out\.sh|tests/plugin/test-lint-temp-paths\.sh|tests/plugin/test-fanout-slug-guard(-codex)?\.sh)$
