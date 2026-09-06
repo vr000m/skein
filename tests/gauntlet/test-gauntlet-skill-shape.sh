@@ -739,21 +739,21 @@ g11_check_block() {
 	local g11_code
 	g11_code="$(grep -v '^[[:space:]]*#' "$file")"
 
-	if printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\$auto_fix_manifest" \]\]'; then
+	if grep -q '\[\[ -s "\$auto_fix_manifest" \]\]' <<<"$g11_code"; then
 		fail "G11(a) ($label): an UNGUARDED \$auto_fix_manifest test remains (unbound-variable abort under set -u)"
-	elif printf '%s\n' "$g11_code" | grep -q '\[\[ -s "\${auto_fix_manifest:-}" \]\]'; then
+	elif grep -q '\[\[ -s "\${auto_fix_manifest:-}" \]\]' <<<"$g11_code"; then
 		pass "G11(a) ($label): the \$auto_fix_manifest test carries a :- default"
 	else
 		fail "G11(a) ($label): no recognisable \$auto_fix_manifest guard found"
 	fi
 
-	if printf '%s\n' "$g11_code" | grep -q 'auto_fix_manifest=""'; then
+	if grep -q 'auto_fix_manifest=""' <<<"$g11_code"; then
 		pass "G11(b) ($label): \$auto_fix_manifest is initialised in the keys setup block (it has an owner)"
 	else
 		fail "G11(b) ($label): \$auto_fix_manifest is never initialised -- only defensively read"
 	fi
 
-	if printf '%s\n' "$g11_code" | grep -qF "jq -c '.findings[]' reconciled-envelope.json"; then
+	if grep -qF "jq -c '.findings[]' reconciled-envelope.json" <<<"$g11_code"; then
 		fail "G11(c) ($label): an UNGUARDED .findings[] expansion remains (exits non-zero on a null/absent .findings, aborting the round under pipefail)"
 	else
 		pass "G11(c) ($label): the present-keys extraction is optional (.findings[]?), matching 2a"
