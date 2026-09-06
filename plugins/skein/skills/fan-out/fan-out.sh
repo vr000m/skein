@@ -854,8 +854,8 @@ PYEOF
 	# (macOS $TMPDIR under /var -> /private/var) still matches itself, and run
 	# both sides through the guard's own normalisation so the verdict cannot turn
 	# on a '//', '/./' or trailing-'/' spelling difference.
-	repo_root_phys="$(cd -P "$repo_root" 2>/dev/null && pwd -P || true)"
-	resolved_phys="$(cd -P "$resolved" 2>/dev/null && pwd -P || true)"
+	repo_root_phys="$(cd -P "$repo_root" 2>/dev/null && pwd -P)" || repo_root_phys=""
+	resolved_phys="$(cd -P "$resolved" 2>/dev/null && pwd -P)" || resolved_phys=""
 	repo_root_phys="$(fanout_normalise_path "$repo_root_phys")"
 	resolved_phys="$(fanout_normalise_path "$resolved_phys")"
 	if [[ -z "$resolved_phys" || -z "$repo_root_phys" || "$resolved_phys" != "$repo_root_phys" ]]; then
