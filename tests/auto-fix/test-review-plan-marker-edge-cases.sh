@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_plan_applier
@@ -78,7 +78,6 @@ git -C "$case2" commit -q -m "add plan"
 awk -v repl="$plan_rel" '{ gsub(/PLAN_PATH/, repl); print }' \
 	"$FIXTURES_DIR/marker_refresh-corrupt-plan.jsonl" >"$findings2"
 plan_before_apply="$(cat "$plan_abs2")"
-before2="$(head_sha "$case2")"
 
 run_plan_applier "$case2" --plan "$plan_rel" "$findings2"
 

@@ -86,7 +86,7 @@ fi
 # and asserts equality on the post-write file.
 roundtrip_fixture() {
 	local label="$1"
-	local pyfixture="$2"          # python *literal* (ast.literal_eval) -> bytes
+	local pyfixture="$2"             # python *literal* (ast.literal_eval) -> bytes
 	local check_placeholder="${3:-}" # "1" => also assert no placeholder survives
 
 	local tmpdir

@@ -35,6 +35,7 @@
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
+# shellcheck disable=SC2016  # single-quoted literal grep/regex pattern text throughout, not shell expansions
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -1154,18 +1155,6 @@ mkdir -p "$r5_root"
 	git commit -q -m init
 )
 COLLECT="$REPO_ROOT/scripts/collect-lens-results.sh"
-
-# r5_write <lens> <args...> -- one writer invocation, exit code on stdout.
-r5_write() {
-	local lens="$1"
-	shift
-	set +e
-	bash "$SCRIPT" --root "$r5_root" --skill deep-review --run-id r5 \
-		--lens "$lens" --attempt 1 "$@" >/dev/null 2>&1
-	local rc=$?
-	set -e
-	printf '%s' "$rc"
-}
 
 # r5_expected <csv> -- one collector invocation against that CSV, exit code on
 # stdout. The collector is the surviving argv-CSV wire.

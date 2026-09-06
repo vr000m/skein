@@ -10,7 +10,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="$ROOT_DIR/scripts"
 
-# shellcheck source=scripts/lib/bundle-map.sh
+# shellcheck source=scripts/lib/bundle-map.sh disable=SC1091
 . "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
 MIRRORS=(plugins/skein plugins/skein-codex)

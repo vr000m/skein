@@ -66,6 +66,7 @@ skills_from_case() {
 # read from its OUT_DIR assignment (".deep-review" -> deep-review).
 skill_from_out_dir() {
 	local file="$1" dir
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	dir="$(grep -E '^OUT_DIR="\$ROOT_DIR/\.[a-z-]+"$' "$file" | head -1 |
 		sed -E 's|^OUT_DIR="\$ROOT_DIR/\.([a-z-]+)"$|\1|')"
 	printf '%s' "$dir"

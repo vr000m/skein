@@ -52,6 +52,7 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 WORKDIR="$(mktemp -d)"
+# shellcheck disable=SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 
@@ -286,7 +287,6 @@ gate_flag_row_text="$(cat "$gate_flag_row")"
 gate_col="$(awk -F'\t' '{print $1}' "$gate_flag_row")"
 assert_eq "$gate_col" "codex-adversarial" "F5: --gate codex-adversarial populates column 1 (gate) on the fallback row"
 assert_contains "$gate_flag_row_text" "error" "F5: --gate on a fallback row still reports status=error"
-
 
 # --- 5. Non-scalar field values still yield exactly one row, rc=0 --------
 #

@@ -403,6 +403,7 @@ for skill_md in "${SKILLS[@]}"; do
 	# persist-deep-review-state.sh persists it, so the key is PRESENT with a
 	# status in neither arm and --continue silently skipped a lens that never
 	# ran. A complement rule no future enum value can escape.
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	assert_grep "$skill_md" 'not `completed` and not `skipped`' \
 		"A1 ($label): the resume rule is stated as a complement of completed/skipped"
 
@@ -447,6 +448,7 @@ for skill_md in "${SKILLS[@]}"; do
 	fi
 	assert_grep "$skill_md" 'highest on-disk attempt index' \
 		"A4(b) ($label): the next attempt is 1 + the highest on-disk attempt index"
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	assert_grep "$skill_md" 'writes that attempt.s `start` record on the lens' \
 		"A4(c) ($label): the orchestrator writes the start record for any attempt N >= 2"
 
@@ -696,11 +698,11 @@ f1_codex="$(grep -oE '"schema_version": [0-9]+,' "$ROOT_DIR/plugins/skein-codex/
 if [[ -z "$f1_script" ]]; then
 	fail "(R11-F1) could not read --argjson schema_version from persist-deep-review-state.sh"
 elif [[ "$(printf '%s' "$f1_script" | wc -l)" -ne 0 ]]; then
-	fail "(R11-F1) persist-deep-review-state.sh stamps more than one schema_version: $(echo $f1_script)"
+	fail "(R11-F1) persist-deep-review-state.sh stamps more than one schema_version: $f1_script"
 elif [[ "$f1_script" == "$f1_claude" && "$f1_script" == "$f1_codex" ]]; then
 	pass "(R11-F1) schema_version $f1_script agrees across the script and both deep-review mirrors"
 else
-	fail "(R11-F1) schema_version drift: script=$f1_script claude-mirror=$(echo $f1_claude) codex-mirror=$(echo $f1_codex)"
+	fail "(R11-F1) schema_version drift: script=$f1_script claude-mirror=$f1_claude codex-mirror=$f1_codex"
 fi
 
 # The compat gate must name the SAME version in prose. This is the sentence
@@ -713,7 +715,7 @@ for f1_md in "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" "$ROOT_DIR/pl
 	elif [[ "$f1_gate" == "$f1_script" ]]; then
 		pass "(R11-F1b) the --continue compat gate names version $f1_gate ($(basename "$(dirname "$(dirname "$(dirname "$f1_md")")")"))"
 	else
-		fail "(R11-F1b) compat gate names version $(echo $f1_gate) but the script stamps $f1_script ($f1_md)"
+		fail "(R11-F1b) compat gate names version $f1_gate but the script stamps $f1_script ($f1_md)"
 	fi
 done
 

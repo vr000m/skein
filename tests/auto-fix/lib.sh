@@ -95,7 +95,9 @@ run_applier() {
 	local repo="$1"
 	shift
 	set +e
+	# shellcheck disable=SC2034  # read by callers that source this lib
 	LAST_OUT="$(cd "$repo" && bash "$APPLIER" "$@" 2>&1)"
+	# shellcheck disable=SC2034  # read by callers that source this lib
 	LAST_RC=$?
 	set -e
 }
@@ -106,7 +108,9 @@ run_plan_applier() {
 	local repo="$1"
 	shift
 	set +e
+	# shellcheck disable=SC2034  # read by callers that source this lib
 	LAST_OUT="$(cd "$repo" && bash "$PLAN_APPLIER" "$@" 2>&1)"
+	# shellcheck disable=SC2034  # read by callers that source this lib
 	LAST_RC=$?
 	set -e
 }

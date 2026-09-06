@@ -53,6 +53,7 @@
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
+# shellcheck disable=SC2016  # single-quoted literal grep/regex pattern text throughout, not shell expansions
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
@@ -423,8 +424,8 @@ STUB
 	# Poll: gate_run_bounded is documented synchronous, so the child should
 	# already be dead by the time it returns; allow a grace window sized for
 	# the unified 10s kill_after_s escalation.
-	local alive=1 i
-	for i in $(seq 1 20); do
+	local alive=1
+	for _ in $(seq 1 20); do
 		if ! kill -0 "$child_pid" 2>/dev/null; then
 			alive=0
 			break
@@ -905,8 +906,8 @@ STUB
 	local child_pid
 	child_pid="$(cat "$pidfile")"
 
-	local alive=1 i
-	for i in $(seq 1 25); do
+	local alive=1
+	for _ in $(seq 1 25); do
 		if ! kill -0 "$child_pid" 2>/dev/null; then
 			alive=0
 			break
@@ -963,7 +964,7 @@ a11_skipped=0
 a11_straddled=0
 a11_env="$WORKDIR/a11-env.json"
 a11_out="$WORKDIR/a11-out.json"
-for i in $(seq 1 50); do
+for _ in $(seq 1 50); do
 	rm -f "$a11_env" "$a11_out"
 	TMPDIR="$a11_tmp" "$RUNNER" 1 "$a11_env" "$a11_out" -- "$a11_stub" >/dev/null 2>&1 || true
 	a11_status="$(jq -r '.status // "MISSING"' "$a11_env" 2>/dev/null || echo PARSE_ERROR)"
@@ -1671,10 +1672,13 @@ r7g1a_bad=""
 r7g1a_matrix=""
 for r7g1_i in "${!r7g1_paths[@]}"; do
 	r7g1_row=""
+	r7g1_verdicts=()
 	for r7g1_cwd in "${r7g1_cwds[@]}"; do
-		r7g1_row="$r7g1_row $(r7g1_verdict "$r7g1_cwd" "${r7g1_paths[$r7g1_i]}")"
+		r7g1_v="$(r7g1_verdict "$r7g1_cwd" "${r7g1_paths[$r7g1_i]}")"
+		r7g1_row="$r7g1_row $r7g1_v"
+		r7g1_verdicts+=("$r7g1_v")
 	done
-	r7g1_uniq="$(printf '%s\n' $r7g1_row | sort -u | tr '\n' ',' | sed 's/,$//')"
+	r7g1_uniq="$(printf '%s\n' "${r7g1_verdicts[@]}" | sort -u | tr '\n' ',' | sed 's/,$//')"
 	r7g1a_matrix="$r7g1a_matrix
   ${r7g1_paths[$r7g1_i]#"$r7g1_root/"} ->$r7g1_row (expected ${r7g1_expected[$r7g1_i]})"
 	if [[ "$r7g1_uniq" != "${r7g1_expected[$r7g1_i]}" ]]; then
@@ -1861,6 +1865,7 @@ r9g1_verdict() {
 	# $1 path, $2 = 1 to put a `dirname` that answers `/` earlier on PATH.
 	(
 		if [[ "${2:-0}" -eq 1 ]]; then
+			# shellcheck disable=SC2030  # intentionally scoped to this subshell only
 			PATH="$r9g1_fakebin:$PATH"
 			export PATH
 		fi
@@ -2417,7 +2422,7 @@ if grep -q '^gate-bounded\.' "$F15_DIR/tmpdir-during-run.txt" 2>/dev/null; then
 else
 	fail "R12-F15a: no gate-bounded.* scratch dir seen under \$TMPDIR during the run (got '$(cat "$F15_DIR/tmpdir-during-run.txt" 2>/dev/null)')"
 fi
-assert_eq "$(ls -A "$F15_DIR/tmp" | tr '\n' ' ')" "" \
+assert_eq "$(find "$F15_DIR/tmp" -mindepth 1 | tr '\n' ' ')" "" \
 	"R12-F15b: ...and the clean success path leaves \$TMPDIR empty"
 
 # (c) THE REGRESSION: abort after the scratch files exist.
@@ -2428,6 +2433,7 @@ EOF
 chmod +x "$F15_DIR/bin/date"
 
 f15_rc=0
+# shellcheck disable=SC2031  # PATH override is scoped to this command only, unrelated to the r9g1_verdict subshell above
 TMPDIR="$F15_DIR/tmp" PATH="$F15_DIR/bin:$PATH" "$RUNNER" 30 \
 	"$F15_DIR/abort-env.json" "$F15_DIR/abort-out.json" \
 	-- "$F15_DIR/stub.sh" >/dev/null 2>&1 || f15_rc=$?
@@ -2436,7 +2442,7 @@ if [[ "$f15_rc" -ne 0 ]]; then
 else
 	fail "R12-F15c: expected a non-zero abort, got rc=0 -- the injection no longer aborts and (d) is vacuous"
 fi
-assert_eq "$(ls -A "$F15_DIR/tmp" | tr '\n' ' ')" "" \
+assert_eq "$(find "$F15_DIR/tmp" -mindepth 1 | tr '\n' ' ')" "" \
 	"R12-F15d: an abort between scratch creation and the success/expiry cleanup leaves NO scratch files behind"
 
 # (e) The mechanism is documented where the next round will look for it: a

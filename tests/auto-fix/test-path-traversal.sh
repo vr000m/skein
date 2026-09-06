@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_applier
@@ -24,7 +24,7 @@ trap 'rm -rf "$scratch"' EXIT
 # Find the most-recent manifest under the given repo's per-skill dir.
 latest_manifest() {
 	local repo="$1" skill_dir="$2"
-	ls -t "$repo/$skill_dir"/auto-fix-*.json 2>/dev/null | head -n 1
+	find "$repo/$skill_dir" -maxdepth 1 -name 'auto-fix-*.json' 2>/dev/null | sort | tail -n 1
 }
 
 # Assert no `auto_fix(...)` commit exists in the repo's history.
@@ -70,7 +70,11 @@ cat >"$case1/findings.json" <<JSON
 JSON
 run_applier "$case1" --test-cmd "true" "$case1/findings.json"
 assert_no_apply_commit "$case1" "code-abs"
-[[ "$(cat "$sentinel")" == "untouched" ]] && pass "code-abs: out-of-repo sentinel untouched" || fail "code-abs: sentinel was written!"
+if [[ "$(cat "$sentinel")" == "untouched" ]]; then
+	pass "code-abs: out-of-repo sentinel untouched"
+else
+	fail "code-abs: sentinel was written!"
+fi
 assert_manifest_status "$(latest_manifest "$case1" ".deep-review")" "rejected_path" "code-abs"
 
 # ../ traversal in .file
@@ -86,7 +90,11 @@ cat >"$case2/findings.json" <<JSON
 JSON
 run_applier "$case2" --test-cmd "true" "$case2/findings.json"
 assert_no_apply_commit "$case2" "code-traversal"
-[[ "$(cat "$sentinel2")" == "untouched" ]] && pass "code-traversal: out-of-repo sentinel untouched" || fail "code-traversal: sentinel was written!"
+if [[ "$(cat "$sentinel2")" == "untouched" ]]; then
+	pass "code-traversal: out-of-repo sentinel untouched"
+else
+	fail "code-traversal: sentinel was written!"
+fi
 assert_manifest_status "$(latest_manifest "$case2" ".deep-review")" "rejected_path" "code-traversal"
 
 # --- /review-plan plan applier ------------------------------------------
@@ -109,7 +117,11 @@ cat >"$case3/findings.json" <<JSON
 JSON
 run_plan_applier "$case3" --plan "$plan_rel3" "$case3/findings.json"
 assert_no_apply_commit "$case3" "plan-abs"
-[[ "$(grep -c 'wrong' "$sentinel3")" -eq 1 ]] && pass "plan-abs: out-of-repo plan untouched" || fail "plan-abs: out-of-repo plan was modified!"
+if [[ "$(grep -c 'wrong' "$sentinel3")" -eq 1 ]]; then
+	pass "plan-abs: out-of-repo plan untouched"
+else
+	fail "plan-abs: out-of-repo plan was modified!"
+fi
 assert_manifest_status "$(latest_manifest "$case3" ".review-plan")" "rejected_path" "plan-abs"
 
 # ../ traversal in scope
@@ -128,7 +140,11 @@ cat >"$case4/findings.json" <<JSON
 JSON
 run_plan_applier "$case4" --plan "$plan_rel4" "$case4/findings.json"
 assert_no_apply_commit "$case4" "plan-traversal"
-[[ "$(grep -c 'wrong' "$sentinel4")" -eq 1 ]] && pass "plan-traversal: out-of-repo plan untouched" || fail "plan-traversal: out-of-repo plan was modified!"
+if [[ "$(grep -c 'wrong' "$sentinel4")" -eq 1 ]]; then
+	pass "plan-traversal: out-of-repo plan untouched"
+else
+	fail "plan-traversal: out-of-repo plan was modified!"
+fi
 assert_manifest_status "$(latest_manifest "$case4" ".review-plan")" "rejected_path" "plan-traversal"
 
 summary_and_exit

@@ -60,6 +60,7 @@ assert_grep "$SKILL_MD" 'known permanent capability gaps do not count' \
 assert_grep "$SKILL_MD" 'gate 4.*security-review.*always.*gate 3.*skein:deep-review.*nested-spawn topology/tier evidence remains unconfirmed' \
 	"the permanent deferred gate list names gate 4 always and gate 3 while nested-spawn evidence is unconfirmed"
 
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 assert_grep "$SKILL_MD" 'full pass at count 0 with `--unresolved 0` may resolve to success even when those permanent gaps are present' \
 	"clean Codex pass can succeed with only permanent capability gaps present"
 

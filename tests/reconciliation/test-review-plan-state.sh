@@ -471,7 +471,7 @@ else
 			diff "$case_g_dir/original-copy.json" "$target" | sed 's/^/    /' || true
 		elif compgen -G "$case_g_dir/.review-plan/*.tmp.*" >/dev/null 2>&1; then
 			fail "(g) interrupted write preserves the previous valid file (stray .tmp.* file left behind)"
-			ls -la "$case_g_dir/.review-plan" | sed 's/^/    /'
+			while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_g_dir/.review-plan")
 		else
 			pass "(g) interrupted write preserves the previous valid file, and leaves no stray temp file"
 		fi
@@ -508,7 +508,7 @@ elif [[ ! -d "$case_h_dir/.review-plan/latest-claude.json" ]]; then
 	fail "(h) refuses to write when the target path is a pre-existing directory (target directory no longer present)"
 elif [[ -n "$(find "$case_h_dir/.review-plan/latest-claude.json" -mindepth 1 2>/dev/null)" ]]; then
 	fail "(h) refuses to write when the target path is a pre-existing directory (a stray temp file was moved inside it)"
-	ls -la "$case_h_dir/.review-plan/latest-claude.json" | sed 's/^/    /'
+	while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_h_dir/.review-plan/latest-claude.json")
 else
 	pass "(h) refuses to write when the target path is a pre-existing directory, and leaves it untouched"
 fi
@@ -541,7 +541,7 @@ elif ! grep -Fq "persist-review-state:" "$case_i_dir/stderr"; then
 	sed 's/^/    /' "$case_i_dir/stderr"
 elif [[ -e "$case_i_dir/.review-plan" ]]; then
 	fail "(i) refuses multi-document input (a file was written despite rejection)"
-	ls -la "$case_i_dir/.review-plan" | sed 's/^/    /'
+	while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_i_dir/.review-plan")
 else
 	pass "(i) refuses multi-document input, writes nothing"
 fi
@@ -574,7 +574,7 @@ elif ! grep -Fq "missing required top-level keys" "$case_j_dir/stderr"; then
 	sed 's/^/    /' "$case_j_dir/stderr"
 elif [[ -e "$case_j_dir/.review-plan" ]]; then
 	fail "(j) refuses incomplete envelope missing summary/findings/related (a file was written despite rejection)"
-	ls -la "$case_j_dir/.review-plan" | sed 's/^/    /'
+	while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_j_dir/.review-plan")
 else
 	pass "(j) refuses incomplete envelope missing summary/findings/related, writes nothing"
 fi

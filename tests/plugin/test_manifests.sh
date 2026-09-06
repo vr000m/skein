@@ -59,8 +59,8 @@ claude_source="$(jq -r '
 	[.plugins[]? | select(.name == "skein") | (.source // "")][0] // ""
 ' "$CLAUDE_MARKETPLACE")"
 case "$claude_source" in
-	*"./plugins/skein"*) ;;
-	*) fail "$CLAUDE_MARKETPLACE: skein entry source must contain ./plugins/skein, got \"$claude_source\"" ;;
+*"./plugins/skein"*) ;;
+*) fail "$CLAUDE_MARKETPLACE: skein entry source must contain ./plugins/skein, got \"$claude_source\"" ;;
 esac
 echo "ok: $CLAUDE_MARKETPLACE references skein at ./plugins/skein"
 
@@ -92,8 +92,8 @@ codex_installation="$(jq -r '
 	[.plugins[]? | select(.name == "skein") | (.policy.installation // "")][0] // ""
 ' "$CODEX_MARKETPLACE")"
 case "$codex_installation" in
-	NOT_AVAILABLE|AVAILABLE|INSTALLED_BY_DEFAULT) ;;
-	*) fail "$CODEX_MARKETPLACE: policy.installation must be NOT_AVAILABLE|AVAILABLE|INSTALLED_BY_DEFAULT, got \"$codex_installation\"" ;;
+NOT_AVAILABLE | AVAILABLE | INSTALLED_BY_DEFAULT) ;;
+*) fail "$CODEX_MARKETPLACE: policy.installation must be NOT_AVAILABLE|AVAILABLE|INSTALLED_BY_DEFAULT, got \"$codex_installation\"" ;;
 esac
 echo "ok: $CODEX_MARKETPLACE policy.installation = $codex_installation"
 

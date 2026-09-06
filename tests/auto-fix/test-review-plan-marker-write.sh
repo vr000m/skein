@@ -75,6 +75,7 @@ if [[ -f "$CODEX_SKILL_MD" ]]; then
 		fail "codex mirror does not reference write-review-marker.py"
 	fi
 	# Codex must use the $SKILL_DIR anchor, never the Claude ${CLAUDE_PLUGIN_ROOT}.
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	if grep -Eq '"\$SKILL_DIR"/scripts/write-review-marker.py' "$CODEX_SKILL_MD"; then
 		pass "codex mirror invokes entrypoint via \$SKILL_DIR anchor"
 	else

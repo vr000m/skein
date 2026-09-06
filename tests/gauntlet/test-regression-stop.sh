@@ -64,6 +64,7 @@ if [[ ! -x "$LEDGER_SCRIPT" ]]; then
 fi
 
 TMP_FILES=()
+# shellcheck disable=SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() {
 	local f
 	for f in "${TMP_FILES[@]:-}"; do
@@ -515,7 +516,6 @@ assert_eq "$(fixed_keys_of "$L15")" "H" "cap-priority setup round 2: H promoted 
 tok_h2="$(roundk "$L15" 1 0 1 full 0 --present-keys "$present_H" --claimed-keys "$empty_keys" --cap 3)"
 assert_eq "$tok_h2" "regression" "priority: regression beats cap (loop_counter reaches cap=3 on this round, but H, a fixed key, reappears -> regression wins)"
 
-
 # ---------------------------------------------------------------------------
 # (B9) The applier join must be EXACT on (file, line).
 #
@@ -675,6 +675,7 @@ for a7_mirror in skein skein-codex; do
 	else
 		fail "(A7/$a7_mirror) the bundled script no longer uses the total \`.claimed[]?\` extraction"
 	fi
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	if grep -Fq '($m[0] // [])' "$a7_script"; then
 		pass "(A7/$a7_mirror) the bundled script keeps the total \`(\$m[0] // [])\` manifest read"
 	else
@@ -697,6 +698,7 @@ for a7_mirror in skein skein-codex; do
 	else
 		fail "(A7/$a7_mirror) the fixer-report flag is passed unconditionally -- a clean round runs no fixer"
 	fi
+	# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 	if grep -Eq '\$gate_out_dir/(annotated-envelope|fixer-report)\.json' "$a7_skill"; then
 		pass "(A7/$a7_mirror) the claim artifacts are composed from \$gate_out_dir, not read from a bare cwd-relative path"
 	else

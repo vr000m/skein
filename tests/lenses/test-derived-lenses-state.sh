@@ -158,10 +158,10 @@ collector_out="$(
 		--expected "missing-lens:u1"
 )"
 
-persisted="$(
+(
 	cd "$DIR" && printf '%s' "$collector_out" | bash "$PERSIST" --harness claude --run-id "$RUN_ID" \
 		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
-)"
+) >/dev/null
 
 target="$DIR/.deep-review/latest-claude.json"
 if [[ ! -f "$target" ]]; then
@@ -218,10 +218,10 @@ else
 	fail "(4a) --attempts-derived timed_out (collector output was: $collector_out2)"
 fi
 
-persisted2="$(
+(
 	cd "$DIR" && printf '%s' "$collector_out2" | bash "$PERSIST" --harness claude --run-id "$RUN_ID2" \
 		--base-commit aaa --head-commit bbb --diff-hash ccc --review-focus-hash "" --from-collector
-)"
+) >/dev/null
 
 target2="$DIR/.deep-review/latest-claude.json"
 lenses_json2="$(jq -c '.lenses' "$target2")"
@@ -233,7 +233,6 @@ else
 	fail "(4b) --attempts-derived timed_out lens should be in the --continue re-run set (got $actual_rerun2)"
 	echo "    .lenses was: $lenses_json2"
 fi
-
 
 # ---------------------------------------------------------------------------
 # (C13) The skill -> state-dir mapping lives in FOUR places; each must

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_applier
@@ -39,6 +39,7 @@ if [[ "$invocations" -eq 1 ]]; then
 	pass "test command invoked exactly once (counter=$invocations)"
 else
 	fail "expected test command invoked exactly 1x for 1 fix; got $invocations"
+	# shellcheck disable=SC2001  # per-line prefix over a multiline var; param expansion cannot anchor ^ per-line
 	echo "$LAST_OUT" | sed 's/^/  /'
 fi
 
