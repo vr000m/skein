@@ -1325,12 +1325,12 @@ r5g7_header="$(awk '/^set -euo pipefail/{exit} {print}' "$SCRIPT")"
 r5g7_ok=1
 r5g7_why=""
 for r5g7_stale in 'must not contain commas' 'comma-joined'; do
-	if printf '%s' "$r5g7_header" | grep -Fq -- "$r5g7_stale"; then
+	if grep -Fq -- "$r5g7_stale" <<<"$r5g7_header"; then
 		r5g7_ok=0
 		r5g7_why="$r5g7_why stale:'$r5g7_stale'"
 	fi
 done
-if ! printf '%s' "$r5g7_header" | grep -Fq -- 'PERSIST_UNIT_JQ_GATE'; then
+if ! grep -Fq -- 'PERSIST_UNIT_JQ_GATE' <<<"$r5g7_header"; then
 	r5g7_ok=0
 	r5g7_why="$r5g7_why missing:PERSIST_UNIT_JQ_GATE"
 fi
