@@ -850,7 +850,7 @@ for r9g6_md in "${r9g6_mirrors[@]}"; do
 		continue
 	fi
 	for r9g6_sub in normalize reconcile route status-row; do
-		if ! grep -qE '(\$\{CLAUDE_PLUGIN_ROOT\}/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r9g6_sub"'([[:space:]]|$)' "$r9g6_md"; then
+		if ! grep -qE '("\$\{CLAUDE_PLUGIN_ROOT\}"/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r9g6_sub"'([[:space:]]|$)' "$r9g6_md"; then
 			r9g6_bad="$r9g6_bad [$(basename "$(dirname "$(dirname "$(dirname "$r9g6_md")")")"): no runnable 'run-gate.sh $r9g6_sub' invocation]"
 		fi
 	done
@@ -986,7 +986,7 @@ for r10a1b_md in "${r9g6_mirrors[@]}"; do
 
 	r10a1b_lines=()
 	for r10a1b_sub in normalize reconcile route; do
-		r10a1b_n="$(grep -nE '(\$\{CLAUDE_PLUGIN_ROOT\}/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r10a1b_sub"'([[:space:]]|$)' "$r10a1b_md" | head -1 | cut -d: -f1 || true)"
+		r10a1b_n="$(grep -nE '("\$\{CLAUDE_PLUGIN_ROOT\}"/skills/review-gauntlet/lib/|"\$SKILL_DIR"/lib/)run-gate\.sh '"$r10a1b_sub"'([[:space:]]|$)' "$r10a1b_md" | head -1 | cut -d: -f1 || true)"
 		r10a1b_lines+=("$r10a1b_n")
 	done
 	if [[ -z "${r10a1b_lines[0]}" || -z "${r10a1b_lines[1]}" || -z "${r10a1b_lines[2]}" ]]; then

@@ -31,6 +31,7 @@ parity-tests:
     bash tests/parity/test-auto-fix-orchestration-contract.sh
     bash tests/parity/test-handoff-ignores-auto-fix.sh
     bash tests/parity/test-no-manual-apply-fallback.sh
+    bash tests/parity/test-anchor-path-with-spaces.sh
     bash tests/parity/test-conduct-marker-parity.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
@@ -113,12 +114,18 @@ reconciliation-tests:
 # pre-existing style debt.
 # Cleaning that up is its own change with its own diff; adopt a new file here
 # only together with the fix that makes it pass.
+#
+# plugins/skein*/skills/fan-out/fan-out.sh carry the task-binding and
+# base-branch guards, so they sit under both shellcheck and shfmt like every
+# other bundled script.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh tests/plugin/test-lint-temp-paths.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
     ./scripts/lint-temp-paths.sh
 
-# Plugin-level guards: CLAUDE.md hygiene rules and the manifest checks.
+# Plugin-level guards and skill-script guard suites: CLAUDE.md hygiene rules,
+# the manifest checks, and the regression suites for guards that live in a
+# skill's own scripts (the temp-path lint, fan-out's slug/base-branch guards).
 # (tests/plugin/test_history_and_assets.sh is deliberately NOT listed: it is
 # a one-off migration-commit assertion that only holds against the specific
 # commit it was written for, not a suite member that can run against
@@ -128,6 +135,8 @@ plugin-tests:
     bash tests/plugin/test-claude-md-hygiene.sh
     bash tests/plugin/test_manifests.sh
     bash tests/plugin/test-lint-temp-paths.sh
+    bash tests/plugin/test-fanout-slug-guard.sh
+    bash tests/plugin/test-fanout-slug-guard-codex.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but

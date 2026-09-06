@@ -1,6 +1,7 @@
 .env
 **/.DS_Store
 .deep-review/
+.fan-out-state.json
 .conduct/
 __pycache__/
 .pytest_cache/
