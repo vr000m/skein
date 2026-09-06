@@ -47,7 +47,7 @@ if [[ ! -x "$FINDING_KEY_SCRIPT" ]]; then
 fi
 
 WORKDIR="$(mktemp -d)"
-# shellcheck disable=SC2329  # invoked indirectly via trap cleanup EXIT
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
 

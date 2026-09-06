@@ -64,7 +64,7 @@ if [[ ! -x "$LEDGER_SCRIPT" ]]; then
 fi
 
 TMP_FILES=()
-# shellcheck disable=SC2329  # invoked indirectly via trap cleanup EXIT
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() {
 	local f
 	for f in "${TMP_FILES[@]:-}"; do

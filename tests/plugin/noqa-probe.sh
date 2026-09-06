@@ -37,7 +37,7 @@ fi
 RUFF_VERSION="$(ruff --version 2>/dev/null || echo unknown)"
 
 SCRATCH="$(mktemp -d)"
-# shellcheck disable=SC2329  # invoked indirectly via trap cleanup EXIT
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() { rm -rf "$SCRATCH"; }
 trap cleanup EXIT
 

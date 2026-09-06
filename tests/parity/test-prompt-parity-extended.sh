@@ -28,7 +28,7 @@ PASS=0
 FAIL=0
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/skein-prompt-parity.XXXXXX")"
 
-# shellcheck disable=SC2329  # invoked indirectly via trap cleanup_test_tmp_root EXIT
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup_test_tmp_root EXIT
 cleanup_test_tmp_root() {
 	rm -rf "$TEST_TMP_ROOT"
 }
@@ -1016,7 +1016,7 @@ _phase4_run_fixture_parity() {
 # Tamper the deep-review allowlist citation in `$1` (a SKILL.md path).
 # Returns 0 on successful tamper, 2 if the canonical literal was not
 # found (so the test can fail loudly rather than silently pass).
-# shellcheck disable=SC2329  # invoked indirectly via $tamper_fn in _phase4_mutate_and_assert_caught
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via $tamper_fn in _phase4_mutate_and_assert_caught
 _phase4_tamper_allowlist() {
 	python3 - "$1" <<'PY'
 import sys, pathlib
@@ -1032,7 +1032,7 @@ PY
 
 # Tamper one line inside the GENERIC FINDING SCHEMA AND MERGE block of
 # `$1`. Returns 0 on success, 2 if the block was not found.
-# shellcheck disable=SC2329  # invoked indirectly via $tamper_fn in _phase4_mutate_and_assert_caught
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via $tamper_fn in _phase4_mutate_and_assert_caught
 _phase4_tamper_generic_block() {
 	python3 - "$1" <<'PY'
 import sys, pathlib
