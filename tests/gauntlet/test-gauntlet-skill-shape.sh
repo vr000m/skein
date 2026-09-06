@@ -195,11 +195,6 @@ assert_grep_i "$SKILL_MD" 'guardrail 4' \
 assert_grep "$SKILL_MD" 'git status --short' \
 	"documents verifying the fixer's claims against live repo state"
 
-assert_grep_i "$SKILL_MD" 'guardrail 5' \
-	"documents Guardrail 5 heading/label"
-
-assert_grep "$SKILL_MD" 'just ci' \
-	"documents the full-CI requirement on every fixer brief and after every fixer commit"
 
 # --- Invocation modes ------------------------------------------------------
 
@@ -710,6 +705,23 @@ assert_phase3_deferred_and_gate_stamp_for() {
 
 assert_phase3_deferred_and_gate_stamp_for "$SKILL_MD" "Claude mirror"
 assert_phase3_deferred_and_gate_stamp_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# ---------------------------------------------------------------------------
+# Guardrail 5: every fixer brief requires `just ci`, and the conductor re-runs
+# it after each fixer/applier commit. Pinned on BOTH mirrors so a section
+# dropped from one twin cannot leave the suite green.
+# ---------------------------------------------------------------------------
+
+assert_guardrail5_for() {
+	local file="$1" label="$2"
+	assert_grep_i "$file" 'guardrail 5' \
+		"$label: documents Guardrail 5 heading/label"
+	assert_grep "$file" 'just ci' \
+		"$label: documents the full-CI requirement on every fixer brief and after every fixer commit"
+}
+
+assert_guardrail5_for "$SKILL_MD" "Claude mirror"
+assert_guardrail5_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
