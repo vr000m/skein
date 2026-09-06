@@ -101,26 +101,19 @@ reconciliation-tests:
 # Codex copy is held byte-identical to it by
 # tests/parity/test-applier-bundle-parity.sh.
 #
-# The fourth entry is not an exception to the rule, it IS a rule (round 10,
-# F8): a `tests/` file is listed here IFF it is the regression suite for a
-# lint that this recipe itself runs. `tests/plugin/test-lint-temp-paths.sh`
-# qualifies because the last line runs `scripts/lint-temp-paths.sh`; a suite
-# that tests something else does not, however shell-shaped it is. The other 61
-# files under `tests/*/` are out of scope by MEASUREMENT, not oversight:
-# `shellcheck -f gcc tests/*/*.sh` reports 86 findings across 41 files today
-# (and even the narrowest containing glob, `tests/plugin/*.sh`, reports 2 --
-# in noqa-probe.sh and test_history_and_assets.sh -- plus `shfmt -d` diffs in
-# those same two files), so widening a glob here turns `lint-scripts` red on
-# pre-existing style debt.
-# Cleaning that up is its own change with its own diff; adopt a new file here
-# only together with the fix that makes it pass.
+# The whole tests/ tree is linted: `tests/*/*.sh` sits under both shellcheck
+# and shfmt alongside the canonical scripts, so a new `tests/<suite>/*.sh`
+# file is covered automatically without touching this recipe. The pre-commit
+# hooks' `files:` patterns (.pre-commit-config.yaml) mirror these globs
+# exactly -- two levels under scripts/ and tests/, not recursive -- so a file
+# the hooks check is a file this recipe checks, and vice versa.
 #
 # plugins/skein*/skills/fan-out/fan-out.sh carry the task-binding and
 # base-branch guards, so they sit under both shellcheck and shfmt like every
 # other bundled script.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/plugin/test-lint-temp-paths.sh tests/plugin/test-fanout-slug-guard.sh tests/plugin/test-fanout-slug-guard-codex.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
     ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards and skill-script guard suites: CLAUDE.md hygiene rules,
