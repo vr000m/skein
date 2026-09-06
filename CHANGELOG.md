@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-06
+
 ### Added
 - `scripts/lib/state-path-guard.sh` (bundled into `review-gauntlet/lib/`): `gauntlet_assert_no_symlink` refuses symlinked `.gauntlet/` state paths via one lexical loop bounded at the shallowest non-symlink ancestor carrying `.git`; wired into `convergence-ledger.sh`, `gate-bounded.sh`, `run-gate.sh`.
 - `scripts/lint-temp-paths.sh` + `tests/plugin/test-lint-temp-paths.sh`: static lint against hard-coded `/tmp`/`$RANDOM` temp paths, run by `just lint-scripts`.
