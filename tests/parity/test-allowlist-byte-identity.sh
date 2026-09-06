@@ -37,7 +37,8 @@ fi
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-if ! python3 - "$ALLOWLIST" >"$tmpdir/arrays.tsv" <<'PY' 2>"$tmpdir/python.err"; then
+allowlist_preflight_rc=0
+python3 - "$ALLOWLIST" >"$tmpdir/arrays.tsv" <<'PY' 2>"$tmpdir/python.err" || allowlist_preflight_rc=$?
 import json
 import sys
 
@@ -69,6 +70,7 @@ if data != expected:
 for skill in ("deep-review", "review-plan"):
     print(f"{skill}\t{json.dumps(data[skill], ensure_ascii=False, separators=(',', ':'))}")
 PY
+if [[ "$allowlist_preflight_rc" -ne 0 ]]; then
 	fail "preflight (allowlist JSON parse/contract check failed)"
 	sed 's/^/  /' "$tmpdir/python.err"
 	echo ""
@@ -93,9 +95,9 @@ check_skill_array() {
 			continue
 		fi
 		if grep -Fq -- "$array_literal" "$target"; then
-			pass "$allowlist_key allowlist cited byte-identically in ${target#$ROOT_DIR/}"
+			pass "$allowlist_key allowlist cited byte-identically in ${target#"$ROOT_DIR"/}"
 		else
-			fail "$allowlist_key allowlist drift in ${target#$ROOT_DIR/}"
+			fail "$allowlist_key allowlist drift in ${target#"$ROOT_DIR"/}"
 			echo "  expected literal: $array_literal"
 		fi
 	done

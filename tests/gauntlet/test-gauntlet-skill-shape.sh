@@ -16,6 +16,7 @@
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
+# shellcheck disable=SC2016  # single-quoted literal grep/regex pattern text throughout, not shell expansions
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
@@ -194,7 +195,6 @@ assert_grep_i "$SKILL_MD" 'guardrail 4' \
 
 assert_grep "$SKILL_MD" 'git status --short' \
 	"documents verifying the fixer's claims against live repo state"
-
 
 # --- Invocation modes ------------------------------------------------------
 
@@ -825,6 +825,7 @@ g12_check_ledger_guard "$CODEX_SKILL_MD" "skein-codex/review-gauntlet"
 # `just check-prompt-parity`.
 r7g7_codex_md="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/SKILL.md"
 r7g7_missing=""
+# shellcheck disable=SC2013  # splitting one bash-array-literal line into words, not iterating lines
 for r7g7_f in $(sed -n 's/^GAUNTLET_LIB_PARITY_FILES=(\(.*\))$/\1/p' \
 	"$ROOT_DIR/tests/parity/test-applier-bundle-parity.sh"); do
 	grep -Fq "lib/$r7g7_f" "$SKILL_MD" || r7g7_missing="$r7g7_missing [claude:$r7g7_f]"

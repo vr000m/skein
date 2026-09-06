@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_plan_applier
@@ -76,6 +76,7 @@ scope_detect_resolves_to() {
 	set -e
 	if [[ $rc -ne 0 ]]; then
 		fail "scope-detect $label: exited $rc"
+		# shellcheck disable=SC2001  # per-line prefix over a multiline var; param expansion cannot anchor ^ per-line
 		echo "$out" | sed 's/^/  /'
 		return
 	fi

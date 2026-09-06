@@ -90,6 +90,7 @@ assert_grep "$SKILL_MD" '\*\*Review Gates:\*\*' \
 assert_grep "$SKILL_MD" 'none \| full' \
 	"SKILL.md documents the two values \`none | full\`"
 
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 assert_grep "$SKILL_MD" '\*\*Review Gates:\*\*[^.]*default `none`|default `none`[^.]*\*\*Review Gates:\*\*|`none`, default' \
 	"SKILL.md documents the \`none\` default"
 
@@ -119,6 +120,7 @@ assert_grep "$SKILL_MD" 'full.*(all|logical) gate slots' \
 assert_grep "$TEMPLATE_MD" '\*\*Review Gates\*\*:? none \| full' \
 	"template.md header block includes a \`**Review Gates**\` line with the two values"
 
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 assert_grep "$TEMPLATE_MD" '\*\*Review Gates\*\*[^.]*default `none`' \
 	"template.md documents the \`none\` default in the header block"
 

@@ -54,12 +54,12 @@ fi
 echo "ok: $TOTAL_RENAMES rename entries (>=22 required)"
 
 for skill in "${SKILLS[@]}"; do
-	claude_hits=$(printf '%s\n' "$NAME_STATUS" \
-		| awk -v s="plugins/skein/skills/${skill}/" '$1 ~ /^R/ && $3 ~ "^"s' \
-		| wc -l | tr -d ' ')
-	codex_hits=$(printf '%s\n' "$NAME_STATUS" \
-		| awk -v s="plugins/skein-codex/skills/${skill}/" '$1 ~ /^R/ && $3 ~ "^"s' \
-		| wc -l | tr -d ' ')
+	claude_hits=$(printf '%s\n' "$NAME_STATUS" |
+		awk -v s="plugins/skein/skills/${skill}/" '$1 ~ /^R/ && $3 ~ "^"s' |
+		wc -l | tr -d ' ')
+	codex_hits=$(printf '%s\n' "$NAME_STATUS" |
+		awk -v s="plugins/skein-codex/skills/${skill}/" '$1 ~ /^R/ && $3 ~ "^"s' |
+		wc -l | tr -d ' ')
 	if [[ "$claude_hits" -lt 1 ]]; then
 		fail "skill '$skill' has no staged rename into plugins/skein/skills/$skill/"
 	fi
@@ -72,8 +72,8 @@ echo "ok: each of the 11 skills has >=1 rename into both plugin halves"
 # --- 2. No D/A pairs for skill content ------------------------------------
 # Anything that disappears from .claude/skills/** or .codex/skills/** must
 # show up as `R old new`, never as `D old` + `A new` (which loses history).
-DELETED_SKILL_FILES=$(printf '%s\n' "$NAME_STATUS" \
-	| awk '$1 == "D" && ($2 ~ /^\.claude\/skills\// || $2 ~ /^\.codex\/skills\//) {print $2}')
+DELETED_SKILL_FILES=$(printf '%s\n' "$NAME_STATUS" |
+	awk '$1 == "D" && ($2 ~ /^\.claude\/skills\// || $2 ~ /^\.codex\/skills\//) {print $2}')
 if [[ -n "$DELETED_SKILL_FILES" ]]; then
 	# A D/A pair must share the post-skill-root suffix. Strip the
 	# `.{claude,codex}/skills/` prefix from each deletion and look for an
@@ -85,8 +85,8 @@ if [[ -n "$DELETED_SKILL_FILES" ]]; then
 		[[ -z "$dpath" ]] && continue
 		suffix="${dpath#.claude/skills/}"
 		suffix="${suffix#.codex/skills/}"
-		match=$(printf '%s\n' "$NAME_STATUS" \
-			| awk -v s="$suffix" '$1 == "A" && ($2 ~ ("^plugins/skein/skills/" s "$") || $2 ~ ("^plugins/skein-codex/skills/" s "$")) {print $2; exit}')
+		match=$(printf '%s\n' "$NAME_STATUS" |
+			awk -v s="$suffix" '$1 == "A" && ($2 ~ ("^plugins/skein/skills/" s "$") || $2 ~ ("^plugins/skein-codex/skills/" s "$")) {print $2; exit}')
 		if [[ -n "$match" ]]; then
 			fail "D/A pair detected (history lost): D $dpath  /  A $match"
 		fi
@@ -118,8 +118,8 @@ for path in "${SPOT_CHECKS[@]}"; do
 	# extends past this phase, which the old path's log answers equivalently.
 	follow_path="$path"
 	if [[ "$MODE" == "staged" ]]; then
-		old_path=$(printf '%s\n' "$NAME_STATUS" \
-			| awk -v p="$path" '$1 ~ /^R/ && $3 == p {print $2; exit}')
+		old_path=$(printf '%s\n' "$NAME_STATUS" |
+			awk -v p="$path" '$1 ~ /^R/ && $3 == p {print $2; exit}')
 		if [[ -n "$old_path" ]]; then
 			follow_path="$old_path"
 		fi
@@ -178,10 +178,9 @@ for path in "${CODEX_SKILL_MDS[@]}"; do
 		continue
 	fi
 	# Non-R100 — look for substantive content lines (not diff/rename headers).
-	content_changes=$(git diff $DIFF_RANGE -M -- "$path" \
-		| grep -E '^[+-]' \
-		| grep -Ev '^(\+\+\+|---|\+\+\+ b/|--- a/)' \
-		| wc -l | tr -d ' ' || true)
+	content_changes=$(git diff $DIFF_RANGE -M -- "$path" |
+		grep -E '^[+-]' |
+		grep -Ecv '^(\+\+\+|---|\+\+\+ b/|--- a/)' || true)
 	if [[ "${content_changes:-0}" -gt 0 ]]; then
 		fail "$path shows $content_changes content-line changes — must be rename-only"
 	fi

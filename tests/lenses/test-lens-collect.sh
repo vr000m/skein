@@ -595,8 +595,8 @@ fi
 
 out_p_d="$(run_collect "$dir_d" deep-review d-run "architecture:u1,u2,u3,u4,u5" 2>/dev/null || true)"
 out_p_g="$(run_collect "$dir_g" deep-review g-run "architecture:u1,u2,u3,u4,u5" 2>/dev/null || true)"
-if printf '%s' "$out_p_d" | jq -e '.architecture.status == "partial"' >/dev/null 2>&1 \
-	&& printf '%s' "$out_p_g" | jq -e '.architecture.status == "timed_out"' >/dev/null 2>&1; then
+if printf '%s' "$out_p_d" | jq -e '.architecture.status == "partial"' >/dev/null 2>&1 &&
+	printf '%s' "$out_p_g" | jq -e '.architecture.status == "timed_out"' >/dev/null 2>&1; then
 	pass "(p) --attempts absent -> unchanged behaviour on existing fixtures ((d) partial, (g) timed_out)"
 else
 	fail "(p) --attempts absent regression (d)/(g) changed status"
@@ -611,10 +611,10 @@ make_scratch_repo "$dir_q"
 
 for bad_attempts in "logic" "logic:0" "logic:x" "lo*c:1" "-x:1" "logic:-1"; do
 	set +e
-	out_q="$(
+	(
 		cd "$dir_q" && bash "$SCRIPT" --skill deep-review --run-id q-run \
 			--expected "logic:u1" --attempts "$bad_attempts" 2>"$dir_q/stderr"
-	)"
+	) >/dev/null
 	q_exit=$?
 	set -e
 	if [[ $q_exit -eq 2 ]]; then
@@ -677,7 +677,7 @@ else
 fi
 
 set +e
-out_s2="$(cd "$dir_s" && bash "$SCRIPT" --skill deep-review --run-id s-run --expected 'lo*c:u1' 2>"$dir_s/stderr2")"
+(cd "$dir_s" && bash "$SCRIPT" --skill deep-review --run-id s-run --expected 'lo*c:u1' 2>"$dir_s/stderr2") >/dev/null
 s2_exit=$?
 set -e
 if [[ $s2_exit -eq 2 ]]; then
@@ -833,8 +833,8 @@ JSONL
 	set +e
 	reconciled_w="$(
 		cd "$dir_w" && bash "$SCRIPT" --skill deep-review --run-id w-run \
-			--expected "logic:u1" --expected "security:u1" --findings-jsonl \
-			| bash "$RECONCILE" --skill deep-review
+			--expected "logic:u1" --expected "security:u1" --findings-jsonl |
+			bash "$RECONCILE" --skill deep-review
 	)"
 	w_exit=$?
 	set -e
@@ -999,7 +999,6 @@ if [[ "$x6_root_status" == "missing" ]]; then
 else
 	fail "(x6b) G12c: explicit --root outside a worktree failed (status='$x6_root_status')"
 fi
-
 
 # ---------------------------------------------------------------------------
 # (C5) attempt-merge dedup must not fold path case.
@@ -1380,9 +1379,11 @@ fi
 # units never reach a command line, and a file path or plan section may
 # legitimately contain '$' or a quote. Rejecting it would be a whitelist,
 # which is exactly what this deliberately is not.
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 printf '%s' '{"logic":["src/$weird (v2).ts"]}' >"$g4_root/meta.json"
 g4_meta_units="$(bash "$SCRIPT" --root "$g4_root" --skill deep-review --run-id g4-run \
 	--expected-file "$g4_root/meta.json" 2>/dev/null | jq -c '.logic.unreviewed' || true)"
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 if [[ "$g4_meta_units" == '["src/$weird (v2).ts"]' ]]; then
 	pass "(G4) a shell metacharacter inside --expected-file is accepted verbatim (file transport never reaches a shell)"
 else

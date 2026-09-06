@@ -14,7 +14,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_applier
@@ -36,6 +36,7 @@ run_applier "$case1" --test-cmd "true" "$case1/findings.json"
 
 if [[ $LAST_RC -ne 0 ]]; then
 	fail "unused_import-accept: applier exited $LAST_RC (expected 0)"
+	# shellcheck disable=SC2001  # per-line prefix over a multiline var; param expansion cannot anchor ^ per-line
 	echo "$LAST_OUT" | sed 's/^/  /'
 else
 	after_head="$(head_sha "$case1")"

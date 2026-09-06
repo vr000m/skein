@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 plan="$REPO_ROOT/docs/dev_plans/20260515-feature-review-auto-fix-tier.md"

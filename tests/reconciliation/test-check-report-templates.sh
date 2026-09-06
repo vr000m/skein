@@ -89,6 +89,7 @@ TARGET="$SCRATCH/plugins/skein/skills/deep-review/SKILL.md"
 # finding.
 grep -v -E '^\*\*Full findings JSON\*\*: \.' "$TARGET" >"$TARGET.tmp"
 mv "$TARGET.tmp" "$TARGET"
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 printf '\nSee the `**Full findings JSON**:` footer line for the persisted state file path.\n' >>"$TARGET"
 
 # Sanity: require_pattern's own substring check must still find the marker

@@ -17,6 +17,7 @@
 #
 # Exit codes: 0 all assertions pass, 1 any assertion fails.
 
+# shellcheck disable=SC2016  # single-quoted literal grep/regex pattern text throughout, not shell expansions
 set -euo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"

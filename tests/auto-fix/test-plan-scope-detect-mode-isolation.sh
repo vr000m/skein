@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_plan_scope_detect

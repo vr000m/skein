@@ -63,6 +63,7 @@ fi
 # Track every temp ledger we create so we can clean up unconditionally on
 # exit, including on early failure.
 TMP_LEDGERS=()
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() {
 	local f
 	for f in "${TMP_LEDGERS[@]:-}"; do

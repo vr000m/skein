@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./lib.sh
+# shellcheck source=tests/auto-fix/lib.sh disable=SC1091
 source "$SCRIPT_DIR/lib.sh"
 
 require_applier
@@ -25,7 +25,10 @@ cp "$FIXTURES_DIR/unused_import-accept.jsonl" "$d/findings.json"
 
 # Explicitly unset AUTO_FIX_TEST_CMD and do NOT pass --test-cmd.
 set +e
-LAST_OUT="$(cd "$d" && unset AUTO_FIX_TEST_CMD; bash "$APPLIER" "$d/findings.json" 2>&1)"
+LAST_OUT="$(
+	cd "$d" && unset AUTO_FIX_TEST_CMD
+	bash "$APPLIER" "$d/findings.json" 2>&1
+)"
 LAST_RC=$?
 set -e
 
@@ -52,6 +55,7 @@ if grep -Eqi 'test[-_ ]cmd|AUTO_FIX_TEST_CMD|test command' <<<"$LAST_OUT"; then
 	pass "missing --test-cmd: error mentions test command requirement"
 else
 	fail "missing --test-cmd: error did not mention test-cmd / AUTO_FIX_TEST_CMD"
+	# shellcheck disable=SC2001  # per-line prefix over a multiline var; param expansion cannot anchor ^ per-line
 	echo "$LAST_OUT" | sed 's/^/  /'
 fi
 

@@ -173,7 +173,7 @@ else
 	fail "$(basename "$SKILL_MD") is empty"
 fi
 
-line_count=$(wc -l < "$SKILL_MD")
+line_count=$(wc -l <"$SKILL_MD")
 if [[ "$line_count" -gt 200 ]]; then
 	pass "$(basename "$SKILL_MD") has substantial content (>200 lines, not truncated)"
 else

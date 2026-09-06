@@ -150,7 +150,8 @@ has_test() {
 	local runtime="$1"
 	local file="$2"
 	local test_name="$3"
-	local path="$REPO_ROOT/$(runtime_new_tree "$runtime")/tests/$file"
+	local path
+	path="$REPO_ROOT/$(runtime_new_tree "$runtime")/tests/$file"
 	[[ -f "$path" ]] || path="$REPO_ROOT/.$runtime/skills/conduct/tests/$file"
 	[[ -f "$path" ]] || return 1
 	grep -q "^def $test_name\\b" "$path"

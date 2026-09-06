@@ -185,6 +185,7 @@ assert_grep "$SKILL_MD" '\*\*Goal:\*\*.*\(optional\)|\*\*Goal:\*\*.*optional' \
 assert_grep "$SKILL_MD" '\*\*Goal:\*\*.*\{\{PHASE_GOAL\}\}|\{\{PHASE_GOAL\}\}.*\*\*Goal:\*\*' \
 	"SKILL.md documents \`**Goal:**\` as the source parsed into \`{{PHASE_GOAL}}\`"
 
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 assert_grep "$SKILL_MD" '\|\s*`?\{\{PHASE_GOAL\}\}`?\s*\|' \
 	"SKILL.md's Step 3 placeholder-substitution table includes a \`{{PHASE_GOAL}}\` row"
 

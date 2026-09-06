@@ -73,8 +73,8 @@ mkdir -p "$SCRATCH"
 # --- (b) deep-review final persist pipeline, verbatim from SKILL.md ---------
 # The Step 5 block is the fenced pair of lines ending in `--from-collector`.
 # Strip only the bracketed optional flags, which are documentation placeholders.
-dr_cmd="$(grep -B1 -- '--from-collector$' "$DR_SKILL" | grep -v '^--$' \
-	| sed -E 's/ \[--attempts "<lens>:<n>" \.\.\.\] \[--running "<lens>:<n>" \.\.\.\]//')"
+dr_cmd="$(grep -B1 -- '--from-collector$' "$DR_SKILL" | grep -v '^--$' |
+	sed -E 's/ \[--attempts "<lens>:<n>" \.\.\.\] \[--running "<lens>:<n>" \.\.\.\]//')"
 if [[ "$(printf '%s\n' "$dr_cmd" | wc -l | tr -d ' ')" != "2" ]]; then
 	fail "(b) could not extract the deep-review Step 5 persist block from SKILL.md"
 else
@@ -83,13 +83,14 @@ else
 	printf '%s' '{"logic":["u1"]}' >"$SCRATCH/.deep-review/lenses/$RUN_ID/expected.json"
 	if (
 		cd "$SCRATCH"
+		# shellcheck disable=SC2030  # intentionally scoped to this eval subshell only
 		export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 		# shellcheck disable=SC2034 # consumed by the eval'd SKILL.md command line
 		REPO_ROOT="$SCRATCH" BASE_COMMIT=aaa HEAD_COMMIT=bbb DIFF_HASH=ccc REVIEW_FOCUS_HASH=""
 		eval "$dr_cmd"
-	) >"$TMPDIR_ROOT/dr.out" 2>"$TMPDIR_ROOT/dr.err" \
-		&& [[ -f "$SCRATCH/.deep-review/latest-claude.json" ]] \
-		&& jq -e '.run_id == "spaces-run" and (.lenses | has("logic"))' "$SCRATCH/.deep-review/latest-claude.json" >/dev/null; then
+	) >"$TMPDIR_ROOT/dr.out" 2>"$TMPDIR_ROOT/dr.err" &&
+		[[ -f "$SCRATCH/.deep-review/latest-claude.json" ]] &&
+		jq -e '.run_id == "spaces-run" and (.lenses | has("logic"))' "$SCRATCH/.deep-review/latest-claude.json" >/dev/null; then
 		pass "(b) deep-review Step 5 pipeline writes latest-claude.json under paths with spaces"
 	else
 		fail "(b) deep-review Step 5 pipeline failed under paths with spaces"
@@ -98,8 +99,8 @@ else
 fi
 
 # --- (c) review-plan final state writer, verbatim prefix from SKILL.md ------
-rp_prefix="$(grep -E '^"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/review-plan/scripts/persist-review-state.sh --harness claude ' "$RP_SKILL" \
-	| head -1 | sed -E 's/ --plan-path .*$//')"
+rp_prefix="$(grep -E '^"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/review-plan/scripts/persist-review-state.sh --harness claude ' "$RP_SKILL" |
+	head -1 | sed -E 's/ --plan-path .*$//')"
 if [[ -z "$rp_prefix" ]]; then
 	fail "(c) could not extract the review-plan state-writer invocation from SKILL.md"
 else
@@ -107,12 +108,13 @@ else
 	printf '# plan\n' >"$plan"
 	if (
 		cd "$SCRATCH"
+		# shellcheck disable=SC2030,SC2031  # intentionally scoped to and read within this eval subshell only
 		export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
-		printf '%s' '{"schema_version":2,"summary":{},"findings":[],"related":[]}' \
-			| eval "$rp_prefix --plan-path \"\$plan\" --plan-hash deadbeef --run-id spaces-run -"
-	) >"$TMPDIR_ROOT/rp.out" 2>"$TMPDIR_ROOT/rp.err" \
-		&& [[ -f "$SCRATCH/.review-plan/latest-claude.json" ]] \
-		&& jq -e '.run_id == "spaces-run"' "$SCRATCH/.review-plan/latest-claude.json" >/dev/null; then
+		printf '%s' '{"schema_version":2,"summary":{},"findings":[],"related":[]}' |
+			eval "$rp_prefix --plan-path \"\$plan\" --plan-hash deadbeef --run-id spaces-run -"
+	) >"$TMPDIR_ROOT/rp.out" 2>"$TMPDIR_ROOT/rp.err" &&
+		[[ -f "$SCRATCH/.review-plan/latest-claude.json" ]] &&
+		jq -e '.run_id == "spaces-run"' "$SCRATCH/.review-plan/latest-claude.json" >/dev/null; then
 		pass "(c) review-plan state writer writes latest-claude.json under paths with spaces"
 	else
 		fail "(c) review-plan state writer failed under paths with spaces"

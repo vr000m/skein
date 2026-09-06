@@ -394,7 +394,7 @@ elif [[ ! -d "$case_f_dir/.deep-review/latest-claude.json" ]]; then
 	fail "(f) refuses to write when the target path is a pre-existing directory (target directory no longer present)"
 elif [[ -n "$(find "$case_f_dir/.deep-review/latest-claude.json" -mindepth 1 2>/dev/null)" ]]; then
 	fail "(f) refuses to write when the target path is a pre-existing directory (a stray temp file was moved inside it)"
-	ls -la "$case_f_dir/.deep-review/latest-claude.json" | sed 's/^/    /'
+	while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_f_dir/.deep-review/latest-claude.json")
 else
 	pass "(f) refuses to write when the target path is a pre-existing directory, and leaves it untouched"
 fi
@@ -424,7 +424,7 @@ elif ! grep -Fq "persist-deep-review-state:" "$case_g_dir/stderr"; then
 	sed 's/^/    /' "$case_g_dir/stderr"
 elif [[ -e "$case_g_dir/.deep-review" ]]; then
 	fail "(g) refuses multi-document input (a file was written despite rejection)"
-	ls -la "$case_g_dir/.deep-review" | sed 's/^/    /'
+	while IFS= read -r _diag_line; do echo "    $_diag_line"; done < <(ls -la "$case_g_dir/.deep-review")
 else
 	pass "(g) refuses multi-document input, writes nothing"
 fi

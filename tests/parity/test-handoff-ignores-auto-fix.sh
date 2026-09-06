@@ -40,6 +40,7 @@ if [[ ! -f "$HANDOFF" ]]; then
 	echo "Summary: $pass_count passed, $fail_count failed"
 	exit 1
 fi
+# shellcheck disable=SC2016  # literal grep/regex pattern text, not shell expansion
 if grep -Eq 'grep[[:space:]]+-[a-zA-Z]*q[[:space:]]+"Conducted-By: \$runtime"' "$HANDOFF"; then
 	pass "handoff gate still matches case-sensitive 'Conducted-By: <runtime>'"
 else
