@@ -42,7 +42,7 @@ docs/skills_architecture/    Skills architecture design docs (source; rendered v
 justfile                     Task runner config
 .deep-review/                Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
 .review-plan/                Gitignored auto-fix manifests + latest-<harness>.json reconciled-envelope state for /review-plan (per-run)
-.fan-out-state.json          Gitignored per-run state for /fan-out (repo_root plus one record per agent: pid, branch, worktree, log); read by fan-out.sh status/cancel/cleanup and removed by cleanup
+.fan-out-state.json          Gitignored per-run state for /fan-out (repo_root plus one record per agent: pid, branch, worktree, log); read by fan-out.sh status/cancel; cleanup reads it only as a diagnostic cross-check (its targets come from `git worktree list`) and removes it
 docs/_plan_view/             Gitignored generated HTML output from /plan-view (default out dir; sibling of docs/dev_plans/)
 _rich_manifest.json          /plan-view `--rich` manifest of plans needing LLM re-render (written inside the output dir)
                              Deterministic and rich pages are cross-linked: forward links (plain → `.rich.html`) are emitted unconditionally; back-links (rich → plain/index, breadcrumb) are injected idempotently by `relink_rich_pages()` on every plain run, back-filling pre-existing rich pages.
