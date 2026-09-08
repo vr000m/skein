@@ -4,6 +4,10 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- The project `.claude/CLAUDE.md` no longer restates the global `~/.claude/CLAUDE.md` (it was a near-verbatim copy, so both loaded on every session in this repo). It now carries only skein-specific rules — releases through `skein:release`, the review gates including that `/code-review` can never be chained by `review-gauntlet`, resuming an interrupted `conduct`/`review-gauntlet` via `--resume`, the divergent mirror path anchors, and backgrounding `just ci` — and points at `AGENTS.md` for the detail.
+- `tests/plugin/test-claude-md-hygiene.sh` asserts the hygiene rules by content rather than by H2 heading, on both the repo file and the `GLOBAL_CLAUDE_MD`-gated global file. The heading form coupled skein's CI to the global file's section layout, which is owned by the sync-computer repo; a rule that moves under another heading there no longer fails skein, while a rule that is deleted still does.
+
 ## [0.7.1] - 2026-09-06
 
 ### Added
