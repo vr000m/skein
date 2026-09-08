@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- `review-gauntlet` Guardrail 6 (both mirrors): every fixer brief must make the fixer state a one-line root cause per substantive finding, explicitly distinguished from the reported line, and the applied fix must address that cause rather than silencing the symptom. A fix whose stated root cause survives it is incomplete and must not be reported as applied. Guardrail 3 already forces a regression test and Guardrail 4 forces the claimed edit to exist in the live diff, but a fix could satisfy both while patching only the line a gate happened to name. Pinned on both mirrors by `tests/gauntlet/test-gauntlet-skill-shape.sh`.
+
 ### Changed
 - The project `.claude/CLAUDE.md` no longer restates the global `~/.claude/CLAUDE.md` (it was a near-verbatim copy, so both loaded on every session in this repo). It now carries only skein-specific rules — releases through `skein:release`, the review gates including that `/code-review` can never be chained by `review-gauntlet`, resuming an interrupted `conduct`/`review-gauntlet` via `--resume`, the divergent mirror path anchors, and backgrounding `just ci` — and points at `AGENTS.md` for the detail.
 - `AGENTS.md` gains a **Contributing Hygiene** section carrying the contributor-facing rules that the trim would otherwise have left in no tracked file: feature branches over commits to `main`, the ban on `git add -A`/`--all`/`.`, no squash-merges, a secrets check before committing, `ruff format` as well as `ruff check`, and backgrounding `just ci`. Previously these lived only in the project `.claude/CLAUDE.md`, so a contributor or agent without the maintainer's personal `~/.claude/CLAUDE.md` had none of them.
