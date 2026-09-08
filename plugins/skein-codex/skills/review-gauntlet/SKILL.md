@@ -265,6 +265,12 @@ Every fixer brief's Constraints section must require `just ci` (the whole lint +
 
 The loop verifies each fix against the reported finding and against whichever checks the brief happened to list, but nothing else in the round re-runs suites the touched files are wired into elsewhere. A fixer that unquotes an inline placeholder in a SKILL.md can break a lens-shape assertion two directories away; with a subset brief that regression stays invisible until a later gate happens to run that suite, at which point it arrives as a "new" finding, resets nothing, and feeds the K=2 stall rule toward `non-converge`.
 
+### Guardrail 6 - state the root cause, not just the reported symptom
+
+Every fixer brief's Constraints section must require the fixer, for each substantive finding routed to direct edits (Guardrail 2's second bullet), to state a one-line root cause: the underlying defect, explicitly distinguished from the reported line/symptom. When the reported line is itself the root cause, the fixer must say so explicitly; omitting the statement is not acceptable.
+
+The applied fix must address that stated root cause, not merely silence the reported symptom. If the stated root cause remains, the fix is incomplete and the fixer must not report the finding as applied. This is a fixer-prompt requirement, not a mechanical gate; like Guardrails 3 and 4, there is no deterministic mechanical backstop, and the parity test pins only this section and its key phrases.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.

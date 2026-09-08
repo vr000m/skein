@@ -206,6 +206,14 @@ Every fixer brief's Constraints section must require `just ci` (the whole lint +
 
 The loop verifies each fix against the reported finding and against whichever checks the brief happened to list, but nothing else in the round re-runs suites the touched files are wired into elsewhere. A fixer that unquotes an inline placeholder in a SKILL.md can break a lens-shape assertion two directories away; with a subset brief that regression stays invisible until a later gate happens to run that suite, at which point it arrives as a "new" finding, resets nothing, and feeds the K=2 stall rule toward `non-converge`.
 
+### Guardrail 6 — state the root cause, not just the reported symptom
+
+Every fixer brief's Constraints section must require the fixer, for each substantive finding routed to direct edits (Guardrail 2's second bullet), to state a one-line root cause: the underlying defect, explicitly distinguished from the reported line/symptom. When the reported line *is* itself the root cause, the fixer must say so explicitly — omitting the statement is not acceptable.
+
+The applied fix must address that stated root cause, not merely silence the reported symptom. If the stated root cause survives the fix, the finding is incomplete and the fixer must not report it as applied — the same contract Guardrail 3 applies to a substantive fix with no named regression test.
+
+This is a fixer-prompt requirement, not a mechanical gate — like Guardrails 3 and 4, there is no deterministic backstop, only the instruction, and the parity test pins only that this section and its key phrases exist. It closes a gap the other five leave open: Guardrail 3 forces a test that reproduces the reported failure and Guardrail 4 forces the claimed edit to exist in the live diff, but a fix can satisfy both while patching only the line the gate happened to name. A fixer dispatched straight from a finding tends to write exactly that patch; asking for the cause in one line before the edit is what separates the two.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 `review-gauntlet` has its own bundled copies of the shared pipeline, placed by `scripts/bundle-appliers.sh` (driven by `BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh`) — byte-identical to the repo canonical, enforced by `tests/parity/test-applier-bundle-parity.sh`. **Never reach into deep-review's own `scripts/` directory via a relative parent-directory path** — always resolve this skill's own bundled copy. Resolve the skill's own bundled directory the same way `deep-review/SKILL.md` does — bind `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/` once and run every operative command from there. If that path is absent, abort with a clear error; never fall back to applying fixes by hand or to an unbundled script.

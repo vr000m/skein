@@ -724,6 +724,25 @@ assert_guardrail5_for "$SKILL_MD" "Claude mirror"
 assert_guardrail5_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
+# Guardrail 6: every fixer brief makes the fixer state a root cause distinct
+# from the reported symptom, and the fix must address it. Pinned on BOTH
+# mirrors so a section dropped from one twin cannot leave the suite green.
+# ---------------------------------------------------------------------------
+
+assert_guardrail6_for() {
+	local file="$1" label="$2"
+	assert_grep_i "$file" 'guardrail 6' \
+		"$label: documents Guardrail 6 heading/label"
+	assert_grep_i "$file" 'root cause' \
+		"$label: requires a stated root cause on every substantive fix"
+	assert_grep_i "$file" 'symptom' \
+		"$label: distinguishes the root cause from the reported symptom"
+}
+
+assert_guardrail6_for "$SKILL_MD" "Claude mirror"
+assert_guardrail6_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
 # `pipefail`.
 #

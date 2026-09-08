@@ -135,6 +135,17 @@ For local development against a clone, swap the marketplace source for a path: `
 
 **Cleaning up pre-plugin flat copies:** the older flat layout (`~/.claude/skills/<name>/` and `~/.codex/skills/<name>/` populated by the deleted `promote-skills.sh` / `bootstrap-skills.sh`) is removed via `scripts/delete-skills.sh`. Its destructive target is the immutable 11-skill migration-era set (`conduct`, `content-draft`, `content-review`, `deep-review`, `dev-plan`, `fan-out`, `plan-view`, `review-plan`, `rfc-finder`, `spec-compliance`, `update-docs`); post-migration `grill`, `release`, and `review-gauntlet` directories are deliberately preserved. Back up first per the repo's destructive-ops rule. Regression command: `uvx pytest tests/parity/test_delete_skills.py -q`.
 
+## Contributing Hygiene
+
+These rules apply to every contributor and agent working in this repo, independent of any personal `~/.claude/CLAUDE.md`.
+
+- **Work on feature branches.** Never commit directly to `main`: branch, implement, update docs, then open a PR.
+- **Never `git add -A`, `git add --all`, or `git add .`.** They sweep untracked scratch and dev-plan files into commits. Stage explicit paths. A PreToolUse hook blocks these for Claude Code, but the rule holds regardless of harness.
+- **Never squash-merge PRs.** Use `gh pr merge --merge --delete-branch` so individual commit history survives.
+- **Check staged files for secrets before committing** — PII, private keys, credentials, tokens. Never commit them.
+- **Run `ruff format` AND `ruff check` before pushing Python changes**, not just `check`.
+- **Run `just ci` before opening or updating a PR**, and background it (a full run exceeds a 2-minute foreground timeout).
+
 ## Skill Workflow
 
 Recommended development workflow using skills:
