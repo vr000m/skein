@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Phase 4 acceptance test: assert the four insights-report hygiene failures
-# each have a written rule or a mechanical guard.
+# Phase 4 acceptance test: assert that the hygiene rules THIS repo owns each
+# have a written rule in a tracked file. Three of the four original
+# insights-report failures travelled to sync-computer with the files they
+# govern (see the ownership note below); what is asserted here is the
+# skein-owned remainder.
 #
 # Ownership split (see AGENTS.md): files under ~/.claude/ -- CLAUDE.md and
 # hooks/* alike -- are owned by the sync-computer repo, which now enforces
@@ -19,8 +22,8 @@
 #     (release via skein:release, the review gates, backgrounded `just ci`).
 #     It is NOT required to restate the global hygiene rules.
 #  2. AGENTS.md unconditionally carries the contributor rules that must stay
-#     repo-tracked (sweeping-git-add ban, secrets check, feature branches,
-#     ruff format alongside ruff check).
+#     repo-tracked (sweeping-git-add ban, no squash-merges, secrets check,
+#     feature branches, ruff format alongside ruff check, backgrounded `just ci`).
 #
 # tests/plugin/noqa-probe.sh stays in this repo and is NOT superseded by
 # sync-computer's hook check: the probe reproduces the MECHANISM (ruff really
@@ -68,7 +71,7 @@ assert_rule() {
 REPO_CLAUDE_MD=".claude/CLAUDE.md"
 REPO_RULES=(
 	"repo file routes releases through skein:release|skein:release"
-	"repo file names the review gates|review-gauntlet"
+	"repo file names the review gates|skein:review-gauntlet"
 	"repo file backgrounds the full CI run|background.*just ci|just ci.*run_in_background"
 )
 if [[ ! -f "$REPO_CLAUDE_MD" ]]; then
@@ -82,15 +85,16 @@ fi
 # --- 2. AGENTS.md: contributor rules that must stay repo-tracked -----------
 # These moved out of .claude/CLAUDE.md when it was trimmed to skein-specific
 # rules. They are contributor-facing, so they must live in a tracked file
-# rather than only in the operator's personal ~/.claude/CLAUDE.md. Unlike
-# block 2, this block runs on a CI runner.
+# rather than only in the operator's personal ~/.claude/CLAUDE.md. Like block
+# 1, it runs unconditionally on a CI runner.
 AGENTS_MD="AGENTS.md"
 AGENTS_RULES=(
 	"bans the sweeping git add forms|git add -A"
 	"requires feature branches over commits to main|feature branches"
-	"forbids squash-merging|never squash-merge|squash-merge"
+	"forbids squash-merging|never squash-merge"
 	"requires a secrets check before committing|secrets before committing|private keys"
 	"requires ruff format as well as ruff check before pushing|ruff format. AND .ruff check"
+	"requires a backgrounded just ci before opening or updating a PR|just ci. before opening or updating a PR"
 )
 if [[ ! -f "$AGENTS_MD" ]]; then
 	fail "repo file missing: $AGENTS_MD"
