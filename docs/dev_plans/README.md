@@ -56,6 +56,8 @@ Component values here are hand-entered (no plan file to derive from) and best-ef
 
 | Date | Type | Name | Comp | PR |
 |------|------|------|------|----|
+| 2026-09-10 | test | drop-cross-repo-hygiene-assertions | meta | [#38](https://github.com/vr000m/skein/pull/38) |
+| 2026-09-08 | chore | split-project-global-claude-md | meta | [#37](https://github.com/vr000m/skein/pull/37) |
 | 2026-09-06 | chore | port-codex-skill-hardening | planning-skills | [#30](https://github.com/vr000m/skein/pull/30) |
 | 2026-06-03 | feature | review-plan-assumptions-lens | review-skills | [#4](https://github.com/vr000m/skein/pull/4) |
 | 2026-05-24 | feature | plan-view-rich-navigable | planning-skills | [#31](https://github.com/vr000m/skills.md/pull/31) |
