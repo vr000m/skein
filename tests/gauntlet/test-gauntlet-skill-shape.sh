@@ -743,6 +743,28 @@ assert_guardrail6_for "$SKILL_MD" "Claude mirror"
 assert_guardrail6_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
+# Guardrail 7: a fix that changes a mode/flag on a mechanism used elsewhere in
+# the touched files must sweep the other call sites and state the old and new
+# invariants. Pinned on BOTH mirrors so a section dropped from one twin cannot
+# leave the suite green.
+# ---------------------------------------------------------------------------
+
+assert_guardrail7_for() {
+	local file="$1" label="$2"
+	assert_grep_i "$file" 'guardrail 7' \
+		"$label: documents Guardrail 7 heading/label"
+	assert_grep_i "$file" 'sweep the blast radius' \
+		"$label: names the blast-radius sweep (not the fixer's blast-radius self-classification)"
+	assert_grep_i "$file" 'old invariant' \
+		"$label: requires the old and new invariants to be stated side by side"
+	assert_grep_i "$file" 'encode/decode|escape/unescape|serialize/deserialize' \
+		"$label: calls out paired operations as the case to watch"
+}
+
+assert_guardrail7_for "$SKILL_MD" "Claude mirror"
+assert_guardrail7_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
 # `pipefail`.
 #

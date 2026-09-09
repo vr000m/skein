@@ -271,6 +271,16 @@ Every fixer brief's Constraints section must require the fixer, for each substan
 
 The applied fix must address that stated root cause, not merely silence the reported symptom. If the stated root cause remains, the fix is incomplete and the fixer must not report the finding as applied. This is a fixer-prompt requirement, not a mechanical gate; like Guardrails 3 and 4, there is no deterministic mechanical backstop, and the parity test pins only this section and its key phrases.
 
+### Guardrail 7 - sweep the blast radius before finalizing a mode or flag change
+
+This guardrail fires only when a fix changes a MODE or FLAG on a mechanism already used elsewhere in the touched files - a command flag, a config key, a filter regex, or shared state - not on pure line-content edits. Both observed regressions were flag changes on a shared git fetch invocation, not content edits; gating every trivial fix behind a call-site sweep would slow the loop for no observed benefit.
+
+When it fires, every fixer brief's Constraints section must require the fixer to grep every other occurrence of that mechanism in the touched files and state the invariant each call site depends on before finalizing the fix, with the old invariant and new invariant shown side by side. Treat paired operations as a special case: encode/decode, escape/unescape, and serialize/deserialize often build the reverse side the same naive way, so the reverse call site must be swept too.
+
+If the sweep shows another call site relying on the old invariant, the fix is not complete: the fixer must either preserve that invariant or report the conflict, and must not report the finding as applied on the strength of the reported line alone. Guardrail 6 makes the fixer look backward from the reported line to the cause; this guardrail makes it look sideways to other call sites of the same mechanism, since a fix can satisfy Guardrail 6 fully and still break a second call site.
+
+This is a fixer-prompt requirement with no deterministic mechanical backstop; the parity test pins only that this section and its key phrases exist.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.

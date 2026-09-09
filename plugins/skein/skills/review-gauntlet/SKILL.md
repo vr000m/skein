@@ -214,6 +214,18 @@ The applied fix must address that stated root cause, not merely silence the repo
 
 This is a fixer-prompt requirement, not a mechanical gate — like Guardrails 3 and 4, there is no deterministic backstop, only the instruction, and the parity test pins only that this section and its key phrases exist. It closes a gap the other five leave open: Guardrail 3 forces a test that reproduces the reported failure and Guardrail 4 forces the claimed edit to exist in the live diff, but a fix can satisfy both while patching only the line the gate happened to name. A fixer dispatched straight from a finding tends to write exactly that patch; asking for the cause in one line before the edit is what separates the two.
 
+### Guardrail 7 — sweep the blast radius before finalizing a mode or flag change
+
+This guardrail fires only when a fix changes a **mode or flag on a mechanism already used elsewhere in the touched files** — a command flag, a config key, a filter regex, or shared state. It does not fire on pure line-content edits. Both regressions that motivated it were flag changes on a shared `git fetch --tags` invocation rather than content edits, and gating every trivial fix behind a call-site sweep would slow the loop for no observed benefit.
+
+When it fires, the fixer brief's Constraints section must require the fixer to grep every other occurrence of that mechanism in the touched file(s) and state the invariant each call site depends on — **the old invariant and the new one side by side** — before finalizing the fix. Paired operations are the case to watch: encode/decode, escape/unescape, serialize/deserialize. The reverse side is often built the same naive way and breaks in reverse, so it must be swept too.
+
+If the sweep shows another call site relying on the old invariant, the fix is **not** complete: the fixer must either preserve that invariant or report the conflict, and must not report the finding as applied on the strength of the reported line alone.
+
+Guardrail 6 makes the fixer look *backward* from the reported line to the cause; this one makes it look *sideways* to other call sites of the same mechanism. A fix can satisfy Guardrail 6 fully and still break a second call site — which is exactly what happened twice in the release skill's own review cycle, where a tag-points-at-HEAD check broke re-sync (whose tag legitimately points at a historical commit) and a `--prune-tags` fetch flag deleted the documented local-only-tag recovery path. Each fix was correct about the line it was given and wrong about the mechanism behind it.
+
+This is a fixer-prompt requirement, not a mechanical gate — like Guardrails 3, 4 and 6, there is no deterministic backstop, only the instruction, and the parity test pins only that this section and its key phrases exist.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 `review-gauntlet` has its own bundled copies of the shared pipeline, placed by `scripts/bundle-appliers.sh` (driven by `BUNDLE_SKILLS` in `scripts/lib/bundle-map.sh`) — byte-identical to the repo canonical, enforced by `tests/parity/test-applier-bundle-parity.sh`. **Never reach into deep-review's own `scripts/` directory via a relative parent-directory path** — always resolve this skill's own bundled copy. Resolve the skill's own bundled directory the same way `deep-review/SKILL.md` does — bind `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/` once and run every operative command from there. If that path is absent, abort with a clear error; never fall back to applying fixes by hand or to an unbundled script.
