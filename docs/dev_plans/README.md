@@ -9,8 +9,6 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-08-23 | feature | review-skills-resilience | review-skills | [#25](https://github.com/vr000m/skein/pull/25) | feature/review-skills-resilience | [plan](20260823-feature-review-skills-resilience.md) |
-| 2026-07-10 | feature | review-gauntlet-resume | review-skills | — | feature/review-gauntlet-resume | [plan](20260710-feature-review-gauntlet-resume.md) |
 | 2026-07-04 | chore | model-effort-explicit-spawns | meta | — | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
 | 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
@@ -26,10 +24,12 @@ parser can pick up the slug.
 |------|------|------|------|----|--------|------|
 | 2026-09-03 | docs | prompt-audit-claude | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-claude.md) |
 | 2026-09-03 | docs | prompt-audit-codex | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-codex.md) |
+| 2026-08-23 | feature | review-skills-resilience | review-skills | [#25](https://github.com/vr000m/skein/pull/25) | feature/review-skills-resilience | [plan](20260823-feature-review-skills-resilience.md) |
 | 2026-07-12 | feature | release-skill | meta | [#18](https://github.com/vr000m/skein/pull/18) | feature/skein-release-skill | [plan](20260712-feature-release-skill.md) |
 | 2026-07-12 | feature | deep-review-review-plan-compact-output | review-skills | [#19](https://github.com/vr000m/skein/pull/19) | feature/deep-review-compact-output | [plan](20260712-feature-deep-review-compact-output.md) |
 | 2026-07-11 | chore | skill-invocation-mode-audit | meta | [#16](https://github.com/vr000m/skein/pull/16) | chore/skill-invocation-mode-audit | [plan](20260711-chore-skill-invocation-mode-audit.md) |
 | 2026-07-11 | feature | review-plan-grill-step | review-skills | [#15](https://github.com/vr000m/skein/pull/15) | feature/review-plan-grill-step | [plan](20260711-feature-review-plan-grill-step.md) |
+| 2026-07-10 | feature | review-gauntlet-resume | review-skills | — | feature/review-gauntlet-resume | [plan](20260710-feature-review-gauntlet-resume.md) |
 | 2026-07-07 | feature | review-gauntlet-skill | review-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-review-gauntlet-skill.md) |
 | 2026-07-07 | feature | conduct-phase-goal-field | planning-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-conduct-phase-goal-field.md) |
 | 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | [#10](https://github.com/vr000m/skein/pull/10) | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |

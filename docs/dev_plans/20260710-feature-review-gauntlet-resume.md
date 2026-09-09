@@ -1,12 +1,12 @@
 # Task: Session-Resume Support for review-gauntlet
 
-**Status**: In Progress
+**Status**: Shipped
 **Component**: review-skills
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/review-gauntlet-resume
 **Created**: 2026-07-10
-**Completed**: (pending PR merge — all 4 phases implemented, tested, and reviewed as of 2026-07-11; flip to Complete/fill this date once merged, matching the 20260707 sibling plan's convention)
+**Completed**: 2026-07-11 (shipped in v0.4.1; all 4 phases plus the Guardrails 3/4 addendum are on `main` in both mirrors)
 
 ## Objective
 

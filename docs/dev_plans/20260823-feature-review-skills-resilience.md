@@ -1,12 +1,12 @@
 # Task: Review-skill resilience — bounded gates, durable lens state, regression guard, hygiene
 
-**Status**: Complete (PR #25 open)
+**Status**: Shipped
 **Component**: review-skills
 **Assigned to**: Claude (conduct) + Codex mirror via `codex:rescue`
 **Priority**: High
 **Branch**: feature/review-skills-resilience
 **Created**: 2026-08-23
-**Completed**:
+**Completed**: 2026-08-26 (PR #25 merged)
 **Review Gates**: full
 
 ## Objective
