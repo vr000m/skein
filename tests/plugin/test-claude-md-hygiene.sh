@@ -2,27 +2,31 @@
 # Phase 4 acceptance test: assert the four insights-report hygiene failures
 # each have a written rule or a mechanical guard.
 #
-# Ownership split (see AGENTS.md): the global ~/.claude/CLAUDE.md is owned by
-# the sync-computer repo, which since its PR #27 enforces the three
-# cross-project hygiene rules in its OWN CI (.github/workflows/ci.yml +
-# scripts/check-claude-md-hygiene.sh there). This file therefore no longer
-# asserts anything about the global file -- that block was removed rather
-# than left as a duplicate that only ran when an operator set an env var.
+# Ownership split (see AGENTS.md): files under ~/.claude/ -- CLAUDE.md and
+# hooks/* alike -- are owned by the sync-computer repo, which now enforces
+# their hygiene in its OWN CI. This test therefore asserts nothing about any
+# file outside this repo; both cross-repo blocks it used to carry were removed
+# rather than left as duplicates that only ran when a maintainer set an env
+# var locally:
+#   * the global ~/.claude/CLAUDE.md rules -> sync-computer's
+#     scripts/check-claude-md-hygiene.sh (its PR #27)
+#   * the format-on-edit hook's `--ignore RUF100` flag -> sync-computer's
+#     scripts/check-format-hook-hygiene.sh (its PR #28, commit 93c959a)
+#
+# What remains is what skein owns, and both blocks run on a CI runner:
 #
 #  1. Repo .claude/CLAUDE.md unconditionally carries its skein-specific rules
 #     (release via skein:release, the review gates, backgrounded `just ci`).
 #     It is NOT required to restate the global hygiene rules.
-#  1b. AGENTS.md unconditionally carries the contributor rules that must stay
+#  2. AGENTS.md unconditionally carries the contributor rules that must stay
 #     repo-tracked (sweeping-git-add ban, secrets check, feature branches,
-#     ruff format alongside ruff check). Both these blocks run on a CI runner.
-#  2. The ruff format-on-edit hook fix is checked only when reachable via
-#     HOOK_PATH (or the default $HOME/.claude/hooks/format-on-edit.sh):
-#     absent -> explicit SKIP; present -> grep the `ruff check --fix` line
-#     for `--ignore RUF100`. The hook is also sync-computer-owned, so this
-#     block SKIPs on a CI runner and is operator-verified only.
+#     ruff format alongside ruff check).
 #
-# This test does not own tests/plugin/noqa-probe.sh (a parallel implementer
-# owns that reproduction script) and does not edit implementation files.
+# tests/plugin/noqa-probe.sh stays in this repo and is NOT superseded by
+# sync-computer's hook check: the probe reproduces the MECHANISM (ruff really
+# does strip an unused `# noqa` without the flag), which is a different claim
+# from asserting the hook source carries the flag. This test does not own that
+# probe and does not edit implementation files.
 
 set -euo pipefail
 
@@ -40,10 +44,6 @@ pass() {
 fail() {
 	FAIL_COUNT=$((FAIL_COUNT + 1))
 	echo "FAIL: $1" >&2
-}
-
-skip() {
-	echo "SKIP: $1"
 }
 
 # assert_rule <file> <label> <extended-regex>
@@ -79,7 +79,7 @@ else
 	done
 fi
 
-# --- 1b. AGENTS.md: contributor rules that must stay repo-tracked -----------
+# --- 2. AGENTS.md: contributor rules that must stay repo-tracked -----------
 # These moved out of .claude/CLAUDE.md when it was trimmed to skein-specific
 # rules. They are contributor-facing, so they must live in a tracked file
 # rather than only in the operator's personal ~/.claude/CLAUDE.md. Unlike
@@ -98,22 +98,6 @@ else
 	for entry in "${AGENTS_RULES[@]}"; do
 		assert_rule "$AGENTS_MD" "${AGENTS_MD}: ${entry%%|*}" "${entry#*|}"
 	done
-fi
-
-# --- 2. ruff hook fix: gated on HOOK_PATH / default location ----------------
-DEFAULT_HOOK_PATH="${HOME}/.claude/hooks/format-on-edit.sh"
-HOOK_PATH="${HOOK_PATH:-$DEFAULT_HOOK_PATH}"
-
-if [[ ! -f "$HOOK_PATH" ]]; then
-	skip "hook not found at '$HOOK_PATH' (set HOOK_PATH to override) — ruff fix check skipped"
-else
-	# The `ruff check --fix` line must carry `--ignore RUF100` so the hook
-	# stops stripping `# noqa` comments that select RUF100 (unused noqa).
-	if grep -q -F -- "--ignore RUF100" <<<"$(grep -F -- "ruff check --fix" "$HOOK_PATH")"; then
-		pass "$HOOK_PATH: ruff check --fix line carries --ignore RUF100"
-	else
-		fail "$HOOK_PATH: ruff check --fix line missing --ignore RUF100"
-	fi
 fi
 
 # --- Summary -----------------------------------------------------------------
