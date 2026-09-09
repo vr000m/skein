@@ -164,7 +164,7 @@ Guard for all: `scripts/check-prompt-parity.sh:271-296` compares the two files a
 
 Guard for all: `tests/plugin/test-claude-md-hygiene.sh:53-57` asserts the H2 headings `## Testing`, `## Facts vs Inference`, `## Security & Diff Reviews`; no hunk touches a heading.
 
-> **Superseded (2026-09-08):** `test-claude-md-hygiene.sh` no longer asserts H2 headings. The repo file now carries only skein-specific rules and the three cross-project hygiene rules are asserted by content against the `GLOBAL_CLAUDE_MD`-gated global file; the `:53-57` line references below are historical.
+> **Superseded (2026-09-10):** `test-claude-md-hygiene.sh` no longer asserts H2 headings, and no longer asserts anything about `~/.claude/CLAUDE.md` at all. The repo file now carries only skein-specific rules, matched by content; the three cross-project hygiene rules moved to the sync-computer repo that owns the global file, which enforces them in its own CI (`scripts/check-claude-md-hygiene.sh`, its PR #27). The `GLOBAL_CLAUDE_MD` gate and the `:53-57` line references below are historical.
 
 - **D-F05** :29 `- Run \`/update-docs\`, \`/review\`, \`/security-review\`, and \`/deep-review\` before merging.` → two lines: `- When the skein plugin is available, run \`skein:review-gauntlet\` (or set a dev-plan's **Review Gates:** field) rather than hand-running the gates. Otherwise hand-run \`/code-review\` and \`/security-review\` before merging (\`/deep-review\` is a skein skill, so it is not available in that case either).` / `- Once reviews have converged, run \`/update-docs\` — review-gauntlet does not do this itself, it only chains the review gates.` — High (`/review` resolves nowhere; AD-6).
 - **D-F01** :18 — High, rewrite: drop `Reason: two consecutive fixes in one session (2026-07-12, … after the fact.`; insert after `those other call sites depend on` the parenthetical ` (pay special attention to encode/decode, escape/unescape, serialize/deserialize pairs — the reverse side is often built the same naive way and breaks in reverse)`; append `A fix that satisfies the reported line can silently break a second call site on the same mechanism, and the second break surfaces only in a later review round.`
@@ -403,7 +403,7 @@ sequenceDiagram
 
 ## Follow-ups outside this repo
 
-Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, then `./scripts/sync.sh collect claude`. Line numbers are as of 2026-09-03. None of these hunks touch a heading asserted by `test-claude-md-hygiene.sh` when `GLOBAL_CLAUDE_MD` is set.
+Route to the sync-computer repo (owner of `~/.claude/CLAUDE.md`); apply there, then `./scripts/sync.sh collect claude`. Line numbers are as of 2026-09-03. `test-claude-md-hygiene.sh` no longer asserts anything about `~/.claude/CLAUDE.md` (headings or rules), so none of these hunks is guarded from this repo; sync-computer's own `scripts/check-claude-md-hygiene.sh` guards them there.
 
 - **D-F05 (global half)** :37 drop `/review` and `/deep-review` from the hand-run gate list, leaving `/code-review` and `/security-review`; `/review` resolves nowhere and `/deep-review` is a skein skill, so neither belongs in the no-plugin fallback (same as the project-file hunk after gauntlet round 14).
 - **D-F06** :158 remove ` Reason: 2026-08-23 insights report, full suite > 2-minute foreground timeout, had to be re-run in background.`
