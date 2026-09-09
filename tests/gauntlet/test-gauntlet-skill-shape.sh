@@ -2,7 +2,7 @@
 # test-gauntlet-skill-shape.sh — Phase 1 acceptance: the Claude review-gauntlet
 # SKILL.md documents the conductor contract: frontmatter/trigger phrases, the
 # three gate slots, Option A split delegation, the convergence algorithm
-# surface, both guardrails, the three invocation modes, <untrusted-content>
+# surface, the guardrails, the three invocation modes, <untrusted-content>
 # wrapping, and reuse of the bundled scripts (never a relative-path fork of
 # deep-review's).
 #
@@ -161,7 +161,7 @@ assert_grep_i "$SKILL_MD" 'K=2|two consecutive' \
 assert_grep "$SKILL_MD" 'success_with_quarantine' \
 	"documents the \`success_with_quarantine\` terminal status"
 
-# --- Both guardrails -------------------------------------------------------
+# --- Guardrails 1-4 (Claude mirror; 5-7 are pinned on both mirrors below) ---
 
 assert_grep_i "$SKILL_MD" 'guardrail 1' \
 	"documents Guardrail 1 heading/label"
@@ -741,6 +741,89 @@ assert_guardrail6_for() {
 
 assert_guardrail6_for "$SKILL_MD" "Claude mirror"
 assert_guardrail6_for "$CODEX_SKILL_MD" "Codex mirror"
+
+# ---------------------------------------------------------------------------
+# Guardrail 7: a fix that changes a mode/flag on a mechanism used elsewhere in
+# the touched files must sweep the other call sites and state the old and new
+# invariants. Pinned on BOTH mirrors so a section dropped from one twin cannot
+# leave the suite green.
+# ---------------------------------------------------------------------------
+
+# Extract one `### <heading>` section from a SKILL.md into a temp file: from the
+# first heading line matching AWK_PATTERN through the line before the next
+# heading of the same or higher level. Prints the temp path; caller removes it.
+extract_section() {
+	local file="$1" pattern="$2" out
+	out="$(mktemp)"
+	awk -v pat="$pattern" '
+		/^#{2,6} / {
+			if (inside) { exit }
+			if (tolower($0) ~ tolower(pat)) { inside = 1 }
+		}
+		inside { print }
+	' "$file" >"$out"
+	printf '%s\n' "$out"
+}
+
+assert_guardrail7_for() {
+	local file="$1" label="$2" section
+	assert_grep_i "$file" 'guardrail 7' \
+		"$label: documents Guardrail 7 heading/label"
+
+	# Scope every phrase assertion below to the Guardrail 7 SECTION, not the
+	# whole file. A whole-file grep is not the check this block advertises: the
+	# `unconditional` assertion, for one, matched the Codex mirror purely on an
+	# unrelated shell comment 60 lines away, so it pinned nothing at all.
+	section="$(extract_section "$file" 'guardrail 7')"
+	if [[ ! -s "$section" ]]; then
+		fail "$label: could not extract a Guardrail 7 section from $file"
+		rm -f "$section"
+		return
+	fi
+
+	file="$section"
+	assert_grep_i "$file" 'sweep the blast radius' \
+		"$label: names the blast-radius sweep (not the fixer's blast-radius self-classification)"
+	assert_grep_i "$file" 'old invariant' \
+		"$label: requires the old and new invariants to be stated side by side"
+
+	# All three paired operations, asserted separately: a single alternation
+	# stayed green with two of the three dropped, and the reverse-side case is
+	# the whole point of naming them.
+	assert_grep_i "$file" 'encode/decode' \
+		"$label: names encode/decode as a paired operation to sweep"
+	assert_grep_i "$file" 'escape/unescape' \
+		"$label: names escape/unescape as a paired operation to sweep"
+	assert_grep_i "$file" 'serialize/deserialize' \
+		"$label: names serialize/deserialize as a paired operation to sweep"
+
+	# The enforcement half. Without this, the guardrail could be softened to a
+	# suggestion (sweep, then report it applied anyway) with the suite green.
+	assert_grep_i "$file" 'must not report the finding as applied' \
+		"$label: a sweep that finds another call site on the old invariant blocks the applied-claim"
+
+	# The trigger contract. The conductor writes the fixer brief BEFORE the
+	# fixer has chosen a fix, so it cannot evaluate "does this change a mode or
+	# flag?" at brief-construction time. The constraint must ride in every brief
+	# unconditionally, with the fixer evaluating the trigger at fix time --
+	# otherwise a conductor reading a conditional literally omits it and the
+	# guardrail never fires at all.
+	assert_grep_i "$file" 'unconditional' \
+		"$label: the constraint rides in every fixer brief unconditionally"
+	assert_grep_i "$file" 'fix.authoring time|fixer evaluates the trigger' \
+		"$label: the FIXER evaluates the trigger at fix-authoring time, not the conductor at brief time"
+
+	# The trigger covers an added precondition/check, not flags alone: one of the
+	# two motivating regressions was a HEAD-equality precondition added to a
+	# shared commit-resolution step, which a flags-only trigger would miss.
+	assert_grep_i "$file" 'precondition' \
+		"$label: the trigger covers an added precondition/check, not only flags"
+
+	rm -f "$section"
+}
+
+assert_guardrail7_for "$SKILL_MD" "Claude mirror"
+assert_guardrail7_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
