@@ -38,7 +38,7 @@ Confirmed distinct scope from `plan-view` before starting: `plan-view` renders `
 ### Phase 3: Validation
 - [x] `just check-prompt-parity` — passed
 - [x] `just ci` (backgrounded) — passed
-- [ ] `/code-review xhigh --fix` (human-invoked; harness blocks Claude from invoking it)
+- [x] `/code-review xhigh --fix` (Claude mirror) + Codex review of the Codex mirror — 5 fixes applied (skill unregistered in `MANAGED_SKILLS`/`EXPECTED_SKILL_COUNT`, `update-docs` step 8 content drift, missing artifact-mechanics cross-reference, missing `**Review Gates:**` header); re-verified with `just ci`
 - [ ] `skein:review-gauntlet`
 - [ ] `/update-docs` — sync this plan's status/PR link, README index, CHANGELOG
 
