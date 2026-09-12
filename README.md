@@ -15,6 +15,7 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 | grill | Yes | Yes | Relentless, one-question-at-a-time interview over a plan file or freeform idea; splits facts (looked up, never asked) from decisions (one recommendation each, blocks until accept/override/waive); standalone and user-invocable, also used inline by `review-plan` Step 6.4 for grill-eligible findings |
 | rfc-finder | Yes | Yes | Find and link to IETF RFCs and related drafts |
 | spec-compliance | Yes | Yes | Check code against RFC/W3C/WHATWG requirements |
+| show-me | Yes | Yes | Judgment-only skill for choosing when a visual (pseudocode, call tree, component tree, file tree, mermaid diagram, diff, HTML artifact) beats prose in an explanation; no subagents, tool calls, or scripts |
 | update-docs | Yes | Yes | Audit and update stale docs against branch diffs |
 | conduct | Yes | Yes | Walk a reviewed dev plan phase by phase via harness-native clean-context subagents |
 | plan-view | Yes | Yes | Generate HTML dashboard and per-plan drill-down pages from a markdown dev-plan corpus; renders Mermaid fences as live diagrams via the Mermaid CDN runtime; `--rich` mode produces LLM-rendered per-plan views constrained by a widget toolkit; deterministic and rich pages are cross-linked bidirectionally (forward links emitted unconditionally, back-links injected by `relink_rich_pages()` on every plain run) |
