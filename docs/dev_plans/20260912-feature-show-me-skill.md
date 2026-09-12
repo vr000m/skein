@@ -7,6 +7,7 @@
 | **Priority** | Low |
 | **Branch** | `feat/show-me-skill` |
 | **Created** | 2026-09-12 |
+| **Review Gates** | full |
 | **Objective** | Add a `show-me` skill that governs when to reach for a visual (pseudocode, call tree, component tree, file tree, mermaid diagram, diff, HTML artifact) instead of prose, modeled on `humanlayer/skills`' `show-me` plugin |
 
 ## Context

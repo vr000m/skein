@@ -30,7 +30,7 @@ When none of these fit better than a sentence or two, just write the sentence. N
 ## Format-specific notes
 
 - **Mermaid** renders natively in Claude Code artifacts, GitHub PR bodies, and most markdown viewers — safe to reach for anywhere markdown is rendered, including PR descriptions.
-- **HTML artifacts** need the `artifact-design` skill's design pass before publishing (load it first) and don't render in GitHub markdown (PR bodies strip `<script>`/`<style>`) — use them for in-conversation explanations and artifacts, not for content destined for a PR body or a plain markdown doc.
+- **HTML artifacts** need the `artifact-design` skill's design pass before publishing (load it first) and don't render in GitHub markdown (PR bodies strip `<script>`/`<style>`) — use them for in-conversation explanations and artifacts, not for content destined for a PR body or a plain markdown doc. If the artifact itself is a diagram (not mermaid) or a chart, load `artifact-diagramming` or `dataviz` too — they cover the mechanics `show-me` doesn't.
 - **Pseudocode / call tree / component tree / file tree / diff** are all plain fenced code blocks — they render everywhere markdown does, including PR descriptions, dev-plan files, and commit messages.
 
 ## Composing with other skills

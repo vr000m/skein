@@ -30,7 +30,7 @@ When none of these fit better than a sentence or two, just write the sentence. N
 ## Format-specific notes
 
 - **Mermaid** renders natively in supported markdown viewers and GitHub PR bodies — safe to reach for anywhere markdown is rendered, including PR descriptions.
-- **HTML artifacts** need a design pass before publishing and don't render in GitHub markdown (PR bodies strip `<script>`/`<style>`) — use them for in-conversation explanations and artifacts, not for content destined for a PR body or a plain markdown doc.
+- **HTML artifacts** need a design pass before publishing and don't render in GitHub markdown (PR bodies strip `<script>`/`<style>`) — use them for in-conversation explanations and artifacts, not for content destined for a PR body or a plain markdown doc. If the artifact itself is a diagram or a chart, the `visualize` skill covers the mechanics `show-me` doesn't.
 - **Pseudocode / call tree / component tree / file tree / diff** are all plain fenced code blocks — they render everywhere markdown does, including PR descriptions, dev-plan files, and commit messages.
 
 ## Composing with other skills

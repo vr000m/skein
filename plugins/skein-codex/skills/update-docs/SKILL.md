@@ -280,7 +280,7 @@ each modified file after editing.
 5. For README: add missing sections/entries where appropriate
 6. For CLAUDE.md: update commands, layout, or versioning sections
 7. For AGENTS.md: update commands, layout, or tool/API sections
-8. For PR description: only after explicit confirmation for the exact external change, use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — a mermaid diagram (changed data/control flow) or a file tree (which files own which responsibility) often communicates the change faster than a paragraph; stay within markdown-safe formats (no HTML artifacts — GitHub strips `<script>`/`<style>` in PR bodies)
+8. For PR description: only after explicit confirmation for the exact external change, use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu for a visual that communicates the change faster than a paragraph — mermaid diagram, file tree, or diff snippet are all markdown-safe in a PR body; no HTML artifacts (GitHub strips `<script>`/`<style>`)
 
 After applying, show a summary:
 ```
