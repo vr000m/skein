@@ -57,7 +57,7 @@ Confirmed distinct scope from `plan-view` before starting: `plan-view` renders `
 
 - `just check-prompt-parity`: passed after both mirror edits.
 - `just ci`: passed (backgrounded per project convention; full run exceeds the 2-minute foreground timeout).
-- No skill-specific automated tests were added — `show-me` has no scripts or executable logic to unit-test; parity between mirrors is the only verifiable invariant, and `check-prompt-parity` covers it.
+- No skill-specific automated tests were added — `show-me` has no scripts or executable logic to unit-test. `check-prompt-parity.sh` only diffs `rubric.md`/`*-prompt.md`/normalized-release-contract artefacts (per its own header); `show-me` ships none of those, so it hits that script's `continue` branch and is **not** content-parity-checked by it. The only automated coverage of `show-me`'s two mirrors is `test_skill_md_presence.py` (existence, not content) — mirror *content* parity was verified by hand (`codex:rescue`'s fresh-context self-review, both times it edited a `show-me`-related file). Found by deep-review's logic lens (2026-09-13): this note originally overstated `check-prompt-parity`'s coverage.
 
 ## Issues & Solutions
 
