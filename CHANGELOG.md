@@ -4,6 +4,11 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-13
+
+### Added
+- `show-me` skill (both mirrors): judgment-only guidance for choosing when a visual — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — communicates an explanation faster than prose, and how much of it to show. No subagents, tool calls, or scripts. `update-docs`'s PR-description step (Phase 4, step 8, both mirrors) now consults `show-me`'s format menu before writing prose-only, scoped to markdown-safe formats since GitHub PR bodies strip `<script>`/`<style>`.
+
 ## [0.7.2] - 2026-09-10
 
 ### Added
@@ -213,7 +218,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/vr000m/skein/compare/v0.7.2...v0.8.0
 [0.6.0]: https://github.com/vr000m/skein/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/vr000m/skein/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/vr000m/skein/compare/v0.5.3...v0.5.4

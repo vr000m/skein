@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | In Progress |
+| **Status** | Shipped |
 | **Component** | meta |
 | **Priority** | Low |
 | **Branch** | `feat/show-me-skill` |
