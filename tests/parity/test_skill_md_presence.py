@@ -46,6 +46,7 @@ MANAGED_SKILLS = [
     "review-gauntlet",
     "review-plan",
     "rfc-finder",
+    "show-me",
     "spec-compliance",
     "update-docs",
 ]

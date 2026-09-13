@@ -269,7 +269,7 @@ If `--apply` was passed, or the user confirms, apply the updates. **Always show 
 5. For README: add missing sections/entries where appropriate
 6. For CLAUDE.md: update commands, layout, or versioning sections
 7. For AGENTS.md: update commands, layout, or tool/API sections
-8. For PR description: use `gh pr edit --body` to update
+8. For PR description: use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — it owns which visual (mermaid, file tree, diff snippet, etc.) fits and which formats are markdown-safe in a PR body.
 9. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
 
 After applying, show a summary:

@@ -858,3 +858,5 @@ def test_invocation_mode_count_matches_release_catalogue() -> None:
 
     assert "2 of 14 skills — `plan-view` and `release` — clear both" in architecture
     assert "1 of 13 skills — `plan-view` — clears both" not in architecture
+    assert "2 of 15 skills — `plan-view` and `release` — clear both" in architecture
+    assert "2 of 15 skills clear both axes for Claude" in architecture
