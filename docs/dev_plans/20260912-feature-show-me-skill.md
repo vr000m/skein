@@ -39,8 +39,8 @@ Confirmed distinct scope from `plan-view` before starting: `plan-view` renders `
 - [x] `just check-prompt-parity` — passed
 - [x] `just ci` (backgrounded) — passed
 - [x] `/code-review xhigh --fix` (Claude mirror) + Codex review of the Codex mirror — 5 fixes applied (skill unregistered in `MANAGED_SKILLS`/`EXPECTED_SKILL_COUNT`, `update-docs` step 8 content drift, missing artifact-mechanics cross-reference, missing `**Review Gates:**` header); re-verified with `just ci`
-- [ ] `skein:review-gauntlet`
-- [ ] `/update-docs` — sync this plan's status/PR link, README index, CHANGELOG
+- [x] `skein:review-gauntlet` — converged after round 2; see Final Results
+- [x] `/update-docs` — synced this plan's status/PR link, README index, CHANGELOG
 
 ## Technical Specifications
 
@@ -70,4 +70,9 @@ Confirmed distinct scope from `plan-view` before starting: `plan-view` renders `
 
 ## Final Results
 
-_Pending merge — PR [#41](https://github.com/vr000m/skein/pull/41) open. Update this section, the Status header above, and `docs/dev_plans/README.md` via `/update-docs` after review gates converge and the PR merges._
+Review gates converged 2026-09-13; PR [#41](https://github.com/vr000m/skein/pull/41) still open pending merge.
+
+- `/code-review xhigh --fix` (Claude mirror) + Codex review of the Codex mirror: 5 fixes applied, verified via `just ci`.
+- `skein:review-gauntlet` round 1: 3 gates → 5 findings fixed, 1 quarantined (version bump/changelog — see Issues & Solutions), 1 false positive dismissed (`visualize` skill reference).
+- `skein:review-gauntlet` round 2 (confirming pass, local-only fixes): all three gates clean. Ledger returned `continue` rather than `success` solely because `codex exec review --output-schema` (Codex CLI 0.154.0) did not emit schema-conformant JSON in either round — the tool-out text itself was a clean approval both times. Treated as converged given identical clean content across two consecutive rounds; this is a CLI tooling gap, not a defect in this change.
+- Update `docs/dev_plans/README.md`'s lifecycle bucket and this file's Status header to Shipped once PR #41 merges.
