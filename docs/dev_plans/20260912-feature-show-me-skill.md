@@ -70,9 +70,9 @@ Confirmed distinct scope from `plan-view` before starting: `plan-view` renders `
 
 ## Final Results
 
-Review gates converged 2026-09-13; PR [#41](https://github.com/vr000m/skein/pull/41) still open pending merge.
+Review gates converged 2026-09-13; PR [#41](https://github.com/vr000m/skein/pull/41) merged into `main`.
 
 - `/code-review xhigh --fix` (Claude mirror) + Codex review of the Codex mirror: 5 fixes applied, verified via `just ci`.
 - `skein:review-gauntlet` round 1: 3 gates → 5 findings fixed, 1 quarantined (version bump/changelog — see Issues & Solutions), 1 false positive dismissed (`visualize` skill reference).
 - `skein:review-gauntlet` round 2 (confirming pass, local-only fixes): all three gates clean. Ledger returned `continue` rather than `success` solely because `codex exec review --output-schema` (Codex CLI 0.154.0) did not emit schema-conformant JSON in either round — the tool-out text itself was a clean approval both times. Treated as converged given identical clean content across two consecutive rounds; this is a CLI tooling gap, not a defect in this change.
-- Update `docs/dev_plans/README.md`'s lifecycle bucket and this file's Status header to Shipped once PR #41 merges.
+- The quarantined version bump/changelog finding was resolved in follow-up PR [#42](https://github.com/vr000m/skein/pull/42): CHANGELOG's `[Unreleased]` renamed to `[0.8.0]` with a show-me entry, and both plugin manifests bumped to 0.8.0. `skein:release 0.8.0` cuts the tag/GitHub release separately once #42 merges.

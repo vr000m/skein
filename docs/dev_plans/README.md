@@ -22,6 +22,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-12 | feature | show-me-skill | meta | [#41](https://github.com/vr000m/skein/pull/41) | feat/show-me-skill | [plan](20260912-feature-show-me-skill.md) |
 | 2026-09-03 | docs | prompt-audit-claude | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-claude.md) |
 | 2026-09-03 | docs | prompt-audit-codex | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-codex.md) |
 | 2026-08-23 | feature | review-skills-resilience | review-skills | [#25](https://github.com/vr000m/skein/pull/25) | feature/review-skills-resilience | [plan](20260823-feature-review-skills-resilience.md) |
