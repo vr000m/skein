@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from collections import Counter
@@ -860,3 +861,316 @@ def test_invocation_mode_count_matches_release_catalogue() -> None:
     assert "1 of 13 skills — `plan-view` — clears both" not in architecture
     assert "2 of 15 skills — `plan-view` and `release` — clear both" in architecture
     assert "2 of 15 skills clear both axes for Claude" in architecture
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: `.release-template.json` schema, read path, fail-closed validation
+# ---------------------------------------------------------------------------
+#
+# docs/dev_plans/20260914-feature-release-repo-template.md Phase 1. These
+# tests target the contract the plan specifies; they may fail until the
+# concurrent implementer subagent's SKILL.md edits land.
+
+
+def _template_region(text: str) -> str:
+    """Bound the Step 1b template-read/validate contract inside Step 1."""
+    step_1 = text.index("### Step 1: Resolve the Target Version and Section")
+    step_2 = text.index(
+        "### Step 2: Determine the Previous Version and Lock the Target Repository",
+        step_1,
+    )
+    return text[step_1:step_2]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_schema_defines_all_four_fields(skill_path: Path) -> None:
+    text = skill_path.read_text()
+    canonical_format = text[
+        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+    ]
+
+    assert ".release-template.json" in canonical_format
+    assert '"title_format"' in canonical_format
+    assert '"bare"' in canonical_format
+    assert '"canonical"' in canonical_format
+    assert '"compare_line_label"' in canonical_format
+    assert '"Full diff"' in canonical_format
+    assert '"Full changelog"' in canonical_format
+    assert '"none"' in canonical_format
+    assert '"excluded_sections"' in canonical_format
+    assert '"whats_new"' in canonical_format
+
+    # excluded_sections entry validation rules from the plan: unique,
+    # non-empty, no newline/control bytes, matches ^### [^\n]+$.
+    assert "unique" in canonical_format
+    assert "non-empty" in canonical_format
+    assert "control" in canonical_format
+    assert "^### [^\\n]+$" in canonical_format or "^### [^\\\\n]+$" in canonical_format
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_read_is_harness_native_and_absence_is_noop(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert "Step 1b" in region
+    assert ".release-template.json" in region
+    # A bare `test -f` in cwd is explicitly forbidden by the plan; the read
+    # must go through the harness-native read primitive against the pinned
+    # source top-level instead.
+    assert "test -f .release-template.json" not in region
+    assert re.search(r"absen(?:t|ce)", region, re.IGNORECASE)
+    assert re.search(r"no-?op", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_validation_fails_closed_on_all_gates(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    # The three gates ported verbatim from persist-common.sh's
+    # persist_validate_json_shape.
+    assert "jq empty" in region
+    assert 'type == "object"' in region
+    assert re.search(r"single[- ]document", region, re.IGNORECASE)
+
+    # New gates this schema needs beyond the ported three.
+    assert re.search(r"unknown[- ]key", region, re.IGNORECASE)
+    assert re.search(r"duplicate[- ]key", region, re.IGNORECASE)
+    assert re.search(r"enum", region, re.IGNORECASE)
+
+    # jq must be identity-pinned like every other invoked executable, not
+    # shelled out via inherited PATH.
+    assert "jq" in text[text.index("### Step 2") : text.index("### Step 3")]
+
+    # Any validation failure is a hard stop: never partial-apply, never
+    # silently fall back to canonical.
+    assert "partial" in region.lower()
+    assert re.search(r"never silently fall back", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_commit_precondition_requires_committed_match(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert "git diff --quiet HEAD -- .release-template.json" in region
+    assert re.search(r"\btracked\b", region)
+    assert re.search(r"\buntracked\b", region)
+    assert re.search(r"hard[- ]stop", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_step4_confirmation_names_active_fields(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    step_4 = text.index("### Step 4: Confirm Before Mutating")
+    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_4)
+    confirmation = text[step_4:step_5]
+
+    assert (
+        ".release-template.json" in confirmation or "template" in confirmation.lower()
+    )
+    assert re.search(
+        r"active.*template.*field", confirmation, re.IGNORECASE | re.DOTALL
+    )
+    assert re.search(
+        r"relative to canonical", confirmation, re.IGNORECASE
+    ) or re.search(r"changed.*canonical", confirmation, re.IGNORECASE | re.DOTALL)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_identity_check_is_separate_from_payload_hash(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    step_3 = text.index("### Step 3: Compose Title and Body")
+    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    step_3_contract = text[step_3:step_4]
+    step_6 = text.index("### Step 6: Create or Edit the Release", step_4)
+    audit_mode = text.index("## Audit Mode", step_6)
+    step_6_contract = text[step_6:audit_mode]
+
+    # The existing confirmed-payload-hash stays CHANGELOG-derived-content-only;
+    # template field values are not folded into it.
+    assert "confirmed payload snapshot" in step_3_contract
+    assert re.search(
+        r"template.*not.*fold|not fold.*template", step_3_contract, re.IGNORECASE
+    )
+
+    # A separate confirmed template identity check: committed blob SHA,
+    # re-verified immediately before Step 5's tag write and Step 6's release
+    # mutation, with a no-template sentinel value.
+    assert re.search(r"template identity", text, re.IGNORECASE)
+    assert re.search(r"sentinel", text, re.IGNORECASE)
+    assert "git rev-parse HEAD:.release-template.json" in step_6_contract
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_marker_aware_recovery_strips_marker_and_applies_exclusions(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    step_3 = text.index("### Step 3: Compose Title and Body")
+    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    step_3_contract = text[step_3:step_4]
+    step_A2 = text.index("### Step A2: Classify Every Version")
+    step_A3 = text.index("### Step A3: Report the Punch List", step_A2)
+    a2_contract = text[step_A2:step_A3]
+
+    assert "release-template-sha" in step_3_contract
+    assert re.search(r"strip.*trailing.*marker", step_3_contract, re.IGNORECASE)
+    assert re.search(r"excluded_sections", step_3_contract)
+
+    assert "release-template-sha" in a2_contract
+    assert re.search(r"excluded_sections", a2_contract)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_marker_uses_head_blob_not_working_tree_hash(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    step_6 = text.index("### Step 6: Create or Edit the Release")
+    audit_mode = text.index("## Audit Mode", step_6)
+    step_6_contract = text[step_6:audit_mode]
+
+    assert "<!-- release-template-sha:" in step_6_contract
+    assert "git rev-parse HEAD:.release-template.json" in step_6_contract
+    assert "git hash-object" not in step_6_contract
+    assert re.search(r"committed", step_6_contract, re.IGNORECASE)
+
+
+def _template_fixtures() -> dict[str, tuple[str, bool]]:
+    """Map fixture name -> (raw JSON text, expected-valid)."""
+    valid_full = json.dumps(
+        {
+            "title_format": "bare",
+            "compare_line_label": "Full changelog",
+            "excluded_sections": ["### Internal Notes", "### Contributors"],
+            "whats_new": False,
+        }
+    )
+    return {
+        # NOTE: schema Requirements state every field is "independently
+        # defaulted", so an empty object should be a valid no-op-equivalent
+        # template. This conflicts with the plan's Testing Notes Edge Cases
+        # list, which groups `{}` under "malformed/unparseable" fixtures —
+        # flagged to the conductor (see test-writer coverage summary);
+        # treated as VALID here per the schema Requirements text, which is
+        # more authoritative than the Edge Cases bullet summary.
+        "valid_full_template": (valid_full, True),
+        "empty_object": ("{}", True),
+        "invalid_json": ("{", False),
+        "array_not_object": ("[]", False),
+        "two_concatenated_objects": ("{}\n{}", False),
+        "bad_enum_value": (
+            json.dumps({"title_format": "weird"}),
+            False,
+        ),
+        "whats_new_wrong_type": (
+            json.dumps({"whats_new": "true"}),
+            False,
+        ),
+        "unknown_extra_key": (
+            json.dumps({"title_format": "bare", "extra_field": 1}),
+            False,
+        ),
+        "duplicate_key": (
+            '{"title_format": "bare", "title_format": "canonical"}',
+            False,
+        ),
+    }
+
+
+def _extract_jq_commands(region: str) -> list[str]:
+    """Regex-extract standalone `jq ...` invocations from Markdown text.
+
+    Mirrors this file's `_gh_repo_release_commands` precedent: pull
+    concrete `jq` invocations out of backtick spans and fenced code blocks
+    rather than assuming a fixed script layout, since the mirrors are free
+    to lay the pipeline out as prose-embedded commands or a fenced script.
+    """
+    commands: list[str] = []
+    for match in re.finditer(r"`([^`\n]*\bjq\b[^`\n]*)`", region):
+        commands.append(match.group(1).strip())
+    for fence_match in re.finditer(r"```[A-Za-z]*\n(.*?)```", region, re.DOTALL):
+        for line in fence_match.group(1).splitlines():
+            if re.search(r"\bjq\b", line):
+                commands.append(line.strip().rstrip("\\").strip())
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    unique_commands = []
+    for command in commands:
+        if command not in seen:
+            seen.add(command)
+            unique_commands.append(command)
+    return unique_commands
+
+
+def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
+    """Run one extracted jq command against fixture text on stdin.
+
+    Returns True/False for a command that actually ran as a standalone jq
+    gate, or None when the command could not run standalone (e.g. it
+    references a shell variable this harness does not set) — those are
+    excluded from the verdict rather than treated as evidence either way.
+    """
+    result = subprocess.run(
+        ["bash", "-c", command],
+        input=fixture_text,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode in (126, 127):
+        return None
+    return result.returncode == 0
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> None:
+    text = skill_path.read_text()
+    region = _template_region(text)
+    commands = _extract_jq_commands(region)
+
+    assert commands, (
+        "expected at least one standalone `jq` validation command inside "
+        "the Step 1b template-read/validate contract"
+    )
+
+    fixtures = _template_fixtures()
+    valid_text, _ = fixtures["valid_full_template"]
+    valid_verdicts = [
+        verdict
+        for command in commands
+        if (verdict := _jq_command_accepts(command, valid_text)) is not None
+    ]
+    assert valid_verdicts, "no extracted jq command ran standalone against the fixtures"
+    assert all(valid_verdicts), (
+        "every jq gate must accept a valid, fully-populated template"
+    )
+
+    for name, (fixture_text, expected_valid) in fixtures.items():
+        if name == "valid_full_template":
+            continue
+        if not expected_valid:
+            verdicts = [
+                verdict
+                for command in commands
+                if (verdict := _jq_command_accepts(command, fixture_text)) is not None
+            ]
+            assert not all(verdicts) if verdicts else True, (
+                f"fixture {name!r} should fail at least one jq gate"
+            )
+            if verdicts:
+                assert any(not verdict for verdict in verdicts), (
+                    f"fixture {name!r} should fail at least one jq gate"
+                )
