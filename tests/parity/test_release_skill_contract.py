@@ -1174,3 +1174,112 @@ def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> 
                 assert any(not verdict for verdict in verdicts), (
                     f"fixture {name!r} should fail at least one jq gate"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Audit-mode template-aware classification (Step A2 `ok`/`drifted`)
+# ---------------------------------------------------------------------------
+#
+# docs/dev_plans/20260914-feature-release-repo-template.md Phase 2. These
+# tests target the contract the plan specifies; they may fail until the
+# concurrent implementer subagent's SKILL.md edits land. Design intent under
+# test: a correctly-templated release must classify `ok`, never `drifted`,
+# via a three-way source of truth (pinned blob / current template file /
+# canonical shape) gated by a fail-closed marker-resolution chain.
+
+_MARKER_SHA_REGEX = r"\^<!-- release-template-sha: \[0-9a-f\]\{40\} -->\$"
+
+
+def _a2_region(text: str) -> str:
+    """Bound the `ok`/`drifted` classification contract inside Step A2."""
+    step_A2 = text.index("### Step A2: Classify Every Version")
+    step_A3 = text.index("### Step A3: Report the Punch List", step_A2)
+    return text[step_A2:step_A3]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_marker_gate_chain_is_fail_closed(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    # The marker regex must be anchored, exact, and applied to the release
+    # body exactly once — same untrusted-input treatment as the rest of the
+    # release body per SKILL.md's Step 1 data-boundary contract.
+    assert _MARKER_SHA_REGEX in region or re.search(_MARKER_SHA_REGEX, region)
+    assert re.search(r"exactly once", region)
+
+    # Resolution chain: cat-file type check requires `blob` (never
+    # commit/tree/tag), then cat-file -p content is re-run through the
+    # identical Phase 1 jq validation before it can back a classification.
+    assert "git cat-file -t" in region
+    assert re.search(r"\bblob\b", region)
+    assert "git cat-file -p" in region
+    assert re.search(r"commit", region) and re.search(r"\btree\b", region)
+    assert re.search(r"tag", region)
+    assert re.search(
+        r"(Phase 1|Step 1b).*jq validation|jq validation.*(Phase 1|Step 1b)",
+        region,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_unresolvable_marker_never_classifies_ok_or_drifted(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    # Every gate in the marker-resolution chain must fail closed into an
+    # informational, non-`ok`/non-`drifted` state — never a crash and never
+    # a silent `ok`.
+    assert re.search(r"unresolvable", region, re.IGNORECASE)
+    assert re.search(
+        r"never `ok`/`drifted`|never `ok` or `drifted`|not `ok`/`drifted`",
+        region,
+    )
+    assert re.search(r"informational", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_three_way_classification_branches(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    # Branch 1: marker present and valid -> pinned blob content, with the
+    # marker stripped and that blob's excluded_sections applied before the
+    # exact-bytes comparison (Phase 1's Step 3.1 recovery logic).
+    assert re.search(r"marker present", region, re.IGNORECASE)
+    assert re.search(r"pinned blob", region, re.IGNORECASE)
+    assert "excluded_sections" in region
+
+    # Branch 2: marker absent but a current `.release-template.json` exists
+    # -> classify against that current template, passed through Phase 1
+    # validation first.
+    assert re.search(r"marker absent", region, re.IGNORECASE)
+    assert ".release-template.json" in region
+    assert re.search(r"current template", region, re.IGNORECASE)
+
+    # Branch 3: no template file at all -> canonical shape, today's
+    # behavior, unchanged.
+    assert re.search(r"no template file", region, re.IGNORECASE)
+    assert re.search(r"canonical", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_current_template_closes_pre_adoption_gap(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    # This is the behavior that makes a repo's pre-adoption hand-cut
+    # releases classify `ok` once a template file is committed, without
+    # requiring every historical release to be re-cut with a marker.
+    assert re.search(r"pre-adoption", region, re.IGNORECASE)
+    assert re.search(r"historical", region, re.IGNORECASE)
+    assert re.search(r"re-cut|without requiring", region, re.IGNORECASE)
