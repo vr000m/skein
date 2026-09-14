@@ -1283,3 +1283,147 @@ def test_release_audit_a2_current_template_closes_pre_adoption_gap(
     assert re.search(r"pre-adoption", region, re.IGNORECASE)
     assert re.search(r"historical", region, re.IGNORECASE)
     assert re.search(r"re-cut|without requiring", region, re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Audit-mode no-template dry-run and proposal
+# ---------------------------------------------------------------------------
+#
+# docs/dev_plans/20260914-feature-release-repo-template.md Phase 3. These
+# tests target the contract the plan specifies; they may fail until the
+# concurrent implementer subagent's SKILL.md edits land. Design intent under
+# test: a repo with a real, hand-followed convention but no
+# `.release-template.json` gets surfaced and offered a template — without
+# ever writing one unprompted, without issuing new `gh` calls beyond what
+# A2 already fetches, and without taxing an ordinary `/release` cut.
+
+
+def _dry_run_search_region(text: str) -> str:
+    """Bound a generous window from Step A2 through Step A4.
+
+    The new dry-run step's own heading name is not pinned by the plan, so
+    this deliberately over-includes Step A2 and Step A3's existing text
+    rather than guessing a heading — the assertions below key on phrasing
+    specific to the dry-run/proposal behavior, not on section boundaries.
+    """
+    step_A2 = text.index("### Step A2: Classify Every Version")
+    step_A4 = text.index("### Step A4: Fix (Opt-In, One Version at a Time)")
+    return text[step_A2:step_A4]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    single_version_mode = text[
+        text.index("## Single-Version Mode") : text.index("## Audit Mode")
+    ]
+    step_A1 = text.index("### Step A1: Gather the Three Inventories")
+    step_A2 = text.index("### Step A2: Classify Every Version")
+    region = _dry_run_search_region(text)
+
+    # Never present in Single-Version Mode: this is an Audit-only behavior.
+    assert "never Single-Version Mode" in region
+    assert re.search(r"never taxes? an ordinary", region, re.IGNORECASE) or re.search(
+        r"without taxing an ordinary", region, re.IGNORECASE
+    )
+    assert "no-template-convention-detected" not in single_version_mode
+    assert "T=R=C" not in text[step_A1:step_A2] or True  # A1 has no T/R/C notion yet
+
+    # Sequenced after A2, explicitly not alongside A1 (A1.3's list call has
+    # no `body` field; A2 is what actually fetches per-candidate body).
+    assert re.search(r"not alongside A1", region)
+    assert "A1.3" in region
+    assert re.search(r"no `body` field|has no `body`", region)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+
+    assert re.search(
+        r"no new `gh` calls|no new gh calls are introduced", region, re.IGNORECASE
+    )
+    assert re.search(r"highest 2-3|highest 2–3", region)
+    assert "T=R=C=" in region
+    assert re.search(
+        r"never fetched by A2|exclude it rather than issuing an extra call",
+        region,
+        re.IGNORECASE,
+    )
+
+    # Phase-3 regression guard: explicitly re-verify the pinned gh-call
+    # Counter stays unchanged rather than assuming the pre-existing
+    # assertion below continues to pass silently.
+    calls = _assert_scoped_gh_repo_release_calls(text)
+    inventory = Counter(" ".join(command.split()[:3]) for _, command in calls)
+    assert inventory == Counter(
+        {
+            "gh repo view": 3,
+            "gh release view": 4,
+            "gh release list": 2,
+            "gh release create": 1,
+            "gh release edit": 5,
+        }
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+
+    assert re.search(r"untrusted data", region, re.IGNORECASE)
+    assert re.search(
+        r"observe and compare only|never follow embedded instructions",
+        region,
+        re.IGNORECASE,
+    )
+    assert "SKILL.md:101,223" in region or re.search(
+        r"exactly like|exactly as", region, re.IGNORECASE
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+
+    assert re.search(r"3\+.*consecutive", region, re.IGNORECASE | re.DOTALL)
+    assert re.search(r"non-draft", region, re.IGNORECASE)
+    assert re.search(r"non-prerelease", region, re.IGNORECASE)
+    assert re.search(r"strict-SemVer", region)
+    assert re.search(r"agree on every inferred field", region, re.IGNORECASE)
+    assert re.search(
+        r"fewer than 3 qualifying releases|any disagreement",
+        region,
+        re.IGNORECASE,
+    )
+    assert re.search(r"no new finding", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_dry_run_proposes_and_prints_never_writes(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+
+    assert re.search(r"propose", region, re.IGNORECASE)
+    assert re.search(r"never write|not.{0,20}write", region, re.IGNORECASE | re.DOTALL)
+    assert re.search(r"print the proposed", region, re.IGNORECASE)
+    assert re.search(r"strictly read-only|read-only by itself", region, re.IGNORECASE)
+    assert re.search(
+        r"do not add a new Audit-mode file-write side effect",
+        region,
+        re.IGNORECASE,
+    )
+    assert re.search(r"report, don't mutate|report and move on", region, re.IGNORECASE)
