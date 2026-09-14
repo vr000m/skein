@@ -212,7 +212,7 @@ sequenceDiagram
 ## Progress
 
 - [x] Phase 1: Schema, parsing, and Canonical Format read path
-- [ ] Phase 2: Audit-mode template-aware classification
+- [x] Phase 2: Audit-mode template-aware classification
 - [ ] Phase 3: Audit-mode no-template dry-run and proposal
 
 ## Findings
