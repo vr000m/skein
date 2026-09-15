@@ -5,11 +5,23 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import shutil
 import subprocess
 from collections import Counter
 from pathlib import Path
 
 import pytest
+
+# Round-5 finding #5: the jq gates below are exec'd directly (no shell), so a
+# machine without `jq` raises FileNotFoundError rather than producing the
+# shell's 126/127 "not executable"/"not found" status the in-runner guard was
+# written for. Decide availability up front and skip the jq-executing tests
+# cleanly instead of failing the whole parity module.
+_JQ_PATH = shutil.which("jq")
+requires_jq = pytest.mark.skipif(
+    _JQ_PATH is None,
+    reason="jq is not installed; the Step 1b template validation gates cannot be run",
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 README = ROOT / "README.md"
@@ -1277,12 +1289,21 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
         # never provides) must not hang the suite; exclude it from the
         # verdict rather than treating a hang as pass or fail.
         return None
+    except (FileNotFoundError, PermissionError):
+        # Round-5 finding #5: `tokens` is exec'd directly, so a machine with
+        # no `jq` on PATH raises here rather than producing the shell's
+        # 126/127 exit status. The 126/127 guard below therefore never ran on
+        # such a machine and the whole parity module errored instead of
+        # skipping cleanly. Treat "jq not installed / not executable" exactly
+        # as the 126/127 guard does: exclude from the verdict.
+        return None
     if result.returncode in (126, 127):
         return None
     return result.returncode == 0
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+@requires_jq
 def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> None:
     text = skill_path.read_text()
     region = _template_region(text)
@@ -1340,6 +1361,7 @@ def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> 
     ],
 )
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+@requires_jq
 def test_release_template_jq_gates_reject_null_and_false_not_just_wrong_string(
     skill_path: Path, fixture_json: str
 ) -> None:
@@ -1566,7 +1588,10 @@ def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
     assert re.search(
         r"no new `gh` calls|no new gh calls are introduced", region, re.IGNORECASE
     )
-    assert re.search(r"highest 2-3|highest 2–3", region)
+    # Round-5 finding #1: the selection count and the threshold must be the
+    # same number; "2-3" here contradicted the "3+ consecutive" threshold.
+    assert re.search(r"highest \*\*3\*\* candidates", region)
+    assert "highest 2-3" not in region and "highest 2–3" not in region
     assert "T=R=C=" in region
     assert re.search(
         r"never fetched by A2|exclude it rather than issuing an extra call",
@@ -1613,13 +1638,13 @@ def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
     text = skill_path.read_text()
     region = _dry_run_search_region(text)
 
-    assert re.search(r"3\+.*consecutive", region, re.IGNORECASE | re.DOTALL)
+    assert re.search(r"3 consecutive", region, re.IGNORECASE | re.DOTALL)
     assert re.search(r"non-draft", region, re.IGNORECASE)
     assert re.search(r"non-prerelease", region, re.IGNORECASE)
     assert re.search(r"strict-SemVer", region)
     assert re.search(r"agree on every inferred field", region, re.IGNORECASE)
     assert re.search(
-        r"fewer than 3 qualifying releases|any disagreement",
+        r"fewer than 3 qualifying candidates|any disagreement",
         region,
         re.IGNORECASE,
     )
@@ -1841,6 +1866,7 @@ def test_jq_fixture_runner_enforces_timeout_and_flag_allowlist() -> None:
     assert "_allowed_long_flags" in source
 
 
+@requires_jq
 def test_jq_fixture_runner_excludes_file_reading_flags_from_verdict(
     tmp_path: Path,
 ) -> None:
@@ -1850,6 +1876,7 @@ def test_jq_fixture_runner_excludes_file_reading_flags_from_verdict(
     assert _jq_command_accepts(f"jq --rawfile x {marker} .", "{}") is None
 
 
+@requires_jq
 def test_jq_fixture_runner_excludes_flags_missed_by_prior_denylist(
     tmp_path: Path,
 ) -> None:
@@ -1866,6 +1893,7 @@ def test_jq_fixture_runner_excludes_flags_missed_by_prior_denylist(
     assert _jq_command_accepts("jq -se 'length == 1'", '{"a":1}\n{"b":2}') is False
 
 
+@requires_jq
 def test_jq_fixture_runner_excludes_non_terminating_filter() -> None:
     assert _jq_command_accepts("jq -e 'while(true; .)'", "{}") is None
 
@@ -1942,7 +1970,12 @@ def test_release_template_presence_oracle_matches_content_oracle(
     """
     region = _template_region(skill_path.read_text())
 
-    assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
+    # Round-5 finding #7 replaced the presence probe with `git ls-tree`, which
+    # separates "absent" from "store/ref error"; the oracle still addresses the
+    # same commit and path as item 4's content read, which is what round 4 fixed.
+    assert "git ls-tree '<TEMPLATE_HEAD_COMMIT>' -- .release-template.json" in region
+    assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>" not in region
+    assert "git cat-file blob '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
     assert re.search(
         r"absent from the working tree \*\*and\*\* from that commit",
         region,
@@ -2063,6 +2096,7 @@ def test_release_audit_a1_peeled_identity_defect_is_scoped_per_tag(
     assert re.search(r"transport/auth failure", a1)
 
 
+@requires_jq
 def test_jq_fixture_runner_rejects_trailing_file_operand() -> None:
     """Round-4 finding #8: the flag allowlist only screened leading-dash tokens,
     so a positional token after the filter — which jq treats as an input FILE
@@ -2078,3 +2112,205 @@ def test_jq_fixture_runner_rejects_trailing_file_operand() -> None:
     # `--arg`/`--argjson` operands are name/value data, not file operands, and
     # must not be miscounted as the trailing positional.
     assert _jq_command_accepts("jq --arg x 1 -e '.a == 1'", '{"a":1}') is True
+
+
+# ---------------------------------------------------------------------------
+# Round 5 gauntlet regressions
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_candidate_set_is_defined_mechanically(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #1: A2.5's candidate set was defined mechanically as
+    `T=R=C=✓`/non-draft/non-prerelease and then *glossed* as "every candidate
+    A2 resolved a classification source for under canonical shape, since no
+    template exists". Those are different sets: a `template-marker-unresolvable`
+    candidate matches the mechanical criteria without A2 having resolved any
+    source, and a committed-then-deleted template leaves newest releases whose
+    markers still bind through the origin peeled-commit anchor — top-loading
+    the ordering and proposing a convention against a repo that deliberately
+    removed its template.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+
+    # The restriction is stated as the definition, not as a gloss.
+    assert re.search(
+        r"Step A2 actually resolved a classification source, and that resolved "
+        r"classification source was canonical shape",
+        region,
+    )
+    assert "not `template-marker-unresolvable`" in region
+    assert re.search(r"rather than any template blob", region)
+    # Both false-positive classes are named explicitly.
+    assert re.search(r"never resolved a classification source for it at all", region)
+    assert re.search(r"origin peeled-commit anchor", region)
+    assert re.search(r"deliberately removed its template", region)
+    # The old gloss must not survive as the definition of the candidate set.
+    assert "canonical shape, since no template exists" not in region
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_selection_count_matches_threshold(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #1(a): taking "2-3" candidates made the "3+ consecutive"
+    threshold unsatisfiable whenever only 2 were taken. One number, used at
+    both the selection step and the threshold.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+
+    assert re.search(r"Take the highest \*\*3\*\* candidates", region)
+    assert re.search(r"Require all \*\*3 consecutive\*\* qualifying candidates", region)
+    assert re.search(
+        r"number taken above and the number required here are the same 3",
+        region,
+        re.IGNORECASE,
+    )
+    assert "highest 2-3" not in region and "highest 2–3" not in region
+    assert "3+ consecutive" not in region
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_raw_template_bytes_have_an_explicit_shell_transport_rule(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #2: every other untrusted-data path in this document
+    carries an explicit shell-transport rule (Step 5's heredoc ban, Step 6's
+    no-splicing rule, Step 3's no-interpolating-remote-metadata rule), but the
+    raw pre-validation `.release-template.json` bytes read in Step 1b item 4 —
+    and the same raw read at Audit A2 — had none.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert "Shell-transport rule for the raw template bytes" in region
+    assert re.search(r"on stdin only", region)
+    assert re.search(r"never through a heredoc", region)
+    assert re.search(r"never splice or interpolate them into shell source", region)
+    assert re.search(r"not via `--arg`/`--argjson`", region)
+    # The rule is applied at Audit A2's raw `git cat-file -p <sha>` read too.
+    a2 = _a2_region(text)
+    assert "git cat-file -p <sha>" in a2
+    assert re.search(
+        r"shell-transport rule for raw template bytes, which governs this read too",
+        a2,
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_excluded_sections_bound_is_characters_not_bytes(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #3: the schema table said "at most 200 bytes" while the
+    jq gate enforces `length`, which counts codepoints — 200 multibyte
+    characters pass at up to ~800 bytes. The documented unit must match the
+    unit the gate actually enforces.
+    """
+    text = skill_path.read_text()
+
+    assert "at most 200 bytes" not in text
+    assert text.count("at most 200 characters") >= 2
+    region = _template_region(text)
+    assert re.search(r"counts \*\*codepoints, not bytes\*\*", region)
+    assert "utf8bytelength" in region  # named as what a byte bound would require
+    # The gate itself still uses `length` — the doc was wrong, not the gate.
+    assert "(length <= 200)" in region
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step3_title_recovery_is_parametrized_by_title_format(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #4: round 4 parametrized body recovery by
+    `compare_line_label`/`excluded_sections` but left title recovery on the
+    canonical-only rule, so every `title_format: bare` re-sync re-drafted a
+    highlight that appears nowhere in the output — perturbing the confirmed
+    payload snapshot run-to-run.
+    """
+    text = skill_path.read_text()
+    step_3 = _step3_region(text)
+
+    assert re.search(
+        r"Parametrize item 1's title recovery by the active `title_format`", step_3
+    )
+    assert re.search(r"never carried a highlight at all", step_3)
+    assert re.search(r"requiring `name` to equal exactly `vX\.Y\.Z`", step_3)
+    assert re.search(
+        r"highlight therefore contributes the empty string to Step 3 item 4's "
+        r"confirmed payload snapshot",
+        step_3,
+    )
+    # Step 3 item 4's snapshot definition agrees.
+    assert re.search(
+        r"the empty string whenever the active `title_format` is `\"bare\"`", step_3
+    )
+    assert re.search(r"snapshot-stable", step_3)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_single_head_resolution_rule_enumerates_every_site(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #6: the single-HEAD-resolution rule's site enumeration
+    named Steps 5/6 and A2's current-HEAD anchor but omitted A2's marker-absent
+    fallback and A2.5, both of which reference the resolved current-HEAD commit.
+    """
+    region = _template_region(skill_path.read_text())
+
+    enumeration_start = region.index("The same single-resolution rule applies")
+    enumeration = region[enumeration_start : enumeration_start + 900]
+
+    assert "Step 5's and Step 6's template-identity re-verifies" in enumeration
+    assert "current-HEAD anchor" in enumeration
+    assert "marker-absent fallback" in enumeration
+    assert "A2.5" in enumeration
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_presence_probe_separates_absent_from_error(
+    skill_path: Path,
+) -> None:
+    """Round-5 finding #7: `git cat-file -e` returns the same nonzero exit for
+    "path absent from that commit" and "object store/ref unreadable", so the
+    stated fail-closed rule (a result that is not a clean absent must hard-stop)
+    could not be implemented by it. `git ls-tree` is tri-state and returns the
+    mode in the same read, matching A2's anchor gate.
+    """
+    region = _template_region(skill_path.read_text())
+
+    assert "git ls-tree '<TEMPLATE_HEAD_COMMIT>' -- .release-template.json" in region
+    assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>" not in region
+    assert re.search(r"tri-state", region)
+    assert re.search(r"exit zero with \*\*empty\*\* output", region)
+    assert re.search(r"exit zero with \*\*exactly one\*\* parseable entry line", region)
+    assert re.search(r"nonzero exit, unparseable output, more than one line", region)
+    # The presence probe now also carries the mode evidence A2's anchor gate uses.
+    assert re.search(r"`blob` whose mode is exactly `100644` or `100755`", region)
+    # Presence and content oracles still address the same commit and path.
+    assert re.search(r"still address the same commit and\nthe same path", region) or (
+        "still address the same commit and the same path" in region
+    )
+
+
+def test_jq_runner_skips_cleanly_when_jq_is_missing(monkeypatch) -> None:
+    """Round-5 finding #5: `_jq_command_accepts` exec's the tokens directly, so
+    a jq-less machine raised FileNotFoundError and errored the whole parity
+    module; the 126/127 guard it was supposed to hit is unreachable there.
+    """
+
+    def _raise(*args, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory: 'jq'")
+
+    monkeypatch.setattr(subprocess, "run", _raise)
+    assert _jq_command_accepts("jq -e '.a == 1'", '{"a":1}') is None
+
+    def _raise_perm(*args, **kwargs):
+        raise PermissionError(13, "Permission denied: 'jq'")
+
+    monkeypatch.setattr(subprocess, "run", _raise_perm)
+    assert _jq_command_accepts("jq empty", '{"a":1}') is None
+
+    source = Path(__file__).read_text()
+    assert 'shutil.which("jq")' in source
+    assert "requires_jq" in source
