@@ -1118,7 +1118,7 @@ def test_release_audit_marker_absent_fallback_requires_commit_precondition(
     """
     text = skill_path.read_text()
     a2_region = _a2_region(text)
-    marker_absent_start = a2_region.index("**Marker absent (zero matches)**")
+    marker_absent_start = a2_region.index("**Marker absent (zero matches")
     marker_absent_bullet = a2_region[marker_absent_start : marker_absent_start + 800]
 
     assert re.search(r"items? 2", marker_absent_bullet)
@@ -1163,6 +1163,18 @@ def _template_fixtures() -> dict[str, tuple[str, bool]]:
         ),
         "duplicate_key": (
             '{"title_format": "bare", "title_format": "canonical"}',
+            False,
+        ),
+        # Round-6 finding #5: DEL (0x7F) is a control character outside the C0
+        # range, so a `[\x00-\x1F]`-only check let it through into heading
+        # matching and confirmation output.
+        "excluded_section_with_del_byte": (
+            json.dumps({"excluded_sections": ["### Notes\x7f"]}),
+            False,
+        ),
+        # A C0 byte must still be rejected — the widened class is a superset.
+        "excluded_section_with_c0_byte": (
+            json.dumps({"excluded_sections": ["### Notes\x01"]}),
             False,
         ),
     }
@@ -1944,7 +1956,7 @@ def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
     strip_paragraph = next(
         line
         for line in region.splitlines()
-        if "Strip a trailing line matching the loose marker-shaped pattern" in line
+        if "trailing line matching the loose marker-shaped pattern" in line
     )
 
     assert re.search(r"separator", strip_paragraph, re.IGNORECASE), (
@@ -2291,6 +2303,191 @@ def test_release_template_presence_probe_separates_absent_from_error(
     assert re.search(r"still address the same commit and\nthe same path", region) or (
         "still address the same commit and the same path" in region
     )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
+    skill_path: Path,
+) -> None:
+    """Round-6 findings #1/#4: Step 1b is the first thing in Single-Version Mode
+    to launch an external executable, but the pinned-executable invariant and the
+    source-discovery bootstrap live ~35 lines later inside Step 2 item 1. Read in
+    document order the skill's most untrusted-byte handling ran through ambient
+    PATH and ambient repo discovery, and a subdirectory/env-override invocation
+    could stat a different repository than Step 2 later locks.
+    """
+    region = _template_region(skill_path.read_text())
+    preamble = region[
+        region.index("### Step 1b") : region.index("**Resolve `HEAD` once")
+    ]
+
+    # The bootstrap is stated up front, before item 2's first `git` call.
+    assert "Bootstrap the pinned-executable set" in preamble
+    assert "explicit source Git context" in preamble
+    assert re.search(r"Audit Step A1's opening sentence", preamble)
+    assert re.search(
+        r"preconditions of this step as much as\s+of Step 2", preamble
+    ) or ("preconditions of this step as much as of Step 2" in preamble)
+    # The concrete hazard it closes is named, not merely gestured at.
+    assert re.search(r"ambient `PATH`", preamble)
+    assert re.search(r"invoked from a subdirectory", preamble)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_jq_pin_is_conditional_on_template_presence(
+    skill_path: Path,
+) -> None:
+    """Round-6 findings #1 (secondary)/#4: Step 1b item 1 pinned `jq` before
+    item 2 established whether a template exists, while Step 2 listed `jq` in an
+    unconditional "at minimum" pinned set whose pin failure hard-stops — so an
+    untemplated repo without `jq` stopped, contradicting the byte-for-byte
+    absence no-op.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    item_1 = region[
+        region.index("1. **Pin `jq`") : region.index("2. **Check existence")
+    ]
+    assert "only on the branch where item 2 has already established" in item_1
+    assert re.search(
+        r"conditional\*\* member of the\s+pinned-executable set", item_1
+    ) or ("conditional** member of the pinned-executable set" in item_1)
+    assert "`jq` is never resolved at all" in item_1
+    assert re.search(r"must not stop an\s+untemplated run", item_1) or (
+        "must not stop an untemplated run" in item_1
+    )
+
+    # Step 2's unconditional set no longer lists jq, and says why.
+    pinned = text[
+        text.index("**Pinned-executable and source-repository invariant:**") :
+    ][:4000]
+    assert "at minimum Git, `gh`, `mktemp`, `chmod`, `rm`, and `rmdir`" in pinned
+    assert "`jq` (pinned in Step 1b item 1 above" not in pinned
+    assert '`jq` is deliberately absent from that unconditional "at minimum" list' in (
+        pinned
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_raw_template_transport_rule_names_a_permitted_mechanism(
+    skill_path: Path,
+) -> None:
+    """Round-6 finding #2: round 5's transport rule banned a "second read, by
+    `git cat-file` or otherwise" while requiring each of 8 independent jq gates
+    to receive the bytes as a direct pipe between two pinned executables — which
+    IS a second read. Every other stdin mechanism was banned too, leaving no
+    permitted transport at all for gates 2-8. An unsatisfiable rule fails open:
+    the easiest improvisations are the banned injection vectors.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    # The blanket ban is gone; only a path-addressed re-read is forbidden.
+    assert "never a second read, by `git cat-file` or otherwise" not in text
+    assert "never against a second *path-addressed* read" in region
+    assert "Re-running the *content-addressed* read" in region
+
+    # Exactly one mechanism is named as permitted, and it is the safe one.
+    assert (
+        "The one permitted transport is a direct pipe from the pinned Git binary"
+        in (region)
+    )
+    assert "git cat-file blob '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
+    assert re.search(r"once per gate", region)
+    assert re.search(r"no TOCTOU window between them", region)
+
+    # The bans that remain are intact.
+    assert re.search(r"on stdin only", region)
+    assert re.search(r"never through a heredoc", region)
+    assert re.search(r"not via `--arg`/`--argjson`", region)
+
+    # Audit A2 inherits the same named mechanism rather than the dead end.
+    a2 = _a2_region(text)
+    assert "`git cat-file -p <sha>` re-run once per gate" in a2
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable(
+    skill_path: Path,
+) -> None:
+    """Round-6 finding #3: a marker line with uppercase hex (or any other
+    non-`[0-9a-f]` content) matched neither the strict 40-hex nor the loose
+    hex pattern, so it reached the marker-absent branch and could classify `ok`
+    against the current template or canonical shape.
+    """
+    a2 = _a2_region(skill_path.read_text())
+
+    # A third, shape-only pattern exists and is a superset of the other two.
+    assert "`^<!-- release-template-sha:.*-->$`" in a2
+    assert re.search(r"strict superset of both\s+patterns above", a2) or (
+        "strict superset of both patterns above" in a2
+    )
+    assert "ABCDEF0123" in a2  # the uppercase-hex example that motivated it
+
+    # "marker absent" is redefined against the shape-only pattern.
+    assert "**Marker absent (zero matches of all three patterns" in a2
+    assert re.search(
+        r'"marker absent" means zero \*shape-only\* matches, not merely', a2
+    )
+
+    # The new classification bullet exists and fails closed.
+    unparseable = a2[a2.index("  - **Marker-shaped but unparseable") :][:900]
+    assert "zero strict matches, zero loose matches, at least one shape-only match" in (
+        unparseable
+    )
+    assert "template-marker-unresolvable" in unparseable
+    assert "Never let it reach the marker-absent branch." in unparseable
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_excluded_sections_gate_rejects_del_byte(skill_path: Path) -> None:
+    """Round-6 finding #5: the schema promised no control bytes but the gate
+    only rejected `\\x00-\\x1F`, so DEL (0x7F) passed and was carried into Step 3
+    heading matching and Step 4 confirmation output.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert r'test("[\\x00-\\x1F\\x7F]")' in region
+    assert r'test("[\\x00-\\x1F]")' not in text
+    assert "nor `DEL` (`\\x7F`)" in region
+    # The schema table states the same widened class.
+    canonical_format = text[
+        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+    ]
+    assert "`DEL` `\\x7F`" in canonical_format
+    assert "no newline/control bytes" not in canonical_format
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_produce_consume_positions_are_symmetric(
+    skill_path: Path,
+) -> None:
+    """Round-6 finding #6: Step 3 item 3 pins the marker to the body's final
+    line, but neither consumer treated that position as identity — Step 3.1's
+    strip was unconditional with no try-unmodified-first ordering (unlike the
+    compare-suffix removal directly below it), and A2's strict search matched
+    anywhere in the body.
+    """
+    text = skill_path.read_text()
+    step_3 = _step3_region(text)
+
+    # Consumer half 1: the strip now orders its candidates, unmodified first.
+    assert "Try the unmodified body first, then the stripped one" in step_3
+    assert "ordered two-candidate set" in step_3
+    assert re.search(r"consumes the \*\*first\*\* candidate", step_3)
+    assert re.search(r"whose own final line\s+happens to be marker-shaped", step_3) or (
+        "whose own final line happens to be marker-shaped" in step_3
+    )
+    # ...without losing round-4/5's unconditional-on-active-template property.
+    assert re.search(r"unconditionally", step_3)
+
+    # Consumer half 2: A2's strict search requires the pinned final position.
+    a2 = _a2_region(text)
+    assert "must be the body's final line**" in a2
+    assert "marker-shaped line is not the body's final line" in a2
+    assert "produce/consume position asymmetry" in a2
 
 
 def test_jq_runner_skips_cleanly_when_jq_is_missing(monkeypatch) -> None:
