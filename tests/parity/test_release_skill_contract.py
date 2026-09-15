@@ -1504,7 +1504,7 @@ def test_release_audit_a2_three_way_classification_branches(
 
     # Branch 1: marker present and valid -> pinned blob content, with the
     # marker stripped and that blob's excluded_sections applied before the
-    # exact-bytes comparison (Phase 1's Step 3.1 recovery logic).
+    # exact-bytes comparison (Phase 1's Step 3 item 1 recovery logic).
     assert re.search(r"marker present", region, re.IGNORECASE)
     assert re.search(r"pinned blob", region, re.IGNORECASE)
     assert "excluded_sections" in region
@@ -1691,7 +1691,7 @@ def test_release_audit_dry_run_proposes_and_prints_never_writes(
 def test_release_marker_strip_is_unconditional_on_active_template(
     skill_path: Path,
 ) -> None:
-    """Regression for findings #1/#2: marker-stripping in Step 3.1 recovery
+    """Regression for findings #1/#2: marker-stripping in Step 3 item 1 recovery
     must not be gated on *this run's* active template — marker presence is
     a property of what was actually published, not of what Step 1b just
     read. It must also cover both the headed (`## What's New` present) and
@@ -1945,7 +1945,7 @@ def test_release_marker_separator_is_exactly_one_blank_line(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
-    """Round-4 finding #1 (consumer half): Step 3.1's unconditional strip must
+    """Round-4 finding #1 (consumer half): Step 3 item 1's unconditional strip must
     remove the marker's preceding blank-line separator too. Stripping the
     marker line alone leaves a stray blank line, so the first re-sync of a
     templated release fails the byte-for-byte suffix match and Step A2
@@ -1954,9 +1954,7 @@ def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
     """
     region = _step3_region(skill_path.read_text())
     strip_paragraph = next(
-        line
-        for line in region.splitlines()
-        if "trailing line matching the loose marker-shaped pattern" in line
+        line for line in region.splitlines() if "strip a trailing line matching" in line
     )
 
     assert re.search(r"separator", strip_paragraph, re.IGNORECASE), (
@@ -2465,7 +2463,7 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     skill_path: Path,
 ) -> None:
     """Round-6 finding #6: Step 3 item 3 pins the marker to the body's final
-    line, but neither consumer treated that position as identity — Step 3.1's
+    line, but neither consumer treated that position as identity — Step 3 item 1's
     strip was unconditional with no try-unmodified-first ordering (unlike the
     compare-suffix removal directly below it), and A2's strict search matched
     anywhere in the body.
@@ -2557,19 +2555,21 @@ def test_release_audit_a2_5_first_release_compare_line_is_unknown_not_none(
     """
     region = _dry_run_search_region(skill_path.read_text())
 
-    # The exclusion is stated on the field it applies to.
+    # The exclusion is stated on the field it applies to, keyed to Step A2's
+    # own PREV oracle (round-8 finding #1 corrected the oracle; see
+    # test_release_audit_a2_5_prev_exclusion_uses_a2_oracle_not_a1_union).
     assert (
-        "Exclude from this one field's judgement any candidate that has no PREV"
-        in region
+        "Exclude from this one field's judgement any candidate for which Audit "
+        "PREV is absent under Step A2's own PREV oracle" in region
     )
     assert "contributes **unknown** to this field, never a disagreeing" in region
-    # At most one candidate can be the first release, so >= 2 remain determinate.
+    # At most one candidate can lack an Audit PREV, so >= 2 remain determinate.
     assert "at least 2 determinate candidates always remain" in region
     # Scoped: the other two fields are still judged across all 3.
     assert "scoped to `compare_line_label` alone" in region
     # The threshold paragraph acknowledges the exception rather than
     # contradicting it (the round-5 candidate-set/threshold failure mode).
-    assert "One scoped exception" in region
+    assert "Two scoped exceptions" in region
     assert re.search(r"All 3 candidates are still required", region)
     # An `unknown` contribution is not a disagreement at the decision point.
     assert "never counting as a disagreement" in region
@@ -2609,3 +2609,209 @@ def test_release_a3_legend_includes_template_marker_unresolvable(
         "no-template-convention-detected",
     ):
         assert classification in names
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_prev_exclusion_uses_a2_oracle_not_a1_union(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #1: A2.5's first-release carve-out tested the wrong
+    inventory. Step A2 resolves Audit PREV only from A1.1's origin-authoritative
+    tag inventory, but A2.5 excluded on "no PREV in A1's union" — and A1's
+    T-union-R-union-C union also admits CHANGELOG-only and release-without-tag
+    versions that carry no origin tag. A candidate whose only lower union member
+    is tagless therefore has no PREV under A2's oracle (compare line
+    structurally absent) yet was NOT excluded by the union test, so its absence
+    was read as a determinate disagreeing `"none"` — reintroducing exactly the
+    suppression bug round 7 added the carve-out to close.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    bullet_start = region.index("- `compare_line_label` —")
+    bullet_end = region.index("- `excluded_sections` —", bullet_start)
+    bullet = region[bullet_start:bullet_end]
+
+    # The exclusion keys on A2's oracle...
+    assert "under Step A2's own PREV oracle" in bullet
+    # ...and re-states that oracle's own derivation rule, origin tags only.
+    assert "origin-authoritative tag inventory" in bullet
+    assert "highest SemVer tag below it" in bullet
+    # ...and explicitly rejects the wider union as the test.
+    assert "never from A1's wider" in bullet
+    assert "union" in bullet
+    # The pre-fix wording must not survive anywhere in the region.
+    assert "any candidate that has no PREV in A1's union" not in region
+    # The reason the two oracles differ is stated, not left implicit.
+    assert "release-without-tag" in bullet
+    # The >= 2-determinate floor is justified by T=check, not by "first release".
+    assert "at most one of the 3 candidates can lack an audit prev" in bullet.lower()
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step3_marker_strip_uses_a2_shape_only_pattern(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #2: Step 3 item 1's re-sync strip recognized only the
+    loose lowercase-hex marker pattern, while Step A2 additionally searches a
+    broader shape-only pattern to catch marker-shaped-but-invalid lines
+    (uppercase hex, interior whitespace, `0x` prefix, empty hash). A
+    shape-only-but-invalid marker therefore survived the strip and was glued
+    onto the recovered body by the headed-summary boundary scan, contradicting
+    Step 3 item 1's own invariant that a marker-shaped line can never survive
+    verbatim into a re-synced body. Both consumers of the marker grammar must
+    use the same shape-only pattern.
+    """
+    text = skill_path.read_text()
+    step_3 = _step3_region(text)
+    a2 = _a2_region(text)
+
+    shape_only = "`^<!-- release-template-sha:.*-->$`"
+    # Both consumers name the identical shape-only pattern.
+    assert shape_only in step_3, "Step 3 item 1's strip must use the shape-only pattern"
+    assert shape_only in a2, "Step A2 must still search the shape-only pattern"
+    # The strip is no longer keyed to the narrower lowercase-hex pattern.
+    strip_sentence = step_3[step_3.index("strip a trailing line matching") :][:400]
+    assert "[0-9a-f]+ -->$" not in strip_sentence
+    assert "[0-9a-f]{40} -->$" not in strip_sentence
+    # The strip stays unconditional and trailing-only.
+    assert "unconditionally" in strip_sentence
+    # The invariant the mismatch broke is still asserted, now tied to A2.
+    assert "can never survive verbatim into a re-synced body" in step_3
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_excluded_sections_has_structural_absence_carve_out(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #4: `excluded_sections` had the same structural-absence
+    gap round 7 fixed for `compare_line_label`. A candidate whose own CHANGELOG
+    section never carried a given `###` heading can neither include nor omit it,
+    but the literal "any disagreement suppresses the finding" rule counted that
+    as disagreement — silently suppressing a valid
+    `no-template-convention-detected` proposal for a repo that does
+    consistently exclude the section wherever exclusion is possible.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    bullet_start = region.index("- `excluded_sections` —")
+    bullet_end = region.index("Any disagreement across the candidates", bullet_start)
+    bullet = region[bullet_start:bullet_end]
+
+    # Judged per heading, not per candidate as a whole.
+    assert "per heading" in bullet
+    # The carve-out is explicitly the same one compare_line_label uses.
+    assert "structural-absence carve-out" in bullet
+    assert "contributes **unknown**" in bullet
+    assert "never a disagreeing" in bullet
+    # The structural condition is named precisely.
+    assert "never carried that heading at all" in bullet
+    # A heading no candidate is determinate on is not proposed as an exclusion.
+    assert "is never proposed as an exclusion" in bullet
+    # No 2-candidate floor is claimed here; the difference is justified.
+    assert "no 2-candidate floor" in bullet
+
+    # The threshold paragraph above must acknowledge BOTH carve-outs rather
+    # than claiming compare_line_label's is the only one (the round-5
+    # candidate-set/threshold contradiction, re-armed by this fix).
+    threshold = region[: region.index("- `title_format` —")]
+    assert "Two scoped exceptions" in threshold
+    assert "neither reduces the number of candidates taken" in threshold
+    assert "that heading alone" in threshold
+    # compare_line_label's bullet no longer claims excluded_sections has no
+    # structural-absence problem of its own.
+    compare_bullet = region[
+        region.index("- `compare_line_label` —") : region.index(
+            "- `excluded_sections` —"
+        )
+    ]
+    assert (
+        "since neither is structurally absent on a first release" not in compare_bullet
+    )
+    assert "keyed per `###` heading rather than per candidate" in compare_bullet
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a1_3_names_all_five_per_candidate_json_fields(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #5: Step A1.3's parenthetical described the per-candidate
+    release-view call as `--json name,body,isDraft,isPrerelease` (4 fields),
+    but Step A2 issues it with `databaseId` too and mandates recording that
+    immutable identity, and Step A4 compares against it. The field list must
+    match what A2/A4 actually require.
+    """
+    text = skill_path.read_text()
+    step_a1 = text.index("### Step A1: Gather the Three Inventories")
+    step_a2 = text.index("### Step A2: Classify Every Version", step_a1)
+    a1 = text[step_a1:step_a2]
+    a2 = _a2_region(text)
+
+    five_fields = "--json databaseId,name,body,isDraft,isPrerelease"
+    assert five_fields in a1, "A1.3 must name the same five fields A2 requests"
+    # The stale four-field spelling must not survive in A1.
+    assert "`--json name,body,isDraft,isPrerelease`" not in a1
+    # A2's actual calls still use the five-field spelling A1.3 now advertises.
+    assert a2.count(five_fields) >= 2
+    # The reason databaseId belongs there is stated, not just the field name.
+    assert "databaseId" in a1
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a4_exhaustive_non_fixable_list_is_actually_exhaustive(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #6: Step A4 claimed its non-fixable inventory-exception
+    list was exhaustive while omitting `template-marker-unresolvable` (non-fixable
+    per A2) and `no-template-convention-detected` (report-only per A2.5). The
+    mis-routing protection actually comes from A4's separate positive allowlist,
+    so this was a false completeness claim rather than an open behavioral gap —
+    but a future editor would trust it.
+    """
+    text = skill_path.read_text()
+    a4 = text[text.index("### Step A4: Fix (Opt-In, One Version at a Time)") :]
+    claim_start = a4.index("The non-fixable inventory exceptions are exhaustive")
+    claim = a4[claim_start : a4.index("\n\n", claim_start)]
+
+    for classification in (
+        "untracked-tag",
+        "no-changelog-entry",
+        "release-without-tag",
+        "legacy-bare-tag",
+        "local-only-tag",
+        "non-release-tag",
+        "malformed-changelog-header",
+        "template-marker-unresolvable",
+        "no-template-convention-detected",
+    ):
+        assert f"`{classification}`" in claim, (
+            f"A4's exhaustive non-fixable list omits {classification}"
+        )
+
+    # The positive allowlist that does the real routing work stays intact.
+    assert "`missing-tag`, `missing-release`, `drifted` only" in a4
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_skill_uses_one_step_item_reference_notation(
+    skill_path: Path,
+) -> None:
+    """Round-8 finding #3: the skills used an informal `Step 3.1`/`Step 1.2`
+    notation 24 times with no corresponding heading, ambiguous against the real
+    sibling heading `Step 1b` (is `.2` an item number or a subsection?). All
+    numeric item references now use the file's already-dominant `Step N item M`
+    form; `Step A2.5` stays untouched because it *is* a real heading.
+    """
+    text = skill_path.read_text()
+
+    headings = set(re.findall(r"^### (Step [^\n:]+):", text, re.MULTILINE))
+    bad = {
+        ref
+        for ref in re.findall(r"Step \d+\.\d+", text)
+        if not any(h.startswith(ref) for h in headings)
+    }
+    assert not bad, f"headingless numeric Step references remain: {sorted(bad)}"
+
+    # The replacement notation is present and matches the pre-existing style.
+    assert "Step 3 item 1" in text
+    assert "Step 1 item 2" in text
+    # `Step A2.5` is a genuine heading and must survive the normalization.
+    assert "### Step A2.5:" in text
+    assert "Step A2.5" in text
