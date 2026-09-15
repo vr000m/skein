@@ -1221,14 +1221,38 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     _allowed_short_flag_chars = frozenset("ensr")
     _allowed_long_flags = frozenset({"--stream", "--arg", "--argjson"})
 
+    def _is_flag(token: str) -> bool:
+        return token.startswith("-") and len(token) > 1
+
     def _flag_allowed(token: str) -> bool:
         if token.startswith("--"):
             return token in _allowed_long_flags
-        if token.startswith("-") and len(token) > 1:
+        if _is_flag(token):
             return all(ch in _allowed_short_flag_chars for ch in token[1:])
         return True  # not a flag at all — a filter string, e.g. "length == 1"
 
-    if not all(_flag_allowed(token) for token in tokens[1:]):
+    # Walk the argv rather than only screening leading-dash tokens. jq treats
+    # every positional token *after* the filter as an input FILE operand, so an
+    # allowlist that only inspects flags still lets `jq -e '<filter>' /etc/passwd`
+    # through: every token passes `_flag_allowed`, and jq then reads that file
+    # instead of the fixture on stdin. A genuine standalone gate has exactly one
+    # positional (the filter) and reads stdin; anything with a second positional
+    # is excluded from the verdict rather than executed. `--arg`/`--argjson`
+    # consume two following tokens each, which are name/value data, never file
+    # operands, so they are skipped rather than counted as positionals.
+    _two_operand_long_flags = {"--arg", "--argjson"}
+    positionals: list[str] = []
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_flag(token):
+            if not _flag_allowed(token):
+                return None
+            index += 3 if token in _two_operand_long_flags else 1
+            continue
+        positionals.append(token)
+        index += 1
+    if len(positionals) > 1:
         return None
     # A module-loading `include`/`import` directive can appear inside the
     # filter text itself, not just as a `-L`/`--library-path` flag; reject
@@ -1844,3 +1868,213 @@ def test_jq_fixture_runner_excludes_flags_missed_by_prior_denylist(
 
 def test_jq_fixture_runner_excludes_non_terminating_filter() -> None:
     assert _jq_command_accepts("jq -e 'while(true; .)'", "{}") is None
+
+
+# ---------------------------------------------------------------------------
+# Round 4 gauntlet regressions
+# ---------------------------------------------------------------------------
+
+
+def _step3_region(text: str) -> str:
+    step_3 = text.index("### Step 3: Compose Title and Body")
+    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    return text[step_3:step_4]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_separator_is_exactly_one_blank_line(
+    skill_path: Path,
+) -> None:
+    """Round-4 finding #1 (producer half): the separator between the compare
+    line and the `release-template-sha` marker must be pinned, not left to
+    interpretation, or the strip and the re-sync byte-match cannot agree.
+    """
+    region = _step3_region(skill_path.read_text())
+    marker_item = region[region.index("**Template identity marker.**") :]
+
+    assert re.search(r"exactly one blank line", marker_item, re.IGNORECASE), (
+        "Step 3 item 3 must pin the marker separator to exactly one blank line"
+    )
+    assert re.search(
+        r"always the body's final line|final line", marker_item, re.IGNORECASE
+    )
+    # All three trailing shapes the convention has to hold for.
+    assert "compare_line_label" in marker_item
+    assert re.search(r"What's New", marker_item)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
+    """Round-4 finding #1 (consumer half): Step 3.1's unconditional strip must
+    remove the marker's preceding blank-line separator too. Stripping the
+    marker line alone leaves a stray blank line, so the first re-sync of a
+    templated release fails the byte-for-byte suffix match and Step A2
+    check (3)'s "exactly one final line" compare-line rule, misclassifying a
+    correct release as drifted.
+    """
+    region = _step3_region(skill_path.read_text())
+    strip_paragraph = next(
+        line
+        for line in region.splitlines()
+        if "Strip a trailing line matching the loose marker-shaped pattern" in line
+    )
+
+    assert re.search(r"separator", strip_paragraph, re.IGNORECASE), (
+        "the strip must name the separator it removes"
+    )
+    assert r"\n\n" in strip_paragraph, (
+        "the strip must state the exact bytes removed before the marker line"
+    )
+    # Tolerate a marker that arrived without the separator (hand edit / PR).
+    assert re.search(r"without that separator", strip_paragraph, re.IGNORECASE)
+    assert re.search(r"never remove more than one blank line", strip_paragraph)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_presence_oracle_matches_content_oracle(
+    skill_path: Path,
+) -> None:
+    """Round-4 finding #2: Step 1b item 2's presence check queried the working
+    tree while item 4's content read moved to the committed object, so a
+    committed-but-working-tree-deleted template short-circuited as "no template
+    active" and silently fell back to canonical shape — the exact fail-open the
+    template contract forbids.
+    """
+    region = _template_region(skill_path.read_text())
+
+    assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
+    assert re.search(
+        r"absent from the working tree \*\*and\*\* from that commit",
+        region,
+        re.IGNORECASE,
+    )
+    assert re.search(r"committed-then-deleted", region, re.IGNORECASE)
+    assert re.search(r"never a no-op", region, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_head_is_resolved_once_per_check(
+    skill_path: Path,
+) -> None:
+    """Round-4 finding #6: symbolic `HEAD` was resolved independently by Step 1b
+    items 3, 4 and 5, so a concurrent commit/checkout between them could bind
+    the commit precondition, the validated bytes and the published marker SHA
+    to three different commits.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert "TEMPLATE_HEAD_COMMIT" in region
+    assert re.search(r"full 40-character hexadecimal commit SHA", region)
+    # Items 3, 4 and 5 each address the pinned literal SHA.
+    assert (
+        "git diff --quiet '<TEMPLATE_HEAD_COMMIT>' -- .release-template.json" in region
+    )
+    assert "git cat-file blob '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
+    assert "git rev-parse '<TEMPLATE_HEAD_COMMIT>:.release-template.json'" in region
+
+    # The rule carries to every other HEAD-addressed template check: Step 5's
+    # and Step 6's re-verifies and Audit A2's current-HEAD anchor.
+    step_5 = text.index("### Step 5: Create or Re-Sync the Tag")
+    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
+    audit = text.index("## Audit Mode", step_6)
+    for name, chunk in (
+        ("step 5", text[step_5:step_6]),
+        ("step 6", text[step_6:audit]),
+        ("audit a2", _a2_region(text)),
+    ):
+        assert re.search(
+            r"resolve (?:the pinned source top-level's symbolic )?`?HEAD`? to one literal commit SHA",
+            chunk,
+            re.IGNORECASE,
+        ), f"{name} must resolve HEAD once for its own check"
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_anchors_enforce_tracked_mode_gate(
+    skill_path: Path,
+) -> None:
+    """Round-4 finding #7: the marker-binding anchors compared a blob SHA
+    without the tracked-mode gate Step 1b item 3 and the marker-absent fallback
+    enforce, so a committed symlink whose target happened to be schema-valid
+    JSON could authenticate a marker. `git cat-file -t` reports a symlink as
+    `blob`, so the type gate cannot substitute for the mode gate.
+    """
+    region = _a2_region(skill_path.read_text())
+
+    assert "git ls-tree '<anchor-commit-sha>' -- .release-template.json" in region
+    assert "100644" in region and "100755" in region
+    assert "120000" in region
+    assert re.search(r"neither is exempt", region, re.IGNORECASE)
+    # A failed mode gate means "this anchor did not resolve", never a match.
+    assert re.search(
+        r"did not resolve.*never means the anchor matched",
+        region,
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_documents_dual_anchor_limitations(
+    skill_path: Path,
+) -> None:
+    """Round-4 findings #3 and #4: the dual-anchor scheme's coverage claim was
+    stronger than the mechanism. A marker produced by a re-sync/historical fix
+    becomes unbindable once `.release-template.json` is next edited, and both
+    anchors resolve against the local object store, so a shallow/partial/stale
+    clone can classify `template-marker-unresolvable` where a complete clone
+    classifies `ok`.
+    """
+    region = _a2_region(skill_path.read_text())
+
+    assert re.search(r"Known limitations", region, re.IGNORECASE)
+    assert re.search(r"shallow|partial|stale clone", region, re.IGNORECASE)
+    assert re.search(r"clone-dependent|clone-completeness", region, re.IGNORECASE)
+    # The two failure reasons must be reported distinctly.
+    assert "neither anchor resolved (object or path absent in this clone)" in region
+    assert "anchor resolved but SHA mismatched" in region
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a1_peeled_identity_defect_is_scoped_per_tag(
+    skill_path: Path,
+) -> None:
+    """Round-4 finding #5: A1.1 hard-stopped the whole audit on a malformed or
+    ambiguous peeled-commit identity for any strict `vX.Y.Z` origin tag, far
+    wider than that identity's single consumer (A2's marker-binding origin
+    anchor) and inconsistent with Step 2's narrower per-target rule. Scope the
+    defect to its tag; keep the whole-audit stop for transport/parse failure.
+    """
+    text = skill_path.read_text()
+    a1 = text[
+        text.index("### Step A1: Gather the Three Inventories") : text.index(
+            "### Step A2: Classify Every Version"
+        )
+    ]
+
+    assert re.search(r"scoped to the tag it affects, not to the whole audit", a1)
+    assert re.search(r"\bunavailable\b", a1)
+    # Fail-closed is preserved: such a candidate can still never become `ok`
+    # on weaker evidence.
+    assert "template-marker-unresolvable" in a1
+    # Step 2's stricter target/PREV cardinality stop is explicitly untouched.
+    assert re.search(r"keep that Step 2 rule exactly as it is", a1, re.IGNORECASE)
+    # A whole-inventory defect still stops the audit.
+    assert re.search(r"transport/auth failure", a1)
+
+
+def test_jq_fixture_runner_rejects_trailing_file_operand() -> None:
+    """Round-4 finding #8: the flag allowlist only screened leading-dash tokens,
+    so a positional token after the filter — which jq treats as an input FILE
+    operand — passed the allowlist and would read an arbitrary file instead of
+    the fixture on stdin.
+    """
+    assert _jq_command_accepts("jq -e '.' /etc/passwd", "{}") is None
+    assert _jq_command_accepts("jq empty /etc/passwd", "{}") is None
+    assert _jq_command_accepts("jq -se 'length == 1' /etc/hosts", '{"a":1}') is None
+    # A single positional (the filter) reading stdin is still a genuine gate.
+    assert _jq_command_accepts("jq -e '.a == 1'", '{"a":1}') is True
+    assert _jq_command_accepts("jq empty", '{"a":1}') is True
+    # `--arg`/`--argjson` operands are name/value data, not file operands, and
+    # must not be miscounted as the trailing positional.
+    assert _jq_command_accepts("jq --arg x 1 -e '.a == 1'", '{"a":1}') is True
