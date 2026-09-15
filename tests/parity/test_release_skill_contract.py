@@ -1205,16 +1205,38 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     # argument and must not be treated as an always-accept gate.
     if len(tokens) < 2 or tokens[0] != "jq":
         return None
-    # Flag denylist: a prose edit to SKILL.md could otherwise smuggle a jq
+    # Flag allowlist: a prose edit to SKILL.md could otherwise smuggle a jq
     # flag that reads an arbitrary file (`-f`/`--from-file`, `--rawfile`,
-    # `--slurpfile`, `--argfile`) into this harness's argv. None of this
-    # gate's legitimate `jq -e '<filter>'` extractions need any of these,
-    # so treat their presence as "not a genuine standalone gate" (excluded
-    # from the verdict) rather than executing it.
-    _file_reading_flags = {"-f", "--from-file", "--rawfile", "--slurpfile", "--argfile"}
+    # `--slurpfile`, `--argfile`, `--run-tests`), loads a module (`-L`/
+    # `--library-path`), or does the same via `=`-joined form
+    # (`--from-file=...`). A denylist has to be extended by hand every time
+    # a new such flag is found (see finding #9: the prior denylist missed
+    # `--run-tests`, `-L`, `--library-path`, and the `=`-joined spellings)
+    # — invert to an allowlist instead: only the flags this gate's
+    # legitimate `jq -e '<filter>'` extractions actually need are accepted,
+    # every other `-`-prefixed token is treated as "not a genuine
+    # standalone gate" (excluded from the verdict) rather than executed.
+    # Combined short flags (e.g. `-se`) are accepted only when every
+    # character they carry is itself an allowed short flag.
+    _allowed_short_flag_chars = frozenset("ensr")
+    _allowed_long_flags = frozenset({"--stream", "--arg", "--argjson"})
+
+    def _flag_allowed(token: str) -> bool:
+        if token.startswith("--"):
+            return token in _allowed_long_flags
+        if token.startswith("-") and len(token) > 1:
+            return all(ch in _allowed_short_flag_chars for ch in token[1:])
+        return True  # not a flag at all — a filter string, e.g. "length == 1"
+
+    if not all(_flag_allowed(token) for token in tokens[1:]):
+        return None
+    # A module-loading `include`/`import` directive can appear inside the
+    # filter text itself, not just as a `-L`/`--library-path` flag; reject
+    # it there too rather than only gating on flags.
     if any(
-        token in _file_reading_flags or token.startswith(("--rawfile=", "--slurpfile="))
+        re.search(r"\b(include|import)\b", token)
         for token in tokens[1:]
+        if not token.startswith("-")
     ):
         return None
     try:
@@ -1634,20 +1656,45 @@ def test_release_audit_a2_marker_sha_bound_to_candidate_commit_path(
     skill_path: Path,
 ) -> None:
     """Regression for finding #5 (second half): the marker's `<sha>` must be
-    proven to resolve to THIS candidate's own committed `.release-template.json`
-    at its own tag commit, not merely to any blob reachable in the object
-    store.
+    proven to resolve to THIS candidate's own published `.release-template.json`
+    — via its own tag commit or the repo's current `HEAD` — not merely to any
+    blob reachable in the object store.
     """
     text = skill_path.read_text()
     region = _a2_region(text)
 
-    assert "refs/tags/vX.Y.Z^{commit}:.release-template.json" in region
+    assert "<peeled-commit-sha>:.release-template.json" in region
     assert re.search(r"bind.{0,40}<sha>", region, re.IGNORECASE | re.DOTALL)
     assert re.search(
         r"never accept it as a pointer to any object merely reachable",
         region,
         re.IGNORECASE,
     )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_marker_binding_has_two_anchors(skill_path: Path) -> None:
+    """Regression for round-3 findings #1/#2/#5/#6: the marker's producer
+    (Step 1b item 5 / Step 3 item 3) always composes `<sha>` from `HEAD`,
+    not from the target tag's own commit, so a single tag-commit-only
+    binding misclassifies a re-sync after a template edit, an Audit fix of
+    a version predating template adoption, and a New-tag cut to an explicit
+    historical SHA. The binding must accept either the origin peeled-commit
+    anchor (sourced from Step A1.1's already-captured inventory, never a
+    fresh local `refs/tags/` resolution) or the current-`HEAD` anchor.
+    """
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    assert re.search(r"origin peeled-commit anchor", region, re.IGNORECASE)
+    assert re.search(r"current-head anchor", region, re.IGNORECASE)
+    assert "git rev-parse HEAD:.release-template.json" in region
+    assert re.search(
+        r"neither\*? anchor resolves to a SHA equal to `<sha>`", region, re.IGNORECASE
+    )
+    # Must not re-resolve through a fresh local refs/tags/ ref or issue a
+    # second git ls-remote call for this binding.
+    assert "refs/tags/vX.Y.Z^{commit}:.release-template.json" not in region
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -1707,33 +1754,67 @@ def test_release_step4_override_recomposes_through_step3_item3(
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
-def test_release_template_read_uses_single_handle_not_stat_then_read(
+def test_release_template_read_uses_committed_object_not_working_tree_path(
     skill_path: Path,
 ) -> None:
-    """Regression for finding #10: the Step 1b template read must stat and
-    read the same open file handle, not a separate stat-path-then-read-path
-    sequence vulnerable to a symlink swap in between.
+    """Regression for round-3 finding #8: a same-handle stat-then-read
+    cannot actually close the TOCTOU window on this harness, because its
+    native file-read primitive is path-addressed with no atomic
+    open-fstat-read-on-one-fd operation — a stat-then-read sequence still
+    resolves the read's target by path a second time no matter how the
+    stat and read are phrased. The Step 1b template read must instead read
+    content by committed object (`git cat-file blob HEAD:...`), only after
+    the commit precondition passes, so a working-tree swap in between
+    cannot change what gets validated: git resolves by blob hash, not by
+    filesystem path.
     """
     text = skill_path.read_text()
     region = _template_region(text)
 
-    assert re.search(r"single file handle", region, re.IGNORECASE)
-    assert re.search(r"that same open handle", region, re.IGNORECASE)
-    assert re.search(
+    assert re.search(r"git cat-file blob HEAD:\.release-template\.json", region)
+    assert re.search(r"resolves this by committed blob hash", region, re.IGNORECASE)
+    assert re.search(r"no content read here", region, re.IGNORECASE) or re.search(
+        r"never reads content", region, re.IGNORECASE
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_toctou_region_no_longer_claims_single_handle(
+    skill_path: Path,
+) -> None:
+    """The prior (round-2) TOCTOU fix claimed a same-handle stat-then-read
+    closed the swap window; round-3 finding #8 established this harness
+    cannot actually express that operation and replaced the mechanism with
+    a committed-object read (see the sibling test above). The old claim
+    must not linger alongside the new mechanism.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert not re.search(r"single file handle", region, re.IGNORECASE)
+    assert not re.search(
         r"never re-open or re-resolve the path for the read", region, re.IGNORECASE
     )
 
 
-def test_jq_fixture_runner_enforces_timeout_and_file_flag_denylist() -> None:
+def test_jq_fixture_runner_enforces_timeout_and_flag_allowlist() -> None:
     """Regression for finding #11: the jq-fixture test runner must bound
     subprocess execution time and refuse to execute jq flags that read an
     arbitrary file from disk.
+
+    Regression for round-3 finding #9: the original denylist (`-f`,
+    `--from-file`, `--rawfile`, `--slurpfile`, `--argfile`) missed
+    `--run-tests` (reads a file), `-L`/`--library-path` (loads a module),
+    and the `=`-joined spelling of a denylisted flag (`--from-file=...`).
+    Inverted to an allowlist so a newly-discovered file-reading/module-
+    loading flag is excluded by default rather than requiring another
+    denylist entry.
     """
     source = Path(__file__).read_text()
     assert "timeout=10" in source
     assert "TimeoutExpired" in source
-    assert "_file_reading_flags" in source
-    assert '"--rawfile"' in source and '"--slurpfile"' in source
+    assert "_allowed_short_flag_chars" in source
+    assert "_allowed_long_flags" in source
 
 
 def test_jq_fixture_runner_excludes_file_reading_flags_from_verdict(
@@ -1743,6 +1824,22 @@ def test_jq_fixture_runner_excludes_file_reading_flags_from_verdict(
     marker.write_text("secret")
     assert _jq_command_accepts(f"jq -e -f {marker}", "{}") is None
     assert _jq_command_accepts(f"jq --rawfile x {marker} .", "{}") is None
+
+
+def test_jq_fixture_runner_excludes_flags_missed_by_prior_denylist(
+    tmp_path: Path,
+) -> None:
+    """Regression for round-3 finding #9's specific denylist gaps."""
+    marker = tmp_path / "must-not-be-read"
+    marker.write_text("secret")
+    assert _jq_command_accepts(f"jq -e --run-tests {marker}", "{}") is None
+    assert _jq_command_accepts(f"jq -L {marker} -e '.'", "{}") is None
+    assert _jq_command_accepts(f"jq --library-path {marker} -e '.'", "{}") is None
+    assert _jq_command_accepts(f"jq -e --from-file={marker}", "{}") is None
+    assert _jq_command_accepts("jq -e 'include \"evil\"; .'", "{}") is None
+    assert _jq_command_accepts("jq -e 'import \"evil\" as e; .'", "{}") is None
+    # A legitimate combined short-flag gate from SKILL.md must still run.
+    assert _jq_command_accepts("jq -se 'length == 1'", '{"a":1}\n{"b":2}') is False
 
 
 def test_jq_fixture_runner_excludes_non_terminating_filter() -> None:
