@@ -2511,3 +2511,101 @@ def test_jq_runner_skips_cleanly_when_jq_is_missing(monkeypatch) -> None:
     source = Path(__file__).read_text()
     assert 'shutil.which("jq")' in source
     assert "requires_jq" in source
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_strip_ordering_is_scoped_to_byte_exact_paths(
+    skill_path: Path,
+) -> None:
+    """Round-7 finding #4: the arbitration paragraph required trying the raw
+    body before the stripped one for *every* path below, while the same
+    paragraph also said the headed-summary boundary scan works from the
+    marker-free body. That scan performs no byte-exact match at all (it scans
+    for the next heading / compare line / EOF), so "consume the first candidate
+    that yields a byte-exact match" is undecidable there — sharply so under
+    `compare_line_label: "none"` with a CHANGELOG section carrying no `###`
+    subsection, where the boundary list reduces to EOF.
+    """
+    step_3 = _step3_region(skill_path.read_text())
+
+    # The ordering rule is explicitly scoped to the byte-exact paths.
+    assert "**byte-exact** recovery and comparison path" in step_3
+    assert "scoped to those byte-exact paths and to no others" in step_3
+    # The boundary scan is stated to have no ordering choice at all.
+    assert "performs no byte-exact match at all" in step_3
+    assert re.search(
+        r"that path \*\*always\*\* takes the stripped candidate, unconditionally",
+        step_3,
+    )
+    # The undecidable case is named rather than left implicit.
+    assert 'compare_line_label: "none"' in step_3
+    assert "reduces to EOF" in step_3
+    # The pre-fix unscoped phrasing must not survive.
+    assert "every recovery and comparison path below consumes" not in step_3
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_first_release_compare_line_is_unknown_not_none(
+    skill_path: Path,
+) -> None:
+    """Round-7 finding #3: on a repo with exactly three qualifying stable
+    releases, the highest-3 candidate set includes the first-ever release,
+    whose compare line is absent *by construction* (no PREV exists). A2.5 read
+    that structural absence as a disagreeing `"none"` against two consistent
+    compare lines and suppressed the `no-template-convention-detected`
+    proposal that should have fired.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+
+    # The exclusion is stated on the field it applies to.
+    assert (
+        "Exclude from this one field's judgement any candidate that has no PREV"
+        in region
+    )
+    assert "contributes **unknown** to this field, never a disagreeing" in region
+    # At most one candidate can be the first release, so >= 2 remain determinate.
+    assert "at least 2 determinate candidates always remain" in region
+    # Scoped: the other two fields are still judged across all 3.
+    assert "scoped to `compare_line_label` alone" in region
+    # The threshold paragraph acknowledges the exception rather than
+    # contradicting it (the round-5 candidate-set/threshold failure mode).
+    assert "One scoped exception" in region
+    assert re.search(r"All 3 candidates are still required", region)
+    # An `unknown` contribution is not a disagreement at the decision point.
+    assert "never counting as a disagreement" in region
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_a3_legend_includes_template_marker_unresolvable(
+    skill_path: Path,
+) -> None:
+    """Round-7 finding #5: A2 makes `template-marker-unresolvable` a
+    first-class T=R=C=check status that the punch list must carry as a row, but
+    Step A3's summary-count legend enumerated 14 classifications and omitted
+    it, so counts could never reconcile with rows. A2's own Known Limitations
+    say older re-synced releases drift into this state over time.
+    """
+    text = skill_path.read_text()
+    legend_lines = [
+        line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
+    ]
+    assert len(legend_lines) == 1, "expected exactly one A3 summary-count legend"
+    legend = legend_lines[0]
+
+    entries = [entry.strip() for entry in legend.split(",")]
+    letters = [entry.split(" ", 1)[0] for entry in entries]
+    names = [entry.split(" ", 1)[1] for entry in entries]
+
+    assert "template-marker-unresolvable" in names
+    # Counter letters stay unique, so every row maps to exactly one counter.
+    assert len(set(letters)) == len(letters), f"duplicate counter letters: {letters}"
+    # Every classification A2 can assign has a counter here.
+    for classification in (
+        "ok",
+        "drifted",
+        "template-marker-unresolvable",
+        "legacy-bare-tag",
+        "local-only-tag",
+        "no-template-convention-detected",
+    ):
+        assert classification in names
