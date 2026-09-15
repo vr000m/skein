@@ -2571,8 +2571,11 @@ def test_release_audit_a2_5_first_release_compare_line_is_unknown_not_none(
     # contradicting it (the round-5 candidate-set/threshold failure mode).
     assert "Two scoped exceptions" in region
     assert re.search(r"All 3 candidates are still required", region)
-    # An `unknown` contribution is not a disagreement at the decision point.
-    assert "never counting as a disagreement" in region
+    # An `unknown` contribution is not a disagreement at the decision point --
+    # and round-9 finding #1 made that where-clause cover BOTH carve-outs, not
+    # compare_line_label alone (see
+    # test_release_audit_a2_5_gate_sentence_covers_both_carve_outs).
+    assert "never counts as a disagreement on any of the three" in region
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2632,9 +2635,10 @@ def test_release_audit_a2_5_prev_exclusion_uses_a2_oracle_not_a1_union(
 
     # The exclusion keys on A2's oracle...
     assert "under Step A2's own PREV oracle" in bullet
-    # ...and re-states that oracle's own derivation rule, origin tags only.
-    assert "origin-authoritative tag inventory" in bullet
-    assert "highest SemVer tag below it" in bullet
+    # ...by reusing A2's already-computed result rather than re-deriving it
+    # (round-9 finding #4 removed the second prose derivation from this bullet;
+    # see test_release_audit_a2_5_reuses_a2_prev_instead_of_redefining_it).
+    assert "reuse the Audit PREV Step A2 already resolved" in bullet
     # ...and explicitly rejects the wider union as the test.
     assert "never from A1's wider" in bullet
     assert "union" in bullet
@@ -2705,8 +2709,11 @@ def test_release_audit_a2_5_excluded_sections_has_structural_absence_carve_out(
     assert "never carried that heading at all" in bullet
     # A heading no candidate is determinate on is not proposed as an exclusion.
     assert "is never proposed as an exclusion" in bullet
-    # No 2-candidate floor is claimed here; the difference is justified.
-    assert "no 2-candidate floor" in bullet
+    # Round-9 finding #2: this bullet now carries its own 2-determinate floor
+    # (see test_release_audit_a2_5_excluded_sections_has_evidence_floor); the
+    # pre-fix "no floor" claim must not survive.
+    assert "no 2-candidate floor" not in bullet
+    assert "Require at least 2 determinate candidates for a heading" in bullet
 
     # The threshold paragraph above must acknowledge BOTH carve-outs rather
     # than claiming compare_line_label's is the only one (the round-5
@@ -2815,3 +2822,185 @@ def test_release_skill_uses_one_step_item_reference_notation(
     # `Step A2.5` is a genuine heading and must survive the normalization.
     assert "### Step A2.5:" in text
     assert "Step A2.5" in text
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_gate_sentence_covers_both_carve_outs(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #1: round 8 added the per-heading `excluded_sections`
+    carve-out in its own bullet, but the actual decision-point sentence scoped
+    its "an unknown never counts as a disagreement" where-clause to
+    `compare_line_label` alone. Read literally, an `excluded_sections` unknown
+    still suppressed the proposal at the gate — re-opening the exact bug the
+    carve-out was added to close.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    gate_start = region.index("Any disagreement across the candidates")
+    gate = region[
+        gate_start : region.index("If the qualifying candidates agree", gate_start)
+    ]
+
+    # The where-clause is field-general, not scoped to one field.
+    assert "**for every field**" in gate
+    assert "never counts as a disagreement on any of the three" in gate
+    # Each of the three fields is named with its own determinacy rule.
+    for field in ("`title_format`", "`compare_line_label`", "`excluded_sections`"):
+        assert field in gate, f"gate sentence must name {field}"
+    # excluded_sections is covered per heading, with its floor, at the gate.
+    assert "per `###` heading" in gate
+    assert "fewer than 2 candidates judged not at all" in gate
+    # Symmetry is stated explicitly rather than left to inference.
+    assert "Both carve-outs bind here symmetrically" in gate
+    # The pre-fix asymmetric phrasing must not survive.
+    assert 'where, for `compare_line_label`, "the candidates"' not in gate
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_excluded_sections_has_evidence_floor(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #2: exception (ii) explicitly declined an evidence
+    floor, ruling out only n=0. With 2 of 3 candidates structurally lacking a
+    heading, that heading's agreement was judged across a single candidate and
+    trivially satisfied, then proposed as a repo-wide convention on n=1
+    evidence — contradicting the threshold paragraph's claim that requiring all
+    3 candidates is what makes the inference safe.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    bullet_start = region.index("- `excluded_sections` —")
+    bullet_end = region.index("Any disagreement across the candidates", bullet_start)
+    bullet = region[bullet_start:bullet_end]
+
+    assert "Require at least 2 determinate candidates for a heading" in bullet
+    assert "determinate on 0 or 1 of the 3 candidates" in bullet
+    # A sub-floor heading drops out; it is not read as a disagreement.
+    assert "not a disagreement either" in bullet
+    # The floor's value is justified, not asserted.
+    assert "extrapolation from n=1" in bullet
+    # The floor is enforced here because construction does not supply it.
+    assert "must be **enforced**" in bullet
+
+    # The threshold paragraph's exception (ii) carries the same floor.
+    threshold = region[: region.index("- `title_format` —")]
+    exception_ii = threshold[threshold.index("(ii)") :]
+    assert "never fewer than 2" in exception_ii
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_shape_only_marker_pattern_is_single_line(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #3: the widened shape-only marker pattern was the only
+    regex in this skill using an unconstrained `.*` without pinning newline
+    semantics. Under DOTALL, a marker-shaped opening could pair with a `-->`
+    many lines later, letting Step 3's "trailing line" strip swallow legitimate
+    body content. Both sites that specify the pattern must pin it to one line.
+    """
+    text = skill_path.read_text()
+    step_3 = _step3_region(text)
+    a2 = _a2_region(text)
+
+    for region_name, region in (("Step 3", step_3), ("Step A2", a2)):
+        idx = region.index("`^<!-- release-template-sha:.*-->$`")
+        window = region[idx : idx + 400]
+        assert "single physical line" in window, region_name
+        assert "`.` never matching LF" in window, region_name
+        # The newline-explicit equivalent is spelled out.
+        assert "`^<!-- release-template-sha:[^\\n]*-->$`" in window, region_name
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_reuses_a2_prev_instead_of_redefining_it(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #4: the Audit PREV oracle had two prose definition
+    sites (A2's `ok`/`drifted` bullet and A2.5's `compare_line_label` bullet).
+    They matched bit-for-bit at the time, but that exact duplication is what
+    diverged in round 7. Every A2.5 candidate is an A2 candidate already
+    classified, so A2's PREV is already computed and must be reused.
+    """
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+    bullet = region[
+        region.index("- `compare_line_label` —") : region.index(
+            "- `excluded_sections` —"
+        )
+    ]
+
+    assert "reuse the Audit PREV Step A2 already resolved" in bullet
+    assert "never re-derive it here" in bullet
+    assert "nowhere else in this skill" in bullet
+    # Exactly one prose definition site for the derivation survives, and it is
+    # A2's own `ok`/`drifted` bullet, not A2.5's.
+    assert text.count("highest SemVer tag below it") == 1
+    assert "highest SemVer tag below it" not in bullet
+    assert "strip `refs/tags/`/`^{}`, retain only strict `vX.Y.Z` tags" not in bullet
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_documents_audit_time_prev_limitation(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #5: the first-release exclusion tests PREV as it
+    resolves at audit time, while the property inferred (compare line omitted
+    because no PREV existed) is a cut-time fact. No recorded signal of cut-time
+    PREV exists, so the gap is documented as a known limitation — with its
+    concrete failure scenario — rather than silently left open.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    bullet = region[
+        region.index("- `compare_line_label` —") : region.index(
+            "- `excluded_sections` —"
+        )
+    ]
+
+    assert "Known limitation — this oracle is audit-time, not cut-time" in bullet
+    # Why it cannot simply be closed: no cut-time signal is recorded anywhere.
+    assert "Nothing this skill reads records the cut-time tag set" in bullet
+    # The concrete divergence scenario is named, including its own repair path.
+    assert "`missing-tag` repair" in bullet
+    assert "becomes determinate on the next" in bullet
+    # It fails in the safe direction, and says so.
+    assert "suppresses a proposal that should have fired, never emits one" in bullet
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_opening_states_its_scope_once(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #6: A2.5's opening paragraph stated the same
+    Audit-Mode-only scoping fact twice inside one sentence.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    opening = region[region.index("This step runs only inside `/release audit`") :][
+        :1600
+    ]
+    assert (
+        "it never taxes an ordinary Single-Version Mode `/release` cut, since it "
+        "lives here in Audit Mode only" in opening
+    )
+    # The duplicated second clause must not survive.
+    assert "without taxing an ordinary Single-Version Mode run" not in opening
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_none_compare_check_documents_body_wide_scope(
+    skill_path: Path,
+) -> None:
+    """Round-9 finding #7 (judgment call, kept as designed): check (3)'s
+    `"none"` branch rejects a compare-shaped line anywhere in the body, not
+    only as a final trailer. That is deliberate — the labelled branch already
+    calls a non-final or duplicate compare line drift, so a trailer-only
+    `"none"` would be laxer about the same line than a set label is. The
+    rationale is now stated in the text so it is not re-litigated as a bug.
+    """
+    a2 = _a2_region(skill_path.read_text())
+    idx = a2.index('`"none"` requires no `**Full diff:**`')
+    window = a2[idx : idx + 1200]
+
+    assert "This body-wide scope is deliberate, not an oversight" in window
+    assert "laxer" in window
+    # The accepted cost is named explicitly, in the fail-loud direction.
+    assert "a visible flag an operator can read the evidence for and dismiss" in window
+    assert "never a silent wrong `ok`" in window
