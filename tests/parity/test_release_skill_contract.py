@@ -1205,13 +1205,32 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     # argument and must not be treated as an always-accept gate.
     if len(tokens) < 2 or tokens[0] != "jq":
         return None
-    result = subprocess.run(
-        tokens,
-        input=fixture_text,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    # Flag denylist: a prose edit to SKILL.md could otherwise smuggle a jq
+    # flag that reads an arbitrary file (`-f`/`--from-file`, `--rawfile`,
+    # `--slurpfile`, `--argfile`) into this harness's argv. None of this
+    # gate's legitimate `jq -e '<filter>'` extractions need any of these,
+    # so treat their presence as "not a genuine standalone gate" (excluded
+    # from the verdict) rather than executing it.
+    _file_reading_flags = {"-f", "--from-file", "--rawfile", "--slurpfile", "--argfile"}
+    if any(
+        token in _file_reading_flags or token.startswith(("--rawfile=", "--slurpfile="))
+        for token in tokens[1:]
+    ):
+        return None
+    try:
+        result = subprocess.run(
+            tokens,
+            input=fixture_text,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        # A non-terminating filter (or one awaiting stdin this harness
+        # never provides) must not hang the suite; exclude it from the
+        # verdict rather than treating a hang as pass or fail.
+        return None
     if result.returncode in (126, 127):
         return None
     return result.returncode == 0
@@ -1270,6 +1289,8 @@ def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> 
         '{"compare_line_label": false}',
         '{"compare_line_label": null}',
         '{"whats_new": null}',
+        '{"excluded_sections": false}',
+        '{"excluded_sections": null}',
     ],
 )
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -1576,3 +1597,153 @@ def test_release_audit_dry_run_proposes_and_prints_never_writes(
         re.IGNORECASE,
     )
     assert re.search(r"report, don't mutate|report and move on", region, re.IGNORECASE)
+
+
+# ---------------------------------------------------------------------------
+# Round 2 gauntlet regressions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_strip_is_unconditional_on_active_template(
+    skill_path: Path,
+) -> None:
+    """Regression for findings #1/#2: marker-stripping in Step 3.1 recovery
+    must not be gated on *this run's* active template — marker presence is
+    a property of what was actually published, not of what Step 1b just
+    read. It must also cover both the headed (`## What's New` present) and
+    headingless recovery paths, not just the headingless one.
+    """
+    text = skill_path.read_text()
+    step_3 = text.index("### Step 3: Compose Title and Body")
+    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    step_3_contract = text[step_3:step_4]
+
+    assert re.search(r"unconditionally", step_3_contract, re.IGNORECASE)
+    assert re.search(r"regardless of whether", step_3_contract, re.IGNORECASE)
+    assert re.search(
+        r"headed-summary boundary scan in item 1", step_3_contract, re.IGNORECASE
+    )
+    assert re.search(
+        r"headingless-summary candidate matching", step_3_contract, re.IGNORECASE
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_marker_sha_bound_to_candidate_commit_path(
+    skill_path: Path,
+) -> None:
+    """Regression for finding #5 (second half): the marker's `<sha>` must be
+    proven to resolve to THIS candidate's own committed `.release-template.json`
+    at its own tag commit, not merely to any blob reachable in the object
+    store.
+    """
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    assert "refs/tags/vX.Y.Z^{commit}:.release-template.json" in region
+    assert re.search(r"bind.{0,40}<sha>", region, re.IGNORECASE | re.DOTALL)
+    assert re.search(
+        r"never accept it as a pointer to any object merely reachable",
+        region,
+        re.IGNORECASE,
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent(
+    skill_path: Path,
+) -> None:
+    """Regression for finding #7: a marker-shaped line whose hash isn't
+    40 hex characters (e.g. a SHA-256 object id) must classify
+    `template-marker-unresolvable`, never silently fall through to the
+    marker-absent fallback.
+    """
+    text = skill_path.read_text()
+    region = _a2_region(text)
+
+    assert re.search(r"wrong hex length", region, re.IGNORECASE)
+    assert "[0-9a-f]+ -->$" in region
+    assert re.search(
+        r"never treat this as the zero-strict-matches", region, re.IGNORECASE
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step5_tag_message_respects_bare_title_format(
+    skill_path: Path,
+) -> None:
+    """Regression for finding #3: Step 5's New-tag path must write whichever
+    title shape Step 3/Step 4 actually confirmed (canonical or bare), not
+    hardcode the canonical `<repo> vX.Y.Z — <highlight>` shape.
+    """
+    text = skill_path.read_text()
+    step_5 = text.index("### Step 5: Create or Re-Sync the Tag")
+    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
+    step_5_contract = text[step_5:step_6]
+
+    new_tag_start = step_5_contract.index("- **New tag**")
+    new_tag_bullet = step_5_contract[new_tag_start : new_tag_start + 2000]
+
+    assert re.search(r"bare `vX\.Y\.Z`", new_tag_bullet)
+    assert re.search(r"never hardcode the canonical shape", new_tag_bullet)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step4_override_recomposes_through_step3_item3(
+    skill_path: Path,
+) -> None:
+    """Regression for finding #6: Step 4's title/What's-New override must
+    recompose the body through Step 3 item 3 (where the marker/exclusions/
+    compare line are applied), not merely re-hash item 4's snapshot.
+    """
+    text = skill_path.read_text()
+    step_4 = text.index("### Step 4: Confirm Before Mutating")
+    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_4)
+    confirmation = text[step_4:step_5]
+
+    assert re.search(r"recompose the body through Step 3 item 3", confirmation)
+    assert re.search(r"not just re-hashing item 4", confirmation)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_read_uses_single_handle_not_stat_then_read(
+    skill_path: Path,
+) -> None:
+    """Regression for finding #10: the Step 1b template read must stat and
+    read the same open file handle, not a separate stat-path-then-read-path
+    sequence vulnerable to a symlink swap in between.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert re.search(r"single file handle", region, re.IGNORECASE)
+    assert re.search(r"that same open handle", region, re.IGNORECASE)
+    assert re.search(
+        r"never re-open or re-resolve the path for the read", region, re.IGNORECASE
+    )
+
+
+def test_jq_fixture_runner_enforces_timeout_and_file_flag_denylist() -> None:
+    """Regression for finding #11: the jq-fixture test runner must bound
+    subprocess execution time and refuse to execute jq flags that read an
+    arbitrary file from disk.
+    """
+    source = Path(__file__).read_text()
+    assert "timeout=10" in source
+    assert "TimeoutExpired" in source
+    assert "_file_reading_flags" in source
+    assert '"--rawfile"' in source and '"--slurpfile"' in source
+
+
+def test_jq_fixture_runner_excludes_file_reading_flags_from_verdict(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "must-not-be-read"
+    marker.write_text("secret")
+    assert _jq_command_accepts(f"jq -e -f {marker}", "{}") is None
+    assert _jq_command_accepts(f"jq --rawfile x {marker} .", "{}") is None
+
+
+def test_jq_fixture_runner_excludes_non_terminating_filter() -> None:
+    assert _jq_command_accepts("jq -e 'while(true; .)'", "{}") is None
