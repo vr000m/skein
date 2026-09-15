@@ -1,6 +1,6 @@
 # Task: skein:release — repo-declared release-notes template override
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: release-skill
 **Assigned to**: Claude
 **Priority**: Medium
