@@ -2602,16 +2602,168 @@ def test_release_a3_legend_includes_template_marker_unresolvable(
     assert "template-marker-unresolvable" in names
     # Counter letters stay unique, so every row maps to exactly one counter.
     assert len(set(letters)) == len(letters), f"duplicate counter letters: {letters}"
-    # Every classification A2 can assign has a counter here.
+    # Every classification A2 can assign to a *row* has a counter here.
+    # `no-template-convention-detected` is deliberately absent -- it is a
+    # repo-wide finding with no Version key, reported as a binary instead
+    # (round-10 finding #5; see
+    # test_release_a3_legend_letters_are_per_row_counts).
     for classification in (
         "ok",
         "drifted",
         "template-marker-unresolvable",
         "legacy-bare-tag",
         "local-only-tag",
-        "no-template-convention-detected",
     ):
         assert classification in names
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_a3_legend_letters_are_per_row_counts(
+    skill_path: Path,
+) -> None:
+    """Round-10 finding #5: the tally legend gave `no-template-convention-
+    detected` a `V` counter, but every other letter counts rows in the
+    `| Version | Status | Note |` table and A2.5's finding is repo-wide with
+    no Version key -- there is no row a `V` count could tally, so the letter
+    had no denominator. It is reported as a binary line instead.
+    """
+    text = skill_path.read_text()
+    legend_lines = [
+        line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
+    ]
+    assert len(legend_lines) == 1
+    legend = legend_lines[0]
+
+    # The counter-less repo-wide finding is out of the per-row tally.
+    assert "no-template-convention-detected" not in legend
+    assert " V " not in f" {legend} "
+
+    # ... and reported as a binary in the report template instead.
+    assert "Template convention proposal: <yes|no>" in text
+    # The legend's denominator is stated so a future editor does not re-add a
+    # letter for a finding that has no row.
+    assert (
+        "Every letter in that tally counts rows in the "
+        "`| Version | Status | Note |` table above" in text
+    )
+    assert "deliberately carries **no letter**" in text
+    assert "no row to count" in text
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_records_prev_for_a2_5_reuse(
+    skill_path: Path,
+) -> None:
+    """Round-10 finding #1: round 9 added A2.5's consumer-side "reuse the
+    Audit PREV Step A2 already resolved ... never re-derive it here" without a
+    matching producer-side record verb on A2's `ok`/`drifted` bullet, which
+    explicitly retains `databaseId`/`name`/`body` but said nothing about the
+    PREV it computes. A value nothing is told to keep cannot be reused.
+    """
+    a2 = _a2_region(skill_path.read_text())
+    bullet = a2[a2.index("- **`ok` vs. `drifted`**") :]
+
+    record_idx = bullet.index("**Record this resolved Audit PREV")
+    clause = bullet[record_idx : record_idx + 400]
+
+    # Recorded alongside the values the same bullet already retains.
+    assert "`databaseId`/`name`/`body`" in clause
+    assert "carry it forward as-is" in clause
+    # Named consumer, so the two halves cannot drift apart again.
+    assert "Step A2.5's `compare_line_label` bullet" in clause
+    # Absence is recorded too -- "no PREV" is one half of A2.5's predicate.
+    assert "or its explicit absence" in clause
+    # The record verb precedes the classification checks that follow it.
+    assert record_idx < bullet.index("Classify **`ok`** only when")
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_compare_line_determinacy_is_a_conjunction(
+    skill_path: Path,
+) -> None:
+    """Round-10 finding #2: `compare_line_label`'s evidence floor keyed
+    determinacy on a *proxy* (PREV absent) rather than on the compare line
+    itself, discarding present, determinate evidence from a no-PREV candidate
+    that nonetheless carries a compare line -- the one A2.5 path that failed
+    toward emitting a proposal instead of suppressing one. The predicate is
+    now a conjunction: no PREV *and* no compare line in the body.
+    """
+    region = _dry_run_search_region(skill_path.read_text())
+    bullet = region[
+        region.index("- `compare_line_label` —") : region.index(
+            "- `excluded_sections` —"
+        )
+    ]
+
+    assert "*and* whose body carries no compare-shaped line at all" in bullet
+    assert "the predicate is a conjunction, and both halves are load-bearing" in bullet
+    # The discarded-evidence scenario is named concretely.
+    assert "hand-cut first release" in bullet
+    assert "`drifted`-or-`ok` releases, not necessarily ones this skill cut" in bullet
+    # And the failure direction it was correcting is stated explicitly.
+    assert "fails toward **emitting** a proposal rather than suppressing one" in bullet
+    # The 2-determinate floor still holds, now by subset argument.
+    assert "subset of that no-PREV set" in bullet
+    assert "at least 2 determinate candidates always remain" in bullet
+
+    # The threshold paragraph's exception (i) states the same conjunction.
+    threshold = region[: region.index("- `title_format` —")]
+    exception_i = threshold[threshold.index("(i)") : threshold.index("(ii)")]
+    assert "no Audit PREV **and** no compare line in its body" in exception_i
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step6_prev_drift_recomposes_trailer_not_snapshot(
+    skill_path: Path,
+) -> None:
+    """Round-10 finding #3: Step 6's PREV-drift path said to recompose the
+    "body/compare trailer and confirmed payload snapshot from the fresh PREV",
+    but Step 3 item 4 excludes PREV from the snapshot's inputs by design. PREV
+    feeds the trailer only; implying otherwise would have an executing agent
+    hash a value item 4 never defined as an input.
+    """
+    text = skill_path.read_text()
+    step_6 = text[text.index("### Step 6: Create or Edit the Release") :]
+    para_start = step_6.index("**Always refresh the complete inventory and recompute")
+    para = step_6[para_start : step_6.index("\n\n", para_start)]
+
+    assert "recompose the desired body's compare trailer from the fresh PREV" in para
+    assert "**PREV is not an input to the confirmed payload snapshot**" in para
+    # The pre-fix phrasing must not survive.
+    assert "confirmed payload snapshot from the fresh PREV" not in para
+    # Why the PREV check has to be its own gate rather than folded into the
+    # payload re-verify.
+    assert (
+        "an unchanged payload snapshot is never evidence that the compare "
+        "trailer is unchanged" in para
+    )
+
+    # Step 3 item 4's input list, which the corrected clause defers to, still
+    # excludes PREV.
+    item_4 = _step3_region(text)
+    item_4 = item_4[item_4.index("4. **Record the confirmed payload snapshot.**") :]
+    assert "PREV" not in item_4.split("Call this the **confirmed payload snapshot**")[0]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_a2_5_gh_call_claim_is_self_contained(
+    skill_path: Path,
+) -> None:
+    """Round-10 finding #4: A2.5's no-new-gh-calls claim referenced the
+    "gh-call Counter" -- an identifier from this test module's own
+    `collections.Counter` inventory assertion, unresolvable to an agent
+    executing the skill, which never sees the test file.
+    """
+    text = skill_path.read_text()
+    region = _dry_run_search_region(text)
+    idx = region.index("**No new `gh` calls are introduced by this step**")
+    claim = region[idx : idx + 300]
+
+    assert "the total number of `gh` calls an audit run makes unchanged" in claim
+    assert '"exactly one bounded inventory call"' in claim
+    # No test-implementation identifier anywhere in the skill document.
+    assert "gh-call Counter" not in text
+    assert "Counter" not in region
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
