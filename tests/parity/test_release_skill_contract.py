@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 from collections import Counter
 from pathlib import Path
@@ -1048,6 +1049,71 @@ def test_release_template_marker_uses_head_blob_not_working_tree_hash(
     assert re.search(r"committed", step_6_contract, re.IGNORECASE)
 
 
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_marker_is_composed_in_step3_not_deferred_to_step6(
+    skill_path: Path,
+) -> None:
+    """Regression for the marker-ordering contradiction: the marker must be
+    folded into the body where it is composed (Step 3), not appended "once
+    the release succeeds" in Step 6 — the notes file is staged and byte-
+    verified before `gh release create`/`edit` ever runs, so a post-success
+    append was never satisfiable.
+    """
+    text = skill_path.read_text()
+    step_3 = text.index("### Step 3: Compose Title and Body")
+    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    step_3_contract = text[step_3:step_4]
+    step_6 = text.index("### Step 6: Create or Edit the Release")
+    audit_mode = text.index("## Audit Mode", step_6)
+    step_6_contract = text[step_6:audit_mode]
+
+    assert "Template identity marker" in step_3_contract
+    assert "release-template-sha" in step_3_contract
+    assert not re.search(
+        r"once.{0,80}succeeds.{0,200}append", step_6_contract, re.IGNORECASE | re.DOTALL
+    ), "Step 6 must not describe appending the marker only after gh succeeds"
+    assert not re.search(
+        r"do not append.{0,120}marker here", step_3_contract, re.IGNORECASE | re.DOTALL
+    ), "Step 3 must compose the marker, not defer it"
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_ok_checks_whats_new_presence_against_template(
+    skill_path: Path,
+) -> None:
+    """Regression: `ok` classification must compare the split-out `## What's
+    New` paragraph's presence against the classification source's
+    `whats_new` field, not silently ignore it.
+    """
+    text = skill_path.read_text()
+    a2_region = _a2_region(text)
+    ok_bullet_start = a2_region.index("**`ok` vs. `drifted`**")
+    ok_bullet = a2_region[ok_bullet_start:]
+
+    assert re.search(r"whats_new", ok_bullet)
+    assert re.search(r"presence", ok_bullet, re.IGNORECASE)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_audit_marker_absent_fallback_requires_commit_precondition(
+    skill_path: Path,
+) -> None:
+    """Regression: Step A2's marker-absent fallback to the current template
+    must apply Step 1b's commit precondition (item 3, including the
+    tracked-mode/symlink check), not only the jq validation gates (item 4)
+    — otherwise an untracked or symlinked current template could silently
+    become the classification source.
+    """
+    text = skill_path.read_text()
+    a2_region = _a2_region(text)
+    marker_absent_start = a2_region.index("**Marker absent (zero matches)**")
+    marker_absent_bullet = a2_region[marker_absent_start : marker_absent_start + 800]
+
+    assert re.search(r"items? 2", marker_absent_bullet)
+    assert "3 (commit precondition" in marker_absent_bullet
+    assert re.search(r"commit precondition", marker_absent_bullet, re.IGNORECASE)
+
+
 def _template_fixtures() -> dict[str, tuple[str, bool]]:
     """Map fixture name -> (raw JSON text, expected-valid)."""
     valid_full = json.dumps(
@@ -1120,11 +1186,27 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
 
     Returns True/False for a command that actually ran as a standalone jq
     gate, or None when the command could not run standalone (e.g. it
-    references a shell variable this harness does not set) — those are
-    excluded from the verdict rather than treated as evidence either way.
+    references a shell variable this harness does not set, or it is not a
+    genuine `jq <flags/filter>` invocation) — those are excluded from the
+    verdict rather than treated as evidence either way.
+
+    Security: this text is extracted from Markdown prose (SKILL.md) via
+    regex, so it must never be handed to a shell. `shlex.split` tokenizes
+    it and the tokens are exec'd directly (no `bash -c`, no shell
+    metacharacter interpretation) — a PR that edits SKILL.md prose cannot
+    inject shell commands into this test.
     """
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    # Require a genuine `jq <something>` invocation: just the bare word
+    # "jq" (e.g. harvested from prose like "Pin `jq`.") has no filter/flag
+    # argument and must not be treated as an always-accept gate.
+    if len(tokens) < 2 or tokens[0] != "jq":
+        return None
     result = subprocess.run(
-        ["bash", "-c", command],
+        tokens,
         input=fixture_text,
         capture_output=True,
         text=True,
@@ -1161,19 +1243,88 @@ def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> 
     for name, (fixture_text, expected_valid) in fixtures.items():
         if name == "valid_full_template":
             continue
+        verdicts = [
+            verdict
+            for command in commands
+            if (verdict := _jq_command_accepts(command, fixture_text)) is not None
+        ]
         if not expected_valid:
-            verdicts = [
-                verdict
-                for command in commands
-                if (verdict := _jq_command_accepts(command, fixture_text)) is not None
-            ]
-            assert not all(verdicts) if verdicts else True, (
-                f"fixture {name!r} should fail at least one jq gate"
-            )
             if verdicts:
                 assert any(not verdict for verdict in verdicts), (
                     f"fixture {name!r} should fail at least one jq gate"
                 )
+        else:
+            assert verdicts, (
+                f"no extracted jq command ran standalone against fixture {name!r}"
+            )
+            assert all(verdicts), (
+                f"fixture {name!r} is expected-valid but failed a jq gate"
+            )
+
+
+@pytest.mark.parametrize(
+    "fixture_json",
+    [
+        '{"title_format": false}',
+        '{"title_format": null}',
+        '{"compare_line_label": false}',
+        '{"compare_line_label": null}',
+        '{"whats_new": null}',
+    ],
+)
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_jq_gates_reject_null_and_false_not_just_wrong_string(
+    skill_path: Path, fixture_json: str
+) -> None:
+    """Regression for the `//`-defaulting fail-open: a present `false`/`null`
+    field must fail validation, not be treated the same as an absent field.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+    commands = _extract_jq_commands(region)
+
+    verdicts = [
+        verdict
+        for command in commands
+        if (verdict := _jq_command_accepts(command, fixture_json)) is not None
+    ]
+    assert verdicts, "no extracted jq command ran standalone against the fixture"
+    assert any(not verdict for verdict in verdicts), (
+        f"{fixture_json!r} must fail at least one jq gate, not silently default"
+    )
+
+
+def test_release_template_jq_gates_match_across_mirrors() -> None:
+    """Regression for mirror drift in the Step 1b jq validation contract:
+    the two mirrors must extract byte-identical jq gate commands, not just
+    each independently pass their own assertions.
+    """
+    texts = [path.read_text() for path in RELEASE_SKILLS]
+    regions = [_template_region(text) for text in texts]
+    commands = [_extract_jq_commands(region) for region in regions]
+    assert commands[0] == commands[1], (
+        "Claude and Codex release-skill mirrors extracted different jq "
+        "validation commands from their Step 1b template gates"
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_commit_precondition_rejects_symlinked_mode(
+    skill_path: Path,
+) -> None:
+    """Regression: the commit precondition must reject a tracked symlink
+    mode (120000), not just rely on `git diff --quiet` alone, since a
+    symlink's tracked blob holds only its target path and can pass that
+    diff check while a native read follows the link to uncommitted bytes.
+    """
+    text = skill_path.read_text()
+    region = _template_region(text)
+
+    assert "git ls-files --stage -- .release-template.json" in region
+    assert "100644" in region
+    assert "120000" in region
+    assert re.search(r"symlink", region, re.IGNORECASE)
+    assert re.search(r"no-?follow", region, re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -1329,7 +1480,7 @@ def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
         r"without taxing an ordinary", region, re.IGNORECASE
     )
     assert "no-template-convention-detected" not in single_version_mode
-    assert "T=R=C" not in text[step_A1:step_A2] or True  # A1 has no T/R/C notion yet
+    assert "T=R=C" not in text[step_A1:step_A2]  # A1 has no T/R/C notion yet
 
     # Sequenced after A2, explicitly not alongside A1 (A1.3's list call has
     # no `body` field; A2 is what actually fetches per-candidate body).
@@ -1385,9 +1536,7 @@ def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
         region,
         re.IGNORECASE,
     )
-    assert "SKILL.md:101,223" in region or re.search(
-        r"exactly like|exactly as", region, re.IGNORECASE
-    )
+    assert re.search(r"exactly like|exactly as", region, re.IGNORECASE)
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
