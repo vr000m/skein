@@ -2062,6 +2062,38 @@ def test_release_whats_new_true_is_a_noop_not_an_override(skill_path: Path) -> N
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_recovery_uses_marker_pinned_template_not_active_template(
+    skill_path: Path,
+) -> None:
+    """Gauntlet round-2 finding #9: recovery of an *existing* release body
+    (Step 3 item 1) previously parametrized itself entirely by *this run's*
+    active `.release-template.json`, not by the shape the release was
+    actually cut under. A repo that changes `compare_line_label` or
+    `excluded_sections` between releases could then misparse an older
+    release's body against the new shape's recovery rules. Recovery must
+    resolve its own "recovery template" from the body's marker via Step A2's
+    dual-anchor scheme, the same fix that problem already has for
+    classification, and use it -- not the active template -- to parametrize
+    title/boundary/exclusion recovery. The *new*, forward-composed body must
+    still use the active template, unaffected by this resolution.
+    """
+    region = _step3_region(skill_path.read_text())
+
+    assert "recovery template" in region
+    assert re.search(r"Step A2's dual-anchor scheme", region)
+    assert re.search(r"recovery-template-unresolvable", region)
+    assert re.search(r"the recovery template's `title_format`", region)
+    assert re.search(r"the recovery template's `compare_line_label`", region)
+    assert re.search(r"recovery template's\*\* `excluded_sections`", region)
+    # The forward-composed (new) body must remain governed by the active
+    # template, not the recovery template -- this fix must not regress that.
+    assert re.search(
+        r"still governs everything about the \*new\*, forward-composed body",
+        region,
+    )
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_whats_new_default_is_documented_as_unset_sentinel(
     skill_path: Path,
 ) -> None:
@@ -2086,6 +2118,27 @@ def test_release_whats_new_default_is_documented_as_unset_sentinel(
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_template_line_item_documents_unset_whats_new_display(
+    skill_path: Path,
+) -> None:
+    """Gauntlet round-2 finding #2: round-1 documented `whats_new` as an
+    explicit unset sentinel (Step 1b item 5), but Step 4's Template
+    line-item -- the confirmation that "names each active field's value" --
+    never said what to display when `whats_new` is unset, and its worked
+    example only shows the concrete `false (suppressed)` case. Without a
+    documented display rule, an unset field has no defined confirmation
+    behavior.
+    """
+    text = skill_path.read_text()
+    line_item = text[text.index("**Template line-item.**") :]
+    line_item = line_item[: line_item.index("\n\n### Step 5")]
+
+    assert "whats_new: false (suppressed)" in line_item
+    assert re.search(r"when the field is explicitly set", line_item)
+    assert re.search(r"unset.*omit it from this enumerated field list", line_item)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_excluded_sections_empty_body_predicate_matches(
     skill_path: Path,
 ) -> None:
@@ -2095,6 +2148,14 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     predicates that can diverge on a CHANGELOG section carrying prose
     directly under the version header plus ### subsections. Both sites must
     state one identical predicate.
+
+    Gauntlet round-2 finding #1: round-1's unification kept the wrong branch
+    -- a subsection-existence test ("no subsection content left to publish"),
+    not the body-emptiness test the adjoining rationale actually requires.
+    That mis-fires on prose-only sections (no ### subsections at all) and on
+    prose-plus-all-subsections-excluded, both of which have a non-empty body
+    to publish. The predicate must test body emptiness, not subsection
+    existence, so it must not contain the word "subsection".
     """
     text = skill_path.read_text()
     canonical_format = text[
@@ -2102,11 +2163,13 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     ]
     step3 = _step3_region(text)
 
-    schema_predicate = "no subsection content left to publish"
+    schema_predicate = "no content left to publish"
     assert schema_predicate in canonical_format
     assert schema_predicate in step3
     assert "leave nothing to publish" not in canonical_format
     assert "leave no subsection content at all" not in step3
+    assert "no subsection content left to publish" not in canonical_format
+    assert "no subsection content left to publish" not in step3
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2155,6 +2218,13 @@ def test_release_audit_a2_5_proposal_validates_and_escapes_before_printing(
     user to save and commit, but nothing previously required the emitted
     entries to pass Step 1b item 4's own gates or to be JSON-string-escaped --
     a heading containing `"` or `\\` would emit broken JSON.
+
+    Gauntlet round-2 findings #4/#6/#7: the failure branch must never display
+    a rejected entry's value (index + gate name only, matching this file's
+    established reject-without-displaying pattern for untrusted data), must
+    also guard the enclosing ```json fence against a matching backtick
+    sequence, and must reference Step 1b item 4's gates by name rather than
+    re-stating their constants a third time.
     """
     region = _dry_run_search_region(skill_path.read_text())
     proposal_sentence = region[
@@ -2164,11 +2234,34 @@ def test_release_audit_a2_5_proposal_validates_and_escapes_before_printing(
     ]
 
     assert re.search(
-        r"validate the proposed `excluded_sections` entries against Step 1b item 4's own gates",
+        r"validate every proposed `excluded_sections` entry against the same gates Step 1b item 4 already enforces on read",
         proposal_sentence,
     )
     assert re.search(r"JSON-string-escape every entry", proposal_sentence)
-    assert re.search(r"emit no proposal", proposal_sentence, re.IGNORECASE)
+    assert re.search(r"backtick sequence", proposal_sentence, re.IGNORECASE)
+    assert re.search(
+        r"never print that entry's value", proposal_sentence, re.IGNORECASE
+    )
+    assert re.search(
+        r"name it only by its index in the inferred array and the failing gate's name",
+        proposal_sentence,
+    )
+    assert re.search(
+        r"suppresses the entire `excluded_sections` proposal", proposal_sentence
+    )
+    # Round-2 finding #5: a gate-failed entry must be dropped from the
+    # evidence enumeration too, not just from the printed proposal.
+    assert re.search(
+        r"excluded from this evidence enumeration too, not just from the proposal",
+        region[: region.index("Propose — never write —")],
+    )
+    # Round-2 finding #4: the failure text must not still be spelled the old
+    # "emit no proposal ... and state which entry failed and why" way, which
+    # implied naming the entry's value.
+    assert (
+        "emit no proposal for `excluded_sections` and state which entry failed and why"
+        not in proposal_sentence
+    )
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2446,12 +2539,18 @@ def test_release_step3_title_recovery_is_parametrized_by_title_format(
     canonical-only rule, so every `title_format: bare` re-sync re-drafted a
     highlight that appears nowhere in the output — perturbing the confirmed
     payload snapshot run-to-run.
+
+    Round-2 finding #9 renamed the source of these fields from "the active
+    template" to "the recovery template" (resolved from the body's marker,
+    not necessarily equal to the active template) -- update the pinned
+    phrase accordingly.
     """
     text = skill_path.read_text()
     step_3 = _step3_region(text)
 
     assert re.search(
-        r"Parametrize item 1's title recovery by the active `title_format`", step_3
+        r"Parametrize item 1's title recovery by the recovery template's `title_format`",
+        step_3,
     )
     assert re.search(r"never carried a highlight at all", step_3)
     assert re.search(r"requiring `name` to equal exactly `vX\.Y\.Z`", step_3)
