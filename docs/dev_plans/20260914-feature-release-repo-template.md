@@ -1,7 +1,7 @@
 # Task: skein:release — repo-declared release-notes template override
 
 **Status**: Complete
-**Component**: release-skill
+**Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
 **Branch**: feature/release-repo-template
@@ -171,26 +171,26 @@ sequenceDiagram
 ## Testing Notes
 
 ### Test Approach
-- [ ] Extend `tests/parity/test_release_skill_contract.py` for template-present/absent paths
-- [ ] Mirror-parity check (`scripts/check-prompt-parity.sh`) passes on both mirrors post-change
+- [x] Extend `tests/parity/test_release_skill_contract.py` for template-present/absent paths
+- [x] Mirror-parity check (`scripts/check-prompt-parity.sh`) passes on both mirrors post-change
 
 ### Test Results
-- [ ] All existing tests pass
-- [ ] New tests added and passing
-- [ ] Manual verification complete
+- [x] All existing tests pass — `just ci` on this branch: `test_release_skill_contract.py` 216 passed, 0 failed; `check-sync` passed; `check-prompt-parity` passed. `gauntlet-tests` shows 11 pre-existing `tests/gauntlet/test-gate-timeout.sh` shim-path failures — confirmed present identically on `main` (unrelated to this branch's diff, no gate-timeout files touched here; environment-specific, not a regression from this plan).
+- [x] New tests added and passing — structural + executable jq-fixture assertions in `test_release_skill_contract.py` (schema, fail-closed validation, commit precondition, three-way marker classification, dry-run proposal) all pass.
+- [ ] Manual verification complete — the `gh release view --json body` marker round-trip (below) is unverified against a real GitHub release; everything else is covered by the automated suite.
 
 ### Edge Cases Tested
-- [ ] No template file present (default/fallback path, must match today's behavior exactly)
-- [ ] Template present and empty (`{}`) validates successfully — every field is independently defaulted, so an empty object is legal (exit 0, defaults apply), not an error
-- [ ] Template present but malformed/unparseable (fail closed, do not silently fall back or silently apply partial fields), including: invalid JSON, `[]` (not an object), two concatenated objects, bad enum, wrong-type `whats_new`, unknown extra key, duplicate key
-- [ ] Template present but uncommitted/dirty (Step 1b hard-stops, does not use working-tree bytes)
-- [ ] Audit classification of a pre-existing correctly-templated release with a valid marker (must be `ok`, not `drifted`)
-- [ ] Audit classification of a marker-less release with a current template present (must classify against that current template, not canonical)
-- [ ] Templated release re-synced twice is byte-identical, exactly one marker (no marker duplication)
-- [ ] `compare_line_label: "none"` combined with the marker (recovery must not expect a compare-line suffix)
-- [ ] `excluded_sections` naming a heading absent from the fetched CHANGELOG (no-op, reported in Step 4) and naming enough sections to empty the body (hard stop)
-- [ ] Marker with malformed SHA (short, uppercase, shell metacharacters) or resolving to a non-blob object (commit/tree/tag) — must land in the unresolvable/malformed informational state, never `ok`
-- [ ] `gh release view --json body` round-trips the appended marker byte-for-byte (manual verification against a real GitHub release, since this is unverified GitHub behavior, not something derivable from the skill text alone)
+- [x] No template file present (default/fallback path, must match today's behavior exactly) — covered by `test_release_skill_contract.py`
+- [x] Template present and empty (`{}`) validates successfully — every field is independently defaulted, so an empty object is legal (exit 0, defaults apply), not an error
+- [x] Template present but malformed/unparseable (fail closed, do not silently fall back or silently apply partial fields), including: invalid JSON, `[]` (not an object), two concatenated objects, bad enum, wrong-type `whats_new`, unknown extra key, duplicate key
+- [x] Template present but uncommitted/dirty (Step 1b hard-stops, does not use working-tree bytes)
+- [x] Audit classification of a pre-existing correctly-templated release with a valid marker (must be `ok`, not `drifted`)
+- [x] Audit classification of a marker-less release with a current template present (must classify against that current template, not canonical)
+- [x] Templated release re-synced twice is byte-identical, exactly one marker (no marker duplication)
+- [x] `compare_line_label: "none"` combined with the marker (recovery must not expect a compare-line suffix)
+- [x] `excluded_sections` naming a heading absent from the fetched CHANGELOG (no-op, reported in Step 4) and naming enough sections to empty the body (hard stop)
+- [x] Marker with malformed SHA (short, uppercase, shell metacharacters) or resolving to a non-blob object (commit/tree/tag) — must land in the unresolvable/malformed informational state, never `ok`
+- [ ] `gh release view --json body` round-trips the appended marker byte-for-byte — **not yet manually verified** against a real GitHub release; this is unverified GitHub behavior, not derivable from the skill text or contract test alone.
 
 ## Acceptance Criteria
 
@@ -225,4 +225,6 @@ sequenceDiagram
 
 ## Final Results
 
-[Fill this section when the work is complete]
+All three phases landed: repo-declared `.release-template.json` schema (Phase 1), marker/current-template-aware three-way audit classification (Phase 2), and the no-template dry-run proposal step (Phase 3). `tests/parity/test_release_skill_contract.py` passes at 216/0 on both mirrors; `scripts/check-prompt-parity.sh` and `scripts/check-sync.sh` both pass. `just ci` on this branch shows one pre-existing, unrelated failure class (`tests/gauntlet/test-gate-timeout.sh` shim-path, 11 failures) verified identical on `main` — not a regression from this plan.
+
+Outstanding: the `gh release view --json body` marker round-trip is not yet manually verified against a real GitHub release (tracked in Testing Notes/Edge Cases). Follow-up work and scope exclusions are recorded above under Findings.
