@@ -5,7 +5,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 ## [Unreleased]
 
 ### Added
-- `release` skill (both mirrors): a target repository can now declare its own release-notes shape via a `.release-template.json` file at its root (title format, compare-line label, excluded CHANGELOG subsections, `## What's New` presence). Absence is a byte-for-byte no-op against today's canonical shape; any validation failure on the template fails the run closed. `/release audit`'s `ok`/`drifted` classification is now template-aware, resolving a per-release classification source from a published `release-template-sha` marker, the current template file, or canonical shape.
+- `release` skill (both mirrors): a target repository can now declare its own release-notes shape via a `.release-template.json` file at its root (title format, compare-line label, excluded CHANGELOG subsections, `## What's New` presence). Absence is a byte-for-byte no-op against today's canonical shape; any validation failure on the template fails the run closed. `/release audit`'s `ok`/`drifted` classification is now template-aware, resolving a per-release classification source from a published `release-template-sha` marker, the current template file, or canonical shape. For a repo with no template file, `/release audit` also adds an informational `no-template-convention-detected` finding when its highest 3 qualifying releases agree on a stable shape that diverges from canonical — it proposes (prints, never writes) a `.release-template.json` draft for the user to save and commit.
 
 ## [0.8.0] - 2026-09-13
 

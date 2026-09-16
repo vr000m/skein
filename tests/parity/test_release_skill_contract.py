@@ -1138,12 +1138,10 @@ def _template_fixtures() -> dict[str, tuple[str, bool]]:
     )
     return {
         # NOTE: schema Requirements state every field is "independently
-        # defaulted", so an empty object should be a valid no-op-equivalent
-        # template. This conflicts with the plan's Testing Notes Edge Cases
-        # list, which groups `{}` under "malformed/unparseable" fixtures —
-        # flagged to the conductor (see test-writer coverage summary);
-        # treated as VALID here per the schema Requirements text, which is
-        # more authoritative than the Edge Cases bullet summary.
+        # defaulted", so an empty object is a valid no-op-equivalent
+        # template. The dev plan's Testing Notes Edge Cases list agrees:
+        # `{}` has its own bullet stating it "validates successfully" and
+        # is never grouped under the separate malformed/unparseable bullet.
         "valid_full_template": (valid_full, True),
         "empty_object": ("{}", True),
         "invalid_json": ("{", False),
@@ -1459,7 +1457,7 @@ def test_release_audit_a2_marker_gate_chain_is_fail_closed(
     # The marker regex must be anchored, exact, and applied to the release
     # body exactly once — same untrusted-input treatment as the rest of the
     # release body per SKILL.md's Step 1 data-boundary contract.
-    assert _MARKER_SHA_REGEX in region or re.search(_MARKER_SHA_REGEX, region)
+    assert re.search(_MARKER_SHA_REGEX, region)
     assert re.search(r"exactly once", region)
 
     # Resolution chain: cat-file type check requires `blob` (never
