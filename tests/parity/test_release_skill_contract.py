@@ -1759,22 +1759,28 @@ def test_release_audit_dry_run_proposes_and_prints_never_writes(
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
-def test_release_marker_strip_is_unconditional_on_active_template(
+def test_release_marker_strip_requires_strict_bound_marker(
     skill_path: Path,
 ) -> None:
-    """Regression for findings #1/#2: marker-stripping in Step 3 item 1 recovery
-    must not be gated on *this run's* active template — marker presence is
-    a property of what was actually published, not of what Step 1b just
-    read. It must also cover both the headed (`## What's New` present) and
-    headingless recovery paths, not just the headingless one.
+    """A recovery strip needs an authenticated marker, not only its shape.
+
+    The active template still must not gate a valid historical marker, but a
+    malformed or unbound shape must remain body data and become explicit drift.
     """
     text = skill_path.read_text()
     step_3 = text.index("### Step 3: Compose Title and Body")
     step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
     step_3_contract = text[step_3:step_4]
 
-    assert re.search(r"unconditionally", step_3_contract, re.IGNORECASE)
+    assert re.search(
+        r"only when a marker is strictly valid and successfully bound",
+        step_3_contract,
+        re.IGNORECASE,
+    )
     assert re.search(r"regardless of whether", step_3_contract, re.IGNORECASE)
+    assert "recovery-marker-ambiguous" in step_3_contract
+    assert re.search(r"preserve the raw body|remains body data", step_3_contract)
+    assert "never discard the line" in step_3_contract
     assert re.search(
         r"headed-summary boundary scan in item 1", step_3_contract, re.IGNORECASE
     )
@@ -2016,17 +2022,17 @@ def test_release_marker_separator_is_exactly_one_blank_line(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
-    """Round-4 finding #1 (consumer half): Step 3 item 1's unconditional strip must
-    remove the marker's preceding blank-line separator too. Stripping the
+    """Step 3's authenticated strip must remove the marker separator too.
+
+    Stripping the
     marker line alone leaves a stray blank line, so the first re-sync of a
     templated release fails the byte-for-byte suffix match and Step A2
     check (3)'s "exactly one final line" compare-line rule, misclassifying a
     correct release as drifted.
     """
     region = _step3_region(skill_path.read_text())
-    strip_paragraph = next(
-        line for line in region.splitlines() if "strip a trailing line matching" in line
-    )
+    strip_paragraph = region[region.index("Try the unmodified body first") :]
+    strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
 
     assert re.search(r"separator", strip_paragraph, re.IGNORECASE), (
         "the strip must name the separator it removes"
@@ -2779,24 +2785,23 @@ def test_release_excluded_sections_gate_rejects_del_byte(skill_path: Path) -> No
 def test_release_marker_produce_consume_positions_are_symmetric(
     skill_path: Path,
 ) -> None:
-    """Round-6 finding #6: Step 3 item 3 pins the marker to the body's final
-    line, but neither consumer treated that position as identity — Step 3 item 1's
-    strip was unconditional with no try-unmodified-first ordering (unlike the
-    compare-suffix removal directly below it), and A2's strict search matched
-    anywhere in the body.
+    """Step 3 and A2 agree on marker position and authenticated consumption.
+
+    Step 3 tries the unmodified body first and strips only a bound strict
+    marker, while A2's broader search still fails closed for audit.
     """
     text = skill_path.read_text()
     step_3 = _step3_region(text)
 
     # Consumer half 1: the strip now orders its candidates, unmodified first.
-    assert "Try the unmodified body first, then the stripped one" in step_3
-    assert "ordered two-candidate set" in step_3
+    assert "Try the unmodified body first" in step_3
+    assert "ordered candidates" in step_3
     assert re.search(r"consumes the \*\*first\*\* candidate", step_3)
-    assert re.search(r"whose own final line\s+happens to be marker-shaped", step_3) or (
-        "whose own final line happens to be marker-shaped" in step_3
-    )
-    # ...without losing round-4/5's unconditional-on-active-template property.
-    assert re.search(r"unconditionally", step_3)
+    assert "A trailing line matching the broader shape-only pattern" in step_3
+    # A valid historical marker is independent of the active template, but an
+    # unbound shape is preserved rather than stripped.
+    assert "strictly valid and successfully bound" in step_3
+    assert "recovery-marker-ambiguous" in step_3
 
     # Consumer half 2: A2's strict search requires the pinned final position.
     a2 = _a2_region(text)
@@ -2846,17 +2851,13 @@ def test_release_marker_strip_ordering_is_scoped_to_byte_exact_paths(
     # The ordering rule is explicitly scoped to the byte-exact paths.
     assert "**byte-exact** recovery and comparison path" in step_3
     assert "scoped to those byte-exact paths and to no others" in step_3
-    # The boundary scan is stated to have no ordering choice at all.
-    assert "performs no byte-exact match at all" in step_3
+    # The boundary scan is stated to have no byte-exact match to arbitrate.
+    assert "has no byte-exact match to arbitrate candidates" in step_3
     assert re.search(
-        r"that path \*\*always\*\* takes the stripped candidate, unconditionally",
+        r"uses the stripped candidate only when that same strict-and-bound marker proof succeeded",
         step_3,
     )
-    # The undecidable case is named rather than left implicit.
-    assert 'compare_line_label: "none"' in step_3
-    assert "reduces to EOF" in step_3
-    # The pre-fix unscoped phrasing must not survive.
-    assert "every recovery and comparison path below consumes" not in step_3
+    assert "otherwise it scans the unmodified body" in step_3
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -3063,6 +3064,28 @@ def test_release_step6_prev_drift_recomposes_trailer_not_snapshot(
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_step6_prev_drift_restarts_all_identities_before_confirmation(
+    skill_path: Path,
+) -> None:
+    """A PREV race invalidates the whole Step 6 preflight, not only the trailer."""
+    text = skill_path.read_text()
+    step_6 = text[text.index("### Step 6: Create or Edit the Release") :]
+    restart_start = step_6.index("**A PREV change is a full Step 6 restart")
+    restart = step_6[restart_start : step_6.index("\n\n", restart_start)]
+
+    assert "not a body-only recomposition" in restart
+    assert "discard every destination capture" in restart
+    assert "target-tag identity" in restart
+    assert "PREV tag-object/peeled-commit identity" in restart
+    assert "Restart Step 6 at its opening destination revalidation" in restart
+    assert "rebuild the immutable body" in restart
+    assert "obtain a new user confirmation" in restart
+    assert "After that confirmation, begin another Step 6 attempt" in restart
+    assert "immediately before **each** `gh release create`/`edit` mutation" in restart
+    assert "exact target tag-object SHA and peeled-commit SHA" in restart
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_audit_a2_5_gh_call_claim_is_self_contained(
     skill_path: Path,
 ) -> None:
@@ -3141,14 +3164,37 @@ def test_release_step3_marker_strip_uses_a2_shape_only_pattern(
     # Both consumers name the identical shape-only pattern.
     assert shape_only in step_3, "Step 3 item 1's strip must use the shape-only pattern"
     assert shape_only in a2, "Step A2 must still search the shape-only pattern"
-    # The strip is no longer keyed to the narrower lowercase-hex pattern.
-    strip_sentence = step_3[step_3.index("strip a trailing line matching") :][:400]
-    assert "[0-9a-f]+ -->$" not in strip_sentence
-    assert "[0-9a-f]{40} -->$" not in strip_sentence
-    # The strip stays unconditional and trailing-only.
-    assert "unconditionally" in strip_sentence
-    # The invariant the mismatch broke is still asserted, now tied to A2.
+    strip_paragraph = step_3[step_3.index("Try the unmodified body first") :]
+    strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
+    assert "[0-9a-f]{40}" in strip_paragraph
+    assert "successfully bound" in strip_paragraph
+    assert "unconditionally" not in strip_paragraph
+    # The invariant is split: bound markers are removed, ambiguous data is kept.
     assert "can never survive verbatim into a re-synced body" in step_3
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_marker_shaped_unbound_body_is_preserved_as_explicit_drift(
+    skill_path: Path,
+) -> None:
+    """A no-template CHANGELOG may end with marker-shaped user content.
+
+    Step 3 must not treat that shape as authenticated template metadata: the
+    unmodified body remains available for exact recovery and the ambiguity is
+    surfaced instead of being discarded or converted into a hard stop.
+    """
+    step_3 = _step3_region(skill_path.read_text())
+    recovery = step_3[step_3.index("Try the unmodified body first") :]
+    recovery = recovery[: recovery.index("\n\n")]
+
+    assert "shape-only" in recovery
+    assert "strict 40-hex" in recovery
+    assert "successfully bind" in recovery
+    assert "preserve the raw body as the unmodified candidate" in recovery
+    assert "recovery-marker-ambiguous" in recovery
+    assert "never discard the line" in recovery
+    assert "never ... hard-stop" not in recovery
+    assert "hard-stop as `recovery-template-unresolvable`" in recovery
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
