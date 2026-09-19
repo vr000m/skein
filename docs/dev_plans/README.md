@@ -18,6 +18,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-17 | refactor | release-skill-structure | meta | — | TBD | [plan](20260917-refactor-release-skill-structure.md) |
 
 ## Shipped
 
