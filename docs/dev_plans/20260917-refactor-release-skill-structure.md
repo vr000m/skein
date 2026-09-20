@@ -177,6 +177,8 @@ This refactor touches six independently-executing components (round 2 adds compo
 - The Phase 1.5 scratch-copy rename regression test already proves anchor robustness in isolation; this phase's coverage check is the complementary proof that the anchors still bound the *same logical regions* after Phases 2–3's real prose movement.
 - Confirm this phase's own checks pass cleanly given Phases 1.5–3 have already landed the anchor and prose changes they depend on — by construction, since Phase 1.5 now runs first, this phase adds no new anchor-stability risk, only the coverage-narrowing proof.
 
+<!-- reviewed: 2026-09-20 @ 43f2c4323665a0e0302ad7ddd75da4a4f6129296 -->
+
 ## Findings
 
 (populated during implementation/review — do not pre-fill; Phase 1's committed inventory and Phase 2/3's mapping tables land here as they're produced)
