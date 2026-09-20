@@ -12,11 +12,13 @@ parser can pick up the slug.
 | 2026-07-04 | chore | model-effort-explicit-spawns | meta | — | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
 | 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
+| 2026-09-14 | feature | release-repo-template | meta | — | feature/release-repo-template | [plan](20260914-feature-release-repo-template.md) |
 
 ## Planned
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-17 | refactor | release-skill-structure | meta | — | TBD | [plan](20260917-refactor-release-skill-structure.md) |
 
 ## Shipped
 
