@@ -353,7 +353,7 @@ fi
 # a fixture tree (self-test seam), like PARITY_GAUNTLET_LIB_ROOT above.
 RELEASE_LAGGING_PLANES_KNOWN=(release-skill-md release-lib release-references)
 release_lib_acknowledged=0
-for plane in ${RELEASE_LAGGING_MIRROR_OK//,/ }; do
+for plane in $(printf %s "${RELEASE_LAGGING_MIRROR_OK:-}" | tr , " "); do
 	plane_known=0
 	for known in "${RELEASE_LAGGING_PLANES_KNOWN[@]}"; do
 		[[ "$plane" == "$known" ]] && plane_known=1
