@@ -165,3 +165,14 @@ ci: lint check-sync check-trunk-snippet-parity parity-tests gauntlet-tests lens-
 
 noqa-probe:
     bash tests/plugin/noqa-probe.sh
+
+# Capture the pre-Phase-1.5 release-contract pytest test-id baseline (sorted
+# `::` ids, `# captured-at: <sha>` header). Create-only: refuses to overwrite,
+# because a refresh is the silent rebaseline the pin exists to prevent.
+release-baseline-refresh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=tests/parity/.release-test-id-baseline.txt
+    if [[ -e "$out" ]]; then echo "refusing to overwrite $out" >&2; exit 1; fi
+    ids="$(uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py --collect-only -q | grep '::' | LC_ALL=C sort)"
+    { echo "# captured-at: $(git rev-parse HEAD)"; printf '%s\n' "$ids"; } > "$out"
