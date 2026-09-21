@@ -4019,3 +4019,217 @@ def test_release_retargeted_assertions_fail_under_reference_mutation(
     ref.write_text(body)
     with pytest.raises(AssertionError):
         retargeted_test(scratch_skill)
+
+
+# --- Coverage-narrowing checks (release-skill restructure, Phase 4) ----------
+# Complements `just release-baseline-check` (test-id superset): ancestry pins on
+# the three baselines, per-region byte-length tolerance against the last
+# appended row, bash-suite enumeration, and the lagging-window-closed
+# assertion. Missing or shallow history is a hard failure, never a skip.
+# The ancestry pins are removed with `.release-baseline-meta.json` and
+# `RELEASE_LAGGING_MIRROR_OK` by the post-merge sunset commit.
+
+PARITY_DIR = ROOT / "tests/parity"
+_TEST_ID_BASELINE = PARITY_DIR / ".release-test-id-baseline.txt"
+_REGION_BASELINE = PARITY_DIR / ".release-region-length-baseline.tsv"
+_BASELINE_META = PARITY_DIR / ".release-baseline-meta.json"
+_CAPTURED_AT = re.compile(r"^#\s*captured-at:\s*([0-9a-f]{7,40})\s*$", re.MULTILINE)
+
+
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+
+
+def _baseline_meta() -> dict[str, str]:
+    assert _BASELINE_META.is_file(), f"missing {_BASELINE_META}"
+    return json.loads(_BASELINE_META.read_text())
+
+
+def _captured_at(path: Path) -> str:
+    assert path.is_file(), f"missing {path}"
+    match = _CAPTURED_AT.search(path.read_text())
+    assert match, f"{path} has no `# captured-at: <sha>` header"
+    return match.group(1)
+
+
+def _assert_strict_ancestor(ancestor: str, descendant: str, label: str) -> None:
+    shallow = _git("rev-parse", "--is-shallow-repository").stdout.strip()
+    assert shallow != "true", (
+        f"{label}: shallow clone cannot resolve commit ancestry "
+        "(CI must checkout with fetch-depth: 0)"
+    )
+    full_a = _git("rev-parse", "--verify", f"{ancestor}^{{commit}}")
+    full_d = _git("rev-parse", "--verify", f"{descendant}^{{commit}}")
+    assert full_a.returncode == 0, f"{label}: unknown commit {ancestor}"
+    assert full_d.returncode == 0, f"{label}: unknown commit {descendant}"
+    assert full_a.stdout.strip() != full_d.stdout.strip(), (
+        f"{label}: {ancestor} must be a STRICT ancestor of {descendant}"
+    )
+    result = _git("merge-base", "--is-ancestor", ancestor, descendant)
+    assert result.returncode == 0, (
+        f"{label}: {ancestor} is not an ancestor of {descendant}"
+    )
+
+
+def test_release_test_id_baseline_predates_phase15() -> None:
+    _assert_strict_ancestor(
+        _captured_at(_TEST_ID_BASELINE),
+        _baseline_meta()["phase15_first_commit"],
+        "test-id baseline captured-at vs phase15_first_commit",
+    )
+
+
+def test_release_region_length_baseline_predates_phase2() -> None:
+    meta = _baseline_meta()
+    _assert_strict_ancestor(
+        _captured_at(_REGION_BASELINE),
+        meta["phase2_first_commit"],
+        "region-length baseline captured-at vs phase2_first_commit",
+    )
+    _assert_strict_ancestor(
+        meta["phase2_first_commit"], "HEAD", "phase2_first_commit vs HEAD"
+    )
+
+
+def test_release_golden_capture_predates_phase2() -> None:
+    meta = _baseline_meta()
+    _assert_strict_ancestor(
+        meta["golden_capture_commit"],
+        meta["phase2_first_commit"],
+        "golden_capture_commit vs phase2_first_commit",
+    )
+
+
+def _last_region_rows() -> dict[str, tuple[str, int, str]]:
+    """Last appended row per `region` (any file): (file, byte_length, exempt)."""
+    assert _REGION_BASELINE.is_file(), f"missing {_REGION_BASELINE}"
+    rows: dict[str, tuple[str, int, str]] = {}
+    for line in _REGION_BASELINE.read_text().splitlines():
+        if not line.strip() or line.startswith(("#", "region\t")):
+            continue
+        cells = line.split("\t")
+        assert len(cells) in (3, 4), f"malformed region-length row: {line!r}"
+        region, file, length = cells[0], cells[1], cells[2]
+        exempt = cells[3] if len(cells) == 4 else ""
+        rows[region] = (file, int(length), exempt)
+    assert rows, "region-length baseline has no rows"
+    return rows
+
+
+def _measured_region_length(file: str, region: str) -> int:
+    """Byte length of `region` in `file`: its anchor up to the next anchor in
+    that file (last one: up to `## Worked Example`, else EOF). A reference
+    file's region is the spliced section the region's pointer names."""
+    path = ROOT / file
+    text = path.read_text()
+    name = region
+    if "/references/" in file:
+        splice = {entry[0]: entry[3] for entry in _REFERENCE_SPLICES}
+        assert region in splice, f"no reference section mapped for {region!r}"
+        name = splice[region]
+    begin = _anchor_at(text, name)
+    following = re.compile(r"^[ \t]*<!-- skein:[a-z0-9-]+ -->$", re.MULTILINE).search(
+        text, begin + 1
+    )
+    if following:
+        end = following.start()
+    else:
+        worked = text.find("## Worked Example", begin)
+        end = worked if worked != -1 else len(text)
+    return len(text[begin:end].encode())
+
+
+@pytest.mark.parametrize("mirror", ["plugins/skein/", "plugins/skein-codex/"])
+def test_release_regions_stay_within_tolerance_of_last_baseline_row(
+    mirror: str,
+) -> None:
+    if mirror.endswith("skein-codex/") and "release-skill-md" in _RELEASE_LAGGING_ACK:
+        pytest.skip("release-skill-md lag acknowledged via RELEASE_LAGGING_MIRROR_OK")
+    failures: list[str] = []
+    for region, (file, baseline, exempt) in _last_region_rows().items():
+        if exempt:
+            continue
+        mirrored = file.replace("plugins/skein/", mirror, 1)
+        try:
+            current = _measured_region_length(mirrored, region)
+        except AssertionError as exc:
+            failures.append(f"{region} ({mirrored}): {exc}")
+            continue
+        allowed = max(baseline * 0.10, 20)
+        if current == 0 or abs(current - baseline) > allowed:
+            failures.append(
+                f"{region} ({mirrored}): {current} bytes vs last baseline "
+                f"{baseline} (tolerance {allowed:.0f})"
+            )
+    assert not failures, "region length drifted:\n" + "\n".join(failures)
+
+
+def _justfile_recipes() -> dict[str, tuple[list[str], str]]:
+    """Recipe name -> (dependency names, body text)."""
+    recipes: dict[str, tuple[list[str], str]] = {}
+    current: str | None = None
+    header = re.compile(r"^([A-Za-z0-9_-]+)(?:\s+[^:=\n]*)?:(?!=)\s*(.*)$")
+    for line in (ROOT / "justfile").read_text().splitlines():
+        match = header.match(line) if line and not line[0].isspace() else None
+        if match and not line.startswith("#"):
+            current = match.group(1)
+            recipes[current] = (match.group(2).split(), "")
+        elif current and (line[:1].isspace() or not line):
+            deps, body = recipes[current]
+            recipes[current] = (deps, body + line + "\n")
+        elif line and not line.startswith("#"):
+            current = None
+    return recipes
+
+
+def _reachable_from_ci() -> set[str]:
+    recipes = _justfile_recipes()
+    assert "ci" in recipes, "justfile has no `ci` recipe"
+    seen: set[str] = set()
+    stack = ["ci"]
+    while stack:
+        name = stack.pop()
+        if name in seen or name not in recipes:
+            continue
+        seen.add(name)
+        deps, body = recipes[name]
+        stack.extend(deps)
+        for match in re.finditer(r"\bjust\s+([A-Za-z0-9_-]+)", body):
+            stack.append(match.group(1))
+    return seen
+
+
+def test_release_bash_suites_are_all_registered_in_ci() -> None:
+    suites = sorted((ROOT / "tests/release").glob("test-*.sh"))
+    assert suites, "tests/release has no test-*.sh suites"
+    recipes = _justfile_recipes()
+    reachable = _reachable_from_ci()
+    unregistered: list[str] = []
+    for suite in suites:
+        rel = suite.relative_to(ROOT).as_posix()
+        owners = [n for n, (_, body) in recipes.items() if rel in body]
+        if not any(owner in reachable for owner in owners):
+            unregistered.append(rel)
+    assert not unregistered, (
+        "tests/release suites not run by any recipe reachable from `ci:`: "
+        f"{unregistered}"
+    )
+
+
+def test_release_lagging_window_is_closed() -> None:
+    assert "RELEASE_LAGGING_MIRROR_OK" not in os.environ, (
+        "RELEASE_LAGGING_MIRROR_OK must be unset: the lagging window closed in "
+        "Phase 3.5"
+    )
+    assert not _RELEASE_LAGGING_ACK
+    hits: list[str] = []
+    candidates = [ROOT / "justfile", ROOT / ".pre-commit-config.yaml"]
+    candidates += sorted(
+        (ROOT / ".github").rglob("*") if (ROOT / ".github").is_dir() else []
+    )
+    for path in candidates:
+        if path.is_file() and "RELEASE_LAGGING_MIRROR_OK" in path.read_text():
+            hits.append(path.relative_to(ROOT).as_posix())
+    assert not hits, f"RELEASE_LAGGING_MIRROR_OK set/mentioned in: {hits}"

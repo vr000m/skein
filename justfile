@@ -191,8 +191,8 @@ release-baseline-refresh:
 # release-contract pytest ids must be a superset of the committed baseline
 # (`tests/parity/.release-test-id-baseline.txt`), so a retarget can never
 # silently drop a test. Fails hard (never skips) on a missing baseline or a
-# missing `tests/parity/.release-baseline-meta.json`. Phase 4 adds the
-# commit-ancestry pin on top of this.
+# missing `tests/parity/.release-baseline-meta.json`. The ancestry pins live in
+# `tests/parity/test_release_skill_contract.py` (Phase 4).
 release-baseline-check:
     #!/usr/bin/env bash
     set -euo pipefail
