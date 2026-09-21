@@ -97,7 +97,7 @@ fi
 # --- release-lib plane (tests/parity/test-applier-bundle-parity.sh) --------
 lib_root="$TMP/lib"
 mkdir -p "$lib_root/plugins/skein/skills/release/lib" "$lib_root/plugins/skein-codex/skills/release/lib"
-echo "#!/usr/bin/env bash" >"$lib_root/plugins/skein/skills/release/lib/x.sh"
+echo "#!/usr/bin/env bash" >"$lib_root/plugins/skein/skills/release/lib/release-common.sh"
 run_bundle_parity() {
 	env "$@" PARITY_RELEASE_LIB_ROOT="$lib_root" bash "$REPO_ROOT/tests/parity/test-applier-bundle-parity.sh" 2>&1
 }

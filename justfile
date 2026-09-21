@@ -116,8 +116,8 @@ reconciliation-tests:
 # base-branch guards, so they sit under both shellcheck and shfmt like every
 # other bundled script.
 lint-scripts:
-    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
-    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
+    shellcheck scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/release/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
+    shfmt -d scripts/*.sh scripts/lib/*.sh plugins/skein/skills/review-gauntlet/lib/*.sh plugins/skein/skills/release/lib/*.sh plugins/skein/skills/fan-out/fan-out.sh plugins/skein-codex/skills/fan-out/fan-out.sh tests/*/*.sh
     ./scripts/lint-temp-paths.sh
 
 # Plugin-level guards and skill-script guard suites: CLAUDE.md hygiene rules,
@@ -165,7 +165,12 @@ pytest-tests:
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
 # runs on every pull request.
-ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
+ci: lint check-sync check-trunk-snippet-parity release-baseline-check release-script-tests parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
+
+# Golden comparisons, negative cases and exit-code contract for the release
+# skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).
+release-script-tests:
+    bash tests/release/test-scripts.sh
 
 noqa-probe:
     bash tests/plugin/noqa-probe.sh

@@ -218,7 +218,7 @@ done < <({
 # way to add a Codex-only lib file to the real repo just to assert it is
 # caught), and only when this process is not itself the fixture run.
 # ---------------------------------------------------------------------------
-if [[ -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
+if [[ -z "${PARITY_GAUNTLET_LIB_ROOT:-}" && -z "${PARITY_RELEASE_LIB_ROOT:-}" ]]; then
 	g9_fixture="$(mktemp -d)"
 	mkdir -p "$g9_fixture/plugins/skein/skills/review-gauntlet/lib" \
 		"$g9_fixture/plugins/skein-codex/skills/review-gauntlet/lib"
@@ -311,7 +311,7 @@ fi
 # itself a fixture run (either override set), which is what bounds the
 # recursion.
 # ---------------------------------------------------------------------------
-if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]]; then
+if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" && -z "${PARITY_RELEASE_LIB_ROOT:-}" ]]; then
 	r9g8_fixture="$(mktemp -d)"
 	for mirror in skein skein-codex; do
 		mkdir -p "$r9g8_fixture/plugins/$mirror/skills/deep-review/scripts"
@@ -368,10 +368,26 @@ done
 RELEASE_LIB_ROOT="${PARITY_RELEASE_LIB_ROOT:-$ROOT_DIR}"
 RELEASE_LIB_CLAUDE_DIR="$RELEASE_LIB_ROOT/plugins/skein/skills/release/lib"
 RELEASE_LIB_CODEX_DIR="$RELEASE_LIB_ROOT/plugins/skein-codex/skills/release/lib"
+# RELEASE_LIB_PARITY_FILES is the hand-maintained registration list (modelled
+# on GAUNTLET_LIB_PARITY_FILES); the enumeration below walks the UNION of both
+# mirrors' lib/ and fails on any basename outside it. The anchor-divergent
+# exclusion is EMPTY by design (grilled decision 9): the scripts are pure over
+# injected inputs with pre-resolved executables, so they carry no
+# ${CLAUDE_PLUGIN_ROOT}/$SKILL_DIR anchor and are byte-identical across mirrors.
+RELEASE_LIB_PARITY_FILES=(release-common.sh read-release-template.sh resolve-template-marker.sh)
 RELEASE_LIB_ANCHOR_DIVERGENT=()
 release_lib_drift=()
 while IFS= read -r lib_base; do
 	[[ -n "$lib_base" ]] || continue
+	registered=0
+	for d in "${RELEASE_LIB_PARITY_FILES[@]}" "${RELEASE_LIB_ANCHOR_DIVERGENT[@]+"${RELEASE_LIB_ANCHOR_DIVERGENT[@]}"}"; do
+		[[ "$lib_base" == "$d" ]] && registered=1 && break
+	done
+	if [[ "$registered" -eq 0 ]]; then
+		fail "release lib enumeration: $lib_base is not in RELEASE_LIB_PARITY_FILES (nor the anchor-divergent exclusion) -- register it or its mirror parity is never checked"
+	else
+		pass "release lib enumeration: $lib_base is registered"
+	fi
 	divergent=0
 	for d in "${RELEASE_LIB_ANCHOR_DIVERGENT[@]+"${RELEASE_LIB_ANCHOR_DIVERGENT[@]}"}"; do
 		[[ "$lib_base" == "$d" ]] && divergent=1
@@ -397,6 +413,47 @@ if [[ ${#release_lib_drift[@]} -gt 0 ]]; then
 			fail "release lib mirror parity: $lib_base missing or differs between plugins/skein and plugins/skein-codex"
 		done
 	fi
+fi
+
+# Registered files must exist on the Claude mirror (the Codex half lands in
+# Phase 3.5 and is covered by the acknowledged drift above).
+for f in "${RELEASE_LIB_PARITY_FILES[@]}"; do
+	if [[ -n "${PARITY_RELEASE_LIB_ROOT:-}" ]]; then
+		break # fixture runs carry only the files under test
+	elif [[ -f "$RELEASE_LIB_CLAUDE_DIR/$f" ]]; then
+		pass "release lib registration: $f exists in plugins/skein"
+	else
+		fail "release lib registration: $f is registered but missing from plugins/skein"
+	fi
+done
+
+# The anchor-divergent exclusion must stay empty (grilled decision 9).
+if [[ ${#RELEASE_LIB_ANCHOR_DIVERGENT[@]} -eq 0 ]]; then
+	pass "release lib: anchor-divergent exclusion list is empty"
+else
+	fail "release lib: anchor-divergent exclusion list must be empty (scripts are anchor-free)"
+fi
+
+# Self-test (G9-style): the enumeration must catch an unregistered, Codex-only
+# lib file. Runs against a fixture via PARITY_RELEASE_LIB_ROOT with the lagging
+# acknowledgment scrubbed, and is skipped inside any fixture run, which bounds
+# the recursion.
+if [[ -z "${PARITY_RELEASE_LIB_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" && -z "${PARITY_BUNDLE_REF_ROOT:-}" ]]; then
+	rl_fixture="$(mktemp -d)"
+	mkdir -p "$rl_fixture/plugins/skein/skills/release/lib" "$rl_fixture/plugins/skein-codex/skills/release/lib"
+	for rl_f in "${RELEASE_LIB_PARITY_FILES[@]}"; do
+		printf '%s\n' '#!/usr/bin/env bash' >"$rl_fixture/plugins/skein/skills/release/lib/$rl_f"
+		cp "$rl_fixture/plugins/skein/skills/release/lib/$rl_f" "$rl_fixture/plugins/skein-codex/skills/release/lib/$rl_f"
+	done
+	printf '%s\n' '#!/usr/bin/env bash' >"$rl_fixture/plugins/skein-codex/skills/release/lib/orphan.sh"
+	rl_rc=0
+	rl_out="$(RELEASE_LAGGING_MIRROR_OK="" PARITY_RELEASE_LIB_ROOT="$rl_fixture" bash "${BASH_SOURCE[0]}" 2>&1)" || rl_rc=$?
+	if [[ "$rl_rc" -ne 0 ]] && grep -q 'release lib enumeration: orphan.sh is not in RELEASE_LIB_PARITY_FILES' <<<"$rl_out"; then
+		pass "release lib self-test: an unregistered Codex-only lib file fails the enumeration and is named"
+	else
+		fail "release lib self-test: an unregistered Codex-only lib file must fail the enumeration (rc=$rl_rc)"
+	fi
+	rm -rf "$rl_fixture"
 fi
 
 echo ""

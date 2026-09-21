@@ -1007,18 +1007,21 @@ def test_release_template_validation_fails_closed_on_all_gates(
     text = skill_path.read_text()
     region = _template_region(text)
 
-    # The three gates reimplemented equivalently from persist-common.sh's
-    # persist_validate_json_shape.
-    assert "equivalent standalone" in region
-    assert "rather than a verbatim copy" in region
-    assert "jq empty" in region
-    assert 'type == "object"' in region
-    assert re.search(r"single[- ]document", region, re.IGNORECASE)
-
-    # New gates this schema needs beyond the ported three.
-    assert re.search(r"unknown[- ]key", region, re.IGNORECASE)
-    assert re.search(r"duplicate[- ]key", region, re.IGNORECASE)
-    assert re.search(r"enum", region, re.IGNORECASE)
+    # The gate sequence itself moved into the extracted script (Phase 2): the
+    # prose names the script call site and every failed_gate value it reports.
+    assert "read-release-template.sh" in region
+    assert "--site step1b-validate" in region
+    for gate in (
+        "jq-empty",
+        "single-document",
+        "object-type",
+        "duplicate-key",
+        "unknown-key",
+        "enum",
+        "whats-new-type",
+        "excluded-sections-shape",
+    ):
+        assert f"`{gate}`" in region, gate
 
     # jq must be identity-pinned like every other invoked executable, not
     # shelled out via inherited PATH.
@@ -1242,6 +1245,51 @@ def _template_fixtures() -> dict[str, tuple[str, bool]]:
     }
 
 
+def _release_lib_script(skill_path: Path, name: str = "read-release-template") -> Path:
+    return skill_path.parent / "lib" / f"{name}.sh"
+
+
+def _real_exe(name: str) -> str:
+    resolved = shutil.which(name)
+    assert resolved is not None, f"{name} not on PATH"
+    return os.path.realpath(resolved)
+
+
+def _release_lib_validate(
+    skill_path: Path, fixture_text: str, lib_dir: Path | None = None
+) -> tuple[bool, str | None]:
+    """Run the extracted read-release-template.sh (step1b-validate, templated
+    and clean) over fixture bytes on stdin. Returns (accepted, failed_gate).
+
+    Phase 2 retarget (docs/dev_plans/20260917-refactor-release-skill-structure.md):
+    the jq gate sequence no longer lives in SKILL.md prose, so the gate
+    behaviour is asserted against the script that now owns it instead of
+    regex-extracted prose commands.
+    """
+    script = (lib_dir or skill_path.parent / "lib") / "read-release-template.sh"
+    result = subprocess.run(
+        [
+            str(script),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "present-tracked-clean",
+            "--head-commit",
+            "present",
+            "--mode",
+            "100644",
+        ],
+        input=fixture_text.encode("utf-8", "surrogatepass"),
+        capture_output=True,
+        env={**os.environ, "RELEASE_JQ": _real_exe("jq")},
+        check=False,
+    )
+    assert result.returncode in (0, 1), result.stderr
+    decision = json.loads(result.stdout)
+    assert decision["exit_code"] == result.returncode
+    return result.returncode == 0, decision["failed_gate"]
+
+
 def _extract_jq_commands(region: str) -> list[str]:
     """Regex-extract standalone `jq ...` invocations from Markdown text.
 
@@ -1407,16 +1455,6 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
     nested and shape-changing cases that required persist-common.sh's
     raw-vs-collapsed event-count rule, plus non-duplicate controls.
     """
-    text = skill_path.read_text()
-    region = _template_region(text)
-    duplicate_commands = [
-        command
-        for command in _extract_jq_commands(region)
-        if "fromstream(.[])" in command and "tostream" in command
-    ]
-    assert len(duplicate_commands) == 1
-    duplicate_command = duplicate_commands[0]
-
     fixtures = [
         ('{"logic":["a","b"],"logic":[]}', False),
         ('{"logic":[],"logic":["a","b"]}', False),
@@ -1429,8 +1467,13 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
         ('{"scalar":1,"other":2}', True),
     ]
     for fixture_text, expected_accept in fixtures:
-        release_verdict = _jq_command_accepts(duplicate_command, fixture_text)
-        assert release_verdict is not None
+        accepted, failed_gate = _release_lib_validate(skill_path, fixture_text)
+        # These fixtures use keys outside the closed schema, so a fixture the
+        # duplicate-key gate passes still trips the later unknown-key gate;
+        # the duplicate-key verdict is "did that specific gate fire".
+        assert failed_gate in (None, "duplicate-key", "unknown-key"), failed_gate
+        assert accepted is False or failed_gate is None
+        release_verdict = failed_gate != "duplicate-key"
         shared_verdict = _persist_duplicate_key_gate_accepts(fixture_text)
         assert release_verdict == shared_verdict, (
             f"release and persist-common duplicate-key gates disagree for "
@@ -1442,47 +1485,12 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 @requires_jq
 def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> None:
-    text = skill_path.read_text()
-    region = _template_region(text)
-    commands = _extract_jq_commands(region)
-
-    assert commands, (
-        "expected at least one standalone `jq` validation command inside "
-        "the Step 1b template-read/validate contract"
-    )
-
-    fixtures = _template_fixtures()
-    valid_text, _ = fixtures["valid_full_template"]
-    valid_verdicts = [
-        verdict
-        for command in commands
-        if (verdict := _jq_command_accepts(command, valid_text)) is not None
-    ]
-    assert valid_verdicts, "no extracted jq command ran standalone against the fixtures"
-    assert all(valid_verdicts), (
-        "every jq gate must accept a valid, fully-populated template"
-    )
-
-    for name, (fixture_text, expected_valid) in fixtures.items():
-        if name == "valid_full_template":
-            continue
-        verdicts = [
-            verdict
-            for command in commands
-            if (verdict := _jq_command_accepts(command, fixture_text)) is not None
-        ]
-        if not expected_valid:
-            if verdicts:
-                assert any(not verdict for verdict in verdicts), (
-                    f"fixture {name!r} should fail at least one jq gate"
-                )
-        else:
-            assert verdicts, (
-                f"no extracted jq command ran standalone against fixture {name!r}"
-            )
-            assert all(verdicts), (
-                f"fixture {name!r} is expected-valid but failed a jq gate"
-            )
+    for name, (fixture_text, expected_valid) in _template_fixtures().items():
+        accepted, failed_gate = _release_lib_validate(skill_path, fixture_text)
+        assert accepted is expected_valid, (
+            f"fixture {name!r}: expected valid={expected_valid}, "
+            f"got {accepted} (failed_gate={failed_gate})"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1505,19 +1513,47 @@ def test_release_template_jq_gates_reject_null_and_false_not_just_wrong_string(
     """Regression for the `//`-defaulting fail-open: a present `false`/`null`
     field must fail validation, not be treated the same as an absent field.
     """
-    text = skill_path.read_text()
-    region = _template_region(text)
-    commands = _extract_jq_commands(region)
-
-    verdicts = [
-        verdict
-        for command in commands
-        if (verdict := _jq_command_accepts(command, fixture_json)) is not None
-    ]
-    assert verdicts, "no extracted jq command ran standalone against the fixture"
-    assert any(not verdict for verdict in verdicts), (
-        f"{fixture_json!r} must fail at least one jq gate, not silently default"
+    accepted, failed_gate = _release_lib_validate(skill_path, fixture_json)
+    assert not accepted, (
+        f"{fixture_json!r} must fail a gate, not silently default "
+        f"(failed_gate={failed_gate})"
     )
+
+
+_GATE_MUTATION_FIXTURES = {
+    "jq-empty": "{",
+    "single-document": "{}\n{}",
+    "object-type": "[]",
+    "duplicate-key": '{"title_format": "bare", "title_format": "canonical"}',
+    "unknown-key": '{"extra": 1}',
+    "enum": '{"title_format": "weird"}',
+    "whats-new-type": '{"whats_new": "true"}',
+    "excluded-sections-shape": '{"excluded_sections": false}',
+}
+
+
+@pytest.mark.parametrize("gate", sorted(_GATE_MUTATION_FIXTURES))
+@requires_jq
+def test_release_lib_gate_tests_fail_under_deliberate_mutation(
+    gate: str, tmp_path: Path
+) -> None:
+    """Mutation evidence for the Phase 2 retargets (mapping table): with one
+    gate's failure branch neutered in a scratch copy of the Claude lib/, the
+    retargeted fixture verdict flips from rejected to accepted, so the
+    script-level tests cannot pass vacuously.
+    """
+    claude_lib = RELEASE_SKILLS[0].parent / "lib"
+    scratch = tmp_path / "lib"
+    shutil.copytree(claude_lib, scratch)
+    common = scratch / "release-common.sh"
+    text = common.read_text()
+    needle = f'echo "{gate}"\n\t\treturn 1'
+    assert text.count(needle) == 1, gate
+    common.write_text(text.replace(needle, ":"))
+    fixture = _GATE_MUTATION_FIXTURES[gate]
+    assert _release_lib_validate(RELEASE_SKILLS[0], fixture)[1] == gate
+    _, failed_gate = _release_lib_validate(RELEASE_SKILLS[0], fixture, lib_dir=scratch)
+    assert failed_gate != gate, f"mutating the {gate} gate did not change its verdict"
 
 
 def test_release_template_jq_gates_match_across_mirrors() -> None:
@@ -1530,13 +1566,11 @@ def test_release_template_jq_gates_match_across_mirrors() -> None:
             "plane 'release-skill-md' acknowledged via RELEASE_LAGGING_MIRROR_OK: "
             "the Codex mirror lags the Claude mirror's region anchors until Phase 3.5"
         )
-    texts = [path.read_text() for path in RELEASE_SKILLS]
-    regions = [_template_region(text) for text in texts]
-    commands = [_extract_jq_commands(region) for region in regions]
-    assert commands[0] == commands[1], (
-        "Claude and Codex release-skill mirrors extracted different jq "
-        "validation commands from their Step 1b template gates"
-    )
+    claude, codex = (path.parent / "lib" for path in RELEASE_SKILLS)
+    for name in ("read-release-template.sh", "release-common.sh"):
+        assert (claude / name).read_bytes() == (codex / name).read_bytes(), (
+            f"lib/{name} differs between the Claude and Codex release mirrors"
+        )
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2588,12 +2622,22 @@ def test_release_excluded_sections_bound_is_characters_not_bytes(
     text = skill_path.read_text()
 
     assert "at most 200 bytes" not in text
-    assert text.count("at most 200 characters") >= 2
-    region = _template_region(text)
-    assert re.search(r"counts \*\*codepoints, not bytes\*\*", region)
-    assert "utf8bytelength" in region  # named as what a byte bound would require
+    assert (
+        text.count("at most 200 characters") >= 1
+    )  # schema table; gate prose moved to lib/
+    common = (skill_path.parent / "lib" / "release-common.sh").read_text()
+    assert "counts codepoints, not bytes" in common
+    assert "utf8bytelength" in common  # named as what a byte bound would require
     # The gate itself still uses `length` — the doc was wrong, not the gate.
-    assert "(length <= 200)" in region
+    assert "(length <= 200)" in common
+    # Behaviour: 200 multibyte characters (~800 bytes) pass, 201 fail.
+    at_bound = json.dumps({"excluded_sections": ["### " + "é" * 196]})
+    over_bound = json.dumps({"excluded_sections": ["### " + "é" * 197]})
+    assert _release_lib_validate(skill_path, at_bound)[0]
+    assert _release_lib_validate(skill_path, over_bound) == (
+        False,
+        "excluded-sections-shape",
+    )
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2712,6 +2756,29 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
     # The concrete hazard it closes is named, not merely gestured at.
     assert re.search(r"ambient `PATH`", preamble)
     assert re.search(r"invoked from a subdirectory", preamble)
+    # Phase 2 (grilled decision 17): the invariant names the script launch as
+    # a verification boundary and the script re-checks its injected pins.
+    text = skill_path.read_text()
+    assert "**Script-launch verification boundary:**" in text
+    assert "`RELEASE_JQ`, `RELEASE_GIT`" in text
+    result = subprocess.run(
+        [
+            str(_release_lib_script(skill_path)),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "present-tracked-clean",
+            "--head-commit",
+            "present",
+            "--mode",
+            "100644",
+        ],
+        input=b"{}",
+        capture_output=True,
+        env={k: v for k, v in os.environ.items() if k != "RELEASE_JQ"},
+        check=False,
+    )
+    assert result.returncode == 2
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2748,6 +2815,25 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     assert '`jq` is deliberately absent from that unconditional "at minimum" list' in (
         pinned
     )
+    # Phase 2 (grilled decision 18): RELEASE_JQ may be unset only when the
+    # template is absent; the extracted script keeps that no-op byte-identical.
+    untemplated = subprocess.run(
+        [
+            str(_release_lib_script(skill_path)),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "absent",
+            "--head-commit",
+            "absent",
+        ],
+        input=b"",
+        capture_output=True,
+        env={k: v for k, v in os.environ.items() if k != "RELEASE_JQ"},
+        check=False,
+    )
+    assert untemplated.returncode == 0
+    assert json.loads(untemplated.stdout)["decision"] == "absent-noop"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2828,11 +2914,13 @@ def test_release_excluded_sections_gate_rejects_del_byte(skill_path: Path) -> No
     heading matching and Step 4 confirmation output.
     """
     text = skill_path.read_text()
-    region = _template_region(text)
+    common = (skill_path.parent / "lib" / "release-common.sh").read_text()
 
-    assert r'test("[\\x00-\\x1F\\x7F]")' in region
-    assert r'test("[\\x00-\\x1F]")' not in text
-    assert "nor `DEL` (`\\x7F`)" in region
+    assert r'test("[\\x00-\\x1F\\x7F]")' in common
+    assert r'test("[\\x00-\\x1F]")' not in common
+    assert _release_lib_validate(
+        skill_path, json.dumps({"excluded_sections": ["### Notes\x7f"]})
+    ) == (False, "excluded-sections-shape")
     # The schema table states the same widened class.
     canonical_format = text[
         _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")

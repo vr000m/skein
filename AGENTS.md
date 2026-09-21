@@ -12,6 +12,7 @@ just bundle-appliers             # Regenerate the bundled auto-fix pipeline insi
 just parity-tests                # Bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just gauntlet-tests              # review-gauntlet suite: goal-field schema/injection/docs + skill-shape + convergence-ledger + run-gate + reuse-wiring + marker + conduct/fan-out hooks + Codex capability-gap + gate-timeout (bounded-gate budget/expiry envelope) + lens-budget (size-scaled budget arithmetic) + regression-stop (terminal regression gate) + finding-key (stable finding hashing) + status-row (gate status-table rendering)
 just lens-tests                  # disk-first lens results: persist-lens-result + collect-lens-results + --from-collector state + deep-review/review-plan SKILL.md shape (both mirrors)
+just release-script-tests         # release skill lib/ scripts: goldens, negative cases, exit-code contract, golden tamper self-test
 just reconciliation-tests        # Reconciliation parity + fixture + renderer + determinism suite + review-plan state persistence + report-template lint
 just lint-scripts                # shellcheck + shfmt on scripts/ and review-gauntlet's lib/
 just plugin-tests                # Plugin-level guards + skill-script guard suites: CLAUDE.md hygiene + manifest checks (incl. AGENTS.md recipe registration) + temp-path lint + fan-out slug/base-branch guards
@@ -64,6 +65,8 @@ All four non-anchor files are byte-identical across the two mirrors; the list is
 - **Codex mirror** (`plugins/skein-codex/skills/<name>/SKILL.md`): anchors use `"$SKILL_DIR"/scripts/...`. Codex env-exports `$SKILL_DIR` to the bundled-script subprocess.
 
 This divergence is intentional and parallels the existing dispatch-idiom split (`Agent` on Claude vs `spawn_agent` on Codex).
+
+**`lib/` anchors are the hand-authored form.** Hand-authored, mirror-parity-checked scripts live under `lib/` (bundle-generated ones under `scripts/`), so a `lib/` call site reads `${CLAUDE_PLUGIN_ROOT}/skills/<name>/lib/<script>.sh` on Claude and `"$SKILL_DIR"/lib/<script>.sh` on Codex. The release skill's `lib/` scripts (`read-release-template.sh`, `resolve-template-marker.sh`, `release-common.sh`) are pure over injected inputs and carry no anchor themselves, so they are byte-identical across mirrors (`RELEASE_LIB_PARITY_FILES`; empty anchor-divergent exclusion). Pinned executables cross the script-launch boundary as absolute paths in `RELEASE_JQ` and `RELEASE_GIT` (`gh` is never used by a script); each script re-checks them once (absolute, exists, executable, not a symlink) and exits `2` on failure. `RELEASE_JQ` is required only on code paths that run jq (may be unset only when the template is absent). Exit codes: `0` ok, `1` validation failure, `2` environment failure.
 
 ### Model/Effort Policy (target policy, not yet fully enforced)
 

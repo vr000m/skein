@@ -30,6 +30,11 @@ fi
 # for that variable's own self-tests).
 unset RELEASE_LAGGING_MIRROR_OK
 
+# The per-site script-call line generator lives in the script under test
+# (between the release-call-lines markers) so the seed cannot drift from it.
+# shellcheck disable=SC1090
+source <(sed -n '/^# BEGIN release-call-lines/,/^# END release-call-lines/p' "$REAL_SCRIPT")
+
 PASS=0
 FAIL=0
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/skein-prompt-parity.XXXXXX")"
@@ -152,6 +157,8 @@ This skill is **user-invoked only** (`disable-model-invocation: true`): it pushe
 
 Shared workflow contract.
 
+CALL_LINES_PLACEHOLDER
+
 ## Execution Model
 
 Unlike `rfc-finder`/`update-docs` (read-only, subagent-delegated fact-gathering), this skill runs entirely **inline in the main agent context** — no delegating subagent. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller's behalf.
@@ -174,10 +181,39 @@ Tag pushes and release publishes are external, hard-to-reverse actions — alway
 
 Shared workflow contract.
 
+CALL_LINES_PLACEHOLDER
+
 ## Execution Model
 
 Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller's behalf.
 EOF
+	seed_release_call_lines "$root"
+}
+
+# Replace the CALL_LINES_PLACEHOLDER line in each seeded release SKILL.md with
+# that mirror's six script-call lines (one exact-full-line pair per site).
+seed_release_call_lines() {
+	local root="$1" harness dir site tmp_lines
+	for harness in claude codex; do
+		if [[ "$harness" == claude ]]; then
+			dir="$root/plugins/skein/skills/release"
+		else
+			dir="$root/plugins/skein-codex/skills/release"
+		fi
+		tmp_lines="$(mktemp "$TEST_TMP_ROOT/calls.XXXXXX")"
+		for site in "${RELEASE_CALL_SITES[@]}"; do
+			release_call_line "$harness" "$site" >>"$tmp_lines"
+			echo >>"$tmp_lines"
+		done
+		awk -v f="$tmp_lines" '
+			$0 == "CALL_LINES_PLACEHOLDER" {
+				while ((getline l < f) > 0) print l
+				next
+			}
+			{ print }
+		' "$dir/SKILL.md" >"$dir/SKILL.md.new"
+		mv "$dir/SKILL.md.new" "$dir/SKILL.md"
+	done
 }
 
 run_script() {
@@ -652,6 +688,67 @@ test_release_tamper_inside_normalized_divergence_fails_parity() {
 			continue
 		fi
 		_pass "release-$case_name-tamper-fails-parity"
+	done
+}
+
+# One pair of gates per script-call site and mirror: present passes, missing
+# fails, duplicated fails (grilled decision 6's `-ne 1` cardinality pin).
+test_release_script_call_line_gates() {
+	local tmp
+	tmp="$(new_test_tmp_dir)"
+
+	local case_name case_root out rc site line label mirror file expected
+	for site in "${RELEASE_CALL_SITES[@]}"; do
+		for mirror in claude codex; do
+			for case_name in present missing duplicated; do
+				case_root="$tmp/$site-$mirror-$case_name"
+				make_fake_root "$case_root"
+				seed_generic_pair "$case_root"
+				seed_release_pair_with_documented_divergence "$case_root"
+				if [[ "$mirror" == claude ]]; then
+					file="$case_root/plugins/skein/skills/release/SKILL.md"
+					label="Claude"
+				else
+					file="$case_root/plugins/skein-codex/skills/release/SKILL.md"
+					label="Codex"
+				fi
+				line="$(release_call_line "$mirror" "$site")"
+				case "$case_name" in
+				missing)
+					grep -vxF -- "$line" "$file" >"$file.new" || true
+					mv "$file.new" "$file"
+					;;
+				duplicated)
+					printf '\n%s\n' "$line" >>"$file"
+					;;
+				esac
+				set +e
+				out="$(run_script "$case_root" "release deep-review review-plan" 2>&1)"
+				rc=$?
+				set -e
+				case "$case_name" in
+				present)
+					if [[ "$rc" -eq 0 ]]; then
+						_pass "release-call-line-$site-$mirror-present-passes"
+					else
+						_fail "release-call-line-$site-$mirror-present-passes" "$out"
+					fi
+					;;
+				missing | duplicated)
+					if [[ "$case_name" == missing ]]; then
+						expected="release $label script-call line for site $site count is 0 (expected exactly 1)"
+					else
+						expected="release $label script-call line for site $site count is 2 (expected exactly 1)"
+					fi
+					if [[ "$rc" -ne 0 && "$out" == *"$expected"* ]]; then
+						_pass "release-call-line-$site-$mirror-$case_name-fails"
+					else
+						_fail "release-call-line-$site-$mirror-$case_name-fails" "rc=$rc: $out"
+					fi
+					;;
+				esac
+			done
+		done
 	done
 }
 
@@ -1153,6 +1250,7 @@ test_release_harness_paragraph_dual_deletion_fails_before_normalization
 test_release_harness_paragraph_dual_duplication_fails_before_normalization
 test_release_disable_line_relocated_to_both_bodies_fails_parity
 test_release_codex_frontmatter_disable_line_fails_parity
+test_release_script_call_line_gates
 test_phase4_codex_only_allowlist_citation_drift_fails_parity
 test_phase4_claude_only_allowlist_citation_drift_fails_parity
 test_phase4_codex_only_generic_block_drift_fails_parity
