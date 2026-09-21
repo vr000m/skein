@@ -98,6 +98,73 @@ def _region_between(text: str, start_name: str, end_name: str) -> str:
     return text[begin : _anchor_at(text, end_name, begin)]
 
 
+# --- Reference-expanded release text (release-skill restructure, Phase 3) ----
+# Progressive disclosure moved the templated-branch and audit-inference prose
+# out of SKILL.md into `references/`. The prose contract those assertions pin
+# is therefore SKILL.md *plus* the reference sections SKILL.md points at, so
+# `_release_text` splices each reference section in at its pointer, in the
+# position the original prose occupied. A mutation of a reference file fails
+# the same assertions that pinned the prose before it moved. Boundary tests
+# (which pin WHERE prose lives) read the raw SKILL.md instead.
+_REFERENCE_SECTION_ANCHOR = re.compile(
+    r"^<!-- skein:(ref-[a-z0-9-]+) -->$", re.MULTILINE
+)
+
+# (SKILL.md region anchor, needle naming the pointer, reference file, section)
+_REFERENCE_SPLICES = (
+    (
+        "canonical-format",
+        "**Schema and validation live in the templated-branch reference**",
+        "template-subsystem.md",
+        "ref-template-schema",
+    ),
+    (
+        "step-1b-templated-branch",
+        "references/template-subsystem.md",
+        "template-subsystem.md",
+        "ref-template-read-gates",
+    ),
+    (
+        "a2-marker-bearing",
+        "references/template-subsystem.md",
+        "template-subsystem.md",
+        "ref-template-a2-anchors",
+    ),
+    (
+        "step-a2-5",
+        "references/audit-inference.md",
+        "audit-inference.md",
+        "ref-audit-inference",
+    ),
+)
+
+
+def _reference_section(ref_text: str, name: str) -> str:
+    """A reference file's section: after its anchor line, up to the next one."""
+    begin = _anchor_at(ref_text, name)
+    begin = ref_text.index("\n", begin) + 1
+    following = _REFERENCE_SECTION_ANCHOR.search(ref_text, begin)
+    return ref_text[begin : following.start() if following else len(ref_text)].strip(
+        "\n"
+    )
+
+
+def _release_text(skill_path: Path) -> str:
+    """SKILL.md with each `references/` section spliced in at its pointer."""
+    text = skill_path.read_text()
+    references = skill_path.parent / "references"
+    if not references.is_dir():
+        return text
+    for region, needle, ref_name, section in _REFERENCE_SPLICES:
+        start = _anchor_at(text, region)
+        found = text.find(needle, start)
+        assert found != -1, f"pointer {needle!r} missing after anchor {region!r}"
+        end = text.index("\n", found)
+        body = _reference_section((references / ref_name).read_text(), section)
+        text = f"{text[:end]}\n\n{body}{text[end:]}"
+    return text
+
+
 _GH_REPO_RELEASE_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-])gh[ \t]+(?:repo|release)[ \t]+"
     r"[A-Za-z0-9][A-Za-z0-9-]*\b[^;&|\n]*"
@@ -308,7 +375,7 @@ def test_release_scope_rejects_extra_unscoped_multiline_call(
     skill_path: Path,
 ) -> None:
     text = (
-        skill_path.read_text()
+        _release_text(skill_path)
         + """\
 
 ```bash
@@ -328,14 +395,14 @@ release create v9.9.9 \\
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_frontmatter_advertises_audit_mode(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
-    assert 'argument-hint: "[X.Y.Z|latest|unreleased|audit]"' in text
+    assert 'argument-hint: "[X.Y.Z|latest|unreleased|audit [--infer-template]]"' in text
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_treats_changelog_as_untrusted_data_only(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_1 = _anchor_at(text, "step-1")
     first_read = _anchor_at(text, "step-1-item-1", step_1)
     boundary = _anchor_at(text, "step-1-data-boundary", step_1)
@@ -363,7 +430,7 @@ def test_release_treats_changelog_as_untrusted_data_only(skill_path: Path) -> No
 def test_release_resync_preserves_absent_whats_new_by_default(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "the default for a new release" in text
     assert "preserve the existing release's summary state" in text
@@ -405,7 +472,7 @@ def test_readme_describes_persisted_release_highlights_and_summaries() -> None:
 def test_release_audit_inventory_is_bounded_and_fails_closed(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     audit_inventory = _anchor_at(text, "a1-releases")
     normalization = _anchor_at(text, "a1-normalize", audit_inventory)
     contract = text[audit_inventory:normalization]
@@ -455,7 +522,7 @@ def test_completed_release_plan_records_the_shipped_contract() -> None:
 def test_release_rejects_non_default_remote_ports_before_gh(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_2 = _anchor_at(text, "step-2")
     port_stop = text.index(
         "If any fetch or push URL carries an explicit non-default port", step_2
@@ -494,7 +561,7 @@ def test_release_rejects_non_default_remote_ports_before_gh(
 def test_release_forbids_transport_environment_overrides(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_2 = _anchor_at(text, "step-2")
     step_3 = _anchor_at(text, "step-3", step_2)
     transport_contract = text[step_2:step_3]
@@ -530,7 +597,7 @@ def test_release_forbids_transport_environment_overrides(
 def test_release_url_diagnostics_never_expose_raw_or_ambiguous_urls(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_2 = _anchor_at(text, "step-2")
     step_3 = _anchor_at(text, "step-3", step_2)
     identity_contract = text[step_2:step_3]
@@ -565,7 +632,7 @@ def test_release_url_diagnostics_never_expose_raw_or_ambiguous_urls(
 def test_release_isolated_transport_uses_absolute_empty_child_hooks_path(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_2 = _anchor_at(text, "step-2")
     step_3 = _anchor_at(text, "step-3", step_2)
     transport_contract = text[step_2:step_3]
@@ -624,7 +691,7 @@ def test_release_isolated_transport_uses_absolute_empty_child_hooks_path(
 def test_release_revalidates_complete_destination_immediately_before_tag_push(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_5 = _anchor_at(text, "step-5")
     step_6 = _anchor_at(text, "step-6", step_5)
     contract = text[step_5:step_6]
@@ -649,7 +716,7 @@ def test_release_revalidates_complete_destination_immediately_before_tag_push(
 def test_release_locks_repo_identity_and_uses_immutable_step6_remote_url(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_2 = _anchor_at(text, "step-2")
     step_3 = _anchor_at(text, "step-3", step_2)
     identity_contract = text[step_2:step_3]
@@ -692,7 +759,7 @@ def test_release_locks_repo_identity_and_uses_immutable_step6_remote_url(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_rechecks_immutable_release_identity(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_4 = _anchor_at(text, "step-4", step_3)
     baseline_contract = text[step_3:step_4]
@@ -719,7 +786,7 @@ def test_release_rechecks_immutable_release_identity(skill_path: Path) -> None:
 def test_release_audit_uses_one_immutable_remote_url_snapshot(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     audit_contract = text[_anchor_at(text, "audit-mode") :]
 
     assert (
@@ -739,7 +806,7 @@ def test_release_audit_uses_one_immutable_remote_url_snapshot(
 def test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_4 = _anchor_at(text, "step-4")
     step_5 = _anchor_at(text, "step-5", step_4)
     step_6 = _anchor_at(text, "step-6", step_5)
@@ -767,7 +834,7 @@ def test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref(
 def test_release_scopes_every_concrete_gh_repo_and_release_call(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     calls = _assert_scoped_gh_repo_release_calls(text)
     inventory = Counter(" ".join(command.split()[:3]) for _, command in calls)
 
@@ -789,7 +856,7 @@ def test_release_scopes_every_concrete_gh_repo_and_release_call(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None:
-    calls = _executable_gh_repo_release_calls(skill_path.read_text())
+    calls = _executable_gh_repo_release_calls(_release_text(skill_path))
     mutation_calls = [
         command
         for _, command in calls
@@ -802,7 +869,7 @@ def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None
         assert command.split().count("--verify-tag") == 1
     assert (
         "`--verify-tag` on every create/edit path remains a separate existence guard"
-        in skill_path.read_text()
+        in _release_text(skill_path)
     )
 
 
@@ -810,7 +877,7 @@ def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None
 def test_release_direct_mode_guards_prefixed_and_bare_names_before_mutation(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_5 = _anchor_at(text, "step-5", step_3)
     pre_mutation_contract = text[step_3:step_5]
@@ -838,7 +905,7 @@ def test_release_direct_mode_guards_prefixed_and_bare_names_before_mutation(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_title_uses_file_backed_argument_transport(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     mutation_commands = [
         line.strip()
         for line in text.splitlines()
@@ -880,7 +947,7 @@ def test_title_file_transport_preserves_shell_syntax_as_data(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_audit_preserves_every_inventory_exception(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "every dated release-like `## [<raw-version>]` header" in text
     assert "`malformed-changelog-header`" in text
@@ -900,7 +967,7 @@ def test_release_audit_preserves_every_inventory_exception(skill_path: Path) -> 
 def test_release_audit_keeps_release_without_remote_tag_evidence(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "| ✗ | ✓ | ✓ | `release-without-tag` (CHANGELOG present) |" in text
     assert "| ✗ | ✓ | ✗ | `release-without-tag` (no CHANGELOG entry) |" in text
@@ -917,7 +984,7 @@ def test_release_audit_keeps_release_without_remote_tag_evidence(
 def test_release_audit_classifies_nonstandard_tags_consistently(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     tags_start = _anchor_at(text, "a1-tags")
     changelog_start = _anchor_at(text, "a1-changelog", tags_start)
     tags_contract = text[tags_start:changelog_start]
@@ -959,7 +1026,7 @@ def _template_region(text: str) -> str:
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_template_schema_defines_all_four_fields(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
         _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
@@ -987,7 +1054,7 @@ def test_release_template_schema_defines_all_four_fields(skill_path: Path) -> No
 def test_release_template_read_is_harness_native_and_absence_is_noop(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "Step 1b" in region
@@ -1004,7 +1071,7 @@ def test_release_template_read_is_harness_native_and_absence_is_noop(
 def test_release_template_validation_fails_closed_on_all_gates(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     # The gate sequence itself moved into the extracted script (Phase 2): the
@@ -1037,7 +1104,7 @@ def test_release_template_validation_fails_closed_on_all_gates(
 def test_release_template_commit_precondition_requires_committed_match(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "git diff --quiet HEAD -- .release-template.json" in region
@@ -1050,7 +1117,7 @@ def test_release_template_commit_precondition_requires_committed_match(
 def test_release_template_step4_confirmation_names_active_fields(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_4 = _anchor_at(text, "step-4")
     step_5 = _anchor_at(text, "step-5", step_4)
     confirmation = text[step_4:step_5]
@@ -1070,7 +1137,7 @@ def test_release_template_step4_confirmation_names_active_fields(
 def test_release_template_identity_check_is_separate_from_payload_hash(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
@@ -1097,7 +1164,7 @@ def test_release_template_identity_check_is_separate_from_payload_hash(
 def test_release_template_marker_aware_recovery_strips_marker_and_applies_exclusions(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
@@ -1117,7 +1184,7 @@ def test_release_template_marker_aware_recovery_strips_marker_and_applies_exclus
 def test_release_template_marker_uses_head_blob_not_working_tree_hash(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_6 = _anchor_at(text, "step-6")
     audit_mode = _anchor_at(text, "audit-mode", step_6)
     step_6_contract = text[step_6:audit_mode]
@@ -1138,7 +1205,7 @@ def test_release_template_marker_is_composed_in_step3_not_deferred_to_step6(
     verified before `gh release create`/`edit` ever runs, so a post-success
     append was never satisfiable.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
@@ -1164,7 +1231,7 @@ def test_release_audit_ok_checks_whats_new_presence_against_template(
     New` paragraph's presence against the classification source's
     `whats_new` field, not silently ignore it.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a2_region = _a2_region(text)
     ok_bullet_start = a2_region.index("**`ok` vs. `drifted`**")
     ok_bullet = a2_region[ok_bullet_start:]
@@ -1183,7 +1250,7 @@ def test_release_audit_marker_absent_fallback_requires_commit_precondition(
     — otherwise an untracked or symlinked current template could silently
     become the classification source.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a2_region = _a2_region(text)
     marker_absent_start = a2_region.index("**Marker absent (zero matches")
     marker_absent_bullet = a2_region[marker_absent_start : marker_absent_start + 800]
@@ -1582,7 +1649,7 @@ def test_release_template_commit_precondition_rejects_symlinked_mode(
     symlink's tracked blob holds only its target path and can pass that
     diff check while a native read follows the link to uncommitted bytes.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "git ls-files --stage -- .release-template.json" in region
@@ -1617,7 +1684,7 @@ def _a2_region(text: str) -> str:
 def test_release_audit_a2_marker_gate_chain_is_fail_closed(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # The marker regex must be anchored, exact, and applied to the release
@@ -1645,7 +1712,7 @@ def test_release_audit_a2_marker_gate_chain_is_fail_closed(
 def test_release_audit_a2_unresolvable_marker_never_classifies_ok_or_drifted(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # Every gate in the marker-resolution chain must fail closed into an
@@ -1663,7 +1730,7 @@ def test_release_audit_a2_unresolvable_marker_never_classifies_ok_or_drifted(
 def test_release_audit_a2_three_way_classification_branches(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # Branch 1: marker present and valid -> pinned blob content, with the
@@ -1690,7 +1757,7 @@ def test_release_audit_a2_three_way_classification_branches(
 def test_release_audit_a2_current_template_closes_pre_adoption_gap(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # This is the behavior that makes a repo's pre-adoption hand-cut
@@ -1731,7 +1798,7 @@ def _dry_run_search_region(text: str) -> str:
 def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     single_version_mode = text[
         _anchor_at(text, "single-version-mode") : _anchor_at(text, "audit-mode")
     ]
@@ -1758,7 +1825,7 @@ def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
 def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(
@@ -1795,7 +1862,7 @@ def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
 def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(r"untrusted data", region, re.IGNORECASE)
@@ -1811,7 +1878,7 @@ def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
 def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     # Gauntlet round-1 finding #9: the taken candidates need not be adjacent
@@ -1836,7 +1903,7 @@ def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
 def test_release_audit_dry_run_proposes_and_prints_never_writes(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(r"propose", region, re.IGNORECASE)
@@ -1865,7 +1932,7 @@ def test_release_marker_strip_requires_strict_bound_marker(
     The active template still must not gate a valid historical marker, but a
     malformed or unbound shape must remain body data and become explicit drift.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _anchor_at(text, "step-3")
     step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
@@ -1896,7 +1963,7 @@ def test_release_audit_a2_marker_sha_bound_to_candidate_commit_path(
     — via its own tag commit or the repo's current `HEAD` — not merely to any
     blob reachable in the object store.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     assert "<peeled-commit-sha>:.release-template.json" in region
@@ -1919,7 +1986,7 @@ def test_release_audit_a2_marker_binding_has_two_anchors(skill_path: Path) -> No
     anchor (sourced from Step A1.1's already-captured inventory, never a
     fresh local `refs/tags/` resolution) or the current-`HEAD` anchor.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     assert re.search(r"origin peeled-commit anchor", region, re.IGNORECASE)
@@ -1942,7 +2009,7 @@ def test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent(
     `template-marker-unresolvable`, never silently fall through to the
     marker-absent fallback.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     assert re.search(r"wrong hex length", region, re.IGNORECASE)
@@ -1960,7 +2027,7 @@ def test_release_step5_tag_message_respects_bare_title_format(
     title shape Step 3/Step 4 actually confirmed (canonical or bare), not
     hardcode the canonical `<repo> vX.Y.Z — <highlight>` shape.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_5 = _anchor_at(text, "step-5")
     step_6 = _anchor_at(text, "step-6", step_5)
     step_5_contract = text[step_5:step_6]
@@ -1980,7 +2047,7 @@ def test_release_step4_override_recomposes_through_step3_item3(
     recompose the body through Step 3 item 3 (where the marker/exclusions/
     compare line are applied), not merely re-hash item 4's snapshot.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_4 = _anchor_at(text, "step-4")
     step_5 = _anchor_at(text, "step-5", step_4)
     confirmation = text[step_4:step_5]
@@ -2004,7 +2071,7 @@ def test_release_template_read_uses_committed_object_not_working_tree_path(
     cannot change what gets validated: git resolves by blob hash, not by
     filesystem path.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert re.search(r"git cat-file blob HEAD:\.release-template\.json", region)
@@ -2024,7 +2091,7 @@ def test_release_template_toctou_region_no_longer_claims_single_handle(
     a committed-object read (see the sibling test above). The old claim
     must not linger alongside the new mechanism.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert not re.search(r"single file handle", region, re.IGNORECASE)
@@ -2104,7 +2171,7 @@ def test_release_marker_separator_is_exactly_one_blank_line(
     line and the `release-template-sha` marker must be pinned, not left to
     interpretation, or the strip and the re-sync byte-match cannot agree.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     marker_item = region[region.index("**Template identity marker.**") :]
 
     assert re.search(r"exactly one blank line", marker_item, re.IGNORECASE), (
@@ -2128,7 +2195,7 @@ def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
     check (3)'s "exactly one final line" compare-line rule, misclassifying a
     correct release as drifted.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     strip_paragraph = region[region.index("Try the unmodified body first") :]
     strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
 
@@ -2151,7 +2218,7 @@ def test_release_whats_new_true_is_a_noop_not_an_override(skill_path: Path) -> N
     summary to recover) -- the commonest case. Only `false` may be described
     as an override; `true` must be stated as an explicit no-op equal to unset.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     whats_new_bullet = region[region.index("**`## What's New` inclusion.**") :]
     whats_new_bullet = whats_new_bullet[: whats_new_bullet.index("\n   - ")]
 
@@ -2181,7 +2248,7 @@ def test_release_recovery_uses_marker_pinned_template_not_active_template(
     title/boundary/exclusion recovery. The *new*, forward-composed body must
     still use the active template, unaffected by this resolution.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
 
     assert "recovery template" in region
     assert re.search(r"Step A2's dual-anchor scheme", region)
@@ -2206,7 +2273,7 @@ def test_release_whats_new_default_is_documented_as_unset_sentinel(
     "default" is prose behavior, not a fillable value -- item 5 must say so
     explicitly rather than implying every field gets a concrete fill-in.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
     item_5 = region[region.index("5. **Record the active template.**") :]
     item_5 = (
         item_5[: _anchor_at(item_5, "step-2")]
@@ -2233,7 +2300,7 @@ def test_release_template_line_item_documents_unset_whats_new_display(
     documented display rule, an unset field has no defined confirmation
     behavior.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     line_item = text[text.index("**Template line-item.**") :]
     line_item = line_item[: _anchor_at(line_item, "step-5")]
 
@@ -2261,7 +2328,7 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     to publish. The predicate must test body emptiness, not subsection
     existence, so it must not contain the word "subsection".
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
         _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
@@ -2289,7 +2356,7 @@ def test_release_excluded_sections_scoped_out_of_no_free_text_claim(
     explicit treat-as-data-never-instructions boundary, the same as
     CHANGELOG.md (Step 1) and remote release metadata (Step 3) already do.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
         _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
@@ -2330,7 +2397,7 @@ def test_release_audit_a2_5_proposal_validates_and_escapes_before_printing(
     sequence, and must reference Step 1b item 4's gates by name rather than
     re-stating their constants a third time.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     proposal_sentence = region[
         region.index("Propose — never write —") : region.index(
             "Do not add a new Audit-mode file-write side effect"
@@ -2378,7 +2445,7 @@ def test_release_template_presence_oracle_matches_content_oracle(
     active" and silently fell back to canonical shape — the exact fail-open the
     template contract forbids.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
 
     # Round-5 finding #7 replaced the presence probe with `git ls-tree`, which
     # separates "absent" from "store/ref error"; the oracle still addresses the
@@ -2404,7 +2471,7 @@ def test_release_template_head_is_resolved_once_per_check(
     the commit precondition, the validated bytes and the published marker SHA
     to three different commits.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "TEMPLATE_HEAD_COMMIT" in region
@@ -2443,7 +2510,7 @@ def test_release_audit_a2_anchors_enforce_tracked_mode_gate(
     JSON could authenticate a marker. `git cat-file -t` reports a symlink as
     `blob`, so the type gate cannot substitute for the mode gate.
     """
-    region = _a2_region(skill_path.read_text())
+    region = _a2_region(_release_text(skill_path))
 
     assert "git ls-tree '<anchor-commit-sha>' -- .release-template.json" in region
     assert "100644" in region and "100755" in region
@@ -2468,7 +2535,7 @@ def test_release_audit_a2_documents_dual_anchor_limitations(
     clone can classify `template-marker-unresolvable` where a complete clone
     classifies `ok`.
     """
-    region = _a2_region(skill_path.read_text())
+    region = _a2_region(_release_text(skill_path))
 
     assert re.search(r"Known limitations", region, re.IGNORECASE)
     assert re.search(r"shallow|partial|stale clone", region, re.IGNORECASE)
@@ -2488,7 +2555,7 @@ def test_release_audit_a1_peeled_identity_defect_is_scoped_per_tag(
     anchor) and inconsistent with Step 2's narrower per-target rule. Scope the
     defect to its tag; keep the whole-audit stop for transport/parse failure.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a1 = text[_anchor_at(text, "step-a1") : _anchor_at(text, "step-a2")]
 
     assert re.search(r"scoped to the tag it affects, not to the whole audit", a1)
@@ -2538,7 +2605,7 @@ def test_release_audit_a2_5_candidate_set_is_defined_mechanically(
     the ordering and proposing a convention against a repo that deliberately
     removed its template.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     # The restriction is stated as the definition, not as a gloss.
     assert re.search(
@@ -2569,7 +2636,7 @@ def test_release_audit_a2_5_selection_count_matches_threshold(
     sit between them), so "consecutive" was dropped from the threshold
     wording entirely rather than merely kept in sync with the count.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     assert re.search(r"Take the highest \*\*3\*\* candidates", region)
     assert re.search(r"Require all \*\*3\*\* qualifying candidates", region)
@@ -2593,7 +2660,7 @@ def test_release_raw_template_bytes_have_an_explicit_shell_transport_rule(
     raw pre-validation `.release-template.json` bytes read in Step 1b item 4 —
     and the same raw read at Audit A2 — had none.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "Shell-transport rule for the raw template bytes" in region
@@ -2619,7 +2686,7 @@ def test_release_excluded_sections_bound_is_characters_not_bytes(
     characters pass at up to ~800 bytes. The documented unit must match the
     unit the gate actually enforces.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "at most 200 bytes" not in text
     assert (
@@ -2655,7 +2722,7 @@ def test_release_step3_title_recovery_is_parametrized_by_title_format(
     not necessarily equal to the active template) -- update the pinned
     phrase accordingly.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
 
     assert re.search(
@@ -2684,7 +2751,7 @@ def test_release_single_head_resolution_rule_enumerates_every_site(
     named Steps 5/6 and A2's current-HEAD anchor but omitted A2's marker-absent
     fallback and A2.5, both of which reference the resolved current-HEAD commit.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     enumeration_start = region.index("The same single-resolution rule applies")
@@ -2714,7 +2781,7 @@ def test_release_template_presence_probe_separates_absent_from_error(
     could not be implemented by it. `git ls-tree` is tri-state and returns the
     mode in the same read, matching A2's anchor gate.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
 
     assert "git ls-tree '<TEMPLATE_HEAD_COMMIT>' -- .release-template.json" in region
     assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>" not in region
@@ -2741,7 +2808,7 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
     PATH and ambient repo discovery, and a subdirectory/env-override invocation
     could stat a different repository than Step 2 later locks.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
     preamble = region[
         _anchor_at(region, "step-1b") : region.index("**Resolve `HEAD` once")
     ]
@@ -2758,7 +2825,7 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
     assert re.search(r"invoked from a subdirectory", preamble)
     # Phase 2 (grilled decision 17): the invariant names the script launch as
     # a verification boundary and the script re-checks its injected pins.
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     assert "**Script-launch verification boundary:**" in text
     assert "`RELEASE_JQ`, `RELEASE_GIT`" in text
     result = subprocess.run(
@@ -2791,7 +2858,7 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     untemplated repo without `jq` stopped, contradicting the byte-for-byte
     absence no-op.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     item_1 = region[
@@ -2847,7 +2914,7 @@ def test_release_raw_template_transport_rule_names_a_permitted_mechanism(
     permitted transport at all for gates 2-8. An unsatisfiable rule fails open:
     the easiest improvisations are the banned injection vectors.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     # The blanket ban is gone; only a path-addressed re-read is forbidden.
@@ -2883,7 +2950,7 @@ def test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable(
     hex pattern, so it reached the marker-absent branch and could classify `ok`
     against the current template or canonical shape.
     """
-    a2 = _a2_region(skill_path.read_text())
+    a2 = _a2_region(_release_text(skill_path))
 
     # A third, shape-only pattern exists and is a superset of the other two.
     assert "`^<!-- release-template-sha:.*-->$`" in a2
@@ -2913,7 +2980,7 @@ def test_release_excluded_sections_gate_rejects_del_byte(skill_path: Path) -> No
     only rejected `\\x00-\\x1F`, so DEL (0x7F) passed and was carried into Step 3
     heading matching and Step 4 confirmation output.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     common = (skill_path.parent / "lib" / "release-common.sh").read_text()
 
     assert r'test("[\\x00-\\x1F\\x7F]")' in common
@@ -2938,7 +3005,7 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     Step 3 tries the unmodified body first and strips only a bound strict
     marker, while A2's broader search still fails closed for audit.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
 
     # Consumer half 1: the strip now orders its candidates, unmodified first.
@@ -2994,7 +3061,7 @@ def test_release_marker_strip_ordering_is_scoped_to_byte_exact_paths(
     `compare_line_label: "none"` with a CHANGELOG section carrying no `###`
     subsection, where the boundary list reduces to EOF.
     """
-    step_3 = _step3_region(skill_path.read_text())
+    step_3 = _step3_region(_release_text(skill_path))
 
     # The ordering rule is explicitly scoped to the byte-exact paths.
     assert "**byte-exact** recovery and comparison path" in step_3
@@ -3019,7 +3086,7 @@ def test_release_audit_a2_5_first_release_compare_line_is_unknown_not_none(
     compare lines and suppressed the `no-template-convention-detected`
     proposal that should have fired.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     # The exclusion is stated on the field it applies to, keyed to Step A2's
     # own PREV oracle (round-8 finding #1 corrected the oracle; see
@@ -3054,7 +3121,7 @@ def test_release_a3_legend_includes_template_marker_unresolvable(
     it, so counts could never reconcile with rows. A2's own Known Limitations
     say older re-synced releases drift into this state over time.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     legend_lines = [
         line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
     ]
@@ -3093,7 +3160,7 @@ def test_release_a3_legend_letters_are_per_row_counts(
     no Version key -- there is no row a `V` count could tally, so the letter
     had no denominator. It is reported as a binary line instead.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     legend_lines = [
         line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
     ]
@@ -3126,7 +3193,7 @@ def test_release_audit_a2_records_prev_for_a2_5_reuse(
     explicitly retains `databaseId`/`name`/`body` but said nothing about the
     PREV it computes. A value nothing is told to keep cannot be reused.
     """
-    a2 = _a2_region(skill_path.read_text())
+    a2 = _a2_region(_release_text(skill_path))
     bullet = a2[a2.index("- **`ok` vs. `drifted`**") :]
 
     record_idx = bullet.index("**Record this resolved Audit PREV")
@@ -3154,7 +3221,7 @@ def test_release_audit_a2_5_compare_line_determinacy_is_a_conjunction(
     toward emitting a proposal instead of suppressing one. The predicate is
     now a conjunction: no PREV *and* no compare line in the body.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
             "- `excluded_sections` —"
@@ -3188,7 +3255,7 @@ def test_release_step6_prev_drift_recomposes_trailer_not_snapshot(
     feeds the trailer only; implying otherwise would have an executing agent
     hash a value item 4 never defined as an input.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_6 = text[_anchor_at(text, "step-6") :]
     para_start = step_6.index("**Always refresh the complete inventory and recompute")
     para = step_6[para_start : step_6.index("\n\n", para_start)]
@@ -3216,7 +3283,7 @@ def test_release_step6_prev_drift_restarts_all_identities_before_confirmation(
     skill_path: Path,
 ) -> None:
     """A PREV race invalidates the whole Step 6 preflight, not only the trailer."""
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_6 = text[_anchor_at(text, "step-6") :]
     restart_start = step_6.index("**A PREV change is a full Step 6 restart")
     restart = step_6[restart_start : step_6.index("\n\n", restart_start)]
@@ -3242,7 +3309,7 @@ def test_release_audit_a2_5_gh_call_claim_is_self_contained(
     `collections.Counter` inventory assertion, unresolvable to an agent
     executing the skill, which never sees the test file.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
     idx = region.index("**No new `gh` calls are introduced by this step**")
     claim = region[idx : idx + 300]
@@ -3268,7 +3335,7 @@ def test_release_audit_a2_5_prev_exclusion_uses_a2_oracle_not_a1_union(
     was read as a determinate disagreeing `"none"` — reintroducing exactly the
     suppression bug round 7 added the carve-out to close.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `compare_line_label` —")
     bullet_end = region.index("- `excluded_sections` —", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3304,7 +3371,7 @@ def test_release_step3_marker_strip_uses_a2_shape_only_pattern(
     verbatim into a re-synced body. Both consumers of the marker grammar must
     use the same shape-only pattern.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
     a2 = _a2_region(text)
 
@@ -3331,7 +3398,7 @@ def test_release_marker_shaped_unbound_body_is_preserved_as_explicit_drift(
     unmodified body remains available for exact recovery and the ambiguity is
     surfaced instead of being discarded or converted into a hard stop.
     """
-    step_3 = _step3_region(skill_path.read_text())
+    step_3 = _step3_region(_release_text(skill_path))
     recovery = step_3[step_3.index("Try the unmodified body first") :]
     recovery = recovery[: recovery.index("\n\n")]
 
@@ -3357,7 +3424,7 @@ def test_release_audit_a2_5_excluded_sections_has_structural_absence_carve_out(
     `no-template-convention-detected` proposal for a repo that does
     consistently exclude the section wherever exclusion is possible.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `excluded_sections` —")
     bullet_end = region.index("Any disagreement across the candidates", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3408,7 +3475,7 @@ def test_release_audit_a1_3_names_all_five_per_candidate_json_fields(
     immutable identity, and Step A4 compares against it. The field list must
     match what A2/A4 actually require.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_a1 = _anchor_at(text, "step-a1")
     step_a2 = _anchor_at(text, "step-a2", step_a1)
     a1 = text[step_a1:step_a2]
@@ -3435,7 +3502,7 @@ def test_release_audit_a4_exhaustive_non_fixable_list_is_actually_exhaustive(
     so this was a false completeness claim rather than an open behavioral gap —
     but a future editor would trust it.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a4 = text[_anchor_at(text, "step-a4") :]
     claim_start = a4.index("The non-fixable inventory exceptions are exhaustive")
     claim = a4[claim_start : a4.index("\n\n", claim_start)]
@@ -3469,7 +3536,7 @@ def test_release_skill_uses_one_step_item_reference_notation(
     numeric item references now use the file's already-dominant `Step N item M`
     form; `Step A2.5` stays untouched because it *is* a real heading.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     headings = set(re.findall(r"^### (Step [^\n:]+):", text, re.MULTILINE))
     bad = {
@@ -3498,7 +3565,7 @@ def test_release_audit_a2_5_gate_sentence_covers_both_carve_outs(
     still suppressed the proposal at the gate — re-opening the exact bug the
     carve-out was added to close.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     gate_start = region.index("Any disagreement across the candidates")
     gate = region[
         gate_start : region.index("If the qualifying candidates agree", gate_start)
@@ -3530,7 +3597,7 @@ def test_release_audit_a2_5_excluded_sections_has_evidence_floor(
     evidence — contradicting the threshold paragraph's claim that requiring all
     3 candidates is what makes the inference safe.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `excluded_sections` —")
     bullet_end = region.index("Any disagreement across the candidates", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3560,7 +3627,7 @@ def test_release_shape_only_marker_pattern_is_single_line(
     many lines later, letting Step 3's "trailing line" strip swallow legitimate
     body content. Both sites that specify the pattern must pin it to one line.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
     a2 = _a2_region(text)
 
@@ -3583,7 +3650,7 @@ def test_release_audit_a2_5_reuses_a2_prev_instead_of_redefining_it(
     diverged in round 7. Every A2.5 candidate is an A2 candidate already
     classified, so A2's PREV is already computed and must be reused.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
@@ -3611,7 +3678,7 @@ def test_release_audit_a2_5_documents_audit_time_prev_limitation(
     PREV exists, so the gap is documented as a known limitation — with its
     concrete failure scenario — rather than silently left open.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
             "- `excluded_sections` —"
@@ -3635,7 +3702,7 @@ def test_release_audit_a2_5_opening_states_its_scope_once(
     """Round-9 finding #6: A2.5's opening paragraph stated the same
     Audit-Mode-only scoping fact twice inside one sentence.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     opening = region[region.index("This step runs only inside `/release audit`") :][
         :1600
     ]
@@ -3658,7 +3725,7 @@ def test_release_audit_a2_none_compare_check_documents_body_wide_scope(
     `"none"` would be laxer about the same line than a set label is. The
     rationale is now stated in the text so it is not re-litigated as a bug.
     """
-    a2 = _a2_region(skill_path.read_text())
+    a2 = _a2_region(_release_text(skill_path))
     idx = a2.index('`"none"` requires no `**Full diff:**`')
     window = a2[idx : idx + 1200]
 
@@ -3778,3 +3845,177 @@ def test_readme_release_row_edit_fails_with_a_named_assertion_error() -> None:
     assert edited != text
     with pytest.raises(AssertionError):
         _assert_readme_release_row_contract(edited)
+
+
+# --- Progressive-disclosure boundary (release-skill restructure, Phase 3) ---
+# Static assertions over the RAW Claude SKILL.md (never the reference-expanded
+# text): they pin WHERE each reference is named, not what it says. The Codex
+# mirror joins in Phase 3.5.
+
+_TEMPLATE_REF = "references/template-subsystem.md"
+_INFERENCE_REF = "references/audit-inference.md"
+CLAUDE_REFERENCES = CLAUDE_RELEASE_SKILL.parent / "references"
+_REFERENCE_FILES = ("template-subsystem.md", "audit-inference.md")
+
+
+def test_release_template_reference_is_named_exactly_twice_at_its_gated_sites() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    assert text.count(_TEMPLATE_REF) == 2
+    branch = _region_between(
+        text, "step-1b-templated-branch", "step-1b-templated-branch-end"
+    )
+    marker_bearing = _region_between(text, "a2-marker-bearing", "a2-marker-bearing-end")
+    assert branch.count(_TEMPLATE_REF) == 1
+    assert marker_bearing.count(_TEMPLATE_REF) == 1
+
+
+def test_release_audit_inference_reference_is_named_once_inside_audit_mode() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    assert text.count(_INFERENCE_REF) == 1
+    assert (
+        _region_between(text, "audit-mode", "audit-mode-end").count(_INFERENCE_REF) == 1
+    )
+    assert _region_between(text, "step-a2-5", "step-a3").count(_INFERENCE_REF) == 1
+
+
+def test_release_untemplated_path_never_names_the_template_reference() -> None:
+    """Decision 22 boundary: outside the two gated sites the template reference
+    is never named, so an untemplated cut has no pointer to follow."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    stripped = text
+    for start, end in (
+        ("step-1b-templated-branch", "step-1b-templated-branch-end"),
+        ("a2-marker-bearing", "a2-marker-bearing-end"),
+    ):
+        stripped = stripped.replace(_region_between(stripped, start, end), "")
+    assert _TEMPLATE_REF not in stripped
+    assert "template-subsystem" not in stripped
+
+
+def test_release_a2_5_is_in_the_default_run_and_outside_infer_template() -> None:
+    """Decision 2 and 16: A2.5's step marker is part of the default audit run
+    and is not textually inside the `--infer-template` sub-region."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    audit = _region_between(text, "audit-mode", "audit-mode-end")
+    assert _anchor_marker("step-a2-5") in audit
+    infer = _region_between(audit, "infer-template-entry", "infer-template-entry-end")
+    assert _anchor_marker("step-a2-5") not in infer
+    default_run = re.search(
+        r"\*\*Default `/release audit` run sequence:\*\*[^\n]*", audit
+    )
+    assert default_run is not None
+    assert "Step A2.5" in default_run.group(0)
+    assert default_run.group(0) not in infer
+    # The standalone entry re-enters A2 by prose, adding no script call line.
+    assert "resolve-template-marker.sh" not in infer
+
+
+def test_release_audit_inference_reference_is_not_in_the_templated_branch() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    for start, end in (
+        ("step-1b-templated-branch", "step-1b-templated-branch-end"),
+        ("a2-marker-bearing", "a2-marker-bearing-end"),
+        ("canonical-format", "single-version-mode"),
+    ):
+        assert "audit-inference" not in _region_between(text, start, end)
+
+
+def test_release_infer_template_is_listed_in_frontmatter_usage_and_readme() -> None:
+    """Pins the `release` subcommand/flag list so the standalone entry point
+    cannot pass vacuously (the catalogue-count test pins no flag)."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    frontmatter = text.split("\n---\n", 1)[0]
+    assert "audit [--infer-template]" in frontmatter
+    usage = text[text.index("## Usage") : text.index("<!-- skein:canonical-format -->")]
+    assert "`/release audit --infer-template`" in usage
+    release_row = next(
+        line
+        for line in README.read_text().splitlines()
+        if line.startswith("| release |")
+    )
+    assert "--infer-template" in release_row
+
+
+def test_release_reference_files_carry_no_path_anchor_and_have_both_sections() -> None:
+    for name in _REFERENCE_FILES:
+        body = (CLAUDE_REFERENCES / name).read_text()
+        assert "CLAUDE_PLUGIN_ROOT" not in body
+        assert "SKILL_DIR" not in body
+    tmpl = (CLAUDE_REFERENCES / "template-subsystem.md").read_text()
+    for section in (
+        "ref-template-schema",
+        "ref-template-read-gates",
+        "ref-template-a2-anchors",
+    ):
+        assert _reference_section(tmpl, section)
+    inference = (CLAUDE_REFERENCES / "audit-inference.md").read_text()
+    assert "### Script-stdout fields" in inference
+    assert "### Fetch-side fields" in inference
+
+
+@pytest.mark.parametrize("name", _REFERENCE_FILES)
+def test_release_reference_helpers_survive_heading_renames(name: str) -> None:
+    text = (CLAUDE_REFERENCES / name).read_text()
+    scratch, renamed = _rename_anchored_lines(text)
+    assert scratch != text and renamed
+    for anchor in _REFERENCE_SECTION_ANCHOR.findall(text):
+        before = _reference_section(text, anchor).split("\n")
+        after = _reference_section(scratch, anchor).split("\n")
+        assert len(before) == len(after), anchor
+        for old_line, new_line in zip(before, after):
+            assert old_line == new_line or new_line in renamed, anchor
+        mutated = text.replace(_anchor_marker(anchor), f"<!-- skein:{anchor}x -->")
+        with pytest.raises(AssertionError, match=re.escape(_anchor_marker(anchor))):
+            _reference_section(mutated, anchor)
+
+
+_REFERENCE_MUTATIONS = (
+    (
+        "template-subsystem.md",
+        test_release_template_schema_defines_all_four_fields,
+        ('"compare_line_label"',),
+        '"compare_lbl"',
+    ),
+    (
+        "template-subsystem.md",
+        test_release_raw_template_bytes_have_an_explicit_shell_transport_rule,
+        ("never through a heredoc",),
+        "sometimes through a heredoc",
+    ),
+    (
+        "template-subsystem.md",
+        test_release_audit_a2_documents_dual_anchor_limitations,
+        ("clone-dependent", "clone-completeness"),
+        "clone-mutated",
+    ),
+    (
+        "audit-inference.md",
+        test_release_audit_a2_5_candidate_set_is_defined_mechanically,
+        ("Step A2 actually resolved a classification source",),
+        "Step A2 resolved a source",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("ref_name", "retargeted_test", "olds", "new"),
+    _REFERENCE_MUTATIONS,
+    ids=[m[1].__name__ for m in _REFERENCE_MUTATIONS],
+)
+def test_release_retargeted_assertions_fail_under_reference_mutation(
+    tmp_path: Path, ref_name: str, retargeted_test, olds: tuple[str, ...], new: str
+) -> None:
+    """Mutation evidence: each retargeted assertion passes on the shipped
+    Claude skill directory and fails once its reference content is mutated."""
+    scratch = tmp_path / "release"
+    shutil.copytree(CLAUDE_RELEASE_SKILL.parent, scratch)
+    scratch_skill = scratch / "SKILL.md"
+    retargeted_test(scratch_skill)
+    ref = scratch / "references" / ref_name
+    body = ref.read_text()
+    for old in olds:
+        assert old in body, f"{old!r} not in {ref_name}: mutation would be a no-op"
+        body = body.replace(old, new)
+    ref.write_text(body)
+    with pytest.raises(AssertionError):
+        retargeted_test(scratch_skill)

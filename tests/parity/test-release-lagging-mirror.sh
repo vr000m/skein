@@ -30,6 +30,12 @@ make_root() {
 	mkdir -p "$root"
 	cp -R "$REPO_ROOT/scripts" "$root/scripts"
 	cp -R "$REPO_ROOT/plugins" "$root/plugins"
+	# The Claude mirror ships `references/` before the Codex copies exist
+	# (Phase 3.5): mirror them into the fake root so each test isolates one plane.
+	if [[ -d "$root/plugins/skein/skills/release/references" ]]; then
+		rm -rf "$root/plugins/skein-codex/skills/release/references"
+		cp -R "$root/plugins/skein/skills/release/references" "$root/plugins/skein-codex/skills/release/references"
+	fi
 }
 
 run_prompt_parity() {

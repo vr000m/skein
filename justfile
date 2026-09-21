@@ -171,6 +171,7 @@ ci: lint check-sync check-trunk-snippet-parity release-baseline-check release-sc
 # skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).
 release-script-tests:
     bash tests/release/test-scripts.sh
+    bash tests/release/test-a2-a25-contract.sh
 
 noqa-probe:
     bash tests/plugin/noqa-probe.sh

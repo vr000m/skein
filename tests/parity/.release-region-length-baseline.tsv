@@ -34,3 +34,15 @@ step-5	plugins/skein/skills/release/SKILL.md	24361
 step-6	plugins/skein/skills/release/SKILL.md	28535	
 step-a2	plugins/skein/skills/release/SKILL.md	10306	
 a2-marker-bearing-end	plugins/skein/skills/release/SKILL.md	12381	
+# Phase 3: relocated regions (SKILL.md rows shrank; reference rows are the moved prose), new anchors
+canonical-format	plugins/skein/skills/release/SKILL.md	3636	relocated-to-references
+step-1b-templated-branch	plugins/skein/skills/release/SKILL.md	2180	relocated-to-references
+infer-template-entry	plugins/skein/skills/release/SKILL.md	482	
+infer-template-entry-end	plugins/skein/skills/release/SKILL.md	291	
+a2-marker-bearing	plugins/skein/skills/release/SKILL.md	706	relocated-to-references
+step-a2-5	plugins/skein/skills/release/SKILL.md	686	relocated-to-references
+audit-mode-end	plugins/skein/skills/release/SKILL.md	30	
+canonical-format	plugins/skein/skills/release/references/template-subsystem.md	4031	
+step-1b-templated-branch	plugins/skein/skills/release/references/template-subsystem.md	5795	
+a2-marker-bearing	plugins/skein/skills/release/references/template-subsystem.md	9376	
+step-a2-5	plugins/skein/skills/release/references/audit-inference.md	19710	

@@ -727,23 +727,38 @@ fi
 
 # --- release references parity (Phase 3 of the release-skill restructure) --
 #
-# The release skill's progressive-disclosure `references/` directory must be
-# byte-identical across mirrors once it exists. The directory does not exist
-# before Phase 3, so this is a no-op until then. Acknowledgeable via the
-# `release-references` plane of RELEASE_LAGGING_MIRROR_OK.
+# The release skill's progressive-disclosure `references/` files must be
+# byte-identical across mirrors: one arm per file (template-subsystem.md and
+# audit-inference.md), each modeled on the content-review block above. Neither
+# file carries a path anchor, so plain byte identity suffices and no normalizer
+# is needed. A file missing on either side (or any extra file) is drift too. Acknowledgeable via the
+# `release-references` plane of RELEASE_LAGGING_MIRROR_OK until the Codex copies
+# land (Phase 3.5).
 rr_claude="$ROOT_DIR/plugins/skein/skills/release/references"
 rr_codex="$ROOT_DIR/plugins/skein-codex/skills/release/references"
 if [[ -d "$rr_claude" || -d "$rr_codex" ]]; then
-	if ! diff -r "$rr_claude" "$rr_codex" >/dev/null 2>&1; then
+	if [[ "$(ls -1 "$rr_claude" 2>/dev/null)" != "$(ls -1 "$rr_codex" 2>/dev/null)" ]]; then
 		if release_plane_acknowledged release-references; then
 			echo "expected lagging-mirror drift: release-references (RELEASE_LAGGING_MIRROR_OK)" >&2
 		else
-			echo "drift: release/references differs between Claude and Codex mirrors"
-			diff -r "$rr_claude" "$rr_codex" || true
+			echo "drift: release/references file set differs between Claude and Codex mirrors"
 			PARITY_DIFF=1
 		fi
 	fi
 fi
+for rr_name in template-subsystem.md audit-inference.md; do
+	if [[ -f "$rr_claude/$rr_name" || -f "$rr_codex/$rr_name" ]]; then
+		if ! cmp -s "$rr_claude/$rr_name" "$rr_codex/$rr_name" 2>/dev/null; then
+			if release_plane_acknowledged release-references; then
+				echo "expected lagging-mirror drift: release-references $rr_name (RELEASE_LAGGING_MIRROR_OK)" >&2
+			else
+				echo "drift: release/references/$rr_name differs (or is missing) between Claude and Codex mirrors"
+				diff -u "$rr_claude/$rr_name" "$rr_codex/$rr_name" || true
+				PARITY_DIFF=1
+			fi
+		fi
+	fi
+done
 
 # --- scripts/reconcile-findings.sh existence + executable bit ----------
 #
