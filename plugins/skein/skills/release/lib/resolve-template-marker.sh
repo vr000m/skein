@@ -55,10 +55,21 @@ case "$site" in
 a2-classify | step3-recovery) ;;
 *) die "unknown --site" 2 environment-failure bad-arguments ;;
 esac
-release_require_exe RELEASE_JQ || die "RELEASE_JQ must be an absolute executable path" 2 environment-failure jq-unresolvable
 release_require_exe RELEASE_GIT || die "RELEASE_GIT must be an absolute executable path" 2 environment-failure git-unresolvable
-JQ="$RELEASE_JQ"
 GIT="$RELEASE_GIT"
+# jq is the pinned set's one CONDITIONAL member (SKILL.md's pinned-executable
+# invariant): it is resolved only once a candidate actually reaches a gate run
+# or a jq-parsed input. A markerless step3-recovery in an untemplated repo
+# reaches neither, so requiring RELEASE_JQ up front would hard-stop a run that
+# never uses jq. a2-classify parses its release-list/peeled JSON with jq
+# unconditionally, so it pins immediately.
+JQ=""
+need_jq() {
+	[[ -n "$JQ" ]] && return 0
+	release_require_exe RELEASE_JQ || die "RELEASE_JQ must be an absolute executable path" 2 environment-failure jq-unresolvable
+	JQ="$RELEASE_JQ"
+}
+[[ "$site" == "a2-classify" ]] && need_jq
 [[ -d "$repo" ]] || die "--repo is not a directory" 2 environment-failure repo-unreadable
 [[ -r "$peeled" ]] || die "--peeled unreadable" 2 environment-failure input-unreadable
 
@@ -98,9 +109,22 @@ anchor_blob() {
 CUR_STATE="absent" # absent | valid | invalid:<note>
 CUR_FILE="$tmp/current-template.json"
 resolve_current_template() {
-	local head_line wt=0
+	local head_line head_rc wt=0
+	# Tri-state, fail-closed (SKILL.md Step 1b item 2): exit zero with empty
+	# output is the only clean *absent*; exit zero with exactly one entry is
+	# *present*; anything else (nonzero exit, more than one line) leaves the
+	# committed-object question UNANSWERED and must never be read as absence.
 	head_line="$(g ls-tree "$HEAD_SHA" -- "$TPATH" 2>/dev/null)"
+	head_rc=$?
 	[[ -e "$repo/$TPATH" || -L "$repo/$TPATH" ]] && wt=1
+	if [[ "$head_rc" != 0 ]]; then
+		CUR_STATE="invalid:committed-object presence for the current template could not be resolved"
+		return 0
+	fi
+	if [[ -n "$head_line" && "$(printf '%s' "$head_line" | grep -c .)" != 1 ]]; then
+		CUR_STATE="invalid:committed-object presence for the current template is ambiguous (more than one entry)"
+		return 0
+	fi
 	if [[ "$wt" == 0 && -z "$head_line" ]]; then
 		CUR_STATE="absent"
 		return 0
@@ -121,6 +145,7 @@ resolve_current_template() {
 		return 0
 	}
 	local gate
+	need_jq
 	if gate="$(release_validate_gates "$JQ" "$CUR_FILE")"; then
 		CUR_STATE="valid"
 	else
@@ -136,10 +161,27 @@ resolve_source() {
 	SRC_KIND="canonical"
 	SRC_NOTE=""
 	SRC_FILE=""
-	strict="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$body")"
-	loose="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]+ -->$' "$body")"
-	shape="$(grep -a -c -E '^<!-- release-template-sha:.*-->$' "$body")"
+	# A release body fetched from GitHub may carry CRLF line endings (fixture
+	# decision 19 commits both variants). Every marker pattern below anchors on
+	# `-->$`, so a single trailing CR would defeat all three and silently drop a
+	# marker-bearing body into the marker-absent fallback. Normalise a lone
+	# trailing CR per line first; the marker decision is then identical to the
+	# LF body's, which is the byte-for-byte invariant the CRLF fixture pins.
+	local scan="$tmp/body-lf.txt"
+	sed $'s/\r$//' <"$body" >"$scan"
+	strict="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$scan")"
+	loose="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]+ -->$' "$scan")"
+	shape="$(grep -a -c -E '^<!-- release-template-sha:.*-->$' "$scan")"
 	if [[ "$shape" == 0 ]]; then
+		# Step 3 recovery (SKILL.md Step 3 item 1): "If there are zero strict
+		# markers, use the no-template sentinel." The current-template fallback
+		# belongs to Audit Step A2 alone — recovery of an ALREADY-PUBLISHED body
+		# must be parametrized by the shape it was cut under, never by whatever
+		# `.release-template.json` currently reads.
+		if [[ "$site" == "step3-recovery" ]]; then
+			SRC_KIND="canonical"
+			return 0
+		fi
 		resolve_current_template
 		case "$CUR_STATE" in
 		absent) SRC_KIND="canonical" ;;
@@ -167,13 +209,14 @@ resolve_source() {
 		SRC_NOTE="marker present but hash is not lowercase hexadecimal"
 		return 0
 	fi
-	final_ok="$(tail -n 1 "$body" | grep -a -c -E '^<!-- release-template-sha: [0-9a-f]{40} -->$')"
+	final_ok="$(tail -n 1 "$scan" | grep -a -c -E '^<!-- release-template-sha: [0-9a-f]{40} -->$')"
 	if [[ "$final_ok" != 1 ]]; then
 		SRC_NOTE="marker-shaped line is not the body's final line"
 		return 0
 	fi
-	sha="$(grep -a -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$body" | sed -E 's/^<!-- release-template-sha: ([0-9a-f]{40}) -->$/\1/')"
+	sha="$(grep -a -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$scan" | sed -E 's/^<!-- release-template-sha: ([0-9a-f]{40}) -->$/\1/')"
 	local peeled_sha origin_blob="" head_blob="" o_state h_state matched=0 mode_note=""
+	need_jq
 	peeled_sha="$("$JQ" -r --arg t "$tagname" '.[$t] // empty' <"$peeled" 2>/dev/null)"
 	if [[ -n "$peeled_sha" ]]; then
 		anchor_blob "$peeled_sha"
@@ -229,14 +272,41 @@ if [[ "$site" == "step3-recovery" ]]; then
 fi
 
 [[ -r "$list" && -d "$bodies" && -r "$changelog" && -n "$web" ]] || die "a2-classify inputs missing or unreadable" 2 environment-failure input-unreadable
-"$JQ" -e 'type == "array"' <"$list" >/dev/null 2>&1 || die "release list is not a JSON array" 1 gate-failed release-list-shape
+# SKILL.md Step A1 item 3: the release inventory is valid only when it parses as
+# a top-level JSON array whose EVERY entry carries string `tagName` and `name`
+# fields. A shape-only check would let a missing/non-string `name` through and
+# classify a candidate against an empty title — fail closed instead.
+"$JQ" -e 'type == "array" and all(.[]; type == "object" and (.tagName | type) == "string" and (.name | type) == "string")' \
+	<"$list" >/dev/null 2>&1 || die "release list is not a JSON array of {tagName,name} strings" 1 gate-failed release-list-shape
 repo_name="${web##*/}"
 
-# section <version> — the CHANGELOG section body (header stripped), edges trimmed.
+# section <version> — the CHANGELOG section body (header stripped), edges
+# trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
+# extraction+tolerant-matching logic", so a strict miss retries tolerating
+# whitespace/punctuation drift in the header (Step 1 item 5) before giving up.
 section() {
+	local out
+	out="$(section_exact "$1")"
+	[[ -n "$out" ]] || out="$(section_tolerant "$1")"
+	[[ -n "$out" ]] && printf '%s\n' "$out"
+	return 0
+}
+section_exact() {
 	awk -v want="## [$1]" '
 		index($0, want) == 1 { on = 1; next }
 		/^## \[/ { on = 0 }
+		on { print }
+	' "$changelog" | trim_edges
+}
+# Tolerant retry: compare the header with all whitespace removed, so `##  [1.0.0]`
+# and `## [ 1.0.0 ] – date` match `## [1.0.0]` the way Step 1 item 5 requires.
+section_tolerant() {
+	awk -v want="##[$1]" '
+		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
+		/^[[:space:]]*##[[:space:]]*\[/ {
+			on = (index(squash($0), want) == 1)
+			next
+		}
 		on { print }
 	' "$changelog" | trim_edges
 }
@@ -258,16 +328,27 @@ drop_excluded() {
 	' | trim_edges
 }
 
-all_tags="$("$JQ" -r 'keys[]' <"$peeled" | sed -E 's/\^\{\}$//;s#^refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)"
+# SKILL.md Step A1 item 4: only STRICT `vX.Y.Z` names enter the T/R/C union —
+# each component rejects a leading zero, so `v01.2.3` is a `non-release-tag`,
+# not a release row.
+SEMVER_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+all_tags="$("$JQ" -r 'keys[]' <"$peeled" | sed -E 's/\^\{\}$//;s#^refs/tags/##' | grep -E "$SEMVER_TAG" | sort -V)"
 rows="[]"
 any_templated=0
 while IFS= read -r t; do
-	[[ "$t" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+	[[ "$t" =~ $SEMVER_TAG ]] || continue
 	ver="${t#v}"
 	name="$("$JQ" -r --arg t "$t" '.[] | select(.tagName == $t) | .name' <"$list" | head -n 1)"
 	bfile="$bodies/$t.md"
 	[[ -r "$bfile" ]] || bfile="$bodies/$t.lf.md"
-	[[ -r "$bfile" ]] || die "no body file for $t" 2 environment-failure input-unreadable
+	if [[ ! -r "$bfile" ]]; then
+		# Audit Mode is read-only and per-candidate: a failure to obtain this
+		# candidate's classification source classifies the ROW, it never aborts
+		# the whole audit (SKILL.md's A2 marker-absent bullet).
+		rows="$("$JQ" -c --arg v "$ver" '. + [{version: $v, status: "template-marker-unresolvable", note: "release body unavailable for this candidate"}]' <<<"$rows")"
+		any_templated=1
+		continue
+	fi
 	resolve_source "$t" "$bfile"
 	status="ok" note=""
 	case "$SRC_KIND" in
@@ -298,6 +379,18 @@ while IFS= read -r t; do
 			skip && state == 2 && /^[[:space:]]*$/ { skip = 0; next }
 			skip { next }
 			{ print }' "$got.0" | trim_edges >"$got.1"
+		# Check (4) of SKILL.md's `ok`/`drifted` bullet: the split-out
+		# `## What's New` paragraph's PRESENCE must match the classification
+		# source's `whats_new` when it is explicitly set. `whats_new: false`
+		# makes a present summary drift, not something merely stripped and
+		# ignored; `true`/unset impose no presence requirement here.
+		whats_new_ok=1
+		has_summary=0
+		head -n 1 "$got.0" | grep -a -q -E '^## What.s New$' && has_summary=1
+		if [[ -n "$SRC_FILE" ]]; then
+			wn="$("$JQ" -r 'if has("whats_new") then (.whats_new | tostring) else "unset" end' <"$SRC_FILE")"
+			[[ "$wn" == "false" && "$has_summary" == 1 ]] && whats_new_ok=0
+		fi
 		prev="$(printf '%s\n' "$all_tags" | awk -v c="$t" '$0 == c { print prev; exit } { prev = $0 }')"
 		compare_ok=1
 		if [[ "$label" == "none" ]]; then
@@ -324,7 +417,7 @@ while IFS= read -r t; do
 		else
 			[[ "$name" == "$repo_name $t — "?* ]] && title_ok=1
 		fi
-		if [[ "$title_ok" == 1 && "$compare_ok" == 1 ]] && cmp -s "$got" "$want_section"; then
+		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 ]] && cmp -s "$got" "$want_section"; then
 			status="ok"
 		else
 			status="drifted"

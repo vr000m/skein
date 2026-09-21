@@ -1,5 +1,5 @@
-# captured-at: 7983f45dd758b2c763ab000d9a7934a2f05b26b9
-# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included; captured with the Phase 1.5 anchors applied, prose otherwise byte-identical to the captured-at commit
+# captured-at: 7a31bf77ce137a85e0e199cd7445b4f13bc4652d
+# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included; measured on the tree of the captured-at commit (Phase 1.5's anchor-landing commit), whose prose is byte-identical to its parent 7983f45dd758b2c763ab000d9a7934a2f05b26b9 apart from the anchor comments themselves
 region	file	byte_length	exempt
 canonical-format	plugins/skein/skills/release/SKILL.md	6838	
 single-version-mode	plugins/skein/skills/release/SKILL.md	59	

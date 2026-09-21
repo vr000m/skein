@@ -11,7 +11,10 @@
 #       --worktree <absent|present-untracked|present-tracked-clean|
 #                   present-tracked-dirty|present-not-regular>
 #       --head-commit <present|absent> [--mode <six-digit-mode>]
-#       [--head-sha <40-hex>]
+#       --head-sha <40-hex>
+#     (--head-sha is REQUIRED: SKILL.md's Scope paragraph and Step 1b's
+#      single-HEAD-resolution rule make the 40-hex check a precondition of the
+#      presence oracle, so an omitted value must not silently skip it)
 #     (validate/reverify sites read the committed template bytes on stdin)
 #
 # Stdout: one JSON object {case,decision,exit_code,failed_gate,rows,script,site}.
@@ -62,8 +65,11 @@ finish() { # decision code gate case
 	exit "$2"
 }
 
-# SHA-256 (or other non-SHA-1) hard stop runs before the presence oracle.
-if [[ -n "$head_sha" && ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+# SHA-256 (or other non-SHA-1) hard stop runs before the presence oracle, and
+# it runs unconditionally: --head-sha is mandatory, so omitting it can never
+# turn the hard stop off.
+[[ -n "$head_sha" ]] || usage_fail "--head-sha is required"
+if [[ ! "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
 	echo "SHA-256 (or other non-SHA-1) repositories are not supported" >&2
 	finish "hard-stop" 1 "non-sha1-repository"
 fi

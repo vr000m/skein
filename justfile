@@ -24,6 +24,9 @@ bundle-appliers:
 
 # Run every parity guard: bundle/allowlist byte-identity, prompt/release contracts,
 # auto-fix orchestration, marker parity, and managed-skill/cleanup regressions.
+# `release-baseline-check` is deliberately NOT invoked here: it is a coverage
+# gate, not a parity guard, and it is already a direct dependency of `ci:` —
+# registering it on both paths ran the (slow) pytest collection twice per run.
 parity-tests:
     ./scripts/check-prompt-parity.sh
     bash tests/parity/test-applier-bundle-parity.sh
@@ -41,7 +44,6 @@ parity-tests:
     bash tests/parity/test-release-lagging-mirror.sh
     bash tests/release/test-lib.sh
     bash tests/release/test-golden-schema.sh
-    just release-baseline-check
     uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
     uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
     uv run --with pytest python -m pytest tests/parity/test_delete_skills.py -q

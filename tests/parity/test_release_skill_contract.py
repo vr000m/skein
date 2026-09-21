@@ -1345,6 +1345,8 @@ def _release_lib_validate(
             "present",
             "--mode",
             "100644",
+            "--head-sha",
+            "0" * 40,
         ],
         input=fixture_text.encode("utf-8", "surrogatepass"),
         capture_output=True,
@@ -2839,6 +2841,8 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
             "present",
             "--mode",
             "100644",
+            "--head-sha",
+            "0" * 40,
         ],
         input=b"{}",
         capture_output=True,
@@ -2893,6 +2897,8 @@ def test_release_jq_pin_is_conditional_on_template_presence(
             "absent",
             "--head-commit",
             "absent",
+            "--head-sha",
+            "0" * 40,
         ],
         input=b"",
         capture_output=True,
@@ -4164,6 +4170,59 @@ def test_release_regions_stay_within_tolerance_of_last_baseline_row(
                 f"{baseline} (tolerance {allowed:.0f})"
             )
     assert not failures, "region length drifted:\n" + "\n".join(failures)
+
+
+def test_release_reference_sections_have_exactly_one_pointer() -> None:
+    """Every `ref-*` section is claimed by exactly one SKILL.md pointer.
+
+    `_release_text` locates most pointers by the bare file name
+    (`references/template-subsystem.md`), which two different regions both
+    mention, and resolves them with `text.find(needle, region_start)`. If a
+    region's own pointer sentence were deleted, that search would silently run
+    on into a LATER region's pointer and splice the wrong section in — the
+    prose assertions would still pass while SKILL.md no longer names the
+    reference at all. Pin both directions: section anchors present in
+    `references/` match the declared splices exactly, and each pointer resolves
+    inside its own region anchor's span.
+    """
+    skill = ROOT / "plugins/skein/skills/release/SKILL.md"
+    text = skill.read_text()
+    references = skill.parent / "references"
+    assert references.is_dir(), f"missing {references}"
+
+    declared = [section for _, _, _, section in _REFERENCE_SPLICES]
+    assert len(declared) == len(set(declared)), (
+        f"a reference section is claimed by more than one splice: {declared}"
+    )
+    present: list[str] = []
+    for ref in sorted(references.glob("*.md")):
+        present += _REFERENCE_SECTION_ANCHOR.findall(ref.read_text())
+    assert sorted(present) == sorted(declared), (
+        "reference `ref-*` section anchors and SKILL.md splice pointers "
+        f"disagree: present={sorted(present)} declared={sorted(declared)}"
+    )
+
+    anchor_offsets = [
+        match.start()
+        for match in re.finditer(
+            r"^[ \t]*<!-- skein:[a-z0-9-]+ -->$", text, re.MULTILINE
+        )
+    ]
+    pointers: dict[str, int] = {}
+    for region, needle, _ref_name, section in _REFERENCE_SPLICES:
+        start = _anchor_at(text, region)
+        end = next((off for off in anchor_offsets if off > start), len(text))
+        found = text.find(needle, start)
+        assert found != -1, f"pointer {needle!r} missing after anchor {region!r}"
+        assert found < end, (
+            f"the pointer spliced for {section!r} resolves outside region "
+            f"{region!r} — that region no longer names its reference, and the "
+            "splice silently borrowed a later region's pointer"
+        )
+        pointers[section] = found
+    assert len(set(pointers.values())) == len(pointers), (
+        f"two splices resolved to the same SKILL.md pointer occurrence: {pointers}"
+    )
 
 
 def _justfile_recipes() -> dict[str, tuple[list[str], str]]:

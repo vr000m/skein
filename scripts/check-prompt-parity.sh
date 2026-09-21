@@ -321,10 +321,10 @@ release_call_line() {
 	tail=""
 	case "$site" in
 	step1b-precondition)
-		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] [--head-sha <sha>]'
+		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] --head-sha <sha>'
 		;;
 	step1b-validate | step5-reverify | step6-reverify)
-		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] [--head-sha <sha>]'
+		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] --head-sha <sha>'
 		tail=" Pipe the committed template bytes on stdin from the direct \`git cat-file blob\` read (Step 1b item 4's transport rule)."
 		;;
 	step3-recovery)

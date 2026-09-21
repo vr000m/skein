@@ -10,26 +10,61 @@
 
 # release_require_exe <VAR_NAME> — the pinned-executable re-check (grilled
 # decision 17): the env var must hold an absolute path to an existing,
-# executable, non-symlink regular file. Returns 2 otherwise.
+# executable, non-symlink regular file **whose parent components are also
+# symlink-free**. A non-symlink leaf under a symlinked directory is still a
+# redirectable path (SKILL.md's "require every executable and path component to
+# be ... non-symlink"), so the physical resolution of the containing directory
+# must equal the spelling given. Returns 2 otherwise.
 release_require_exe() {
-	local value="${!1-}"
+	local value="${!1-}" dir resolved
 	[[ -n "$value" ]] || return 2
 	[[ "$value" == /* ]] || return 2
 	[[ ! -L "$value" ]] || return 2
 	[[ -f "$value" && -x "$value" ]] || return 2
+	dir="${value%/*}"
+	[[ -n "$dir" ]] || dir="/"
+	resolved="$(cd -P -- "$dir" 2>/dev/null && pwd -P)" || return 2
+	[[ "$resolved" == "$dir" ]] || return 2
 	return 0
+}
+
+# release_json_escape <string> — minimal RFC 8259 string-body escaping, without
+# jq (jq may be unset on the untemplated path). Free-form values (notes, gate
+# text, git mode strings) reach release_emit, so every interpolated string is
+# escaped here rather than trusted to be a controlled token.
+release_json_escape() {
+	local s="${1-}" out="" ch
+	s="${s//\\/\\\\}"
+	s="${s//\"/\\\"}"
+	s="${s//$'\n'/\\n}"
+	s="${s//$'\r'/\\r}"
+	s="${s//$'\t'/\\t}"
+	if [[ "$s" == *[$'\001'-$'\037\177']* ]]; then
+		while [[ -n "$s" ]]; do
+			ch="${s:0:1}"
+			[[ "$ch" == [$'\001'-$'\037\177'] ]] && printf -v ch '\\u%04x' "'$ch"
+			out+="$ch"
+			s="${s:1}"
+		done
+		s="$out"
+	fi
+	printf '%s' "$s"
 }
 
 # release_emit <script> <site> <decision> <exit-code> <failed-gate|""> [rows-json]
 # Prints the decision JSON to stdout WITHOUT needing jq (jq may be unset on the
-# untemplated path). Every string is a controlled token (no escaping needed).
+# untemplated path). Every interpolated string goes through
+# release_json_escape, because `failed_gate` carries free-form note text at
+# some call sites; `rows` is already-valid JSON and is spliced verbatim.
 # `case` is "untemplated" only for the absent-noop / canonical-only decisions.
 release_emit() {
 	local script="$1" site="$2" decision="$3" code="$4" gate="${5-}" rows="${6-null}" case_name="${7-templated}"
 	local gate_json="null"
-	[[ -n "$gate" ]] && gate_json="\"$gate\""
+	[[ -n "$gate" ]] && gate_json="\"$(release_json_escape "$gate")\""
 	printf '{"case":"%s","decision":"%s","exit_code":%s,"failed_gate":%s,"rows":%s,"script":"%s","site":"%s"}\n' \
-		"$case_name" "$decision" "$code" "$gate_json" "$rows" "$script" "$site"
+		"$(release_json_escape "$case_name")" "$(release_json_escape "$decision")" \
+		"$code" "$gate_json" "$rows" \
+		"$(release_json_escape "$script")" "$(release_json_escape "$site")"
 }
 
 # jq programs are single-quoted on purpose (they contain $vars for jq).

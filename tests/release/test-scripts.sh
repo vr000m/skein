@@ -27,6 +27,9 @@ bad() {
 real() { python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$(command -v "$1")"; }
 JQ_REAL="$(real jq)"
 GIT_REAL="$(real git)"
+# --head-sha is mandatory (SKILL.md Scope / Step 1b single-HEAD resolution), so
+# every read-release-template.sh call in this suite supplies a valid SHA-1.
+FAKE_HEAD_SHA="$(printf '0%.0s' {1..40})"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/skein-release-scripts.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -75,7 +78,7 @@ expect_golden() { # name actual code
 run_read() {
 	local stdin_file="$1" wt="$2" head="$3" mode="$4" site="$5"
 	shift 5
-	local args=(--site "$site" --worktree "$wt" --head-commit "$head")
+	local args=(--site "$site" --worktree "$wt" --head-commit "$head" --head-sha "$FAKE_HEAD_SHA")
 	[[ -n "$mode" ]] && args+=(--mode "$mode")
 	if [[ "$stdin_file" == "-" ]]; then
 		"$LIB/read-release-template.sh" "${args[@]}" "$@" </dev/null
@@ -87,7 +90,7 @@ run_read() {
 read_case() { # golden-name stdin wt head mode site [env-jq]
 	local out code
 	if [[ "${7-pinned}" == "unset" ]]; then
-		out="$(env -u RELEASE_JQ "$LIB/read-release-template.sh" --site "$6" --worktree "$3" --head-commit "$4" ${5:+--mode "$5"} <"${2/#-//dev/null}" 2>/dev/null)"
+		out="$(env -u RELEASE_JQ "$LIB/read-release-template.sh" --site "$6" --worktree "$3" --head-commit "$4" --head-sha "$FAKE_HEAD_SHA" ${5:+--mode "$5"} <"${2/#-//dev/null}" 2>/dev/null)"
 		code=$?
 	else
 		out="$(RELEASE_JQ="$JQ_REAL" run_read "$2" "$3" "$4" "$5" "$6" 2>/dev/null)"
@@ -170,9 +173,9 @@ for label in unset relative missing nonexec symlink; do
 		;;
 	esac
 	if [[ "$label" == unset ]]; then
-		env -u RELEASE_JQ "$LIB/read-release-template.sh" --site step1b-validate --worktree present-tracked-clean --head-commit present --mode 100644 <"$TPL" >/dev/null 2>&1
+		env -u RELEASE_JQ "$LIB/read-release-template.sh" --site step1b-validate --worktree present-tracked-clean --head-commit present --head-sha "$FAKE_HEAD_SHA" --mode 100644 <"$TPL" >/dev/null 2>&1
 	else
-		RELEASE_JQ="$val" "$LIB/read-release-template.sh" --site step1b-validate --worktree present-tracked-clean --head-commit present --mode 100644 <"$TPL" >/dev/null 2>&1
+		RELEASE_JQ="$val" "$LIB/read-release-template.sh" --site step1b-validate --worktree present-tracked-clean --head-commit present --head-sha "$FAKE_HEAD_SHA" --mode 100644 <"$TPL" >/dev/null 2>&1
 	fi
 	expect_code "read-release-template with RELEASE_JQ $label" 2 $?
 	web="$(cat "$FIX/untemplated/web-base-url.txt")"
@@ -198,7 +201,7 @@ expect_code "read-release-template SHA-256 hard stop" 1 $?
 
 # Untemplated path succeeds with RELEASE_JQ unset, on every site (decision 18 state (i)).
 for s in step1b-precondition step1b-validate step5-reverify step6-reverify; do
-	env -u RELEASE_JQ "$LIB/read-release-template.sh" --site "$s" --worktree absent --head-commit absent </dev/null >/dev/null 2>&1
+	env -u RELEASE_JQ "$LIB/read-release-template.sh" --site "$s" --worktree absent --head-commit absent --head-sha "$FAKE_HEAD_SHA" </dev/null >/dev/null 2>&1
 	expect_code "untemplated $s with RELEASE_JQ unset" 0 $?
 done
 # Re-verify sites replay the identical item 2/3/4 sequence.
@@ -212,5 +215,123 @@ rec() { RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-mar
 [[ "$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.lf.md" | jq -r .decision)" == "marker-bound" ]] && pass "step3-recovery: marker-bound" || bad "step3-recovery marker-bound"
 [[ "$(rec untemplated v0.1.0 "$FIX/untemplated/bodies/v0.1.0.md" | jq -r .decision)" == "marker-absent-canonical" ]] && pass "step3-recovery: marker-absent-canonical" || bad "step3-recovery marker-absent-canonical"
 [[ "$(rec templated v1.2.0 "$FIX/templated/bodies/v1.2.0.lf.md" | jq -r .decision)" == "template-marker-unresolvable" ]] && pass "step3-recovery: unresolvable" || bad "step3-recovery unresolvable"
+
+# --- round-1 review-gauntlet regressions ----------------------------------
+# A symlink-free scratch root: release_require_exe rejects symlinked PARENT
+# components too, and $TMPDIR itself is symlinked on macOS (/var -> /private/var).
+TMP_REAL="$(cd -P "$TMP" && pwd -P)"
+WEB="$(cat "$FIX/untemplated/web-base-url.txt")"
+
+a2_run() { # repo-case release-list bodies-dir peeled changelog [git]
+	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="${6:-$GIT_REAL}" "$LIB/resolve-template-marker.sh" \
+		--site a2-classify --repo "$TMP/repo-$1" --release-list "$2" --bodies-dir "$3" \
+		--peeled "$4" --changelog "$5" --web-base-url "$WEB" 2>/dev/null
+}
+
+# L5: --head-sha is mandatory, so the SHA-256 hard stop can never be skipped.
+RELEASE_JQ="$JQ_REAL" "$LIB/read-release-template.sh" --site step1b-validate \
+	--worktree present-tracked-clean --head-commit present --mode 100644 <"$TPL" >/dev/null 2>&1
+expect_code "read-release-template without --head-sha" 2 $?
+
+# L2: a CRLF marker-bearing body binds its marker exactly like the LF variant.
+lf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.lf.md" | jq -r .decision)"
+crlf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.crlf.md" | jq -r .decision)"
+[[ "$crlf_dec" == "marker-bound" && "$crlf_dec" == "$lf_dec" ]] &&
+	pass "step3-recovery: CRLF body binds its marker (== LF result)" ||
+	bad "step3-recovery CRLF body: got '$crlf_dec', LF gave '$lf_dec'"
+
+# C3: Step 3 recovery with zero markers selects the no-template sentinel even
+# when the repo HAS a valid current template (that fallback is Audit A2's only).
+[[ "$(rec templated v0.1.0 "$FIX/untemplated/bodies/v0.1.0.md" | jq -r .decision)" == "marker-absent-canonical" ]] &&
+	pass "step3-recovery: zero markers ignore a present current template" ||
+	bad "step3-recovery zero markers selected the current template"
+
+# C6: a markerless step3-recovery reaches no gate run, so it must not need jq.
+env -u RELEASE_JQ RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site step3-recovery \
+	--repo "$TMP/repo-untemplated" --tag v0.1.0 --body-file "$FIX/untemplated/bodies/v0.1.0.md" \
+	--peeled "$FIX/untemplated/peeled-commits.json" >/dev/null 2>&1
+expect_code "step3-recovery markerless with RELEASE_JQ unset" 0 $?
+
+# C5: a failed `git ls-tree` is the UNANSWERED tri-state, never template absence.
+cat >"$TMP_REAL/git-no-ls-tree" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do [[ "\$a" == "ls-tree" ]] && exit 128; done
+exec "$GIT_REAL" "\$@"
+STUB
+chmod +x "$TMP_REAL/git-no-ls-tree"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP_REAL/git-no-ls-tree")"
+[[ "$(jq -r '[.rows[].status] | unique | join(",")' <<<"$out")" == "template-marker-unresolvable" ]] &&
+	pass "a2-classify: unreadable ls-tree fails closed, never 'absent'" ||
+	bad "a2-classify ls-tree failure did not fail closed: $out"
+
+# C9: every release-list entry must carry string tagName and name.
+printf '[{"tagName":"v0.1.0","name":null}]\n' >"$TMP/bad-list.json"
+a2_run untemplated "$TMP/bad-list.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" >"$TMP/badlist.out"
+expect_code "a2-classify rejects a non-string release name" 1 $?
+[[ "$(jq -r '.failed_gate' "$TMP/badlist.out")" == "release-list-shape" ]] &&
+	pass "a2-classify names the release-list gate" || bad "a2-classify release-list gate name"
+
+# C7: `v01.2.3` is a non-release tag (strict SemVer), never a classified row.
+jq '. + [{"tagName":"v01.2.3","name":"v01.2.3"}]' "$FIX/untemplated/release-list.json" >"$TMP/lz-list.json"
+jq '. + {"v01.2.3":"b66041d9cf88e611c0127e98b0e6c2ac7a8a434d"}' "$FIX/untemplated/peeled-commits.json" >"$TMP/lz-peeled.json"
+mkdir -p "$TMP/lz-bodies" && cp "$FIX/untemplated/bodies/"*.md "$TMP/lz-bodies/"
+cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/lz-bodies/v01.2.3.md"
+out="$(a2_run untemplated "$TMP/lz-list.json" "$TMP/lz-bodies" "$TMP/lz-peeled.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(jq -r '[.rows[].version] | join(",")' <<<"$out")" == "0.1.0,0.2.0" ]] &&
+	pass "a2-classify excludes a leading-zero version from the union" ||
+	bad "a2-classify admitted a leading-zero version: $out"
+
+# L6: one missing body classifies its row; it never aborts the whole audit.
+mkdir -p "$TMP/gap-bodies" && cp "$FIX/untemplated/bodies/v0.2.0.md" "$TMP/gap-bodies/"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/gap-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+code=$?
+[[ "$code" == 0 && "$(jq -r '.rows | length' <<<"$out")" == 2 &&
+"$(jq -r '.rows[] | select(.version == "0.1.0") | .status' <<<"$out")" == "template-marker-unresolvable" &&
+"$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a missing body classifies its row, audit continues" ||
+	bad "a2-classify aborted (exit $code) on a missing body: $out"
+
+# L1: whats_new:false makes a PRESENT `## What's New` paragraph drift.
+mkdir -p "$TMP/wn-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/wn-bodies/"
+{
+	printf '## What%ss New\n\nAlpha lands.\n\n' "'"
+	cat "$FIX/templated/bodies/v1.0.0.lf.md"
+} >"$TMP/wn-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "drifted" ]] &&
+	pass "a2-classify: whats_new:false + present summary is drift" ||
+	bad "a2-classify treated a present summary as ok under whats_new:false: $out"
+
+# C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
+sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/drifted-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.1.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: tolerant CHANGELOG-header retry (Step 1 item 5)" ||
+	bad "a2-classify did not retry a drifted CHANGELOG header: $out"
+
+# S2: release_emit JSON-escapes free-form text (`failed_gate` carries notes).
+# shellcheck source=plugins/skein/skills/release/lib/release-common.sh disable=SC1091
+. "$LIB/release-common.sh"
+evil='he said "hi" \ and
+a newline'
+emitted="$(release_emit demo demo-site demo-decision 1 "$evil")"
+if jq -e . <<<"$emitted" >/dev/null 2>&1 && [[ "$(jq -r '.failed_gate' <<<"$emitted")" == "$evil" ]]; then
+	pass "release_emit escapes quotes/backslashes/newlines in free-form text"
+else
+	bad "release_emit did not round-trip a free-form note: $emitted"
+fi
+
+# S3: a symlinked PARENT component of a pinned executable is rejected.
+mkdir -p "$TMP_REAL/realbin" && printf '#!/bin/sh\nexit 0\n' >"$TMP_REAL/realbin/jq" && chmod +x "$TMP_REAL/realbin/jq"
+ln -sfn "$TMP_REAL/realbin" "$TMP_REAL/linkbin"
+RELEASE_JQ="$TMP_REAL/linkbin/jq" "$LIB/read-release-template.sh" --site step1b-validate \
+	--worktree present-tracked-clean --head-commit present --head-sha "$FAKE_HEAD_SHA" --mode 100644 \
+	<"$TPL" >/dev/null 2>&1
+expect_code "read-release-template rejects a symlinked parent component" 2 $?
 
 exit "$fail"

@@ -533,3 +533,45 @@ The Phase 3 prose records `audit-inference.md` as 19,697 bytes; that recorded fi
 ```
 
 **Verification.** `just check-prompt-parity` passed; all three `lib/*.sh` and both `references/*.md` files compare byte-identically and the six lib files have matching executable mode `755`. The required `env -u RELEASE_LAGGING_MIRROR_OK just ci` run exited 1 before tests because the sandbox denied the default uv cache path (`/Users/vr000m/.cache/uv`); its captured stderr contained zero `expected lagging-mirror drift:` lines. Retrying with a writable temporary uv cache reached PyPI but failed DNS. The exact requested pytest command likewise failed before collection for the cache/network reasons; no golden was edited.
+
+### Review round 1 — fixer pass (2026-09-21)
+
+Applied to the **Claude mirror only**; the Codex halves of `lib/` and the four
+`read-release-template.sh` invocation lines are realigned in a following
+`codex:rescue` pass, so the transcript above and the byte-identity claim under
+**Verification** are stale for `lib/read-release-template.sh`,
+`lib/resolve-template-marker.sh`, `lib/release-common.sh`, and those four
+`SKILL.md` lines until that pass lands.
+
+- **Interface change:** `read-release-template.sh --head-sha <40-hex>` is now
+  **required**, not optional. Omitting it previously skipped the SHA-256 hard
+  stop that the Scope paragraph and Step 1b's single-HEAD-resolution rule make a
+  precondition of the presence oracle. The invocation-line text in
+  `SKILL.md` and the divergence-pair constants in
+  `scripts/check-prompt-parity.sh` changed together (`[--head-sha <sha>]` →
+  `--head-sha <sha>`).
+- **Behaviour corrections in `resolve-template-marker.sh`** (all verified
+  against `git show main:.../release/SKILL.md`, all goldens unchanged): CRLF
+  bodies no longer defeat the marker patterns; `step3-recovery` with zero
+  markers selects the no-template sentinel instead of the current template; a
+  failed `git ls-tree` fails closed instead of reading as absence; `jq` is
+  pinned lazily so a markerless `step3-recovery` in an untemplated repo does not
+  require `RELEASE_JQ`; leading-zero versions (`v01.2.3`) are excluded from the
+  union; the CHANGELOG header match has Step 1 item 5's tolerant retry; the
+  release-list gate requires string `tagName`/`name` per entry; one missing body
+  classifies its row instead of aborting the audit; and `whats_new: false` with
+  a present `## What's New` paragraph now classifies `drifted`.
+- **`release-common.sh`:** `release_emit` JSON-escapes every interpolated
+  string (`failed_gate` carries free-form note text), and
+  `release_require_exe` also rejects symlinked *parent* components.
+- **Quarantined, not applied:** naming each failed check in a `drifted` row's
+  `note`. The prose does require it, but the only way to land it is to edit
+  `tests/release/golden/a2-templated.json`, which grilled decision 14 forbids
+  in-phase — it needs a disclosed re-capture commit that moves
+  `golden_capture_commit`.
+- `tests/parity/.release-region-length-baseline.tsv`'s `# captured-at:` header
+  now names `7a31bf77ce137a85e0e199cd7445b4f13bc4652d` (Phase 1.5's
+  anchor-landing commit), which is the tree the recorded byte lengths were
+  actually measured on; the previous value named its anchor-free parent.
+- `just release-baseline-check` is registered on the `ci:` path only; it was
+  running twice per `just ci`.
