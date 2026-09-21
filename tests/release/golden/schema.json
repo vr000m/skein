@@ -1,0 +1,22 @@
+{
+  "description": "Frozen key set for every golden (grilled decisions 10 and 14). Each golden is a value-level JSON projection, `jq -S`-normalised, of a script's decision fields; Phase 2/3 assert key-set equality against this file, so a subset projection cannot weaken a golden. `rows` is null except for classification scripts, where it is an array of {version,status,note} objects compared after sorting by version. exit_code vocabulary (decision 20): 0 ok, 1 validation failure, 2 environment failure.",
+  "exit_code_vocabulary": {
+    "0": "ok",
+    "1": "validation failure",
+    "2": "environment failure"
+  },
+  "keys": [
+    "case",
+    "decision",
+    "exit_code",
+    "failed_gate",
+    "rows",
+    "script",
+    "site"
+  ],
+  "row_keys": [
+    "note",
+    "status",
+    "version"
+  ]
+}

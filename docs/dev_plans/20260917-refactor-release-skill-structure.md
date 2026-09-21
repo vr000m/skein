@@ -331,3 +331,107 @@ Narrow confirmation round on the round-6 edits (run_id `20260920T181224Z`, plan_
 - **Grilled decision 12** (new): extracted scripts emit structured JSON (classification fields only); `SKILL.md` renders human text; decision 3 amended. This resolves the JSON-vs-human-text tension with decision 10's `jq -S` projection and the A2.5 field-source contradiction (fetch results are inputs, not outputs).
 - **Standard fixes applied directly**: A2→A2.5 field-contract assertion moved from Phase 2 to Phase 3 (where `references/audit-inference.md` is created); boundary SHAs recorded machine-readably in `tests/parity/.release-baseline-meta.json` (`phase15_first_commit`, `phase2_first_commit`), with Phase 2 gaining the task; `.tsv` tolerance measured against the last row, `exempt` narrowed to deliberately-emptied regions; `release-baseline-check` registered in `ci:`/`parity-tests` in Phase 1.5; Phase 4 enumeration narrowed to `tests/release/test-*.sh` with the two-hop suite→recipe→`ci:` check and `justfile:27-40`; Phase 3 Impl files gain the `.tsv` and the `tests/release/` assertion; golden key set (incl. `exit_code`) fixed in Phase 1.5; manual golden-capture procedure specified (human supplies fixture files as mocked fetch results); `RELEASE_JQ` required only where jq runs, `gh` dropped from the script-side env set; subcommand-list-pinning test given a target file; stale raw-stdout, "fixture repo", moved-characterization-test, and superseded ancestry wording removed.
 - **Not yet independently re-verified**: as with every prior round, these fixes have not been through a fresh lens pass. Rounds 2-7 each found defects in the previous round's fixes, though round 7's were all Important/Minor propagation, with no Critical findings and no mechanism-level errors — the trend is converging.
+
+### Phase 1.5 stable anchors, mapping table, golden capture (implementer, base 7983f45)
+
+**Boundary SHAs.** `tests/parity/.release-baseline-meta.json` carries `phase15_first_commit` and `golden_capture_commit` as the literal placeholders `__PHASE15_FIRST_COMMIT_PLACEHOLDER__` / `__GOLDEN_CAPTURE_COMMIT_PLACEHOLDER__` (neither commit exists until the conductor's boundary commit; the conductor fills both with that commit's SHA in this phase's last commit). `phase2_first_commit` is `null` until Phase 2. `tests/parity/.release-region-length-baseline.tsv` `# captured-at:` is the base SHA `7983f45dd758b2c763ab000d9a7934a2f05b26b9` (prose byte-identical to it; measured with the Phase 1.5 anchors applied).
+
+**Anchors (Claude mirror only).** 25 `<!-- skein:NAME -->` comment lines in `plugins/skein/skills/release/SKILL.md`; grammar contains no `-sha:` so it cannot match A2's marker regexes. Nesting: `step-1b-templated-branch` / `-end` bracket Step 1b items 4 (grilled decision 22's templated-branch region); `a2-marker-bearing` / `-end` bracket the "Marker present, exactly one match" bullet inside `## Audit Mode` (the A2 sub-region). Audit Mode region anchor is `audit-mode`. Heading spellings were NOT edited (normalization is achieved by retargeting every truncated/full heading literal onto one anchor; SKILL.md prose is byte-identical apart from the inserted anchor lines). Release dev-plan (`docs/dev_plans/20260712-feature-release-skill.md`) carries four `plan-*` anchors. README needs no marker (row-prefix contract) and is covered by the rename test's cell-edit case.
+
+**Mapping table (old literal lookup -> anchor-keyed call).** 90 call sites rewritten mechanically plus 2 by hand (`\n\n### Step 5`, `\n\n### Step 2` guards, now `_anchor_at(..., "step-5"/"step-2")`); the shared primitives are `_anchor_at`, `_plan_anchor_at`, `_region_between`, with `_template_region`, `_a2_region`, `_step3_region` retargeted onto them. Deviation from the plan's "~15 named helpers": one anchor-keyed primitive plus the three pre-existing region helpers, because the inline lookups were single boundary probes, not regions. Mid-region substring probes (e.g. `- \`title_format\` —`, `Try the unmodified body first`, ~65 of the 157 literals) are deliberately NOT anchored: they are content assertions inside an already-anchored region, not region boundaries. Mutation evidence is automated rather than a captured transcript: `test_release_skill_helper_fails_loudly_when_its_anchor_is_mutated[<name>]` renames each anchor comment and asserts a named `AssertionError`.
+
+| Anchor | Replaces literal |
+|---|---|
+| `<!-- skein:step-1 -->` | ### Step 1: Resolve... |
+| `<!-- skein:step-1b -->` | ### Step 1b |
+| `<!-- skein:step-2 -->` | ### Step 2 (full/truncated/bare spellings) |
+| `<!-- skein:step-3 -->` | ### Step 3 |
+| `<!-- skein:step-4 -->` | ### Step 4 |
+| `<!-- skein:step-5 -->` | ### Step 5 |
+| `<!-- skein:step-6 -->` | ### Step 6 |
+| `<!-- skein:audit-mode -->` | ## Audit Mode |
+| `<!-- skein:single-version-mode -->` | ## Single-Version Mode |
+| `<!-- skein:canonical-format -->` | ## Canonical Format |
+| `<!-- skein:step-a1 -->` | ### Step A1 |
+| `<!-- skein:step-a2 -->` | ### Step A2 |
+| `<!-- skein:step-a2-5 -->` | ### Step A2.5 |
+| `<!-- skein:step-a3 -->` | ### Step A3 |
+| `<!-- skein:step-a4 -->` | ### Step A4 |
+| `<!-- skein:step-1-item-1 -->` | 1. Read `CHANGELOG.md` |
+| `<!-- skein:step-1-data-boundary -->` | Treat `CHANGELOG.md` ... untrusted data |
+| `<!-- skein:a1-tags -->` | 1. **Tags** |
+| `<!-- skein:a1-changelog -->` | 2. **CHANGELOG versions** |
+| `<!-- skein:a1-releases -->` | 3. **Releases (list only)** |
+| `<!-- skein:a1-normalize -->` | 4. **Normalize and classify names...** |
+| `<!-- skein:plan-requirements -->` | ## Requirements (release plan) |
+| `<!-- skein:plan-implementation-checklist -->` | ## Implementation Checklist (release plan) |
+| `<!-- skein:plan-requirement-2 -->` | 2. Resolve and validate (release plan) |
+| `<!-- skein:plan-requirement-3 -->` | \n3. (release plan) |
+
+| Test / helper function | Old literal lookup -> new anchor-keyed call |
+|---|---|
+| `test_release_treats_changelog_as_untrusted_data_only` | _anchor_at(step-1), _anchor_at(step-1-item-1), _anchor_at(step-1-data-boundary) |
+| `test_release_audit_inventory_is_bounded_and_fails_closed` | _anchor_at(a1-releases), _anchor_at(a1-normalize) |
+| `test_completed_release_plan_records_the_shipped_contract` | _plan_anchor_at(plan-requirements), _plan_anchor_at(plan-implementation-checklist), _plan_anchor_at(plan-requirement-2), _plan_anchor_at(plan-requirement-3) |
+| `test_release_rejects_non_default_remote_ports_before_gh` | _anchor_at(step-2) |
+| `test_release_forbids_transport_environment_overrides` | _anchor_at(step-2), _anchor_at(step-3) |
+| `test_release_url_diagnostics_never_expose_raw_or_ambiguous_urls` | _anchor_at(step-2), _anchor_at(step-3) |
+| `test_release_isolated_transport_uses_absolute_empty_child_hooks_path` | _anchor_at(step-2), _anchor_at(step-3) |
+| `test_release_revalidates_complete_destination_immediately_before_tag_push` | _anchor_at(step-5), _anchor_at(step-6) |
+| `test_release_locks_repo_identity_and_uses_immutable_step6_remote_url` | _anchor_at(step-2), _anchor_at(step-3), _anchor_at(step-6), _anchor_at(audit-mode) |
+| `test_release_rechecks_immutable_release_identity` | _anchor_at(step-3), _anchor_at(step-4), _anchor_at(step-6), _anchor_at(audit-mode) |
+| `test_release_audit_uses_one_immutable_remote_url_snapshot` | _anchor_at(audit-mode) |
+| `test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref` | _anchor_at(step-4), _anchor_at(step-5), _anchor_at(step-6) |
+| `test_release_direct_mode_guards_prefixed_and_bare_names_before_mutation` | _anchor_at(step-3), _anchor_at(step-5) |
+| `test_release_audit_classifies_nonstandard_tags_consistently` | _anchor_at(a1-tags), _anchor_at(a1-changelog) |
+| `_template_region` | _anchor_at(step-1), _anchor_at(step-2) |
+| `test_release_template_schema_defines_all_four_fields` | _anchor_at(canonical-format), _anchor_at(single-version-mode) |
+| `test_release_template_validation_fails_closed_on_all_gates` | _anchor_at(step-2), _anchor_at(step-3) |
+| `test_release_template_step4_confirmation_names_active_fields` | _anchor_at(step-4), _anchor_at(step-5) |
+| `test_release_template_identity_check_is_separate_from_payload_hash` | _anchor_at(step-3), _anchor_at(step-4), _anchor_at(step-6), _anchor_at(audit-mode) |
+| `test_release_template_marker_aware_recovery_strips_marker_and_applies_exclusions` | _anchor_at(step-3), _anchor_at(step-4), _anchor_at(step-a2), _anchor_at(step-a3) |
+| `test_release_template_marker_uses_head_blob_not_working_tree_hash` | _anchor_at(step-6), _anchor_at(audit-mode) |
+| `test_release_template_marker_is_composed_in_step3_not_deferred_to_step6` | _anchor_at(step-3), _anchor_at(step-4), _anchor_at(step-6), _anchor_at(audit-mode) |
+| `_a2_region` | _anchor_at(step-a2), _anchor_at(step-a3) |
+| `_dry_run_search_region` | _anchor_at(step-a2), _anchor_at(step-a4) |
+| `test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2` | _anchor_at(single-version-mode), _anchor_at(audit-mode), _anchor_at(step-a1), _anchor_at(step-a2) |
+| `test_release_marker_strip_requires_strict_bound_marker` | _anchor_at(step-3), _anchor_at(step-4) |
+| `test_release_step5_tag_message_respects_bare_title_format` | _anchor_at(step-5), _anchor_at(step-6) |
+| `test_release_step4_override_recomposes_through_step3_item3` | _anchor_at(step-4), _anchor_at(step-5) |
+| `_step3_region` | _anchor_at(step-3), _anchor_at(step-4) |
+| `test_release_whats_new_default_is_documented_as_unset_sentinel` | _anchor_at(step-2) |
+| `test_release_template_line_item_documents_unset_whats_new_display` | _anchor_at(step-5) |
+| `test_release_excluded_sections_empty_body_predicate_matches` | _anchor_at(canonical-format), _anchor_at(single-version-mode) |
+| `test_release_excluded_sections_scoped_out_of_no_free_text_claim` | _anchor_at(canonical-format), _anchor_at(single-version-mode) |
+| `test_release_template_head_is_resolved_once_per_check` | _anchor_at(step-5), _anchor_at(step-6), _anchor_at(audit-mode) |
+| `test_release_audit_a1_peeled_identity_defect_is_scoped_per_tag` | _anchor_at(step-a1), _anchor_at(step-a2) |
+| `test_release_single_head_resolution_rule_enumerates_every_site` | _anchor_at(step-a2-5) |
+| `test_release_step1b_bootstraps_pinned_context_before_its_first_launch` | _anchor_at(step-1b) |
+| `test_release_excluded_sections_gate_rejects_del_byte` | _anchor_at(canonical-format), _anchor_at(single-version-mode) |
+| `test_release_step6_prev_drift_recomposes_trailer_not_snapshot` | _anchor_at(step-6) |
+| `test_release_step6_prev_drift_restarts_all_identities_before_confirmation` | _anchor_at(step-6) |
+| `test_release_audit_a1_3_names_all_five_per_candidate_json_fields` | _anchor_at(step-a1), _anchor_at(step-a2) |
+| `test_release_audit_a4_exhaustive_non_fixable_list_is_actually_exhaustive` | _anchor_at(step-a4) |
+
+**In-phase coverage gate.** `just release-baseline-check` (registered in `ci:` and `parity-tests`) asserts collected ids are a superset of `tests/parity/.release-test-id-baseline.txt` and hard-fails on a missing baseline or meta file. Rename regression tests: `test_release_skill_helpers_survive_heading_and_item_renames`, `test_release_plan_helpers_survive_heading_renames`, `test_readme_release_row_edit_fails_with_a_named_assertion_error` (Claude mirror and text-based; Codex lands in Phase 3.5).
+
+**Lagging-mirror acknowledgment.** `RELEASE_LAGGING_MIRROR_OK` (planes `release-skill-md`, `release-lib`, `release-references`; unrecognised name is an error) implemented in `scripts/check-prompt-parity.sh` (skill-md + references), `tests/parity/test-applier-bundle-parity.sh` (lib, with a `PARITY_RELEASE_LIB_ROOT` test seam) and `tests/parity/test_release_skill_contract.py` (loud `pytest.skip` of the Codex parameter, plus the one cross-mirror test). Self-tests: `tests/parity/test-release-lagging-mirror.sh` (per plane: acknowledged -> exit 0 + annotation; unacknowledged -> non-zero; unrecognised name -> non-zero; unset -> hard-fail). Deviation: this new file is outside the Impl-files list.
+
+**Manual golden capture (NOT an automated assertion; single reader so far).** Goldens live in `tests/release/golden/` with the frozen key set in `schema.json` (`case, decision, exit_code, failed_gate, rows, script, site`); `test-golden-schema.sh` enforces the key set. Operator prompt used for every golden (a static reading, since SKILL.md has no substitution seam): "Read `plugins/skein/skills/release/SKILL.md` at the base SHA; for the named site and fixture case under `tests/release/fixtures/`, state the decision the prose mandates and map it to exit 0/1/2 per decision 20." Reader 1 (Claude, this implementer) derived every value below from the cited prose; **reader 2 (Codex via `codex:rescue`) has NOT yet derived them, so per decision 14 the goldens are not yet authoritative and must not be frozen until that agreement is recorded.** No values were fabricated from execution; each is a derivation:
+
+| Golden | Fixture inputs | Derivation (SKILL.md prose) | exit |
+|---|---|---|---|
+| jq-gate-templated | templated/.release-template.json (valid, tracked, clean) | Step 1b item 4: every gate passes -> template active | 0 |
+| jq-gate-untemplated | untemplated (state i) | item 2: absent from worktree and HEAD -> no-op, jq never resolved | 0 |
+| jq-gate-templated-jq-unset | templated, RELEASE_JQ unset | item 1: unresolvable jq on the present branch -> stop | 2 |
+| jq-gate-invalid-{empty,shape,enum,unknown-key,duplicate-key} | invalid/{jq-empty,shape,enum,unknown-key,duplicate-key}.json | item 4 gate failure -> hard stop, failed_gate = gate name (`jq-empty`, `object-type`, `enum`, `unknown-key`, `duplicate-key`) | 1 |
+| commit-precondition-templated / -untemplated | templated clean / untemplated | item 3 passes / item 2 no-op | 0 |
+| commit-precondition-state-ii | presence/state-ii.json | committed-then-deleted falls to item 3 -> tracked-but-dirty | 1 |
+| commit-precondition-state-iii | presence/state-iii.json | untracked fails item 3 | 1 |
+| commit-precondition-state-iv | presence/state-iv.json | tracked-but-dirty fails item 3 | 1 |
+| a2-marker-absent | untemplated bodies, no marker, no current template | A2 marker-absent branch -> canonical shape; both versions match section + compare-line rule -> ok, ok | 0 |
+| a2-templated | templated bodies v1.0.0/v1.1.0/v1.2.0 | v1.0.0 marker = template blob sha, binds via HEAD anchor, body == section -> ok; v1.1.0 marker binds, body differs -> drifted; v1.2.0 marker 40 zeros, both anchors resolve to a different blob -> template-marker-unresolvable, note "anchor resolved but SHA mismatched" | 0 |
+
+**Mapping-table n/a cells (each with a reason).** read-release-template `step5-reverify` / `step6-reverify` x {templated, untemplated}: n/a, the re-verify sites re-run the identical item 2/3/4 sequence against one fixed HEAD, so the static fixtures yield the step1b-* decisions already pinned above and add no distinct decision. resolve-template-marker `step3-recovery` x both cases: n/a, needs a re-sync fixture (existing release body being recovered) that this phase's mandated fixture set does not contain; a later golden would be a disclosed re-capture. `a2-marker-absent` with a *templated* current template: n/a, not mandated (only marker-absent/no-current-template and the marker-bearing set are). CRLF marker-bearing body (`templated/bodies/v1.0.0.crlf.md`): committed for the byte contract but **no golden**, because the prose never defines whether a trailing CR belongs to the "physical line" the marker regexes match, so any expected value would be a guess; needs a human decision. Tracked-mode (`120000`/`160000`) precondition failures have no fixture or golden yet.
+
+**Fixtures.** `tests/release/fixtures/{templated,untemplated,invalid,presence}` (static inputs, `.gitattributes` `-text`), `tests/release/lib.sh` (deterministic builder; `test-lib.sh` asserts identical HEAD across two builds and that the marker blob resolves via `git cat-file`). The CI workflow now checks out with `fetch-depth: 0`.

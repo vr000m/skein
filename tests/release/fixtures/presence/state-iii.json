@@ -1,0 +1,8 @@
+{
+  "state": "iii",
+  "worktree": "present-untracked",
+  "head_commit": "absent",
+  "mode": null,
+  "description": "present in worktree, untracked",
+  "release_jq": "pinned"
+}

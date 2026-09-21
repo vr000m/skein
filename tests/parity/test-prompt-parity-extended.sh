@@ -24,6 +24,12 @@ if [[ ! -x "$REAL_SCRIPT" ]]; then
 	exit 1
 fi
 
+# Hermetic w.r.t. the temporary release-skill lagging-mirror window: an
+# inherited RELEASE_LAGGING_MIRROR_OK would mask the release drift these
+# fixtures deliberately inject (see tests/parity/test-release-lagging-mirror.sh
+# for that variable's own self-tests).
+unset RELEASE_LAGGING_MIRROR_OK
+
 PASS=0
 FAIL=0
 TEST_TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/skein-prompt-parity.XXXXXX")"

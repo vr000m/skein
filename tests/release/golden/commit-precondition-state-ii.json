@@ -1,0 +1,9 @@
+{
+  "case": "templated",
+  "decision": "precondition-failed",
+  "exit_code": 1,
+  "failed_gate": "tracked-but-dirty",
+  "rows": null,
+  "script": "read-release-template",
+  "site": "step1b-precondition"
+}

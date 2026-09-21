@@ -342,6 +342,63 @@ if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" ]];
 	rm -rf "$r9g8_fixture"
 fi
 
+# --- 7. release/lib mirror parity (release-skill restructure, Phase 2+) -------
+# The release skill's hand-authored lib/ scripts (created in Phase 2 of
+# docs/dev_plans/20260917-refactor-release-skill-structure.md) are byte-identical
+# across mirrors except for the documented anchor-divergent set (none yet).
+# Until they exist this section is vacuous by design: the directories are
+# absent on both mirrors. RELEASE_LAGGING_MIRROR_OK's `release-lib` plane
+# acknowledges known-in-flight drift (grilled decision 23); an unrecognised
+# plane name is an error. PARITY_RELEASE_LIB_ROOT repoints only this section at
+# a fixture tree (self-test seam), like PARITY_GAUNTLET_LIB_ROOT above.
+RELEASE_LAGGING_PLANES_KNOWN=(release-skill-md release-lib release-references)
+release_lib_acknowledged=0
+for plane in ${RELEASE_LAGGING_MIRROR_OK//,/ }; do
+	plane_known=0
+	for known in "${RELEASE_LAGGING_PLANES_KNOWN[@]}"; do
+		[[ "$plane" == "$known" ]] && plane_known=1
+	done
+	if [[ "$plane_known" -eq 0 ]]; then
+		fail "RELEASE_LAGGING_MIRROR_OK: unrecognised plane '$plane' (expected one of: ${RELEASE_LAGGING_PLANES_KNOWN[*]})"
+	elif [[ "$plane" == "release-lib" ]]; then
+		release_lib_acknowledged=1
+	fi
+done
+
+RELEASE_LIB_ROOT="${PARITY_RELEASE_LIB_ROOT:-$ROOT_DIR}"
+RELEASE_LIB_CLAUDE_DIR="$RELEASE_LIB_ROOT/plugins/skein/skills/release/lib"
+RELEASE_LIB_CODEX_DIR="$RELEASE_LIB_ROOT/plugins/skein-codex/skills/release/lib"
+RELEASE_LIB_ANCHOR_DIVERGENT=()
+release_lib_drift=()
+while IFS= read -r lib_base; do
+	[[ -n "$lib_base" ]] || continue
+	divergent=0
+	for d in "${RELEASE_LIB_ANCHOR_DIVERGENT[@]+"${RELEASE_LIB_ANCHOR_DIVERGENT[@]}"}"; do
+		[[ "$lib_base" == "$d" ]] && divergent=1
+	done
+	[[ "$divergent" -eq 1 ]] && continue
+	c_f="$RELEASE_LIB_CLAUDE_DIR/$lib_base"
+	x_f="$RELEASE_LIB_CODEX_DIR/$lib_base"
+	if [[ ! -f "$c_f" || ! -f "$x_f" ]] || ! cmp -s "$c_f" "$x_f"; then
+		release_lib_drift+=("$lib_base")
+	else
+		pass "release lib mirror parity: $lib_base byte-identical across plugins"
+	fi
+done < <({
+	find "$RELEASE_LIB_CLAUDE_DIR" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.jq' \) 2>/dev/null
+	find "$RELEASE_LIB_CODEX_DIR" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.jq' \) 2>/dev/null
+} | while IFS= read -r p; do basename "$p"; done | sort -u)
+if [[ ${#release_lib_drift[@]} -gt 0 ]]; then
+	if [[ "$release_lib_acknowledged" -eq 1 ]]; then
+		echo "expected lagging-mirror drift: release-lib: ${release_lib_drift[*]} (RELEASE_LAGGING_MIRROR_OK)" >&2
+		pass "release lib mirror parity: drift acknowledged via RELEASE_LAGGING_MIRROR_OK (${release_lib_drift[*]})"
+	else
+		for lib_base in "${release_lib_drift[@]}"; do
+			fail "release lib mirror parity: $lib_base missing or differs between plugins/skein and plugins/skein-codex"
+		done
+	fi
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 # Non-vacuous-pass guard: if the bundle glob matched zero files we would exit 0

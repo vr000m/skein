@@ -1,0 +1,9 @@
+{
+  "case": "templated",
+  "decision": "gate-failed",
+  "exit_code": 1,
+  "failed_gate": "object-type",
+  "rows": null,
+  "script": "read-release-template",
+  "site": "step1b-validate"
+}

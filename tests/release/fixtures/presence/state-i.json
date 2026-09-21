@@ -1,0 +1,8 @@
+{
+  "state": "i",
+  "worktree": "absent",
+  "head_commit": "absent",
+  "mode": null,
+  "description": "absent from worktree and TEMPLATE_HEAD_COMMIT; RELEASE_JQ may be unset",
+  "release_jq": "unset"
+}

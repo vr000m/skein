@@ -364,6 +364,49 @@ normalize_release_workflow() {
 	' "$1"
 }
 
+# Temporary lagging-mirror acknowledgment for the release-skill restructure
+# (docs/dev_plans/20260917-refactor-release-skill-structure.md, grilled
+# decision 23). ``RELEASE_LAGGING_MIRROR_OK`` is a comma- or whitespace-
+# separated list of plane names whose drift is known-in-flight. Exactly three
+# planes are recognised; an unrecognised name is itself an error so a typo
+# cannot silently widen the window. Modelled on CONDUCT_LAGGING_MIRROR_OK:
+# enumerated drift is annotated on stderr and does not flip PARITY_DIFF;
+# unenumerated drift still fails. This variable is removed by Phase 4's
+# post-merge sunset commit.
+RELEASE_LAGGING_PLANES=(release-skill-md release-lib release-references)
+RELEASE_LAGGING_RAW="${RELEASE_LAGGING_MIRROR_OK:-}"
+RELEASE_LAGGING_RAW="${RELEASE_LAGGING_RAW//,/ }"
+declare -a release_lagging_arr=()
+if [[ -n "$RELEASE_LAGGING_RAW" ]]; then
+	read -r -a release_lagging_arr <<<"$RELEASE_LAGGING_RAW"
+fi
+if [[ ${#release_lagging_arr[@]} -gt 0 ]]; then
+	for release_lagging_item in "${release_lagging_arr[@]}"; do
+		release_lagging_known=0
+		for release_lagging_plane in "${RELEASE_LAGGING_PLANES[@]}"; do
+			if [[ "$release_lagging_item" == "$release_lagging_plane" ]]; then
+				release_lagging_known=1
+				break
+			fi
+		done
+		if [[ "$release_lagging_known" -eq 0 ]]; then
+			echo "error: unrecognised RELEASE_LAGGING_MIRROR_OK plane: $release_lagging_item (expected one of: ${RELEASE_LAGGING_PLANES[*]})" >&2
+			PARITY_DIFF=1
+		fi
+	done
+fi
+
+release_plane_acknowledged() {
+	local item
+	if [[ ${#release_lagging_arr[@]} -eq 0 ]]; then
+		return 1
+	fi
+	for item in "${release_lagging_arr[@]}"; do
+		[[ "$item" == "$1" ]] && return 0
+	done
+	return 1
+}
+
 release_is_managed=0
 for skill in "${managed_skills[@]}"; do
 	if [[ "$skill" == "release" ]]; then
@@ -439,13 +482,17 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 				: # normalized workflows match
 			else
 				diff_rc=$?
-				if [[ $diff_rc -eq 1 ]]; then
-					echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
+				if [[ $diff_rc -eq 1 ]] && release_plane_acknowledged release-skill-md; then
+					echo "expected lagging-mirror drift: release-skill-md (RELEASE_LAGGING_MIRROR_OK)" >&2
 				else
-					echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
+					if [[ $diff_rc -eq 1 ]]; then
+						echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
+					else
+						echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
+					fi
+					echo "$diff_output"
+					PARITY_DIFF=1
 				fi
-				echo "$diff_output"
-				PARITY_DIFF=1
 			fi
 		else
 			echo "drift: release SKILL.md normalization skipped because the documented divergence contract is invalid"
@@ -573,6 +620,26 @@ if [[ -d "$cr_claude" || -d "$cr_codex" ]]; then
 		echo "drift: content-review/references differs between Claude and Codex mirrors"
 		diff -r "$cr_claude" "$cr_codex" || true
 		PARITY_DIFF=1
+	fi
+fi
+
+# --- release references parity (Phase 3 of the release-skill restructure) --
+#
+# The release skill's progressive-disclosure `references/` directory must be
+# byte-identical across mirrors once it exists. The directory does not exist
+# before Phase 3, so this is a no-op until then. Acknowledgeable via the
+# `release-references` plane of RELEASE_LAGGING_MIRROR_OK.
+rr_claude="$ROOT_DIR/plugins/skein/skills/release/references"
+rr_codex="$ROOT_DIR/plugins/skein-codex/skills/release/references"
+if [[ -d "$rr_claude" || -d "$rr_codex" ]]; then
+	if ! diff -r "$rr_claude" "$rr_codex" >/dev/null 2>&1; then
+		if release_plane_acknowledged release-references; then
+			echo "expected lagging-mirror drift: release-references (RELEASE_LAGGING_MIRROR_OK)" >&2
+		else
+			echo "drift: release/references differs between Claude and Codex mirrors"
+			diff -r "$rr_claude" "$rr_codex" || true
+			PARITY_DIFF=1
+		fi
 	fi
 fi
 

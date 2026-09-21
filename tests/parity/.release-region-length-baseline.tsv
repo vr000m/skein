@@ -1,0 +1,28 @@
+# captured-at: 7983f45dd758b2c763ab000d9a7934a2f05b26b9
+# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included; captured with the Phase 1.5 anchors applied, prose otherwise byte-identical to the captured-at commit
+region	file	byte_length	exempt
+canonical-format	plugins/skein/skills/release/SKILL.md	6838	
+single-version-mode	plugins/skein/skills/release/SKILL.md	59	
+step-1	plugins/skein/skills/release/SKILL.md	1034	
+step-1-data-boundary	plugins/skein/skills/release/SKILL.md	723	
+step-1-item-1	plugins/skein/skills/release/SKILL.md	1974	
+step-1b	plugins/skein/skills/release/SKILL.md	11201	
+step-1b-templated-branch	plugins/skein/skills/release/SKILL.md	10510	
+step-1b-templated-branch-end	plugins/skein/skills/release/SKILL.md	1571	
+step-2	plugins/skein/skills/release/SKILL.md	43786	
+step-3	plugins/skein/skills/release/SKILL.md	27382	
+step-4	plugins/skein/skills/release/SKILL.md	13179	
+step-5	plugins/skein/skills/release/SKILL.md	23556	
+step-6	plugins/skein/skills/release/SKILL.md	27840	
+audit-mode	plugins/skein/skills/release/SKILL.md	733	
+step-a1	plugins/skein/skills/release/SKILL.md	1336	
+a1-tags	plugins/skein/skills/release/SKILL.md	4431	
+a1-changelog	plugins/skein/skills/release/SKILL.md	640	
+a1-releases	plugins/skein/skills/release/SKILL.md	2581	
+a1-normalize	plugins/skein/skills/release/SKILL.md	2096	
+step-a2	plugins/skein/skills/release/SKILL.md	9252	
+a2-marker-bearing	plugins/skein/skills/release/SKILL.md	9099	
+a2-marker-bearing-end	plugins/skein/skills/release/SKILL.md	12383	
+step-a2-5	plugins/skein/skills/release/SKILL.md	17687	
+step-a3	plugins/skein/skills/release/SKILL.md	2535	
+step-a4	plugins/skein/skills/release/SKILL.md	5174	

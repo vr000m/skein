@@ -1,0 +1,8 @@
+{
+  "state": "iv",
+  "worktree": "present-tracked-dirty",
+  "head_commit": "present",
+  "mode": "100644",
+  "description": "present tracked, dirty vs HEAD",
+  "release_jq": "pinned"
+}

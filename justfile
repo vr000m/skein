@@ -38,6 +38,10 @@ parity-tests:
     bash tests/parity/test-managed-skills-parity.sh
     bash tests/parity/test-prompt-parity-extended.sh
     bash tests/parity/test-state-dir-registration.sh
+    bash tests/parity/test-release-lagging-mirror.sh
+    bash tests/release/test-lib.sh
+    bash tests/release/test-golden-schema.sh
+    just release-baseline-check
     uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
     uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
     uv run --with pytest python -m pytest tests/parity/test_delete_skills.py -q
@@ -161,7 +165,7 @@ pytest-tests:
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
 # runs on every pull request.
-ci: lint check-sync check-trunk-snippet-parity parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
+ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
 
 noqa-probe:
     bash tests/plugin/noqa-probe.sh
@@ -176,3 +180,25 @@ release-baseline-refresh:
     if [[ -e "$out" ]]; then echo "refusing to overwrite $out" >&2; exit 1; fi
     ids="$(uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py --collect-only -q | grep '::' | LC_ALL=C sort)"
     { echo "# captured-at: $(git rev-parse HEAD)"; printf '%s\n' "$ids"; } > "$out"
+
+# Coverage gate for the release-skill restructure: the currently collected
+# release-contract pytest ids must be a superset of the committed baseline
+# (`tests/parity/.release-test-id-baseline.txt`), so a retarget can never
+# silently drop a test. Fails hard (never skips) on a missing baseline or a
+# missing `tests/parity/.release-baseline-meta.json`. Phase 4 adds the
+# commit-ancestry pin on top of this.
+release-baseline-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    base=tests/parity/.release-test-id-baseline.txt
+    meta=tests/parity/.release-baseline-meta.json
+    [[ -f "$base" ]] || { echo "missing $base" >&2; exit 1; }
+    [[ -f "$meta" ]] || { echo "missing $meta" >&2; exit 1; }
+    now="$(uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py --collect-only -q | grep '::' | LC_ALL=C sort)"
+    missing="$(LC_ALL=C comm -23 <(grep -v '^#' "$base" | LC_ALL=C sort) <(printf '%s\n' "$now"))"
+    if [[ -n "$missing" ]]; then
+        echo "release test ids present in the baseline but no longer collected:" >&2
+        printf '%s\n' "$missing" >&2
+        exit 1
+    fi
+    echo "release-baseline-check passed"
