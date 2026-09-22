@@ -32,6 +32,13 @@ GIT_REAL="$(real git)"
 FAKE_HEAD_SHA="$(printf '0%.0s' {1..40})"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/skein-release-scripts.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
+# A symlink-free scratch root: release_require_exe rejects symlinked PARENT
+# components too, and $TMPDIR itself is symlinked on macOS (/var -> /private/var).
+# Any test candidate meant to exercise release_require_exe's leaf-condition
+# checks (missing/nonexec/symlink) must be built under this, not raw $TMP — a
+# symlinked $TMP would let the parent-symlink check short-circuit before the
+# leaf condition the test claims to exercise ever runs, passing vacuously.
+TMP_REAL="$(cd -P "$TMP" && pwd -P)"
 
 # compare_golden <golden-file> <actual-json> <actual-exit>
 # Key-set equality against schema.json, then a `jq -S` projection equality.
@@ -121,12 +128,19 @@ done
 for c in templated untemplated; do
 	release_build_repo "$c" "$TMP/repo-$c" || bad "fixture build $c"
 done
+# repo_head <case> — resolve-template-marker.sh's --head-sha is mandatory
+# (round-2 fix 4, matching read-release-template.sh's contract) and, unlike
+# read-release-template.sh's stdin-only sites, it does real `git ls-tree`/
+# `rev-parse` reads against --repo, so it needs the fixture repo's ACTUAL
+# HEAD, never FAKE_HEAD_SHA.
+repo_head() { "$GIT_REAL" -C "$TMP/repo-$1" rev-parse HEAD; }
 run_a2() { # case
 	local c="$1" web
 	web="$(cat "$FIX/untemplated/web-base-url.txt")"
 	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
 		--repo "$TMP/repo-$c" --release-list "$FIX/$c/release-list.json" --bodies-dir "$FIX/$c/bodies" \
-		--peeled "$FIX/$c/peeled-commits.json" --changelog "$FIX/$c/CHANGELOG.md" --web-base-url "$web"
+		--peeled "$FIX/$c/peeled-commits.json" --changelog "$FIX/$c/CHANGELOG.md" --web-base-url "$web" \
+		--head-sha "$(repo_head "$c")"
 }
 out="$(run_a2 untemplated 2>/dev/null)"
 expect_golden a2-marker-absent "$out" $?
@@ -177,14 +191,14 @@ for label in unset relative missing nonexec symlink; do
 	case "$label" in
 	unset) val="" ;;
 	relative) val="jq" ;;
-	missing) val="$TMP/no-such-jq" ;;
+	missing) val="$TMP_REAL/no-such-jq" ;;
 	nonexec)
-		: >"$TMP/notexec"
-		val="$TMP/notexec"
+		: >"$TMP_REAL/notexec"
+		val="$TMP_REAL/notexec"
 		;;
 	symlink)
-		ln -sf "$JQ_REAL" "$TMP/jq-link"
-		val="$TMP/jq-link"
+		ln -sf "$JQ_REAL" "$TMP_REAL/jq-link"
+		val="$TMP_REAL/jq-link"
 		;;
 	esac
 	if [[ "$label" == unset ]]; then
@@ -195,15 +209,15 @@ for label in unset relative missing nonexec symlink; do
 	expect_code "read-release-template with RELEASE_JQ $label" 2 $?
 	web="$(cat "$FIX/untemplated/web-base-url.txt")"
 	if [[ "$label" == unset ]]; then
-		env -u RELEASE_JQ RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" >/dev/null 2>&1
+		env -u RELEASE_JQ RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" --head-sha "$(repo_head untemplated)" >/dev/null 2>&1
 	else
-		RELEASE_JQ="$val" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" >/dev/null 2>&1
+		RELEASE_JQ="$val" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" --head-sha "$(repo_head untemplated)" >/dev/null 2>&1
 	fi
 	expect_code "resolve-template-marker with RELEASE_JQ $label" 2 $?
 	if [[ "$label" == unset ]]; then
-		env -u RELEASE_GIT RELEASE_JQ="$JQ_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" >/dev/null 2>&1
+		env -u RELEASE_GIT RELEASE_JQ="$JQ_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" --head-sha "$(repo_head untemplated)" >/dev/null 2>&1
 	else
-		RELEASE_GIT="$val" RELEASE_JQ="$JQ_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" >/dev/null 2>&1
+		RELEASE_GIT="$val" RELEASE_JQ="$JQ_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify --repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" --bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" --changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$web" --head-sha "$(repo_head untemplated)" >/dev/null 2>&1
 	fi
 	expect_code "resolve-template-marker with RELEASE_GIT $label" 2 $?
 done
@@ -226,21 +240,19 @@ for s in step5-reverify step6-reverify; do
 done
 
 # step3-recovery: bound marker, absent marker, unresolvable marker.
-rec() { RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site step3-recovery --repo "$TMP/repo-$1" --tag "$2" --body-file "$3" --peeled "$FIX/$1/peeled-commits.json" 2>/dev/null; }
+rec() { RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site step3-recovery --repo "$TMP/repo-$1" --tag "$2" --body-file "$3" --peeled "$FIX/$1/peeled-commits.json" --head-sha "$(repo_head "$1")" 2>/dev/null; }
 [[ "$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.lf.md" | jq -r .decision)" == "marker-bound" ]] && pass "step3-recovery: marker-bound" || bad "step3-recovery marker-bound"
 [[ "$(rec untemplated v0.1.0 "$FIX/untemplated/bodies/v0.1.0.md" | jq -r .decision)" == "marker-absent-canonical" ]] && pass "step3-recovery: marker-absent-canonical" || bad "step3-recovery marker-absent-canonical"
 [[ "$(rec templated v1.2.0 "$FIX/templated/bodies/v1.2.0.lf.md" | jq -r .decision)" == "template-marker-unresolvable" ]] && pass "step3-recovery: unresolvable" || bad "step3-recovery unresolvable"
 
 # --- round-1 review-gauntlet regressions ----------------------------------
-# A symlink-free scratch root: release_require_exe rejects symlinked PARENT
-# components too, and $TMPDIR itself is symlinked on macOS (/var -> /private/var).
-TMP_REAL="$(cd -P "$TMP" && pwd -P)"
+# TMP_REAL is defined once, near TMP's own creation above.
 WEB="$(cat "$FIX/untemplated/web-base-url.txt")"
 
 a2_run() { # repo-case release-list bodies-dir peeled changelog [git]
 	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="${6:-$GIT_REAL}" "$LIB/resolve-template-marker.sh" \
 		--site a2-classify --repo "$TMP/repo-$1" --release-list "$2" --bodies-dir "$3" \
-		--peeled "$4" --changelog "$5" --web-base-url "$WEB" 2>/dev/null
+		--peeled "$4" --changelog "$5" --web-base-url "$WEB" --head-sha "$(repo_head "$1")" 2>/dev/null
 }
 
 # L5: --head-sha is mandatory, so the SHA-256 hard stop can never be skipped.
@@ -248,12 +260,35 @@ RELEASE_JQ="$JQ_REAL" "$LIB/read-release-template.sh" --site step1b-validate \
 	--worktree present-tracked-clean --head-commit present --mode 100644 <"$TPL" >/dev/null 2>&1
 expect_code "read-release-template without --head-sha" 2 $?
 
+# round-2 fix 4: resolve-template-marker.sh's --head-sha is equally mandatory
+# now (it used to self-resolve HEAD; see the script's HEAD_SHA comment).
+RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
+	--repo "$TMP/repo-untemplated" --release-list "$FIX/untemplated/release-list.json" \
+	--bodies-dir "$FIX/untemplated/bodies" --peeled "$FIX/untemplated/peeled-commits.json" \
+	--changelog "$FIX/untemplated/CHANGELOG.md" --web-base-url "$WEB" >/dev/null 2>&1
+expect_code "resolve-template-marker without --head-sha" 2 $?
+
 # L2: a CRLF marker-bearing body binds its marker exactly like the LF variant.
 lf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.lf.md" | jq -r .decision)"
 crlf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.crlf.md" | jq -r .decision)"
 [[ "$crlf_dec" == "marker-bound" && "$crlf_dec" == "$lf_dec" ]] &&
 	pass "step3-recovery: CRLF body binds its marker (== LF result)" ||
 	bad "step3-recovery CRLF body: got '$crlf_dec', LF gave '$lf_dec'"
+
+# round-2 fix 1 root cause: resolve_source's ok/drifted comparison read the RAW
+# $bfile (not the CR-normalized SRC_SCAN), so a CRLF marker line's `-->$` never
+# matched and a correctly-composed CRLF release misclassified `drifted`
+# ("exact CHANGELOG bytes"). The CRLF fixture was previously exercised only via
+# step3-recovery (above), never through a2-classify's own comparison path —
+# that gap is what let the bug ship. Swap v1.0.0's classified body for the
+# CRLF variant and require the SAME `ok` status the LF golden already pins.
+mkdir -p "$TMP/crlf-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/crlf-bodies/"
+cp "$FIX/templated/bodies/v1.0.0.crlf.md" "$TMP/crlf-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/crlf-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a CRLF marker-bearing body classifies ok (== LF result)" ||
+	bad "a2-classify misclassified a CRLF body: $out"
 
 # C3: Step 3 recovery with zero markers selects the no-template sentinel even
 # when the repo HAS a valid current template (that fallback is Audit A2's only).
@@ -264,7 +299,7 @@ crlf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.crlf.md" | jq -r 
 # C6: a markerless step3-recovery reaches no gate run, so it must not need jq.
 env -u RELEASE_JQ RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site step3-recovery \
 	--repo "$TMP/repo-untemplated" --tag v0.1.0 --body-file "$FIX/untemplated/bodies/v0.1.0.md" \
-	--peeled "$FIX/untemplated/peeled-commits.json" >/dev/null 2>&1
+	--peeled "$FIX/untemplated/peeled-commits.json" --head-sha "$(repo_head untemplated)" >/dev/null 2>&1
 expect_code "step3-recovery markerless with RELEASE_JQ unset" 0 $?
 
 # C5: a failed `git ls-tree` is the UNANSWERED tri-state, never template absence.
@@ -339,6 +374,24 @@ if jq -e . <<<"$emitted" >/dev/null 2>&1 && [[ "$(jq -r '.failed_gate' <<<"$emit
 	pass "release_emit escapes quotes/backslashes/newlines in free-form text"
 else
 	bad "release_emit did not round-trip a free-form note: $emitted"
+fi
+
+# round-2 fix 5: release_emit must never hand-splice an empty/malformed `rows`
+# or a non-integer `exit_code` into unquoted JSON positions — that produces
+# invalid JSON (`"rows":,`) on a nominally-successful exit, e.g. when an
+# upstream `jq` pipeline under `set -uo pipefail` (no `-e`) silently emptied
+# `$rows` before the caller ever inspected it.
+emitted="$(release_emit demo demo-site demo-decision 0 "" "")"
+if jq -e . <<<"$emitted" >/dev/null 2>&1 && [[ "$(jq -c '.rows' <<<"$emitted")" == "[]" ]]; then
+	pass "release_emit defaults an empty rows to []"
+else
+	bad "release_emit did not produce valid JSON for an empty rows: $emitted"
+fi
+emitted="$(release_emit demo demo-site demo-decision "not-a-number" "" "[]")"
+if jq -e . <<<"$emitted" >/dev/null 2>&1 && [[ "$(jq -r '.exit_code' <<<"$emitted")" =~ ^[0-9]+$ ]]; then
+	pass "release_emit rejects a non-integer exit_code without breaking JSON"
+else
+	bad "release_emit did not produce valid JSON for a non-integer exit_code: $emitted"
 fi
 
 # S3: a symlinked PARENT component of a pinned executable is rejected.
