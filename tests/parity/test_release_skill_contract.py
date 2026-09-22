@@ -1377,11 +1377,13 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     genuine `jq <flags/filter>` invocation) — those are excluded from the
     verdict rather than treated as evidence either way.
 
-    Security: this text is extracted from Markdown prose (SKILL.md) via
-    regex, so it must never be handed to a shell. `shlex.split` tokenizes
-    it and the tokens are exec'd directly (no `bash -c`, no shell
-    metacharacter interpretation) — a PR that edits SKILL.md prose cannot
-    inject shell commands into this test.
+    Security: every caller here passes a literal command string written in
+    this test module — there is no extraction step feeding it untrusted
+    prose any more (see above). `command` must still never be handed to a
+    shell: `shlex.split` tokenizes it and the tokens are exec'd directly
+    (no `bash -c`, no shell metacharacter interpretation), so even a
+    caller-supplied string carrying shell metacharacters cannot escape
+    this function's own argv-list `subprocess` call.
     """
     try:
         tokens = shlex.split(command)
@@ -4106,6 +4108,14 @@ def test_release_golden_recapture_is_descendant_of_original_capture() -> None:
         recapture,
         "golden_capture_commit vs golden_recapture_commit",
     )
+    # Mirror test_release_region_length_baseline_predates_phase2's sibling
+    # check: an ancestor-of-*something-earlier* proof alone does not prove the
+    # recapture SHA is reachable from HEAD at all. Without this, an off-branch
+    # or otherwise unreachable SHA that merely happens to descend from
+    # golden_capture_commit would still pass, letting the recapture mechanism
+    # become a silent re-pin escape hatch on decision 14's anti-rebaseline
+    # invariant (a recapture that never actually landed on this branch).
+    _assert_strict_ancestor(recapture, "HEAD", "golden_recapture_commit vs HEAD")
 
 
 def _last_region_rows() -> dict[str, tuple[str, int, str]]:
