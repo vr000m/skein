@@ -417,7 +417,7 @@ Narrow confirmation round on the round-6 edits (run_id `20260920T181224Z`, plan_
 
 **Lagging-mirror acknowledgment.** `RELEASE_LAGGING_MIRROR_OK` (planes `release-skill-md`, `release-lib`, `release-references`; unrecognised name is an error) implemented in `scripts/check-prompt-parity.sh` (skill-md + references), `tests/parity/test-applier-bundle-parity.sh` (lib, with a `PARITY_RELEASE_LIB_ROOT` test seam) and `tests/parity/test_release_skill_contract.py` (loud `pytest.skip` of the Codex parameter, plus the one cross-mirror test). Self-tests: `tests/parity/test-release-lagging-mirror.sh` (per plane: acknowledged -> exit 0 + annotation; unacknowledged -> non-zero; unrecognised name -> non-zero; unset -> hard-fail). Deviation: this new file is outside the Impl-files list.
 
-**Manual golden capture (NOT an automated assertion; single reader so far).** Goldens live in `tests/release/golden/` with the frozen key set in `schema.json` (`case, decision, exit_code, failed_gate, rows, script, site`); `test-golden-schema.sh` enforces the key set. Operator prompt used for every golden (a static reading, since SKILL.md has no substitution seam): "Read `plugins/skein/skills/release/SKILL.md` at the base SHA; for the named site and fixture case under `tests/release/fixtures/`, state the decision the prose mandates and map it to exit 0/1/2 per decision 20." Reader 1 (Claude, this implementer) derived every value below from the cited prose; **reader 2 (Codex via `codex:rescue`) has NOT yet derived them, so per decision 14 the goldens are not yet authoritative and must not be frozen until that agreement is recorded.** No values were fabricated from execution; each is a derivation:
+**Manual golden capture (NOT an automated assertion; single reader so far).** Goldens live in `tests/release/golden/` with the frozen key set in `schema.json` (`case, decision, exit_code, failed_gate, rows, script, site`); `test-golden-schema.sh` enforces the key set. Operator prompt used for every golden (a static reading, since SKILL.md has no substitution seam): "Read `plugins/skein/skills/release/SKILL.md` at the base SHA; for the named site and fixture case under `tests/release/fixtures/`, state the decision the prose mandates and map it to exit 0/1/2 per decision 20." Reader 1 (Claude, this implementer) derived every value below from the cited prose; **reader 2 (Codex via `codex:rescue`) has now derived them too (round 1 review-gauntlet fixer pass, commit `1d3cb54`), and both readers agree — per decision 14 the goldens are authoritative and frozen.** No values were fabricated from execution; each is a derivation:
 
 | Golden | Fixture inputs | Derivation (SKILL.md prose) | exit |
 |---|---|---|---|
@@ -488,13 +488,13 @@ Narrow confirmation round on the round-6 edits (run_id `20260920T181224Z`, plan_
 
 **Marker-absent golden / Phase 2 fixture diff.** `tests/release/test-scripts.sh` (unchanged) still reproduces `a2-marker-absent.json` and every other golden; this phase touched no script file.
 
-**Size result.** Claude `SKILL.md` 213,442 bytes vs pre-refactor 243,730 (-12.4%) and Phase 2's 245,577; round 2's ~195K estimate was NOT reached (213K). `references/template-subsystem.md` 19,599 + `references/audit-inference.md` 19,697 = 252,738 total (+3.7% vs pre-refactor: three headers, the field-contract and entry-point prose are new). SKILL.md is below the pre-refactor size, so this phase's size gate passes; an untemplated `/release <version>` cut no longer loads either reference (~39 KB).
+**Size result.** Claude `SKILL.md` 213,442 bytes vs pre-refactor 243,730 (-12.4%) and Phase 2's 245,577; round 2's ~195K estimate was NOT reached (213K). `references/template-subsystem.md` 19,599 + `references/audit-inference.md` 19,710 = 252,751 total (+3.7% vs pre-refactor: three headers, the field-contract and entry-point prose are new). (This entry originally recorded `audit-inference.md` as 19,697 bytes; Phase 3.5's live `wc -c` measured 19,710 — a 13-byte discrepancy Phase 3.5 noted against the live file but never corrected here. Fixed as part of round 2 review-gauntlet.) SKILL.md is below the pre-refactor size, so this phase's size gate passes; an untemplated `/release <version>` cut no longer loads either reference (~39 KB).
 
 **Region baselines.** `.release-region-length-baseline.tsv` has appended rows (Phase 1.5/2 rows untouched) for every changed region: shrunk SKILL.md rows marked `relocated-to-references`, the relocated reference rows under the same region name, and the new anchors.
 
 **Parity script.** `scripts/check-prompt-parity.sh`: the single `references/` directory diff was replaced by one arm per file (`template-subsystem.md`, `audit-inference.md`), byte identity via `cmp`, a file missing on either side is drift; acknowledged by `release-references` until Phase 3.5.
 
-**NOT DONE, needs a human.** The manual transcript checks require a live Claude Code session and are not recorded (no transcript path/SHA-256/date/verifier): (1) untemplated `/release <version>` against skein's own repo must show zero file reads of `template-subsystem.md` (and of `audit-inference.md`); (2) `/release audit` against the untemplated fixture must show zero reads of `template-subsystem.md`, and its read of `audit-inference.md` must occur only at Step A2.5. Note the plan's protocol names `audit-inference.md` as gated for the audit run, but by grilled decision 2 A2.5 runs in the default audit, so that file is read there by design; the plan text should say the gated-off case for it is single-version cuts. Phase 1.5's reader-2 (Codex) golden agreement is also still open.
+**NOT DONE, needs a human.** The manual transcript checks require a live Claude Code session and are not recorded (no transcript path/SHA-256/date/verifier): (1) untemplated `/release <version>` against skein's own repo must show zero file reads of `template-subsystem.md` (and of `audit-inference.md`); (2) `/release audit` against the untemplated fixture must show zero reads of `template-subsystem.md`, and its read of `audit-inference.md` must occur only at Step A2.5. Note the plan's protocol names `audit-inference.md` as gated for the audit run, but by grilled decision 2 A2.5 runs in the default audit, so that file is read there by design; the plan text should say the gated-off case for it is single-version cuts. (Phase 1.5's reader-2 (Codex) golden agreement, previously also open here, was recorded in round 1 review-gauntlet — commit `1d3cb54`; see that phase's Findings entry above.)
 
 **Deviations.** Also touched (outside the Impl list, required): `tests/parity/test-release-lagging-mirror.sh` (fake root now mirrors Claude's `references/` into Codex so each plane test isolates one plane) and the `references/` arm additionally compares the two directories' file sets so a stray file is drift.
 
@@ -537,11 +537,13 @@ The Phase 3 prose records `audit-inference.md` as 19,697 bytes; that recorded fi
 ### Review round 1 — fixer pass (2026-09-21)
 
 Applied to the **Claude mirror only**; the Codex halves of `lib/` and the four
-`read-release-template.sh` invocation lines are realigned in a following
-`codex:rescue` pass, so the transcript above and the byte-identity claim under
-**Verification** are stale for `lib/read-release-template.sh`,
-`lib/resolve-template-marker.sh`, `lib/release-common.sh`, and those four
-`SKILL.md` lines until that pass lands.
+`read-release-template.sh` invocation lines were realigned in a following
+`codex:rescue` pass (commits `f6b4038`..`1d3cb54`), so the transcript above and
+the byte-identity claim under **Verification** were stale for
+`lib/read-release-template.sh`, `lib/resolve-template-marker.sh`,
+`lib/release-common.sh`, and those four `SKILL.md` lines only for the interim
+between this fixer pass and that later `codex:rescue` pass landing — both
+mirrors have been byte-identical (parity-file scope) since.
 
 - **Interface change:** `read-release-template.sh --head-sha <40-hex>` is now
   **required**, not optional. Omitting it previously skipped the SHA-256 hard
@@ -564,14 +566,156 @@ Applied to the **Claude mirror only**; the Codex halves of `lib/` and the four
 - **`release-common.sh`:** `release_emit` JSON-escapes every interpolated
   string (`failed_gate` carries free-form note text), and
   `release_require_exe` also rejects symlinked *parent* components.
-- **Quarantined, not applied:** naming each failed check in a `drifted` row's
-  `note`. The prose does require it, but the only way to land it is to edit
+- **Resolved via a disclosed golden recapture, not left quarantined:** naming
+  each failed check in a `drifted` row's `note`. This was originally
+  quarantined in this fixer pass because the only way to land it was to edit
   `tests/release/golden/a2-templated.json`, which grilled decision 14 forbids
-  in-phase — it needs a disclosed re-capture commit that moves
-  `golden_capture_commit`.
+  in-phase without a disclosed re-capture commit. That recapture happened in a
+  later round-1 pass — `a2-templated.json`'s `note` field is now populated per
+  candidate, and `golden_recapture_commit` (`c0617ee`) is recorded in
+  `tests/parity/.release-baseline-meta.json` per decision 14's mechanism.
 - `tests/parity/.release-region-length-baseline.tsv`'s `# captured-at:` header
   now names `7a31bf77ce137a85e0e199cd7445b4f13bc4652d` (Phase 1.5's
   anchor-landing commit), which is the tree the recorded byte lengths were
   actually measured on; the previous value named its anchor-free parent.
 - `just release-baseline-check` is registered on the `ci:` path only; it was
   running twice per `just ci`.
+
+### Review round 2 — fixer pass (2026-09-22)
+
+Applied to the **Claude mirror only** in this pass; the Codex mirror's
+`lib/release-common.sh`, `lib/resolve-template-marker.sh`, and the two
+`SKILL.md` call-site lines (`--head-sha` added) are realigned in a following
+`codex:rescue` pass, matching round 1's split. `tests/release/test-scripts.sh`
+runs only against the Claude mirror's `lib/` by design (its own header
+comment) — `RELEASE_LIB_PARITY_FILES` is the transitive byte-identity
+guarantee for the Codex copy once that pass lands.
+
+**Operator-resolved decisions applied:**
+
+- **D1 (A2/SKILL.md duplication):** cut the duplicate three-pattern
+  marker-search algorithm prose (exact regexes, position rationale, per-case
+  restatements) from Step A2's "Resolve the classification source" bullet down
+  to a short pointer at `resolve-template-marker.sh`'s own header comment and
+  `resolve_source()`. The `step-a2` region shrank 11375 → 10492 bytes; a new
+  row is appended to `tests/parity/.release-region-length-baseline.tsv`
+  (never editing the prior row, per the sanctioned append-only mechanism).
+- **D2 (Audit PREV in script output):** `resolve-template-marker.sh`'s
+  `a2-classify` site now emits `rows[].prev` (the Audit PREV tag name, or
+  `null`) for every row, including previously-discarded unresolvable/
+  missing-body rows — the value was already computed internally and simply
+  never threaded into the JSON. `tests/release/golden/schema.json`'s
+  `row_keys` and both classification goldens
+  (`a2-marker-absent.json`, `a2-templated.json`) are updated to match, and
+  `references/audit-inference.md`'s A2→A2.5 field-contract table documents
+  the new field. Additive: nothing downstream treats an unknown JSON key as
+  an error (A2.5 continues to read only the fields its own contract lists;
+  `test-golden-schema.sh`'s schema check is the sole strict-shape gate and is
+  updated in the same commit as the goldens).
+- **D3 (Codex P1 "pin every helper") — QUARANTINED, not applied.** Grilled
+  decision 17's actual text — "launch of a mirror-parity-checked release
+  `lib/` script with pre-verified executables passed by absolute path
+  (`RELEASE_JQ`, `RELEASE_GIT`) is itself a verification boundary" — widens
+  the git/jq verification boundary to script-launch only; it does not name
+  `mktemp`/`sed`/`grep`/`awk`. Codex's round-2 finding asking every helper
+  inside the `lib/` scripts to be independently pinned is a scope-expansion
+  request beyond what decision 17 actually decided, and per the operator's
+  round-2 resolution it is not applied and not auto-fixed — left as an open
+  question for a future grilled decision, not a defect.
+
+**Confirmed-bug fixes** (`plugins/skein/skills/release/lib/`, each with a new
+regression test in `tests/release/test-scripts.sh` unless noted):
+
+1. **CRLF marker bug** — `resolve_source()` normalized CR line endings onto a
+   scan path for marker *detection* but the ok/drifted comparison block (the
+   `got.0` build, the What's New probe) kept reading the raw body file
+   directly, so a CRLF marker line's trailing CR defeated the comparison's own
+   `-->$` anchor and misclassified a correctly-composed CRLF release
+   `drifted`. Root cause: the round-1 normalization fix was threaded through
+   the marker-detection path but not the comparison path — two readers of
+   "the body" on two different byte streams. Fixed by exporting the
+   normalized path as `SRC_SCAN` and reading it from every downstream site.
+   New a2-classify CRLF assertion added (the CRLF fixture was previously
+   exercised only via `step3-recovery`). **Structural** (shared
+   `resolve-template-marker.sh`, both mirrors once synced).
+2. **`--peeled` key-format inconsistency** — one call site assumed
+   `ls-remote`-style `refs/tags/vX^{}` keys (dead against every fixture); the
+   other assumed bare tag names. Picked bare tag names (the fixtures' and the
+   working call site's shape), deleted the dead `sed` strip, added a lazy
+   once-per-run jq shape gate mirroring the existing `--release-list` gate,
+   and documented the format in the script's usage header and SKILL.md's
+   `a2-classify` invocation description. **Structural.**
+3. **Note comma-join bug** — `${failed[*]}` with `IFS=", "` joins on only
+   `IFS`'s first character, dropping the space on a two-failure `drifted`
+   note. Replaced with an explicit loop join. **Local.**
+4. **HEAD self-resolution inconsistency** — `resolve-template-marker.sh` still
+   resolved `HEAD` internally instead of requiring `--head-sha`, unlike
+   `read-release-template.sh`'s round-1 strict contract; SKILL.md's Step 1b
+   single-resolution rule names this script's marker-absent fallback
+   explicitly as a site that must use one externally-supplied SHA. Made
+   `--head-sha` mandatory (swept for and found no other internal
+   `rev-parse HEAD`); SKILL.md's two call sites now pass `TEMPLATE_HEAD_COMMIT`
+   (step3-recovery, reusing Step 1b's resolution) and a newly-named
+   `A2_HEAD_COMMIT` (a2-classify, Audit Mode's own fresh resolution, since
+   Audit Mode has no Step 1b). **Structural** (interface change; every test
+   call site updated to supply a real fixture-repo HEAD SHA).
+5. **`release_emit` unvalidated exit_code/rows splice** — hand-spliced
+   `$exit_code`/`$rows` into unquoted JSON positions with no shape check;
+   under `set -uo pipefail` (no `-e`) a failed `jq` pipeline could leave
+   `$rows` empty and produce invalid JSON on a nominal zero exit. Added a
+   cheap bash-only (no-jq-required, since `release_emit` must work on the
+   jq-less untemplated path) integer gate for `exit_code` and an
+   array/object/`null`-shape gate for `rows`, defaulting to `1` / `[]`
+   respectively. **Structural** (shared `release-common.sh`, both mirrors).
+6. **`test-scripts.sh`'s RELEASE_JQ/RELEASE_GIT negative-test loop passed
+   vacuously on macOS** — candidates were built under `$TMPDIR`, which
+   resolves through the symlinked `/var` on macOS, so
+   `release_require_exe`'s parent-symlink check short-circuited before the
+   leaf condition each sub-case claimed to test ever ran. `TMP_REAL` (already
+   used elsewhere in the suite for exactly this reason) is now defined once
+   near `TMP`'s own creation and the loop's candidates build under it.
+   **Local**, test-only.
+7. **`_jq_command_accepts`'s docstring was dishonest** — its Security
+   paragraph still described "extracted from Markdown prose (SKILL.md) via
+   regex" framing that predated the script-extraction refactor (the first
+   paragraph already correctly says that extraction step was removed).
+   Reworded to describe the actual current behavior: every caller passes a
+   literal test-module string, tokenized and exec'd directly, never through a
+   shell. **Local**, test-only, no behavior change.
+8. **`golden_recapture_commit` had no ancestor-of-HEAD check** — unlike its
+   sibling `test_release_region_length_baseline_predates_phase2`, the
+   recapture descendant test never checked the recapture SHA was reachable
+   from `HEAD`, so an off-branch/unreachable SHA that happened to descend from
+   `golden_capture_commit` would still pass. Added the missing check,
+   mirroring the sibling's pattern, closing a potential silent re-pin escape
+   hatch on decision 14's anti-rebaseline invariant. **Local.**
+9. **Dev-plan Findings staleness** (this file, 5 items + a 6th documenting
+   D1/D2 here) — see the individual edits above this section: Phase 1's
+   "reader 2 has NOT yet derived them", the round-1 "Quarantined, not
+   applied" drift-note bullet, Phase 3's "NOT DONE" Codex golden-agreement
+   line, the round-1 section's now-stale "until that pass lands" warning, and
+   Phase 3's stale `audit-inference.md` byte count (19,697 → 19,710) are all
+   corrected in place above. **Local**, docs-only.
+10. **CRLF handling undocumented in SKILL.md prose** — added a short note to
+    the a2-classify invocation description area once fix 1 above made CR
+    normalization load-bearing rather than incidental (see fix 2's
+    `--peeled` documentation edit's neighboring prose and fix 1's own note in
+    the script). **Local.**
+11. **Marker-count precedence — prose-vs-script verification.** Checked
+    whether SKILL.md's "exactly one match" language for marker resolvability
+    agreed with the script's actual `strict>=2 || shape>=2` unresolvable
+    gate. Verified they agree by construction (the classification bullets are
+    mutually exclusive on marker-shaped-line count, so "exactly one match"
+    already meant "not the two-or-more-matches case" structurally) and
+    clarified the heading wording to say so explicitly, rather than changing
+    script behavior — per the two round-1 quarantine precedents (A2 scope,
+    D3 pin-scope), a script-logic change needs its own operator sign-off;
+    this was a prose-sync-only fix. **Local.**
+
+**Test/CI.** `bash tests/release/test-scripts.sh` — all cases pass, including
+the CRLF-through-a2-classify regression, the `--head-sha`-required negative
+tests for both `resolve-template-marker.sh` and `read-release-template.sh`,
+and the two new `release_emit` shape-gate tests.
+`RELEASE_LAGGING_MIRROR_OK= uv run --with pytest python -m pytest
+tests/parity/test_release_skill_contract.py -v` and `just ci` results are
+recorded in the round-2 fixer's final report (not duplicated here).
