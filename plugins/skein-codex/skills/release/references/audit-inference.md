@@ -22,6 +22,7 @@ The only fields A2.5 may parse from the script's stdout:
 - `rows` (array)
 - `rows[].version`
 - `rows[].status` (one of `ok`, `drifted`, `template-marker-unresolvable`)
+- `rows[].prev` (round-2 review-gauntlet, decision D2 — the resolved Audit PREV tag name for that candidate, or `null`; additive field, already computed internally by the script and now exposed rather than discarded. This is the same value the `ok`/`drifted` bullet's Audit PREV oracle resolves — present here for schema completeness, not a new consumption path: A2.5's `compare_line_label` bullet still reuses the value as Step A2 already carries it forward, per that bullet's own text.)
 
 ### Fetch-side fields
 
