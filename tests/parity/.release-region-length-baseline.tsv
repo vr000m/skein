@@ -52,3 +52,21 @@ step-a2	plugins/skein/skills/release/SKILL.md	11375
 # resolve-template-marker.sh's resolve_source()) out of step-a2's "Resolve the
 # classification source" bullet, down to a short pointer at the script.
 step-a2	plugins/skein/skills/release/SKILL.md	10492
+# review-gauntlet round 2, D1 correction (discovered running the full pytest
+# contract suite after the row above): six pre-existing regression tests
+# (rounds 6, 7, 8, 9 findings — test_release_audit_a2_marker_gate_chain_is_fail_closed,
+# test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent,
+# test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable,
+# test_release_marker_produce_consume_positions_are_symmetric,
+# test_release_step3_marker_strip_uses_a2_shape_only_pattern,
+# test_release_shape_only_marker_pattern_is_single_line) assert the literal
+# three-pattern regex spans (strict/loose/shape-only, incl. the single-line
+# pin and the ABCDEF0123 example) exist verbatim in this bullet. The pointer-
+# style cut above broke all of them, so the literal patterns were restored
+# (prose around them stayed tightened). Net region length is larger than the
+# pre-round-2 baseline (11375) because this round's --head-sha/A2_HEAD_COMMIT/
+# --peeled-shape additions (fixes 2/4/10/11) are additive on top of the
+# now-restored marker-search text; D1's shrink target could not be met
+# without deleting test-load-bearing literal text, so this row records the
+# actual measured length rather than the aspirational one.
+step-a2	plugins/skein/skills/release/SKILL.md	11961
