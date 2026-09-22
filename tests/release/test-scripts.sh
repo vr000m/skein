@@ -134,13 +134,28 @@ out="$(run_a2 templated 2>/dev/null)"
 expect_golden a2-templated "$out" $?
 
 # --- freeze check (grilled decision 14) -----------------------------------
-frozen="$(jq -r '.golden_capture_commit' "$ROOT/tests/parity/.release-baseline-meta.json" 2>/dev/null)"
+# `golden_capture_commit` is the original manual pre-extraction capture and
+# stays a strict ancestor of phase2_first_commit forever (pytest asserts
+# this). A disclosed, separately-reviewed correction to a golden's bytes
+# (never an in-phase edit — decision 14) is recorded as
+# `golden_recapture_commit` instead of overwriting `golden_capture_commit`,
+# so the freeze check diffs against the LATER of the two when a recapture is
+# on record, and against the original otherwise.
+meta_file="$ROOT/tests/parity/.release-baseline-meta.json"
+frozen="$(jq -r '.golden_capture_commit' "$meta_file" 2>/dev/null)"
+recapture="$(jq -r '.golden_recapture_commit // empty' "$meta_file" 2>/dev/null)"
 if [[ ! "$frozen" =~ ^[0-9a-f]{40}$ ]]; then
 	bad "golden_capture_commit is missing or not a 40-hex SHA in tests/parity/.release-baseline-meta.json"
-elif git -C "$ROOT" diff --quiet "$frozen" -- tests/release/golden/ 2>/dev/null; then
-	pass "goldens byte-identical to golden_capture_commit"
+elif [[ -n "$recapture" && ! "$recapture" =~ ^[0-9a-f]{40}$ ]]; then
+	bad "golden_recapture_commit is present but not a 40-hex SHA in tests/parity/.release-baseline-meta.json"
 else
-	bad "tests/release/golden/ differs from golden_capture_commit $frozen"
+	pin="$frozen"
+	[[ -n "$recapture" ]] && pin="$recapture"
+	if git -C "$ROOT" diff --quiet "$pin" -- tests/release/golden/ 2>/dev/null; then
+		pass "goldens byte-identical to $pin"
+	else
+		bad "tests/release/golden/ differs from $pin"
+	fi
 fi
 
 # --- permanent self-test: the comparison can fail (G9-style) --------------

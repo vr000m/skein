@@ -417,10 +417,26 @@ while IFS= read -r t; do
 		else
 			[[ "$name" == "$repo_name $t — "?* ]] && title_ok=1
 		fi
-		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 ]] && cmp -s "$got" "$want_section"; then
+		body_ok=1
+		cmp -s "$got" "$want_section" || body_ok=0
+		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 && "$body_ok" == 1 ]]; then
 			status="ok"
 		else
 			status="drifted"
+			# SKILL.md's ok/drifted bullet: "name each failed check in the
+			# punch-list Note column — title, exact CHANGELOG bytes, exact
+			# cached-base compare path, and What's New presence-vs-whats_new
+			# are independent checks." Build the note from whichever of the
+			# four independent checks failed, in that order.
+			failed=()
+			[[ "$title_ok" == 1 ]] || failed+=("title")
+			[[ "$body_ok" == 1 ]] || failed+=("exact CHANGELOG bytes")
+			[[ "$compare_ok" == 1 ]] || failed+=("exact cached-base compare path")
+			[[ "$whats_new_ok" == 1 ]] || failed+=("What's New presence-vs-whats_new")
+			note="$(
+				IFS=", "
+				echo "${failed[*]}"
+			)"
 		fi
 		;;
 	esac

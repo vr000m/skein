@@ -1359,33 +1359,17 @@ def _release_lib_validate(
     return result.returncode == 0, decision["failed_gate"]
 
 
-def _extract_jq_commands(region: str) -> list[str]:
-    """Regex-extract standalone `jq ...` invocations from Markdown text.
-
-    Mirrors this file's `_gh_repo_release_commands` precedent: pull
-    concrete `jq` invocations out of backtick spans and fenced code blocks
-    rather than assuming a fixed script layout, since the mirrors are free
-    to lay the pipeline out as prose-embedded commands or a fenced script.
-    """
-    commands: list[str] = []
-    for match in re.finditer(r"`([^`\n]*\bjq\b[^`\n]*)`", region):
-        commands.append(match.group(1).strip())
-    for fence_match in re.finditer(r"```[A-Za-z]*\n(.*?)```", region, re.DOTALL):
-        for line in fence_match.group(1).splitlines():
-            if re.search(r"\bjq\b", line):
-                commands.append(line.strip().rstrip("\\").strip())
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    unique_commands = []
-    for command in commands:
-        if command not in seen:
-            seen.add(command)
-            unique_commands.append(command)
-    return unique_commands
-
-
 def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
-    """Run one extracted jq command against fixture text on stdin.
+    """Run one jq command string against fixture text on stdin.
+
+    No production caller extracts `jq` invocations from SKILL.md prose any
+    more — that logic moved into `release-common.sh`'s gate sequence in
+    Phase 2, and its extractor (`_extract_jq_commands`, which fed this
+    function from Markdown-scraped commands) was dead code and was
+    removed (review-gauntlet round 1). This function and its five
+    `test_jq_fixture_runner_*` self-tests remain as a standalone jq-safety
+    fixture validator — they are pinned by
+    `tests/parity/.release-test-id-baseline.txt` and are not removed here.
 
     Returns True/False for a command that actually ran as a standalone jq
     gate, or None when the command could not run standalone (e.g. it
@@ -4105,6 +4089,22 @@ def test_release_golden_capture_predates_phase2() -> None:
         meta["golden_capture_commit"],
         meta["phase2_first_commit"],
         "golden_capture_commit vs phase2_first_commit",
+    )
+
+
+def test_release_golden_recapture_is_descendant_of_original_capture() -> None:
+    """A disclosed golden recapture (decision 14) never predates the
+    original manual capture it corrects — it is a later, separately
+    reviewed commit, not a silent in-phase edit. Absent field is fine:
+    no recapture has happened yet."""
+    meta = _baseline_meta()
+    recapture = meta.get("golden_recapture_commit")
+    if not recapture:
+        return
+    _assert_strict_ancestor(
+        meta["golden_capture_commit"],
+        recapture,
+        "golden_capture_commit vs golden_recapture_commit",
     )
 
 
