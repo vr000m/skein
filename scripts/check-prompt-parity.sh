@@ -332,6 +332,7 @@ release_call_line() {
 		;;
 	a2-classify)
 		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --changelog <file> --web-base-url <url>'
+		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list)."
 		;;
 	esac
 	printf 'Run `%s`, then `%s --site %s %s` with `RELEASE_JQ`/`RELEASE_GIT` set to the pinned absolute paths.%s Exit 0 = ok, 1 = validation failure (`failed_gate` in stdout), 2 = environment failure; stdout is one JSON object.\n' \
