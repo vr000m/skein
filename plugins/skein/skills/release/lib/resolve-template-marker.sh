@@ -11,10 +11,18 @@
 # Usage:
 #   resolve-template-marker.sh --site a2-classify --repo DIR --release-list FILE
 #       --bodies-dir DIR --peeled FILE --changelog FILE --web-base-url URL
+#       --head-sha 40-HEX
 #     Body for tag T is <bodies-dir>/T.md, else <bodies-dir>/T.lf.md.
 #   resolve-template-marker.sh --site step3-recovery --repo DIR --tag TAG
-#       --body-file FILE --peeled FILE
+#       --body-file FILE --peeled FILE --head-sha 40-HEX
 #     Emits only the marker decision for one body (no ok/drifted comparison).
+#   --head-sha is REQUIRED at both sites: the caller resolves HEAD once
+#     (SKILL.md's single-resolution rule) and passes the literal SHA in; this
+#     script never self-resolves HEAD, matching read-release-template.sh's
+#     strict contract.
+#   --peeled FILE is a JSON object of {"vX.Y.Z": "<40-hex origin peeled-commit
+#     SHA>"} — bare tag names as keys, gated by both call sites; never
+#     `refs/tags/vX.Y.Z^{}` ls-remote-style keys.
 #
 # Exit: 0 classified, 1 validation failure (malformed input), 2 environment.
 
@@ -27,7 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/release-common.sh"
 
 SCRIPT="resolve-template-marker"
-site="" repo="" list="" bodies="" peeled="" changelog="" web="" tag="" body_file=""
+site="" repo="" list="" bodies="" peeled="" changelog="" web="" tag="" body_file="" head_sha=""
 
 die() { # code decision gate
 	echo "resolve-template-marker.sh: $1" >&2
@@ -46,6 +54,7 @@ while [[ $# -gt 0 ]]; do
 	--web-base-url) web="${2-}" ;;
 	--tag) tag="${2-}" ;;
 	--body-file) body_file="${2-}" ;;
+	--head-sha) head_sha="${2-}" ;;
 	*) die "unknown argument: $1" 2 environment-failure bad-arguments ;;
 	esac
 	shift 2 || die "missing value for an argument" 2 environment-failure bad-arguments
@@ -79,8 +88,16 @@ trap 'rm -rf "$tmp"' EXIT
 
 g() { "$GIT" -C "$repo" "$@"; }
 
-# HEAD is resolved once for the whole check (single-resolution rule).
-HEAD_SHA="$(g rev-parse HEAD 2>/dev/null)" || die "cannot resolve HEAD" 2 environment-failure head-unresolvable
+# HEAD is resolved ONCE by the caller (SKILL.md's single-resolution rule,
+# Step 1b) and passed in as --head-sha, matching read-release-template.sh's
+# now-strict pure contract: this script must never self-resolve HEAD. Doing so
+# here would be a second, independent resolution of the same symbolic ref the
+# caller already resolved for the whole audit, exactly the failure mode the
+# single-resolution rule exists to close (a commit/checkout/rebase landing
+# between the two resolutions binds this script's reads to a different commit
+# than the one the caller reported).
+[[ -n "$head_sha" ]] || die "--head-sha is required" 2 environment-failure bad-arguments
+HEAD_SHA="$head_sha"
 [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || die "SHA-256 (or other non-SHA-1) repositories are not supported" 1 hard-stop non-sha1-repository
 
 # anchor_blob <commit> — tracked-mode gate + blob SHA. Sets ANCHOR_STATE to
@@ -154,7 +171,10 @@ resolve_current_template() {
 }
 
 # resolve_source <tag> <body-file> — sets SRC_KIND (marker|current|canonical|
-# unresolvable), SRC_NOTE, and SRC_FILE (template JSON when kind marker/current).
+# unresolvable), SRC_NOTE, SRC_FILE (template JSON when kind marker/current),
+# and SRC_SCAN (the CR-normalized body path — every downstream reader of "the
+# body", not just marker detection, must read this path, never the raw
+# <body-file>, or a CRLF body drifts between the two byte streams).
 resolve_source() {
 	local tagname="$1" body="$2"
 	local strict loose shape sha final_ok
@@ -167,8 +187,12 @@ resolve_source() {
 	# marker-bearing body into the marker-absent fallback. Normalise a lone
 	# trailing CR per line first; the marker decision is then identical to the
 	# LF body's, which is the byte-for-byte invariant the CRLF fixture pins.
+	# SRC_SCAN is set unconditionally, before any early return below, because
+	# every caller that reaches the ok/drifted comparison (not just marker
+	# detection) must read this same normalized stream.
 	local scan="$tmp/body-lf.txt"
 	sed $'s/\r$//' <"$body" >"$scan"
+	SRC_SCAN="$scan"
 	strict="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$scan")"
 	loose="$(grep -a -c -E '^<!-- release-template-sha: [0-9a-f]+ -->$' "$scan")"
 	shape="$(grep -a -c -E '^<!-- release-template-sha:.*-->$' "$scan")"
@@ -217,6 +241,18 @@ resolve_source() {
 	sha="$(grep -a -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$scan" | sed -E 's/^<!-- release-template-sha: ([0-9a-f]{40}) -->$/\1/')"
 	local peeled_sha origin_blob="" head_blob="" o_state h_state matched=0 mode_note=""
 	need_jq
+	# --peeled's keys are bare `vX.Y.Z` tag names (the fixtures' shape, and the
+	# ONE format this script reads — see the top-of-file --peeled usage note).
+	# Gate the shape once per run, lazily, right before the first read: an
+	# object whose values are all strings. A malformed entry must fail closed
+	# the same way the release-list gate does, never silently read as
+	# "unresolved" (an unset/wrong-type value and a genuinely absent tag both
+	# jq-select to empty, which is indistinguishable without this gate).
+	if [[ -z "${PEELED_SHAPE_OK:-}" ]]; then
+		"$JQ" -e 'type == "object" and all(.[]; type == "string")' <"$peeled" >/dev/null 2>&1 ||
+			die "--peeled is not a JSON object of {tagName: sha} strings" 1 gate-failed peeled-shape
+		PEELED_SHAPE_OK=1
+	fi
 	peeled_sha="$("$JQ" -r --arg t "$tagname" '.[$t] // empty' <"$peeled" 2>/dev/null)"
 	if [[ -n "$peeled_sha" ]]; then
 		anchor_blob "$peeled_sha"
@@ -332,12 +368,23 @@ drop_excluded() {
 # each component rejects a leading zero, so `v01.2.3` is a `non-release-tag`,
 # not a release row.
 SEMVER_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-all_tags="$("$JQ" -r 'keys[]' <"$peeled" | sed -E 's/\^\{\}$//;s#^refs/tags/##' | grep -E "$SEMVER_TAG" | sort -V)"
+# --peeled's keys are bare `vX.Y.Z` tag names (see resolve_source's PEELED_SHAPE_OK
+# gate above) — never `refs/tags/vX.Y.Z^{}` ls-remote-style keys. The strip that
+# used to run here for that other shape was dead code against every fixture and
+# is deliberately gone: this is the one format both --peeled call sites (this
+# line and resolve_source's per-candidate lookup) agree on.
+all_tags="$("$JQ" -r 'keys[]' <"$peeled" | grep -E "$SEMVER_TAG" | sort -V)"
 rows="[]"
 any_templated=0
 while IFS= read -r t; do
 	[[ "$t" =~ $SEMVER_TAG ]] || continue
 	ver="${t#v}"
+	# Audit PREV (SKILL.md's A2.5 field-contract, decision D2): depends only on
+	# $all_tags and this candidate's own tag, never on SRC_KIND/status, so it is
+	# computed once per candidate, uniformly, and threaded into every row this
+	# loop emits below — including the unresolvable/missing-body rows, which
+	# previously discarded it entirely.
+	prev="$(printf '%s\n' "$all_tags" | awk -v c="$t" '$0 == c { print prev; exit } { prev = $0 }')"
 	name="$("$JQ" -r --arg t "$t" '.[] | select(.tagName == $t) | .name' <"$list" | head -n 1)"
 	bfile="$bodies/$t.md"
 	[[ -r "$bfile" ]] || bfile="$bodies/$t.lf.md"
@@ -345,7 +392,7 @@ while IFS= read -r t; do
 		# Audit Mode is read-only and per-candidate: a failure to obtain this
 		# candidate's classification source classifies the ROW, it never aborts
 		# the whole audit (SKILL.md's A2 marker-absent bullet).
-		rows="$("$JQ" -c --arg v "$ver" '. + [{version: $v, status: "template-marker-unresolvable", note: "release body unavailable for this candidate"}]' <<<"$rows")"
+		rows="$("$JQ" -c --arg v "$ver" --arg p "$prev" '. + [{version: $v, status: "template-marker-unresolvable", note: "release body unavailable for this candidate", prev: (if $p == "" then null else $p end)}]' <<<"$rows")"
 		any_templated=1
 		continue
 	fi
@@ -371,8 +418,13 @@ while IFS= read -r t; do
 			section "$ver" >"$want_section"
 		fi
 		# Body: strip a trailing marker, an optional What's New paragraph, and the compare line.
+		# Read from SRC_SCAN (the CR-normalized stream resolve_source already built
+		# for marker detection), never the raw $bfile: a CRLF body's marker line
+		# carries a trailing CR that defeats the `-->$` anchor below the same way it
+		# would defeat resolve_source's own patterns, and reading two different byte
+		# streams for "the same body" is exactly the bug SRC_SCAN exists to close.
 		got="$tmp/got.txt"
-		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$bfile" >"$got.0"
+		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" >"$got.0"
 		awk 'NR == 1 && /^## What.s New$/ { skip = 1; state = 0; next }
 			skip && state == 0 && /^[[:space:]]*$/ { state = 1; next }
 			skip && state == 1 && !/^[[:space:]]*$/ { state = 2; next }
@@ -391,7 +443,7 @@ while IFS= read -r t; do
 			wn="$("$JQ" -r 'if has("whats_new") then (.whats_new | tostring) else "unset" end' <"$SRC_FILE")"
 			[[ "$wn" == "false" && "$has_summary" == 1 ]] && whats_new_ok=0
 		fi
-		prev="$(printf '%s\n' "$all_tags" | awk -v c="$t" '$0 == c { print prev; exit } { prev = $0 }')"
+		# $prev is already computed once per candidate, above the bfile lookup.
 		compare_ok=1
 		if [[ "$label" == "none" ]]; then
 			grep -a -q -E '^\*\*Full (diff|changelog):\*\*' "$got.1" && compare_ok=0
@@ -428,19 +480,24 @@ while IFS= read -r t; do
 			# cached-base compare path, and What's New presence-vs-whats_new
 			# are independent checks." Build the note from whichever of the
 			# four independent checks failed, in that order.
+			# ${failed[*]} with IFS=", " joins on only IFS's FIRST character
+			# (a single ','), dropping the space — two failures would render
+			# "title,exact CHANGELOG bytes" instead of "title, exact CHANGELOG
+			# bytes". Join explicitly instead.
 			failed=()
 			[[ "$title_ok" == 1 ]] || failed+=("title")
 			[[ "$body_ok" == 1 ]] || failed+=("exact CHANGELOG bytes")
 			[[ "$compare_ok" == 1 ]] || failed+=("exact cached-base compare path")
 			[[ "$whats_new_ok" == 1 ]] || failed+=("What's New presence-vs-whats_new")
-			note="$(
-				IFS=", "
-				echo "${failed[*]}"
-			)"
+			note=""
+			for f in "${failed[@]}"; do
+				[[ -n "$note" ]] && note+=", "
+				note+="$f"
+			done
 		fi
 		;;
 	esac
-	rows="$("$JQ" -c --arg v "$ver" --arg s "$status" --arg n "$note" '. + [{version: $v, status: $s, note: (if $n == "" then null else $n end)}]' <<<"$rows")"
+	rows="$("$JQ" -c --arg v "$ver" --arg s "$status" --arg n "$note" --arg p "$prev" '. + [{version: $v, status: $s, note: (if $n == "" then null else $n end), prev: (if $p == "" then null else $p end)}]' <<<"$rows")"
 done < <("$JQ" -r '.[].tagName' <"$list")
 
 case_name="untemplated"
