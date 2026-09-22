@@ -61,6 +61,18 @@ release_emit() {
 	local script="$1" site="$2" decision="$3" code="$4" gate="${5-}" rows="${6-null}" case_name="${7-templated}"
 	local gate_json="null"
 	[[ -n "$gate" ]] && gate_json="\"$(release_json_escape "$gate")\""
+	# `code` and `rows` are hand-spliced (unquoted) into the JSON below, not
+	# through release_json_escape — a string escaper doesn't make an invalid
+	# NUMBER or a malformed/empty ARRAY into valid JSON at those two positions.
+	# A caller can hand this an empty `rows` when an upstream `jq` pipeline
+	# failed under `set -uo pipefail` (no `-e`): resolve-template-marker.sh's
+	# `"$JQ" -c 'sort_by(.version)' <<<"$rows"` would leave `$rows` empty on a
+	# failure that this function's own exit code never sees, producing invalid
+	# JSON `"rows":,` on a nominally-zero exit. Gate both here, once, so every
+	# call site is protected without needing jq itself (deliberately absent on
+	# the untemplated path).
+	[[ "$code" =~ ^-?[0-9]+$ ]] || code=1
+	[[ -n "$rows" && ("$rows" == null || "$rows" =~ ^[[:space:]]*[\[{]) ]] || rows="[]"
 	printf '{"case":"%s","decision":"%s","exit_code":%s,"failed_gate":%s,"rows":%s,"script":"%s","site":"%s"}\n' \
 		"$(release_json_escape "$case_name")" "$(release_json_escape "$decision")" \
 		"$code" "$gate_json" "$rows" \
