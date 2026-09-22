@@ -6,11 +6,13 @@
   "rows": [
     {
       "note": null,
+      "prev": null,
       "status": "ok",
       "version": "0.1.0"
     },
     {
       "note": null,
+      "prev": "v0.1.0",
       "status": "ok",
       "version": "0.2.0"
     }
