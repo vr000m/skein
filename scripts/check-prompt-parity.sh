@@ -328,11 +328,12 @@ release_call_line() {
 		tail=" Pipe the committed template bytes on stdin from the direct \`git cat-file blob\` read (Step 1b item 4's transport rule)."
 		;;
 	step3-recovery)
-		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file>'
+		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT>'
+		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
 		;;
 	a2-classify)
-		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --changelog <file> --web-base-url <url>'
-		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list)."
+		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
+		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list; \`--peeled <file>\` is Step A1's origin peeled-commit map serialized as a JSON object of bare \`{\"vX.Y.Z\": \"<40-hex sha>\"}\` entries — never \`refs/tags/vX.Y.Z^{}\` ls-remote-style keys). \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\`."
 		;;
 	esac
 	printf 'Run `%s`, then `%s --site %s %s` with `RELEASE_JQ`/`RELEASE_GIT` set to the pinned absolute paths.%s Exit 0 = ok, 1 = validation failure (`failed_gate` in stdout), 2 = environment failure; stdout is one JSON object.\n' \

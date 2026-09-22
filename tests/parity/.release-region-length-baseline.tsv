@@ -45,5 +45,10 @@ audit-mode-end	plugins/skein/skills/release/SKILL.md	30
 canonical-format	plugins/skein/skills/release/references/template-subsystem.md	4031	
 step-1b-templated-branch	plugins/skein/skills/release/references/template-subsystem.md	5795	
 a2-marker-bearing	plugins/skein/skills/release/references/template-subsystem.md	9376	
-step-a2-5	plugins/skein/skills/release/references/audit-inference.md	19710	
-step-a2	plugins/skein/skills/release/SKILL.md	11375	
+step-a2-5	plugins/skein/skills/release/references/audit-inference.md	19710
+step-a2	plugins/skein/skills/release/SKILL.md	11375
+# review-gauntlet round 2, decision D1: cut duplicate marker-search algorithm
+# prose (the three-pattern regex/position exposition, already implemented in
+# resolve-template-marker.sh's resolve_source()) out of step-a2's "Resolve the
+# classification source" bullet, down to a short pointer at the script.
+step-a2	plugins/skein/skills/release/SKILL.md	10492
