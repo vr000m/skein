@@ -72,8 +72,8 @@ for c in templated untemplated; do
 	head_sha="$("$GIT_REAL" -C "$TMP/repo-$c" rev-parse HEAD)"
 	out="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
 		--repo "$TMP/repo-$c" --release-list "$FIX/$c/release-list.json" --bodies-dir "$FIX/$c/bodies" \
-		--peeled "$FIX/$c/peeled-commits.json" --changelog "$FIX/$c/CHANGELOG.md" --web-base-url "$web" \
-		--head-sha "$head_sha" 2>/dev/null)"
+		--peeled "$FIX/$c/peeled-commits.json" --tags "$FIX/$c/tags.json" --changelog "$FIX/$c/CHANGELOG.md" \
+		--web-base-url "$web" --head-sha "$head_sha" 2>/dev/null)"
 	check_output "live a2-classify ($c)" "$out"
 done
 check_output "golden a2-marker-absent" "$(cat "$GOLDEN/a2-marker-absent.json")"

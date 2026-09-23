@@ -139,8 +139,8 @@ run_a2() { # case
 	web="$(cat "$FIX/untemplated/web-base-url.txt")"
 	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
 		--repo "$TMP/repo-$c" --release-list "$FIX/$c/release-list.json" --bodies-dir "$FIX/$c/bodies" \
-		--peeled "$FIX/$c/peeled-commits.json" --changelog "$FIX/$c/CHANGELOG.md" --web-base-url "$web" \
-		--head-sha "$(repo_head "$c")"
+		--peeled "$FIX/$c/peeled-commits.json" --tags "$FIX/$c/tags.json" --changelog "$FIX/$c/CHANGELOG.md" \
+		--web-base-url "$web" --head-sha "$(repo_head "$c")"
 }
 out="$(run_a2 untemplated 2>/dev/null)"
 expect_golden a2-marker-absent "$out" $?
@@ -249,10 +249,11 @@ rec() { RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-mar
 # TMP_REAL is defined once, near TMP's own creation above.
 WEB="$(cat "$FIX/untemplated/web-base-url.txt")"
 
-a2_run() { # repo-case release-list bodies-dir peeled changelog [git]
+a2_run() { # repo-case release-list bodies-dir peeled changelog [git] [tags]
 	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="${6:-$GIT_REAL}" "$LIB/resolve-template-marker.sh" \
 		--site a2-classify --repo "$TMP/repo-$1" --release-list "$2" --bodies-dir "$3" \
-		--peeled "$4" --changelog "$5" --web-base-url "$WEB" --head-sha "$(repo_head "$1")" 2>/dev/null
+		--peeled "$4" --tags "${7:-$FIX/$1/tags.json}" --changelog "$5" --web-base-url "$WEB" \
+		--head-sha "$(repo_head "$1")" 2>/dev/null
 }
 
 # L5: --head-sha is mandatory, so the SHA-256 hard stop can never be skipped.
@@ -401,5 +402,98 @@ RELEASE_JQ="$TMP_REAL/linkbin/jq" "$LIB/read-release-template.sh" --site step1b-
 	--worktree present-tracked-clean --head-commit present --head-sha "$FAKE_HEAD_SHA" --mode 100644 \
 	<"$TPL" >/dev/null 2>&1
 expect_code "read-release-template rejects a symlinked parent component" 2 $?
+
+# --- round-3 review-gauntlet regressions ----------------------------------
+
+# Round-3 fix 2 root cause: the missing-body row set `any_templated=1`
+# unconditionally, even though this candidate's body was never read and so
+# neither a marker nor a current template could have participated in its
+# classification — contradicting audit-inference.md's field contract that
+# `case` is "templated" only when one of those actually did. The L6 fixture
+# above (untemplated repo, v0.1.0's body missing, v0.2.0 present and `ok`) is
+# exactly this scenario; assert `case` on top of L6's own `out`/`code`.
+[[ "$code" == 0 && "$(jq -r '.case' <<<"$out")" == "untemplated" ]] &&
+	pass "a2-classify: a missing body in an untemplated repo keeps case=untemplated" ||
+	bad "a2-classify: missing body wrongly flipped case to templated: $out"
+
+# Round-3 fix 4 root cause: Audit PREV was derived from --peeled's KEYS, but
+# A1.1 explicitly permits a tag's peeled identity to be recorded "unavailable"
+# while the tag stays in the origin inventory — unavailability costs only
+# that tag's own origin anchor, never its membership in the PREV-candidate
+# pool. Remove v0.1.0 from --peeled (simulating an unavailable peeled
+# identity) while it stays in --tags; v0.2.0 never referenced v0.1.0's peeled
+# SHA directly, so its own classification (and its `prev` field) must be
+# unaffected.
+jq 'del(.["v0.1.0"])' "$FIX/untemplated/peeled-commits.json" >"$TMP/peeled-no-v010.json"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
+	"$TMP/peeled-no-v010.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .prev' <<<"$out")" == "v0.1.0" &&
+"$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: an unavailable peeled identity does not falsify an adjacent candidate's PREV" ||
+	bad "a2-classify: removing v0.1.0 from --peeled falsified 0.2.0's classification: $out"
+
+# Round-3 fix 5 root cause: the --peeled shape gate lived only inside
+# resolve_source's marker-present branch, past the SITE's own actual first
+# read of --peeled — a markerless a2-classify run never reaches that branch,
+# so a malformed --peeled (e.g. a bare array, exactly the shape the gate
+# exists to reject) silently exited 0 with every row's `prev` null instead of
+# failing closed. --tags is valid here; only --peeled is malformed.
+printf '["v0.1.0","v0.2.0"]' >"$TMP/peeled-bad-shape.json"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
+	"$TMP/peeled-bad-shape.json" "$FIX/untemplated/CHANGELOG.md")"
+code=$?
+[[ "$code" == 1 && "$(jq -r '.failed_gate' <<<"$out")" == "peeled-shape" ]] &&
+	pass "a2-classify: a bare-array --peeled fails closed at the hoisted shape gate" ||
+	bad "a2-classify: bare-array --peeled did not fail closed (exit $code): $out"
+
+# Round-3 Codex fix 1 root cause: the marker strip removed only the matched
+# marker LINE, never validating what preceded it — a body with TWO blank
+# lines before an otherwise validly-bound marker still compared `ok`, because
+# `trim_edges` later trims the resulting stray trailing blank line away,
+# making the two-blank-line body byte-identical, post-comparison, to the
+# one-blank-line body SKILL.md:168 actually requires.
+mkdir -p "$TMP/sep-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/sep-bodies/"
+awk '/^<!-- release-template-sha:/ { print ""; print; next } { print }' \
+	"$FIX/templated/bodies/v1.0.0.lf.md" >"$TMP/sep-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/sep-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "template-marker-unresolvable" &&
+"$(jq -r '.rows[] | select(.version == "1.0.0") | .note' <<<"$out")" == "marker-shaped line is not preceded by exactly one blank line" ]] &&
+	pass "a2-classify: two blank lines before the marker is not ok" ||
+	bad "a2-classify: a double-blank-line separator was not caught: $out"
+
+# Round-3 Codex fix 3 root cause: `section_exact`'s header match was a bare
+# `index($0, "## [$1]") == 1` prefix check, so a malformed header carrying
+# the target version's brackets but arbitrary trailing text (never even
+# whitespace/punctuation drift — Step 1 item 5's documented tolerance) matched
+# and started extraction from the wrong place. Insert exactly such a line
+# ahead of the real `## [0.1.0] - 2026-01-01` section; a correct implementation
+# must skip it and still classify `ok` against the real section's content.
+{
+	printf '# Changelog\n\n'
+	printf '## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n'
+	printf '## [0.1.0]bogus\n\nBOGUS CONTENT THAT MUST NOT BE READ\n\n'
+	printf '## [0.1.0] - 2026-01-01\n\n### Added\n\n- First thing.\n'
+} >"$TMP/prefix-changelog.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/prefix-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.1.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a malformed header prefix does not hijack section extraction" ||
+	bad "a2-classify: a malformed CHANGELOG header prefix hijacked extraction: $out"
+
+# Round-3 deep-review logic fix 6 root cause: `section_exact`/`section_tolerant`
+# read the raw $changelog while the release BODY was already CR-normalized
+# into SRC_SCAN — a correctly-composed CRLF release (both CHANGELOG and body
+# CRLF) previously matched only because both sides were raw; normalizing one
+# side without the other reopened the same class of mismatch the body-side
+# fix (round-2 fix 1) closed. Build a CRLF CHANGELOG alongside the existing
+# CRLF v1.0.0 body ($TMP/crlf-bodies, built above by the round-2 regression)
+# and require the same `ok` the LF/LF golden already pins.
+sed $'s/$/\r/' "$FIX/templated/CHANGELOG.md" >"$TMP/CHANGELOG.crlf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/crlf-bodies" \
+	"$FIX/templated/peeled-commits.json" "$TMP/CHANGELOG.crlf.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a CRLF CHANGELOG paired with a CRLF body still classifies ok" ||
+	bad "a2-classify: CRLF CHANGELOG + CRLF body misclassified: $out"
 
 exit "$fail"
