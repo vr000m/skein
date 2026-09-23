@@ -332,8 +332,8 @@ release_call_line() {
 		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
 		;;
 	a2-classify)
-		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
-		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list; \`--peeled <file>\` is Step A1's origin peeled-commit map serialized as a JSON object of bare \`{\"vX.Y.Z\": \"<40-hex sha>\"}\` entries — never \`refs/tags/vX.Y.Z^{}\` ls-remote-style keys). \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\`."
+		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --tags <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
+		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list; \`--peeled <file>\` is Step A1's origin peeled-commit map serialized as a JSON object of bare \`{\"vX.Y.Z\": \"<40-hex sha>\"}\` entries — never \`refs/tags/vX.Y.Z^{}\` ls-remote-style keys; \`--tags <file>\` is Step A1.1's full origin-authoritative tag inventory serialized as a JSON array of the same bare \`vX.Y.Z\` strings — every strict-SemVer origin tag A1.1 recorded, independent of which of those tags also got a resolved \`--peeled\` entry, since A1.1 permits a tag's peeled identity to be recorded unavailable while the tag itself stays in the inventory; the script derives Audit PREV from this array, never from \`--peeled\`'s keys). \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\`."
 		;;
 	esac
 	printf 'Run `%s`, then `%s --site %s %s` with `RELEASE_JQ`/`RELEASE_GIT` set to the pinned absolute paths.%s Exit 0 = ok, 1 = validation failure (`failed_gate` in stdout), 2 = environment failure; stdout is one JSON object.\n' \
