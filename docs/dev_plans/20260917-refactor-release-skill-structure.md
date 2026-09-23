@@ -719,3 +719,127 @@ and the two new `release_emit` shape-gate tests.
 `RELEASE_LAGGING_MIRROR_OK= uv run --with pytest python -m pytest
 tests/parity/test_release_skill_contract.py -v` and `just ci` results are
 recorded in the round-2 fixer's final report (not duplicated here).
+
+### Review round 3 — fixer pass (2026-09-23)
+
+Pooled findings from round 3's five gates (Codex adversarial + deep-review's
+logic/security/architecture/documentation lenses + security-review). All
+items were execution bugs in round 2's fixes or unfinished round-2 decisions
+(D1's test-retargeting) — no new design forks, so no operator sign-off was
+needed before dispatch this round.
+
+1. **Separator-cardinality bug** (Codex P2) — a marker-bound body with two
+   blank lines before the marker still compared `ok` after marker removal,
+   though SKILL.md requires exactly one. Added a cardinality check.
+   Regression test added. **Local.**
+2. **Missing-body row falsely set `any_templated=1`** (Codex P2) — an
+   untemplated repo's unresolvable-body row flipped the top-level `case` to
+   `"templated"`, contradicting `audit-inference.md`'s field contract. Fixed
+   by not setting the flag on that path. Regression test added. **Local.**
+3. **Changelog header prefix-match too loose** (Codex P2) — `## [0.1.0]bogus`
+   was matched by a bare prefix check, letting a malformed header hijack
+   section extraction. `section_exact`/`section_tolerant` now require the
+   complete documented shape before falling back to whitespace/punctuation
+   tolerance. Regression test added. **Local.**
+4. **Audit PREV falsified by an incomplete `--peeled` map** (deep-review
+   logic, Important) — PREV was derived from `--peeled`'s keys, but SKILL.md
+   Step A1.1 permits a tag to keep its inventory slot with its peeled
+   identity "unavailable"; a missing `--peeled` entry silently dropped an
+   unrelated candidate from the PREV pool too, flipping its classification.
+   Fixed by adding a new `--tags FILE` input (the full origin-authoritative
+   inventory, independent of `--peeled` resolution) that PREV now derives
+   from; SKILL.md's `a2-classify` call line and every script/test caller
+   updated. Regression test added. **Structural** (new script input + SKILL.md
+   contract change, both mirrors).
+5. **`PEELED_SHAPE_OK` gate fail-open on the actual a2-classify read path**
+   (deep-review logic, Important) — the shape gate lived past `--peeled`'s
+   real first read, so under `set -uo pipefail` a malformed `--peeled` (e.g.
+   a bare array) silently passed with every row's `prev` null instead of
+   exiting 1. Hoisted the gate to run unconditionally before that first read
+   for `a2-classify`; `step3-recovery`'s jq-optional lazy gate is unchanged.
+   Regression test added. **Local.**
+6. **One-sided CRLF normalization** (deep-review logic, Minor) — the body
+   was CR-normalized but `section_exact`/`section_tolerant` still read the
+   raw CHANGELOG, reintroducing a CRLF mismatch the round-2 fix moved rather
+   than closed. Normalized the CHANGELOG stream once into the same scratch
+   area both section functions read. Regression test added (CRLF CHANGELOG +
+   CRLF body, still `ok`). **Local.**
+7. **`release_emit`'s `rows` gate comment overstated its guarantee**
+   (deep-review security, Minor) — the gate is a first-byte shape hint, not
+   structural validation; not exploitable today (only caller passes `jq -c`
+   output), but the comment claimed a stronger guarantee. Narrowed the
+   comment to match actual behavior. **Local**, no new test (comment-only).
+8. **SKILL.md Step A2 self-contradiction** (deep-review architecture,
+   Important) — round 2's D1 restoration left a paragraph that both
+   re-derives the marker-search algorithm and says "do not re-derive it
+   here" in the same breath. Fixed the direct contradiction. **Not fully
+   resolved**: the six pre-existing tests that pin the literal regex text to
+   SKILL.md prose (rather than to `resolve-template-marker.sh` itself) were
+   judged too large/risky to retarget this round, given the
+   `references/template-subsystem.md` reference-splice mechanism the A2
+   region also depends on. Retargeting those six tests onto the script is
+   deferred as a follow-up item for a future round. **Local** (prose-only
+   fix landed; test-retargeting not done).
+9. **Step 1b presence-oracle duplication** (deep-review architecture,
+   Important) — `read-release-template.sh` and `resolve-template-marker.sh`
+   independently reimplement the same presence-oracle decision table with
+   different architectures, and SKILL.md's claimed equivalence between them
+   was previously unverified. Rather than the heavier factoring refactor,
+   added `tests/release/test-presence-differential.sh`, which runs both
+   implementations against each of `tests/release/fixtures/presence/state-i`
+   through `state-iv` and asserts identical classification — closing the
+   equivalence gap with a test, not a redesign. **Local.**
+10. **`case` field's per-script semantics undocumented** (deep-review
+    architecture, Minor) — `schema.json` now documents that `case` is
+    consumed only by `a2-classify`; `read-release-template.sh` emits it but
+    nothing reads it there. Golden-file change, recorded via a new
+    `golden_recapture_commit`. **Local.**
+11. **Baseline TSV header comment inaccurate** (deep-review architecture,
+    Minor) — `.release-region-length-baseline.tsv`'s header claimed every row
+    was "measured on the tree of the captured-at commit"; reworded to state
+    the file is append-only across commits. **Local**, docs-only.
+12. **`RELEASE_LAGGING_MIRROR_OK`/`PARITY_RELEASE_LIB_ROOT` undocumented in
+    AGENTS.md** (deep-review documentation, Important) — added. **Local**,
+    docs-only.
+13. **New `tests/release/` suites undocumented in AGENTS.md** (deep-review
+    documentation, Important) — added a testing-section entry naming
+    `test-scripts.sh`, `test-a2-a25-contract.sh`, `test-golden-schema.sh`,
+    `test-lib.sh`, and `tests/parity/test-release-lagging-mirror.sh`.
+    **Local**, docs-only.
+14. **Remaining documentation-lens Minor items** (golden-capture process,
+    progressive-disclosure reference-count maintenance rule, baseline-file
+    purposes, `--head-sha` breaking-change note, mapping-table cross-links,
+    fixture-structure reference) — **deferred**, per the brief's own
+    lower-priority guidance given 13 substantive items already landed this
+    round.
+
+Security-review (gate 3): clean, no High/Medium findings.
+
+**Test/CI.** `just ci` — pass (exit 0). A blast-radius check caught by
+running `just ci` *before* the final commit (not after, per round 2's
+lesson): item 4's new `--tags` SKILL.md text broke
+`scripts/check-prompt-parity.sh`'s independent reconstruction of the
+`a2-classify` call-line text; fixed in its own commit with root cause
+recorded there.
+
+**Mirrors.** Both `lib/*.sh` scripts and `references/*.md` byte-identical
+across mirrors; SKILL.md's two prose edits (the `--tags` call-line addition
+and the contradiction fix) applied to the Codex mirror via `codex:rescue`
+with only the path-anchor idiom adapted. No hand-editing of
+`plugins/skein-codex/` this round.
+
+**Operator stop after round 3 (2026-09-23).** The convergence ledger's
+computed decision after round 3 was `restart` (fix 4 above is
+self-classified structural, which per the gauntlet's convergence algorithm
+requires a full fresh gate pass). The operator reviewed the trend — round 1
+surfaced 11 findings (several P1), round 2 surfaced 4 (3 P1), round 3
+surfaced 3 (all P2) plus a handful of lens findings with no Critical/High
+severity remaining — and decided to stop here rather than dispatch round 4,
+accepting items 8's deferred test-retargeting and item 14's deferred minor
+docs as known, disclosed follow-up work rather than blocking issues. This is
+a **manual operator override, not an automated convergence success**: the
+ledger's `--last-decision` for this target still reads `restart`, and a
+future `review-gauntlet --resume` against this branch would correctly start
+a fresh round 4 rather than report `success`. Anyone resuming the gauntlet
+loop on this branch should read this note first rather than be surprised by
+that.
