@@ -303,7 +303,9 @@ release_call_script() {
 }
 
 release_call_placeholder() {
-	local up="${1^^}"
+	# bash 3.2 portability (repo floor): `${var^^}` is bash 4.0+ only.
+	local up
+	up="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
 	echo "__RELEASE_CALL_${up//-/_}__"
 }
 

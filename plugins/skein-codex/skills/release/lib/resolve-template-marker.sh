@@ -254,7 +254,12 @@ resolve_source() {
 	# only the matched marker line, without validating what precedes it,
 	# left a double-blank-line body indistinguishable from a single-blank-line
 	# one once trim_edges later trims the resulting trailing blank line away).
-	mapfile -t src_lines <"$scan"
+	# bash 3.2 portability (repo floor): `mapfile` is bash 4.0+ only.
+	local ml_line
+	src_lines=()
+	while IFS= read -r ml_line || [[ -n "$ml_line" ]]; do
+		src_lines+=("$ml_line")
+	done <"$scan"
 	local n="${#src_lines[@]}"
 	if ((n < 2)) || [[ -n "${src_lines[$((n - 2))]}" ]] ||
 		{ ((n >= 3)) && [[ -z "${src_lines[$((n - 3))]}" ]]; }; then
@@ -506,12 +511,27 @@ while IFS= read -r t; do
 		# streams for "the same body" is exactly the bug SRC_SCAN exists to close.
 		got="$tmp/got.txt"
 		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" >"$got.0"
-		awk 'NR == 1 && /^## What.s New$/ { skip = 1; state = 0; next }
-			skip && state == 0 && /^[[:space:]]*$/ { state = 1; next }
+		# NR==1's header match defers its skip/no-skip decision to NR==2
+		# (the "pending" state): only a genuine header-then-blank-line pair
+		# is a valid What's New summary. A header NOT immediately followed
+		# by a blank line is not well-formed and must not enter skip mode --
+		# doing so unconditionally (a prior version of this filter did)
+		# swallowed every remaining line, including the real CHANGELOG
+		# content and the compare line, down to an empty result, and
+		# misdiagnosed the drift as a compare-path/CHANGELOG-bytes mismatch
+		# instead of surfacing the malformed body verbatim for the normal
+		# exact-bytes comparison to flag correctly.
+		awk 'NR == 1 && /^## What.s New$/ { hdr = $0; pending = 1; next }
+			pending {
+				pending = 0
+				if ($0 ~ /^[[:space:]]*$/) { skip = 1; state = 1; next }
+				print hdr; print; next
+			}
 			skip && state == 1 && !/^[[:space:]]*$/ { state = 2; next }
 			skip && state == 2 && /^[[:space:]]*$/ { skip = 0; next }
 			skip { next }
-			{ print }' "$got.0" | trim_edges >"$got.1"
+			{ print }
+			END { if (pending) print hdr }' "$got.0" | trim_edges >"$got.1"
 		# Check (4) of SKILL.md's `ok`/`drifted` bullet: the split-out
 		# `## What's New` paragraph's PRESENCE must match the classification
 		# source's `whats_new` when it is explicitly set. `whats_new: false`
