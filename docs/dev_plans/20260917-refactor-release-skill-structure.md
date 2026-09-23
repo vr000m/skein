@@ -1,10 +1,10 @@
 # Task: skein:release — progressive disclosure, script extraction, audit split, test anchor fragility
 
-**Status**: Draft
+**Status**: In Progress — all 4 implementation phases + 3 review-gauntlet rounds complete; operator stopped short of round 4 (see "Operator stop after round 3" in Findings); two manual transcript verification checks still open (see "NOT DONE, needs a human" in Findings)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
-**Branch**: TBD
+**Branch**: refactor/release-skill-structure
 **Created**: 2026-09-17
 **Review Gates**: full
 
