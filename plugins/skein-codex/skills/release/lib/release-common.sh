@@ -70,7 +70,15 @@ release_emit() {
 	# failure that this function's own exit code never sees, producing invalid
 	# JSON `"rows":,` on a nominally-zero exit. Gate both here, once, so every
 	# call site is protected without needing jq itself (deliberately absent on
-	# the untemplated path).
+	# the untemplated path). The `rows` gate below is a FIRST-BYTE SHAPE HINT
+	# only, not structural JSON validation: it inspects the first non-space
+	# character and falls back to `[]` when that character isn't `[`/`{`, which
+	# is sufficient to catch the empty-pipeline-failure case above, but it does
+	# not parse or otherwise validate what follows — a value such as
+	# `[] ,"decision":"bogus"` passes this gate and is spliced verbatim (round-3
+	# deep-review security finding, defensive hardening only: not exploitable
+	# today, since every non-null caller passes `jq -c` output, never free-form
+	# or externally-influenced text, into this parameter).
 	[[ "$code" =~ ^-?[0-9]+$ ]] || code=1
 	[[ -n "$rows" && ("$rows" == null || "$rows" =~ ^[[:space:]]*[\[{]) ]] || rows="[]"
 	printf '{"case":"%s","decision":"%s","exit_code":%s,"failed_gate":%s,"rows":%s,"script":"%s","site":"%s"}\n' \

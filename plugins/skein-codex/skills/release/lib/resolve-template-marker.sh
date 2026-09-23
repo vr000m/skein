@@ -10,9 +10,15 @@
 #
 # Usage:
 #   resolve-template-marker.sh --site a2-classify --repo DIR --release-list FILE
-#       --bodies-dir DIR --peeled FILE --changelog FILE --web-base-url URL
-#       --head-sha 40-HEX
+#       --bodies-dir DIR --peeled FILE --tags FILE --changelog FILE
+#       --web-base-url URL --head-sha 40-HEX
 #     Body for tag T is <bodies-dir>/T.md, else <bodies-dir>/T.lf.md.
+#     --tags FILE is the full origin-authoritative tag inventory (A1.1), a
+#       JSON array of bare `vX.Y.Z` tag-name strings — independent of which of
+#       those tags have a resolved --peeled entry (A1.1 permits an
+#       unavailable peeled identity; that costs the tag only its own origin
+#       anchor, never its membership in this inventory). Audit PREV is
+#       computed from this population, never from --peeled's keys.
 #   resolve-template-marker.sh --site step3-recovery --repo DIR --tag TAG
 #       --body-file FILE --peeled FILE --head-sha 40-HEX
 #     Emits only the marker decision for one body (no ok/drifted comparison).
@@ -22,7 +28,8 @@
 #     strict contract.
 #   --peeled FILE is a JSON object of {"vX.Y.Z": "<40-hex origin peeled-commit
 #     SHA>"} — bare tag names as keys, gated by both call sites; never
-#     `refs/tags/vX.Y.Z^{}` ls-remote-style keys.
+#     `refs/tags/vX.Y.Z^{}` ls-remote-style keys. Used only as the per-candidate
+#     origin-anchor SHA lookup (never as the tag-inventory source — see --tags).
 #
 # Exit: 0 classified, 1 validation failure (malformed input), 2 environment.
 
@@ -35,7 +42,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/release-common.sh"
 
 SCRIPT="resolve-template-marker"
-site="" repo="" list="" bodies="" peeled="" changelog="" web="" tag="" body_file="" head_sha=""
+site="" repo="" list="" bodies="" peeled="" tags="" changelog="" web="" tag="" body_file="" head_sha=""
 
 die() { # code decision gate
 	echo "resolve-template-marker.sh: $1" >&2
@@ -50,6 +57,7 @@ while [[ $# -gt 0 ]]; do
 	--release-list) list="${2-}" ;;
 	--bodies-dir) bodies="${2-}" ;;
 	--peeled) peeled="${2-}" ;;
+	--tags) tags="${2-}" ;;
 	--changelog) changelog="${2-}" ;;
 	--web-base-url) web="${2-}" ;;
 	--tag) tag="${2-}" ;;
@@ -238,16 +246,37 @@ resolve_source() {
 		SRC_NOTE="marker-shaped line is not the body's final line"
 		return 0
 	fi
+	# Separator cardinality (SKILL.md:168, "exactly one blank line, always"):
+	# the marker's immediate predecessor line must be blank, and the line
+	# before THAT must not also be blank — zero or two-or-more blank lines
+	# before the marker is a distinct failure, never silently compared `ok`
+	# after the marker itself is stripped (round-3 Codex finding: stripping
+	# only the matched marker line, without validating what precedes it,
+	# left a double-blank-line body indistinguishable from a single-blank-line
+	# one once trim_edges later trims the resulting trailing blank line away).
+	mapfile -t src_lines <"$scan"
+	local n="${#src_lines[@]}"
+	if ((n < 2)) || [[ -n "${src_lines[$((n - 2))]}" ]] ||
+		{ ((n >= 3)) && [[ -z "${src_lines[$((n - 3))]}" ]]; }; then
+		SRC_NOTE="marker-shaped line is not preceded by exactly one blank line"
+		return 0
+	fi
 	sha="$(grep -a -E '^<!-- release-template-sha: [0-9a-f]{40} -->$' "$scan" | sed -E 's/^<!-- release-template-sha: ([0-9a-f]{40}) -->$/\1/')"
 	local peeled_sha origin_blob="" head_blob="" o_state h_state matched=0 mode_note=""
 	need_jq
 	# --peeled's keys are bare `vX.Y.Z` tag names (the fixtures' shape, and the
 	# ONE format this script reads — see the top-of-file --peeled usage note).
-	# Gate the shape once per run, lazily, right before the first read: an
-	# object whose values are all strings. A malformed entry must fail closed
-	# the same way the release-list gate does, never silently read as
-	# "unresolved" (an unset/wrong-type value and a genuinely absent tag both
-	# jq-select to empty, which is indistinguishable without this gate).
+	# Gate the shape once per run: an object whose values are all strings. A
+	# malformed entry must fail closed the same way the release-list gate
+	# does, never silently read as "unresolved" (an unset/wrong-type value
+	# and a genuinely absent tag both jq-select to empty, which is
+	# indistinguishable without this gate). For a2-classify this is already a
+	# no-op — that site's own unconditional pre-loop gate (above, before the
+	# per-tag loop) sets PEELED_SHAPE_OK before any candidate reaches here,
+	# since that gate site is the actual first read of --peeled for
+	# a2-classify (round-3 fix 5). This lazy form stays live for
+	# step3-recovery, which never reaches that pre-loop gate and must not
+	# require jq on a markerless run.
 	if [[ -z "${PEELED_SHAPE_OK:-}" ]]; then
 		"$JQ" -e 'type == "object" and all(.[]; type == "string")' <"$peeled" >/dev/null 2>&1 ||
 			die "--peeled is not a JSON object of {tagName: sha} strings" 1 gate-failed peeled-shape
@@ -307,14 +336,42 @@ if [[ "$site" == "step3-recovery" ]]; then
 	exit 0
 fi
 
-[[ -r "$list" && -d "$bodies" && -r "$changelog" && -n "$web" ]] || die "a2-classify inputs missing or unreadable" 2 environment-failure input-unreadable
+[[ -r "$list" && -d "$bodies" && -r "$changelog" && -r "$tags" && -n "$web" ]] || die "a2-classify inputs missing or unreadable" 2 environment-failure input-unreadable
 # SKILL.md Step A1 item 3: the release inventory is valid only when it parses as
 # a top-level JSON array whose EVERY entry carries string `tagName` and `name`
 # fields. A shape-only check would let a missing/non-string `name` through and
 # classify a candidate against an empty title — fail closed instead.
 "$JQ" -e 'type == "array" and all(.[]; type == "object" and (.tagName | type) == "string" and (.name | type) == "string")' \
 	<"$list" >/dev/null 2>&1 || die "release list is not a JSON array of {tagName,name} strings" 1 gate-failed release-list-shape
+# --tags is a JSON array of bare tag-name strings (A1.1's origin-authoritative
+# inventory) — gated the same way, fail closed on a malformed shape.
+"$JQ" -e 'type == "array" and all(.[]; type == "string")' <"$tags" >/dev/null 2>&1 ||
+	die "--tags is not a JSON array of strings" 1 gate-failed tags-shape
+# --peeled's shape gate (round-3 fix 5): a2-classify reads --peeled inside the
+# per-candidate loop below (resolve_source's origin-anchor lookup), not at a
+# fixed line number any more now that --tags supplies the tag inventory. Gate
+# it here, unconditionally, before the loop — the true "first read" for this
+# site — rather than relying on resolve_source's own lazy per-candidate gate,
+# which a markerless a2-classify run (every candidate falling through to the
+# marker-absent branch before ever reaching resolve_source's peeled lookup)
+# would never reach, letting a malformed --peeled (e.g. a bare array) exit 0
+# with every row's `prev` silently null instead of failing closed. Setting
+# PEELED_SHAPE_OK here makes resolve_source's own gate a no-op for this site;
+# step3-recovery (which must not require jq on a markerless run) keeps its
+# original lazy behavior, since it never reaches this line.
+"$JQ" -e 'type == "object" and all(.[]; type == "string")' <"$peeled" >/dev/null 2>&1 ||
+	die "--peeled is not a JSON object of {tagName: sha} strings" 1 gate-failed peeled-shape
+PEELED_SHAPE_OK=1
 repo_name="${web##*/}"
+
+# CR-normalize CHANGELOG.md once, the same way resolve_source normalizes each
+# release body into SRC_SCAN (round-3 fix 6): section_exact/section_tolerant
+# below must read this normalized stream, never the raw $changelog, or a CRLF
+# CHANGELOG paired with a CRLF body drifts between the two byte streams — a
+# comparison that matched before the body-side CR-normalization landed (both
+# sides raw) now mismatches once only one side is normalized.
+CHANGELOG_LF="$tmp/changelog-lf.txt"
+sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
 # section <version> — the CHANGELOG section body (header stripped), edges
 # trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
@@ -327,24 +384,38 @@ section() {
 	[[ -n "$out" ]] && printf '%s\n' "$out"
 	return 0
 }
+# Complete-header-shape match (round-3 Codex finding): require the exact
+# canonical `## [X.Y.Z] - ` prefix (with its single trailing space before the
+# date), never a bare `## [X.Y.Z]` prefix. A bare prefix let a malformed line
+# such as `## [0.1.0]bogus` — not even whitespace/punctuation drift, just
+# unrelated trailing text — match here and start extraction from the wrong
+# place; the documented tolerant retry below (whitespace/punctuation drift
+# only, SKILL.md Step 1 item 5) is the sole sanctioned fallback for anything
+# looser than this exact shape.
 section_exact() {
-	awk -v want="## [$1]" '
+	awk -v want="## [$1] - " '
 		index($0, want) == 1 { on = 1; next }
 		/^## \[/ { on = 0 }
 		on { print }
-	' "$changelog" | trim_edges
+	' "$CHANGELOG_LF" | trim_edges
 }
 # Tolerant retry: compare the header with all whitespace removed, so `##  [1.0.0]`
 # and `## [ 1.0.0 ] – date` match `## [1.0.0]` the way Step 1 item 5 requires.
+# Still requires a hyphen or en dash immediately after the squashed brackets
+# (the documented drift is whitespace/punctuation-style ONLY — hyphen vs. en
+# dash — never arbitrary trailing content): a bare prefix match here would
+# reopen the same "## [0.1.0]bogus" hole section_exact's fix above closes,
+# just one fallback stage later.
 section_tolerant() {
-	awk -v want="##[$1]" '
+	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" '
 		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
 		/^[[:space:]]*##[[:space:]]*\[/ {
-			on = (index(squash($0), want) == 1)
+			s = squash($0)
+			on = (index(s, h) == 1) || (index(s, e) == 1)
 			next
 		}
 		on { print }
-	' "$changelog" | trim_edges
+	' "$CHANGELOG_LF" | trim_edges
 }
 trim_edges() {
 	awk '{ l[NR] = $0 } END {
@@ -368,12 +439,16 @@ drop_excluded() {
 # each component rejects a leading zero, so `v01.2.3` is a `non-release-tag`,
 # not a release row.
 SEMVER_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
-# --peeled's keys are bare `vX.Y.Z` tag names (see resolve_source's PEELED_SHAPE_OK
-# gate above) — never `refs/tags/vX.Y.Z^{}` ls-remote-style keys. The strip that
-# used to run here for that other shape was dead code against every fixture and
-# is deliberately gone: this is the one format both --peeled call sites (this
-# line and resolve_source's per-candidate lookup) agree on.
-all_tags="$("$JQ" -r 'keys[]' <"$peeled" | grep -E "$SEMVER_TAG" | sort -V)"
+# Audit PREV's population is the full origin-authoritative tag inventory
+# (--tags, A1.1) — never --peeled's keys (round-3 fix 4). A1.1 explicitly
+# permits a tag's peeled identity to be "unavailable" while the tag itself
+# stays in the inventory; unavailability costs that one candidate its own
+# origin anchor (resolve_source's per-candidate --peeled lookup) and nothing
+# else. Deriving all_tags from --peeled's keys instead would silently drop
+# such a tag from the PREV-candidate pool too, falsifying an UNRELATED
+# candidate's PREV (and therefore its ok/drifted compare-line check) whenever
+# the tag immediately below it in SemVer order had no resolved peeled SHA.
+all_tags="$("$JQ" -r '.[]' <"$tags" | grep -E "$SEMVER_TAG" | sort -V)"
 rows="[]"
 any_templated=0
 while IFS= read -r t; do
@@ -391,9 +466,15 @@ while IFS= read -r t; do
 	if [[ ! -r "$bfile" ]]; then
 		# Audit Mode is read-only and per-candidate: a failure to obtain this
 		# candidate's classification source classifies the ROW, it never aborts
-		# the whole audit (SKILL.md's A2 marker-absent bullet).
+		# the whole audit (SKILL.md's A2 marker-absent bullet). This candidate's
+		# body was never read, so neither a marker nor a current template could
+		# have participated in its classification — `any_templated` must NOT be
+		# set here (round-3 Codex finding: doing so made a wholly untemplated
+		# repo's `case` field read "templated" solely because one candidate's
+		# body file was missing, contradicting audit-inference.md's field
+		# contract that `case` is "templated" only when a marker or current
+		# template actually participated).
 		rows="$("$JQ" -c --arg v "$ver" --arg p "$prev" '. + [{version: $v, status: "template-marker-unresolvable", note: "release body unavailable for this candidate", prev: (if $p == "" then null else $p end)}]' <<<"$rows")"
-		any_templated=1
 		continue
 	fi
 	resolve_source "$t" "$bfile"
