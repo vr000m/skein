@@ -8,6 +8,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections import Counter
 from itertools import pairwise
 from pathlib import Path
@@ -1359,6 +1360,66 @@ def _release_lib_validate(
     return result.returncode == 0, decision["failed_gate"]
 
 
+def _resolve_template_marker_script(skill_path: Path) -> Path:
+    return _release_lib_script(skill_path, "resolve-template-marker")
+
+
+def _resolve_template_marker_recovery(
+    skill_path: Path, tag: str, body: str, *, peeled: str = "{}"
+) -> dict:
+    """Run resolve-template-marker.sh --site step3-recovery over crafted
+    release-body bytes and return its decision JSON.
+
+    Phase 2 retarget (round-3 deferred item, docs/dev_plans/
+    20260917-refactor-release-skill-structure.md): the marker-search regex
+    definitions, gate ordering and note text now live in
+    resolve-template-marker.sh's `resolve_source()`, not restated SKILL.md
+    prose, so behaviour is asserted against the script directly, matching
+    `_release_lib_validate`'s precedent above. `step3-recovery` is the
+    lightweight site for this: every non-binding decision it can reach (the
+    marker-search/shape gates under test) only touches `--repo`/`--peeled`
+    through the script's unconditional directory/readability checks and
+    `anchor_blob`'s own fail-soft `git` calls, so a throwaway tmp dir and an
+    empty peeled object exercise every documented marker-search case without
+    building a fixture git repository.
+    """
+    script = _resolve_template_marker_script(skill_path)
+    with tempfile.TemporaryDirectory() as td:
+        repo_dir = Path(td) / "repo"
+        repo_dir.mkdir()
+        body_file = Path(td) / "body.md"
+        body_file.write_text(body)
+        peeled_file = Path(td) / "peeled.json"
+        peeled_file.write_text(peeled)
+        result = subprocess.run(
+            [
+                str(script),
+                "--site",
+                "step3-recovery",
+                "--repo",
+                str(repo_dir),
+                "--tag",
+                tag,
+                "--body-file",
+                str(body_file),
+                "--peeled",
+                str(peeled_file),
+                "--head-sha",
+                "0" * 40,
+            ],
+            capture_output=True,
+            env={
+                **os.environ,
+                "RELEASE_JQ": _real_exe("jq"),
+                "RELEASE_GIT": _real_exe("git"),
+            },
+            check=False,
+        )
+    decision = json.loads(result.stdout)
+    assert decision["exit_code"] == result.returncode, result.stderr
+    return decision
+
+
 def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     """Run one jq command string against fixture text on stdin.
 
@@ -1672,28 +1733,50 @@ def _a2_region(text: str) -> str:
 def test_release_audit_a2_marker_gate_chain_is_fail_closed(
     skill_path: Path,
 ) -> None:
-    text = _release_text(skill_path)
-    region = _a2_region(text)
+    """Phase 2 retarget (round-3 deferred item, commit b7d8688): the marker
+    search-and-bind gate chain is resolve-template-marker.sh's
+    `resolve_source()`, not restated SKILL.md prose — assert against the
+    script's actual regex and cat-file/jq-validation chain, and behaviourally
+    prove the exactness/cardinality rule (a single strict marker reaches
+    binding; two or more never does).
+    """
+    script_text = _resolve_template_marker_script(skill_path).read_text()
 
-    # The marker regex must be anchored, exact, and applied to the release
-    # body exactly once — same untrusted-input treatment as the rest of the
-    # release body per SKILL.md's Step 1 data-boundary contract.
-    assert re.search(_MARKER_SHA_REGEX, region)
-    assert re.search(r"exactly once", region)
+    # The marker regex is anchored, exact, and the script counts matches
+    # (cardinality), not merely detects presence — same untrusted-input
+    # treatment as the rest of the release body per SKILL.md's Step 1
+    # data-boundary contract.
+    assert re.search(_MARKER_SHA_REGEX, script_text)
+    assert "grep -a -c -E" in script_text
 
-    # Resolution chain: cat-file type check requires `blob` (never
-    # commit/tree/tag), then cat-file -p content is re-run through the
-    # identical Phase 1 jq validation before it can back a classification.
-    assert "git cat-file -t" in region
-    assert re.search(r"\bblob\b", region)
-    assert "git cat-file -p" in region
-    assert re.search(r"commit", region) and re.search(r"\btree\b", region)
-    assert re.search(r"tag", region)
-    assert re.search(
-        r"(Phase 1|Step 1b).*jq validation|jq validation.*(Phase 1|Step 1b)",
-        region,
-        re.IGNORECASE | re.DOTALL,
+    # Resolution chain: a bound `<sha>` is re-run through `git cat-file -t`
+    # requiring exactly `blob` (never commit/tree/tag), then `git cat-file -p`
+    # content is re-validated through the identical Step 1b jq gates.
+    assert 'cat-file -t "$sha"' in script_text
+    assert '"blob"' in script_text
+    assert 'cat-file -p "$sha"' in script_text
+    assert "release_validate_gates" in script_text
+
+    # Behavioural proof of "exactly once": a single strict, final-line marker
+    # reaches the binding step (it fails only for lack of a resolvable anchor
+    # in this throwaway repo, proving the search itself passed), while two
+    # marker-shaped lines never bind.
+    sha = "a" * 40
+    one_marker = f"Body.\n\n<!-- release-template-sha: {sha} -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", one_marker)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "neither anchor resolved (object or path absent in this clone)"
     )
+
+    two_markers = (
+        f"Body.\n\n<!-- release-template-sha: {sha} -->\n"
+        f"<!-- release-template-sha: {sha} -->\n"
+    )
+    decision2 = _resolve_template_marker_recovery(skill_path, "v1.0.0", two_markers)
+    assert decision2["decision"] == "template-marker-unresolvable"
+    assert decision2["failed_gate"] == "marker line appears more than once"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -1992,18 +2075,31 @@ def test_release_audit_a2_marker_binding_has_two_anchors(skill_path: Path) -> No
 def test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent(
     skill_path: Path,
 ) -> None:
-    """Regression for finding #7: a marker-shaped line whose hash isn't
-    40 hex characters (e.g. a SHA-256 object id) must classify
-    `template-marker-unresolvable`, never silently fall through to the
-    marker-absent fallback.
+    """Regression for finding #7 (Phase 2 retarget): a marker-shaped line
+    whose hash isn't 40 hex characters (e.g. a SHA-256 object id) must
+    classify `template-marker-unresolvable`, never silently fall through to
+    the marker-absent fallback. Assert against resolve-template-marker.sh's
+    loose regex and its actual classification, not restated SKILL.md prose.
     """
-    text = _release_text(skill_path)
-    region = _a2_region(text)
+    script_text = _resolve_template_marker_script(skill_path).read_text()
+    assert "[0-9a-f]+ -->$" in script_text
 
-    assert re.search(r"wrong hex length", region, re.IGNORECASE)
-    assert "[0-9a-f]+ -->$" in region
-    assert re.search(
-        r"never treat this as the zero-strict-matches", region, re.IGNORECASE
+    sha256 = "b" * 64
+    wrong_length = f"Body.\n\n<!-- release-template-sha: {sha256} -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", wrong_length)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "marker present but hash length unsupported (expected 40 hex characters)"
+    )
+
+    # A genuine 40-hex marker must NOT hit this gate — proving the check is
+    # length-specific, not a blanket rejection of every loose match.
+    sha1 = "c" * 40
+    ok_length = f"Body.\n\n<!-- release-template-sha: {sha1} -->\n"
+    decision2 = _resolve_template_marker_recovery(skill_path, "v1.0.0", ok_length)
+    assert decision2["failed_gate"] != (
+        "marker present but hash length unsupported (expected 40 hex characters)"
     )
 
 
@@ -2937,25 +3033,39 @@ def test_release_raw_template_transport_rule_names_a_permitted_mechanism(
 def test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable(
     skill_path: Path,
 ) -> None:
-    """Round-6 finding #3: a marker line with uppercase hex (or any other
-    non-`[0-9a-f]` content) matched neither the strict 40-hex nor the loose
-    hex pattern, so it reached the marker-absent branch and could classify `ok`
-    against the current template or canonical shape.
+    """Round-6 finding #3 (Phase 2 retarget for the shape-only pattern half):
+    a marker line with uppercase hex (or any other non-`[0-9a-f]` content)
+    matched neither the strict 40-hex nor the loose hex pattern, so it
+    reached the marker-absent branch and could classify `ok` against the
+    current template or canonical shape. Assert against
+    resolve-template-marker.sh's own shape-only pattern and behaviour, not
+    restated SKILL.md prose; the "Marker-shaped but unparseable" sub-bullet
+    below is a sibling list item this branch's shrink does not touch, so its
+    assertions stay against SKILL.md prose.
     """
+    script_text = _resolve_template_marker_script(skill_path).read_text()
     a2 = _a2_region(_release_text(skill_path))
 
-    # A third, shape-only pattern exists and is a superset of the other two.
-    assert "`^<!-- release-template-sha:.*-->$`" in a2
-    assert re.search(r"strict superset of both\s+patterns above", a2) or (
-        "strict superset of both patterns above" in a2
-    )
-    assert "ABCDEF0123" in a2  # the uppercase-hex example that motivated it
+    # A third, shape-only pattern exists in the script and is a superset of
+    # the strict/loose patterns.
+    assert "^<!-- release-template-sha:.*-->$" in script_text
 
-    # "marker absent" is redefined against the shape-only pattern.
-    assert "**Marker absent (zero matches of all three patterns" in a2
-    assert re.search(
-        r'"marker absent" means zero \*shape-only\* matches, not merely', a2
+    uppercase = "Body.\n\n<!-- release-template-sha: ABCDEF0123 -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", uppercase)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "marker present but hash is not lowercase hexadecimal"
     )
+
+    # Zero shape-only matches at all is genuinely absent, never unresolvable.
+    absent = _resolve_template_marker_recovery(skill_path, "v1.0.0", "Body.\n")
+    assert absent["decision"] != "template-marker-unresolvable"
+
+    # "marker absent" is redefined against the shape-only pattern in the
+    # sibling "Marker absent" sub-bullet (untouched by the shrink above); the
+    # behavioural absent-vs-unresolvable proof above is this bullet's half.
+    assert "**Marker absent (zero matches of all three patterns" in a2
 
     # The new classification bullet exists and fails closed.
     unparseable = a2[a2.index("  - **Marker-shaped but unparseable") :][:900]
@@ -2995,7 +3105,11 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     """Step 3 and A2 agree on marker position and authenticated consumption.
 
     Step 3 tries the unmodified body first and strips only a bound strict
-    marker, while A2's broader search still fails closed for audit.
+    marker, while A2's broader search still fails closed for audit. Consumer
+    half 2 (Phase 2 retarget): A2's final-line requirement is asserted
+    behaviourally against resolve-template-marker.sh, not restated SKILL.md
+    prose — Step 3's half is untouched by that branch's shrink and stays
+    against prose.
     """
     text = _release_text(skill_path)
     step_3 = _step3_region(text)
@@ -3010,11 +3124,15 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     assert "strictly valid and successfully bound" in step_3
     assert "recovery-marker-ambiguous" in step_3
 
-    # Consumer half 2: A2's strict search requires the pinned final position.
-    a2 = _a2_region(text)
-    assert "must be the body's final line**" in a2
-    assert "marker-shaped line is not the body's final line" in a2
-    assert "produce/consume position asymmetry" in a2
+    # Consumer half 2: A2's strict search requires the pinned final position
+    # — a strict marker present but NOT the body's final line must classify
+    # unresolvable with the documented reason, never marker-absent and never
+    # a silent bind.
+    sha = "d" * 40
+    not_final = f"<!-- release-template-sha: {sha} -->\n\nTrailer.\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", not_final)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert decision["failed_gate"] == "marker-shaped line is not the body's final line"
 
 
 def test_jq_runner_skips_cleanly_when_jq_is_missing(monkeypatch) -> None:
@@ -3361,16 +3479,22 @@ def test_release_step3_marker_strip_uses_a2_shape_only_pattern(
     onto the recovered body by the headed-summary boundary scan, contradicting
     Step 3 item 1's own invariant that a marker-shaped line can never survive
     verbatim into a re-synced body. Both consumers of the marker grammar must
-    use the same shape-only pattern.
+    use the same shape-only pattern. Phase 2 retarget: A2's half of that
+    agreement is asserted against resolve-template-marker.sh's literal
+    pattern, not restated SKILL.md prose; Step 3's half is untouched by that
+    branch's shrink and stays against prose.
     """
     text = _release_text(skill_path)
     step_3 = _step3_region(text)
-    a2 = _a2_region(text)
+    script_text = _resolve_template_marker_script(skill_path).read_text()
 
     shape_only = "`^<!-- release-template-sha:.*-->$`"
-    # Both consumers name the identical shape-only pattern.
+    # Step 3's prose names the shape-only pattern...
     assert shape_only in step_3, "Step 3 item 1's strip must use the shape-only pattern"
-    assert shape_only in a2, "Step A2 must still search the shape-only pattern"
+    # ...and the script that now owns A2's search uses the identical grammar.
+    assert "'^<!-- release-template-sha:.*-->$'" in script_text, (
+        "resolve-template-marker.sh must still search the same shape-only pattern"
+    )
     strip_paragraph = step_3[step_3.index("Try the unmodified body first") :]
     strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
     assert "[0-9a-f]{40}" in strip_paragraph
@@ -3618,18 +3742,40 @@ def test_release_shape_only_marker_pattern_is_single_line(
     semantics. Under DOTALL, a marker-shaped opening could pair with a `-->`
     many lines later, letting Step 3's "trailing line" strip swallow legitimate
     body content. Both sites that specify the pattern must pin it to one line.
+    Phase 2 retarget: A2's half is asserted against resolve-template-marker.sh
+    directly (it uses line-based `grep`, never `-P`/`-z`, so `.` structurally
+    cannot span lines) plus a behavioural proof, not restated SKILL.md prose;
+    Step 3's half is untouched by that branch's shrink and stays against
+    prose.
     """
     text = _release_text(skill_path)
     step_3 = _step3_region(text)
-    a2 = _a2_region(text)
 
-    for region_name, region in (("Step 3", step_3), ("Step A2", a2)):
-        idx = region.index("`^<!-- release-template-sha:.*-->$`")
-        window = region[idx : idx + 400]
-        assert "single physical line" in window, region_name
-        assert "`.` never matching LF" in window, region_name
-        # The newline-explicit equivalent is spelled out.
-        assert "`^<!-- release-template-sha:[^\\n]*-->$`" in window, region_name
+    idx = step_3.index("`^<!-- release-template-sha:.*-->$`")
+    window = step_3[idx : idx + 400]
+    assert "single physical line" in window
+    assert "`.` never matching LF" in window
+    # The newline-explicit equivalent is spelled out.
+    assert "`^<!-- release-template-sha:[^\\n]*-->$`" in window
+
+    script_text = _resolve_template_marker_script(skill_path).read_text()
+    shape_line = next(
+        line
+        for line in script_text.splitlines()
+        if "release-template-sha:.*-->" in line
+    )
+    assert "grep -a -c -E" in shape_line
+    assert " -P" not in shape_line and " -z" not in shape_line
+
+    # Behavioural proof: an opening marker-shaped prefix on one line and a
+    # `-->` several lines later must NOT be treated as a shape-only match
+    # (which DOTALL would allow) — each physical line lacks a closing `-->`
+    # of its own, so this classifies absent, not unresolvable.
+    multiline_fake = (
+        "<!-- release-template-sha: not-a-real-marker\nsome body text\nmore text -->\n"
+    )
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", multiline_fake)
+    assert decision["decision"] != "template-marker-unresolvable"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
