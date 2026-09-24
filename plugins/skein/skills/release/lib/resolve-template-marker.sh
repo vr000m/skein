@@ -130,6 +130,27 @@ anchor_blob() {
 	ANCHOR_STATE="resolved"
 }
 
+# anchor_blob_head — memoized anchor_blob "$HEAD_SHA". HEAD_SHA and TPATH are
+# fixed for the whole run (HEAD_SHA is caller-resolved, never re-resolved
+# here; see the single-resolution comment above), so resolving HEAD's anchor
+# blob is invariant across every a2-classify candidate in the per-tag loop.
+# Without this cache resolve_current_template and resolve_source each call
+# anchor_blob "$HEAD_SHA" (2 git subprocesses: ls-tree + rev-parse) on every
+# tag, re-doing identical work up to 2x per candidate on a long tag history.
+_head_anchor_done=""
+_head_anchor_state=""
+_head_anchor_blob=""
+anchor_blob_head() {
+	if [[ -z "$_head_anchor_done" ]]; then
+		anchor_blob "$HEAD_SHA"
+		_head_anchor_state="$ANCHOR_STATE"
+		_head_anchor_blob="$ANCHOR_BLOB"
+		_head_anchor_done=1
+	fi
+	ANCHOR_STATE="$_head_anchor_state"
+	ANCHOR_BLOB="$_head_anchor_blob"
+}
+
 # Current-template presence (two-sided, decision 18) for the marker-absent fallback.
 CUR_STATE="absent" # absent | valid | invalid:<note>
 CUR_FILE="$tmp/current-template.json"
@@ -159,7 +180,7 @@ resolve_current_template() {
 		return 0
 	fi
 	local blob
-	anchor_blob "$HEAD_SHA"
+	anchor_blob_head
 	blob="$ANCHOR_BLOB"
 	if [[ "$ANCHOR_STATE" != "resolved" ]]; then
 		CUR_STATE="invalid:current template entry is not a regular-file blob"
@@ -295,7 +316,7 @@ resolve_source() {
 	else
 		o_state="unresolved"
 	fi
-	anchor_blob "$HEAD_SHA"
+	anchor_blob_head
 	head_blob="$ANCHOR_BLOB"
 	h_state="$ANCHOR_STATE"
 	[[ "$o_state" == resolved && "$origin_blob" == "$sha" ]] && matched=1
