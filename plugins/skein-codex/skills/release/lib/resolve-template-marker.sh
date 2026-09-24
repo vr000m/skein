@@ -348,6 +348,15 @@ fi
 # classify a candidate against an empty title — fail closed instead.
 "$JQ" -e 'type == "array" and all(.[]; type == "object" and (.tagName | type) == "string" and (.name | type) == "string")' \
 	<"$list" >/dev/null 2>&1 || die "release list is not a JSON array of {tagName,name} strings" 1 gate-failed release-list-shape
+# User-requested fix 2b: a --release-list with two entries sharing the same
+# tagName but different name values drove two full classification passes
+# emitting two rows for the same version, while `select(...).name | head -n1`
+# silently kept only the first title and discarded the second. Gate tagName
+# uniqueness unconditionally, the same pre-loop shape-gate pattern as the
+# checks immediately around this one, rather than silently processing both
+# and discarding one title.
+"$JQ" -e '[.[].tagName] | (length == (unique | length))' <"$list" >/dev/null 2>&1 ||
+	die "--release-list has a duplicate tagName" 1 gate-failed release-list-duplicate-tag
 # --tags is a JSON array of bare tag-name strings (A1.1's origin-authoritative
 # inventory) — gated the same way, fail closed on a malformed shape.
 "$JQ" -e 'type == "array" and all(.[]; type == "string")' <"$tags" >/dev/null 2>&1 ||
@@ -454,6 +463,20 @@ SEMVER_TAG='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 # candidate's PREV (and therefore its ok/drifted compare-line check) whenever
 # the tag immediately below it in SemVer order had no resolved peeled SHA.
 all_tags="$("$JQ" -r '.[]' <"$tags" | grep -E "$SEMVER_TAG" | sort -V)"
+# User-requested fix 2a: a --release-list candidate whose tag is absent from
+# --tags is an input-consistency bug (the two inputs disagree about what tags
+# exist), never a legitimate "no previous release" case — but the PREV lookup
+# below (`awk '$0==c{print prev;exit}'`) never matches an absent $t, silently
+# printing nothing, so that candidate's `prev` came out `null`, indistinguishable
+# from a genuine first release. Gate the full --release-list population against
+# --tags unconditionally, before the per-candidate loop — the same pre-loop
+# shape-gate pattern as release-list-shape/tags-shape/peeled-shape above —
+# rather than letting each affected row's `prev` silently null out.
+while IFS= read -r t; do
+	[[ "$t" =~ $SEMVER_TAG ]] || continue
+	printf '%s\n' "$all_tags" | grep -qxF "$t" ||
+		die "release-list tag '$t' is absent from --tags's inventory" 1 gate-failed tag-not-in-inventory
+done < <("$JQ" -r '.[].tagName' <"$list")
 rows="[]"
 any_templated=0
 while IFS= read -r t; do

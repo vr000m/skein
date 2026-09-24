@@ -324,6 +324,29 @@ expect_code "a2-classify rejects a non-string release name" 1 $?
 [[ "$(jq -r '.failed_gate' "$TMP/badlist.out")" == "release-list-shape" ]] &&
 	pass "a2-classify names the release-list gate" || bad "a2-classify release-list gate name"
 
+# User-requested fix 2a: a --release-list tag absent from --tags is an
+# input-consistency bug, never a legitimate "no previous release" — must fail
+# closed with a named gate rather than silently emitting prev: null.
+jq -c '.[0].tagName = "v0.9.9"' "$FIX/untemplated/release-list.json" >"$TMP/rl-tag-mismatch.json"
+a2_run untemplated "$TMP/rl-tag-mismatch.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" >"$TMP/rl-tag-mismatch.out"
+expect_code "a2-classify fails closed on a release-list tag absent from --tags" 1 $?
+[[ "$(jq -r '.failed_gate' "$TMP/rl-tag-mismatch.out")" == "tag-not-in-inventory" ]] &&
+	pass "a2-classify names the tag-not-in-inventory gate" ||
+	bad "a2-classify tag-not-in-inventory gate name: $(cat "$TMP/rl-tag-mismatch.out")"
+
+# User-requested fix 2b: two --release-list entries sharing a tagName drove
+# two classification passes for the same version and silently discarded the
+# second title — must fail closed with a named uniqueness gate instead.
+jq -c '. + [{"tagName":"v0.1.0","name":"a second title for the same tag"}]' \
+	"$FIX/untemplated/release-list.json" >"$TMP/rl-dup-tag.json"
+a2_run untemplated "$TMP/rl-dup-tag.json" "$FIX/untemplated/bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" >"$TMP/rl-dup-tag.out"
+expect_code "a2-classify fails closed on a duplicate release-list tagName" 1 $?
+[[ "$(jq -r '.failed_gate' "$TMP/rl-dup-tag.out")" == "release-list-duplicate-tag" ]] &&
+	pass "a2-classify names the release-list-duplicate-tag gate" ||
+	bad "a2-classify release-list-duplicate-tag gate name: $(cat "$TMP/rl-dup-tag.out")"
+
 # C7: `v01.2.3` is a non-release tag (strict SemVer), never a classified row.
 jq '. + [{"tagName":"v01.2.3","name":"v01.2.3"}]' "$FIX/untemplated/release-list.json" >"$TMP/lz-list.json"
 jq '. + {"v01.2.3":"b66041d9cf88e611c0127e98b0e6c2ac7a8a434d"}' "$FIX/untemplated/peeled-commits.json" >"$TMP/lz-peeled.json"
