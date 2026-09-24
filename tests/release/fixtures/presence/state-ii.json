@@ -1,0 +1,8 @@
+{
+  "state": "ii",
+  "worktree": "absent",
+  "head_commit": "present",
+  "mode": "100644",
+  "description": "absent from worktree, present at TEMPLATE_HEAD_COMMIT (committed-then-deleted)",
+  "release_jq": "pinned"
+}

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
+import tempfile
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -30,6 +33,138 @@ RELEASE_SKILLS = [
     ROOT / "plugins/skein-codex/skills/release/SKILL.md",
 ]
 RELEASE_PLAN = ROOT / "docs/dev_plans/20260712-feature-release-skill.md"
+
+# --- Lagging-mirror acknowledgment (release-skill restructure, decision 23) --
+# Temporary: while the Claude mirror carries region anchors the Codex mirror
+# does not yet have (Phase 3.5 mirrors them), `release-skill-md` in
+# RELEASE_LAGGING_MIRROR_OK makes the Codex-mirror parameter of every
+# RELEASE_SKILLS-parametrized test skip loudly. Tests are still collected, so
+# the Phase 4 test-id superset check is unaffected. Removed by Phase 4's
+# sunset commit.
+_RELEASE_LAGGING_PLANES = ("release-skill-md", "release-lib", "release-references")
+_RELEASE_LAGGING_ACK = frozenset(
+    os.environ.get("RELEASE_LAGGING_MIRROR_OK", "").replace(",", " ").split()
+)
+_UNKNOWN_LAGGING_PLANES = sorted(_RELEASE_LAGGING_ACK - set(_RELEASE_LAGGING_PLANES))
+if _UNKNOWN_LAGGING_PLANES:
+    raise ValueError(
+        "unrecognised RELEASE_LAGGING_MIRROR_OK plane(s): "
+        f"{_UNKNOWN_LAGGING_PLANES} (expected a subset of {_RELEASE_LAGGING_PLANES})"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _skip_lagging_codex_release_mirror(request: pytest.FixtureRequest) -> None:
+    """Loudly skip the Codex-mirror parameter while `release-skill-md` lags."""
+    if "release-skill-md" not in _RELEASE_LAGGING_ACK:
+        return
+    callspec = getattr(request.node, "callspec", None)
+    skill_path = callspec.params.get("skill_path") if callspec else None
+    if skill_path is not None and "skein-codex" in Path(skill_path).parts:
+        pytest.skip(
+            "plane 'release-skill-md' acknowledged via RELEASE_LAGGING_MIRROR_OK: "
+            "the Codex mirror lags the Claude mirror's region anchors until Phase 3.5"
+        )
+
+
+# --- Anchor-keyed region helpers (release-skill restructure, Phase 1.5) ------
+# Every region boundary the suite used to locate via literal heading or body
+# text is now located via a stable `<!-- skein:NAME -->` comment. Helpers take
+# `text: str` (not a path) so the rename regression test can run them against a
+# scratch copy. There is deliberately NO fallback to heading text: a missing
+# anchor raises a named AssertionError so a retarget can never pass vacuously.
+
+
+def _anchor_marker(name: str) -> str:
+    return f"<!-- skein:{name} -->"
+
+
+def _anchor_at(text: str, name: str, start: int = 0) -> int:
+    """Offset of the `<!-- skein:NAME -->` anchor at or after `start`."""
+    marker = _anchor_marker(name)
+    pos = text.find(marker, start)
+    if pos == -1:
+        raise AssertionError(f"region anchor {marker!r} not found at/after {start}")
+    return pos
+
+
+def _plan_anchor_at(text: str, name: str, start: int = 0) -> int:
+    """Same as `_anchor_at`, for the release dev-plan document's anchors."""
+    return _anchor_at(text, name, start)
+
+
+def _region_between(text: str, start_name: str, end_name: str) -> str:
+    """Text from the start anchor up to (excluding) the next end anchor."""
+    begin = _anchor_at(text, start_name)
+    return text[begin : _anchor_at(text, end_name, begin)]
+
+
+# --- Reference-expanded release text (release-skill restructure, Phase 3) ----
+# Progressive disclosure moved the templated-branch and audit-inference prose
+# out of SKILL.md into `references/`. The prose contract those assertions pin
+# is therefore SKILL.md *plus* the reference sections SKILL.md points at, so
+# `_release_text` splices each reference section in at its pointer, in the
+# position the original prose occupied. A mutation of a reference file fails
+# the same assertions that pinned the prose before it moved. Boundary tests
+# (which pin WHERE prose lives) read the raw SKILL.md instead.
+_REFERENCE_SECTION_ANCHOR = re.compile(
+    r"^<!-- skein:(ref-[a-z0-9-]+) -->$", re.MULTILINE
+)
+
+# (SKILL.md region anchor, needle naming the pointer, reference file, section)
+_REFERENCE_SPLICES = (
+    (
+        "canonical-format",
+        "**Schema and validation live in the templated-branch reference**",
+        "template-subsystem.md",
+        "ref-template-schema",
+    ),
+    (
+        "step-1b-templated-branch",
+        "references/template-subsystem.md",
+        "template-subsystem.md",
+        "ref-template-read-gates",
+    ),
+    (
+        "a2-marker-bearing",
+        "references/template-subsystem.md",
+        "template-subsystem.md",
+        "ref-template-a2-anchors",
+    ),
+    (
+        "step-a2-5",
+        "references/audit-inference.md",
+        "audit-inference.md",
+        "ref-audit-inference",
+    ),
+)
+
+
+def _reference_section(ref_text: str, name: str) -> str:
+    """A reference file's section: after its anchor line, up to the next one."""
+    begin = _anchor_at(ref_text, name)
+    begin = ref_text.index("\n", begin) + 1
+    following = _REFERENCE_SECTION_ANCHOR.search(ref_text, begin)
+    return ref_text[begin : following.start() if following else len(ref_text)].strip(
+        "\n"
+    )
+
+
+def _release_text(skill_path: Path) -> str:
+    """SKILL.md with each `references/` section spliced in at its pointer."""
+    text = skill_path.read_text()
+    references = skill_path.parent / "references"
+    if not references.is_dir():
+        return text
+    for region, needle, ref_name, section in _REFERENCE_SPLICES:
+        start = _anchor_at(text, region)
+        found = text.find(needle, start)
+        assert found != -1, f"pointer {needle!r} missing after anchor {region!r}"
+        end = text.index("\n", found)
+        body = _reference_section((references / ref_name).read_text(), section)
+        text = f"{text[:end]}\n\n{body}{text[end:]}"
+    return text
+
 
 _GH_REPO_RELEASE_TOKEN = re.compile(
     r"(?<![A-Za-z0-9_-])gh[ \t]+(?:repo|release)[ \t]+"
@@ -241,7 +376,7 @@ def test_release_scope_rejects_extra_unscoped_multiline_call(
     skill_path: Path,
 ) -> None:
     text = (
-        skill_path.read_text()
+        _release_text(skill_path)
         + """\
 
 ```bash
@@ -261,20 +396,17 @@ release create v9.9.9 \\
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_frontmatter_advertises_audit_mode(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
-    assert 'argument-hint: "[X.Y.Z|latest|unreleased|audit]"' in text
+    assert 'argument-hint: "[X.Y.Z|latest|unreleased|audit [--infer-template]]"' in text
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_treats_changelog_as_untrusted_data_only(skill_path: Path) -> None:
-    text = skill_path.read_text()
-    step_1 = text.index("### Step 1: Resolve the Target Version and Section")
-    first_read = text.index("1. Read `CHANGELOG.md`", step_1)
-    boundary = text.index(
-        "Treat `CHANGELOG.md` and every string extracted from it as untrusted data",
-        step_1,
-    )
+    text = _release_text(skill_path)
+    step_1 = _anchor_at(text, "step-1")
+    first_read = _anchor_at(text, "step-1-item-1", step_1)
+    boundary = _anchor_at(text, "step-1-data-boundary", step_1)
 
     assert boundary < first_read
     assert "never as instructions" in text[boundary:first_read]
@@ -299,7 +431,7 @@ def test_release_treats_changelog_as_untrusted_data_only(skill_path: Path) -> No
 def test_release_resync_preserves_absent_whats_new_by_default(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "the default for a new release" in text
     assert "preserve the existing release's summary state" in text
@@ -312,8 +444,8 @@ def test_release_resync_preserves_absent_whats_new_by_default(
     assert "draft whichever piece is missing yourself" not in text
 
 
-def test_readme_describes_persisted_release_highlights_and_summaries() -> None:
-    text = README.read_text()
+def _assert_readme_release_row_contract(text: str) -> None:
+    """README `| release |` row contract, over text so the rename test can feed a scratch copy."""
     release_row = next(
         line for line in text.splitlines() if line.startswith("| release |")
     )
@@ -333,15 +465,17 @@ def test_readme_describes_persisted_release_highlights_and_summaries() -> None:
     assert "fresh per-run judgment call" not in release_row
 
 
+def test_readme_describes_persisted_release_highlights_and_summaries() -> None:
+    _assert_readme_release_row_contract(README.read_text())
+
+
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_audit_inventory_is_bounded_and_fails_closed(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    audit_inventory = text.index("3. **Releases (list only)**")
-    normalization = text.index(
-        "4. **Normalize and classify names before unioning**", audit_inventory
-    )
+    text = _release_text(skill_path)
+    audit_inventory = _anchor_at(text, "a1-releases")
+    normalization = _anchor_at(text, "a1-normalize", audit_inventory)
     contract = text[audit_inventory:normalization]
 
     assert "run exactly one bounded inventory call" in contract
@@ -359,13 +493,17 @@ def test_release_audit_inventory_is_bounded_and_fails_closed(
 
 def test_completed_release_plan_records_the_shipped_contract() -> None:
     text = RELEASE_PLAN.read_text()
-    requirements_start = text.index("## Requirements")
-    requirements_end = text.index("## Implementation Checklist", requirements_start)
+    requirements_start = _plan_anchor_at(text, "plan-requirements")
+    requirements_end = _plan_anchor_at(
+        text, "plan-implementation-checklist", requirements_start
+    )
     requirements = text[requirements_start:requirements_end]
 
     assert "untrusted data only" in requirements
-    requirement_2_start = requirements.index("2. Resolve and validate")
-    requirement_3_start = requirements.index("\n3. ", requirement_2_start)
+    requirement_2_start = _plan_anchor_at(requirements, "plan-requirement-2")
+    requirement_3_start = _plan_anchor_at(
+        requirements, "plan-requirement-3", requirement_2_start
+    )
     requirement_2 = requirements[requirement_2_start:requirement_3_start]
     assert 'git ls-remote --tags "$ORIGIN_FETCH_URL"' in requirement_2
     assert "git ls-remote --tags origin" not in requirement_2
@@ -385,8 +523,8 @@ def test_completed_release_plan_records_the_shipped_contract() -> None:
 def test_release_rejects_non_default_remote_ports_before_gh(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_2 = text.index("### Step 2: Determine the Previous Version")
+    text = _release_text(skill_path)
+    step_2 = _anchor_at(text, "step-2")
     port_stop = text.index(
         "If any fetch or push URL carries an explicit non-default port", step_2
     )
@@ -424,11 +562,9 @@ def test_release_rejects_non_default_remote_ports_before_gh(
 def test_release_forbids_transport_environment_overrides(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_2 = text.index(
-        "### Step 2: Determine the Previous Version and Lock the Target Repository"
-    )
-    step_3 = text.index("### Step 3: Compose Title and Body", step_2)
+    text = _release_text(skill_path)
+    step_2 = _anchor_at(text, "step-2")
+    step_3 = _anchor_at(text, "step-3", step_2)
     transport_contract = text[step_2:step_3]
 
     forbidden_names = [
@@ -462,11 +598,9 @@ def test_release_forbids_transport_environment_overrides(
 def test_release_url_diagnostics_never_expose_raw_or_ambiguous_urls(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_2 = text.index(
-        "### Step 2: Determine the Previous Version and Lock the Target Repository"
-    )
-    step_3 = text.index("### Step 3: Compose Title and Body", step_2)
+    text = _release_text(skill_path)
+    step_2 = _anchor_at(text, "step-2")
+    step_3 = _anchor_at(text, "step-3", step_2)
     identity_contract = text[step_2:step_3]
     paragraphs = [paragraph.lower() for paragraph in identity_contract.split("\n\n")]
 
@@ -499,11 +633,9 @@ def test_release_url_diagnostics_never_expose_raw_or_ambiguous_urls(
 def test_release_isolated_transport_uses_absolute_empty_child_hooks_path(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_2 = text.index(
-        "### Step 2: Determine the Previous Version and Lock the Target Repository"
-    )
-    step_3 = text.index("### Step 3: Compose Title and Body", step_2)
+    text = _release_text(skill_path)
+    step_2 = _anchor_at(text, "step-2")
+    step_3 = _anchor_at(text, "step-3", step_2)
     transport_contract = text[step_2:step_3]
     child_hooks_contract = [
         paragraph.lower()
@@ -560,9 +692,9 @@ def test_release_isolated_transport_uses_absolute_empty_child_hooks_path(
 def test_release_revalidates_complete_destination_immediately_before_tag_push(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag")
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
+    text = _release_text(skill_path)
+    step_5 = _anchor_at(text, "step-5")
+    step_6 = _anchor_at(text, "step-6", step_5)
     contract = text[step_5:step_6]
 
     assert "all of Step 2 items 1–2's destination rules" in contract
@@ -585,14 +717,12 @@ def test_release_revalidates_complete_destination_immediately_before_tag_push(
 def test_release_locks_repo_identity_and_uses_immutable_step6_remote_url(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_2 = text.index(
-        "### Step 2: Determine the Previous Version and Lock the Target Repository"
-    )
-    step_3 = text.index("### Step 3: Compose Title and Body", step_2)
+    text = _release_text(skill_path)
+    step_2 = _anchor_at(text, "step-2")
+    step_3 = _anchor_at(text, "step-3", step_2)
     identity_contract = text[step_2:step_3]
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_3)
-    audit_mode = text.index("## Audit Mode", step_6)
+    step_6 = _anchor_at(text, "step-6", step_3)
+    audit_mode = _anchor_at(text, "audit-mode", step_6)
     release_contract = text[step_6:audit_mode]
 
     identity_call = (
@@ -630,12 +760,12 @@ def test_release_locks_repo_identity_and_uses_immutable_step6_remote_url(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_rechecks_immutable_release_identity(skill_path: Path) -> None:
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     baseline_contract = text[step_3:step_4]
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_4)
-    audit_mode = text.index("## Audit Mode", step_6)
+    step_6 = _anchor_at(text, "step-6", step_4)
+    audit_mode = _anchor_at(text, "audit-mode", step_6)
     release_contract = text[step_6:audit_mode]
     identity_fields = "databaseId,name,body,isDraft,isPrerelease"
 
@@ -657,8 +787,8 @@ def test_release_rechecks_immutable_release_identity(skill_path: Path) -> None:
 def test_release_audit_uses_one_immutable_remote_url_snapshot(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    audit_contract = text[text.index("## Audit Mode") :]
+    text = _release_text(skill_path)
+    audit_contract = text[_anchor_at(text, "audit-mode") :]
 
     assert (
         "retain the exact validated fetch URL as immutable `AUDIT_FETCH_URL`"
@@ -677,10 +807,10 @@ def test_release_audit_uses_one_immutable_remote_url_snapshot(
 def test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_4 = text.index("### Step 4: Confirm Before Mutating")
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_4)
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
+    text = _release_text(skill_path)
+    step_4 = _anchor_at(text, "step-4")
+    step_5 = _anchor_at(text, "step-5", step_4)
+    step_6 = _anchor_at(text, "step-6", step_5)
     confirmation = text[step_4:step_5]
     contract = text[step_5:step_6]
 
@@ -705,7 +835,7 @@ def test_release_pushes_pinned_tag_object_instead_of_mutable_local_ref(
 def test_release_scopes_every_concrete_gh_repo_and_release_call(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     calls = _assert_scoped_gh_repo_release_calls(text)
     inventory = Counter(" ".join(command.split()[:3]) for _, command in calls)
 
@@ -727,7 +857,7 @@ def test_release_scopes_every_concrete_gh_repo_and_release_call(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None:
-    calls = _executable_gh_repo_release_calls(skill_path.read_text())
+    calls = _executable_gh_repo_release_calls(_release_text(skill_path))
     mutation_calls = [
         command
         for _, command in calls
@@ -740,7 +870,7 @@ def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None
         assert command.split().count("--verify-tag") == 1
     assert (
         "`--verify-tag` on every create/edit path remains a separate existence guard"
-        in skill_path.read_text()
+        in _release_text(skill_path)
     )
 
 
@@ -748,9 +878,9 @@ def test_release_mutations_require_verified_remote_tag(skill_path: Path) -> None
 def test_release_direct_mode_guards_prefixed_and_bare_names_before_mutation(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_5 = _anchor_at(text, "step-5", step_3)
     pre_mutation_contract = text[step_3:step_5]
 
     assert "looking up `vX.Y.Z` in the origin tag-name set" in pre_mutation_contract
@@ -776,7 +906,7 @@ def test_release_direct_mode_guards_prefixed_and_bare_names_before_mutation(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_title_uses_file_backed_argument_transport(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     mutation_commands = [
         line.strip()
         for line in text.splitlines()
@@ -818,7 +948,7 @@ def test_title_file_transport_preserves_shell_syntax_as_data(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_audit_preserves_every_inventory_exception(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "every dated release-like `## [<raw-version>]` header" in text
     assert "`malformed-changelog-header`" in text
@@ -838,7 +968,7 @@ def test_release_audit_preserves_every_inventory_exception(skill_path: Path) -> 
 def test_release_audit_keeps_release_without_remote_tag_evidence(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "| ✗ | ✓ | ✓ | `release-without-tag` (CHANGELOG present) |" in text
     assert "| ✗ | ✓ | ✗ | `release-without-tag` (no CHANGELOG entry) |" in text
@@ -855,9 +985,9 @@ def test_release_audit_keeps_release_without_remote_tag_evidence(
 def test_release_audit_classifies_nonstandard_tags_consistently(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    tags_start = text.index("1. **Tags**")
-    changelog_start = text.index("2. **CHANGELOG versions**", tags_start)
+    text = _release_text(skill_path)
+    tags_start = _anchor_at(text, "a1-tags")
+    changelog_start = _anchor_at(text, "a1-changelog", tags_start)
     tags_contract = text[tags_start:changelog_start]
 
     assert "non-standard tags as findings (`untracked-tag`)" not in tags_contract
@@ -890,19 +1020,16 @@ def test_invocation_mode_count_matches_release_catalogue() -> None:
 
 def _template_region(text: str) -> str:
     """Bound the Step 1b template-read/validate contract inside Step 1."""
-    step_1 = text.index("### Step 1: Resolve the Target Version and Section")
-    step_2 = text.index(
-        "### Step 2: Determine the Previous Version and Lock the Target Repository",
-        step_1,
-    )
+    step_1 = _anchor_at(text, "step-1")
+    step_2 = _anchor_at(text, "step-2", step_1)
     return text[step_1:step_2]
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_template_schema_defines_all_four_fields(skill_path: Path) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
-        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+        _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
 
     assert ".release-template.json" in canonical_format
@@ -928,7 +1055,7 @@ def test_release_template_schema_defines_all_four_fields(skill_path: Path) -> No
 def test_release_template_read_is_harness_native_and_absence_is_noop(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "Step 1b" in region
@@ -945,25 +1072,28 @@ def test_release_template_read_is_harness_native_and_absence_is_noop(
 def test_release_template_validation_fails_closed_on_all_gates(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
-    # The three gates reimplemented equivalently from persist-common.sh's
-    # persist_validate_json_shape.
-    assert "equivalent standalone" in region
-    assert "rather than a verbatim copy" in region
-    assert "jq empty" in region
-    assert 'type == "object"' in region
-    assert re.search(r"single[- ]document", region, re.IGNORECASE)
-
-    # New gates this schema needs beyond the ported three.
-    assert re.search(r"unknown[- ]key", region, re.IGNORECASE)
-    assert re.search(r"duplicate[- ]key", region, re.IGNORECASE)
-    assert re.search(r"enum", region, re.IGNORECASE)
+    # The gate sequence itself moved into the extracted script (Phase 2): the
+    # prose names the script call site and every failed_gate value it reports.
+    assert "read-release-template.sh" in region
+    assert "--site step1b-validate" in region
+    for gate in (
+        "jq-empty",
+        "single-document",
+        "object-type",
+        "duplicate-key",
+        "unknown-key",
+        "enum",
+        "whats-new-type",
+        "excluded-sections-shape",
+    ):
+        assert f"`{gate}`" in region, gate
 
     # jq must be identity-pinned like every other invoked executable, not
     # shelled out via inherited PATH.
-    assert "jq" in text[text.index("### Step 2") : text.index("### Step 3")]
+    assert "jq" in text[_anchor_at(text, "step-2") : _anchor_at(text, "step-3")]
 
     # Any validation failure is a hard stop: never partial-apply, never
     # silently fall back to canonical.
@@ -975,7 +1105,7 @@ def test_release_template_validation_fails_closed_on_all_gates(
 def test_release_template_commit_precondition_requires_committed_match(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "git diff --quiet HEAD -- .release-template.json" in region
@@ -988,9 +1118,9 @@ def test_release_template_commit_precondition_requires_committed_match(
 def test_release_template_step4_confirmation_names_active_fields(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_4 = text.index("### Step 4: Confirm Before Mutating")
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_4)
+    text = _release_text(skill_path)
+    step_4 = _anchor_at(text, "step-4")
+    step_5 = _anchor_at(text, "step-5", step_4)
     confirmation = text[step_4:step_5]
 
     assert (
@@ -1008,12 +1138,12 @@ def test_release_template_step4_confirmation_names_active_fields(
 def test_release_template_identity_check_is_separate_from_payload_hash(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_4)
-    audit_mode = text.index("## Audit Mode", step_6)
+    step_6 = _anchor_at(text, "step-6", step_4)
+    audit_mode = _anchor_at(text, "audit-mode", step_6)
     step_6_contract = text[step_6:audit_mode]
 
     # The existing confirmed-payload-hash stays CHANGELOG-derived-content-only;
@@ -1035,12 +1165,12 @@ def test_release_template_identity_check_is_separate_from_payload_hash(
 def test_release_template_marker_aware_recovery_strips_marker_and_applies_exclusions(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
-    step_A2 = text.index("### Step A2: Classify Every Version")
-    step_A3 = text.index("### Step A3: Report the Punch List", step_A2)
+    step_A2 = _anchor_at(text, "step-a2")
+    step_A3 = _anchor_at(text, "step-a3", step_A2)
     a2_contract = text[step_A2:step_A3]
 
     assert "release-template-sha" in step_3_contract
@@ -1055,9 +1185,9 @@ def test_release_template_marker_aware_recovery_strips_marker_and_applies_exclus
 def test_release_template_marker_uses_head_blob_not_working_tree_hash(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    step_6 = text.index("### Step 6: Create or Edit the Release")
-    audit_mode = text.index("## Audit Mode", step_6)
+    text = _release_text(skill_path)
+    step_6 = _anchor_at(text, "step-6")
+    audit_mode = _anchor_at(text, "audit-mode", step_6)
     step_6_contract = text[step_6:audit_mode]
 
     assert "<!-- release-template-sha:" in step_6_contract
@@ -1076,12 +1206,12 @@ def test_release_template_marker_is_composed_in_step3_not_deferred_to_step6(
     verified before `gh release create`/`edit` ever runs, so a post-success
     append was never satisfiable.
     """
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
-    step_6 = text.index("### Step 6: Create or Edit the Release")
-    audit_mode = text.index("## Audit Mode", step_6)
+    step_6 = _anchor_at(text, "step-6")
+    audit_mode = _anchor_at(text, "audit-mode", step_6)
     step_6_contract = text[step_6:audit_mode]
 
     assert "Template identity marker" in step_3_contract
@@ -1102,7 +1232,7 @@ def test_release_audit_ok_checks_whats_new_presence_against_template(
     New` paragraph's presence against the classification source's
     `whats_new` field, not silently ignore it.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a2_region = _a2_region(text)
     ok_bullet_start = a2_region.index("**`ok` vs. `drifted`**")
     ok_bullet = a2_region[ok_bullet_start:]
@@ -1121,7 +1251,7 @@ def test_release_audit_marker_absent_fallback_requires_commit_precondition(
     — otherwise an untracked or symlinked current template could silently
     become the classification source.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     a2_region = _a2_region(text)
     marker_absent_start = a2_region.index("**Marker absent (zero matches")
     marker_absent_bullet = a2_region[marker_absent_start : marker_absent_start + 800]
@@ -1183,33 +1313,124 @@ def _template_fixtures() -> dict[str, tuple[str, bool]]:
     }
 
 
-def _extract_jq_commands(region: str) -> list[str]:
-    """Regex-extract standalone `jq ...` invocations from Markdown text.
+def _release_lib_script(skill_path: Path, name: str = "read-release-template") -> Path:
+    return skill_path.parent / "lib" / f"{name}.sh"
 
-    Mirrors this file's `_gh_repo_release_commands` precedent: pull
-    concrete `jq` invocations out of backtick spans and fenced code blocks
-    rather than assuming a fixed script layout, since the mirrors are free
-    to lay the pipeline out as prose-embedded commands or a fenced script.
+
+def _real_exe(name: str) -> str:
+    resolved = shutil.which(name)
+    assert resolved is not None, f"{name} not on PATH"
+    return os.path.realpath(resolved)
+
+
+def _release_lib_validate(
+    skill_path: Path, fixture_text: str, lib_dir: Path | None = None
+) -> tuple[bool, str | None]:
+    """Run the extracted read-release-template.sh (step1b-validate, templated
+    and clean) over fixture bytes on stdin. Returns (accepted, failed_gate).
+
+    Phase 2 retarget (docs/dev_plans/20260917-refactor-release-skill-structure.md):
+    the jq gate sequence no longer lives in SKILL.md prose, so the gate
+    behaviour is asserted against the script that now owns it instead of
+    regex-extracted prose commands.
     """
-    commands: list[str] = []
-    for match in re.finditer(r"`([^`\n]*\bjq\b[^`\n]*)`", region):
-        commands.append(match.group(1).strip())
-    for fence_match in re.finditer(r"```[A-Za-z]*\n(.*?)```", region, re.DOTALL):
-        for line in fence_match.group(1).splitlines():
-            if re.search(r"\bjq\b", line):
-                commands.append(line.strip().rstrip("\\").strip())
-    # De-duplicate while preserving order.
-    seen: set[str] = set()
-    unique_commands = []
-    for command in commands:
-        if command not in seen:
-            seen.add(command)
-            unique_commands.append(command)
-    return unique_commands
+    script = (lib_dir or skill_path.parent / "lib") / "read-release-template.sh"
+    result = subprocess.run(
+        [
+            str(script),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "present-tracked-clean",
+            "--head-commit",
+            "present",
+            "--mode",
+            "100644",
+            "--head-sha",
+            "0" * 40,
+        ],
+        input=fixture_text.encode("utf-8", "surrogatepass"),
+        capture_output=True,
+        env={**os.environ, "RELEASE_JQ": _real_exe("jq")},
+        check=False,
+    )
+    assert result.returncode in (0, 1), result.stderr
+    decision = json.loads(result.stdout)
+    assert decision["exit_code"] == result.returncode
+    return result.returncode == 0, decision["failed_gate"]
+
+
+def _resolve_template_marker_script(skill_path: Path) -> Path:
+    return _release_lib_script(skill_path, "resolve-template-marker")
+
+
+def _resolve_template_marker_recovery(
+    skill_path: Path, tag: str, body: str, *, peeled: str = "{}"
+) -> dict:
+    """Run resolve-template-marker.sh --site step3-recovery over crafted
+    release-body bytes and return its decision JSON.
+
+    Phase 2 retarget (round-3 deferred item, docs/dev_plans/
+    20260917-refactor-release-skill-structure.md): the marker-search regex
+    definitions, gate ordering and note text now live in
+    resolve-template-marker.sh's `resolve_source()`, not restated SKILL.md
+    prose, so behaviour is asserted against the script directly, matching
+    `_release_lib_validate`'s precedent above. `step3-recovery` is the
+    lightweight site for this: every non-binding decision it can reach (the
+    marker-search/shape gates under test) only touches `--repo`/`--peeled`
+    through the script's unconditional directory/readability checks and
+    `anchor_blob`'s own fail-soft `git` calls, so a throwaway tmp dir and an
+    empty peeled object exercise every documented marker-search case without
+    building a fixture git repository.
+    """
+    script = _resolve_template_marker_script(skill_path)
+    with tempfile.TemporaryDirectory() as td:
+        repo_dir = Path(td) / "repo"
+        repo_dir.mkdir()
+        body_file = Path(td) / "body.md"
+        body_file.write_text(body)
+        peeled_file = Path(td) / "peeled.json"
+        peeled_file.write_text(peeled)
+        result = subprocess.run(
+            [
+                str(script),
+                "--site",
+                "step3-recovery",
+                "--repo",
+                str(repo_dir),
+                "--tag",
+                tag,
+                "--body-file",
+                str(body_file),
+                "--peeled",
+                str(peeled_file),
+                "--head-sha",
+                "0" * 40,
+            ],
+            capture_output=True,
+            env={
+                **os.environ,
+                "RELEASE_JQ": _real_exe("jq"),
+                "RELEASE_GIT": _real_exe("git"),
+            },
+            check=False,
+        )
+    decision = json.loads(result.stdout)
+    assert decision["exit_code"] == result.returncode, result.stderr
+    return decision
 
 
 def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
-    """Run one extracted jq command against fixture text on stdin.
+    """Run one jq command string against fixture text on stdin.
+
+    No production caller extracts `jq` invocations from SKILL.md prose any
+    more — that logic moved into `release-common.sh`'s gate sequence in
+    Phase 2, and its extractor (`_extract_jq_commands`, which fed this
+    function from Markdown-scraped commands) was dead code and was
+    removed (review-gauntlet round 1). This function and its five
+    `test_jq_fixture_runner_*` self-tests remain as a standalone jq-safety
+    fixture validator — they are pinned by
+    `tests/parity/.release-test-id-baseline.txt` and are not removed here.
 
     Returns True/False for a command that actually ran as a standalone jq
     gate, or None when the command could not run standalone (e.g. it
@@ -1217,11 +1438,13 @@ def _jq_command_accepts(command: str, fixture_text: str) -> bool | None:
     genuine `jq <flags/filter>` invocation) — those are excluded from the
     verdict rather than treated as evidence either way.
 
-    Security: this text is extracted from Markdown prose (SKILL.md) via
-    regex, so it must never be handed to a shell. `shlex.split` tokenizes
-    it and the tokens are exec'd directly (no `bash -c`, no shell
-    metacharacter interpretation) — a PR that edits SKILL.md prose cannot
-    inject shell commands into this test.
+    Security: every caller here passes a literal command string written in
+    this test module — there is no extraction step feeding it untrusted
+    prose any more (see above). `command` must still never be handed to a
+    shell: `shlex.split` tokenizes it and the tokens are exec'd directly
+    (no `bash -c`, no shell metacharacter interpretation), so even a
+    caller-supplied string carrying shell metacharacters cannot escape
+    this function's own argv-list `subprocess` call.
     """
     try:
         tokens = shlex.split(command)
@@ -1348,16 +1571,6 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
     nested and shape-changing cases that required persist-common.sh's
     raw-vs-collapsed event-count rule, plus non-duplicate controls.
     """
-    text = skill_path.read_text()
-    region = _template_region(text)
-    duplicate_commands = [
-        command
-        for command in _extract_jq_commands(region)
-        if "fromstream(.[])" in command and "tostream" in command
-    ]
-    assert len(duplicate_commands) == 1
-    duplicate_command = duplicate_commands[0]
-
     fixtures = [
         ('{"logic":["a","b"],"logic":[]}', False),
         ('{"logic":[],"logic":["a","b"]}', False),
@@ -1370,8 +1583,13 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
         ('{"scalar":1,"other":2}', True),
     ]
     for fixture_text, expected_accept in fixtures:
-        release_verdict = _jq_command_accepts(duplicate_command, fixture_text)
-        assert release_verdict is not None
+        accepted, failed_gate = _release_lib_validate(skill_path, fixture_text)
+        # These fixtures use keys outside the closed schema, so a fixture the
+        # duplicate-key gate passes still trips the later unknown-key gate;
+        # the duplicate-key verdict is "did that specific gate fire".
+        assert failed_gate in (None, "duplicate-key", "unknown-key"), failed_gate
+        assert accepted is False or failed_gate is None
+        release_verdict = failed_gate != "duplicate-key"
         shared_verdict = _persist_duplicate_key_gate_accepts(fixture_text)
         assert release_verdict == shared_verdict, (
             f"release and persist-common duplicate-key gates disagree for "
@@ -1383,47 +1601,12 @@ def test_release_duplicate_key_gate_matches_persist_common_edge_cases(
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 @requires_jq
 def test_release_template_jq_gates_fail_closed_on_fixtures(skill_path: Path) -> None:
-    text = skill_path.read_text()
-    region = _template_region(text)
-    commands = _extract_jq_commands(region)
-
-    assert commands, (
-        "expected at least one standalone `jq` validation command inside "
-        "the Step 1b template-read/validate contract"
-    )
-
-    fixtures = _template_fixtures()
-    valid_text, _ = fixtures["valid_full_template"]
-    valid_verdicts = [
-        verdict
-        for command in commands
-        if (verdict := _jq_command_accepts(command, valid_text)) is not None
-    ]
-    assert valid_verdicts, "no extracted jq command ran standalone against the fixtures"
-    assert all(valid_verdicts), (
-        "every jq gate must accept a valid, fully-populated template"
-    )
-
-    for name, (fixture_text, expected_valid) in fixtures.items():
-        if name == "valid_full_template":
-            continue
-        verdicts = [
-            verdict
-            for command in commands
-            if (verdict := _jq_command_accepts(command, fixture_text)) is not None
-        ]
-        if not expected_valid:
-            if verdicts:
-                assert any(not verdict for verdict in verdicts), (
-                    f"fixture {name!r} should fail at least one jq gate"
-                )
-        else:
-            assert verdicts, (
-                f"no extracted jq command ran standalone against fixture {name!r}"
-            )
-            assert all(verdicts), (
-                f"fixture {name!r} is expected-valid but failed a jq gate"
-            )
+    for name, (fixture_text, expected_valid) in _template_fixtures().items():
+        accepted, failed_gate = _release_lib_validate(skill_path, fixture_text)
+        assert accepted is expected_valid, (
+            f"fixture {name!r}: expected valid={expected_valid}, "
+            f"got {accepted} (failed_gate={failed_gate})"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1446,19 +1629,47 @@ def test_release_template_jq_gates_reject_null_and_false_not_just_wrong_string(
     """Regression for the `//`-defaulting fail-open: a present `false`/`null`
     field must fail validation, not be treated the same as an absent field.
     """
-    text = skill_path.read_text()
-    region = _template_region(text)
-    commands = _extract_jq_commands(region)
-
-    verdicts = [
-        verdict
-        for command in commands
-        if (verdict := _jq_command_accepts(command, fixture_json)) is not None
-    ]
-    assert verdicts, "no extracted jq command ran standalone against the fixture"
-    assert any(not verdict for verdict in verdicts), (
-        f"{fixture_json!r} must fail at least one jq gate, not silently default"
+    accepted, failed_gate = _release_lib_validate(skill_path, fixture_json)
+    assert not accepted, (
+        f"{fixture_json!r} must fail a gate, not silently default "
+        f"(failed_gate={failed_gate})"
     )
+
+
+_GATE_MUTATION_FIXTURES = {
+    "jq-empty": "{",
+    "single-document": "{}\n{}",
+    "object-type": "[]",
+    "duplicate-key": '{"title_format": "bare", "title_format": "canonical"}',
+    "unknown-key": '{"extra": 1}',
+    "enum": '{"title_format": "weird"}',
+    "whats-new-type": '{"whats_new": "true"}',
+    "excluded-sections-shape": '{"excluded_sections": false}',
+}
+
+
+@pytest.mark.parametrize("gate", sorted(_GATE_MUTATION_FIXTURES))
+@requires_jq
+def test_release_lib_gate_tests_fail_under_deliberate_mutation(
+    gate: str, tmp_path: Path
+) -> None:
+    """Mutation evidence for the Phase 2 retargets (mapping table): with one
+    gate's failure branch neutered in a scratch copy of the Claude lib/, the
+    retargeted fixture verdict flips from rejected to accepted, so the
+    script-level tests cannot pass vacuously.
+    """
+    claude_lib = RELEASE_SKILLS[0].parent / "lib"
+    scratch = tmp_path / "lib"
+    shutil.copytree(claude_lib, scratch)
+    common = scratch / "release-common.sh"
+    text = common.read_text()
+    needle = f'echo "{gate}"\n\t\treturn 1'
+    assert text.count(needle) == 1, gate
+    common.write_text(text.replace(needle, ":"))
+    fixture = _GATE_MUTATION_FIXTURES[gate]
+    assert _release_lib_validate(RELEASE_SKILLS[0], fixture)[1] == gate
+    _, failed_gate = _release_lib_validate(RELEASE_SKILLS[0], fixture, lib_dir=scratch)
+    assert failed_gate != gate, f"mutating the {gate} gate did not change its verdict"
 
 
 def test_release_template_jq_gates_match_across_mirrors() -> None:
@@ -1466,13 +1677,16 @@ def test_release_template_jq_gates_match_across_mirrors() -> None:
     the two mirrors must extract byte-identical jq gate commands, not just
     each independently pass their own assertions.
     """
-    texts = [path.read_text() for path in RELEASE_SKILLS]
-    regions = [_template_region(text) for text in texts]
-    commands = [_extract_jq_commands(region) for region in regions]
-    assert commands[0] == commands[1], (
-        "Claude and Codex release-skill mirrors extracted different jq "
-        "validation commands from their Step 1b template gates"
-    )
+    if "release-skill-md" in _RELEASE_LAGGING_ACK:
+        pytest.skip(
+            "plane 'release-skill-md' acknowledged via RELEASE_LAGGING_MIRROR_OK: "
+            "the Codex mirror lags the Claude mirror's region anchors until Phase 3.5"
+        )
+    claude, codex = (path.parent / "lib" for path in RELEASE_SKILLS)
+    for name in ("read-release-template.sh", "release-common.sh"):
+        assert (claude / name).read_bytes() == (codex / name).read_bytes(), (
+            f"lib/{name} differs between the Claude and Codex release mirrors"
+        )
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -1484,7 +1698,7 @@ def test_release_template_commit_precondition_rejects_symlinked_mode(
     symlink's tracked blob holds only its target path and can pass that
     diff check while a native read follows the link to uncommitted bytes.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "git ls-files --stage -- .release-template.json" in region
@@ -1510,8 +1724,8 @@ _MARKER_SHA_REGEX = r"\^<!-- release-template-sha: \[0-9a-f\]\{40\} -->\$"
 
 def _a2_region(text: str) -> str:
     """Bound the `ok`/`drifted` classification contract inside Step A2."""
-    step_A2 = text.index("### Step A2: Classify Every Version")
-    step_A3 = text.index("### Step A3: Report the Punch List", step_A2)
+    step_A2 = _anchor_at(text, "step-a2")
+    step_A3 = _anchor_at(text, "step-a3", step_A2)
     return text[step_A2:step_A3]
 
 
@@ -1519,35 +1733,57 @@ def _a2_region(text: str) -> str:
 def test_release_audit_a2_marker_gate_chain_is_fail_closed(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
-    region = _a2_region(text)
+    """Phase 2 retarget (round-3 deferred item, commit b7d8688): the marker
+    search-and-bind gate chain is resolve-template-marker.sh's
+    `resolve_source()`, not restated SKILL.md prose — assert against the
+    script's actual regex and cat-file/jq-validation chain, and behaviourally
+    prove the exactness/cardinality rule (a single strict marker reaches
+    binding; two or more never does).
+    """
+    script_text = _resolve_template_marker_script(skill_path).read_text()
 
-    # The marker regex must be anchored, exact, and applied to the release
-    # body exactly once — same untrusted-input treatment as the rest of the
-    # release body per SKILL.md's Step 1 data-boundary contract.
-    assert re.search(_MARKER_SHA_REGEX, region)
-    assert re.search(r"exactly once", region)
+    # The marker regex is anchored, exact, and the script counts matches
+    # (cardinality), not merely detects presence — same untrusted-input
+    # treatment as the rest of the release body per SKILL.md's Step 1
+    # data-boundary contract.
+    assert re.search(_MARKER_SHA_REGEX, script_text)
+    assert "grep -a -c -E" in script_text
 
-    # Resolution chain: cat-file type check requires `blob` (never
-    # commit/tree/tag), then cat-file -p content is re-run through the
-    # identical Phase 1 jq validation before it can back a classification.
-    assert "git cat-file -t" in region
-    assert re.search(r"\bblob\b", region)
-    assert "git cat-file -p" in region
-    assert re.search(r"commit", region) and re.search(r"\btree\b", region)
-    assert re.search(r"tag", region)
-    assert re.search(
-        r"(Phase 1|Step 1b).*jq validation|jq validation.*(Phase 1|Step 1b)",
-        region,
-        re.IGNORECASE | re.DOTALL,
+    # Resolution chain: a bound `<sha>` is re-run through `git cat-file -t`
+    # requiring exactly `blob` (never commit/tree/tag), then `git cat-file -p`
+    # content is re-validated through the identical Step 1b jq gates.
+    assert 'cat-file -t "$sha"' in script_text
+    assert '"blob"' in script_text
+    assert 'cat-file -p "$sha"' in script_text
+    assert "release_validate_gates" in script_text
+
+    # Behavioural proof of "exactly once": a single strict, final-line marker
+    # reaches the binding step (it fails only for lack of a resolvable anchor
+    # in this throwaway repo, proving the search itself passed), while two
+    # marker-shaped lines never bind.
+    sha = "a" * 40
+    one_marker = f"Body.\n\n<!-- release-template-sha: {sha} -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", one_marker)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "neither anchor resolved (object or path absent in this clone)"
     )
+
+    two_markers = (
+        f"Body.\n\n<!-- release-template-sha: {sha} -->\n"
+        f"<!-- release-template-sha: {sha} -->\n"
+    )
+    decision2 = _resolve_template_marker_recovery(skill_path, "v1.0.0", two_markers)
+    assert decision2["decision"] == "template-marker-unresolvable"
+    assert decision2["failed_gate"] == "marker line appears more than once"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_audit_a2_unresolvable_marker_never_classifies_ok_or_drifted(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # Every gate in the marker-resolution chain must fail closed into an
@@ -1565,7 +1801,7 @@ def test_release_audit_a2_unresolvable_marker_never_classifies_ok_or_drifted(
 def test_release_audit_a2_three_way_classification_branches(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # Branch 1: marker present and valid -> pinned blob content, with the
@@ -1592,7 +1828,7 @@ def test_release_audit_a2_three_way_classification_branches(
 def test_release_audit_a2_current_template_closes_pre_adoption_gap(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     # This is the behavior that makes a repo's pre-adoption hand-cut
@@ -1624,8 +1860,8 @@ def _dry_run_search_region(text: str) -> str:
     rather than guessing a heading — the assertions below key on phrasing
     specific to the dry-run/proposal behavior, not on section boundaries.
     """
-    step_A2 = text.index("### Step A2: Classify Every Version")
-    step_A4 = text.index("### Step A4: Fix (Opt-In, One Version at a Time)")
+    step_A2 = _anchor_at(text, "step-a2")
+    step_A4 = _anchor_at(text, "step-a4")
     return text[step_A2:step_A4]
 
 
@@ -1633,12 +1869,12 @@ def _dry_run_search_region(text: str) -> str:
 def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     single_version_mode = text[
-        text.index("## Single-Version Mode") : text.index("## Audit Mode")
+        _anchor_at(text, "single-version-mode") : _anchor_at(text, "audit-mode")
     ]
-    step_A1 = text.index("### Step A1: Gather the Three Inventories")
-    step_A2 = text.index("### Step A2: Classify Every Version")
+    step_A1 = _anchor_at(text, "step-a1")
+    step_A2 = _anchor_at(text, "step-a2")
     region = _dry_run_search_region(text)
 
     # Never present in Single-Version Mode: this is an Audit-only behavior.
@@ -1660,7 +1896,7 @@ def test_release_audit_dry_run_is_audit_mode_only_and_sequenced_after_a2(
 def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(
@@ -1697,7 +1933,7 @@ def test_release_audit_dry_run_reuses_a2_fetch_with_no_new_gh_calls(
 def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(r"untrusted data", region, re.IGNORECASE)
@@ -1713,7 +1949,7 @@ def test_release_audit_dry_run_treats_fetched_body_as_untrusted_data(
 def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     # Gauntlet round-1 finding #9: the taken candidates need not be adjacent
@@ -1738,7 +1974,7 @@ def test_release_audit_dry_run_threshold_requires_three_consistent_releases(
 def test_release_audit_dry_run_proposes_and_prints_never_writes(
     skill_path: Path,
 ) -> None:
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
 
     assert re.search(r"propose", region, re.IGNORECASE)
@@ -1767,9 +2003,9 @@ def test_release_marker_strip_requires_strict_bound_marker(
     The active template still must not gate a valid historical marker, but a
     malformed or unbound shape must remain body data and become explicit drift.
     """
-    text = skill_path.read_text()
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    text = _release_text(skill_path)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     step_3_contract = text[step_3:step_4]
 
     assert re.search(
@@ -1798,7 +2034,7 @@ def test_release_audit_a2_marker_sha_bound_to_candidate_commit_path(
     — via its own tag commit or the repo's current `HEAD` — not merely to any
     blob reachable in the object store.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     assert "<peeled-commit-sha>:.release-template.json" in region
@@ -1821,7 +2057,7 @@ def test_release_audit_a2_marker_binding_has_two_anchors(skill_path: Path) -> No
     anchor (sourced from Step A1.1's already-captured inventory, never a
     fresh local `refs/tags/` resolution) or the current-`HEAD` anchor.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _a2_region(text)
 
     assert re.search(r"origin peeled-commit anchor", region, re.IGNORECASE)
@@ -1839,18 +2075,31 @@ def test_release_audit_a2_marker_binding_has_two_anchors(skill_path: Path) -> No
 def test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent(
     skill_path: Path,
 ) -> None:
-    """Regression for finding #7: a marker-shaped line whose hash isn't
-    40 hex characters (e.g. a SHA-256 object id) must classify
-    `template-marker-unresolvable`, never silently fall through to the
-    marker-absent fallback.
+    """Regression for finding #7 (Phase 2 retarget): a marker-shaped line
+    whose hash isn't 40 hex characters (e.g. a SHA-256 object id) must
+    classify `template-marker-unresolvable`, never silently fall through to
+    the marker-absent fallback. Assert against resolve-template-marker.sh's
+    loose regex and its actual classification, not restated SKILL.md prose.
     """
-    text = skill_path.read_text()
-    region = _a2_region(text)
+    script_text = _resolve_template_marker_script(skill_path).read_text()
+    assert "[0-9a-f]+ -->$" in script_text
 
-    assert re.search(r"wrong hex length", region, re.IGNORECASE)
-    assert "[0-9a-f]+ -->$" in region
-    assert re.search(
-        r"never treat this as the zero-strict-matches", region, re.IGNORECASE
+    sha256 = "b" * 64
+    wrong_length = f"Body.\n\n<!-- release-template-sha: {sha256} -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", wrong_length)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "marker present but hash length unsupported (expected 40 hex characters)"
+    )
+
+    # A genuine 40-hex marker must NOT hit this gate — proving the check is
+    # length-specific, not a blanket rejection of every loose match.
+    sha1 = "c" * 40
+    ok_length = f"Body.\n\n<!-- release-template-sha: {sha1} -->\n"
+    decision2 = _resolve_template_marker_recovery(skill_path, "v1.0.0", ok_length)
+    assert decision2["failed_gate"] != (
+        "marker present but hash length unsupported (expected 40 hex characters)"
     )
 
 
@@ -1862,9 +2111,9 @@ def test_release_step5_tag_message_respects_bare_title_format(
     title shape Step 3/Step 4 actually confirmed (canonical or bare), not
     hardcode the canonical `<repo> vX.Y.Z — <highlight>` shape.
     """
-    text = skill_path.read_text()
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag")
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
+    text = _release_text(skill_path)
+    step_5 = _anchor_at(text, "step-5")
+    step_6 = _anchor_at(text, "step-6", step_5)
     step_5_contract = text[step_5:step_6]
 
     new_tag_start = step_5_contract.index("- **New tag**")
@@ -1882,9 +2131,9 @@ def test_release_step4_override_recomposes_through_step3_item3(
     recompose the body through Step 3 item 3 (where the marker/exclusions/
     compare line are applied), not merely re-hash item 4's snapshot.
     """
-    text = skill_path.read_text()
-    step_4 = text.index("### Step 4: Confirm Before Mutating")
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag", step_4)
+    text = _release_text(skill_path)
+    step_4 = _anchor_at(text, "step-4")
+    step_5 = _anchor_at(text, "step-5", step_4)
     confirmation = text[step_4:step_5]
 
     assert re.search(r"recompose the body through Step 3 item 3", confirmation)
@@ -1906,7 +2155,7 @@ def test_release_template_read_uses_committed_object_not_working_tree_path(
     cannot change what gets validated: git resolves by blob hash, not by
     filesystem path.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert re.search(r"git cat-file blob HEAD:\.release-template\.json", region)
@@ -1926,7 +2175,7 @@ def test_release_template_toctou_region_no_longer_claims_single_handle(
     a committed-object read (see the sibling test above). The old claim
     must not linger alongside the new mechanism.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert not re.search(r"single file handle", region, re.IGNORECASE)
@@ -1993,8 +2242,8 @@ def test_jq_fixture_runner_excludes_non_terminating_filter() -> None:
 
 
 def _step3_region(text: str) -> str:
-    step_3 = text.index("### Step 3: Compose Title and Body")
-    step_4 = text.index("### Step 4: Confirm Before Mutating", step_3)
+    step_3 = _anchor_at(text, "step-3")
+    step_4 = _anchor_at(text, "step-4", step_3)
     return text[step_3:step_4]
 
 
@@ -2006,7 +2255,7 @@ def test_release_marker_separator_is_exactly_one_blank_line(
     line and the `release-template-sha` marker must be pinned, not left to
     interpretation, or the strip and the re-sync byte-match cannot agree.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     marker_item = region[region.index("**Template identity marker.**") :]
 
     assert re.search(r"exactly one blank line", marker_item, re.IGNORECASE), (
@@ -2030,7 +2279,7 @@ def test_release_marker_strip_removes_its_separator(skill_path: Path) -> None:
     check (3)'s "exactly one final line" compare-line rule, misclassifying a
     correct release as drifted.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     strip_paragraph = region[region.index("Try the unmodified body first") :]
     strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
 
@@ -2053,7 +2302,7 @@ def test_release_whats_new_true_is_a_noop_not_an_override(skill_path: Path) -> N
     summary to recover) -- the commonest case. Only `false` may be described
     as an override; `true` must be stated as an explicit no-op equal to unset.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
     whats_new_bullet = region[region.index("**`## What's New` inclusion.**") :]
     whats_new_bullet = whats_new_bullet[: whats_new_bullet.index("\n   - ")]
 
@@ -2083,7 +2332,7 @@ def test_release_recovery_uses_marker_pinned_template_not_active_template(
     title/boundary/exclusion recovery. The *new*, forward-composed body must
     still use the active template, unaffected by this resolution.
     """
-    region = _step3_region(skill_path.read_text())
+    region = _step3_region(_release_text(skill_path))
 
     assert "recovery template" in region
     assert re.search(r"Step A2's dual-anchor scheme", region)
@@ -2108,11 +2357,11 @@ def test_release_whats_new_default_is_documented_as_unset_sentinel(
     "default" is prose behavior, not a fillable value -- item 5 must say so
     explicitly rather than implying every field gets a concrete fill-in.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
     item_5 = region[region.index("5. **Record the active template.**") :]
     item_5 = (
-        item_5[: item_5.index("\n\n### Step 2")]
-        if "\n\n### Step 2" in item_5
+        item_5[: _anchor_at(item_5, "step-2")]
+        if _anchor_marker("step-2") in item_5
         else item_5
     )
 
@@ -2135,9 +2384,9 @@ def test_release_template_line_item_documents_unset_whats_new_display(
     documented display rule, an unset field has no defined confirmation
     behavior.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     line_item = text[text.index("**Template line-item.**") :]
-    line_item = line_item[: line_item.index("\n\n### Step 5")]
+    line_item = line_item[: _anchor_at(line_item, "step-5")]
 
     assert "whats_new: false (suppressed)" in line_item
     assert re.search(r"when the field is explicitly set", line_item)
@@ -2163,9 +2412,9 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     to publish. The predicate must test body emptiness, not subsection
     existence, so it must not contain the word "subsection".
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
-        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+        _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
     step3 = _step3_region(text)
 
@@ -2191,9 +2440,9 @@ def test_release_excluded_sections_scoped_out_of_no_free_text_claim(
     explicit treat-as-data-never-instructions boundary, the same as
     CHANGELOG.md (Step 1) and remote release metadata (Step 3) already do.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     canonical_format = text[
-        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+        _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
     template_region = _template_region(text)
 
@@ -2232,7 +2481,7 @@ def test_release_audit_a2_5_proposal_validates_and_escapes_before_printing(
     sequence, and must reference Step 1b item 4's gates by name rather than
     re-stating their constants a third time.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     proposal_sentence = region[
         region.index("Propose — never write —") : region.index(
             "Do not add a new Audit-mode file-write side effect"
@@ -2280,7 +2529,7 @@ def test_release_template_presence_oracle_matches_content_oracle(
     active" and silently fell back to canonical shape — the exact fail-open the
     template contract forbids.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
 
     # Round-5 finding #7 replaced the presence probe with `git ls-tree`, which
     # separates "absent" from "store/ref error"; the oracle still addresses the
@@ -2306,7 +2555,7 @@ def test_release_template_head_is_resolved_once_per_check(
     the commit precondition, the validated bytes and the published marker SHA
     to three different commits.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "TEMPLATE_HEAD_COMMIT" in region
@@ -2320,9 +2569,9 @@ def test_release_template_head_is_resolved_once_per_check(
 
     # The rule carries to every other HEAD-addressed template check: Step 5's
     # and Step 6's re-verifies and Audit A2's current-HEAD anchor.
-    step_5 = text.index("### Step 5: Create or Re-Sync the Tag")
-    step_6 = text.index("### Step 6: Create or Edit the Release", step_5)
-    audit = text.index("## Audit Mode", step_6)
+    step_5 = _anchor_at(text, "step-5")
+    step_6 = _anchor_at(text, "step-6", step_5)
+    audit = _anchor_at(text, "audit-mode", step_6)
     for name, chunk in (
         ("step 5", text[step_5:step_6]),
         ("step 6", text[step_6:audit]),
@@ -2345,7 +2594,7 @@ def test_release_audit_a2_anchors_enforce_tracked_mode_gate(
     JSON could authenticate a marker. `git cat-file -t` reports a symlink as
     `blob`, so the type gate cannot substitute for the mode gate.
     """
-    region = _a2_region(skill_path.read_text())
+    region = _a2_region(_release_text(skill_path))
 
     assert "git ls-tree '<anchor-commit-sha>' -- .release-template.json" in region
     assert "100644" in region and "100755" in region
@@ -2370,7 +2619,7 @@ def test_release_audit_a2_documents_dual_anchor_limitations(
     clone can classify `template-marker-unresolvable` where a complete clone
     classifies `ok`.
     """
-    region = _a2_region(skill_path.read_text())
+    region = _a2_region(_release_text(skill_path))
 
     assert re.search(r"Known limitations", region, re.IGNORECASE)
     assert re.search(r"shallow|partial|stale clone", region, re.IGNORECASE)
@@ -2390,12 +2639,8 @@ def test_release_audit_a1_peeled_identity_defect_is_scoped_per_tag(
     anchor) and inconsistent with Step 2's narrower per-target rule. Scope the
     defect to its tag; keep the whole-audit stop for transport/parse failure.
     """
-    text = skill_path.read_text()
-    a1 = text[
-        text.index("### Step A1: Gather the Three Inventories") : text.index(
-            "### Step A2: Classify Every Version"
-        )
-    ]
+    text = _release_text(skill_path)
+    a1 = text[_anchor_at(text, "step-a1") : _anchor_at(text, "step-a2")]
 
     assert re.search(r"scoped to the tag it affects, not to the whole audit", a1)
     assert re.search(r"\bunavailable\b", a1)
@@ -2444,7 +2689,7 @@ def test_release_audit_a2_5_candidate_set_is_defined_mechanically(
     the ordering and proposing a convention against a repo that deliberately
     removed its template.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     # The restriction is stated as the definition, not as a gloss.
     assert re.search(
@@ -2475,7 +2720,7 @@ def test_release_audit_a2_5_selection_count_matches_threshold(
     sit between them), so "consecutive" was dropped from the threshold
     wording entirely rather than merely kept in sync with the count.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     assert re.search(r"Take the highest \*\*3\*\* candidates", region)
     assert re.search(r"Require all \*\*3\*\* qualifying candidates", region)
@@ -2499,7 +2744,7 @@ def test_release_raw_template_bytes_have_an_explicit_shell_transport_rule(
     raw pre-validation `.release-template.json` bytes read in Step 1b item 4 —
     and the same raw read at Audit A2 — had none.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     assert "Shell-transport rule for the raw template bytes" in region
@@ -2525,15 +2770,25 @@ def test_release_excluded_sections_bound_is_characters_not_bytes(
     characters pass at up to ~800 bytes. The documented unit must match the
     unit the gate actually enforces.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     assert "at most 200 bytes" not in text
-    assert text.count("at most 200 characters") >= 2
-    region = _template_region(text)
-    assert re.search(r"counts \*\*codepoints, not bytes\*\*", region)
-    assert "utf8bytelength" in region  # named as what a byte bound would require
+    assert (
+        text.count("at most 200 characters") >= 1
+    )  # schema table; gate prose moved to lib/
+    common = (skill_path.parent / "lib" / "release-common.sh").read_text()
+    assert "counts codepoints, not bytes" in common
+    assert "utf8bytelength" in common  # named as what a byte bound would require
     # The gate itself still uses `length` — the doc was wrong, not the gate.
-    assert "(length <= 200)" in region
+    assert "(length <= 200)" in common
+    # Behaviour: 200 multibyte characters (~800 bytes) pass, 201 fail.
+    at_bound = json.dumps({"excluded_sections": ["### " + "é" * 196]})
+    over_bound = json.dumps({"excluded_sections": ["### " + "é" * 197]})
+    assert _release_lib_validate(skill_path, at_bound)[0]
+    assert _release_lib_validate(skill_path, over_bound) == (
+        False,
+        "excluded-sections-shape",
+    )
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2551,7 +2806,7 @@ def test_release_step3_title_recovery_is_parametrized_by_title_format(
     not necessarily equal to the active template) -- update the pinned
     phrase accordingly.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
 
     assert re.search(
@@ -2580,7 +2835,7 @@ def test_release_single_head_resolution_rule_enumerates_every_site(
     named Steps 5/6 and A2's current-HEAD anchor but omitted A2's marker-absent
     fallback and A2.5, both of which reference the resolved current-HEAD commit.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     enumeration_start = region.index("The same single-resolution rule applies")
@@ -2591,7 +2846,7 @@ def test_release_single_head_resolution_rule_enumerates_every_site(
     assert "marker-absent fallback" in enumeration
     assert "A2.5" in enumeration
 
-    a25_start = text.index("### Step A2.5: No-Template Convention Detection")
+    a25_start = _anchor_at(text, "step-a2-5")
     a25 = text[a25_start:]
     fresh_resolution = a25.index("**Fresh `HEAD` resolution is the first action")
     scope_description = a25.index("This step runs only inside `/release audit`")
@@ -2610,7 +2865,7 @@ def test_release_template_presence_probe_separates_absent_from_error(
     could not be implemented by it. `git ls-tree` is tri-state and returns the
     mode in the same read, matching A2's anchor gate.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
 
     assert "git ls-tree '<TEMPLATE_HEAD_COMMIT>' -- .release-template.json" in region
     assert "git cat-file -e '<TEMPLATE_HEAD_COMMIT>" not in region
@@ -2637,9 +2892,9 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
     PATH and ambient repo discovery, and a subdirectory/env-override invocation
     could stat a different repository than Step 2 later locks.
     """
-    region = _template_region(skill_path.read_text())
+    region = _template_region(_release_text(skill_path))
     preamble = region[
-        region.index("### Step 1b") : region.index("**Resolve `HEAD` once")
+        _anchor_at(region, "step-1b") : region.index("**Resolve `HEAD` once")
     ]
 
     # The bootstrap is stated up front, before item 2's first `git` call.
@@ -2652,6 +2907,31 @@ def test_release_step1b_bootstraps_pinned_context_before_its_first_launch(
     # The concrete hazard it closes is named, not merely gestured at.
     assert re.search(r"ambient `PATH`", preamble)
     assert re.search(r"invoked from a subdirectory", preamble)
+    # Phase 2 (grilled decision 17): the invariant names the script launch as
+    # a verification boundary and the script re-checks its injected pins.
+    text = _release_text(skill_path)
+    assert "**Script-launch verification boundary:**" in text
+    assert "`RELEASE_JQ`, `RELEASE_GIT`" in text
+    result = subprocess.run(
+        [
+            str(_release_lib_script(skill_path)),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "present-tracked-clean",
+            "--head-commit",
+            "present",
+            "--mode",
+            "100644",
+            "--head-sha",
+            "0" * 40,
+        ],
+        input=b"{}",
+        capture_output=True,
+        env={k: v for k, v in os.environ.items() if k != "RELEASE_JQ"},
+        check=False,
+    )
+    assert result.returncode == 2
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2664,7 +2944,7 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     untemplated repo without `jq` stopped, contradicting the byte-for-byte
     absence no-op.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     item_1 = region[
@@ -2688,6 +2968,27 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     assert '`jq` is deliberately absent from that unconditional "at minimum" list' in (
         pinned
     )
+    # Phase 2 (grilled decision 18): RELEASE_JQ may be unset only when the
+    # template is absent; the extracted script keeps that no-op byte-identical.
+    untemplated = subprocess.run(
+        [
+            str(_release_lib_script(skill_path)),
+            "--site",
+            "step1b-validate",
+            "--worktree",
+            "absent",
+            "--head-commit",
+            "absent",
+            "--head-sha",
+            "0" * 40,
+        ],
+        input=b"",
+        capture_output=True,
+        env={k: v for k, v in os.environ.items() if k != "RELEASE_JQ"},
+        check=False,
+    )
+    assert untemplated.returncode == 0
+    assert json.loads(untemplated.stdout)["decision"] == "absent-noop"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -2701,7 +3002,7 @@ def test_release_raw_template_transport_rule_names_a_permitted_mechanism(
     permitted transport at all for gates 2-8. An unsatisfiable rule fails open:
     the easiest improvisations are the banned injection vectors.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _template_region(text)
 
     # The blanket ban is gone; only a path-addressed re-read is forbidden.
@@ -2732,25 +3033,39 @@ def test_release_raw_template_transport_rule_names_a_permitted_mechanism(
 def test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable(
     skill_path: Path,
 ) -> None:
-    """Round-6 finding #3: a marker line with uppercase hex (or any other
-    non-`[0-9a-f]` content) matched neither the strict 40-hex nor the loose
-    hex pattern, so it reached the marker-absent branch and could classify `ok`
-    against the current template or canonical shape.
+    """Round-6 finding #3 (Phase 2 retarget for the shape-only pattern half):
+    a marker line with uppercase hex (or any other non-`[0-9a-f]` content)
+    matched neither the strict 40-hex nor the loose hex pattern, so it
+    reached the marker-absent branch and could classify `ok` against the
+    current template or canonical shape. Assert against
+    resolve-template-marker.sh's own shape-only pattern and behaviour, not
+    restated SKILL.md prose; the "Marker-shaped but unparseable" sub-bullet
+    below is a sibling list item this branch's shrink does not touch, so its
+    assertions stay against SKILL.md prose.
     """
-    a2 = _a2_region(skill_path.read_text())
+    script_text = _resolve_template_marker_script(skill_path).read_text()
+    a2 = _a2_region(_release_text(skill_path))
 
-    # A third, shape-only pattern exists and is a superset of the other two.
-    assert "`^<!-- release-template-sha:.*-->$`" in a2
-    assert re.search(r"strict superset of both\s+patterns above", a2) or (
-        "strict superset of both patterns above" in a2
+    # A third, shape-only pattern exists in the script and is a superset of
+    # the strict/loose patterns.
+    assert "^<!-- release-template-sha:.*-->$" in script_text
+
+    uppercase = "Body.\n\n<!-- release-template-sha: ABCDEF0123 -->\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", uppercase)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert (
+        decision["failed_gate"]
+        == "marker present but hash is not lowercase hexadecimal"
     )
-    assert "ABCDEF0123" in a2  # the uppercase-hex example that motivated it
 
-    # "marker absent" is redefined against the shape-only pattern.
+    # Zero shape-only matches at all is genuinely absent, never unresolvable.
+    absent = _resolve_template_marker_recovery(skill_path, "v1.0.0", "Body.\n")
+    assert absent["decision"] != "template-marker-unresolvable"
+
+    # "marker absent" is redefined against the shape-only pattern in the
+    # sibling "Marker absent" sub-bullet (untouched by the shrink above); the
+    # behavioural absent-vs-unresolvable proof above is this bullet's half.
     assert "**Marker absent (zero matches of all three patterns" in a2
-    assert re.search(
-        r'"marker absent" means zero \*shape-only\* matches, not merely', a2
-    )
 
     # The new classification bullet exists and fails closed.
     unparseable = a2[a2.index("  - **Marker-shaped but unparseable") :][:900]
@@ -2767,15 +3082,17 @@ def test_release_excluded_sections_gate_rejects_del_byte(skill_path: Path) -> No
     only rejected `\\x00-\\x1F`, so DEL (0x7F) passed and was carried into Step 3
     heading matching and Step 4 confirmation output.
     """
-    text = skill_path.read_text()
-    region = _template_region(text)
+    text = _release_text(skill_path)
+    common = (skill_path.parent / "lib" / "release-common.sh").read_text()
 
-    assert r'test("[\\x00-\\x1F\\x7F]")' in region
-    assert r'test("[\\x00-\\x1F]")' not in text
-    assert "nor `DEL` (`\\x7F`)" in region
+    assert r'test("[\\x00-\\x1F\\x7F]")' in common
+    assert r'test("[\\x00-\\x1F]")' not in common
+    assert _release_lib_validate(
+        skill_path, json.dumps({"excluded_sections": ["### Notes\x7f"]})
+    ) == (False, "excluded-sections-shape")
     # The schema table states the same widened class.
     canonical_format = text[
-        text.index("## Canonical Format") : text.index("## Single-Version Mode")
+        _anchor_at(text, "canonical-format") : _anchor_at(text, "single-version-mode")
     ]
     assert "`DEL` `\\x7F`" in canonical_format
     assert "no newline/control bytes" not in canonical_format
@@ -2788,9 +3105,13 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     """Step 3 and A2 agree on marker position and authenticated consumption.
 
     Step 3 tries the unmodified body first and strips only a bound strict
-    marker, while A2's broader search still fails closed for audit.
+    marker, while A2's broader search still fails closed for audit. Consumer
+    half 2 (Phase 2 retarget): A2's final-line requirement is asserted
+    behaviourally against resolve-template-marker.sh, not restated SKILL.md
+    prose — Step 3's half is untouched by that branch's shrink and stays
+    against prose.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
 
     # Consumer half 1: the strip now orders its candidates, unmodified first.
@@ -2803,11 +3124,15 @@ def test_release_marker_produce_consume_positions_are_symmetric(
     assert "strictly valid and successfully bound" in step_3
     assert "recovery-marker-ambiguous" in step_3
 
-    # Consumer half 2: A2's strict search requires the pinned final position.
-    a2 = _a2_region(text)
-    assert "must be the body's final line**" in a2
-    assert "marker-shaped line is not the body's final line" in a2
-    assert "produce/consume position asymmetry" in a2
+    # Consumer half 2: A2's strict search requires the pinned final position
+    # — a strict marker present but NOT the body's final line must classify
+    # unresolvable with the documented reason, never marker-absent and never
+    # a silent bind.
+    sha = "d" * 40
+    not_final = f"<!-- release-template-sha: {sha} -->\n\nTrailer.\n"
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", not_final)
+    assert decision["decision"] == "template-marker-unresolvable"
+    assert decision["failed_gate"] == "marker-shaped line is not the body's final line"
 
 
 def test_jq_runner_skips_cleanly_when_jq_is_missing(monkeypatch) -> None:
@@ -2846,7 +3171,7 @@ def test_release_marker_strip_ordering_is_scoped_to_byte_exact_paths(
     `compare_line_label: "none"` with a CHANGELOG section carrying no `###`
     subsection, where the boundary list reduces to EOF.
     """
-    step_3 = _step3_region(skill_path.read_text())
+    step_3 = _step3_region(_release_text(skill_path))
 
     # The ordering rule is explicitly scoped to the byte-exact paths.
     assert "**byte-exact** recovery and comparison path" in step_3
@@ -2871,7 +3196,7 @@ def test_release_audit_a2_5_first_release_compare_line_is_unknown_not_none(
     compare lines and suppressed the `no-template-convention-detected`
     proposal that should have fired.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
 
     # The exclusion is stated on the field it applies to, keyed to Step A2's
     # own PREV oracle (round-8 finding #1 corrected the oracle; see
@@ -2906,7 +3231,7 @@ def test_release_a3_legend_includes_template_marker_unresolvable(
     it, so counts could never reconcile with rows. A2's own Known Limitations
     say older re-synced releases drift into this state over time.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     legend_lines = [
         line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
     ]
@@ -2945,7 +3270,7 @@ def test_release_a3_legend_letters_are_per_row_counts(
     no Version key -- there is no row a `V` count could tally, so the letter
     had no denominator. It is reported as a binary line instead.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     legend_lines = [
         line for line in text.splitlines() if line.startswith("N ok, M missing-tag")
     ]
@@ -2978,7 +3303,7 @@ def test_release_audit_a2_records_prev_for_a2_5_reuse(
     explicitly retains `databaseId`/`name`/`body` but said nothing about the
     PREV it computes. A value nothing is told to keep cannot be reused.
     """
-    a2 = _a2_region(skill_path.read_text())
+    a2 = _a2_region(_release_text(skill_path))
     bullet = a2[a2.index("- **`ok` vs. `drifted`**") :]
 
     record_idx = bullet.index("**Record this resolved Audit PREV")
@@ -3006,7 +3331,7 @@ def test_release_audit_a2_5_compare_line_determinacy_is_a_conjunction(
     toward emitting a proposal instead of suppressing one. The predicate is
     now a conjunction: no PREV *and* no compare line in the body.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
             "- `excluded_sections` —"
@@ -3040,8 +3365,8 @@ def test_release_step6_prev_drift_recomposes_trailer_not_snapshot(
     feeds the trailer only; implying otherwise would have an executing agent
     hash a value item 4 never defined as an input.
     """
-    text = skill_path.read_text()
-    step_6 = text[text.index("### Step 6: Create or Edit the Release") :]
+    text = _release_text(skill_path)
+    step_6 = text[_anchor_at(text, "step-6") :]
     para_start = step_6.index("**Always refresh the complete inventory and recompute")
     para = step_6[para_start : step_6.index("\n\n", para_start)]
 
@@ -3068,8 +3393,8 @@ def test_release_step6_prev_drift_restarts_all_identities_before_confirmation(
     skill_path: Path,
 ) -> None:
     """A PREV race invalidates the whole Step 6 preflight, not only the trailer."""
-    text = skill_path.read_text()
-    step_6 = text[text.index("### Step 6: Create or Edit the Release") :]
+    text = _release_text(skill_path)
+    step_6 = text[_anchor_at(text, "step-6") :]
     restart_start = step_6.index("**A PREV change is a full Step 6 restart")
     restart = step_6[restart_start : step_6.index("\n\n", restart_start)]
 
@@ -3094,7 +3419,7 @@ def test_release_audit_a2_5_gh_call_claim_is_self_contained(
     `collections.Counter` inventory assertion, unresolvable to an agent
     executing the skill, which never sees the test file.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
     idx = region.index("**No new `gh` calls are introduced by this step**")
     claim = region[idx : idx + 300]
@@ -3120,7 +3445,7 @@ def test_release_audit_a2_5_prev_exclusion_uses_a2_oracle_not_a1_union(
     was read as a determinate disagreeing `"none"` — reintroducing exactly the
     suppression bug round 7 added the carve-out to close.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `compare_line_label` —")
     bullet_end = region.index("- `excluded_sections` —", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3154,16 +3479,22 @@ def test_release_step3_marker_strip_uses_a2_shape_only_pattern(
     onto the recovered body by the headed-summary boundary scan, contradicting
     Step 3 item 1's own invariant that a marker-shaped line can never survive
     verbatim into a re-synced body. Both consumers of the marker grammar must
-    use the same shape-only pattern.
+    use the same shape-only pattern. Phase 2 retarget: A2's half of that
+    agreement is asserted against resolve-template-marker.sh's literal
+    pattern, not restated SKILL.md prose; Step 3's half is untouched by that
+    branch's shrink and stays against prose.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
-    a2 = _a2_region(text)
+    script_text = _resolve_template_marker_script(skill_path).read_text()
 
     shape_only = "`^<!-- release-template-sha:.*-->$`"
-    # Both consumers name the identical shape-only pattern.
+    # Step 3's prose names the shape-only pattern...
     assert shape_only in step_3, "Step 3 item 1's strip must use the shape-only pattern"
-    assert shape_only in a2, "Step A2 must still search the shape-only pattern"
+    # ...and the script that now owns A2's search uses the identical grammar.
+    assert "'^<!-- release-template-sha:.*-->$'" in script_text, (
+        "resolve-template-marker.sh must still search the same shape-only pattern"
+    )
     strip_paragraph = step_3[step_3.index("Try the unmodified body first") :]
     strip_paragraph = strip_paragraph[: strip_paragraph.index("\n\n")]
     assert "[0-9a-f]{40}" in strip_paragraph
@@ -3183,7 +3514,7 @@ def test_release_marker_shaped_unbound_body_is_preserved_as_explicit_drift(
     unmodified body remains available for exact recovery and the ambiguity is
     surfaced instead of being discarded or converted into a hard stop.
     """
-    step_3 = _step3_region(skill_path.read_text())
+    step_3 = _step3_region(_release_text(skill_path))
     recovery = step_3[step_3.index("Try the unmodified body first") :]
     recovery = recovery[: recovery.index("\n\n")]
 
@@ -3209,7 +3540,7 @@ def test_release_audit_a2_5_excluded_sections_has_structural_absence_carve_out(
     `no-template-convention-detected` proposal for a repo that does
     consistently exclude the section wherever exclusion is possible.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `excluded_sections` —")
     bullet_end = region.index("Any disagreement across the candidates", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3260,9 +3591,9 @@ def test_release_audit_a1_3_names_all_five_per_candidate_json_fields(
     immutable identity, and Step A4 compares against it. The field list must
     match what A2/A4 actually require.
     """
-    text = skill_path.read_text()
-    step_a1 = text.index("### Step A1: Gather the Three Inventories")
-    step_a2 = text.index("### Step A2: Classify Every Version", step_a1)
+    text = _release_text(skill_path)
+    step_a1 = _anchor_at(text, "step-a1")
+    step_a2 = _anchor_at(text, "step-a2", step_a1)
     a1 = text[step_a1:step_a2]
     a2 = _a2_region(text)
 
@@ -3287,8 +3618,8 @@ def test_release_audit_a4_exhaustive_non_fixable_list_is_actually_exhaustive(
     so this was a false completeness claim rather than an open behavioral gap —
     but a future editor would trust it.
     """
-    text = skill_path.read_text()
-    a4 = text[text.index("### Step A4: Fix (Opt-In, One Version at a Time)") :]
+    text = _release_text(skill_path)
+    a4 = text[_anchor_at(text, "step-a4") :]
     claim_start = a4.index("The non-fixable inventory exceptions are exhaustive")
     claim = a4[claim_start : a4.index("\n\n", claim_start)]
 
@@ -3321,7 +3652,7 @@ def test_release_skill_uses_one_step_item_reference_notation(
     numeric item references now use the file's already-dominant `Step N item M`
     form; `Step A2.5` stays untouched because it *is* a real heading.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
 
     headings = set(re.findall(r"^### (Step [^\n:]+):", text, re.MULTILINE))
     bad = {
@@ -3350,7 +3681,7 @@ def test_release_audit_a2_5_gate_sentence_covers_both_carve_outs(
     still suppressed the proposal at the gate — re-opening the exact bug the
     carve-out was added to close.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     gate_start = region.index("Any disagreement across the candidates")
     gate = region[
         gate_start : region.index("If the qualifying candidates agree", gate_start)
@@ -3382,7 +3713,7 @@ def test_release_audit_a2_5_excluded_sections_has_evidence_floor(
     evidence — contradicting the threshold paragraph's claim that requiring all
     3 candidates is what makes the inference safe.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet_start = region.index("- `excluded_sections` —")
     bullet_end = region.index("Any disagreement across the candidates", bullet_start)
     bullet = region[bullet_start:bullet_end]
@@ -3411,18 +3742,40 @@ def test_release_shape_only_marker_pattern_is_single_line(
     semantics. Under DOTALL, a marker-shaped opening could pair with a `-->`
     many lines later, letting Step 3's "trailing line" strip swallow legitimate
     body content. Both sites that specify the pattern must pin it to one line.
+    Phase 2 retarget: A2's half is asserted against resolve-template-marker.sh
+    directly (it uses line-based `grep`, never `-P`/`-z`, so `.` structurally
+    cannot span lines) plus a behavioural proof, not restated SKILL.md prose;
+    Step 3's half is untouched by that branch's shrink and stays against
+    prose.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     step_3 = _step3_region(text)
-    a2 = _a2_region(text)
 
-    for region_name, region in (("Step 3", step_3), ("Step A2", a2)):
-        idx = region.index("`^<!-- release-template-sha:.*-->$`")
-        window = region[idx : idx + 400]
-        assert "single physical line" in window, region_name
-        assert "`.` never matching LF" in window, region_name
-        # The newline-explicit equivalent is spelled out.
-        assert "`^<!-- release-template-sha:[^\\n]*-->$`" in window, region_name
+    idx = step_3.index("`^<!-- release-template-sha:.*-->$`")
+    window = step_3[idx : idx + 400]
+    assert "single physical line" in window
+    assert "`.` never matching LF" in window
+    # The newline-explicit equivalent is spelled out.
+    assert "`^<!-- release-template-sha:[^\\n]*-->$`" in window
+
+    script_text = _resolve_template_marker_script(skill_path).read_text()
+    shape_line = next(
+        line
+        for line in script_text.splitlines()
+        if "release-template-sha:.*-->" in line
+    )
+    assert "grep -a -c -E" in shape_line
+    assert " -P" not in shape_line and " -z" not in shape_line
+
+    # Behavioural proof: an opening marker-shaped prefix on one line and a
+    # `-->` several lines later must NOT be treated as a shape-only match
+    # (which DOTALL would allow) — each physical line lacks a closing `-->`
+    # of its own, so this classifies absent, not unresolvable.
+    multiline_fake = (
+        "<!-- release-template-sha: not-a-real-marker\nsome body text\nmore text -->\n"
+    )
+    decision = _resolve_template_marker_recovery(skill_path, "v1.0.0", multiline_fake)
+    assert decision["decision"] != "template-marker-unresolvable"
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -3435,7 +3788,7 @@ def test_release_audit_a2_5_reuses_a2_prev_instead_of_redefining_it(
     diverged in round 7. Every A2.5 candidate is an A2 candidate already
     classified, so A2's PREV is already computed and must be reused.
     """
-    text = skill_path.read_text()
+    text = _release_text(skill_path)
     region = _dry_run_search_region(text)
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
@@ -3463,7 +3816,7 @@ def test_release_audit_a2_5_documents_audit_time_prev_limitation(
     PREV exists, so the gap is documented as a known limitation — with its
     concrete failure scenario — rather than silently left open.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     bullet = region[
         region.index("- `compare_line_label` —") : region.index(
             "- `excluded_sections` —"
@@ -3487,7 +3840,7 @@ def test_release_audit_a2_5_opening_states_its_scope_once(
     """Round-9 finding #6: A2.5's opening paragraph stated the same
     Audit-Mode-only scoping fact twice inside one sentence.
     """
-    region = _dry_run_search_region(skill_path.read_text())
+    region = _dry_run_search_region(_release_text(skill_path))
     opening = region[region.index("This step runs only inside `/release audit`") :][
         :1600
     ]
@@ -3510,7 +3863,7 @@ def test_release_audit_a2_none_compare_check_documents_body_wide_scope(
     `"none"` would be laxer about the same line than a set label is. The
     rationale is now stated in the text so it is not re-litigated as a bug.
     """
-    a2 = _a2_region(skill_path.read_text())
+    a2 = _a2_region(_release_text(skill_path))
     idx = a2.index('`"none"` requires no `**Full diff:**`')
     window = a2[idx : idx + 1200]
 
@@ -3519,3 +3872,579 @@ def test_release_audit_a2_none_compare_check_documents_body_wide_scope(
     # The accepted cost is named explicitly, in the fail-loud direction.
     assert "a visible flag an operator can read the evidence for and dismiss" in window
     assert "never a silent wrong `ok`" in window
+
+
+# --- Scratch-copy rename regression (release-skill restructure, Phase 1.5) ---
+# Rename every anchored heading / list-item line in a scratch *text* copy and
+# assert the anchor-keyed helpers still resolve the same regions. The Claude
+# mirror only: the Codex mirror's anchors land in Phase 3.5.
+
+CLAUDE_RELEASE_SKILL = RELEASE_SKILLS[0]
+_ANCHOR_LINE = re.compile(r"^[ \t]*<!-- skein:([a-z0-9-]+) -->$", re.MULTILINE)
+
+
+def _anchor_names(text: str) -> list[str]:
+    return _ANCHOR_LINE.findall(text)
+
+
+def _rename_anchored_lines(text: str) -> tuple[str, set[str]]:
+    """Rewrite the line after every anchor comment; return (text, renamed lines)."""
+    lines = text.split("\n")
+    renamed: set[str] = set()
+    for index, line in enumerate(lines):
+        if _ANCHOR_LINE.match(line) and index + 1 < len(lines):
+            target = lines[index + 1]
+            indent = target[: len(target) - len(target.lstrip())]
+            lines[index + 1] = f"{indent}RENAMED-{index} {target.lstrip()}"
+            renamed.add(lines[index + 1])
+    return "\n".join(lines), renamed
+
+
+def test_release_skill_anchor_names_are_unique_and_grammar_safe() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    names = _anchor_names(text)
+    assert names, "the Claude mirror must carry skein region anchors"
+    assert len(names) == len(set(names)), "anchor names must be unique"
+    # The anchor grammar must not resemble the release-template-sha marker family.
+    for match in re.finditer(r"<!-- skein:[^>]*-->", text):
+        assert "-sha:" not in match.group(0)
+
+
+def test_release_skill_helpers_survive_heading_and_item_renames() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    scratch, renamed = _rename_anchored_lines(text)
+    assert scratch != text and renamed
+
+    # Every anchor still resolves, in the same order, after every anchored
+    # line was renamed: the helpers depend on the anchor, not the heading text.
+    names = _anchor_names(text)
+    assert _anchor_names(scratch) == names
+    for name in names:
+        assert _anchor_at(scratch, name) > 0
+
+    # The named region helpers return the same region (modulo the renamed
+    # lines themselves) from the renamed scratch text.
+    for helper in (_template_region, _a2_region, _step3_region):
+        before, after = helper(text).split("\n"), helper(scratch).split("\n")
+        assert len(before) == len(after), helper.__name__
+        for old_line, new_line in zip(before, after):
+            assert old_line == new_line or new_line in renamed, helper.__name__
+
+    # Anchor-to-anchor regions likewise.
+    for start, end in pairwise(names):
+        before = _region_between(text, start, end).split("\n")
+        after = _region_between(scratch, start, end).split("\n")
+        assert len(before) == len(after), (start, end)
+        for old_line, new_line in zip(before, after):
+            assert old_line == new_line or new_line in renamed, (start, end)
+
+
+@pytest.mark.parametrize("name", _anchor_names(CLAUDE_RELEASE_SKILL.read_text()))
+def test_release_skill_helper_fails_loudly_when_its_anchor_is_mutated(
+    name: str,
+) -> None:
+    """Mutation evidence: renaming the anchor comment itself must break the
+    retargeted lookup with a named AssertionError, never a silent pass."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    mutated = text.replace(_anchor_marker(name), f"<!-- skein:{name}x -->")
+    with pytest.raises(AssertionError, match=re.escape(_anchor_marker(name))):
+        _anchor_at(mutated, name)
+
+
+def test_release_plan_helpers_survive_heading_renames() -> None:
+    text = RELEASE_PLAN.read_text()
+    scratch = text.replace("## Requirements", "## Renamed Requirements").replace(
+        "## Implementation Checklist", "## Renamed Checklist"
+    )
+    assert scratch != text
+    for name in (
+        "plan-requirements",
+        "plan-requirement-2",
+        "plan-requirement-3",
+        "plan-implementation-checklist",
+    ):
+        assert _plan_anchor_at(scratch, name) == _plan_anchor_at(text, name) + (
+            len("## Renamed Requirements") - len("## Requirements")
+            if _plan_anchor_at(text, name) > _plan_anchor_at(text, "plan-requirements")
+            else 0
+        )
+    mutated = text.replace("<!-- skein:plan-requirement-2 -->", "<!-- skein:x -->")
+    with pytest.raises(AssertionError, match="plan-requirement-2"):
+        _plan_anchor_at(mutated, "plan-requirement-2")
+
+
+def test_readme_release_row_edit_fails_with_a_named_assertion_error() -> None:
+    """README's anchor is the `| release |` row prefix plus exact cell
+    equality: an edited cell must fail loudly as an AssertionError (not a bare
+    StopIteration, not a silent pass); an untouched copy passes."""
+    text = README.read_text()
+    _assert_readme_release_row_contract(text)
+    edited = text.replace("Yes (user-invoked only)", "Yes (user invoked only)", 1)
+    assert edited != text
+    with pytest.raises(AssertionError):
+        _assert_readme_release_row_contract(edited)
+
+
+# --- Progressive-disclosure boundary (release-skill restructure, Phase 3) ---
+# Static assertions over the RAW Claude SKILL.md (never the reference-expanded
+# text): they pin WHERE each reference is named, not what it says. The Codex
+# mirror joins in Phase 3.5.
+
+_TEMPLATE_REF = "references/template-subsystem.md"
+_INFERENCE_REF = "references/audit-inference.md"
+CLAUDE_REFERENCES = CLAUDE_RELEASE_SKILL.parent / "references"
+_REFERENCE_FILES = ("template-subsystem.md", "audit-inference.md")
+
+
+def test_release_template_reference_is_named_exactly_twice_at_its_gated_sites() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    assert text.count(_TEMPLATE_REF) == 2
+    branch = _region_between(
+        text, "step-1b-templated-branch", "step-1b-templated-branch-end"
+    )
+    marker_bearing = _region_between(text, "a2-marker-bearing", "a2-marker-bearing-end")
+    assert branch.count(_TEMPLATE_REF) == 1
+    assert marker_bearing.count(_TEMPLATE_REF) == 1
+
+
+def test_release_audit_inference_reference_is_named_once_inside_audit_mode() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    assert text.count(_INFERENCE_REF) == 1
+    assert (
+        _region_between(text, "audit-mode", "audit-mode-end").count(_INFERENCE_REF) == 1
+    )
+    assert _region_between(text, "step-a2-5", "step-a3").count(_INFERENCE_REF) == 1
+
+
+def test_release_untemplated_path_never_names_the_template_reference() -> None:
+    """Decision 22 boundary: outside the two gated sites the template reference
+    is never named, so an untemplated cut has no pointer to follow."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    stripped = text
+    for start, end in (
+        ("step-1b-templated-branch", "step-1b-templated-branch-end"),
+        ("a2-marker-bearing", "a2-marker-bearing-end"),
+    ):
+        stripped = stripped.replace(_region_between(stripped, start, end), "")
+    assert _TEMPLATE_REF not in stripped
+    assert "template-subsystem" not in stripped
+
+
+def test_release_a2_5_is_in_the_default_run_and_outside_infer_template() -> None:
+    """Decision 2 and 16: A2.5's step marker is part of the default audit run
+    and is not textually inside the `--infer-template` sub-region."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    audit = _region_between(text, "audit-mode", "audit-mode-end")
+    assert _anchor_marker("step-a2-5") in audit
+    infer = _region_between(audit, "infer-template-entry", "infer-template-entry-end")
+    assert _anchor_marker("step-a2-5") not in infer
+    default_run = re.search(
+        r"\*\*Default `/release audit` run sequence:\*\*[^\n]*", audit
+    )
+    assert default_run is not None
+    assert "Step A2.5" in default_run.group(0)
+    assert default_run.group(0) not in infer
+    # The standalone entry re-enters A2 by prose, adding no script call line.
+    assert "resolve-template-marker.sh" not in infer
+
+
+def test_release_audit_inference_reference_is_not_in_the_templated_branch() -> None:
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    for start, end in (
+        ("step-1b-templated-branch", "step-1b-templated-branch-end"),
+        ("a2-marker-bearing", "a2-marker-bearing-end"),
+        ("canonical-format", "single-version-mode"),
+    ):
+        assert "audit-inference" not in _region_between(text, start, end)
+
+
+def test_release_infer_template_is_listed_in_frontmatter_usage_and_readme() -> None:
+    """Pins the `release` subcommand/flag list so the standalone entry point
+    cannot pass vacuously (the catalogue-count test pins no flag)."""
+    text = CLAUDE_RELEASE_SKILL.read_text()
+    frontmatter = text.split("\n---\n", 1)[0]
+    assert "audit [--infer-template]" in frontmatter
+    usage = text[text.index("## Usage") : text.index("<!-- skein:canonical-format -->")]
+    assert "`/release audit --infer-template`" in usage
+    release_row = next(
+        line
+        for line in README.read_text().splitlines()
+        if line.startswith("| release |")
+    )
+    assert "--infer-template" in release_row
+
+
+def test_release_reference_files_carry_no_path_anchor_and_have_both_sections() -> None:
+    for name in _REFERENCE_FILES:
+        body = (CLAUDE_REFERENCES / name).read_text()
+        assert "CLAUDE_PLUGIN_ROOT" not in body
+        assert "SKILL_DIR" not in body
+    tmpl = (CLAUDE_REFERENCES / "template-subsystem.md").read_text()
+    for section in (
+        "ref-template-schema",
+        "ref-template-read-gates",
+        "ref-template-a2-anchors",
+    ):
+        assert _reference_section(tmpl, section)
+    inference = (CLAUDE_REFERENCES / "audit-inference.md").read_text()
+    assert "### Script-stdout fields" in inference
+    assert "### Fetch-side fields" in inference
+
+
+@pytest.mark.parametrize("name", _REFERENCE_FILES)
+def test_release_reference_helpers_survive_heading_renames(name: str) -> None:
+    text = (CLAUDE_REFERENCES / name).read_text()
+    scratch, renamed = _rename_anchored_lines(text)
+    assert scratch != text and renamed
+    for anchor in _REFERENCE_SECTION_ANCHOR.findall(text):
+        before = _reference_section(text, anchor).split("\n")
+        after = _reference_section(scratch, anchor).split("\n")
+        assert len(before) == len(after), anchor
+        for old_line, new_line in zip(before, after):
+            assert old_line == new_line or new_line in renamed, anchor
+        mutated = text.replace(_anchor_marker(anchor), f"<!-- skein:{anchor}x -->")
+        with pytest.raises(AssertionError, match=re.escape(_anchor_marker(anchor))):
+            _reference_section(mutated, anchor)
+
+
+_REFERENCE_MUTATIONS = (
+    (
+        "template-subsystem.md",
+        test_release_template_schema_defines_all_four_fields,
+        ('"compare_line_label"',),
+        '"compare_lbl"',
+    ),
+    (
+        "template-subsystem.md",
+        test_release_raw_template_bytes_have_an_explicit_shell_transport_rule,
+        ("never through a heredoc",),
+        "sometimes through a heredoc",
+    ),
+    (
+        "template-subsystem.md",
+        test_release_audit_a2_documents_dual_anchor_limitations,
+        ("clone-dependent", "clone-completeness"),
+        "clone-mutated",
+    ),
+    (
+        "audit-inference.md",
+        test_release_audit_a2_5_candidate_set_is_defined_mechanically,
+        ("Step A2 actually resolved a classification source",),
+        "Step A2 resolved a source",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("ref_name", "retargeted_test", "olds", "new"),
+    _REFERENCE_MUTATIONS,
+    ids=[m[1].__name__ for m in _REFERENCE_MUTATIONS],
+)
+def test_release_retargeted_assertions_fail_under_reference_mutation(
+    tmp_path: Path, ref_name: str, retargeted_test, olds: tuple[str, ...], new: str
+) -> None:
+    """Mutation evidence: each retargeted assertion passes on the shipped
+    Claude skill directory and fails once its reference content is mutated."""
+    scratch = tmp_path / "release"
+    shutil.copytree(CLAUDE_RELEASE_SKILL.parent, scratch)
+    scratch_skill = scratch / "SKILL.md"
+    retargeted_test(scratch_skill)
+    ref = scratch / "references" / ref_name
+    body = ref.read_text()
+    for old in olds:
+        assert old in body, f"{old!r} not in {ref_name}: mutation would be a no-op"
+        body = body.replace(old, new)
+    ref.write_text(body)
+    with pytest.raises(AssertionError):
+        retargeted_test(scratch_skill)
+
+
+# --- Coverage-narrowing checks (release-skill restructure, Phase 4) ----------
+# Complements `just release-baseline-check` (test-id superset): ancestry pins on
+# the three baselines, per-region byte-length tolerance against the last
+# appended row, bash-suite enumeration, and the lagging-window-closed
+# assertion. Missing or shallow history is a hard failure, never a skip.
+# The ancestry pins are removed with `.release-baseline-meta.json` and
+# `RELEASE_LAGGING_MIRROR_OK` by the post-merge sunset commit.
+
+PARITY_DIR = ROOT / "tests/parity"
+_TEST_ID_BASELINE = PARITY_DIR / ".release-test-id-baseline.txt"
+_REGION_BASELINE = PARITY_DIR / ".release-region-length-baseline.tsv"
+_BASELINE_META = PARITY_DIR / ".release-baseline-meta.json"
+_CAPTURED_AT = re.compile(r"^#\s*captured-at:\s*([0-9a-f]{7,40})\s*$", re.MULTILINE)
+
+
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+
+
+def _baseline_meta() -> dict[str, str]:
+    assert _BASELINE_META.is_file(), f"missing {_BASELINE_META}"
+    return json.loads(_BASELINE_META.read_text())
+
+
+def _captured_at(path: Path) -> str:
+    assert path.is_file(), f"missing {path}"
+    match = _CAPTURED_AT.search(path.read_text())
+    assert match, f"{path} has no `# captured-at: <sha>` header"
+    return match.group(1)
+
+
+def _assert_strict_ancestor(ancestor: str, descendant: str, label: str) -> None:
+    shallow = _git("rev-parse", "--is-shallow-repository").stdout.strip()
+    assert shallow != "true", (
+        f"{label}: shallow clone cannot resolve commit ancestry "
+        "(CI must checkout with fetch-depth: 0)"
+    )
+    full_a = _git("rev-parse", "--verify", f"{ancestor}^{{commit}}")
+    full_d = _git("rev-parse", "--verify", f"{descendant}^{{commit}}")
+    assert full_a.returncode == 0, f"{label}: unknown commit {ancestor}"
+    assert full_d.returncode == 0, f"{label}: unknown commit {descendant}"
+    assert full_a.stdout.strip() != full_d.stdout.strip(), (
+        f"{label}: {ancestor} must be a STRICT ancestor of {descendant}"
+    )
+    result = _git("merge-base", "--is-ancestor", ancestor, descendant)
+    assert result.returncode == 0, (
+        f"{label}: {ancestor} is not an ancestor of {descendant}"
+    )
+
+
+def test_release_test_id_baseline_predates_phase15() -> None:
+    _assert_strict_ancestor(
+        _captured_at(_TEST_ID_BASELINE),
+        _baseline_meta()["phase15_first_commit"],
+        "test-id baseline captured-at vs phase15_first_commit",
+    )
+
+
+def test_release_region_length_baseline_predates_phase2() -> None:
+    meta = _baseline_meta()
+    _assert_strict_ancestor(
+        _captured_at(_REGION_BASELINE),
+        meta["phase2_first_commit"],
+        "region-length baseline captured-at vs phase2_first_commit",
+    )
+    _assert_strict_ancestor(
+        meta["phase2_first_commit"], "HEAD", "phase2_first_commit vs HEAD"
+    )
+
+
+def test_release_golden_capture_predates_phase2() -> None:
+    meta = _baseline_meta()
+    _assert_strict_ancestor(
+        meta["golden_capture_commit"],
+        meta["phase2_first_commit"],
+        "golden_capture_commit vs phase2_first_commit",
+    )
+
+
+def test_release_golden_recapture_is_descendant_of_original_capture() -> None:
+    """A disclosed golden recapture (decision 14) never predates the
+    original manual capture it corrects — it is a later, separately
+    reviewed commit, not a silent in-phase edit. Absent field is fine:
+    no recapture has happened yet."""
+    meta = _baseline_meta()
+    recapture = meta.get("golden_recapture_commit")
+    if not recapture:
+        return
+    _assert_strict_ancestor(
+        meta["golden_capture_commit"],
+        recapture,
+        "golden_capture_commit vs golden_recapture_commit",
+    )
+    # Mirror test_release_region_length_baseline_predates_phase2's sibling
+    # check: an ancestor-of-*something-earlier* proof alone does not prove the
+    # recapture SHA is reachable from HEAD at all. Without this, an off-branch
+    # or otherwise unreachable SHA that merely happens to descend from
+    # golden_capture_commit would still pass, letting the recapture mechanism
+    # become a silent re-pin escape hatch on decision 14's anti-rebaseline
+    # invariant (a recapture that never actually landed on this branch).
+    _assert_strict_ancestor(recapture, "HEAD", "golden_recapture_commit vs HEAD")
+
+
+def _last_region_rows() -> dict[str, tuple[str, int, str]]:
+    """Last appended row per `region` (any file): (file, byte_length, exempt)."""
+    assert _REGION_BASELINE.is_file(), f"missing {_REGION_BASELINE}"
+    rows: dict[str, tuple[str, int, str]] = {}
+    for line in _REGION_BASELINE.read_text().splitlines():
+        if not line.strip() or line.startswith(("#", "region\t")):
+            continue
+        cells = line.split("\t")
+        assert len(cells) in (3, 4), f"malformed region-length row: {line!r}"
+        region, file, length = cells[0], cells[1], cells[2]
+        exempt = cells[3] if len(cells) == 4 else ""
+        rows[region] = (file, int(length), exempt)
+    assert rows, "region-length baseline has no rows"
+    return rows
+
+
+def _measured_region_length(file: str, region: str) -> int:
+    """Byte length of `region` in `file`: its anchor up to the next anchor in
+    that file (last one: up to `## Worked Example`, else EOF). A reference
+    file's region is the spliced section the region's pointer names."""
+    path = ROOT / file
+    text = path.read_text()
+    name = region
+    if "/references/" in file:
+        splice = {entry[0]: entry[3] for entry in _REFERENCE_SPLICES}
+        assert region in splice, f"no reference section mapped for {region!r}"
+        name = splice[region]
+    begin = _anchor_at(text, name)
+    following = re.compile(r"^[ \t]*<!-- skein:[a-z0-9-]+ -->$", re.MULTILINE).search(
+        text, begin + 1
+    )
+    if following:
+        end = following.start()
+    else:
+        worked = text.find("## Worked Example", begin)
+        end = worked if worked != -1 else len(text)
+    return len(text[begin:end].encode())
+
+
+@pytest.mark.parametrize("mirror", ["plugins/skein/", "plugins/skein-codex/"])
+def test_release_regions_stay_within_tolerance_of_last_baseline_row(
+    mirror: str,
+) -> None:
+    if mirror.endswith("skein-codex/") and "release-skill-md" in _RELEASE_LAGGING_ACK:
+        pytest.skip("release-skill-md lag acknowledged via RELEASE_LAGGING_MIRROR_OK")
+    failures: list[str] = []
+    for region, (file, baseline, exempt) in _last_region_rows().items():
+        if exempt:
+            continue
+        mirrored = file.replace("plugins/skein/", mirror, 1)
+        try:
+            current = _measured_region_length(mirrored, region)
+        except AssertionError as exc:
+            failures.append(f"{region} ({mirrored}): {exc}")
+            continue
+        allowed = max(baseline * 0.10, 20)
+        if current == 0 or abs(current - baseline) > allowed:
+            failures.append(
+                f"{region} ({mirrored}): {current} bytes vs last baseline "
+                f"{baseline} (tolerance {allowed:.0f})"
+            )
+    assert not failures, "region length drifted:\n" + "\n".join(failures)
+
+
+def test_release_reference_sections_have_exactly_one_pointer() -> None:
+    """Every `ref-*` section is claimed by exactly one SKILL.md pointer.
+
+    `_release_text` locates most pointers by the bare file name
+    (`references/template-subsystem.md`), which two different regions both
+    mention, and resolves them with `text.find(needle, region_start)`. If a
+    region's own pointer sentence were deleted, that search would silently run
+    on into a LATER region's pointer and splice the wrong section in — the
+    prose assertions would still pass while SKILL.md no longer names the
+    reference at all. Pin both directions: section anchors present in
+    `references/` match the declared splices exactly, and each pointer resolves
+    inside its own region anchor's span.
+    """
+    skill = ROOT / "plugins/skein/skills/release/SKILL.md"
+    text = skill.read_text()
+    references = skill.parent / "references"
+    assert references.is_dir(), f"missing {references}"
+
+    declared = [section for _, _, _, section in _REFERENCE_SPLICES]
+    assert len(declared) == len(set(declared)), (
+        f"a reference section is claimed by more than one splice: {declared}"
+    )
+    present: list[str] = []
+    for ref in sorted(references.glob("*.md")):
+        present += _REFERENCE_SECTION_ANCHOR.findall(ref.read_text())
+    assert sorted(present) == sorted(declared), (
+        "reference `ref-*` section anchors and SKILL.md splice pointers "
+        f"disagree: present={sorted(present)} declared={sorted(declared)}"
+    )
+
+    anchor_offsets = [
+        match.start()
+        for match in re.finditer(
+            r"^[ \t]*<!-- skein:[a-z0-9-]+ -->$", text, re.MULTILINE
+        )
+    ]
+    pointers: dict[str, int] = {}
+    for region, needle, _ref_name, section in _REFERENCE_SPLICES:
+        start = _anchor_at(text, region)
+        end = next((off for off in anchor_offsets if off > start), len(text))
+        found = text.find(needle, start)
+        assert found != -1, f"pointer {needle!r} missing after anchor {region!r}"
+        assert found < end, (
+            f"the pointer spliced for {section!r} resolves outside region "
+            f"{region!r} — that region no longer names its reference, and the "
+            "splice silently borrowed a later region's pointer"
+        )
+        pointers[section] = found
+    assert len(set(pointers.values())) == len(pointers), (
+        f"two splices resolved to the same SKILL.md pointer occurrence: {pointers}"
+    )
+
+
+def _justfile_recipes() -> dict[str, tuple[list[str], str]]:
+    """Recipe name -> (dependency names, body text)."""
+    recipes: dict[str, tuple[list[str], str]] = {}
+    current: str | None = None
+    header = re.compile(r"^([A-Za-z0-9_-]+)(?:\s+[^:=\n]*)?:(?!=)\s*(.*)$")
+    for line in (ROOT / "justfile").read_text().splitlines():
+        match = header.match(line) if line and not line[0].isspace() else None
+        if match and not line.startswith("#"):
+            current = match.group(1)
+            recipes[current] = (match.group(2).split(), "")
+        elif current and (line[:1].isspace() or not line):
+            deps, body = recipes[current]
+            recipes[current] = (deps, body + line + "\n")
+        elif line and not line.startswith("#"):
+            current = None
+    return recipes
+
+
+def _reachable_from_ci() -> set[str]:
+    recipes = _justfile_recipes()
+    assert "ci" in recipes, "justfile has no `ci` recipe"
+    seen: set[str] = set()
+    stack = ["ci"]
+    while stack:
+        name = stack.pop()
+        if name in seen or name not in recipes:
+            continue
+        seen.add(name)
+        deps, body = recipes[name]
+        stack.extend(deps)
+        for match in re.finditer(r"\bjust\s+([A-Za-z0-9_-]+)", body):
+            stack.append(match.group(1))
+    return seen
+
+
+def test_release_bash_suites_are_all_registered_in_ci() -> None:
+    suites = sorted((ROOT / "tests/release").glob("test-*.sh"))
+    assert suites, "tests/release has no test-*.sh suites"
+    recipes = _justfile_recipes()
+    reachable = _reachable_from_ci()
+    unregistered: list[str] = []
+    for suite in suites:
+        rel = suite.relative_to(ROOT).as_posix()
+        owners = [n for n, (_, body) in recipes.items() if rel in body]
+        if not any(owner in reachable for owner in owners):
+            unregistered.append(rel)
+    assert not unregistered, (
+        "tests/release suites not run by any recipe reachable from `ci:`: "
+        f"{unregistered}"
+    )
+
+
+def test_release_lagging_window_is_closed() -> None:
+    assert "RELEASE_LAGGING_MIRROR_OK" not in os.environ, (
+        "RELEASE_LAGGING_MIRROR_OK must be unset: the lagging window closed in "
+        "Phase 3.5"
+    )
+    assert not _RELEASE_LAGGING_ACK
+    hits: list[str] = []
+    candidates = [ROOT / "justfile", ROOT / ".pre-commit-config.yaml"]
+    candidates += sorted(
+        (ROOT / ".github").rglob("*") if (ROOT / ".github").is_dir() else []
+    )
+    for path in candidates:
+        if path.is_file() and "RELEASE_LAGGING_MIRROR_OK" in path.read_text():
+            hits.append(path.relative_to(ROOT).as_posix())
+    assert not hits, f"RELEASE_LAGGING_MIRROR_OK set/mentioned in: {hits}"

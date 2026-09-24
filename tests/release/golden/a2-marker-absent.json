@@ -1,0 +1,22 @@
+{
+  "case": "untemplated",
+  "decision": "classified",
+  "exit_code": 0,
+  "failed_gate": null,
+  "rows": [
+    {
+      "note": null,
+      "prev": null,
+      "status": "ok",
+      "version": "0.1.0"
+    },
+    {
+      "note": null,
+      "prev": "v0.1.0",
+      "status": "ok",
+      "version": "0.2.0"
+    }
+  ],
+  "script": "resolve-template-marker",
+  "site": "a2-classify"
+}

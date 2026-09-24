@@ -1,0 +1,9 @@
+{
+  "case": "untemplated",
+  "decision": "absent-noop",
+  "exit_code": 0,
+  "failed_gate": null,
+  "rows": null,
+  "script": "read-release-template",
+  "site": "step1b-precondition"
+}

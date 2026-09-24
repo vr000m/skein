@@ -1,0 +1,9 @@
+{
+  "case": "templated",
+  "decision": "environment-failure",
+  "exit_code": 2,
+  "failed_gate": "jq-unresolvable",
+  "rows": null,
+  "script": "read-release-template",
+  "site": "step1b-validate"
+}

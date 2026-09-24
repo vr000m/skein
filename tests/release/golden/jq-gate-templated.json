@@ -1,0 +1,9 @@
+{
+  "case": "templated",
+  "decision": "template-valid",
+  "exit_code": 0,
+  "failed_gate": null,
+  "rows": null,
+  "script": "read-release-template",
+  "site": "step1b-validate"
+}

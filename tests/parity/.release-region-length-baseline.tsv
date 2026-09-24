@@ -1,0 +1,82 @@
+# captured-at: 7a31bf77ce137a85e0e199cd7445b4f13bc4652d
+# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included. `captured-at` anchors ONLY the file's origin commit (Phase 1.5's anchor-landing commit, whose prose is byte-identical to its parent 7983f45dd758b2c763ab000d9a7934a2f05b26b9 apart from the anchor comments themselves) — used by test_release_region_length_baseline_predates_phase2's ancestry pin, not a claim about every row below. This file is APPEND-ONLY (round-3 documentation fix): each subsequent block of rows was measured on the tree of whatever commit last touched that region, not on the captured-at commit's tree; `_last_region_rows()` reads only the LAST row per region, so a later block's rows supersede an earlier block's for that region without deleting it (kept for history). A `#`-prefixed comment immediately above a block names the commit/change that produced it when that context is not otherwise obvious.
+region	file	byte_length	exempt
+canonical-format	plugins/skein/skills/release/SKILL.md	6838	
+single-version-mode	plugins/skein/skills/release/SKILL.md	59	
+step-1	plugins/skein/skills/release/SKILL.md	1034	
+step-1-data-boundary	plugins/skein/skills/release/SKILL.md	723	
+step-1-item-1	plugins/skein/skills/release/SKILL.md	1974	
+step-1b	plugins/skein/skills/release/SKILL.md	11201	
+step-1b-templated-branch	plugins/skein/skills/release/SKILL.md	10510	
+step-1b-templated-branch-end	plugins/skein/skills/release/SKILL.md	1571	
+step-2	plugins/skein/skills/release/SKILL.md	43786	
+step-3	plugins/skein/skills/release/SKILL.md	27382	
+step-4	plugins/skein/skills/release/SKILL.md	13179	
+step-5	plugins/skein/skills/release/SKILL.md	23556	
+step-6	plugins/skein/skills/release/SKILL.md	27840	
+audit-mode	plugins/skein/skills/release/SKILL.md	733	
+step-a1	plugins/skein/skills/release/SKILL.md	1336	
+a1-tags	plugins/skein/skills/release/SKILL.md	4431	
+a1-changelog	plugins/skein/skills/release/SKILL.md	640	
+a1-releases	plugins/skein/skills/release/SKILL.md	2581	
+a1-normalize	plugins/skein/skills/release/SKILL.md	2096	
+step-a2	plugins/skein/skills/release/SKILL.md	9252	
+a2-marker-bearing	plugins/skein/skills/release/SKILL.md	9099	
+a2-marker-bearing-end	plugins/skein/skills/release/SKILL.md	12383	
+step-a2-5	plugins/skein/skills/release/SKILL.md	17687	
+step-a3	plugins/skein/skills/release/SKILL.md	2535	
+step-a4	plugins/skein/skills/release/SKILL.md	5174	
+step-1b	plugins/skein/skills/release/SKILL.md	12110	
+step-1b-templated-branch	plugins/skein/skills/release/SKILL.md	6852	
+step-2	plugins/skein/skills/release/SKILL.md	44254	
+step-3	plugins/skein/skills/release/SKILL.md	28264	
+step-5	plugins/skein/skills/release/SKILL.md	24361	
+step-6	plugins/skein/skills/release/SKILL.md	28535	
+step-a2	plugins/skein/skills/release/SKILL.md	10306	
+a2-marker-bearing-end	plugins/skein/skills/release/SKILL.md	12381	
+# Phase 3: relocated regions (SKILL.md rows shrank; reference rows are the moved prose), new anchors
+canonical-format	plugins/skein/skills/release/SKILL.md	3636	relocated-to-references
+step-1b-templated-branch	plugins/skein/skills/release/SKILL.md	2180	relocated-to-references
+infer-template-entry	plugins/skein/skills/release/SKILL.md	482	
+infer-template-entry-end	plugins/skein/skills/release/SKILL.md	291	
+a2-marker-bearing	plugins/skein/skills/release/SKILL.md	706	relocated-to-references
+step-a2-5	plugins/skein/skills/release/SKILL.md	686	relocated-to-references
+audit-mode-end	plugins/skein/skills/release/SKILL.md	30	
+canonical-format	plugins/skein/skills/release/references/template-subsystem.md	4031	
+step-1b-templated-branch	plugins/skein/skills/release/references/template-subsystem.md	5795	
+a2-marker-bearing	plugins/skein/skills/release/references/template-subsystem.md	9376	
+step-a2-5	plugins/skein/skills/release/references/audit-inference.md	19710
+step-a2	plugins/skein/skills/release/SKILL.md	11375
+# review-gauntlet round 2, decision D1: cut duplicate marker-search algorithm
+# prose (the three-pattern regex/position exposition, already implemented in
+# resolve-template-marker.sh's resolve_source()) out of step-a2's "Resolve the
+# classification source" bullet, down to a short pointer at the script.
+step-a2	plugins/skein/skills/release/SKILL.md	10492
+# review-gauntlet round 2, D1 correction (discovered running the full pytest
+# contract suite after the row above): six pre-existing regression tests
+# (rounds 6, 7, 8, 9 findings — test_release_audit_a2_marker_gate_chain_is_fail_closed,
+# test_release_audit_a2_wrong_hex_length_marker_is_unresolvable_not_absent,
+# test_release_audit_a2_marker_shaped_but_unparseable_is_unresolvable,
+# test_release_marker_produce_consume_positions_are_symmetric,
+# test_release_step3_marker_strip_uses_a2_shape_only_pattern,
+# test_release_shape_only_marker_pattern_is_single_line) assert the literal
+# three-pattern regex spans (strict/loose/shape-only, incl. the single-line
+# pin and the ABCDEF0123 example) exist verbatim in this bullet. The pointer-
+# style cut above broke all of them, so the literal patterns were restored
+# (prose around them stayed tightened). Net region length is larger than the
+# pre-round-2 baseline (11375) because this round's --head-sha/A2_HEAD_COMMIT/
+# --peeled-shape additions (fixes 2/4/10/11) are additive on top of the
+# now-restored marker-search text; D1's shrink target could not be met
+# without deleting test-load-bearing literal text, so this row records the
+# actual measured length rather than the aspirational one.
+step-a2	plugins/skein/skills/release/SKILL.md	11961
+# User-requested fix 1 (post-round-3, operator-approved): the six tests named
+# in the row above are retargeted onto resolve-template-marker.sh's
+# resolve_source() (its literal regex definitions plus crafted-fixture
+# behavioural assertions via a new `_resolve_template_marker_recovery`
+# step3-recovery helper) instead of pinning the restated three-pattern regex
+# prose. With the tests no longer load-bearing on that prose, D1's original
+# shrink (round-2 row above, before the D1-correction row) can now land: the
+# "Resolve the classification source" bullet is cut to a short pointer at the
+# script, matching the round-2 pointer-style edit byte-for-byte in intent.
+step-a2	plugins/skein/skills/release/SKILL.md	10595

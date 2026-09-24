@@ -285,6 +285,73 @@ RELEASE_CLAUDE_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, su
 # shellcheck disable=SC2016
 RELEASE_CODEX_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
 
+# Script-invocation call sites (docs/dev_plans/20260917-refactor-release-skill-structure.md,
+# Phase 2, grilled decisions 6/15/23). Each site is ONE exact-full-line
+# divergence pair: the Claude line carries `${CLAUDE_PLUGIN_ROOT}`, the Codex line
+# `$SKILL_DIR`, and everything else is byte-identical. Both mirrors' lines are
+# generated here from one template so the two sides cannot drift apart; each is
+# gated to occur exactly once per mirror below. The Codex half of the mirror
+# lands in Phase 3.5 (RELEASE_LAGGING_MIRROR_OK plane release-skill-md).
+# BEGIN release-call-lines (sourced by tests/parity/test-prompt-parity-extended.sh)
+RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step5-reverify step6-reverify a2-classify)
+
+release_call_script() {
+	case "$1" in
+	step1b-* | step5-reverify | step6-reverify) echo "read-release-template" ;;
+	step3-recovery | a2-classify) echo "resolve-template-marker" ;;
+	esac
+}
+
+release_call_placeholder() {
+	# bash 3.2 portability (repo floor): `${var^^}` is bash 4.0+ only.
+	local up
+	up="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+	echo "__RELEASE_CALL_${up//-/_}__"
+}
+
+# shellcheck disable=SC2016
+release_call_line() {
+	local harness="$1" site="$2" name guard call args tail
+	name="$(release_call_script "$site")"
+	if [[ "$harness" == claude ]]; then
+		guard="[ -x \"\${CLAUDE_PLUGIN_ROOT}/skills/release/lib/$name.sh\" ] || { echo \"release lib script missing: reinstall the skein plugin\"; exit 1; }"
+		call="\"\${CLAUDE_PLUGIN_ROOT}/skills/release/lib/$name.sh\""
+	else
+		guard="[ -x \"\${SKILL_DIR:?}/lib/$name.sh\" ] || { echo \"release lib script missing: reinstall the skein plugin\"; exit 1; }"
+		call="\"\$SKILL_DIR\"/lib/$name.sh"
+	fi
+	tail=""
+	case "$site" in
+	step1b-precondition)
+		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] --head-sha <sha>'
+		;;
+	step1b-validate | step5-reverify | step6-reverify)
+		args='--worktree <state> --head-commit <present|absent> [--mode <mode>] --head-sha <sha>'
+		tail=" Pipe the committed template bytes on stdin from the direct \`git cat-file blob\` read (Step 1b item 4's transport rule)."
+		;;
+	step3-recovery)
+		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT>'
+		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
+		;;
+	a2-classify)
+		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --tags <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
+		tail=" (\`<file>\` here is the release list already filtered per the paragraph above — never the raw, unfiltered list; \`--peeled <file>\` is Step A1's origin peeled-commit map serialized as a JSON object of bare \`{\"vX.Y.Z\": \"<40-hex sha>\"}\` entries — never \`refs/tags/vX.Y.Z^{}\` ls-remote-style keys; \`--tags <file>\` is Step A1.1's full origin-authoritative tag inventory serialized as a JSON array of the same bare \`vX.Y.Z\` strings — every strict-SemVer origin tag A1.1 recorded, independent of which of those tags also got a resolved \`--peeled\` entry, since A1.1 permits a tag's peeled identity to be recorded unavailable while the tag itself stays in the inventory; the script derives Audit PREV from this array, never from \`--peeled\`'s keys). \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\`."
+		;;
+	esac
+	printf 'Run `%s`, then `%s --site %s %s` with `RELEASE_JQ`/`RELEASE_GIT` set to the pinned absolute paths.%s Exit 0 = ok, 1 = validation failure (`failed_gate` in stdout), 2 = environment failure; stdout is one JSON object.\n' \
+		"$guard" "$call" "$site" "$args" "$tail"
+}
+
+# release_call_map <harness> <out-file> — `placeholder<TAB>line` per call site.
+release_call_map() {
+	local site
+	: >"$2"
+	for site in "${RELEASE_CALL_SITES[@]}"; do
+		printf '%s\t%s\n' "$(release_call_placeholder "$site")" "$(release_call_line "$1" "$site")" >>"$2"
+	done
+}
+# END release-call-lines
+
 count_release_contract_line() {
 	awk -v expected="$2" -v frontmatter_only="${3:-0}" '
 		{
@@ -312,6 +379,7 @@ count_release_frontmatter_line() {
 normalize_release_workflow() {
 	awk \
 		-v harness="$2" \
+		-v callmap="${3:-/dev/null}" \
 		-v codex_invocation_divergence="$RELEASE_CODEX_INVOCATION_DIVERGENCE" \
 		-v claude_invocation_mode="$RELEASE_CLAUDE_INVOCATION_MODE" \
 		-v codex_invocation_mode="$RELEASE_CODEX_INVOCATION_MODE" \
@@ -319,6 +387,12 @@ normalize_release_workflow() {
 		-v codex_execution_model="$RELEASE_CODEX_EXECUTION_MODEL" '
 		function emit(line) {
 			print line
+		}
+		BEGIN {
+			while ((getline entry < callmap) > 0) {
+				tab = index(entry, "\t")
+				if (tab > 0) callline[substr(entry, tab + 1)] = substr(entry, 1, tab - 1)
+			}
 		}
 		{
 			line = $0
@@ -359,9 +433,56 @@ normalize_release_workflow() {
 				emit("__HARNESS_EXECUTION_MODEL__")
 				next
 			}
+			if (line in callline) {
+				emit(callline[line])
+				next
+			}
 			emit(line)
 		}
 	' "$1"
+}
+
+# Temporary lagging-mirror acknowledgment for the release-skill restructure
+# (docs/dev_plans/20260917-refactor-release-skill-structure.md, grilled
+# decision 23). ``RELEASE_LAGGING_MIRROR_OK`` is a comma- or whitespace-
+# separated list of plane names whose drift is known-in-flight. Exactly three
+# planes are recognised; an unrecognised name is itself an error so a typo
+# cannot silently widen the window. Modelled on CONDUCT_LAGGING_MIRROR_OK:
+# enumerated drift is annotated on stderr and does not flip PARITY_DIFF;
+# unenumerated drift still fails. This variable is removed by Phase 4's
+# post-merge sunset commit.
+RELEASE_LAGGING_PLANES=(release-skill-md release-lib release-references)
+RELEASE_LAGGING_RAW="${RELEASE_LAGGING_MIRROR_OK:-}"
+RELEASE_LAGGING_RAW="${RELEASE_LAGGING_RAW//,/ }"
+declare -a release_lagging_arr=()
+if [[ -n "$RELEASE_LAGGING_RAW" ]]; then
+	read -r -a release_lagging_arr <<<"$RELEASE_LAGGING_RAW"
+fi
+if [[ ${#release_lagging_arr[@]} -gt 0 ]]; then
+	for release_lagging_item in "${release_lagging_arr[@]}"; do
+		release_lagging_known=0
+		for release_lagging_plane in "${RELEASE_LAGGING_PLANES[@]}"; do
+			if [[ "$release_lagging_item" == "$release_lagging_plane" ]]; then
+				release_lagging_known=1
+				break
+			fi
+		done
+		if [[ "$release_lagging_known" -eq 0 ]]; then
+			echo "error: unrecognised RELEASE_LAGGING_MIRROR_OK plane: $release_lagging_item (expected one of: ${RELEASE_LAGGING_PLANES[*]})" >&2
+			PARITY_DIFF=1
+		fi
+	done
+fi
+
+release_plane_acknowledged() {
+	local item
+	if [[ ${#release_lagging_arr[@]} -eq 0 ]]; then
+		return 1
+	fi
+	for item in "${release_lagging_arr[@]}"; do
+		[[ "$item" == "$1" ]] && return 0
+	done
+	return 1
 }
 
 release_is_managed=0
@@ -430,26 +551,58 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 			release_divergence_contract_valid=0
 		fi
 
+		# One exact-full-line pair per script-invocation call site: each mirror
+		# must carry its own anchor form exactly once. Until Phase 3.5 the real
+		# Codex mirror carries none, so a Codex-side miss is acknowledged via the
+		# release-skill-md plane; a Claude-side miss never is.
+		release_call_map_claude="$(mktemp "${TMPDIR:-/tmp}/release-call-claude.XXXXXX")"
+		release_call_map_codex="$(mktemp "${TMPDIR:-/tmp}/release-call-codex.XXXXXX")"
+		release_call_map claude "$release_call_map_claude"
+		release_call_map codex "$release_call_map_codex"
+		for call_site in "${RELEASE_CALL_SITES[@]}"; do
+			claude_call_count="$(count_release_contract_line "$release_claude" "$(release_call_line claude "$call_site")")"
+			codex_call_count="$(count_release_contract_line "$release_codex" "$(release_call_line codex "$call_site")")"
+			if [[ "$claude_call_count" -ne 1 ]]; then
+				echo "drift: release Claude script-call line for site $call_site count is $claude_call_count (expected exactly 1)"
+				PARITY_DIFF=1
+				release_divergence_contract_valid=0
+			fi
+			if [[ "$codex_call_count" -ne 1 ]]; then
+				if release_plane_acknowledged release-skill-md; then
+					echo "expected lagging-mirror drift: release-skill-md Codex script-call line for site $call_site (RELEASE_LAGGING_MIRROR_OK)" >&2
+				else
+					echo "drift: release Codex script-call line for site $call_site count is $codex_call_count (expected exactly 1)"
+					PARITY_DIFF=1
+					release_divergence_contract_valid=0
+				fi
+			fi
+		done
+
 		# Only substitute the sanctioned harness placeholders after their
 		# one-to-one source lines have passed the cardinality contract above.
 		if [[ "$release_divergence_contract_valid" -eq 1 ]]; then
 			if diff_output=$(diff -u \
-				<(normalize_release_workflow "$release_claude" claude) \
-				<(normalize_release_workflow "$release_codex" codex) 2>&1); then
+				<(normalize_release_workflow "$release_claude" claude "$release_call_map_claude") \
+				<(normalize_release_workflow "$release_codex" codex "$release_call_map_codex") 2>&1); then
 				: # normalized workflows match
 			else
 				diff_rc=$?
-				if [[ $diff_rc -eq 1 ]]; then
-					echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
+				if [[ $diff_rc -eq 1 ]] && release_plane_acknowledged release-skill-md; then
+					echo "expected lagging-mirror drift: release-skill-md (RELEASE_LAGGING_MIRROR_OK)" >&2
 				else
-					echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
+					if [[ $diff_rc -eq 1 ]]; then
+						echo "drift: release SKILL.md normalized workflow differs between the Claude and Codex mirrors"
+					else
+						echo "error: normalized release SKILL.md diff failed (exit $diff_rc)"
+					fi
+					echo "$diff_output"
+					PARITY_DIFF=1
 				fi
-				echo "$diff_output"
-				PARITY_DIFF=1
 			fi
 		else
 			echo "drift: release SKILL.md normalization skipped because the documented divergence contract is invalid"
 		fi
+		rm -f "$release_call_map_claude" "$release_call_map_codex"
 	fi
 fi
 
@@ -575,6 +728,41 @@ if [[ -d "$cr_claude" || -d "$cr_codex" ]]; then
 		PARITY_DIFF=1
 	fi
 fi
+
+# --- release references parity (Phase 3 of the release-skill restructure) --
+#
+# The release skill's progressive-disclosure `references/` files must be
+# byte-identical across mirrors: one arm per file (template-subsystem.md and
+# audit-inference.md), each modeled on the content-review block above. Neither
+# file carries a path anchor, so plain byte identity suffices and no normalizer
+# is needed. A file missing on either side (or any extra file) is drift too. Acknowledgeable via the
+# `release-references` plane of RELEASE_LAGGING_MIRROR_OK until the Codex copies
+# land (Phase 3.5).
+rr_claude="$ROOT_DIR/plugins/skein/skills/release/references"
+rr_codex="$ROOT_DIR/plugins/skein-codex/skills/release/references"
+if [[ -d "$rr_claude" || -d "$rr_codex" ]]; then
+	if [[ "$(ls -1 "$rr_claude" 2>/dev/null)" != "$(ls -1 "$rr_codex" 2>/dev/null)" ]]; then
+		if release_plane_acknowledged release-references; then
+			echo "expected lagging-mirror drift: release-references (RELEASE_LAGGING_MIRROR_OK)" >&2
+		else
+			echo "drift: release/references file set differs between Claude and Codex mirrors"
+			PARITY_DIFF=1
+		fi
+	fi
+fi
+for rr_name in template-subsystem.md audit-inference.md; do
+	if [[ -f "$rr_claude/$rr_name" || -f "$rr_codex/$rr_name" ]]; then
+		if ! cmp -s "$rr_claude/$rr_name" "$rr_codex/$rr_name" 2>/dev/null; then
+			if release_plane_acknowledged release-references; then
+				echo "expected lagging-mirror drift: release-references $rr_name (RELEASE_LAGGING_MIRROR_OK)" >&2
+			else
+				echo "drift: release/references/$rr_name differs (or is missing) between Claude and Codex mirrors"
+				diff -u "$rr_claude/$rr_name" "$rr_codex/$rr_name" || true
+				PARITY_DIFF=1
+			fi
+		fi
+	fi
+done
 
 # --- scripts/reconcile-findings.sh existence + executable bit ----------
 #

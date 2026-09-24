@@ -1,0 +1,28 @@
+{
+  "case": "templated",
+  "decision": "classified",
+  "exit_code": 0,
+  "failed_gate": null,
+  "rows": [
+    {
+      "note": null,
+      "prev": null,
+      "status": "ok",
+      "version": "1.0.0"
+    },
+    {
+      "note": "exact CHANGELOG bytes",
+      "prev": "v1.0.0",
+      "status": "drifted",
+      "version": "1.1.0"
+    },
+    {
+      "note": "anchor resolved but SHA mismatched",
+      "prev": "v1.1.0",
+      "status": "template-marker-unresolvable",
+      "version": "1.2.0"
+    }
+  ],
+  "script": "resolve-template-marker",
+  "site": "a2-classify"
+}
