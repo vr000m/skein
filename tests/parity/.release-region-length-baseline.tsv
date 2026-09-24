@@ -70,3 +70,13 @@ step-a2	plugins/skein/skills/release/SKILL.md	10492
 # without deleting test-load-bearing literal text, so this row records the
 # actual measured length rather than the aspirational one.
 step-a2	plugins/skein/skills/release/SKILL.md	11961
+# User-requested fix 1 (post-round-3, operator-approved): the six tests named
+# in the row above are retargeted onto resolve-template-marker.sh's
+# resolve_source() (its literal regex definitions plus crafted-fixture
+# behavioural assertions via a new `_resolve_template_marker_recovery`
+# step3-recovery helper) instead of pinning the restated three-pattern regex
+# prose. With the tests no longer load-bearing on that prose, D1's original
+# shrink (round-2 row above, before the D1-correction row) can now land: the
+# "Resolve the classification source" bullet is cut to a short pointer at the
+# script, matching the round-2 pointer-style edit byte-for-byte in intent.
+step-a2	plugins/skein/skills/release/SKILL.md	10595
