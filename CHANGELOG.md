@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-24
+
 ### Added
 - `release` skill (both mirrors): a target repository can now declare its own release-notes shape via a `.release-template.json` file at its root (title format, compare-line label, excluded CHANGELOG subsections, `## What's New` presence). Absence is a byte-for-byte no-op against today's canonical shape; any validation failure on the template fails the run closed. `/release audit`'s `ok`/`drifted` classification is now template-aware, resolving a per-release classification source from a published `release-template-sha` marker, the current template file, or canonical shape. For a repo with no template file, `/release audit` also adds an informational `no-template-convention-detected` finding when its highest 3 qualifying releases agree on a stable shape that diverges from canonical — it proposes (prints, never writes) a `.release-template.json` draft for the user to save and commit. Requires a SHA-1 repository: the marker and HEAD-resolution gates require a literal 40-character hex commit SHA, so a SHA-256-format repository hard-stops on every `/release` invocation rather than silently degrading.
 - `release` skill: `/release audit --infer-template` — a standalone entry point that runs Audit Mode's template-shape inference without requiring a prior `/release` run, bypassing A2.5's template-absent gate for this one flag. New `references/audit-inference.md` (both mirrors) documents the inference contract.
