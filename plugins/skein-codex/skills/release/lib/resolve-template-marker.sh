@@ -558,21 +558,30 @@ while IFS= read -r t; do
 		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 		# What's New prose block runs from the heading up to whichever comes
 		# first of the next "### " heading, the next "## " heading, the
-		# compare line, or EOF -- there is no blank-line-after-the-heading
-		# requirement. A prior version of this filter required NR==2 to be
-		# blank before it would strip anything, which is backwards from the
-		# actual composed shape (heading immediately followed by the prose,
-		# blank line AFTER the paragraph as the separator before the next
-		# boundary) -- that inverted check left every What's-New-bearing
-		# release's summary unstripped and misdiagnosed as CHANGELOG-bytes
-		# drift. Only line 1 is tested against the heading pattern (a
-		# malformed body with no genuine heading there is not a summary and
-		# must not enter skip mode -- doing so unconditionally, per the
-		# still-applicable half of the older comment, would swallow real
-		# CHANGELOG content).
-		awk 'NR == 1 && /^## What.s New$/ { insummary = 1; next }
+		# compare line, or EOF. Real release bodies use both a paragraph
+		# immediately after the heading (no blank line) and a blank line
+		# between the heading and the paragraph -- both are well-formed, so
+		# leading blank lines before any paragraph content are swallowed
+		# without ending the skip. Once the paragraph has started, the blank
+		# line that follows it (the separator before the next boundary) is
+		# itself part of the boundary and is swallowed too, not just the
+		# anchor lines that follow it -- a prior version of this rewrite
+		# dropped blank-line detection entirely and skipped everything up to
+		# the first anchor line unconditionally, which silently ate real
+		# CHANGELOG content whenever a release's CHANGELOG section has no
+		# "### "/"## " subsection before the compare line (flat prose or
+		# bullets directly under the version header), since nothing
+		# terminated the skip before EOF/the compare line. An even earlier
+		# version required NR==2 to be blank before entering skip mode at
+		# all, which left every summary using the no-blank-line style
+		# unstripped. The anchor check remains as a fallback boundary for a
+		# paragraph that runs straight into "### "/"## "/the compare line
+		# with no intervening blank line at all.
+		awk 'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
 			insummary && (/^### / || /^## / || /^\*\*Full (diff|changelog):\*\*/) { insummary = 0; print; next }
-			insummary { next }
+			insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
+			insummary && !started && /^[[:space:]]*$/ { next }
+			insummary { started = 1; next }
 			{ print }' "$got.0" | trim_edges >"$got.1"
 		# Check (4) of SKILL.md's `ok`/`drifted` bullet: the split-out
 		# `## What's New` paragraph's PRESENCE must match the classification

@@ -519,4 +519,43 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/crlf-bodies" \
 	pass "a2-classify: a CRLF CHANGELOG paired with a CRLF body still classifies ok" ||
 	bad "a2-classify: CRLF CHANGELOG + CRLF body misclassified: $out"
 
+# Regression: a What's New paragraph followed by CHANGELOG content with no
+# "### "/"## " subsection before the compare line (flat prose or bullets
+# directly under the version header) must not be swallowed along with the
+# summary — the skip has to end at the paragraph's trailing blank line, not
+# only at the next anchor line. Covers both real-world heading styles: no
+# blank line between the heading and the paragraph, and a blank line
+# between them.
+cat >"$TMP/flat-changelog.md" <<'CHANGELOGEOF'
+# Changelog
+
+## [0.2.0] - 2026-02-01
+
+Second thing, described in plain prose with no subsection heading.
+
+## [0.1.0] - 2026-01-01
+
+### Added
+
+- First thing.
+CHANGELOGEOF
+mkdir -p "$TMP/flat-bodies" && cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/flat-bodies/"
+printf "## What%ss New\nThis adds the second thing.\n\nSecond thing, described in plain prose with no subsection heading.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/flat-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/flat-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a What's New paragraph before flat (no-subsection) CHANGELOG content classifies ok" ||
+	bad "a2-classify: flat CHANGELOG content swallowed with the What's New summary: $out"
+
+# Same case, but the heading is followed by a blank line before the
+# paragraph (the other real-world style) — must classify ok too.
+printf "## What%ss New\n\nThis adds the second thing.\n\nSecond thing, described in plain prose with no subsection heading.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/flat-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/flat-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: blank-line-after-heading What's New style before flat CHANGELOG content classifies ok" ||
+	bad "a2-classify: blank-line-after-heading style misclassified flat content: $out"
+
 exit "$fail"
