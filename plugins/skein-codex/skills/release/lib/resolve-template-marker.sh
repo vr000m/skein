@@ -588,8 +588,21 @@ while IFS= read -r t; do
 		# matching either label unconditionally (the previous bug here) mis-
 		# ends the scan on that line and leaks it, plus everything after it,
 		# into the CHANGELOG-content comparison below.
+		# `-v anchor=...` runs awk's own C-string escape processing on the
+		# VALUE before it ever becomes a dynamic regexp, consuming a single
+		# backslash-asterisk down to nothing (verified: `-v anchor='^\*\*X'`
+		# compiles to the regexp `^X`, not `^\*\*X` -- awk's leading `**`
+		# with nothing to repeat is elided as a no-op, not treated as two
+		# literal asterisks). That silently widened the anchor to match ANY
+		# line starting with the bare label text, no markdown bold required,
+		# reopening the same false-"drifted" bug class this rewrite exists to
+		# close: ordinary prose beginning "Full diff: ..." (no `**`) would
+		# now end the scan early. Doubling the backslashes here survives
+		# -v's one round of consumption so the regexp the awk program
+		# actually compiles still contains a literal backslash before each
+		# asterisk.
 		compare_anchor=""
-		[[ "$label" == "none" ]] || compare_anchor='^\*\*'"$label"':\*\*'
+		[[ "$label" == "none" ]] || compare_anchor='^\\*\\*'"$label"':\\*\\*'
 		awk -v anchor="$compare_anchor" \
 			'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
 			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }

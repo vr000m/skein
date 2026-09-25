@@ -573,4 +573,22 @@ out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bo
 	pass "a2-classify: compare_line_label:none ignores a Full-diff-shaped line inside the What's New paragraph" ||
 	bad "a2-classify: compare_line_label:none boundary anchor not parametrized by label: $out"
 
+# Regression (adversarial-review finding): `awk -v anchor="$compare_anchor"`
+# runs awk's own C-string escape processing on the VALUE before it becomes a
+# dynamic regexp -- a single un-doubled backslash-asterisk (`\*`) is consumed
+# down to nothing, silently widening the compare-line anchor to match ANY
+# line starting with the bare label text, no markdown bold required. Under
+# the default "Full diff" label, a What's New paragraph whose prose merely
+# MENTIONS "Full diff:" (no `**`) must NOT be mistaken for the compare-line
+# boundary -- only the literal bold `**Full diff:**` trailer may terminate
+# the scan.
+mkdir -p "$TMP/anchor-bodies" && cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/anchor-bodies/"
+printf "## What%ss New\n\nSee the Full diff: link below for the full context.\n\n### Added\n\n- Second thing.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/anchor-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/anchor-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a bare (non-bold) 'Full diff:' mention inside the summary paragraph is not mistaken for the compare-line boundary" ||
+	bad "a2-classify: awk -v backslash-escape consumption widened the compare-line anchor: $out"
+
 exit "$fail"
