@@ -1,6 +1,6 @@
 ---
 name: release
-description: "Cuts or re-syncs a GitHub release from a CHANGELOG.md section (Keep a Changelog format) in a canonical title+body shape by default: title `<repo> vX.Y.Z — <highlight>`, body = an optional 'What's New' summary paragraph + the section's content with its `## [X.Y.Z] - date` header stripped, plus a trailing `**Full diff:**` compare link — or in a repo-declared shape via a committed `.release-template.json` (title format, compare-line label, excluded sections, What's New presence; absence is a no-op). `/release audit` scans tags, GitHub releases, and CHANGELOG versions for missing artifacts, releases whose remote tag was deleted, or drifted title/body (template-aware) and reports a punch list. Use when the user says 'cut a release', 'publish this release', 'sync release notes', 'make a github release', 'audit releases', 'find missed releases', or '/release'."
+description: "Cuts or re-syncs a GitHub release from a CHANGELOG.md section (Keep a Changelog format), `/release audit` scans tags, GitHub releases, and CHANGELOG versions for missing or drifted artifacts. Uses a canonical title+body shape by default, or a repo-declared shape via a committed `.release-template.json`. Use for `/release`."
 argument-hint: "[X.Y.Z|latest|unreleased|audit [--infer-template]]"
 disable-model-invocation: true
 ---

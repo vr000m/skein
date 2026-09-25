@@ -21,9 +21,12 @@ Frontmatter `description:` rewrites (trigger-case enumeration, behaviour text in
 - L704: replace "do not lobby it back in" with the stated reason (verified against `20260515-feature-review-auto-fix-tier.md:40`).
 - L91: remove the unverified Managed Agents `callable_agents` analogy.
 
+## Codex pair-edit (second commit, via codex:rescue)
+
+- `release` description (parity-enforced frontmatter; keeps the phrase `/release audit scans tags, GitHub releases, and CHANGELOG versions` that `test_release_skill_contract.py` pins), `fan-out/agent-prompt.md` (three edits; mirrors differ by design in the test-writer block), `conduct/reviewer-prompt.md` (byte-identical), and Codex `deep-review` L534.
+
 ## Out of scope
 
-- `release` description: `check-prompt-parity.sh` compares release's normalized SKILL.md frontmatter byte-for-byte with Codex (found when `just ci` failed). Needs a `codex:rescue` pair-edit.
 - `*-prompt.md` edits (`fan-out/agent-prompt.md`, `conduct/reviewer-prompt.md`): `scripts/check-prompt-parity.sh` enforces byte-identity with the Codex mirror, so these need a `codex:rescue` pair-edit. Deferred.
 - `content-draft` / `content-review` banned-phrase list: rejected — the skill exists to enforce anti-LLM style; the list is its purpose, not cruft.
 - Codex analogues of the `deep-review` edits (`skein-codex/.../deep-review/SKILL.md:534`): via `codex:rescue`, separate change.
@@ -36,5 +39,5 @@ Frontmatter `description:` rewrites (trigger-case enumeration, behaviour text in
 
 ## Progress
 
-- [ ] Edits applied
-- [ ] `just ci` green
+- [x] Edits applied
+- [x] `just ci` green
