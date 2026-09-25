@@ -577,8 +577,22 @@ while IFS= read -r t; do
 		# unstripped. The anchor check remains as a fallback boundary for a
 		# paragraph that runs straight into "### "/"## "/the compare line
 		# with no intervening blank line at all.
-		awk 'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
-			insummary && (/^### / || /^## / || /^\*\*Full (diff|changelog):\*\*/) { insummary = 0; print; next }
+		# The compare-line anchor itself is parametrized by this candidate's
+		# own resolved $label (SKILL.md Step 3 item 1 / the A2 ok/drifted
+		# bullet, line ~366: "parametrized by the classification source's
+		# compare_line_label, exactly as Step 3 item 1 documents"), never a
+		# fixed diff-or-changelog alternation: under "none" no compare-line
+		# boundary exists at all, so a `## What's New` paragraph that opens
+		# with literal bold text shaped like `**Full diff:**`/`**Full
+		# changelog:**` must stay ordinary summary prose, not a boundary --
+		# matching either label unconditionally (the previous bug here) mis-
+		# ends the scan on that line and leaks it, plus everything after it,
+		# into the CHANGELOG-content comparison below.
+		compare_anchor=""
+		[[ "$label" == "none" ]] || compare_anchor='^\*\*'"$label"':\*\*'
+		awk -v anchor="$compare_anchor" \
+			'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
+			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
 			insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
 			insummary && !started && /^[[:space:]]*$/ { next }
 			insummary { started = 1; next }

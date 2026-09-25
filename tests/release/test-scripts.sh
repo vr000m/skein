@@ -125,7 +125,7 @@ for s in ii iii iv; do
 done
 
 # --- resolve-template-marker.sh goldens -----------------------------------
-for c in templated untemplated; do
+for c in templated untemplated none-label; do
 	release_build_repo "$c" "$TMP/repo-$c" || bad "fixture build $c"
 done
 # repo_head <case> — resolve-template-marker.sh's --head-sha is mandatory
@@ -557,5 +557,20 @@ out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies
 [[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
 	pass "a2-classify: blank-line-after-heading What's New style before flat CHANGELOG content classifies ok" ||
 	bad "a2-classify: blank-line-after-heading style misclassified flat content: $out"
+
+# Regression: the What's-New/CHANGELOG split's compare-line boundary anchor
+# must be parametrized by the classification source's own compare_line_label
+# (SKILL.md Step 3 item 1 / the A2 ok/drifted bullet), never a fixed
+# diff-or-changelog alternation. The none-label fixture's template sets
+# compare_line_label:"none", under which no compare-line boundary exists at
+# all -- so a `## What's New` paragraph whose prose happens to open with bold
+# text shaped like a compare trailer (`**Full diff:**`) must stay ordinary
+# summary prose, not get mistaken for the boundary and leaked into the
+# CHANGELOG-content comparison below it.
+out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bodies" \
+	"$FIX/none-label/peeled-commits.json" "$FIX/none-label/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: compare_line_label:none ignores a Full-diff-shaped line inside the What's New paragraph" ||
+	bad "a2-classify: compare_line_label:none boundary anchor not parametrized by label: $out"
 
 exit "$fail"
