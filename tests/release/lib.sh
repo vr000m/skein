@@ -27,9 +27,11 @@ release_commit() {
 		git -C "$1" -c commit.gpgsign=false commit -q --no-verify -m "$2"
 }
 
-# release_build_repo <templated|untemplated> <empty-dest-dir>
-# Commit 1 carries CHANGELOG.md (+ .release-template.json when templated);
-# commit 2 adds NOTES.md. Prints nothing; HEAD is commit 2.
+# release_build_repo <case-name> <empty-dest-dir>
+# <case-name> is any directory under fixtures/ (e.g. templated, untemplated,
+# none-label). Commit 1 carries CHANGELOG.md (+ .release-template.json when
+# the fixture has one); commit 2 adds NOTES.md. Prints nothing; HEAD is
+# commit 2.
 release_build_repo() {
 	local case_name="$1" dest="$2" src
 	src="$RELEASE_FIXTURES_DIR/$case_name"
