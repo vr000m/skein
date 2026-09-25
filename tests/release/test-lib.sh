@@ -21,9 +21,12 @@ check() {
 	fi
 }
 
-# Every fixture directory under fixtures/ is exercised here — not just the
-# two original cases — so a new templated fixture (e.g. none-label) gets the
-# same determinism + blob-identity coverage without a second, parallel harness.
+# Every release-repo fixture case (one with a CHANGELOG.md, buildable via
+# release_build_repo) is listed here explicitly — not auto-globbed, since
+# fixtures/ also holds non-repo fixtures (invalid/, presence/) that would
+# break release_build_repo if picked up. Add new release-repo fixture names
+# to this list so they get the same determinism + blob-identity coverage
+# without a second, parallel harness.
 for case_name in templated untemplated none-label; do
 	release_build_repo "$case_name" "$TMP/$case_name.a"
 	release_build_repo "$case_name" "$TMP/$case_name.b"
