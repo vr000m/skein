@@ -4,6 +4,12 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- `release` skill (both mirrors): `resolve-template-marker.sh`'s `## What's New`-stripping boundary scan had three successive bugs, each caught by a different review layer — (1) the original blank-line-after-heading check was inverted against the documented composed shape, misdiagnosing every What's-New-bearing release as `drifted`; (2) the follow-up content-anchor rewrite had no way to end the skip for a CHANGELOG section with no `###`/`##` subsection before the compare line, swallowing real content down to EOF; (3) the compare-line anchor was hardcoded instead of parametrized by `compare_line_label` (a `"none"`-labeled release could false-positive `drifted` on ordinary prose shaped like `**Full diff:**`), and once parametrized, passing it through `awk -v anchor=...` hit awk's own C-string escape processing consuming the anchor's literal backslashes before the regex compiler ever saw them, silently un-anchoring the match. Verified via a live re-run against all real releases and new regression tests for each case.
+
+### Changed
+- `release` skill (both mirrors): the Canonical Format's `## What's New` bullet now recommends drafting a short (2–4 sentence) summary whenever a new release has substantial Added/Removed content or a dense Changed section, rather than leaving inclusion undirected; a small, single-item release may still skip it. Re-sync's existing-absence-preservation guarantee is unchanged.
+
 ## [0.8.1] - 2026-09-24
 
 ### Added

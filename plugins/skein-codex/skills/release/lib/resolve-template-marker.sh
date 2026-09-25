@@ -555,27 +555,61 @@ while IFS= read -r t; do
 		# streams for "the same body" is exactly the bug SRC_SCAN exists to close.
 		got="$tmp/got.txt"
 		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" >"$got.0"
-		# NR==1's header match defers its skip/no-skip decision to NR==2
-		# (the "pending" state): only a genuine header-then-blank-line pair
-		# is a valid What's New summary. A header NOT immediately followed
-		# by a blank line is not well-formed and must not enter skip mode --
-		# doing so unconditionally (a prior version of this filter did)
-		# swallowed every remaining line, including the real CHANGELOG
-		# content and the compare line, down to an empty result, and
-		# misdiagnosed the drift as a compare-path/CHANGELOG-bytes mismatch
-		# instead of surfacing the malformed body verbatim for the normal
-		# exact-bytes comparison to flag correctly.
-		awk 'NR == 1 && /^## What.s New$/ { hdr = $0; pending = 1; next }
-			pending {
-				pending = 0
-				if ($0 ~ /^[[:space:]]*$/) { skip = 1; state = 1; next }
-				print hdr; print; next
-			}
-			skip && state == 1 && !/^[[:space:]]*$/ { state = 2; next }
-			skip && state == 2 && /^[[:space:]]*$/ { skip = 0; next }
-			skip { next }
-			{ print }
-			END { if (pending) print hdr }' "$got.0" | trim_edges >"$got.1"
+		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
+		# What's New prose block runs from the heading up to whichever comes
+		# first of the next "### " heading, the next "## " heading, the
+		# compare line, or EOF. Real release bodies use both a paragraph
+		# immediately after the heading (no blank line) and a blank line
+		# between the heading and the paragraph -- both are well-formed, so
+		# leading blank lines before any paragraph content are swallowed
+		# without ending the skip. Once the paragraph has started, the blank
+		# line that follows it (the separator before the next boundary) is
+		# itself part of the boundary and is swallowed too, not just the
+		# anchor lines that follow it -- a prior version of this rewrite
+		# dropped blank-line detection entirely and skipped everything up to
+		# the first anchor line unconditionally, which silently ate real
+		# CHANGELOG content whenever a release's CHANGELOG section has no
+		# "### "/"## " subsection before the compare line (flat prose or
+		# bullets directly under the version header), since nothing
+		# terminated the skip before EOF/the compare line. An even earlier
+		# version required NR==2 to be blank before entering skip mode at
+		# all, which left every summary using the no-blank-line style
+		# unstripped. The anchor check remains as a fallback boundary for a
+		# paragraph that runs straight into "### "/"## "/the compare line
+		# with no intervening blank line at all.
+		# The compare-line anchor itself is parametrized by this candidate's
+		# own resolved $label (SKILL.md Step 3 item 1 / the A2 ok/drifted
+		# bullet, line ~366: "parametrized by the classification source's
+		# compare_line_label, exactly as Step 3 item 1 documents"), never a
+		# fixed diff-or-changelog alternation: under "none" no compare-line
+		# boundary exists at all, so a `## What's New` paragraph that opens
+		# with literal bold text shaped like `**Full diff:**`/`**Full
+		# changelog:**` must stay ordinary summary prose, not a boundary --
+		# matching either label unconditionally (the previous bug here) mis-
+		# ends the scan on that line and leaks it, plus everything after it,
+		# into the CHANGELOG-content comparison below.
+		# `-v anchor=...` runs awk's own C-string escape processing on the
+		# VALUE before it ever becomes a dynamic regexp, consuming a single
+		# backslash-asterisk down to nothing (verified: `-v anchor='^\*\*X'`
+		# compiles to the regexp `^X`, not `^\*\*X` -- awk's leading `**`
+		# with nothing to repeat is elided as a no-op, not treated as two
+		# literal asterisks). That silently widened the anchor to match ANY
+		# line starting with the bare label text, no markdown bold required,
+		# reopening the same false-"drifted" bug class this rewrite exists to
+		# close: ordinary prose beginning "Full diff: ..." (no `**`) would
+		# now end the scan early. Doubling the backslashes here survives
+		# -v's one round of consumption so the regexp the awk program
+		# actually compiles still contains a literal backslash before each
+		# asterisk.
+		compare_anchor=""
+		[[ "$label" == "none" ]] || compare_anchor='^\\*\\*'"$label"':\\*\\*'
+		awk -v anchor="$compare_anchor" \
+			'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
+			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
+			insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
+			insummary && !started && /^[[:space:]]*$/ { next }
+			insummary { started = 1; next }
+			{ print }' "$got.0" | trim_edges >"$got.1"
 		# Check (4) of SKILL.md's `ok`/`drifted` bullet: the split-out
 		# `## What's New` paragraph's PRESENCE must match the classification
 		# source's `whats_new` when it is explicitly set. `whats_new: false`

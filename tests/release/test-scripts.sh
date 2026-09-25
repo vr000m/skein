@@ -125,7 +125,7 @@ for s in ii iii iv; do
 done
 
 # --- resolve-template-marker.sh goldens -----------------------------------
-for c in templated untemplated; do
+for c in templated untemplated none-label; do
 	release_build_repo "$c" "$TMP/repo-$c" || bad "fixture build $c"
 done
 # repo_head <case> — resolve-template-marker.sh's --head-sha is mandatory
@@ -518,5 +518,77 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/crlf-bodies" \
 [[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "ok" ]] &&
 	pass "a2-classify: a CRLF CHANGELOG paired with a CRLF body still classifies ok" ||
 	bad "a2-classify: CRLF CHANGELOG + CRLF body misclassified: $out"
+
+# Regression: a What's New paragraph followed by CHANGELOG content with no
+# "### "/"## " subsection before the compare line (flat prose or bullets
+# directly under the version header) must not be swallowed along with the
+# summary — the skip has to end at the paragraph's trailing blank line, not
+# only at the next anchor line. Covers both real-world heading styles: no
+# blank line between the heading and the paragraph, and a blank line
+# between them.
+cat >"$TMP/flat-changelog.md" <<'CHANGELOGEOF'
+# Changelog
+
+## [0.2.0] - 2026-02-01
+
+Second thing, described in plain prose with no subsection heading.
+
+## [0.1.0] - 2026-01-01
+
+### Added
+
+- First thing.
+CHANGELOGEOF
+mkdir -p "$TMP/flat-bodies" && cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/flat-bodies/"
+printf "## What%ss New\nThis adds the second thing.\n\nSecond thing, described in plain prose with no subsection heading.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/flat-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/flat-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a What's New paragraph before flat (no-subsection) CHANGELOG content classifies ok" ||
+	bad "a2-classify: flat CHANGELOG content swallowed with the What's New summary: $out"
+
+# Same case, but the heading is followed by a blank line before the
+# paragraph (the other real-world style) — must classify ok too.
+printf "## What%ss New\n\nThis adds the second thing.\n\nSecond thing, described in plain prose with no subsection heading.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/flat-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$TMP/flat-changelog.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: blank-line-after-heading What's New style before flat CHANGELOG content classifies ok" ||
+	bad "a2-classify: blank-line-after-heading style misclassified flat content: $out"
+
+# Regression: the What's-New/CHANGELOG split's compare-line boundary anchor
+# must be parametrized by the classification source's own compare_line_label
+# (SKILL.md Step 3 item 1 / the A2 ok/drifted bullet), never a fixed
+# diff-or-changelog alternation. The none-label fixture's template sets
+# compare_line_label:"none", under which no compare-line boundary exists at
+# all -- so a `## What's New` paragraph whose prose happens to open with bold
+# text shaped like a compare trailer (`**Full diff:**`) must stay ordinary
+# summary prose, not get mistaken for the boundary and leaked into the
+# CHANGELOG-content comparison below it.
+out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bodies" \
+	"$FIX/none-label/peeled-commits.json" "$FIX/none-label/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: compare_line_label:none ignores a Full-diff-shaped line inside the What's New paragraph" ||
+	bad "a2-classify: compare_line_label:none boundary anchor not parametrized by label: $out"
+
+# Regression (adversarial-review finding): `awk -v anchor="$compare_anchor"`
+# runs awk's own C-string escape processing on the VALUE before it becomes a
+# dynamic regexp -- a single un-doubled backslash-asterisk (`\*`) is consumed
+# down to nothing, silently widening the compare-line anchor to match ANY
+# line starting with the bare label text, no markdown bold required. Under
+# the default "Full diff" label, a What's New paragraph whose prose merely
+# MENTIONS "Full diff:" (no `**`) must NOT be mistaken for the compare-line
+# boundary -- only the literal bold `**Full diff:**` trailer may terminate
+# the scan.
+mkdir -p "$TMP/anchor-bodies" && cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/anchor-bodies/"
+printf "## What%ss New\n\nSee the Full diff: link below for the full context.\n\n### Added\n\n- Second thing.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n" \
+	"'" "$WEB" >"$TMP/anchor-bodies/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/anchor-bodies" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a bare (non-bold) 'Full diff:' mention inside the summary paragraph is not mistaken for the compare-line boundary" ||
+	bad "a2-classify: awk -v backslash-escape consumption widened the compare-line anchor: $out"
 
 exit "$fail"
