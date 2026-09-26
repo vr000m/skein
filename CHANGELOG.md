@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- `review-gauntlet` (Codex mirror): call-site-sweep guardrail drops incident commit SHAs and narrative, matching the Claude mirror. `spec-compliance` (both mirrors): description states intent categories instead of quoted trigger phrases.
+
 ## [0.8.3] - 2026-09-26
 
 ### Changed

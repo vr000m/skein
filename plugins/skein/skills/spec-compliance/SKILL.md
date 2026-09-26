@@ -1,6 +1,6 @@
 ---
 name: spec-compliance
-description: "Checks whether code complies with a referenced specification section by extracting normative RFC 2119 requirements (MUST/SHOULD/MAY) and mapping each against the code as Met/Missing/Partial/N/A. Use when the user asks to 'check compliance', 'verify against spec', 'does this implement RFC X', 'conformance check', 'check against W3C', or references RFC 2119 requirements in the context of code review."
+description: "Checks whether code complies with a referenced specification section by extracting normative RFC 2119 requirements (MUST/SHOULD/MAY) and mapping each against the code as Met/Missing/Partial/N/A. Use to check code against a named spec section (RFC, IETF draft, W3C/WHATWG), or when RFC 2119 requirements come up in code review."
 argument-hint: "[file-path] [spec-reference] [section]"
 ---
 
