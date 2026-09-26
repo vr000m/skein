@@ -1,6 +1,6 @@
 ---
 name: grill
-description: "Runs a relentless, one-question-at-a-time interview over any plan, design, or freeform idea, splitting facts (verified from the codebase, never asked) from decisions (genuine judgment calls that must go to the human). Proposes one recommended resolution per decision and blocks until the user accepts, proposes an alternative, or waives it before advancing. Works standalone against a plan file or inline conversational input — not gated behind having run /review-plan first. Use when the user says 'grill me on X', 'stress-test this plan', 'interview me on this design', or '/grill'."
+description: "Runs a relentless, one-question-at-a-time interview over any plan, design, or freeform idea, splitting facts (verified from the codebase, never asked) from decisions (genuine judgment calls that must go to the human). Proposes one recommended resolution per decision and blocks until the user accepts, proposes an alternative, or waives it before advancing. Works standalone against a plan file or inline conversational input — not gated behind having run /review-plan first. Use when the user wants a plan, design, or idea stress-tested through interview, or invokes /grill."
 argument-hint: "[path/to/plan.md] | [freeform description]"
 ---
 

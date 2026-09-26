@@ -58,7 +58,6 @@ Emit a final fenced ```json block matching this schema exactly. The block must b
 ```
 
 - An empty `findings` list is a valid and welcome outcome.
-- Do not pad the list with style nits to look thorough.
 
 Exit when the JSON block is written. Do not wait for further instructions.
 ```

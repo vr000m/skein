@@ -531,7 +531,7 @@ Per-fix gating (the applier re-verifies even what the auditor already checked):
 
 Per run, the applier writes a manifest at `.deep-review/auto-fix-<unix>-<pid>.json` listing every attempted fix as `{kind, file, line, status, commit_sha, before_sha}`. The directory `.deep-review/` is gitignored. `git revert <first_sha>..<last_sha>` undoes a batch of successful applies; the manifest documents the range.
 
-The applier handles `dead_branch` the same way it handles any other unknown kind — it is **intentionally NOT** in the v1 allowlist. The reasoning is in the dev-plan Architecture Decisions section; do not lobby it back in without a static-analysis gate.
+The applier handles `dead_branch` the same way it handles any other unknown kind — it is not in the v1 allowlist: unreachability is something a lens cannot reliably self-tag, so without a static-analysis gate the applier cannot verify a proposed removal is safe.
 
 After the applier returns, proceed to suppression / triage / output. Findings that landed as commits should not be re-surfaced; only `rejected_*`, `drift`, `unsupported`, and `test_failed` entries appear in the report (as advisory).
 

@@ -4,6 +4,11 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-09-26
+
+### Changed
+- Prompt-audit cleanup of skill text (PR #46): `conduct`/`grill`/`dev-plan` descriptions now state intent categories instead of enumerating trigger phrases; `fan-out` agent prompt drops caps pressure language and the generic self-review checklist; `conduct` reviewer prompt drops a duplicate nit rule; `deep-review` states why `dead_branch` is outside the auto-fix allowlist; `review-gauntlet` drops incident commit SHAs from the call-site-sweep guardrail; `release` description shortened (both mirrors where parity-enforced).
+
 ## [0.8.2] - 2026-09-25
 
 ### Fixed
@@ -235,7 +240,10 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/vr000m/skein/compare/v0.8.2...v0.8.3
+[0.8.2]: https://github.com/vr000m/skein/compare/v0.8.1...v0.8.2
+[0.8.1]: https://github.com/vr000m/skein/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/vr000m/skein/compare/v0.7.2...v0.8.0
 [0.6.0]: https://github.com/vr000m/skein/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/vr000m/skein/compare/v0.5.4...v0.5.5
