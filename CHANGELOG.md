@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-09-26
+
 ### Changed
 - `review-gauntlet` (Codex mirror): call-site-sweep guardrail drops incident commit SHAs and narrative, matching the Claude mirror. `spec-compliance` (both mirrors): description states intent categories instead of quoted trigger phrases.
 
@@ -243,7 +245,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/vr000m/skein/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/vr000m/skein/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/vr000m/skein/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/vr000m/skein/compare/v0.8.0...v0.8.1
