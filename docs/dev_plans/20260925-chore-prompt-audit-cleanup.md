@@ -1,6 +1,6 @@
 # Task: prompt-audit cleanup (Claude-side skill text)
 
-**Status**: In Review (PR #46)
+**Status**: Complete — shipped in v0.8.3 (PR #46)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Low
