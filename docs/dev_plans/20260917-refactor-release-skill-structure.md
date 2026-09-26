@@ -1,6 +1,6 @@
 # Task: skein:release — progressive disclosure, script extraction, audit split, test anchor fragility
 
-**Status**: In Progress — all 4 implementation phases + 3 review-gauntlet rounds complete; operator stopped short of round 4 (see "Operator stop after round 3" in Findings); both manual transcript verification checks closed 2026-09-24 (see "Manual transcript checks — DONE" in Findings)
+**Status**: Complete — merged via PR #44 (2026-09-24); all 4 implementation phases + 3 review-gauntlet rounds done, operator stopped short of round 4 (see "Operator stop after round 3" in Findings); both manual transcript verification checks closed 2026-09-24 (see "Manual transcript checks — DONE" in Findings)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
