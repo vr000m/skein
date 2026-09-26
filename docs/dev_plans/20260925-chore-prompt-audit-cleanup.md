@@ -1,6 +1,6 @@
 # Task: prompt-audit cleanup (Claude-side skill text)
 
-**Status**: In Progress
+**Status**: In Review (PR #46)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Low
@@ -36,6 +36,8 @@ Frontmatter `description:` rewrites (trigger-case enumeration, behaviour text in
 
 - `just ci` green (parity + description-shape tests).
 - `git diff --stat` touches only the five Claude-side files plus this plan and CHANGELOG.
+
+- Follow-up commit `9aefdf6`: `review-gauntlet` L225 incident SHAs dropped (Claude-only; its description and UNVERIFIED line stay — `test-gauntlet-skill-shape.sh` pins them).
 
 ## Progress
 

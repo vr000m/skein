@@ -14,6 +14,7 @@ parser can pick up the slug.
 | 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 | 2026-09-14 | feature | release-repo-template | meta | — | feature/release-repo-template | [plan](20260914-feature-release-repo-template.md) |
 | 2026-09-17 | refactor | release-skill-structure | meta | [#44](https://github.com/vr000m/skein/pull/44) | refactor/release-skill-structure | [plan](20260917-refactor-release-skill-structure.md) |
+| 2026-09-25 | chore | prompt-audit-cleanup | meta | [#46](https://github.com/vr000m/skein/pull/46) | chore/prompt-audit-cleanup | [plan](20260925-chore-prompt-audit-cleanup.md) |
 
 ## Planned
 

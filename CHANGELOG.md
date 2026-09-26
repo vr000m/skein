@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- Prompt-audit cleanup of skill text (PR #46): `conduct`/`grill`/`dev-plan` descriptions now state intent categories instead of enumerating trigger phrases; `fan-out` agent prompt drops caps pressure language and the generic self-review checklist; `conduct` reviewer prompt drops a duplicate nit rule; `deep-review` states why `dead_branch` is outside the auto-fix allowlist; `review-gauntlet` drops incident commit SHAs from the call-site-sweep guardrail; `release` description shortened (both mirrors where parity-enforced).
+
 ## [0.8.2] - 2026-09-25
 
 ### Fixed
