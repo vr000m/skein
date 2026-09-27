@@ -112,8 +112,8 @@ assert_grep "$SKILL_MD" '^argument-hint:' \
 
 # --- Three gate slots -----------------------------------------------------
 
-assert_grep "$SKILL_MD" 'codex exec review' \
-	"documents gate 1 (adversarial Codex-review, \`codex exec review\`)"
+assert_grep "$SKILL_MD" 'codex exec --ephemeral --sandbox read-only' \
+	"documents gate 1 (adversarial Codex-review, plain \`codex exec\` with read-only sandbox)"
 
 assert_grep "$SKILL_MD" 'deep-review' \
 	"documents gate 2 (\`deep-review\`)"
@@ -388,7 +388,7 @@ assert_phase1_gate_bound_shape_for() {
 	fi
 
 	assert_grep_i "$file" 'gate_run_bounded|gate-bounded\.sh' \
-		"$label: gate 1 invocation goes through the gate_run_bounded helper (lib/gate-bounded.sh), not a bare \`codex exec review\` call"
+		"$label: gate 1 invocation goes through the gate_run_bounded helper (lib/gate-bounded.sh), not a bare \`codex exec\` call"
 
 	assert_grep_fixed "$file" 'lens-budget.sh' \
 		"$label: gate 1's budget is sourced from lens-budget.sh, not a hardcoded number"
