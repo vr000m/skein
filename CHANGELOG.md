@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Fixed
+- `review-gauntlet` (both mirrors): adversarial Codex-review gate switched from `codex exec review` to plain `codex exec --ephemeral --sandbox read-only`, with diff scope stated in the prompt text — codex-cli 0.157.0 rejects `--base`/`--uncommitted` when combined with a custom prompt.
+
 ## [0.8.4] - 2026-09-26
 
 ### Changed
