@@ -96,6 +96,7 @@ Both native gates below cost at most their budget, enforced in shell, and never 
 ```
 . "$SKILL_DIR"/lib/gate-bounded.sh
 budget_s="$("$SKILL_DIR"/scripts/lens-budget.sh --kind codex [--files <N> --lines <N>] [--gate-timeout <seconds>])"
+repo_root="$(git rev-parse --show-toplevel)"
 gate_out_dir="$run_dir/round-$round_n"; mkdir -p "$gate_out_dir"
 envelope_codex_review="$gate_out_dir/codex-review.envelope.json"
 toolout_codex_review="$gate_out_dir/codex-review.tool-out.json"
