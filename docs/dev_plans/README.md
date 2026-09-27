@@ -60,6 +60,7 @@ Component values here are hand-entered (no plan file to derive from) and best-ef
 
 | Date | Type | Name | Comp | PR |
 |------|------|------|------|----|
+| 2026-09-27 | fix | gauntlet-codex-adversarial-invocation | review-skills | [#49](https://github.com/vr000m/skein/pull/49) |
 | 2026-09-10 | test | drop-cross-repo-hygiene-assertions | meta | [#38](https://github.com/vr000m/skein/pull/38) |
 | 2026-09-08 | feature | review-gauntlet-guardrail-7-blast-radius | review-skills | [#39](https://github.com/vr000m/skein/pull/39) |
 | 2026-09-08 | chore | split-project-global-claude-md | meta | [#37](https://github.com/vr000m/skein/pull/37) |
