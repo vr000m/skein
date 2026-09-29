@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from test_dispatcher import RESULT
 from test_package import ROOT, package_fixture, run
 from test_package import sandbox as sandbox  # noqa: PLC0414 — pytest fixture re-export
@@ -17,7 +18,7 @@ from test_worker import MODEL, PROVIDER, configure, endpoint
 EXTENSION = ROOT / "plugins/skein-pi/extension.ts"
 
 
-def rpc_worker(sandbox, *, approve, explicit_extension=True):
+def rpc_worker(sandbox, *, approve, explicit_extension=True, tool_name="skein_worker"):
     pi, env, cwd, _ = sandbox
     env = {**env, "SKEIN_PI_PYTHON": str(Path(sys.executable).resolve())}
     args = [
@@ -29,7 +30,7 @@ def rpc_worker(sandbox, *, approve, explicit_extension=True):
         "--no-context-files",
         "--no-approve",
         "--tools",
-        "skein_worker",
+        tool_name,
         "--no-prompt-templates",
         "--no-themes",
         "--offline",
@@ -154,6 +155,133 @@ def test_extension_approved_worker_end_to_end(sandbox, tmp_path):
     files = list(state.glob("*.json"))
     assert len(files) == 1
     assert json.loads(files[0].read_text()) == envelope
+    shutil.rmtree(state)
+
+
+@pytest.mark.parametrize(
+    "tool_name,arguments,response,source_anchor,rule_anchor",
+    [
+        (
+            "skein_content_draft_worker",
+            {
+                "type": "til",
+                "title": "A fixture TIL",
+                "date": "2026-09-29",
+                "audience": "Python maintainers",
+                "summary": "The command failed once, then a bounded retry passed.",
+            },
+            {
+                "schema_version": 1,
+                "status": "ok",
+                "summary": "Drafted one fixture TIL.",
+                "findings": [],
+                "artifact": {
+                    "format": "markdown",
+                    "content": "---\\nstatus: 'draft'\\n---\\n\\nA bounded fixture.",
+                },
+            },
+            "A fixture TIL",
+            "Anti-LLM Authenticity Rules",
+        ),
+        (
+            "skein_content_review_worker",
+            {
+                "type": "technical-doc",
+                "path": "docs/fixture.md",
+                "content": "The pipeline is fast, it works.",
+            },
+            {
+                "schema_version": 1,
+                "status": "ok",
+                "summary": "One critical comma splice.",
+                "findings": [
+                    {
+                        "severity": "critical",
+                        "location": "sentence 1",
+                        "summary": "Comma splice",
+                        "evidence": "Two independent clauses use one comma.",
+                        "recommendation": "Original: fast, it. Fixed: fast. It.",
+                    }
+                ],
+                "artifact": {
+                    "format": "markdown",
+                    "content": "## Checklist\\n- Fail: comma splice",
+                },
+            },
+            "docs/fixture.md",
+            "Universal Writing Style Rules",
+        ),
+    ],
+)
+def test_registered_content_worker_flow_builds_exact_bounded_task(
+    sandbox, tool_name, arguments, response, source_anchor, rule_anchor
+):
+    call = {"name": tool_name, "arguments": json.dumps(arguments)}
+    with endpoint(
+        tool_call=call,
+        response=response,
+        expected_key="fixture-not-a-secret",
+    ) as (url, requests, _):
+        configure(sandbox, url)
+        records, stderr = rpc_worker(sandbox, approve=True, tool_name=tool_name)
+    assert stderr == ""
+    assert len(requests) == 3
+    assert requests[0]["tools"][0]["function"]["name"] == tool_name
+    assert not requests[1].get("tools")
+    child_request = json.dumps(requests[1])
+    assert source_anchor in child_request
+    assert rule_anchor in child_request
+    assert "schema_version" in child_request
+    confirmation = next(
+        record for record in records if record.get("type") == "extension_ui_request"
+    )
+    assert source_anchor in confirmation["message"]
+    assert rule_anchor in confirmation["message"]
+    result = tool_results(records)[0]
+    assert not result["isError"]
+    envelope = json.loads(result["result"]["content"][0]["text"])
+    assert envelope["status"] == "completed"
+    assert envelope["result"] == response
+    state = sandbox[2] / ".skein-pi-attempts"
+    assert len(list(state.glob("*.json"))) == 1
+    shutil.rmtree(state)
+
+
+@pytest.mark.parametrize(
+    "tool_name,arguments",
+    [
+        (
+            "skein_content_draft_worker",
+            {
+                "type": "til",
+                "title": "Fixture",
+                "date": "2026-09-29",
+                "audience": "Maintainers",
+                "summary": "Confirmed facts.",
+            },
+        ),
+        (
+            "skein_content_review_worker",
+            {"type": "general", "content": "Confirmed prose."},
+        ),
+    ],
+)
+def test_specialized_worker_rejects_generic_valid_but_unusable_artifact(
+    sandbox, tool_name, arguments
+):
+    call = {"name": tool_name, "arguments": json.dumps(arguments)}
+    with endpoint(tool_call=call, response=RESULT) as (url, requests, _):
+        configure(sandbox, url)
+        records, _ = rpc_worker(sandbox, approve=True, tool_name=tool_name)
+    assert len(requests) == 3
+    result = tool_results(records)[0]
+    assert result["isError"]
+    text = result["result"]["content"][0]["text"]
+    assert "result_contract_invalid" in text
+    state = sandbox[2] / ".skein-pi-attempts"
+    assert len(list(state.glob("*.json"))) == 1
+    # Generic dispatcher completion remains audit evidence, but the specialised
+    # tool fails closed and does not return it as an accepted skill result.
     shutil.rmtree(state)
 
 

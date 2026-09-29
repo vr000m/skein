@@ -17,7 +17,16 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = "plugins/skein-pi/skills/show-me/SKILL.md"
-ALLOWLIST = [f"./{SKILL}"]
+ALLOWLIST = [
+    "./plugins/skein-pi/skills/show-me/SKILL.md",
+    "./plugins/skein-pi/skills/content-draft/SKILL.md",
+    "./plugins/skein-pi/skills/content-review/SKILL.md",
+]
+COMMANDS = [
+    "skill:skein-show-me",
+    "skill:skein-content-draft",
+    "skill:skein-content-review",
+]
 
 
 def run(argv, env, cwd):
@@ -55,9 +64,11 @@ def sandbox(tmp_path):
 def package_fixture(path):
     path.mkdir(parents=True)
     shutil.copy2(ROOT / "package.json", path / "package.json")
-    target = path / SKILL
-    target.parent.mkdir(parents=True)
-    shutil.copy2(ROOT / SKILL, target)
+    manifest = json.loads((ROOT / "package.json").read_text())
+    for skill_path in manifest["pi"]["skills"]:
+        source_dir = (ROOT / skill_path).parent
+        target_dir = (path / skill_path).parent
+        shutil.copytree(source_dir, target_dir)
     shutil.copy2(
         ROOT / "plugins/skein-pi/extension.ts", path / "plugins/skein-pi/extension.ts"
     )
@@ -156,8 +167,8 @@ def assert_discovery(sandbox, package):
         commands = [
             c for c in request("get_commands")["commands"] if c["source"] == "skill"
         ]
-        assert [c["name"] for c in commands] == ["skill:skein-show-me"]
-        command = commands[0]
+        assert [c["name"] for c in commands] == COMMANDS
+        command = next(c for c in commands if c["name"] == "skill:skein-show-me")
         assert command["source"] == "skill"
         assert (
             Path(command["sourceInfo"]["path"]).resolve() == (package / SKILL).resolve()
@@ -171,6 +182,19 @@ def assert_discovery(sandbox, package):
         assert body in queued[0]
         assert "explain the request call tree" in queued[0]
         assert str(package / SKILL) in queued[0]
+        for name, argument in (
+            ("content-draft", '--type til --title "Fixture"'),
+            ("content-review", "draft.md --type technical-doc"),
+        ):
+            skill_path = f"plugins/skein-pi/skills/{name}/SKILL.md"
+            request("steer", message=f"/skill:skein-{name} {argument}")
+            expanded = request("clear_queue")["steering"]
+            assert len(expanded) == 1
+            assert (package / skill_path).read_text().split("---\n", 2)[
+                2
+            ].strip() in expanded[0]
+            assert argument in expanded[0]
+            assert str(package / skill_path) in expanded[0]
 
 
 def test_manifest_exact_allowlist():
