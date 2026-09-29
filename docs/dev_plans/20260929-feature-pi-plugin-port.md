@@ -213,10 +213,68 @@ Context lifecycle:
 
 ## Progress
 
-- [ ] Phase 1: Capability inventory and Pi package skeleton
+- [x] Phase 1: Capability inventory and Pi package skeleton
 - [ ] Phase 2: Isolated Pi worker and model policy
 - [ ] Phase 3: Disk-first review and capability-aware gates
 - [ ] Phase 4: Complex orchestration, install coverage and release readiness
+
+### Phase 1 capability inventory
+
+This maintained inventory is implementation progress below the review marker; the reviewed contract above is unchanged. Only **ready** rows may appear in `package.json`'s exact `pi.skills` allowlist. A target command in this table is not a claim that it is installed. Claude and Codex remain separate authored mirrors; neither is a Pi runtime dependency.
+
+In the interaction columns, **Agent** means Claude's clean-context Agent dispatch; **spawn_agent** means Codex's native worker dispatch subject to that skill's delegation-availability checks. Claude script anchors use `CLAUDE_PLUGIN_ROOT`; Codex uses `SKILL_DIR`. Pi must use installed-package-relative resources instead, never either environment variable or a harness cache.
+
+| Skill | Target Pi command | Pi readiness | Dependencies / readiness gate | Claude interaction | Codex interaction | Pi interaction |
+|---|---|---|---|---|---|---|
+| show-me | `/skill:skein-show-me` | ready | Standalone instructions; frontmatter, exact allowlist, real install/discovery and command expansion tests | Inline format selection; optional external artifact skills | Inline format selection | Current session; text/Mermaid, opt-in standalone HTML; no external skill |
+| rfc-finder | `/skill:skein-rfc-finder` | blocked (Phase 2) | Worker isolation/model policy; verified RFC retrieval | Single Agent lookup | Single spawn_agent lookup | Bounded factual worker; retrieval capability required |
+| content-draft | `/skill:skein-content-draft` | blocked (Phase 2) | Worker; content-review reference guidelines shipped locally | Agent drafts from curated session facts | spawn_agent drafts from curated facts | Bounded mechanical worker; main-session approval |
+| content-review | `/skill:skein-content-review` | blocked (Phase 2) | Worker; content-guidelines and writing-style references | Agent structured review | spawn_agent structured review | Bounded mechanical worker; structured findings |
+| spec-compliance | `/skill:skein-spec-compliance` | blocked (Phase 2) | Worker; spec retrieval and normative requirement mapping | Judgment Agent | Judgment spawn_agent | Bounded judgment worker; evidence mapping |
+| update-docs | `/skill:skein-update-docs` | blocked (Phase 2) | Worker; git diff/trunk resolution; optional gh for PR edits; show-me | Agent audit, main applies approved changes | spawn_agent audit, main applies changes | Bounded mechanical worker; main owns confirmation/writes |
+| plan-view | `/skill:skein-plan-view` | blocked (Phase 2) | Real generator, templates/assets, Python dependencies, rich worker and relocated-path tests | Generator plus rich render Agents | Generator plus rich render workers | Deterministic generator plus bounded rich workers; no partial broken mode |
+| dev-plan | `/skill:skein-dev-plan` | blocked (Phase 3) | Worker Explore; plan templates; create/update and decision persistence | Explore Agent on create; inline updates | Fresh spawn_agent Explore; inline updates | Bounded factual worker on create; main writes plan |
+| grill | `/skill:skein-grill` | blocked (Phase 3) | Working dev-plan update route and interactive decision persistence | Inline interview, dev-plan update | Inline interview, dev-plan update | Main-session interview; no unavailable command chaining |
+| review-plan | `/skill:skein-review-plan` | blocked (Phase 3) | Worker; dev-plan/grill; lens collector, reconciler, marker, persistence and auto-fix bundles | Parallel Agent lenses, contradiction pass, inline decisions | Parallel spawn_agent lenses, contradiction pass, inline decisions | Top-level lenses; disk-first results; Pi marker/persistence route |
+| deep-review | `/skill:skein-deep-review` | blocked (Phase 3) | Worker; lens budgets/collector, reconciliation, persistence and auto-fix bundles | Parallel Agent lenses | Parallel spawn_agent lenses | Top-level lenses; disk-first results; Pi state identity |
+| review-gauntlet | `/skill:skein-review-gauntlet` | blocked (Phase 3) | deep-review; ledger/guards; fixer worker; stable gate capability cache | Top-level deep-review/external gates; Agent fixer | Native Codex gates; deep-review gated; security deferred | Top-level gates; isolated fixer; unavailable/skipped never passed |
+| conduct | `/skill:skein-conduct` | blocked (Phase 4) | Worker; reviewed marker/parser, phase prompts, CI parity; optional gauntlet route | Agent implementer/test-writer/reviewer; top-level gauntlet | spawn_agent workers; top-level gauntlet | Bounded phase workers; main orchestrator; tested handback |
+| fan-out | `/skill:skein-fan-out` | blocked (Phase 4) | Pi process launcher; worktree/state cleanup; conduct reset verification; optional gauntlet | claude subprocesses; clean-context test-writer; conduct opt-in | codex exec worktrees; nested workers gated | Separate process trees only if isolation proven; otherwise reject route |
+| release | `/skill:skein-release` | blocked (Phase 4) | Release lib/references; pinned git/jq/gh checks; confirmation/refusal dry-run | Main-session audit and confirmation before remote mutation | Main-session audit and confirmation before remote mutation | Main owns exact target/title/body approval; no remote writes in tests |
+
+### Phase 1 installation and verification
+
+Validated runtime: **Pi 0.87.1**. Phase 1 exposes only `/skill:skein-show-me`; `skein:` is not a Pi namespace. No worker or extension is shipped, and the package has no npm runtime dependencies or lifecycle scripts. `private: true` prevents accidental npm publication; local/Git package installation remains supported.
+
+Local install (quote paths with spaces):
+
+```sh
+pi install "/absolute/path/to/skein"
+pi list
+pi update "/absolute/path/to/skein"
+pi remove "/absolute/path/to/skein"
+```
+
+Local sources are read in place. Restart Pi after installation/edits, or enter **`/reload`** in an interactive session (there is no `--reload` flag). Invoke `/skill:skein-show-me explain the request call tree`. The tests verify restart-based discovery and real command expansion, not interactive TUI `/reload` or model output quality.
+
+Pinned Git install, **after a commit containing this package is published** (replace `COMMIT_SHA` with that full commit; no existing release is claimed to contain this port):
+
+```sh
+pi install git:github.com/vr000m/skein@COMMIT_SHA
+pi update git:github.com/vr000m/skein@COMMIT_SHA
+pi remove git:github.com/vr000m/skein@COMMIT_SHA
+```
+
+Updating a pinned source reconciles that ref; it does not advance to main. Select and install a new reviewed ref to upgrade. `pi update --extensions` reconciles all packages; bare `pi update` updates Pi itself. These commands normally alter personal settings; use a disposable `HOME` and `PI_CODING_AGENT_DIR` for experiments. Do not run test installs against the person's settings.
+
+`tests/pi/test_package.py` runs the real Pi CLI with a private environment, disposable home/agent/workspace and no credentials. A temporary committed Git fixture is reached through a private Git `insteadOf` rewrite; only the file transport is allowed, so no hosted ref/network is needed. Its default branch advances to a deliberately broken revision after the pin, proving install/update still select the ready commit. Unregistered Pi skills and legacy-mirror decoys remain undiscoverable. RPC steering/queue inspection verifies `/skill:skein-show-me` expands the installed instructions and arguments without a provider call. Missing Pi fails the readiness suite rather than silently skipping it.
+
+### Phase 1 handoff
+
+- Scope: root package, standalone Pi show-me, this inventory/install guide, and the two Phase 1 test modules only. No Claude/Codex edits, script bundling changes, worker layer, CI registration, public release, or personal settings changes.
+- Tests: `uv run --with pytest python -m pytest tests/pi -q` — **6 passed** on Pi 0.87.1. `ruff format --check tests/pi`, `ruff check tests/pi`, `just check-sync`, `just check-prompt-parity`, `just check-trunk-snippet-parity`, and `git diff --check` passed. Local install/update/remove, spaces, relocated Git checkout, immutable commit pin, exact discovery, full skill-body/argument expansion and inventory/frontmatter contracts are covered. Pi stores local install paths relative to the disposable agent settings; tests validate their resolved identity. Built-in non-skill commands are excluded from skill census assertions.
+- Verification limits: no live model response or interactive TUI `/reload` was exercised; no public ref was installed. Full `just ci` was not run (no PR opened or updated). These are not release-portability claims.
+- Next: Phase 2 must first establish worker CLI isolation and model identity. All other 14 skills remain blocked and absent from the manifest. Full CI and authenticated two-provider/all-command release smoke remain later-phase gates, not satisfied by these deterministic tests.
 
 ## Findings
 
@@ -230,4 +288,4 @@ Context lifecycle:
 
 ## Final Results
 
-- Pending implementation.
+- Phase 1 complete: only `/skill:skein-show-me` is exposed; install/discovery and inventory checks pass. Phases 2–4 are not implemented. See Phase 1 handoff above for verification boundaries and the next readiness gate.

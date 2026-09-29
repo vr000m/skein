@@ -1,0 +1,12 @@
+{
+  "name": "skein-pi",
+  "private": true,
+  "description": "Skein skills for Pi — staged port; only readiness-tested skills are exposed.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "skills": ["./plugins/skein-pi/skills/show-me/SKILL.md"],
+    "extensions": [],
+    "prompts": [],
+    "themes": []
+  }
+}
