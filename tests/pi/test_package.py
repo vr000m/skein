@@ -58,6 +58,14 @@ def package_fixture(path):
     target = path / SKILL
     target.parent.mkdir(parents=True)
     shutil.copy2(ROOT / SKILL, target)
+    shutil.copy2(
+        ROOT / "plugins/skein-pi/extension.ts", path / "plugins/skein-pi/extension.ts"
+    )
+    shutil.copytree(
+        ROOT / "plugins/skein-pi/lib",
+        path / "plugins/skein-pi/lib",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
     # Real files outside the allowlist must not become commands, even if valid.
     for extra in (
         "plugins/skein-pi/skills/grill/SKILL.md",
@@ -169,7 +177,7 @@ def test_manifest_exact_allowlist():
     manifest = json.loads((ROOT / "package.json").read_text())
     assert manifest["pi"] == {
         "skills": ALLOWLIST,
-        "extensions": [],
+        "extensions": ["./plugins/skein-pi/extension.ts"],
         "prompts": [],
         "themes": [],
     }

@@ -5,7 +5,7 @@
   "keywords": ["pi-package"],
   "pi": {
     "skills": ["./plugins/skein-pi/skills/show-me/SKILL.md"],
-    "extensions": [],
+    "extensions": ["./plugins/skein-pi/extension.ts"],
     "prompts": [],
     "themes": []
   }
