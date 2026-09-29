@@ -57,4 +57,25 @@ The hostile tool-call test proves the command is **not executed**, not that the 
 
 Passing these tests closes the observed ambient-prompt and package-startup gaps **for this no-tools/API-key lane**. It does not establish same-UID filesystem isolation, provider portability, live model quality or operational readiness of any new skill. Arbitrary read/bash would expose files or nested processes; all tools are refused by this builder until role-scoped access is separately designed and tested.
 
-Next, after reviewing the revised plan/design, implement the dispatcher around this boundary: bounded concurrency/streaming/output, exact result schema and terminal validation, measured-or-unknown usage, process-group cancellation and guarded attempt persistence. Do not register skills until their required credential/tool lanes and end-to-end tests pass. The package allowlist remains `skein-show-me` only.
+## Dispatcher implementation and handoff
+
+`dispatcher.py` now implements the bounded synchronous host library for this lane. It is not a model-invocable CLI. A trusted host constructs it once with absolute runtime/cwd/state paths, a selected capability minted by `approve_selection(...)`, and optional separately confirmed tier capabilities. `approve_selection` calls an operator-facing callback with only a frozen redacted identity tuple; direct `Selection(...)` construction is refused. This is an in-process capability boundary, not protection from arbitrary code already executing inside the trusted host. Task requests contain exactly task id, attempt, role and prompt; they cannot carry approvals, credentials, runtime paths, tools, cwd or state destinations.
+
+The dispatcher:
+
+- rejects nested dispatcher construction when the private profile's depth marker is present;
+- bounds concurrency (including queue wait in the task deadline), wall time, prompt/result/event-line/total output sizes and finding counts;
+- writes task JSON to stdin with nonblocking I/O and fails if the child closes stdin before the complete task is delivered;
+- concurrently drains stdout/stderr, retaining neither raw prompts, event streams nor diagnostics;
+- requires one exact selected provider/model identity, one schema-valid no-tool assistant result, agent end without retry, and final `agent_settled`; it rejects tool/error/retry/compaction/extension events, duplicate JSON keys, extra turns and post-terminal records;
+- treats absent or synthetic-zero usage as `unknown`, labels positive token counts `reported`, and always leaves cost `unknown` because no approved rate provenance is supplied;
+- terminates the process group on cancellation, deadline, output overflow and every exit, escalating TERM to KILL;
+- persists only the bounded typed envelope to a mode-0600 immutable attempt file. A pinned directory-fd walk refuses `..`, symlinked path components, pre-existing leaves and concurrent claims; publication is atomic and never overwrites. A persistence failure returns `state_error` with no result, so an unrecorded completion cannot be reported as success.
+
+`tests/pi/test_dispatcher.py` covers real-Pi loopback success/auth/tool/missing-usage paths plus deterministic adversarial process fixtures: malformed/truncated/duplicate JSON, wrong identity/cwd, normal-looking output after a tool event, credential-bearing output/diagnostics, early stdin close, output floods, timeout, cancellation, TERM-resistant descendants, queue cancellation/deadline, concurrency, task authority injection, shell-like prompt data, immutable/concurrent state claims and symlink escapes. These are deterministic host-boundary tests, not hosted-model quality tests.
+
+A fresh read-only review first identified two defects: partial stdin could have been accepted after a broken pipe, and `Selection` was an ordinary caller assertion. Both were fixed and covered. A second fresh review returned **PASS within the documented in-process trusted-caller boundary**, finding no remaining concrete false-success, cancellation, output-bound, state-containment or secret-persistence defect in scope. This focused review is not a full plan re-review and does not refresh the plan marker.
+
+### Remaining integration gate
+
+No skill is registered through this dispatcher yet. A Pi skill runs under model control and therefore cannot safely read a key, manufacture an approval callback, or interpolate secret-bearing launch commands. A trusted package extension/operator host (or another separately reviewed integration surface) must own selection, credential acquisition and dispatcher construction, exposing only bounded role/task submission to skills. That host must preserve the no-tools/API-key lane or separately verify any broader credential/tool lane. Until it exists and skill end-to-end tests pass, the package allowlist remains `skein-show-me` only.

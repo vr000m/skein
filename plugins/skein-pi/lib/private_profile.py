@@ -251,6 +251,7 @@ def private_profile(
             "PI_OFFLINE": "1",
             "PI_SKIP_VERSION_CHECK": "1",
             "PI_TELEMETRY": "0",
+            "SKEIN_PI_WORKER_DEPTH": "1",
             "PI_CODING_AGENT_SESSION_DIR": str(root / "sessions"),
         }
         yield PrivateProfile(root=root, agent_dir=agent, cwd=cwd, argv=argv, env=env)

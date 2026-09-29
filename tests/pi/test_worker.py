@@ -34,7 +34,15 @@ FLAGS = [
 
 
 @contextmanager
-def endpoint(*, status=200, usage=True, tool_call=None, hold=False, expected_key=None):
+def endpoint(
+    *,
+    status=200,
+    usage=True,
+    tool_call=None,
+    hold=False,
+    expected_key=None,
+    response=None,
+):
     requests = []
     arrived = threading.Event()
     release = threading.Event()
@@ -76,7 +84,11 @@ def endpoint(*, status=200, usage=True, tool_call=None, hold=False, expected_key
                     }
                 ]
             else:
-                delta["content"] = '{"status":"ok","summary":"fixture response"}'
+                delta["content"] = (
+                    json.dumps(response)
+                    if response is not None
+                    else '{"status":"ok","summary":"fixture response"}'
+                )
             chunk = {
                 "id": "fixture",
                 "object": "chat.completion.chunk",
