@@ -151,5 +151,5 @@ def test_review_plan_exclusions_remain_absent_from_manifest():
         assert (
             f"./plugins/skein-pi/skills/{name}/SKILL.md" not in manifest["pi"]["skills"]
         )
-    assert not (ROOT / "plugins/skein-pi/skills/deep-review").exists()
+    assert (ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md").is_file()
     assert not (ROOT / "plugins/skein-pi/skills/review-gauntlet").exists()

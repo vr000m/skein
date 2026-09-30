@@ -69,10 +69,11 @@ def sandbox(tmp_path):
     return pi, env, cwd, agent
 
 
-def package_fixture(path):
+def package_fixture(path, extra_skills=()):
     path.mkdir(parents=True)
-    shutil.copy2(ROOT / "package.json", path / "package.json")
     manifest = json.loads((ROOT / "package.json").read_text())
+    manifest["pi"]["skills"].extend(extra_skills)
+    (path / "package.json").write_text(json.dumps(manifest, indent=2) + "\n")
     for skill_path in manifest["pi"]["skills"]:
         source_dir = (ROOT / skill_path).parent
         target_dir = (path / skill_path).parent
@@ -93,8 +94,10 @@ def package_fixture(path):
         "plugins/skein-codex/skills/show-me/SKILL.md",
         "skills/unfinished/SKILL.md",
     ):
+        if extra in {skill.removeprefix("./") for skill in extra_skills}:
+            continue
         target = path / extra
-        target.parent.mkdir(parents=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             "---\nname: unfinished\ndescription: Must not load.\n---\nNo.\n"
         )
@@ -170,12 +173,15 @@ def rpc(sandbox):
         process.stderr.close()
 
 
-def assert_discovery(sandbox, package):
+def assert_discovery(sandbox, package, include_deep_review=False):
     with rpc(sandbox) as request:
         commands = [
             c for c in request("get_commands")["commands"] if c["source"] == "skill"
         ]
-        assert [c["name"] for c in commands] == COMMANDS
+        expected_commands = COMMANDS + (
+            ["skill:skein-deep-review"] if include_deep_review else []
+        )
+        assert [c["name"] for c in commands] == expected_commands
         command = next(c for c in commands if c["name"] == "skill:skein-show-me")
         assert command["source"] == "skill"
         assert (
@@ -197,6 +203,7 @@ def assert_discovery(sandbox, package):
             ("dev-plan", "create feature fixture"),
             ("grill", "A bounded fixture idea"),
             ("review-plan", "docs/dev_plans/fixture.md"),
+            *([("deep-review", "--full")] if include_deep_review else []),
         ):
             skill_path = f"plugins/skein-pi/skills/{name}/SKILL.md"
             request("steer", message=f"/skill:skein-{name} {argument}")

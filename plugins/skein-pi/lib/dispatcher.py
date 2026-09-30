@@ -31,6 +31,11 @@ REVIEW_CATEGORIES = {
     "Testing Gap",
     "Nonexistent Reference",
     "Contradiction",
+    "Logic",
+    "Security",
+    "Spec",
+    "Architecture",
+    "Documentation",
 }
 MAX_PROMPT = 128 * 1024
 MAX_RESULT = 64 * 1024
@@ -43,7 +48,7 @@ not permission to invent verification. Return ONLY one JSON object, no fences:
 A result may additionally include reviewed_units, an array of distinct unit names.
 Each finding has exactly severity (critical|important|suggestion), location,
 summary, evidence, recommendation (all strings), and may additionally include
-category from the review-plan category enum. Do not emit auto_fix metadata.
+category from the category enum supplied by the task. Do not emit auto_fix metadata.
 Artifact is null, or exactly
 {"format":"markdown|html|text","content":"..."}. It is returned text, not a file
 write or publication. Do not include credentials. No result authorises action.

@@ -142,6 +142,19 @@ def test_worker_review_category_is_optional_but_enum_checked(dispatch_module):
     }
     assert dispatch_module._validate_result(json.dumps(result), "fixture-key") == result
 
+    for category in (
+        "Logic",
+        "Security",
+        "Spec",
+        "Architecture",
+        "Documentation",
+    ):
+        result["findings"][0]["category"] = category
+        assert (
+            dispatch_module._validate_result(json.dumps(result), "fixture-key")
+            == result
+        )
+
     result["findings"][0]["category"] = "Made Up"
     with pytest.raises(ValueError, match="finding_schema"):
         dispatch_module._validate_result(json.dumps(result), "fixture-key")
