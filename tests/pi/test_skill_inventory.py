@@ -11,6 +11,8 @@ READY = {
     "content-draft",
     "content-review",
     "update-docs",
+    "dev-plan",
+    "grill",
 }
 SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
 EXPECTED = {
@@ -64,7 +66,14 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
     assert manifest["pi"]["skills"] == [
         f"./plugins/skein-pi/skills/{name}/SKILL.md" for name in ready
     ]
-    assert ready == ["show-me", "content-draft", "content-review", "update-docs"]
+    assert ready == [
+        "show-me",
+        "content-draft",
+        "content-review",
+        "update-docs",
+        "dev-plan",
+        "grill",
+    ]
 
 
 def test_show_me_port_is_standalone_and_pi_native():

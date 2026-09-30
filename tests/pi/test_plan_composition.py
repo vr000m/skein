@@ -1,7 +1,6 @@
 """Readiness and trusted evidence-flow tests for dev-plan and grill."""
 
 import json
-import shutil
 
 from test_extension import rpc_worker, tool_results
 from test_package import COMMANDS, ROOT, package_fixture, rpc, run
@@ -19,8 +18,6 @@ def enable_dev_plan_fixture(sandbox, tmp_path):
     manifest = json.loads(manifest_path.read_text())
     manifest["pi"]["skills"].extend([DEV_PLAN, GRILL])
     manifest_path.write_text(json.dumps(manifest))
-    for path in (DEV_PLAN, GRILL):
-        shutil.copytree((ROOT / path).parent, (package / path).parent)
     run([pi, "install", str(package)], env, cwd)
     return package / "plugins/skein-pi/extension.ts"
 
@@ -35,7 +32,7 @@ def test_ready_fixture_discovers_and_expands_both_composition_commands(
             for command in request("get_commands")["commands"]
             if command["source"] == "skill"
         ]
-        assert names == [*COMMANDS, "skill:skein-dev-plan", "skill:skein-grill"]
+        assert names == COMMANDS, names
         for command, argument, skill in (
             ("/skill:skein-dev-plan", "create feature fixture", "dev-plan"),
             ("/skill:skein-grill", "A bounded fixture idea", "grill"),
@@ -52,21 +49,16 @@ def test_ready_fixture_discovers_and_expands_both_composition_commands(
             assert argument in queued[0]
 
 
-def test_dev_plan_and_grill_are_unregistered_until_review():
+def test_dev_plan_and_grill_are_registered_only_after_readiness_contract():
     manifest = json.loads((ROOT / "package.json").read_text())
-    assert DEV_PLAN not in manifest["pi"]["skills"]
-    assert GRILL not in manifest["pi"]["skills"]
+    assert DEV_PLAN in manifest["pi"]["skills"]
+    assert GRILL in manifest["pi"]["skills"]
     extension = (ROOT / "plugins/skein-pi/extension.ts").read_text()
     assert "if (manifestIncludes(DEV_PLAN_SKILL_PATH)) pi.registerTool" in extension
     assert "skein_dev_plan_explore" in extension
     inventory = (ROOT / "docs/dev_plans/20260929-feature-pi-plugin-port.md").read_text()
-    assert (
-        "| dev-plan | `/skill:skein-dev-plan` | staged (Phase 3, first) |" in inventory
-    )
-    assert (
-        "| grill | `/skill:skein-grill` | staged (Phase 3, with dev-plan) |"
-        in inventory
-    )
+    assert "| dev-plan | `/skill:skein-dev-plan` | ready |" in inventory
+    assert "| grill | `/skill:skein-grill` | ready |" in inventory
 
 
 def test_pi_plan_assets_match_canonical_templates():
@@ -74,6 +66,55 @@ def test_pi_plan_assets_match_canonical_templates():
     target = ROOT / "plugins/skein-pi/skills/dev-plan/references"
     for name in ("template.md", "rubric.md"):
         assert (target / name).read_bytes() == (source / name).read_bytes()
+
+
+def test_dev_plan_create_and_update_require_approval_and_fresh_target():
+    dev_plan = (ROOT / DEV_PLAN).read_text()
+    create = dev_plan.index("6. Show the full proposed file/path")
+    create_approval = dev_plan.index(
+        "Ask for explicit approval before creating", create
+    )
+    create_recheck = dev_plan.index("After approval, re-check", create_approval)
+    update = dev_plan.index("## Update and complete")
+    update_approval = dev_plan.index("wait for explicit approval", update)
+    update_recheck = dev_plan.index(
+        "After approval, re-read the target", update_approval
+    )
+    assert create_approval < create_recheck
+    assert update_approval < update_recheck
+    for phrase in (
+        "accept only an explicit approval",
+        "never silence",
+        "a worker result",
+        "rather than overwrite",
+        "compare it byte-for-byte",
+        "If it changed, stop without writing",
+        "do not run Explore again",
+        "calculate/refresh the review marker",
+    ):
+        assert phrase in dev_plan
+
+
+def test_grill_outcomes_are_explicit_and_write_free_until_approval():
+    grill = (ROOT / GRILL).read_text()
+    interview = grill.index("## 3. Interview one decision at a time")
+    handback = grill.index("## 4. Hand back and persist only with approval")
+    assert grill.index("accept", interview) < grill.index("override", interview)
+    assert grill.index("waive", interview) < handback
+    assert (
+        grill.index("Do not batch decisions or write during the interview.") < handback
+    )
+    assert grill.index("wait for explicit approval", handback) < grill.index(
+        "The dev-plan update route must re-read again", handback
+    )
+    for phrase in (
+        "Wait for the user's answer",
+        "Record the outcome as `accept`, `override`, or `waive`",
+        "stop: show the drift",
+        "do not apply decisions to a stale target",
+        "Never stage, commit, or refresh a review marker",
+    ):
+        assert phrase in grill
 
 
 def test_dev_plan_and_grill_frontmatter_and_write_safety():

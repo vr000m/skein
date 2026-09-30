@@ -25,6 +25,8 @@ def test_manifest_registers_only_readiness_tested_skill_files():
         "show-me",
         *READY,
         *SPECIALIZED,
+        "dev-plan",
+        "grill",
     }
 
 
