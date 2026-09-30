@@ -1,6 +1,6 @@
 # Review-Plan Output Rubric
 
-Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a Managed Agents outcome rubric (text mode) and a local self-check: the orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Mirrored byte-identically in `plugins/skein/skills/review-plan/rubric.md` and `plugins/skein-codex/skills/review-plan/rubric.md`.
+Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a Managed Agents outcome rubric (text mode) and a local self-check: the orchestrator self-checks merged lens output against this rubric before presenting findings to the user. Pi-specific rubric; the Pi main-session adapter normalizes worker findings before reconciliation.
 
 ## Coverage
 
@@ -46,7 +46,7 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 - One-line overall summary at the top
 - Markdown is well-formed and renders cleanly
 - Minor findings render compact by default (no Evidence/Suggestion sub-bullets); `--verbose` restores full detail for every severity
-- The report always ends with the per-harness JSON state file path (`.review-plan/latest-claude.json` / `.review-plan/latest-codex.json`)
+- The report always ends with the per-harness JSON state file path (`.review-plan/latest-pi.json`)
 
 ## Reconciliation
 

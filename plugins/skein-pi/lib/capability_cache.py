@@ -93,6 +93,7 @@ def record(path: Path, key: str, current_fingerprint: str, reason: str) -> None:
 def clear(path: Path) -> None:
     """Explicit operator refresh: remove all cached capability decisions."""
     try:
+        _assert_no_symlink_path(path)
         path.unlink()
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
         pass

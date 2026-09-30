@@ -24,7 +24,7 @@ If a lens is unavailable, emit an explicit `skipped` record naming the stable re
 
 ## Reconcile and report
 
-1. Collect the disk-first lens stream and validate each record. The main session owns this adapter and must persist only the bounded worker result, never raw prompts or event streams. Reconcile with bundled `reconcile-findings.sh --skill review-plan`.
+1. Collect the disk-first lens stream and validate each record. The main session owns this adapter and must persist only the bounded worker result, never raw prompts or event streams. Before persistence, map worker `critical|important|suggestion` to `Critical|Important|Minor`, split a supplied `file:line` location into `file` and numeric `line`, copy `summary`/`evidence`, and map `recommendation` to `suggestion`; attach the current lens name. Reconcile with bundled `reconcile-findings.sh --skill review-plan`.
 2. Run the contradiction pass as a separate top-level worker after reconciliation, or as a visibly labelled best-effort main-session fallback only when the user explicitly accepts that degraded route. Reconcile its findings with the same contract.
 3. Run the bundled auto-fix eligibility audit. Auto-fix remains opt-in and must use the bundled applier; never hand-apply or fall back to unbundled scripts.
 4. Persist the validated reconciled envelope with bundled `persist-review-state.sh --harness pi`, adding `plan_path`, the pre-reconciliation plan hash, and `run_id`. Preserve `unknown` usage and typed failures.

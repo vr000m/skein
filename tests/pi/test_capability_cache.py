@@ -41,6 +41,8 @@ def test_symlinked_cache_directory_is_refused(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     cache_dir = tmp_path / ".review-plan"
+    sentinel = outside / "capabilities.json"
+    sentinel.write_text("sentinel")
     cache_dir.symlink_to(outside, target_is_directory=True)
     try:
         capability_cache.record(
@@ -50,7 +52,8 @@ def test_symlinked_cache_directory_is_refused(tmp_path):
         assert "symlink" in str(error)
     else:
         raise AssertionError("symlinked capability cache path was accepted")
-    assert not (outside / "capabilities.json").exists()
+    capability_cache.clear(cache_dir / "capabilities.json")
+    assert (outside / "capabilities.json").exists()
 
 
 def test_refresh_removes_cache_and_rejects_empty_entries(tmp_path):
