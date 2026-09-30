@@ -21,11 +21,13 @@ ALLOWLIST = [
     "./plugins/skein-pi/skills/show-me/SKILL.md",
     "./plugins/skein-pi/skills/content-draft/SKILL.md",
     "./plugins/skein-pi/skills/content-review/SKILL.md",
+    "./plugins/skein-pi/skills/update-docs/SKILL.md",
 ]
 COMMANDS = [
     "skill:skein-show-me",
     "skill:skein-content-draft",
     "skill:skein-content-review",
+    "skill:skein-update-docs",
 ]
 
 
@@ -185,6 +187,7 @@ def assert_discovery(sandbox, package):
         for name, argument in (
             ("content-draft", '--type til --title "Fixture"'),
             ("content-review", "draft.md --type technical-doc"),
+            ("update-docs", ""),
         ):
             skill_path = f"plugins/skein-pi/skills/{name}/SKILL.md"
             request("steer", message=f"/skill:skein-{name} {argument}")

@@ -18,7 +18,14 @@ from test_worker import MODEL, PROVIDER, configure, endpoint
 EXTENSION = ROOT / "plugins/skein-pi/extension.ts"
 
 
-def rpc_worker(sandbox, *, approve, explicit_extension=True, tool_name="skein_worker"):
+def rpc_worker(
+    sandbox,
+    *,
+    approve,
+    explicit_extension=True,
+    extension_path=None,
+    tool_name="skein_worker",
+):
     pi, env, cwd, _ = sandbox
     env = {**env, "SKEIN_PI_PYTHON": str(Path(sys.executable).resolve())}
     args = [
@@ -41,8 +48,12 @@ def rpc_worker(sandbox, *, approve, explicit_extension=True, tool_name="skein_wo
         "--thinking",
         "off",
     ]
-    if explicit_extension:
-        args[4:4] = ["--no-extensions", "--extension", str(EXTENSION)]
+    if explicit_extension or extension_path:
+        args[4:4] = [
+            "--no-extensions",
+            "--extension",
+            str(extension_path or EXTENSION),
+        ]
     process = subprocess.Popen(
         args,
         env=env,

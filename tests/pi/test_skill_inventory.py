@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = ROOT / "docs/dev_plans/20260929-feature-pi-plugin-port.md"
-READY = {"show-me", "content-draft", "content-review"}
+READY = {"show-me", "content-draft", "content-review", "update-docs"}
 SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
 EXPECTED = {
     "conduct",
@@ -49,8 +49,6 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
             assert readiness == "ready"
         elif name in SKIPPED:
             assert readiness == "skipped (unavailable)"
-        elif name == "update-docs":
-            assert readiness == "implemented (review pending)"
         elif name in {"dev-plan", "grill"}:
             assert readiness.startswith("staged (Phase 3")
         else:
@@ -61,7 +59,7 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
     assert manifest["pi"]["skills"] == [
         f"./plugins/skein-pi/skills/{name}/SKILL.md" for name in ready
     ]
-    assert ready == ["show-me", "content-draft", "content-review"]
+    assert ready == ["show-me", "content-draft", "content-review", "update-docs"]
 
 
 def test_show_me_port_is_standalone_and_pi_native():

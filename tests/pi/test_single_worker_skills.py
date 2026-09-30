@@ -7,6 +7,7 @@ from pathlib import Path
 from test_package import ALLOWLIST, ROOT
 
 READY = ("content-draft", "content-review")
+SPECIALIZED = ("update-docs",)
 
 
 def skill(name):
@@ -23,6 +24,7 @@ def test_manifest_registers_only_readiness_tested_skill_files():
     assert {Path(path).parent.name for path in manifest["pi"]["skills"]} == {
         "show-me",
         *READY,
+        *SPECIALIZED,
     }
 
 

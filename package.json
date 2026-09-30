@@ -7,7 +7,8 @@
     "skills": [
       "./plugins/skein-pi/skills/show-me/SKILL.md",
       "./plugins/skein-pi/skills/content-draft/SKILL.md",
-      "./plugins/skein-pi/skills/content-review/SKILL.md"
+      "./plugins/skein-pi/skills/content-review/SKILL.md",
+      "./plugins/skein-pi/skills/update-docs/SKILL.md"
     ],
     "extensions": ["./plugins/skein-pi/extension.ts"],
     "prompts": [],

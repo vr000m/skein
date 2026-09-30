@@ -209,6 +209,16 @@ function reviewPrompt(params: { type: string; path?: string; content: string }) 
 }
 
 const DOC_INPUT_LIMIT = 96 * 1024;
+const packageManifestPath = join(extensionRoot, "..", "..", "package.json");
+
+function updateDocsEnabled() {
+  try {
+    const manifest = JSON.parse(readFileSync(packageManifestPath, "utf8"));
+    return manifest.pi?.skills?.includes("./plugins/skein-pi/skills/update-docs/SKILL.md") === true;
+  } catch {
+    return false;
+  }
+}
 const DOC_RESULT_CONTRACT = `Return only JSON: {"schema_version":1,"status":"ok","summary":"...","findings":[{"severity":"critical|important|suggestion","location":"one supplied document path","summary":"category and confidence plus concise issue","evidence":"...","recommendation":"minimal proposed edit"}],"artifact":{"format":"markdown","content":"concise audit report"}}. Findings are advisory proposals, not edits. Never claim to have read files outside the supplied snapshots or to have changed files.`;
 
 function updateDocsPrompt(params: {
@@ -313,7 +323,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
+  if (updateDocsEnabled()) pi.registerTool({
     name: "skein_update_docs_audit",
     label: "Skein documentation audit",
     description: "Audit bounded main-session snapshots of the current diff and selected project documents. Returns proposals only; it never edits files.",
@@ -340,10 +350,12 @@ export default function (pi: ExtensionAPI) {
       if (planPath && (planPath.startsWith("/") || planPath.split(/[\\\\/]/).includes("..") || !planPath.startsWith("docs/dev_plans/") || !planPath.endsWith(".md"))) {
         throw new Error("Skein documentation audit unavailable: document_path_invalid.");
       }
-      const allowedDocuments = new Set([
-        "README.md", "AGENTS.md", "CHANGELOG.md", "docs/dev_plans/README.md",
-        ...(planPath ? [planPath] : []),
-      ]);
+      const allowedDocuments = new Set<string>();
+      if (params.readme.trim()) allowedDocuments.add("README.md");
+      if (params.agents.trim()) allowedDocuments.add("AGENTS.md");
+      if (params.changelog.trim()) allowedDocuments.add("CHANGELOG.md");
+      if (params.plan_index.trim()) allowedDocuments.add("docs/dev_plans/README.md");
+      if (planPath && params.relevant_plan.trim()) allowedDocuments.add(planPath);
       const result = await executeWorker(ctx, "mechanical", prompt, signal);
       return validateDocAudit(result, allowedDocuments);
     },
