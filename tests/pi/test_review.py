@@ -45,11 +45,39 @@ def test_review_plan_has_portable_disk_first_and_degraded_contract():
         "latest-pi.json",
         "never treat a skipped gate as a clean approval",
         "main session owns this adapter",
+        "bounded evidence packet prepared by the main session",
+        "report those claims as unverified",
+        "category` from the rubric's exact category enum",
+        "`reviewed_units`, a duplicate-free list drawn from that attempt's assigned units",
+        "Persist one `progress` record for every returned unit",
+        "Mark an attempt completed only when every assigned unit was returned as reviewed",
+        "Pi review workers must not emit `auto_fix`",
+        "recommendations only and never invoke the eligibility audit or applier",
+        "preserve `category` and `location`",
+        "collect once with the default `scripts/collect-lens-results.sh` output for status/coverage and again with `--findings-jsonl`",
+        "use the collector's `--findings-jsonl` output",
+        "assign a unique synthetic location `__skein_unanchored__:<run-id>:<lens>:<attempt>:<finding-index>`",
+        "Keep the persistence `location` field intact through `persist-lens-result.sh`",
+        "convert to empty `file` and line `-1` only after collection",
         "--json-file",
         "skein-dev-plan update",
         "Never calculate or refresh the marker by hand",
     ):
         assert phrase in text
+
+
+def test_review_plan_rubric_uses_pi_specific_fallback_and_categories():
+    rubric = SKILL.with_name("rubric.md").read_text()
+    assert "Pi main-session fallback" in rubric
+    assert (
+        "category ∈ {Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference, Contradiction}"
+        in rubric
+    )
+    assert "bounded evidence for that path/symbol" in rubric
+    assert (
+        "This Pi port is advisory-only and does not accept or persist `auto_fix` blocks."
+        in rubric
+    )
 
 
 def test_review_plan_capability_cache_is_packaged_separately_from_results():

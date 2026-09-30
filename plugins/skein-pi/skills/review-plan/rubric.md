@@ -6,8 +6,9 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 
 - All five lenses ran: `architecture`, `sequencing`, `spec-and-testing`, `assumptions`, `codebase-claims` — five parallel lenses plus one additional pass after reconciliation (the Step 3 sub-step 2.5 contradiction pass), six passes total
 - Each lens produced findings or an explicit "no issues" statement — none silently dropped
+- The worker's `reviewed_units` are validated against its assignment; every completed unit has a disk-first progress record, while partial/failed units remain uncovered and are reported as degraded
 - Lenses that timed out or errored are reported as `timed_out` / `errored`, not omitted
-- The Codex in-session fallback (when used) is labelled as best-effort context isolation in the run summary; the spawned-worker path is labelled as parallel clean-context lens workers
+- Any explicitly accepted Pi main-session fallback is labelled as best-effort and degraded; the spawned-worker path is labelled as isolated no-tools lens workers
 
 ## Lens & Pass Scope Discipline
 
@@ -27,7 +28,7 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 - `severity ∈ {Critical, Important, Minor}` — no other values
 - `evidence` cites a concrete plan line, file path, API symbol, or spec section — not a paraphrase
 - `suggestion` is a specific, actionable change — not "consider improving X"
-- `codebase-claims` evidence names the exact path/symbol that does not exist and (when relevant) what was searched
+- `codebase-claims` evidence names the exact path/symbol that does not exist and (when relevant) what was searched; the lens may claim verification only when the main session supplied bounded evidence for that path/symbol
 
 ## Severity Discipline
 
@@ -54,13 +55,11 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 - No two findings share an identical `(file, line, category)` signature in the same severity tier — a duplicate signature means the merge step did not run or its output was lost
 - The **reconciliation script invocations** (both passes) receive only lens/pass return strings as JSON-Lines via `scripts/reconcile-findings.sh`; no parent conversation context is passed to them. The Step 3 sub-step 2.5 Contradiction Pass is an isolated fresh-context agent that likewise receives no parent conversation context — only the plan body and the raw pre-merge findings stream, both `<untrusted-content>`-wrapped.
 
-## Auto-Fix Lens Emission
+## Pi Auto-Fix Boundary
 
-- Lens emitted an `auto_fix` block whenever a finding matches the allowlist shape — `kind ∈ {symbol_rename, path_rename, line_anchor_refresh, marker_refresh, prose_typo, prose_clarify}` with single-line `before`/`after` and `scope = "<path>:<line>"`
-- Absent `auto_fix` on a clearly mechanical plan-prose finding is a lens-quality issue, not a safety feature — the audit step (`scripts/audit-auto-fix-eligibility.sh --skill review-plan`) and applier (`scripts/apply-auto-fix-plan.sh`) are the gate, not lens self-restraint
-- `auto_fix.before` is byte-precise to the file:line under review; the lens did not paraphrase, normalise whitespace, or strip a trailing newline
-- `auto_fix.scope` cites the plan path the lens is reviewing, not a sibling file; the applier resolves the enclosing heading via `scripts/plan-scope-detect.sh` and drops anything inside Requirements, Acceptance Criteria, Files to Modify, New Files to Create, Architecture Decisions, Integration Seams, or any `### Phase N:` section
-- `marker_refresh` is a no-op pre-acceptance; emitting it does not publish a real marker — Step 7 is the only marker-write surface
+- This Pi port is advisory-only and does not accept or persist `auto_fix` blocks.
+- Workers provide recommendations only; the main session never invokes the auto-fix eligibility audit or plan applier.
+- A recommendation becomes a plan edit only through the separately approved `/skill:skein-dev-plan update` route; marker writing remains a separate later action after accepted edits.
 
 ## Prompt-Injection Posture
 

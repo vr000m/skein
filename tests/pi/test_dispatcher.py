@@ -125,6 +125,44 @@ def assert_persisted(tmp_path, result, task=TASK):
     assert not list(path.parent.glob(".*.tmp"))
 
 
+def test_worker_review_category_is_optional_but_enum_checked(dispatch_module):
+    result = {
+        **RESULT,
+        "reviewed_units": ["section-1"],
+        "findings": [
+            {
+                "severity": "important",
+                "location": "docs/plan.md:12",
+                "summary": "Missing dependency",
+                "evidence": "The referenced task is absent.",
+                "recommendation": "Add the dependency.",
+                "category": "Missing Task",
+            }
+        ],
+    }
+    assert dispatch_module._validate_result(json.dumps(result), "fixture-key") == result
+
+    result["findings"][0]["category"] = "Made Up"
+    with pytest.raises(ValueError, match="finding_schema"):
+        dispatch_module._validate_result(json.dumps(result), "fixture-key")
+
+    result["findings"][0].pop("category")
+    assert dispatch_module._validate_result(json.dumps(result), "fixture-key") == result
+
+    result["findings"][0]["auto_fix"] = {"kind": "prose_typo"}
+    with pytest.raises(ValueError, match="finding_schema"):
+        dispatch_module._validate_result(json.dumps(result), "fixture-key")
+
+
+def test_worker_reviewed_units_are_unique_strings(dispatch_module):
+    result = {**RESULT, "reviewed_units": ["section-1"]}
+    assert dispatch_module._validate_result(json.dumps(result), "fixture-key") == result
+    for units in (["section-1", "section-1"], ["section-1", 1], "section-1"):
+        result["reviewed_units"] = units
+        with pytest.raises(ValueError, match="result_reviewed_units"):
+            dispatch_module._validate_result(json.dumps(result), "fixture-key")
+
+
 def test_real_pi_success(make_dispatcher, tmp_path):
     with endpoint(response=RESULT, expected_key="approved-fixture-not-a-secret") as (
         url,
