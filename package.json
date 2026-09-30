@@ -11,6 +11,7 @@
       "./plugins/skein-pi/skills/update-docs/SKILL.md",
       "./plugins/skein-pi/skills/dev-plan/SKILL.md",
       "./plugins/skein-pi/skills/grill/SKILL.md",
+      "./plugins/skein-pi/skills/deep-review/SKILL.md",
       "./plugins/skein-pi/skills/review-plan/SKILL.md"
     ],
     "extensions": ["./plugins/skein-pi/extension.ts"],

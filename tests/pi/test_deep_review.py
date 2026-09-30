@@ -17,13 +17,11 @@ from test_package import sandbox as sandbox  # noqa: PLC0414 — pytest fixture 
 SKILL = ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md"
 
 
-def test_deep_review_remains_unregistered_until_readiness_review():
+def test_deep_review_is_registered_after_readiness_review():
     manifest = json.loads((ROOT / "package.json").read_text())
-    assert "./plugins/skein-pi/skills/deep-review/SKILL.md" not in ALLOWLIST
-    assert (
-        "./plugins/skein-pi/skills/deep-review/SKILL.md" not in manifest["pi"]["skills"]
-    )
-    assert "skill:skein-deep-review" not in COMMANDS
+    assert "./plugins/skein-pi/skills/deep-review/SKILL.md" in ALLOWLIST
+    assert "./plugins/skein-pi/skills/deep-review/SKILL.md" in manifest["pi"]["skills"]
+    assert "skill:skein-deep-review" in COMMANDS
 
 
 def test_deep_review_has_pi_native_bounded_disk_first_contract():
@@ -69,12 +67,9 @@ def test_deep_review_bundles_canonical_required_scripts():
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):
     pi, env, cwd, _agent = sandbox
-    skill_path = "./plugins/skein-pi/skills/deep-review/SKILL.md"
-    package = package_fixture(
-        tmp_path / "staged deep-review", extra_skills=[skill_path]
-    )
+    package = package_fixture(tmp_path / "registered deep-review")
     run([pi, "install", str(package)], env, cwd)
-    assert_discovery(sandbox, package, include_deep_review=True)
+    assert_discovery(sandbox, package)
     run([pi, "remove", str(package)], env, cwd)
 
 

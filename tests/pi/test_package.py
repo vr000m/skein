@@ -24,6 +24,7 @@ ALLOWLIST = [
     "./plugins/skein-pi/skills/update-docs/SKILL.md",
     "./plugins/skein-pi/skills/dev-plan/SKILL.md",
     "./plugins/skein-pi/skills/grill/SKILL.md",
+    "./plugins/skein-pi/skills/deep-review/SKILL.md",
     "./plugins/skein-pi/skills/review-plan/SKILL.md",
 ]
 COMMANDS = [
@@ -33,6 +34,7 @@ COMMANDS = [
     "skill:skein-update-docs",
     "skill:skein-dev-plan",
     "skill:skein-grill",
+    "skill:skein-deep-review",
     "skill:skein-review-plan",
 ]
 
@@ -94,7 +96,7 @@ def package_fixture(path, extra_skills=()):
         "plugins/skein-codex/skills/show-me/SKILL.md",
         "skills/unfinished/SKILL.md",
     ):
-        if extra in {skill.removeprefix("./") for skill in extra_skills}:
+        if extra in {skill.removeprefix("./") for skill in manifest["pi"]["skills"]}:
             continue
         target = path / extra
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -173,14 +175,12 @@ def rpc(sandbox):
         process.stderr.close()
 
 
-def assert_discovery(sandbox, package, include_deep_review=False):
+def assert_discovery(sandbox, package):
     with rpc(sandbox) as request:
         commands = [
             c for c in request("get_commands")["commands"] if c["source"] == "skill"
         ]
-        expected_commands = COMMANDS + (
-            ["skill:skein-deep-review"] if include_deep_review else []
-        )
+        expected_commands = COMMANDS
         assert [c["name"] for c in commands] == expected_commands
         command = next(c for c in commands if c["name"] == "skill:skein-show-me")
         assert command["source"] == "skill"
@@ -203,7 +203,7 @@ def assert_discovery(sandbox, package, include_deep_review=False):
             ("dev-plan", "create feature fixture"),
             ("grill", "A bounded fixture idea"),
             ("review-plan", "docs/dev_plans/fixture.md"),
-            *([("deep-review", "--full")] if include_deep_review else []),
+            ("deep-review", "--full"),
         ):
             skill_path = f"plugins/skein-pi/skills/{name}/SKILL.md"
             request("steer", message=f"/skill:skein-{name} {argument}")

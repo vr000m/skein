@@ -28,6 +28,7 @@ def test_manifest_registers_only_readiness_tested_skill_files():
         "dev-plan",
         "grill",
         "review-plan",
+        "deep-review",
     }
 
 
