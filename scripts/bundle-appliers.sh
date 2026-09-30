@@ -18,7 +18,7 @@ SRC="$ROOT_DIR/scripts"
 # shellcheck source=scripts/lib/bundle-map.sh
 . "$ROOT_DIR/scripts/lib/bundle-map.sh"
 
-MIRRORS=(plugins/skein plugins/skein-codex)
+MIRRORS=(plugins/skein plugins/skein-codex plugins/skein-pi)
 
 temp_root="${TMPDIR:-/tmp}"
 if [[ -d /private/tmp && -w /private/tmp ]]; then
@@ -59,6 +59,9 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	[[ -f "$stage/write-review-marker.py" ]] && chmod +x "$stage/write-review-marker.py"
 
 	for mirror in "${MIRRORS[@]}"; do
+		if [[ "$mirror" == "plugins/skein-pi" && "$skill" != "review-plan" ]]; then
+			continue
+		fi
 		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
 		mkdir -p "$dest"
 		rsync -a --delete "$stage/" "$dest/"

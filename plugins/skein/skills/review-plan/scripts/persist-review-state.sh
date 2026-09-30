@@ -2,7 +2,7 @@
 # persist-review-state.sh — `/review-plan` state-file persistence.
 #
 # Usage:
-#   scripts/persist-review-state.sh --harness claude|codex --plan-path <path> \
+#   scripts/persist-review-state.sh --harness claude|codex|pi --plan-path <path> \
 #       --plan-hash <sha1> --run-id <id> [envelope.json|-]
 #
 # Reads the reconciled v2 finding envelope Step 3's `reconcile-findings.sh`
@@ -50,7 +50,7 @@ SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/persist-review-state.sh --harness claude|codex --plan-path <path> --plan-hash <sha1> --run-id <id> [envelope.json|-]
+usage: scripts/persist-review-state.sh --harness claude|codex|pi --plan-path <path> --plan-hash <sha1> --run-id <id> [envelope.json|-]
 EOF
 }
 
@@ -101,8 +101,8 @@ while [[ $# -gt 0 ]]; do
 	shift
 done
 
-if [[ "$HARNESS" != "claude" && "$HARNESS" != "codex" ]]; then
-	echo "persist-review-state: --harness must be claude or codex" >&2
+if [[ "$HARNESS" != "claude" && "$HARNESS" != "codex" && "$HARNESS" != "pi" ]]; then
+	echo "persist-review-state: --harness must be claude, codex, or pi" >&2
 	usage
 	exit 2
 fi
