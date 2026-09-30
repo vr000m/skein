@@ -6,7 +6,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = ROOT / "docs/dev_plans/20260929-feature-pi-plugin-port.md"
-READY = {"show-me", "content-draft", "content-review", "update-docs"}
+READY = {
+    "show-me",
+    "content-draft",
+    "content-review",
+    "update-docs",
+}
 SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
 EXPECTED = {
     "conduct",
@@ -48,7 +53,7 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
         if name in READY:
             assert readiness == "ready"
         elif name in SKIPPED:
-            assert readiness == "skipped (unavailable)"
+            assert readiness == "skipped (out of scope)"
         elif name in {"dev-plan", "grill"}:
             assert readiness.startswith("staged (Phase 3")
         else:
