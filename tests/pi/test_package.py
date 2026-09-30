@@ -81,7 +81,7 @@ def package_fixture(path):
     )
     # Real files outside the allowlist must not become commands, even if valid.
     for extra in (
-        "plugins/skein-pi/skills/grill/SKILL.md",
+        "plugins/skein-pi/skills/deep-review/SKILL.md",
         "plugins/skein-pi/skills/plan-view/SKILL.md",
         "plugins/skein/skills/show-me/SKILL.md",
         "plugins/skein-codex/skills/show-me/SKILL.md",
