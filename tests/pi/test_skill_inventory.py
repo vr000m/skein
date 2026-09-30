@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = ROOT / "docs/dev_plans/20260929-feature-pi-plugin-port.md"
 READY = {"show-me", "content-draft", "content-review"}
+SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
 EXPECTED = {
     "conduct",
     "content-draft",
@@ -44,11 +45,16 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
     assert {row[0] for row in rows} == EXPECTED
     for name, command, readiness, dependencies, claude, codex, pi in rows:
         assert command == f"`/skill:skein-{name}`"
-        assert (
-            readiness == "ready"
-            if name in READY
-            else readiness.startswith("blocked (Phase ")
-        )
+        if name in READY:
+            assert readiness == "ready"
+        elif name in SKIPPED:
+            assert readiness == "skipped (unavailable)"
+        elif name == "update-docs":
+            assert readiness == "implemented (review pending)"
+        elif name in {"dev-plan", "grill"}:
+            assert readiness.startswith("staged (Phase 3")
+        else:
+            assert readiness.startswith("blocked (Phase ")
         assert all((dependencies, claude, codex, pi))
     ready = [row[0] for row in rows if row[2] == "ready"]
     manifest = json.loads((ROOT / "package.json").read_text())
