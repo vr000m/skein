@@ -46,9 +46,11 @@ Reconcile findings mechanically using the installed Pi review scripts. Do not
 accept `auto_fix` blocks in this port. For substantive findings, construct a
 `fixer_request()`; pass its returned `prompt` and `role` fields to the Pi
 extension's `skein_worker` (the tool accepts only those two fields). The child
-returns a validated patch proposal and never writes files. The main session
-must inspect the proposal, apply any approved edits, re-read the targets, and
-verify the live diff before recording a round. Do not invoke a Claude `Agent`,
+returns a generic worker envelope and never writes files. The main session must
+call `validate_fixer_result(envelope, expected_findings=batch)`; reject any
+claim outside that batch or any malformed patch. Only then may it inspect the
+proposal, apply approved edits, re-read the targets, and verify the live diff
+before recording a round. Do not invoke a Claude `Agent`,
 Codex `spawn_agent`, `codex`, `gh`, or a nested review skill. Run the
 repository's required validation command after approved edits. A worker claim
 alone is not evidence that a fix landed.

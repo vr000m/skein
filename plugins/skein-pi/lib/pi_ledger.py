@@ -126,14 +126,25 @@ class PiLedger:
         if not isinstance(gates, list) or not gates:
             raise ValueError("gate evidence is required")
         finding_count = 0
+        gate_names: set[str] = set()
         for gate in gates:
             if not isinstance(gate, dict) or not isinstance(gate.get("gate"), str):
                 raise ValueError("invalid Pi gauntlet gate evidence")  # noqa: TRY004
-            if gate.get("status") not in {"passed", "findings", "skipped", "degraded"}:
+            if gate["gate"] in gate_names:
+                raise ValueError("duplicate Pi gauntlet gate")
+            gate_names.add(gate["gate"])
+            gate_status = gate.get("status")
+            if gate_status not in {"passed", "findings", "skipped", "degraded"}:
                 raise ValueError("invalid Pi gauntlet gate status")
             findings = gate.get("findings", [])
             if not isinstance(findings, list):
                 raise ValueError("invalid Pi gauntlet findings")  # noqa: TRY004
+            if any(not isinstance(finding, dict) for finding in findings):
+                raise ValueError("invalid Pi gauntlet finding")
+            if gate_status == "passed" and findings:
+                raise ValueError("passed gate has findings")
+            if gate_status == "findings" and not findings:
+                raise ValueError("findings gate has no findings")
             finding_count += len(findings)
         if type(outcome.get("findings_count", finding_count)) is not int:
             raise ValueError("invalid Pi gauntlet finding count")

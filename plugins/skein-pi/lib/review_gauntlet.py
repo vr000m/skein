@@ -174,7 +174,7 @@ def fixer_request(
 
 def validate_fixer_result(
     envelope: Mapping[str, object],
-    expected_findings: Iterable[Mapping[str, object]] | None = None,
+    expected_findings: Iterable[Mapping[str, object]],
 ) -> dict[str, object]:
     """Validate the proposal encoded inside the generic worker envelope."""
     if envelope.get("status") != "completed":
@@ -238,19 +238,12 @@ def validate_fixer_result(
         ):
             raise ValueError("fixer_claim_invalid")
     claim_files = {claim["file"] for claim in proposal["claimed"]}
-    expected = (
-        {
-            (finding.get("file"), finding.get("line"), finding.get("category"))
-            for finding in expected_findings
-        }
-        if expected_findings is not None
-        else None
-    )
+    expected = {
+        (finding.get("file"), finding.get("line"), finding.get("category"))
+        for finding in expected_findings
+    }
     for claim in proposal["claimed"]:
-        if (
-            expected is not None
-            and (claim["file"], claim["line"], claim["category"]) not in expected
-        ):
+        if (claim["file"], claim["line"], claim["category"]) not in expected:
             raise ValueError("fixer_claim_not_in_batch")
     for patch in proposal["patches"]:
         if not isinstance(patch, dict) or set(patch) != {

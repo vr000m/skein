@@ -187,7 +187,10 @@ def test_fixer_result_uses_generic_worker_envelope():
             },
         },
     }
-    assert review_gauntlet.validate_fixer_result(envelope)["patches"] == []
+    assert (
+        review_gauntlet.validate_fixer_result(envelope, expected_findings=[])["patches"]
+        == []
+    )
 
 
 def test_refresh_failure_is_degraded(tmp_path, monkeypatch):
@@ -219,7 +222,7 @@ def test_pi_ledger_rejects_unproven_success_and_is_resumable(tmp_path):
         raise AssertionError("ledger accepted success without gate evidence")
     assert (
         ledger.append(
-            {"status": "continue", "gates": [{"gate": "deep", "status": "findings"}]}
+            {"status": "continue", "gates": [{"gate": "deep", "status": "passed"}]}
         )
         == "continue"
     )
@@ -274,11 +277,37 @@ def test_fixer_rejects_unclaimed_patches():
         },
     }
     try:
-        review_gauntlet.validate_fixer_result(envelope)
+        review_gauntlet.validate_fixer_result(envelope, expected_findings=[])
     except ValueError as error:
         assert "without_claims" in str(error)
     else:
         raise AssertionError("unclaimed patch was accepted")
+
+
+def test_pi_ledger_rejects_malformed_gate_evidence():
+    cases = [
+        {
+            "status": "continue",
+            "gates": [{"gate": "deep", "status": "passed", "findings": [None]}],
+        },
+        {
+            "status": "continue",
+            "gates": [{"gate": "deep", "status": "findings", "findings": []}],
+        },
+        {
+            "status": "success",
+            "gates": [
+                {"gate": "deep", "status": "passed"},
+                {"gate": "deep", "status": "passed"},
+            ],
+        },
+    ]
+    for case in cases:
+        try:
+            pi_ledger.PiLedger._validate_round(case)
+        except ValueError:
+            continue
+        raise AssertionError("malformed gate evidence was accepted")
 
 
 def test_pi_ledger_rejects_inconsistent_and_overlong_history(tmp_path):
