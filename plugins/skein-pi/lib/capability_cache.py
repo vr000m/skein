@@ -19,8 +19,8 @@ def fingerprint(parts: dict[str, str]) -> str:
 
 
 def load(path: Path, key: str, current_fingerprint: str) -> dict[str, str] | None:
+    _assert_no_symlink_path(path)
     try:
-        _assert_no_symlink_path(path)
         value = json.loads(path.read_text())
     except (FileNotFoundError, OSError, ValueError):
         return None
@@ -97,3 +97,33 @@ def clear(path: Path) -> None:
         path.unlink()
     except (FileNotFoundError, ValueError):
         pass
+
+
+def clear_entry(path: Path, key: str) -> None:
+    """Remove one gate entry, preserving other gates' decisions."""
+    _assert_no_symlink_path(path)
+    try:
+        value = json.loads(path.read_text())
+    except FileNotFoundError:
+        return
+    except ValueError:
+        return
+    if not isinstance(value, dict) or not isinstance(value.get("entries"), dict):
+        return
+    if key not in value["entries"]:
+        return
+    del value["entries"][key]
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
