@@ -234,7 +234,7 @@ Context lifecycle:
 
 - [x] Phase 1: Capability inventory and Pi package skeleton
 - [ ] Phase 2: Isolated Pi worker and model policy
-- [ ] Phase 3: Disk-first review and capability-aware gates
+- [x] Phase 3: Disk-first review and capability-aware gates
 - [ ] Phase 4: Complex orchestration, install coverage and release readiness
 
 ### Phase 1 capability inventory
@@ -256,12 +256,12 @@ In the interaction columns, **Agent** means Claude's clean-context Agent dispatc
 | grill | `/skill:skein-grill` | ready | Depends on the registered dev-plan update route; main-session interview and explicit decision persistence | Inline interview, dev-plan update | Inline interview, dev-plan update | Main-session one-decision-at-a-time interview; explicit accepted writes only |
 | deep-review | `/skill:skein-deep-review` | ready | Worker; lens budgets/collector, reconciliation, persistence and auto-fix bundles | Parallel Agent lenses | Parallel spawn_agent lenses | Top-level lenses; disk-first results; Pi state identity |
 | review-plan | `/skill:skein-review-plan` | ready | Worker; dev-plan/grill; lens collector, reconciler, marker, persistence and auto-fix bundles | Parallel Agent lenses, contradiction pass, inline decisions | Parallel spawn_agent lenses, contradiction pass, inline decisions | Top-level lenses; disk-first results; Pi marker/persistence route |
-| review-gauntlet | `/skill:skein-review-gauntlet` | blocked (Phase 3) | deep-review; ledger/guards; fixer worker; stable gate capability cache | Top-level deep-review/external gates; Agent fixer | Native Codex gates; deep-review gated; security deferred | Top-level gates; isolated fixer; unavailable/skipped never passed |
+| review-gauntlet | `/skill:skein-review-gauntlet` | ready | deep-review; ledger/guards; fixer worker; stable gate capability cache | Top-level deep-review/external gates; Agent fixer | Native Codex gates; deep-review gated; security deferred | Top-level gates; isolated fixer; unavailable/skipped never passed |
 | conduct | `/skill:skein-conduct` | blocked (Phase 4) | Worker; reviewed marker/parser, phase prompts, CI parity; optional gauntlet route | Agent implementer/test-writer/reviewer; top-level gauntlet | spawn_agent workers; top-level gauntlet | Bounded phase workers; main orchestrator; tested handback |
 | fan-out | `/skill:skein-fan-out` | blocked (Phase 4) | Pi process launcher; worktree/state cleanup; conduct reset verification; optional gauntlet | claude subprocesses; clean-context test-writer; conduct opt-in | codex exec worktrees; nested workers gated | Separate process trees only if isolation proven; otherwise reject route |
 | release | `/skill:skein-release` | blocked (Phase 4) | Release lib/references; pinned git/jq/gh checks; confirmation/refusal dry-run | Main-session audit and confirmation before remote mutation | Main-session audit and confirmation before remote mutation | Main owns exact target/title/body approval; no remote writes in tests |
 
-**Pi scope decisions and sequence:** `plan-view`, `rfc-finder`, and `spec-compliance` are intentionally out of scope and must remain absent from `pi.skills`; they are neither unfinished registrations nor runtime capabilities awaiting a follow-up probe. The next additions follow dependency order: `dev-plan` and `grill`, then `review-plan`, then `conduct`. `update-docs` is independently reviewed, readiness-tested and registered; dev-plan/grill remain staged until their own focused review and readiness gates pass. All other unready rows remain excluded.
+**Pi scope decisions and sequence:** `plan-view`, `rfc-finder`, and `spec-compliance` are intentionally out of scope and must remain absent from `pi.skills`; they are neither unfinished registrations nor runtime capabilities awaiting a follow-up probe. The next additions follow dependency order: `dev-plan` and `grill`, then `review-plan`, then `conduct`. `update-docs`, `dev-plan`, `grill`, `review-plan`, `deep-review`, and `review-gauntlet` are independently reviewed, readiness-tested and registered. All other unready rows remain excluded.
 
 ### Phase 1 installation and verification
 
@@ -349,6 +349,13 @@ Updating a pinned source reconciles that ref; it does not advance to main. Selec
 - Validation: `uv run --with pytest python -m pytest tests/pi -q` — **122 passed**; Ruff format/check, `just check-sync`, `just check-prompt-parity`, `just check-trunk-snippet-parity`, and `git diff --check` passed.
 - Independent `codex exec review` of the implementation found two P2 issues: the audit tool was registered before its skill readiness gate, and findings could target absent document snapshots. Both were fixed: registration now checks the package's explicit skill allowlist, and validated finding paths are derived only from non-empty supplied snapshots. A second independent read-only review (`codex exec review --uncommitted --ephemeral`) found no correctness defects. The exact `pi.skills` allowlist now includes update-docs. At this handoff, focused code review did not replace full plan review; the later independent plan review passed and the marker was recomputed.
 
+### Phase 3 handoff — capability-aware review gauntlet
+
+- Added the Pi-native `/skill:skein-review-gauntlet` route and registered it only after an independent read-only implementation review. The route keeps gate capability probing, stable-unavailability caching, visible skipped/degraded coverage, zero-runnable stopping, isolated fixer requests, strict proposal validation, and guarded ten-round ledger state separate from the existing Claude/Codex implementations.
+- The independent review found one concrete hardening issue: the ledger path guard rejected symlink components but allowed lexical `..` traversal. The guard now rejects parent traversal and has a regression test. A fresh re-review of the corrected implementation found no remaining concrete defect in the scoped Phase 3 route.
+- Validation: `uv run --with pytest python -m pytest tests/pi -q` — **164 passed**; `just reconciliation-tests` passed; `just check-sync` passed; `just ci` passed. The explicit Pi allowlist now includes review-gauntlet. `conduct`, `fan-out`, and `release` remain unregistered and blocked for Phase 4; the three deliberate exclusions remain absent.
+- Verification remains deterministic and does not claim live provider portability, authenticated release smoke, or completion of Phase 4 orchestration.
+
 ## Findings
 
 These discovery notes describe the initial plan-creation checkpoint; later implementation handoffs below supersede explicit status statements.
@@ -363,4 +370,4 @@ These discovery notes describe the initial plan-creation checkpoint; later imple
 
 ## Final Results
 
-- Phase 1 complete. The explicit Pi skill surface contains `/skill:skein-show-me`, `/skill:skein-content-draft`, `/skill:skein-content-review`, and `/skill:skein-update-docs`. Three inventory entries (`plan-view`, `rfc-finder`, `spec-compliance`) are deliberately excluded; eight other skills remain staged or blocked pending later phases. Phase 2 rejected parent-profile reuse, then delivered and independently reviewed the private-profile, dispatcher, trusted extension/host, and three specialized text-only worker routes for an API-key/openai-completions/no-tools lane. Phase 2 remains incomplete. The revised plan contract passed independent review and its marker was refreshed; Phases 3–4 are not started.
+- Phase 1 complete. The explicit Pi skill surface contains `/skill:skein-show-me`, `/skill:skein-content-draft`, `/skill:skein-content-review`, and `/skill:skein-update-docs`. Three inventory entries (`plan-view`, `rfc-finder`, `spec-compliance`) are deliberately excluded; eight other skills remain staged or blocked pending later phases. Phase 2 rejected parent-profile reuse, then delivered and independently reviewed the private-profile, dispatcher, trusted extension/host, and three specialized text-only worker routes for an API-key/openai-completions/no-tools lane. Phase 2 remains incomplete. The revised plan contract passed independent review and its marker was refreshed; Phase 3 is complete and Phase 4 remains not started.

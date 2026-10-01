@@ -340,8 +340,10 @@ def test_pi_ledger_rejects_inconsistent_and_overlong_history(tmp_path):
         raise AssertionError("overlong ledger was accepted")
 
 
-def test_gauntlet_skill_is_not_registered_before_independent_review():
-    root = Path(__file__).parents[2]
-    manifest = (root / "package.json").read_text()
-    assert "plugins/skein-pi/skills/review-gauntlet/SKILL.md" not in manifest
-    assert (root / "plugins/skein-pi/skills/review-gauntlet/SKILL.md").is_file()
+def test_pi_ledger_rejects_parent_traversal():
+    try:
+        pi_ledger.PiLedger(Path(".gauntlet/../outside/run.json"), "target").init()
+    except ValueError as error:
+        assert "traversal" in str(error)
+    else:
+        raise AssertionError("ledger accepted a parent-traversal path")

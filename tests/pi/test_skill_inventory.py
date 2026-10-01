@@ -15,6 +15,7 @@ READY = {
     "grill",
     "review-plan",
     "deep-review",
+    "review-gauntlet",
 }
 SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
 EXPECTED = {
@@ -77,6 +78,7 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
         "grill",
         "deep-review",
         "review-plan",
+        "review-gauntlet",
     ]
 
 

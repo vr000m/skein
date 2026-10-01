@@ -19,6 +19,8 @@ TERMINAL = frozenset({"success", "partial", "degraded", "zero_runnable", "cap"})
 def _guard(path: Path) -> None:
     current = Path(path.anchor) if path.is_absolute() else Path()
     parts = path.parts[1:] if path.is_absolute() else path.parts
+    if ".." in parts:
+        raise ValueError("parent traversal in Pi gauntlet ledger path")
     for component in parts:
         current /= component
         if current.is_symlink():

@@ -145,7 +145,6 @@ def test_review_plan_exclusions_remain_absent_from_manifest():
         "plan-view",
         "rfc-finder",
         "spec-compliance",
-        "review-gauntlet",
     ):
         assert (
             f"./plugins/skein-pi/skills/{name}/SKILL.md" not in manifest["pi"]["skills"]

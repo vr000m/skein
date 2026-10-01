@@ -29,6 +29,7 @@ def test_manifest_registers_only_readiness_tested_skill_files():
         "grill",
         "review-plan",
         "deep-review",
+        "review-gauntlet",
     }
 
 
