@@ -16,8 +16,10 @@ READY = {
     "review-plan",
     "deep-review",
     "review-gauntlet",
+    "conduct",
+    "release",
 }
-SKIPPED = {"plan-view", "rfc-finder", "spec-compliance"}
+SKIPPED = {"plan-view", "rfc-finder", "spec-compliance", "fan-out"}
 EXPECTED = {
     "conduct",
     "content-draft",
@@ -79,6 +81,8 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
         "deep-review",
         "review-plan",
         "review-gauntlet",
+        "conduct",
+        "release",
     ]
 
 

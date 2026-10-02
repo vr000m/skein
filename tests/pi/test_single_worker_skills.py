@@ -30,6 +30,8 @@ def test_manifest_registers_only_readiness_tested_skill_files():
         "review-plan",
         "deep-review",
         "review-gauntlet",
+        "conduct",
+        "release",
     }
 
 

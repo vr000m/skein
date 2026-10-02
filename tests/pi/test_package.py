@@ -27,6 +27,8 @@ ALLOWLIST = [
     "./plugins/skein-pi/skills/deep-review/SKILL.md",
     "./plugins/skein-pi/skills/review-plan/SKILL.md",
     "./plugins/skein-pi/skills/review-gauntlet/SKILL.md",
+    "./plugins/skein-pi/skills/conduct/SKILL.md",
+    "./plugins/skein-pi/skills/release/SKILL.md",
 ]
 COMMANDS = [
     "skill:skein-show-me",
@@ -38,6 +40,8 @@ COMMANDS = [
     "skill:skein-deep-review",
     "skill:skein-review-plan",
     "skill:skein-review-gauntlet",
+    "skill:skein-conduct",
+    "skill:skein-release",
 ]
 
 
@@ -207,6 +211,8 @@ def assert_discovery(sandbox, package):
             ("review-plan", "docs/dev_plans/fixture.md"),
             ("deep-review", "--full"),
             ("review-gauntlet", "--refresh"),
+            ("conduct", "docs/dev_plans/fixture.md --status"),
+            ("release", "audit"),
         ):
             skill_path = f"plugins/skein-pi/skills/{name}/SKILL.md"
             request("steer", message=f"/skill:skein-{name} {argument}")
