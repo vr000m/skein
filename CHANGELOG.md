@@ -4,6 +4,16 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-02
+
+### Added
+- Pi package support with an explicit skill allowlist and Pi-native routes for `show-me`, content drafting/review, documentation audits, development plans, grilling, review planning, deep review, review gauntlet, conduct, and release preparation.
+- Isolated, bounded Pi workers with operator-approved model selection, no-tools child profiles, typed result validation, guarded attempt persistence, and visible degraded coverage for unavailable review gates.
+
+### Changed
+- Pi conduct runs sequentially and owns writes in the main session; fan-out remains intentionally excluded from the Pi package.
+- Pi release preparation is user-invoked, read-only by default, and requires explicit confirmation after payload and destination revalidation before remote mutation.
+
 ## [0.8.5] - 2026-09-27
 
 ### Fixed
@@ -250,7 +260,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/vr000m/skein/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/vr000m/skein/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/vr000m/skein/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/vr000m/skein/compare/v0.8.2...v0.8.3
