@@ -7,7 +7,7 @@ argument-hint: "[path/to/plan.md] [--resume] [--status] [--max-iterations N]"
 # Skein Conduct (Pi)
 
 Invoke with `/skill:skein-conduct`. This is a user-invoked phase runner. It
-requires a reviewed plan marker and never invokes fan-out, Claude, Codex, or a
+requires a reviewed plan marker and never invokes fan-out, another harness, or a
 nested orchestrator. Pi's main session remains the conductor and owns every
 filesystem write, test run, commit, and handback.
 
