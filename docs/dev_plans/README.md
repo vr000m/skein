@@ -18,6 +18,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-29 | feature | pi-plugin-port | meta | — | feature/pi-plugin-port | [plan](20260929-feature-pi-plugin-port.md) |
 
 ## Shipped
 

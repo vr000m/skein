@@ -8,6 +8,7 @@ __pycache__/
 .phase6-fixture
 .review-plan/
 .gauntlet/
+.skein-pi-attempts/
 
 # Backups created before destructive global-skills cleanup (Phase 4)
 backups/

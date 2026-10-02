@@ -1,0 +1,24 @@
+{
+  "name": "skein-pi",
+  "private": true,
+  "description": "Skein skills for Pi — staged port; only readiness-tested skills are exposed.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "skills": [
+      "./plugins/skein-pi/skills/show-me/SKILL.md",
+      "./plugins/skein-pi/skills/content-draft/SKILL.md",
+      "./plugins/skein-pi/skills/content-review/SKILL.md",
+      "./plugins/skein-pi/skills/update-docs/SKILL.md",
+      "./plugins/skein-pi/skills/dev-plan/SKILL.md",
+      "./plugins/skein-pi/skills/grill/SKILL.md",
+      "./plugins/skein-pi/skills/deep-review/SKILL.md",
+      "./plugins/skein-pi/skills/review-plan/SKILL.md",
+      "./plugins/skein-pi/skills/review-gauntlet/SKILL.md",
+      "./plugins/skein-pi/skills/conduct/SKILL.md",
+      "./plugins/skein-pi/skills/release/SKILL.md"
+    ],
+    "extensions": ["./plugins/skein-pi/extension.ts"],
+    "prompts": [],
+    "themes": []
+  }
+}

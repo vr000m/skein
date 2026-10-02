@@ -4,7 +4,7 @@
 #
 # Contract under test (see the script's own header for the full contract):
 #
-#   scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> \
+#   scripts/persist-deep-review-state.sh --harness claude|codex|pi --run-id <id> \
 #       --base-commit <sha> --head-commit <sha> --diff-hash <sha> \
 #       --review-focus-hash <sha-or-empty> [lenses.json|-]
 #
@@ -193,6 +193,32 @@ if (
 else
 	fail "(a) writes required top-level keys (script exited non-zero)"
 	sed 's/^/    /' "$case_a_dir/stderr"
+fi
+
+# ---------------------------------------------------------------------------
+# (a2) Pi uses its own latest-state identity and does not overwrite Claude/Codex.
+# ---------------------------------------------------------------------------
+
+case_a2_dir="$TMPDIR_ROOT/case-a2"
+make_scratch_repo "$case_a2_dir"
+sample_lenses >"$case_a2_dir/lenses.json"
+if (
+	cd "$case_a2_dir" && persist_state "$case_a2_dir/lenses.json" \
+		"pi" "pi-run" "base" "head" "sha256:pi" ""
+) >"$case_a2_dir/stdout" 2>"$case_a2_dir/stderr"; then
+	if [[ -f "$case_a2_dir/.deep-review/latest-pi.json" &&
+		! -e "$case_a2_dir/.deep-review/latest-claude.json" &&
+		! -e "$case_a2_dir/.deep-review/latest-codex.json" ]] &&
+		jq -e '.run_id == "pi-run" and .lenses.logic.status == "completed"' \
+			"$case_a2_dir/.deep-review/latest-pi.json" >/dev/null; then
+		pass "(a2) Pi state is written to latest-pi.json without clobbering other harnesses"
+	else
+		fail "(a2) Pi state target/schema mismatch"
+		sed 's/^/    /' "$case_a2_dir/stderr"
+	fi
+else
+	fail "(a2) Pi harness identity was refused"
+	sed 's/^/    /' "$case_a2_dir/stderr"
 fi
 
 # ---------------------------------------------------------------------------

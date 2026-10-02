@@ -2,7 +2,7 @@
 # persist-deep-review-state.sh — `/deep-review` state-file persistence.
 #
 # Usage:
-#   scripts/persist-deep-review-state.sh --harness claude|codex --run-id <id> \
+#   scripts/persist-deep-review-state.sh --harness claude|codex|pi --run-id <id> \
 #       --base-commit <sha> --head-commit <sha> --diff-hash <sha> \
 #       --review-focus-hash <sha-or-empty> [--from-collector] [lenses.json|-]
 #
@@ -119,7 +119,7 @@ SCRIPT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: scripts/persist-deep-review-state.sh [--from-collector] --harness claude|codex --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
+usage: scripts/persist-deep-review-state.sh [--from-collector] --harness claude|codex|pi --run-id <id> --base-commit <sha> --head-commit <sha> --diff-hash <sha> --review-focus-hash <sha-or-empty> [lenses.json|-]
 EOF
 }
 
@@ -188,8 +188,8 @@ while [[ $# -gt 0 ]]; do
 	shift
 done
 
-if [[ "$HARNESS" != "claude" && "$HARNESS" != "codex" ]]; then
-	echo "persist-deep-review-state: --harness must be claude or codex" >&2
+if [[ "$HARNESS" != "claude" && "$HARNESS" != "codex" && "$HARNESS" != "pi" ]]; then
+	echo "persist-deep-review-state: --harness must be claude, codex, or pi" >&2
 	usage
 	exit 2
 fi
