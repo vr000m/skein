@@ -1,6 +1,6 @@
 # Task: Pi package and skill port
 
-**Status**: In Progress (Phase 1 complete; Phase 2 private-profile design revised with maintainer approval; re-review required)
+**Status**: Done (scoped Pi port shipped in v0.9.0; fan-out and multi-provider portability remain future work)
 **Component**: meta
 **Assigned to**: Pi agent + maintainer
 **Priority**: High
@@ -228,7 +228,7 @@ Context lifecycle:
 - Real package installation/discovery and path resolution verified; deterministic Pi test suite and existing `just ci` pass. Before release, required real-Pi smoke verifies all 12 in-scope skills, negative discovery for the three deliberate exclusions, delegated review, safe release refusal, and two authenticated provider/model classes; absent credentials block the claim rather than silently waiving it.
 - Code reviewed, documentation updated, and no changes committed directly to `main`.
 
-<!-- reviewed: 2026-09-30 @ 9de5e1e3a0e4063408663d0e17cf298ca9e4b5a5 -->
+<!-- reviewed: 2026-10-02 @ d41964aee157cad48d6c890e34c80eaa3a9259ee -->
 
 ## Progress
 
