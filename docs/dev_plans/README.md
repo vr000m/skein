@@ -18,12 +18,12 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-09-29 | feature | pi-plugin-port | meta | — | feature/pi-plugin-port | [plan](20260929-feature-pi-plugin-port.md) |
 
 ## Shipped
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-09-29 | feature | pi-plugin-port | meta | [#50](https://github.com/vr000m/skein/pull/50) | feature/pi-plugin-port | [plan](20260929-feature-pi-plugin-port.md) |
 | 2026-09-17 | refactor | release-skill-structure | meta | [#44](https://github.com/vr000m/skein/pull/44) | refactor/release-skill-structure | [plan](20260917-refactor-release-skill-structure.md) |
 | 2026-09-25 | chore | prompt-audit-cleanup | meta | [#46](https://github.com/vr000m/skein/pull/46) | chore/prompt-audit-cleanup | [plan](20260925-chore-prompt-audit-cleanup.md) |
 | 2026-09-12 | feature | show-me-skill | meta | [#41](https://github.com/vr000m/skein/pull/41) | feat/show-me-skill | [plan](20260912-feature-show-me-skill.md) |
