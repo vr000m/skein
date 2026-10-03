@@ -111,4 +111,4 @@ New tests sweep authored conduct Markdown and the Python diagnostic for obsolete
 
 ## Final Results
 
-Pending.
+The authored Codex conduct API correction and 0.9.1 metadata are implemented in [PR #52](https://github.com/vr000m/skein/pull/52). Full `just ci` passed; the final Codex conduct suite passed 246 tests, including eleven API regressions. Documentation, code, and security audits are clear. Phase 1 is complete; Phase 2 remains open for merge, exact-payload release confirmation, publication, and installed-byte verification.
