@@ -1,6 +1,6 @@
 # Task: Pi package and skill port
 
-**Status**: In Progress (Phase 1 complete; Phase 2 private-profile design revised with maintainer approval; re-review required)
+**Status**: Done (scoped Pi port shipped in v0.9.0; fan-out and multi-provider portability remain future work)
 **Component**: meta
 **Assigned to**: Pi agent + maintainer
 **Priority**: High
@@ -228,14 +228,14 @@ Context lifecycle:
 - Real package installation/discovery and path resolution verified; deterministic Pi test suite and existing `just ci` pass. Before release, required real-Pi smoke verifies all 12 in-scope skills, negative discovery for the three deliberate exclusions, delegated review, safe release refusal, and two authenticated provider/model classes; absent credentials block the claim rather than silently waiving it.
 - Code reviewed, documentation updated, and no changes committed directly to `main`.
 
-<!-- reviewed: 2026-09-30 @ 9de5e1e3a0e4063408663d0e17cf298ca9e4b5a5 -->
+<!-- reviewed: 2026-10-02 @ d41964aee157cad48d6c890e34c80eaa3a9259ee -->
 
 ## Progress
 
 - [x] Phase 1: Capability inventory and Pi package skeleton
-- [ ] Phase 2: Isolated Pi worker and model policy
+- [x] Phase 2: Isolated Pi worker and model policy
 - [x] Phase 3: Disk-first review and capability-aware gates
-- [ ] Phase 4: Complex orchestration, install coverage and release readiness
+- [x] Phase 4: Complex orchestration, install coverage and release readiness (scoped closure; fan-out excluded)
 
 ### Phase 1 capability inventory
 
@@ -356,11 +356,12 @@ Updating a pinned source reconciles that ref; it does not advance to main. Selec
 - Validation: `uv run --with pytest python -m pytest tests/pi -q` — **164 passed**; `just reconciliation-tests` passed; `just check-sync` passed; `just ci` passed. The explicit Pi allowlist now includes review-gauntlet. `conduct`, `fan-out`, and `release` remain unregistered and blocked for Phase 4; the three deliberate exclusions remain absent.
 - Verification remains deterministic and does not claim live provider portability, authenticated release smoke, or completion of Phase 4 orchestration.
 
-### Phase 4 partial handoff — conduct and release, fan-out excluded
+### Phase 4 closure handoff — conduct and release, fan-out excluded
 
 - Added Pi-native `/skill:skein-conduct` and `/skill:skein-release` routes and registered both explicitly. Conduct is sequential and main-session-owned: it uses only bounded approved `skein_worker` requests, validates patch proposals, owns writes/tests/commits, and never dispatches fan-out or nested orchestrators. Release is user-invoked only, read-only by default, and requires a second confirmation after exact target/payload/destination revalidation before any mutation.
 - `fan-out` is deliberately skipped by maintainer decision and remains absent from `package.json`; its process-tree/worktree semantics are not claimed for Pi.
-- Validation: `uv run --with pytest python -m pytest tests/pi -q` — **164 passed**; `just reconciliation-tests`, `just check-sync`, and `just ci` passed. Real authenticated provider smoke, interactive release mutation, and full twelve-skill release matrix remain unverified; Phase 4 stays open until those release-readiness checks are performed.
+- Validation: `uv run --with pytest python -m pytest tests/pi -q` — **167 passed**; `just ci` passed, including reconciliation, sync, parity, plugin, and mirror suites. The merged package was installed from `v0.9.0`; Pi discovery exposed all 11 registered routes and command expansion passed. Release `v0.9.0` was created from the merged main commit after exact payload confirmation.
+- Closure limits: fan-out is explicitly excluded by maintainer decision; the three deliberate exclusions remain absent. The worker lane remains limited to the verified `openai-completions` API-key/text/no-tools profile, so authenticated multi-provider portability was not claimed or silently waived. This plan is closed for the shipped Pi scope; provider expansion and any future fan-out work require a new plan.
 
 ## Findings
 
@@ -376,4 +377,6 @@ These discovery notes describe the initial plan-creation checkpoint; later imple
 
 ## Final Results
 
-- Phase 1 complete. The explicit Pi skill surface contains `/skill:skein-show-me`, `/skill:skein-content-draft`, `/skill:skein-content-review`, and `/skill:skein-update-docs`. Three inventory entries (`plan-view`, `rfc-finder`, `spec-compliance`) are deliberately excluded; eight other skills remain staged or blocked pending later phases. Phase 2 rejected parent-profile reuse, then delivered and independently reviewed the private-profile, dispatcher, trusted extension/host, and three specialized text-only worker routes for an API-key/openai-completions/no-tools lane. Phase 2 remains incomplete. The revised plan contract passed independent review and its marker was refreshed; Phase 3 is complete and Phase 4 remains not started.
+- Pi package port shipped in `v0.9.0` through PR #50. The explicit package surface contains 11 registered routes: show-me, content-draft, content-review, update-docs, dev-plan, grill, deep-review, review-plan, review-gauntlet, conduct, and release. Fan-out, plan-view, rfc-finder, and spec-compliance remain intentionally undiscoverable.
+- Phase 2 worker isolation, model policy, dispatcher, trusted extension/host, and specialized worker routes were delivered for the verified API-key/openai-completions/text/no-tools lane. Phase 3 capability-aware review gauntlet and Phase 4 conduct/release routes were delivered and verified. Deterministic Pi tests pass (**167**); full `just ci` passes.
+- The plan is closed for the shipped scope. Multi-provider portability and fan-out are explicitly future work, not release claims.
