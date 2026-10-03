@@ -102,6 +102,7 @@ New tests sweep authored conduct Markdown and the Python diagnostic for obsolete
 - Runtime schema directly verifies fork_turns="none", spawn_agent, and wait_agent; no close operation exists.
 - Plan review: architecture and sequencing used clean-context workers; testing, assumptions, codebase-claims, and the post-reconciliation contradiction pass ran in-session after the runtime thread limit, with best-effort isolation. Two Important architecture findings addressed by the explicit gauntlet boundary and call-flow section; no contradictory fixes. Full findings: `.review-plan/latest-codex.json`.
 - Targeted validation: 245 Codex conduct tests passed; all ten new declarative API checks pass. Prompt parity passed. Authored-source sweep verified clean context across initial dispatch, both fix-loop roles, and advisory review. Historical sibling-plan contract bytes were preserved.
+- Code review found that a later parallel dispatch can fail while an earlier worker is still writing. The dispatch template now requires collecting already-started workers' terminal reports before handback; a regression pins that ordering. Manual security review found no new input-execution path: role prompts retain their untrusted-data boundaries and tool arguments use structured serialization.
 
 ## Issues & Solutions
 

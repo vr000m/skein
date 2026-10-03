@@ -54,6 +54,15 @@ def test_availability_requires_spawn_and_wait_only():
     assert "lacks `spawn_agent` or `wait_agent`" in gauntlet
 
 
+def test_dispatch_failure_drains_started_workers_before_handback():
+    template = (SKILL_DIR / "worker-dispatch.md").read_text()
+    assert (
+        "wait for any already-started workers to deliver their final reports"
+        in template
+    )
+    assert "reach terminal status before handing back" in template
+
+
 @pytest.mark.parametrize(
     "name",
     [

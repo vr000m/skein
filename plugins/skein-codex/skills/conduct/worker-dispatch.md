@@ -17,4 +17,4 @@ Inherit the harness-selected model. Set `reasoning_effort` to `"medium"` for imp
 
 Use `wait_agent` while reports are outstanding. Its return value signals mailbox updates or a timeout; worker messages arrive separately. Collect each worker's delivered final message and terminal status before validating its JSON report. An update summary alone is not completion. No additional lifecycle operation is required after the terminal report.
 
-If a dispatch fails, including a runtime capacity limit, hand back with the actual error and preserve existing phase state. Do not run the worker's phase inline or reuse a prior worker's conversation as a fresh dispatch.
+If a dispatch fails, including a runtime capacity limit, wait for any already-started workers to deliver their final reports and reach terminal status before handing back with the actual error. Preserve existing phase state. Do not run the worker's phase inline or reuse a prior worker's conversation as a fresh dispatch.
