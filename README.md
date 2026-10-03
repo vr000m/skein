@@ -26,6 +26,8 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`). Judgment lenses ("high-reasoning" above) vs. mechanical/factual work follow the two-tier model/effort policy in [AGENTS.md](AGENTS.md#modeleffort-policy-target-policy-not-yet-fully-enforced).
 
+Codex `conduct` requires `spawn_agent` and `wait_agent`. Every fresh phase worker uses `fork_turns="none"` and the Codex dispatch template; the conductor consumes delivered final reports and terminal status. Optional downstream review gates retain their own capability checks.
+
 ## Plugin install
 
 Install through the harness plugin CLI on each machine. There are no rsync, promote, or bootstrap scripts — the marketplace files in this repo are the install surface. Both harnesses can install directly from GitHub; no clone required.

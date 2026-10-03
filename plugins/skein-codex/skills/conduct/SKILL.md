@@ -15,6 +15,8 @@ Subagent prompt templates live alongside this file:
 - `reviewer-prompt.md`
 - `ci-parity-prompt.md`
 
+Codex worker request template: `worker-dispatch.md`. Use it for every fresh dispatch, including fix-loop retries and the advisory reviewer; pass the rendered role prompt as the structured `message` argument.
+
 Helper modules for preflight and state handling:
 
 - `parser.py` — phase-heading regex, `Test command:` / `Validation cmd:` regexes, phase-overlap check.
@@ -27,27 +29,27 @@ Helper modules for preflight and state handling:
 
 Deterministic tests under `tests/` (run via `uvx pytest plugins/skein-codex/skills/conduct/tests/ -v && bash plugins/skein-codex/skills/conduct/tests/test_skill_spawn_grep.sh`).
 
-These helpers are a pure-Python library — there is no CLI entry point. Main Codex orchestrates the per-phase loop turn-by-turn per this SKILL.md: it calls helpers (preflight, phase parse, state read/write, pause/abort) for the pure-function steps, and invokes `spawn_agent`, `wait_agent`, and `close_agent` directly for each subagent lifecycle. Each worker must be spawned with `fork_context=false` so the filled template is the worker's entire context.
+These helpers are a pure-Python library — there is no CLI entry point. Main Codex orchestrates the per-phase loop turn-by-turn per this SKILL.md: it calls helpers (preflight, phase parse, state read/write, pause/abort) for the pure-function steps, and invokes `spawn_agent` and `wait_agent` directly for each subagent lifecycle. Each worker must be spawned with `fork_turns="none"` so the filled template is the worker's entire context.
 
 ## Delegation Pattern
 
 Delegation depth from this skill is exactly 1: conduct → workers. Workers never spawn further subagents. This skill is invoked directly by the user as a top-level skill, OR inside a Codex session spawned by `/fan-out` that re-baselines depth at the process boundary. It is never invoked as a worker subagent.
 
-Subagents are spawned via `spawn_agent` with `fork_context=false`. Shared workspace — worktree isolation is the user's concern at the outer layer. Clean context comes from explicitly not forking the parent conversation, not from filesystem separation.
+Subagents are spawned via `spawn_agent` with `fork_turns="none"`. Shared workspace — worktree isolation is the user's concern at the outer layer. Clean context comes from explicitly not forking the parent conversation, not from filesystem separation.
 
 Codex-native role routing:
 - Implementer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical implementation of a reviewed phase.
 - Test-writer: inherit the harness-selected model; request `reasoning_effort=medium` when supported. This is mechanical test authoring against the phase contract.
 - Optional reviewer: inherit the harness-selected model; request `reasoning_effort=high` when supported. Code review is judgment work, so the advisory reviewer gets the review tier.
 
-Do not use literal model names or a literal `reasoning:` field in these dispatches. Express the tier as the `reasoning_effort` request supported by the current Codex runtime, and always keep `fork_context=false`.
+Do not use literal model names or a literal `reasoning:` field in these dispatches. Express the tier as the `reasoning_effort` request supported by the current Codex runtime, and always keep `fork_turns="none"`.
 
 ## Delegation Availability
 
-Codex `/conduct` does **not** silently degrade into inline main-session implementation when delegated workers are unavailable. If the current runtime lacks `spawn_agent`, `wait_agent`, or `close_agent`, hard-stop with this message and do no phase work:
+Codex `/conduct` does **not** silently degrade into inline main-session implementation when delegated workers are unavailable. If the current runtime lacks `spawn_agent` or `wait_agent`, hard-stop with this message and do no phase work:
 
 ```text
-Delegated subagents unavailable in this Codex runtime; the conduct skill requires spawn_agent, wait_agent, and close_agent support.
+Delegated subagents unavailable in this Codex runtime; the conduct skill requires spawn_agent and wait_agent support.
 ```
 
 The user can then rerun `/conduct` in a Codex session with agent delegation support or execute the phase manually.
@@ -191,7 +193,7 @@ Same pattern for `test-writer-prompt.md` (placeholders: plan path, phase index, 
 
 Apply the same closing-marker escape before substituting every plan- or repository-derived display value in all three worker prompts (`PLAN_PATH`, `PHASE_LABEL_DISPLAY`, `PHASE_TITLE`, `BASE_SHA`, `PRIOR_DIFF`, `TEST_FAILURES`, `EXISTING_TESTS`, and `DIFF`); keep operational instructions outside the resulting data-only blocks. Insert `PHASE_LABEL_JSON` as the complete JSON-escaped value derived from the unchanged original `PHASE_LABEL`, with no closing-marker neutralisation, so the structured report identity remains verbatim. This same closing-marker escaping and data-only treatment covers the implementer, test-writer, and optional reviewer prompts, including DIFF.
 
-Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_context=false`, and a worker-oriented agent type. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. After each worker reaches a terminal status, call `close_agent` to clean it up.
+Spawn via `spawn_agent` with the filled template as the worker's full `message`, `fork_turns="none"`, using the request template in `worker-dispatch.md`. Request `reasoning_effort=medium` for both the implementer and test-writer when supported. In parallel mode, spawn implementer and test-writer back-to-back, then use `wait_agent` to await whichever completes first until both have returned final output. The return value of `wait_agent` is an update summary, not the worker report. Read the delivered final message for each worker and confirm its terminal status before parsing its report; do not treat an update or timeout summary as completion.
 
 ### Step 4 — Await both, parse reports
 
@@ -234,12 +236,12 @@ No classifier. On any failure (test failure OR pre-commit hook failure at the bo
 - Helper block priority: `stall_threshold exceeded`, then `max_iterations_ceiling exceeded`, then `max_iterations exceeded (legacy)`.
 - Persist state immediately after the helper returns (crash recovery; stall counters survive `--resume`).
 - Else capture `git diff --cached` into `{{PRIOR_DIFF}}`. Normally then run `git reset` (mixed, no `--hard`) to clear the staging area so the respawned implementer starts from a clean index with the prior diff visible only inside its prompt.
-- Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = a redacted failure summary (or pre-commit hook summary, if the failure came from the boundary commit). Use `spawn_agent` with `fork_context=false`, then `wait_agent` and `close_agent` for the lifecycle; request `reasoning_effort=medium` when supported.
-- Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration and keep the previously staged implementation diff in the index so the follow-up commit can still include the original implementation work plus the newly staged tests. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again). Use the same `fork_context=false` lifecycle and `reasoning_effort=medium` request.
+- Respawn the implementer with `{{ITERATION}}` = new count, `{{PRIOR_DIFF}}` = the captured diff, `{{TEST_FAILURES}}` = a redacted failure summary (or pre-commit hook summary, if the failure came from the boundary commit). Use `spawn_agent` with `fork_turns="none"`, then `wait_agent` and the delivered final message for the lifecycle; request `reasoning_effort=medium` when supported.
+- Exception: if the previous implementer report set `flags.test_contract_mismatch: true`, respawn the **test-writer** instead on this iteration and keep the previously staged implementation diff in the index so the follow-up commit can still include the original implementation work plus the newly staged tests. Reset the flag handling for the iteration after that (respawn implementer again unless the next report flips the flag again). Use the same `fork_turns="none"` lifecycle and `reasoning_effort=medium` request.
 
 ### Step 7 — Optional mid-phase reviewer (one-shot)
 
-Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Use `spawn_agent` with `fork_context=false`, request `reasoning_effort=high` when supported, then `wait_agent` and `close_agent` for the lifecycle. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
+Trigger conditions: staged diff > 200 lines, OR > 3 files touched, OR phase tagged high-risk in the plan's Review Focus section. If triggered, spawn one reviewer subagent using `reviewer-prompt.md` with `{{DIFF}}` = staged diff. Use `spawn_agent` with `fork_turns="none"`, request `reasoning_effort=high` when supported, then `wait_agent` and the delivered final message for the lifecycle. Log findings into the phase summary. Never loop the reviewer. Findings do not block phase completion — the conductor is advisory here, not gating.
 
 ### Step 8 — Phase-boundary commit
 
@@ -357,7 +359,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 ### Dispatch
 
 - `review-gauntlet` is a conductor in its own right. Its supported review gates run at its own top level, in its own context, and only its fixer batch uses a clean-context Codex subagent. Conduct therefore invokes `review-gauntlet` directly as a top-level skill, the same way a human operator would run it. This is not a `spawn_agent` worker from Step 3/Step 7, and it is not routed through the CI-parity result-file dispatch protocol.
-- Codex's delegation-availability hard stop still applies. If the current runtime lacks `spawn_agent`, `wait_agent`, or `close_agent`, do not inline the gauntlet or its fixer in the main session; hard-stop with the delegation-unavailable message above and hand back.
+- The gauntlet performs its own capability checks; conduct's two-tool preflight does not guarantee the downstream gates can run. Preserve its unsupported-gate handback. Codex's delegation-availability hard stop still applies. If the current runtime lacks `spawn_agent` or `wait_agent`, do not inline the gauntlet or its fixer in the main session; hard-stop with the delegation-unavailable message above and hand back.
 - If `review-gauntlet` itself hands back a non-clean terminal state (`success_with_quarantine`, loop cap, or non-convergence/design-conflict halt), conduct surfaces that as its own handback: `status = "awaiting_user"` with blocker text from the gauntlet terminal report. A non-clean gauntlet outcome is never silently folded into `complete`.
 
 ### Commit ownership at the terminal seam

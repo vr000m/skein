@@ -2,7 +2,7 @@
 
 This module exists primarily as a deterministic test harness. Real /conduct
 runs are driven by main Codex inlining the SKILL.md algorithm with
-``spawn_agent`` / ``wait_agent`` / ``close_agent`` as the worker-control
+``spawn_agent`` / ``wait_agent`` as the worker-control
 primitive — but that path is impossible to unit-test because real delegated
 agents cost budget and produce non-deterministic output.
 
@@ -155,7 +155,7 @@ class ConductResult:
 
 DELEGATION_UNAVAILABLE_MESSAGE = (
     "Delegated subagents unavailable in this Codex runtime; the conduct skill requires "
-    "spawn_agent, wait_agent, and close_agent support."
+    "spawn_agent and wait_agent support."
 )
 
 

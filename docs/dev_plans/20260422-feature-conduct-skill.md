@@ -639,3 +639,7 @@ The state-path collision on Claude was fixed in PR #19: the digest suffix matche
 ### Follow-up Work
 
 Non-blocking items have moved to [`docs/BACKLOG.md`](../BACKLOG.md) under the `/conduct` section. None block this PR.
+
+## Current Conduct Contract
+
+- **Conduct API correction (2026-10-03):** the current Codex conduct contract supersedes this plan's historical worker lifecycle wording: fresh workers use `fork_turns="none"`; required tools are `spawn_agent` and `wait_agent`. Worker-close support is not required. Shared role prompts, phase state, and report contracts are preserved. Other skills, including the downstream gauntlet, retain their separate capability checks. See [the correction plan](20261003-bug-codex-conduct-agent-api.md).
