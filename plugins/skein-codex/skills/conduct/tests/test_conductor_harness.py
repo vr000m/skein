@@ -2038,6 +2038,8 @@ def test_delegation_unavailable_result_hard_stops_with_clear_message():
     result = delegation_unavailable_result(plan)
     assert result.status == "preflight_fail"
     assert "Delegated subagents unavailable" in result.diagnostic
+    assert "requires spawn_agent and wait_agent support." in result.diagnostic
+    assert "close_agent" not in result.diagnostic
     assert str(plan) in result.diagnostic
 
 
