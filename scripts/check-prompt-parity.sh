@@ -273,6 +273,11 @@ fi
 # forbidden here: extra text appended inside a divergence paragraph must remain
 # visible to diff and fail the gate.
 
+# BEGIN release-codex-executable-policy (sourced by parity fixtures)
+# shellcheck disable=SC2016
+RELEASE_CODEX_EXECUTABLE_POLICY='   **Codex executable-preflight adapter (intentional harness divergence):** Step 1b bootstrap and Audit Step A1 apply this paragraph together with the invariant immediately above. When native filesystem primitives are unavailable on macOS, use `exec_command` with `shell="/bin/bash"` and `login=false` to launch the fixed system `/usr/bin/env -i /usr/bin/python3 -I -S "$SKILL_DIR"/executable_policy.py`; never discover bootstrap tools through PATH. This first metadata-only launch explicitly trusts the installed operating system and its system-interpreter loader before application-tool pinning. The authored adapter performs only canonicalization, no-follow stat, system-admin-group lookup and content hashing: it never executes selected tools, changes permissions or contacts a network. Missing adapter/bootstrap support fails closed; on other hosts require verified native primitives rather than inventing a shell fallback. Pass selected absolute paths from fixed trusted roots as separate `--candidate` argv values; record its JSON pins and use `--verify-stdin` with that trusted JSON immediately before each subsequent application-tool launch, then launch only the recorded canonical path. Exit 2 or identity drift stops the run. Entrypoint and transport-helper symlinks are resolved as data before pinning; every component of the final canonical path remains non-symlink and root/current-user-owned. The sole application-tool permission exception is for macOS directories at or below `/opt/homebrew` or `/usr/local`, with the executable inside the matching prefix'\''s `Cellar`, when the directory group is the system `admin` group with gid 80: those directories may be group-writable. Ancestors above the prefix retain the strict rule. World-writable components and group/other-writable executable files remain rejected. All other executable-identity, isolated-source/transport, conditional-jq and confirmation rules are unchanged. This trusts installation administrators and retains the verification-to-launch race; it changes no filesystem permissions.'
+# END release-codex-executable-policy
+
 RELEASE_CLAUDE_DISABLE_MODEL_LINE='disable-model-invocation: true'
 RELEASE_CODEX_INVOCATION_DIVERGENCE='<!-- invocation-mode divergence: this skill is user-invoked-only on the Claude mirror (disable-model-invocation: true) — it pushes a git tag and publishes a public GitHub release, an externally-visible, hard-to-reverse action that should not fire off conversational context alone. Codex CLI has no equivalent front-matter suppression as of this writing, so it remains autonomously invocable here — a harness limitation, not an oversight. See docs/dev_plans/20260712-feature-release-skill.md. -->'
 # Literal Markdown backticks are part of the exact paragraph contracts.
@@ -384,7 +389,8 @@ normalize_release_workflow() {
 		-v claude_invocation_mode="$RELEASE_CLAUDE_INVOCATION_MODE" \
 		-v codex_invocation_mode="$RELEASE_CODEX_INVOCATION_MODE" \
 		-v claude_execution_model="$RELEASE_CLAUDE_EXECUTION_MODEL" \
-		-v codex_execution_model="$RELEASE_CODEX_EXECUTION_MODEL" '
+		-v codex_execution_model="$RELEASE_CODEX_EXECUTION_MODEL" \
+		-v codex_executable_policy="$RELEASE_CODEX_EXECUTABLE_POLICY" '
 		function emit(line) {
 			print line
 		}
@@ -411,6 +417,10 @@ normalize_release_workflow() {
 			if (harness == "codex" && skip_codex_comment_blank) {
 				skip_codex_comment_blank = 0
 				if (line == "") next
+			}
+			if (harness == "codex" && line == codex_executable_policy) {
+				skip_codex_comment_blank = 1
+				next
 			}
 			if (harness == "claude" && in_frontmatter && line == "disable-model-invocation: true") next
 			if (harness == "codex" && line == codex_invocation_divergence) {
@@ -515,6 +525,25 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 		codex_execution_model_count="$(count_release_contract_line \
 			"$release_codex" "$RELEASE_CODEX_EXECUTION_MODEL")"
 		release_divergence_contract_valid=1
+		claude_policy_count="$(count_release_contract_line "$release_claude" "$RELEASE_CODEX_EXECUTABLE_POLICY")"
+		codex_policy_count="$(count_release_contract_line "$release_codex" "$RELEASE_CODEX_EXECUTABLE_POLICY")"
+		if [[ "$claude_policy_count" -ne 0 || "$codex_policy_count" -ne 1 ]]; then
+			echo "drift: release Codex executable policy counts are Claude=$claude_policy_count Codex=$codex_policy_count (expected 0/1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if ! awk -v policy="$RELEASE_CODEX_EXECUTABLE_POLICY" '
+			$0 == "<!-- skein:step-2 -->" { in_step2 = 1 }
+			$0 == "<!-- skein:step-3 -->" { in_step2 = 0 }
+			{ line=$0; sub(/[[:space:]]+$/, "", line) }
+			line == policy { if (!in_step2 || previous !~ /^[[:space:]]*\*\*Pinned-executable and source-repository invariant:/) bad=1; found=1 }
+			line != "" { previous=line }
+			END { exit (!found || bad) }
+		' "$release_codex"; then
+			echo "drift: release Codex executable policy must immediately follow the invariant in Step 2"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
 		if [[ "$claude_disable_model_frontmatter_count" -ne 1 ]]; then
 			echo "drift: release Claude frontmatter disable-model-invocation line count is $claude_disable_model_frontmatter_count (expected exactly 1)"
 			PARITY_DIFF=1
