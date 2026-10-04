@@ -46,7 +46,14 @@ codex plugin marketplace add vr000m/skein --ref main
 codex plugin add skein@skein
 ```
 
-The marketplace name `skein` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). To pick up upstream changes, re-add the marketplace (or `git pull` your clone if you installed from a local path) and re-run `/plugin install skein@skein` / `codex plugin add skein@skein` — there is no separate sync step.
+The marketplace name `skein` matches the entries in `.claude-plugin/marketplace.json` (Claude) and `.agents/plugins/marketplace.json` (Codex). To pick up upstream changes on Claude, re-add the marketplace and re-run `/plugin install skein@skein`. For an existing Codex Git marketplace, refresh its configured snapshot and then reinstall:
+
+```bash
+codex plugin marketplace upgrade skein
+codex plugin add skein@skein
+```
+
+`marketplace add` registers the marketplace; repeating it for an existing Codex marketplace does not refresh the snapshot. `marketplace upgrade` follows the configured ref and does not reinstall the plugin. For a local-path install, `git pull` your clone and re-run the harness's plugin install command. There is no background sync step.
 
 **Pinning to an existing release.** Prefer pinning over tracking `main`: pass `--ref vX.Y.Z` to `codex plugin marketplace add` (Codex), or resolve to a tag when adding the marketplace on Claude Code. See the release badge above or [the GitHub releases page](https://github.com/vr000m/skein/releases) for the current tag list. Tracking `main` follows unreleased commits.
 
