@@ -84,9 +84,11 @@ This makes auto-chain invocations self-resuming by construction: they never pass
 
 The multi-spawn gates run at the conductor's top level because they either invoke Codex review directly or may use their own delegation. Do not wrap gate 1, gate 2, or a supported `skein:deep-review` gate inside a fixer worker. That would turn the gauntlet into a nested orchestrator and make delegation depth and child tier evidence ambiguous.
 
-Only the fixer batch runs in a clean-context subagent. Spawn it with `spawn_agent`, pass the filled fixer prompt as the full message, set `fork_context=false`, request `reasoning_effort=medium` when supported, then use `wait_agent` and `close_agent` for the lifecycle. The fixer is the repeated high-context consumer across the loop; isolating it keeps gate orchestration in the main conductor while preventing fix application prompts from accumulating in the main context.
+Only the fixer batch runs in a clean-context subagent. Every fixer dispatch, including quick-mode fixes, resumed batches and retries, uses [worker-dispatch.md](worker-dispatch.md): call `spawn_agent` with the filled fixer prompt as the full message, set `fork_turns="none"`, and request `reasoning_effort=medium` when supported. The fixer is the repeated high-context consumer across the loop; isolating it keeps gate orchestration in the main conductor while preventing fix application prompts from accumulating in the main context.
 
-If `spawn_agent`, `wait_agent`, or `close_agent` are unavailable, hard-stop before applying fixes. Do not silently degrade into main-session fixing, because the conductor contract depends on clean-context fixer batches.
+Use `wait_agent` while a fixer is outstanding. Its return value is a mailbox-update or timeout summary, not the fixer report. Collect the delivered final message and terminal worker status before validating the existing report schema, verifying live edits, or advancing the convergence ledger. A final message without terminal status is still incomplete; terminal failure or malformed output hands back the actual error without counting the batch as fixed. No additional worker lifecycle operation is required after a terminal report.
+
+If `spawn_agent` or `wait_agent` is unavailable, hard-stop before applying fixes. Do not silently degrade into main-session fixing, because the conductor contract depends on clean-context fixer batches. If dispatch fails, including a capacity error, drain any already-started workers to terminal status and capture their final reports before handing back the actual dispatch error. Keep existing ledger state; retries use fresh workers and never reuse an earlier conversation.
 
 ## Gate Sequence (fixed order)
 
