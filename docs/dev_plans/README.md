@@ -9,10 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-07-04 | chore | model-effort-explicit-spawns | meta | — | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
-| 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
-| 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
-| 2026-09-14 | feature | release-repo-template | meta | — | feature/release-repo-template | [plan](20260914-feature-release-repo-template.md) |
+| 2026-03-17 | feature | deep-review | review-skills | [#8](https://github.com/vr000m/skills.md/pull/8) | feature/deep-review | [plan](20260317-feature-deep-review.md) |
 
 ## Planned
 
@@ -23,10 +20,11 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-10-03 | bug | codex-conduct-agent-api | planning-skills | [#52](https://github.com/vr000m/skein/pull/52) | fix/codex-conduct-agent-api | [plan](20261003-bug-codex-conduct-agent-api.md) |
+| 2026-10-03 | bug | codex-conduct-agent-api | planning-skills | [#52](https://github.com/vr000m/skein/pull/52), [docs #53](https://github.com/vr000m/skein/pull/53) | fix/codex-conduct-agent-api | [plan](20261003-bug-codex-conduct-agent-api.md) |
 | 2026-09-29 | feature | pi-plugin-port | meta | [#50](https://github.com/vr000m/skein/pull/50) | feature/pi-plugin-port | [plan](20260929-feature-pi-plugin-port.md) |
 | 2026-09-17 | refactor | release-skill-structure | meta | [#44](https://github.com/vr000m/skein/pull/44) | refactor/release-skill-structure | [plan](20260917-refactor-release-skill-structure.md) |
 | 2026-09-25 | chore | prompt-audit-cleanup | meta | [#46](https://github.com/vr000m/skein/pull/46) | chore/prompt-audit-cleanup | [plan](20260925-chore-prompt-audit-cleanup.md) |
+| 2026-09-14 | feature | release-repo-template | meta | — | feature/release-repo-template | [plan](20260914-feature-release-repo-template.md) |
 | 2026-09-12 | feature | show-me-skill | meta | [#41](https://github.com/vr000m/skein/pull/41) | feat/show-me-skill | [plan](20260912-feature-show-me-skill.md) |
 | 2026-09-03 | docs | prompt-audit-claude | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-claude.md) |
 | 2026-09-03 | docs | prompt-audit-codex | meta | — | chore/prompt-audit-cleanup | [plan](20260903-docs-prompt-audit-codex.md) |
@@ -38,8 +36,11 @@ parser can pick up the slug.
 | 2026-07-10 | feature | review-gauntlet-resume | review-skills | — | feature/review-gauntlet-resume | [plan](20260710-feature-review-gauntlet-resume.md) |
 | 2026-07-07 | feature | review-gauntlet-skill | review-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-review-gauntlet-skill.md) |
 | 2026-07-07 | feature | conduct-phase-goal-field | planning-skills | [#12](https://github.com/vr000m/skein/pull/12) | feature/review-gauntlet-skill | [plan](20260707-feature-conduct-phase-goal-field.md) |
+| 2026-07-04 | chore | model-effort-explicit-spawns | meta | [#11](https://github.com/vr000m/skein/pull/11) | feature/explicit-model-effort-policy | [plan](20260704-chore-model-effort-explicit-spawns.md) |
 | 2026-06-21 | feature | call-flow-diagrams-mermaid-review-loop | planning-skills | [#10](https://github.com/vr000m/skein/pull/10) | feature/plan-call-flow-and-interactive-review | [plan](20260621-feature-call-flow-diagrams-mermaid-review-loop.md) |
+| 2026-06-15 | bug | review-plan-marker-hash | review-skills | [#9](https://github.com/vr000m/skein/pull/9) | fix/review-plan-deterministic-marker-hash | [plan](20260615-bug-review-plan-marker-hash.md) |
 | 2026-05-25 | chore | skein-plugin-packaging | meta | — | feature/skein-plugin-migration | [plan](20260525-chore-skein-plugin-packaging.md) |
+| 2026-05-23 | feature | bundle-auto-fix-appliers | review-skills | — | feature/bundle-auto-fix-appliers | [plan](20260523-feature-bundle-auto-fix-appliers.md) |
 | 2026-05-21 | feature | plan-view-skill | planning-skills | [#28](https://github.com/vr000m/skills.md/pull/28) | feat/plan-view-skill | [plan](20260521-feature-plan-view-skill.md) |
 | 2026-05-15 | feature | review-auto-fix-tier | review-skills | [#23](https://github.com/vr000m/skills.md/pull/23) | feature/review-auto-fix-tier | [plan](20260515-feature-review-auto-fix-tier.md) |
 | 2026-05-12 | feature | conduct-autonomous-mode | planning-skills | [#22](https://github.com/vr000m/skills.md/pull/22) | feature/conduct-autonomous-mode | [plan](20260512-feature-conduct-autonomous-mode.md) |
@@ -47,7 +48,6 @@ parser can pick up the slug.
 | 2026-05-04 | feature | skill-improvements-from-usage-report | meta | [#16](https://github.com/vr000m/skills.md/pull/16) | feature/skill-improvements-from-usage-report | [plan](20260504-feature-skill-improvements-from-usage-report.md) |
 | 2026-05-02 | feature | subagent-upgrade-plan-skills | planning-skills | [#15](https://github.com/vr000m/skills.md/pull/15) | feature/subagent-upgrade-plan-skills | [plan](20260502-feature-subagent-upgrade-plan-skills.md) |
 | 2026-04-22 | feature | conduct-skill | planning-skills | [#11](https://github.com/vr000m/skills.md/pull/11), [#13](https://github.com/vr000m/skills.md/pull/13), [#19](https://github.com/vr000m/skills.md/pull/19), [#20](https://github.com/vr000m/skills.md/pull/20) | feature/conduct-skill | [plan](20260422-feature-conduct-skill.md) |
-| 2026-03-17 | feature | deep-review | review-skills | [#8](https://github.com/vr000m/skills.md/pull/8) | feature/deep-review | [plan](20260317-feature-deep-review.md) |
 | 2026-03-13 | feature | spec-compliance-check | spec-skills | [#6](https://github.com/vr000m/skills.md/pull/6) | feat/rfc-finder-skill | [plan](20260313-feature-spec-compliance-check.md) |
 | 2026-03-13 | feature | rfc-finder | spec-skills | [#6](https://github.com/vr000m/skills.md/pull/6) | feat/rfc-finder-skill | [plan](20260313-feature-rfc-finder.md) |
 | 2026-03-07 | chore | content-guidelines-standardize | content-skills | [#5](https://github.com/vr000m/skills.md/pull/5) | codex/content-guidelines-standardize | [plan](20260307-chore-content-guidelines-standardize.md) |

@@ -70,9 +70,9 @@ This divergence is intentional and parallels the existing dispatch-idiom split (
 
 **`RELEASE_LAGGING_MIRROR_OK` and `PARITY_RELEASE_LIB_ROOT`** (round 2/3 of the release-skill restructure) are release-skill-scoped test/CI escape hatches, read by `scripts/check-prompt-parity.sh` and `tests/parity/test-applier-bundle-parity.sh`, never by a shipped skill script. `RELEASE_LAGGING_MIRROR_OK` is a comma- or whitespace-separated list of named "planes" (`release-skill-md`, `release-references`, `release-lib`) that acknowledges an EXPECTED, temporary Claude-ahead-of-Codex drift in that plane during a mid-flight Codex-mirror update (the mirror-parity checks otherwise hard-fail on any drift) — an unrecognised plane name is itself an error, not a silent no-op. Once both mirrors are re-aligned, unset it; it is not a permanent config. `PARITY_RELEASE_LIB_ROOT` repoints `test-applier-bundle-parity.sh`'s release-lib comparison at a scratch root instead of the repo tree — used only by that test's own self-tests (`tests/parity/test-release-lagging-mirror.sh`) to exercise the lagging/drift-detection logic against a synthetic fixture without mutating the real plugin tree.
 
-### Model/Effort Policy (target policy, not yet fully enforced)
+### Model/Effort Policy
 
-Every subagent spawn should declare its own model/effort tier rather than inheriting the parent session's — this is the policy of record the tree is converging to. It is being rolled out in phases (see `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`): as of this doc, an enforcing cross-skill census and full spawn compliance have not yet landed, so the presence of this section is **not** proof that every spawn below is already tiered. Treat it as the target, verify compliance against the actual `SKILL.md` files.
+Every subagent spawn should declare its own model/effort tier rather than inheriting the parent session's. The policy implementation shipped in PR #11 (see `docs/dev_plans/20260704-chore-model-effort-explicit-spawns.md`). The cross-skill census in `tests/parity/test-spawn-tiers.sh`, run by `just parity-tests` and `just ci`, checks pinned tier-declaration counts across both harnesses. Verify compliance against the actual `SKILL.md` files and census assertions; check the selected runtime's tool capabilities before dispatch.
 
 The two-tier policy, harness-independent:
 

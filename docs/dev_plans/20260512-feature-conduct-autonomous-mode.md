@@ -503,3 +503,7 @@ The repo has no workflow files under `.github/workflows/`; `ci-parity-no-entrypo
 
 **Conducted-By provenance:** every boundary commit carries the `Conducted-By: <runtime>` trailer that `tests/parity/check-mirror-handoff.sh` consumes structurally.
 <!-- reviewed: 2026-05-15 @ 071db1040ae8cbfb71d3a44834a31873d548bbce -->
+
+## Delivery update
+
+[PR #22](https://github.com/vr000m/skills.md/pull/22) merged to `main` on 2026-05-15; global promote completed post-merge, as recorded in the primary status header. This supersedes the historical pre-merge wording in Final Results. The above-marker contract is preserved.
