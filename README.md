@@ -26,7 +26,9 @@ Namespaced skill plugin for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`). Judgment lenses ("high-reasoning" above) vs. mechanical/factual work follow the two-tier model/effort policy in [AGENTS.md](AGENTS.md#modeleffort-policy-target-policy-not-yet-fully-enforced).
 
-Codex `conduct` requires `spawn_agent` and `wait_agent`. Every fresh phase worker uses `fork_turns="none"` and the Codex dispatch template; the conductor consumes delivered final reports and terminal status. Optional downstream review gates retain their own capability checks.
+Codex `conduct` and `review-gauntlet` require `spawn_agent` and `wait_agent`. Fresh phase workers and fixer batches use `fork_turns="none"` and their Codex dispatch templates; conductors consume delivered final reports and terminal status. Unsupported downstream review gates retain their explicit capability outcomes.
+
+Codex `release` ships a read-only executable preflight adapter for macOS shell-only runtimes. Its fixed system-interpreter bootstrap trusts the installed operating system. Canonical Homebrew Cellar tools may traverse root/current-user-owned directories writable by the system `admin` group; executable files and world-writable paths remain restricted, and pinned identities are reverified before application-tool launches. Claude release policy is unchanged. No directory permissions need to be changed.
 
 ## Plugin install
 

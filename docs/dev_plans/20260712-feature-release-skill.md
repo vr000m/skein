@@ -173,6 +173,8 @@ All 7 fixes applied identically to both mirrors. Verified: no stray `--json titl
 
 ## Findings
 
+- **Codex 0.9.2 follow-up (2026-10-04):** The Codex release preflight has a read-only executable adapter and an explicit macOS system bootstrap. Only trusted admin-group Homebrew directory permissions diverge; executable identity, source/transport isolation and publication confirmation remain enforced. Claude policy is unchanged. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md). Source preparation does not assert publication or installation.
+
 ### Review (2026-07-12, scaled-down single-lens architecture review — see note)
 
 Ran a single Opus architecture-lens review (not the full 5-lens `/review-plan` gauntlet) given this is a doc-only skill addition with no runtime code and no bundled scripts — judged disproportionate to run 4 more high-reasoning Opus lenses on a markdown change. The architecture lens surfaced two real Important findings, both fixed before implementation:

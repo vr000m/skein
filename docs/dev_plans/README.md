@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-10-04 | bug | codex-gauntlet-release-runtime | meta | — | fix/codex-runtime-release-0.9.2 | [plan](20261004-bug-codex-gauntlet-release-runtime.md) |
 | 2026-03-17 | feature | deep-review | review-skills | [#8](https://github.com/vr000m/skills.md/pull/8) | feature/deep-review | [plan](20260317-feature-deep-review.md) |
 
 ## Planned
