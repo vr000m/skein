@@ -1,6 +1,6 @@
 # Task: Correct Codex conduct worker API
 
-**Status**: In Progress
+**Status**: Shipped (v0.9.1)
 **Component**: planning-skills
 **Assigned to**: Codex
 **Priority**: High
@@ -95,7 +95,7 @@ New tests sweep authored conduct Markdown and the Python diagnostic for obsolete
 ## Progress
 
 - [x] Phase 1: Correct the worker contract
-- [ ] Phase 2: Document, validate, and prepare delivery
+- [x] Phase 2: Document, validate, and prepare delivery
 
 ## Findings
 
@@ -103,12 +103,15 @@ New tests sweep authored conduct Markdown and the Python diagnostic for obsolete
 - Plan review: architecture and sequencing used clean-context workers; testing, assumptions, codebase-claims, and the post-reconciliation contradiction pass ran in-session after the runtime thread limit, with best-effort isolation. Two Important architecture findings addressed by the explicit gauntlet boundary and call-flow section; no contradictory fixes. Full findings: `.review-plan/latest-codex.json`.
 - Targeted validation: 245 Codex conduct tests passed; all ten new declarative API checks pass. Prompt parity passed. Authored-source sweep verified clean context across initial dispatch, both fix-loop roles, and advisory review. Historical sibling-plan contract bytes were preserved.
 - Code review found that a later parallel dispatch can fail while an earlier worker is still writing. The dispatch template now requires collecting already-started workers' terminal reports before handback; a regression pins that ordering. Manual security review found no new input-execution path: role prompts retain their untrusted-data boundaries and tool arguments use structured serialization.
-- Full validation: `just ci` exited 0 outside the process-restricted sandbox, with fixture-only `commit.gpgsign=false` and a scoped uv cache. The final Codex conduct suite passed 246 tests, including eleven API regressions. Documentation, code, and security audits are clear. Source, metadata, and docs are ready for PR; publication and installed-byte verification remain outstanding.
+- Full validation: `just ci` exited 0 outside the process-restricted sandbox, with fixture-only `commit.gpgsign=false` and a scoped uv cache. The final Codex conduct suite passed 246 tests, including eleven API regressions. Documentation, code, and security audits are clear. PR #52 merged normally on 2026-10-03; publication and installed-byte verification are complete.
+- Delivery: Claude presented the exact release payload, received the user's confirmation, and published [v0.9.1](https://github.com/vr000m/skein/releases/tag/v0.9.1) on 2026-10-03. GitHub's annotated tag object `c5d70bbcaeef12fbde25e7038e5618c49fe0a26c` peels to merge commit `5250975e2d840dcdc4ecba8b72bddc5e3c1574fc`. The enabled Codex install is 0.9.1; SKILL.md, conductor.py, worker-dispatch.md, and all four role/CI prompt files match the released tree byte-for-byte.
 
 ## Issues & Solutions
 
 - Publication has an explicit exact-payload confirmation gate in skein:release; source edits and release preparation can proceed before it.
+- Codex `marketplace add` returned `alreadyAdded` without refreshing the existing Git snapshot. `codex plugin marketplace upgrade skein` followed by `codex plugin add skein@skein` installed 0.9.1. README.md and AGENTS.md now distinguish registration, snapshot refresh, and installation.
+- Codex release preflight stopped at the skill's executable-path permission rule because `/opt/homebrew/Cellar` is group-writable. Claude completed publication using ordinary Git/GitHub CLI calls without that pinned transport wrapper. The release-skill policy remains unchanged; no filesystem permissions were changed.
 
 ## Final Results
 
-The authored Codex conduct API correction and 0.9.1 metadata are implemented in [PR #52](https://github.com/vr000m/skein/pull/52). Full `just ci` passed; the final Codex conduct suite passed 246 tests, including eleven API regressions. Documentation, code, and security audits are clear. Phase 1 is complete; Phase 2 remains open for merge, exact-payload release confirmation, publication, and installed-byte verification.
+The authored Codex conduct API correction and 0.9.1 metadata shipped through [PR #52](https://github.com/vr000m/skein/pull/52) and [release v0.9.1](https://github.com/vr000m/skein/releases/tag/v0.9.1). Full `just ci` passed; the final Codex conduct suite passed 246 tests, including eleven API regressions. Both phases are complete. The GitHub tag targets the verified merge commit, and all seven installed conduct source/prompt files match the released tree byte-for-byte.
