@@ -258,5 +258,5 @@ An optional `**Goal:**` field is now part of the dev-plan phase schema, document
 
 ### Follow-up Work
 
-- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) is open, not yet merged to `main`.
+- PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) merged to `main` on 2026-07-10.
 - Move the `**Test command:**` trailing HTML comment off the slot line in a future cleanup so conduct's regex doesn't need manual workarounds.

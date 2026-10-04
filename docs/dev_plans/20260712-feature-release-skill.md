@@ -1,6 +1,6 @@
 # Task: `skein:release` — sync/cut GitHub releases from CHANGELOG.md
 
-**Status**: In Review (implementation complete; PR #18 open)
+**Status**: Shipped (PR #18 merged 2026-07-16)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
@@ -132,7 +132,7 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 
 ## Final Results
 
-Implemented in two passes on `feature/skein-release-skill` (PR #18 remains open): the base skill (Single-Version Mode: cut or re-sync one named version) landed first, then a follow-on pass added Audit Mode (`/release audit` — scans all tags/CHANGELOG versions repo-wide for `missing-tag`/`missing-release`/`drifted`/`no-changelog-entry`, reports a punch list, fixes opt-in via Single-Version Mode per selected version) and a `## What's New` summary paragraph to the canonical body shape, both requested after reviewing release-note patterns from three external repos (`pipecat-ai/pipecat-context-hub`, `vr000m/pipecat-local-tts-server`, `vr000m/pipecat-local-stt-server` — read-only `gh release list`/`view` lookups only, no changes made to those repos). Those repos' own tags all had matching releases (no missed-release case to observe live), but their bodies confirmed the "intro paragraph + itemized sections" pattern was a real, generalizable convention worth adopting, not a one-off. What's New is now default for a new release and recovered when an existing release has it; an ordinary re-sync preserves its absence, and only an explicit user choice adds a previously-absent paragraph.
+Implemented in two passes on `feature/skein-release-skill` (PR #18 merged 2026-07-16): the base skill (Single-Version Mode: cut or re-sync one named version) landed first, then a follow-on pass added Audit Mode (`/release audit` — scans all tags/CHANGELOG versions repo-wide for `missing-tag`/`missing-release`/`drifted`/`no-changelog-entry`, reports a punch list, fixes opt-in via Single-Version Mode per selected version) and a `## What's New` summary paragraph to the canonical body shape, both requested after reviewing release-note patterns from three external repos (`pipecat-ai/pipecat-context-hub`, `vr000m/pipecat-local-tts-server`, `vr000m/pipecat-local-stt-server` — read-only `gh release list`/`view` lookups only, no changes made to those repos). Those repos' own tags all had matching releases (no missed-release case to observe live), but their bodies confirmed the "intro paragraph + itemized sections" pattern was a real, generalizable convention worth adopting, not a one-off. What's New is now default for a new release and recovered when an existing release has it; an ordinary re-sync preserves its absence, and only an explicit user choice adds a previously-absent paragraph.
 
 ### Contract correction (2026-07-15)
 
@@ -258,7 +258,7 @@ Applied identically to both mirrors (the Codex-authored findings targeted the Co
 
 After the six earlier independent review rounds counted in PR #18's description, the finished branch entered a full `skein:review-gauntlet` loop. The six finding-bearing fixer rounds landed as `e48be1e`, `2ec8e24`, `3a72e9e`, `a555736`, `063bfc6`, and `b447bbe`; the live PR description records 44 additional issues fixed across those rounds. The fixes concentrated on four cross-cutting invariants: credentials and CHANGELOG-derived content never become executable or leak in diagnostics; the confirmed repository, branch/SHA, payload, tag, push destination, and release-state baselines remain bound through mutation; PREV and tag existence stay origin-authoritative without mutating local tags; and draft/prerelease plus Audit Mode classifications fail closed rather than silently publishing, promoting, or repairing the wrong object.
 
-The loop reached a clean substantive result in code-review, deep-review, and security-review. Its final adversarial Codex confirmation was attempted three times but stalled on tool infrastructure, so PR #18's test plan correctly leaves that one formal checkbox open and recommends rerunning it before merge; the PR itself remains open. This is review-history status only and does not transfer release mutation ownership away from `skein:release` or weaken its explicit pre-mutation confirmation gate.
+The loop reached a clean substantive result in code-review, deep-review, and security-review. Its final adversarial Codex confirmation was attempted three times but stalled on tool infrastructure, so at the end of that loop PR #18's test plan left that one formal checkbox open and recommended rerunning it before merge. PR #18 subsequently merged on 2026-07-16. The recorded infrastructure limitation is review history; the merge does not establish that the blocked confirmation passed or transfer release mutation ownership away from `skein:release`.
 
 ### Post-gauntlet hardening pass (2026-07-16)
 

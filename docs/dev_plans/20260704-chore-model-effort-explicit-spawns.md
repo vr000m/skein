@@ -304,6 +304,8 @@ runners, conduct mention guard.
 
 ## Findings
 
+- **Delivery status:** [PR #11](https://github.com/vr000m/skein/pull/11) (`0.3.0: two-tier model/effort policy + R6 test-writer graft`) merged on 2026-07-05. This supersedes the historical pending-PR/merge wording above the review marker. The reviewed contract and marker remain unchanged.
+
 - **Conduct API correction (2026-10-03):** the current Codex conduct contract supersedes this plan's historical worker lifecycle wording: fresh workers use `fork_turns="none"`; required tools are `spawn_agent` and `wait_agent`. Worker-close support is not required. Shared role prompts, phase state, and report contracts are preserved. Other skills, including the downstream gauntlet, retain their separate capability checks. See [the correction plan](20261003-bug-codex-conduct-agent-api.md).
 
 _(durable findings recorded during implementation, below the marker)_
