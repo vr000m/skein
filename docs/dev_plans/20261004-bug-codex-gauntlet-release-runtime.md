@@ -24,7 +24,7 @@ Live filesystem inspection resolved Homebrew Git 2.56.0, gh 2.102.0 and jq 1.8.2
 - All gauntlet fixer dispatches, including retries and quick-mode substantive fixes, use `spawn_agent` with `fork_turns="none"`. Require spawn/wait; preserve the no-inline-fixing fallback and top-level review gates.
 - Wait summaries are mailbox updates only. Collect delivered final output and terminal worker status before consuming a report or advancing the convergence ledger. Dispatch failures hand back the actual error after any started workers drain; do not reuse prior worker conversations.
 - Inherit the harness-selected model, requesting medium effort when supported. Keep the existing fixer report, quarantine, claim promotion and convergence semantics.
-- Codex release uses an explicit read-only metadata adapter when native stat/hash tools are absent. On macOS, the fixed system `/usr/bin/env` and `/usr/bin/python3` bootstrap the adapter in an empty environment with isolated Python (`-I -S`), through `/bin/bash` with login disabled. This trusts the installed operating system and its system-interpreter loader before application-tool pinning; unsupported/missing system bootstrap fails closed. The adapter performs filesystem/identity reads only, never tool execution, permissions changes or network work. Codex release keeps fixed trusted executable roots, canonical paths, user/root ownership, device/inode/hash pinning and pre-execution reverification, isolated environment/source/transport rules, conditional jq and exact-payload publication confirmation.
+- Codex release uses an explicit read-only metadata adapter when native stat/hash tools are absent. On macOS, the fixed system `/usr/bin/env` and `/usr/bin/python3` bootstrap the adapter in an empty environment with isolated Python (`-I -S`), through the authored `preflight-shell.sh` with login and TTY disabled. Its fixed `/bin/sh -p` startup suppresses inherited shell files, options and functions before any command is interpreted. This trusts the installed operating system and its system-interpreter loader before application-tool pinning; unsupported/missing system bootstrap fails closed. The adapter performs filesystem/identity reads only, never tool execution, permissions changes or network work. Codex release keeps fixed trusted executable roots, canonical paths, user/root ownership, device/inode/hash pinning and pre-execution reverification, isolated environment/source/transport rules, conditional jq and exact-payload publication confirmation.
 - On macOS only, permit group-writable directories at or below `/opt/homebrew` or `/usr/local` on a canonical executable's path when the executable is inside that prefix's Cellar, the directory is root/current-user-owned and its group is the system `admin` group. Resolve entrypoint symlinks as data before checking the final canonical path. Reject world-writable components, group/other-writable executable files, unexpected owners/groups, and symlinks in that final path. This trusts administrators maintaining the installation and retains the verification-to-launch race as an explicit residual.
 - Register one exact Codex-only release policy paragraph as a parity divergence, with cardinality/placement checks. Missing, modified, duplicated, appended, misplaced or Claude-side exception text must fail. All remaining normalized release workflow and shared library bytes retain parity; no lagging-mirror escape hatch is used.
 - Claude authored skill content, release references and shared libraries remain byte-identical to main. Both plugin manifests receive the common release version 0.9.2. Do not change fan-out's dormant topology documentation or other skills.
@@ -48,7 +48,7 @@ The important boundaries are clean worker context versus mailbox wakeups, Codex-
 - Preserve unsupported-gate status accounting and shared gauntlet helpers.
 
 ### Phase 2: Correct Codex Homebrew executable preflight
-**Impl files:** plugins/skein-codex/skills/release/SKILL.md, plugins/skein-codex/skills/release/executable_policy.py, scripts/check-prompt-parity.sh
+**Impl files:** plugins/skein-codex/skills/release/SKILL.md, plugins/skein-codex/skills/release/executable_policy.py, plugins/skein-codex/skills/release/preflight-shell.sh, scripts/check-prompt-parity.sh
 **Test files:** tests/parity/test-prompt-parity-extended.sh, tests/parity/test_release_skill_contract.py, plugins/skein-codex/skills/release/tests/test_executable_policy.py, justfile
 **Test command:** `bash tests/parity/test-prompt-parity-extended.sh`
 **Validation cmd:** `just check-prompt-parity`
@@ -79,11 +79,12 @@ The exact files are listed in phase contracts. Authoritative edits occur in the 
 
 - `plugins/skein-codex/skills/review-gauntlet/worker-dispatch.md`: structured spawn arguments and final-report collection contract, following conduct's supported runtime idiom.
 - `tests/gauntlet/test_codex_agent_api.py`: Codex dispatch and lifecycle contract coverage.
+- `plugins/skein-codex/skills/release/preflight-shell.sh`: fixed startup-suppressed shell boundary for every release command when the macOS adapter is used.
 - `plugins/skein-codex/skills/release/executable_policy.py` and `tests/test_executable_policy.py`: deterministic read-only application-tool pinning and permission/identity regression tests.
 
 ### Architecture Decisions
 
-These are corrections to two existing orchestration boundaries, not a new transport or gate. The Codex Homebrew paragraph narrowly qualifies only the shared directory group-write prohibition. The authored read-only `executable_policy.py` adapter supplies canonicalization, no-follow component inspection, OS/admin-group identification and device/inode/hash capture/reverification. Its fixed system-interpreter bootstrap is an explicit trusted-OS boundary, replacing the unverified assumption that this Codex runtime has native filesystem primitives. It performs no application-tool execution or state mutation. Every subsequent workflow launch uses the recorded canonical identity; native adapters remain available when the harness supplies them. The exact policy paragraph has an explicit normalization contract and cannot be silently broadened.
+These are corrections to two existing orchestration boundaries, not a new transport or gate. The Codex Homebrew paragraph narrowly qualifies only the shared directory group-write prohibition. The authored read-only `executable_policy.py` adapter supplies canonicalization, no-follow component inspection, OS/admin-group identification and device/inode/hash capture/reverification. Its fixed startup-suppressed launcher and system-interpreter bootstrap form an explicit trusted-plugin/OS boundary, replacing the unverified assumption that this Codex runtime has native filesystem primitives. It performs no application-tool execution or state mutation. Every subsequent workflow launch uses the recorded canonical identity; native adapters remain available when the harness supplies them. The exact policy paragraph has an explicit normalization contract and cannot be silently broadened.
 
 ### Integration Seams
 
@@ -167,8 +168,10 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 ## Issues & Solutions
 
+- Logic and security review found that an outer Bash process can interpret inherited BASH_ENV or SHELLOPTS/PS4 before its inner `env -i`. The authored launcher starts with `/bin/sh -p` before parsing any command, suppressing inherited startup files, options and functions; command-level environment clearing alone is insufficient. Regression checks exercise hostile startup state and actual runtime shell launch.
+
 - A shared release rule needs a registered Codex-only divergence to preserve the requested harness scope without weakening parity elsewhere.
 
 ## Final Results
 
-Implementation is complete. The seven Codex dispatch tests, 25 executable-policy tests, 300 release-contract tests and 72 prompt-parity mutation checks passed. Full CI and committed-scope reviews are pending; 0.9.2 has not been merged, tagged, published or installed.
+Implementation is complete. The seven Codex dispatch tests, 29 executable-policy/launcher tests and 300 release-contract tests passed (336 total). Prompt parity passed without drift waivers. Full CI passed at `700ede6`; all four code-review lenses completed, with one shared launch-isolation issue from logic/security corrected by the authored launcher. Full CI and incremental review of that correction are pending; 0.9.2 has not been merged, tagged, published or installed.

@@ -28,7 +28,7 @@ Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`)
 
 Codex `conduct` and `review-gauntlet` require `spawn_agent` and `wait_agent`. Fresh phase workers and fixer batches use `fork_turns="none"` and their Codex dispatch templates; conductors consume delivered final reports and terminal status. Unsupported downstream review gates retain their explicit capability outcomes.
 
-Codex `release` ships a read-only executable preflight adapter for macOS shell-only runtimes. Its fixed system-interpreter bootstrap trusts the installed operating system. Canonical Homebrew Cellar tools may traverse root/current-user-owned directories writable by the system `admin` group; executable files and world-writable paths remain restricted, and pinned identities are reverified before application-tool launches. Claude release policy is unchanged. No directory permissions need to be changed.
+Codex `release` ships a read-only executable preflight adapter for macOS shell-only runtimes. Its authored launcher suppresses ambient shell startup state; the fixed system-interpreter bootstrap trusts the installed plugin and operating system. Canonical Homebrew Cellar tools may traverse root/current-user-owned directories writable by the system `admin` group; executable files and world-writable paths remain restricted, and pinned identities are reverified before application-tool launches. Claude release policy is unchanged. No directory permissions need to be changed.
 
 ## Plugin install
 

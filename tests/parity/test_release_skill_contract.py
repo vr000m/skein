@@ -52,6 +52,10 @@ def test_codex_executable_adapter_is_a_single_positioned_divergence() -> None:
     paragraph = lines[position]
     for token in (
         "Step 1b bootstrap and Audit Step A1",
+        '"$SKILL_DIR"/preflight-shell.sh',
+        "`login=false` and `tty=false` for every release command",
+        "`#!/bin/sh -p` startup",
+        "suppress inherited shell startup files, options and functions",
         '/usr/bin/env -i /usr/bin/python3 -I -S "$SKILL_DIR"/executable_policy.py',
         "system-interpreter loader before application-tool pinning",
         "--verify-stdin",
