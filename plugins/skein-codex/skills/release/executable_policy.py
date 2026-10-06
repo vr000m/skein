@@ -72,8 +72,8 @@ def component_allowed(
 
 def metadata(info: os.stat_result) -> dict:
     return {
-        "device": info.st_dev,
-        "inode": info.st_ino,
+        "device": str(info.st_dev),
+        "inode": str(info.st_ino),
         "mode": info.st_mode,
         "uid": info.st_uid,
         "gid": info.st_gid,

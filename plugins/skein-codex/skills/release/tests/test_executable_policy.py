@@ -2,15 +2,14 @@
 
 import importlib.util
 import json
+import re
 import stat
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 SOURCE = Path(__file__).resolve().parents[1] / "executable_policy.py"
-SHELL = SOURCE.with_name("preflight-shell.sh")
 SPEC = importlib.util.spec_from_file_location("executable_policy", SOURCE)
 policy = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(policy)
@@ -141,42 +140,38 @@ def test_data_adapter_does_not_execute_tools_or_change_permissions():
     assert "hashlib.sha256()" in text
 
 
-@pytest.mark.parametrize("attack", ["startup_files", "inherited_options", "functions"])
-def test_launcher_suppresses_ambient_code_before_isolated_python(tmp_path, attack):
-    marker = "SKEIN_AMBIENT_STARTUP_RAN"
-    startup = tmp_path / "startup.sh"
-    startup.write_text(f"printf '{marker}\\n' >&2\n")
-    environments = {
-        "startup_files": {"BASH_ENV": str(startup), "ENV": str(startup)},
-        "inherited_options": {
-            "SHELLOPTS": "xtrace",
-            "BASHOPTS": "expand_aliases",
-            "PS4": f"$(printf {marker} >&2) ",
-        },
-        "functions": {
-            "BASH_FUNC_skein_injected%%": f"() {{ printf {marker} >&2; }}",
-        },
-    }
-    command = (
-        "if command -v skein_injected >/dev/null 2>&1; then skein_injected; fi; "
-        'exec /usr/bin/env -i /usr/bin/python3 -I -S "$1" --candidate /bin/ls'
+def test_large_device_inode_identities_survive_json_number_precision_boundaries():
+    info = SimpleNamespace(
+        st_dev=2**60 + 1,
+        st_ino=2**60 + 3,
+        st_mode=stat.S_IFREG | 0o555,
+        st_uid=501,
+        st_gid=80,
     )
-    result = subprocess.run(
-        [str(SHELL), "-c", command, "release-preflight", str(SOURCE)],
-        env=environments[attack],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
-    assert marker not in result.stdout + result.stderr
-    assert json.loads(result.stdout)["pins"][0]["candidate"] == "/bin/ls"
+    record = policy.metadata(info)
+    assert record["device"] == str(2**60 + 1)
+    assert record["inode"] == str(2**60 + 3)
+    assert json.loads(json.dumps(record)) == record
 
 
-def test_launcher_is_fixed_executable_and_privileged_from_kernel_startup():
-    assert SHELL.read_text().startswith("#!/bin/sh -p\n")
-    assert SHELL.read_text().splitlines()[-1] == 'exec /bin/sh -p "$@"'
-    info = SHELL.lstat()
-    assert stat.S_ISREG(info.st_mode)
-    assert info.st_mode & 0o111
-    assert not info.st_mode & 0o022
+def test_native_launch_request_keeps_argv_and_environment_as_structured_data():
+    contract = SOURCE.with_name("native-launch.md").read_text()
+    template = json.loads(re.search(r"```json\n(.*?)\n```", contract, re.DOTALL)[1])
+    assert template["executable"] == "/usr/bin/env"
+    assert template["argv"][:4] == ["-i", "/usr/bin/python3", "-I", "-S"]
+    assert template["env"] == {}
+    literal = 'quoted "path" $(printf unwanted)\nsecond line'
+    template["argv"][-1] = literal
+    assert json.loads(json.dumps(template))["argv"][-1] == literal
+    assert "shell: false" in contract
+    assert "child.stdin.end(stdin)" in contract
+
+
+def test_native_launch_requires_real_capability_and_never_inherits_environment():
+    contract = SOURCE.with_name("native-launch.md").read_text()
+    assert "node:child_process" in contract
+    assert "Missing support stops" in contract
+    assert "Never merge ambient variables or fall back to `exec_command`" in contract
+    assert "!env || typeof env !== 'object'" in contract
+    assert "child.on('error', reject)" in contract
+    assert "Immediately before each application-tool launch" in contract
