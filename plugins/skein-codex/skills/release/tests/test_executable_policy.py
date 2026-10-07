@@ -175,3 +175,18 @@ def test_native_launch_requires_real_capability_and_never_inherits_environment()
     assert "!env || typeof env !== 'object'" in contract
     assert "child.on('error', reject)" in contract
     assert "Immediately before each application-tool launch" in contract
+
+
+def test_native_compound_bridge_preserves_single_child_and_raw_bytes():
+    contract = SOURCE.with_name("native-launch.md").read_text()
+    assert "**same Bash call**" in contract
+    assert "pinning Bash and its complete executable graph" in contract
+    assert "argv: ['-c', fixedCompoundProgram]" in contract
+    assert "together within that single child" in contract
+    assert (
+        "payload bytes come only from its locked-file reads and quoted variables"
+        in (contract)
+    )
+    assert "never decode and re-encode them through JavaScript strings" in contract
+    assert "stdout: Buffer.concat(chunks)," in contract
+    assert "Buffer.concat(chunks).toString()" not in contract

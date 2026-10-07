@@ -1,6 +1,6 @@
 # Native Release Launch Contract
 
-Use a verified runtime-native process API for the adapter and every subsequent release command. The API must take an executable path and argv separately, supply an explicit child environment before creation, and avoid a shell. A native Node REPL exposing `node:child_process.spawn` supports this contract; discover and verify the real tool, never invent an API. A shell override, a successful command or an in-shell environment reset does not prove these properties. Missing support stops the release before any application-tool execution.
+Use a verified runtime-native process API for the adapter and every subsequent release command. The API must take an executable path and argv separately, supply an explicit child environment before creation, and avoid an ambient or interposed shell. A native Node REPL exposing `node:child_process.spawn` supports this contract; discover and verify the real tool, never invent an API. A shell override, a successful command or an in-shell environment reset does not prove these properties. Missing support stops the release before any application-tool execution.
 
 In a verified native Node REPL, define this transport once. The runtime and installed adapter are trusted bootstrap code. Use only standard library imports; do not import `node:process` or copy ambient environment state.
 
@@ -25,8 +25,8 @@ var releaseRun = ({executable, argv, env, cwd, stdin = ''}) =>
     child.stdin.on('error', reject);
     child.on('error', reject);
     child.on('close', code => resolve({code,
-      stdout: Buffer.concat(chunks).toString(),
-      stderr: Buffer.concat(errors).toString()}));
+      stdout: Buffer.concat(chunks),
+      stderr: Buffer.concat(errors)}));
     child.stdin.end(stdin);
   });
 ```
@@ -42,6 +42,8 @@ Fill requests as structured data, escaping values through JSON serialization rat
 }
 ```
 
-Add each additional candidate as a separate `--candidate`, absolute-path pair. Save successful adapter stdout as the trusted pin document. Device/inode fields are decimal strings to preserve values above JavaScript's exact integer range; retain the document losslessly anyway. Immediately before each application-tool launch, run the same bootstrap argv with `--verify-stdin` instead of candidate arguments and pass the trusted pin document as `stdin`. Any nonzero exit, launch error or identity drift stops the workflow.
+Add each additional candidate as a separate `--candidate`, absolute-path pair. Save successful adapter stdout as the trusted pin document. Output remains a Buffer; decode only the adapter's ASCII JSON when inspecting fields. Device/inode fields are decimal strings to preserve values above JavaScript's exact integer range; retain the document losslessly anyway. Immediately before each application-tool launch, run the same bootstrap argv with `--verify-stdin` instead of candidate arguments and pass the trusted pin document as `stdin`. Any nonzero exit, launch error or identity drift stops the workflow.
 
 Application-tool requests use only the recorded canonical executable path, explicit argv, the pinned source/transport `cwd`, and the exact-name environment values admitted by SKILL.md. Never merge ambient variables or fall back to `exec_command`. This transport supplies process isolation; it does not replace the source, configuration, helper-graph, credential or immutable-destination checks. Do not print authentication inputs or tool output containing secrets.
+
+**Compound calls and raw pipes:** `shell:false` prevents an interposed runtime shell; it permits an explicitly selected, identity-pinned interpreter. Preserve the bundled-script/raw Git-to-jq pipe and Step 5/6 **same Bash call** contracts by pinning Bash and its complete executable graph under the existing invariant, then directly spawning its recorded absolute path with `argv: ['-c', fixedCompoundProgram]` and the exact from-empty admitted environment. Keep locked-file payload loading, adjacent identity/content verification, mutation, and unconditional identity-aware cleanup/status precedence together within that single child. Keep the compound program source fixed and trusted; payload bytes come only from its locked-file reads and quoted variables, never interpolation into Bash source. Internal command paths and dependencies remain pinned. Keep raw committed blob pipes inside that child or connect native byte streams directly; never decode and re-encode them through JavaScript strings. This adapts the launch boundary without splitting or rewriting the required mutation sequence.
