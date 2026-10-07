@@ -1,9 +1,10 @@
 # Codex gauntlet and release runtime correction
 
-**Status**: In Progress
+**Status**: In Review
 **Component**: meta
 **Priority**: High
 **Branch**: fix/codex-runtime-release-0.9.2
+**PR**: [#54](https://github.com/vr000m/skein/pull/54)
 **Created**: 2026-10-04
 **Review Gates:** none
 
@@ -157,7 +158,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 - [x] Phase 1: Correct Codex gauntlet worker lifecycle
 - [x] Phase 2: Correct Codex Homebrew executable preflight
-- [ ] Phase 3: Document, validate and prepare 0.9.2
+- [x] Phase 3: Document, validate and prepare 0.9.2
 
 ## Findings
 
@@ -176,4 +177,8 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 ## Final Results
 
-Implementation is complete. The seven Codex dispatch tests, 29 executable-policy/native-launch tests and 300 release-contract tests passed (336 total). Prompt parity passed without drift waivers. Full CI passed at `b73f5e4`. Real native bootstrap, pin reverification, empty-environment, literal-argv, missing-binary and tampered-hash checks passed; Git/gh/jq/HTTPS-helper pins passed with lossless identity roundtrips. After immediately reverifying Bash/cat pins, a native compound call preserved the exact raw bytes `ff00410a`; an explicit empty child environment produced zero bytes. The final compound-call clarification requires its committed-scope review and CI before PR creation. 0.9.2 has not been merged, tagged, published or installed.
+[PR #54](https://github.com/vr000m/skein/pull/54) is open with the completed Codex-only implementation and 0.9.2 release metadata. All 336 targeted tests passed (seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Full `just ci` passed at `fb0a861`, and prompt parity passed without drift waivers. The final fresh logic, security, architecture and documentation lenses completed all assigned units with no actionable findings.
+
+Real native bootstrap, pin reverification, empty-environment, literal-argv, missing-binary and tampered-hash checks passed; Git/gh/jq/HTTPS-helper pins passed with lossless identity roundtrips. After immediately reverifying Bash/cat pins, a native compound call preserved the exact raw bytes `ff00410a`; an explicit empty child environment produced zero bytes. Claude skill sources and shared release files remain byte-identical to main. Canonical marker checks preserved all four marked sibling contract hashes and all six sibling contract prefixes and prior marker statuses.
+
+Merge, tag creation, GitHub release publication and plugin installation are pending. Source preparation and CI do not assert that 0.9.2 is released or installed.
