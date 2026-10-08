@@ -232,7 +232,7 @@ This refactor touches six independently-executing components (round 2 adds compo
 
 ## Findings
 
-- **Codex 0.9.2 follow-up (2026-10-04):** Codex executable preflight adds an authored metadata adapter outside shared lib/reference surfaces. Its exact paragraph has cardinality and placement enforcement in prompt parity; all other release workflow/library/reference bytes remain compared. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md). Source preparation does not assert publication or installation.
+- **Codex 0.9.2 follow-up (2026-10-04):** Codex executable preflight adds an authored metadata adapter outside shared lib/reference surfaces. Its exact paragraph has cardinality and placement enforcement in prompt parity; all other release workflow/library/reference bytes remain compared. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
 
 (populated during implementation/review — do not pre-fill; Phase 1's committed inventory and Phase 2/3's mapping tables land here as they're produced)
 

@@ -303,9 +303,8 @@ Both mirrors (`plugins/skein/skills/review-gauntlet/`, `plugins/skein-codex/skil
 ### Follow-up Work
 - Open the PR, run `/deep-review` + `/security-review`, then flip `**Status**`/`**Completed**` and move this plan's `docs/dev_plans/README.md` row to "Shipped" once merged.
 
+## Contract corrections
 
-## Delivery follow-up
+- **Codex 0.9.2 follow-up (2026-10-04):** Resumed Codex fixer batches use the same fresh spawn/wait lifecycle as initial and quick-mode batches. The existing target/ledger resume protocol is unchanged. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
 
-- **Codex 0.9.2 follow-up (2026-10-04):** Resumed Codex fixer batches use the same fresh spawn/wait lifecycle as initial and quick-mode batches. The existing target/ledger resume protocol is unchanged. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md). Source preparation does not assert publication or installation.
-
-- **Codex native-gate follow-up (2026-10-07):** [PR #54](https://github.com/vr000m/skein/pull/54) adds strict native envelopes and private snapshots with source-input checks before fixes/ledger accounting. Native review is retained through app-server raw events with deterministic verdict mapping; uncommitted input remains supported. This supersedes the Codex gate invocation examples only and does not assert a gauntlet verdict for the interrupted PCH run.
+- **Codex native-gate follow-up (2026-10-07):** The Codex gate invocation examples are superseded by native `review/start` raw verdict mapping and frozen private input with source checks before fixes/ledger accounting. Uncommitted input remains supported; escaping/cyclic snapshot links are refused. See [the correction plan](20261004-bug-codex-gauntlet-release-runtime.md).

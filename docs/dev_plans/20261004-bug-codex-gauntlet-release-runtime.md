@@ -1,6 +1,6 @@
 # Codex gauntlet and release runtime correction
 
-**Status**: In Progress
+**Status**: In Review
 **Component**: meta
 **Priority**: High
 **Branch**: fix/codex-runtime-release-0.9.2
@@ -177,7 +177,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 - [x] Phase 1: Correct Codex gauntlet worker lifecycle
 - [x] Phase 2: Correct Codex Homebrew executable preflight
 - [x] Phase 3: Document, validate and prepare 0.9.2
-- [ ] Phase 4: Freeze native gate inputs and enforce strict envelopes
+- [x] Phase 4: Freeze native gate inputs and enforce strict envelopes
 
 ## Findings
 
@@ -189,6 +189,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 ## Issues & Solutions
 
 - **2026-10-07 gauntlet follow-up:** User reported a blocked 0.9.1 run with prose native output, an initially rejected nested auto-fix schema, and concurrent renderer edits. The installed lifecycle mismatch is already corrected by this PR. Inspection of the exact Codex 0.160.1 source confirms that native `review/start` receives no output schema, while ordinary `turn/start` does. A live clean-case probe showed that rendered native prose can omit an explicit clean verdict; a second normalization turn correctly refused to infer one. The replacement app-server raw-event probe retained the native JSON verdict and successful turn. Phase 4 addresses that integration and mutable-input gap; the earlier run has no verdict and its PYTHONPATH observation remains provisional.
+- **2026-10-07 review corrections:** Fresh review reproduced source-local `diff.noprefix` breaking staged snapshot replay and escaping links exposing mutable external bytes. `d1654cd` centralizes canonical cached patches; `95f4975` rejects escaping/cyclic resolved snapshot links. Two prefix-config regressions and ten committed/uncommitted symlink regressions cover these cases; fresh final reviews found no remaining defects.
 
 - Logic and security review found that an outer Bash process can interpret inherited BASH_ENV or SHELLOPTS/PS4 before its inner `env -i`. A standalone privileged-shell launcher passed subprocess tests, but stronger runtime probes proved that this runtime silently ignores the requested shell. It was removed. The supported native Node launcher supplies argv and a closed environment before process creation; no ambient shell fallback is permitted.
 - Native validation also found that macOS inode values exceed JavaScript exact integer precision. Device/inode metadata is transported as decimal strings, and pin documents are preserved losslessly during reverification.
@@ -198,7 +199,11 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 ## Final Results
 
-[PR #54](https://github.com/vr000m/skein/pull/54) is open with the completed Codex-only implementation and 0.9.2 release metadata. All 336 targeted tests passed (seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Full `just ci` passed at `fb0a861`, and prompt parity passed without drift waivers. The initial implementation's final fresh logic, security, architecture and documentation lenses completed all assigned units with no actionable findings. The Phase 4 native adapter/schema and 44 regressions are committed in `e4606e2`; all 380 targeted tests passed (44 native input/verdict, seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Prompt parity and 187 skill-shape assertions passed. Live bounded native review accepted a clean square-function addition and flagged a seeded addition-instead-of-multiplication bug; adversarial review also flagged that bug. Source/snapshot drift, unsupported raw output and malformed nested proposals fail closed in fixtures. The extension still requires final full CI and fresh committed-scope reviews before PR update. The interrupted PCH run has no accepted verdict; its provisional renderer finding was not validated by these fixtures.
+[PR #54](https://github.com/vr000m/skein/pull/54) contains the Codex-only fixes and shared 0.9.2 version metadata. All 392 targeted tests passed: 56 native input/verdict regressions, seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests. Full `just ci` passed at `95f4975`, without lagging-mirror variables or parity waivers; ruff format/check, prompt parity and 187 skill-shape assertions passed. Fresh logic, security, architecture and documentation lenses each completed four assigned native-gate units with zero actionable findings (`20261008T030725Z-092-native-fixed`), following full-branch reviews at `61b5c24` and fixes for both reported defects.
+
+The review invariant is explicit: only a strict, completed result for the pinned private input can authorize fixes or ledger accounting. Both native gate branches share snapshot creation, source/snapshot reverification and local schema validation. Both cached-diff reads share canonical prefix enforcement. Every applier/fixer/retry/ledger boundary checks the accepted mutation baseline; only fully attributed, verified fix commits can advance it. Regressions prove escaping/cyclic links stop before native launch, internal links retain frozen bytes after source edits, source/index/HEAD changes invalidate input, and malformed/prose/ambiguous verdicts never become approval.
+
+Live bounded native probes accepted a clean square-function addition and flagged an addition-instead-of-multiplication bug in committed and staged-plus-unstaged targets; adversarial review also flagged the bug. The final uncommitted probe ran on Codex CLI 0.161.0 and preserved the source HEAD and fingerprint. The raw-event API was grounded in Codex 0.160.1 source and verified live. The interrupted PCH run still has no accepted verdict; its provisional renderer finding was not validated by these fixtures.
 
 Real native bootstrap, pin reverification, empty-environment, literal-argv, missing-binary and tampered-hash checks passed; Git/gh/jq/HTTPS-helper pins passed with lossless identity roundtrips. After immediately reverifying Bash/cat pins, a native compound call preserved the exact raw bytes `ff00410a`; an explicit empty child environment produced zero bytes. Claude skill sources and shared release files remain byte-identical to main. Canonical marker checks preserved all four marked sibling contract hashes and all six sibling contract prefixes and prior marker statuses.
 
