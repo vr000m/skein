@@ -49,6 +49,8 @@ def fake_codex(tmp_path, monkeypatch, repo):
     fake.write_text(r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
 mode = os.environ.get('NATIVE_GATE_TEST_MODE', '')
+if os.environ.get('NATIVE_GATE_TEST_LAUNCH'):
+    pathlib.Path(os.environ['NATIVE_GATE_TEST_LAUNCH']).write_text('launched')
 source = pathlib.Path(os.environ['NATIVE_GATE_TEST_SOURCE'])
 assert pathlib.Path.cwd() != source
 if sys.argv[1] == 'app-server':
@@ -525,3 +527,71 @@ def test_snapshot_replays_staged_patch_with_source_local_prefix_settings(
     frozen = gates.snapshot(repo, tmp_path / "review", state, True)
     assert frozen["index"] == state["index"]
     assert frozen["files"] == state["files"]
+
+
+@pytest.mark.parametrize("uncommitted", [False, True])
+@pytest.mark.parametrize("kind", ["absolute", "relative", "chain", "cycle"])
+def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
+    repo, fake_codex, tmp_path, monkeypatch, uncommitted, kind
+):
+    external = tmp_path / "external.py"
+    external.write_text("external = True\n")
+    (repo / "a.py").unlink()
+    target = str(external) if kind == "absolute" else "../external.py"
+    if kind in ("chain", "cycle"):
+        (repo / "bridge.py").symlink_to("a.py" if kind == "cycle" else "../external.py")
+        target = "bridge.py"
+    (repo / "a.py").symlink_to(target)
+    if not uncommitted:
+        command("git", "add", "a.py", cwd=repo)
+        if kind in ("chain", "cycle"):
+            command("git", "add", "bridge.py", cwd=repo)
+        command(
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "symlink fixture",
+            cwd=repo,
+        )
+    marker = tmp_path / "native-launched"
+    monkeypatch.setenv("NATIVE_GATE_TEST_LAUNCH", str(marker))
+    state = gates.capture(repo)
+    with pytest.raises(gates.GateError, match="symlink"):
+        gates.run_gate(request(repo, fake_codex, uncommitted=uncommitted))
+    assert not marker.exists()
+    assert gates.capture(repo)["fingerprint"] == state["fingerprint"]
+
+
+@pytest.mark.parametrize("uncommitted", [False, True])
+def test_internal_snapshot_links_preserve_spelling_and_frozen_target_bytes(
+    repo, tmp_path, uncommitted
+):
+    (repo / "link.py").symlink_to("a.py")
+    if not uncommitted:
+        command("git", "add", "link.py", cwd=repo)
+        command(
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "internal link",
+            cwd=repo,
+        )
+    state = gates.capture(repo)
+    destination = tmp_path / "review"
+    gates.snapshot(repo, destination, state, uncommitted)
+    before = (destination / "link.py").read_bytes()
+    assert os.readlink(destination / "link.py") == "a.py"
+    (repo / "a.py").write_text("source_changed = True\n")
+    assert (destination / "link.py").read_bytes() == before

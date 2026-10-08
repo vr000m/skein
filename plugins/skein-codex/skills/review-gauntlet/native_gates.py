@@ -212,7 +212,17 @@ def snapshot(root, destination, state, uncommitted):
             else:
                 path.write_bytes(data)
                 path.chmod(mode)
-    return capture(destination)
+    frozen = capture(destination)
+    for name, (kind, _, _) in frozen["files"].items():
+        if kind != "link":
+            continue
+        try:
+            target = (destination / name).resolve()
+        except (OSError, RuntimeError) as exc:
+            raise GateError("Cannot freeze a cyclic or unresolvable symlink") from exc
+        if not target.is_relative_to(destination):
+            raise GateError("Cannot freeze a symlink escaping the review snapshot")
+    return frozen
 
 
 def validate(value, schema):
