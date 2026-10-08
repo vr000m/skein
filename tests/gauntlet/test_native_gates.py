@@ -510,3 +510,18 @@ def test_gauntlet_checks_pinned_input_across_review_and_mutation_boundaries():
     assert "Only then capture a new `mutation_head`/`mutation_fingerprint`" in skill
     assert "Quick mode uses the same pin/check rules." in skill
     assert "stop before fixes and do not append the ledger" in skill
+
+
+@pytest.mark.parametrize("setting", ["diff.noprefix", "diff.mnemonicPrefix"])
+def test_snapshot_replays_staged_patch_with_source_local_prefix_settings(
+    repo, tmp_path, setting
+):
+    command("git", "config", setting, "true", cwd=repo)
+    (repo / "a.py").write_text("staged = True\n")
+    command("git", "add", "a.py", cwd=repo)
+    (repo / "a.py").write_text("unstaged = True\n")
+    state = gates.capture(repo)
+    assert b"diff --git a/a.py b/a.py" in state["index"]
+    frozen = gates.snapshot(repo, tmp_path / "review", state, True)
+    assert frozen["index"] == state["index"]
+    assert frozen["files"] == state["files"]

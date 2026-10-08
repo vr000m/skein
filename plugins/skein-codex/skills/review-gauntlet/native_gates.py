@@ -51,6 +51,26 @@ def git(root, *args, stdin=None):
     return result.stdout
 
 
+def cached_diff(root):
+    # Source-local diff settings must not change the patch replay format.
+    return git(
+        root,
+        "-c",
+        "diff.noprefix=false",
+        "-c",
+        "diff.mnemonicPrefix=false",
+        "diff",
+        "--cached",
+        "--binary",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "HEAD",
+    )
+
+
 def capture(root):
     """Capture effective Git input as bytes; never follow a file symlink."""
     head = git(root, "rev-parse", "--verify", "HEAD^{commit}").decode().strip()
@@ -73,16 +93,7 @@ def capture(root):
         )
         - {b""}
     )
-    index = git(
-        root,
-        "diff",
-        "--cached",
-        "--binary",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "HEAD",
-    )
+    index = cached_diff(root)
     files = {}
     digest = hashlib.sha256(head.encode() + b"\0" + index + b"\0")
     for raw in paths:
@@ -143,17 +154,7 @@ def capture(root):
     # A capture that straddled an edit or commit is not usable either.
     if (
         git(root, "rev-parse", "HEAD").decode().strip() != head
-        or git(
-            root,
-            "diff",
-            "--cached",
-            "--binary",
-            "--no-color",
-            "--no-ext-diff",
-            "--no-textconv",
-            "HEAD",
-        )
-        != index
+        or cached_diff(root) != index
     ):
         raise GateError("Input changed while being captured")
     return {
