@@ -1,6 +1,6 @@
 # Codex gauntlet and release runtime correction
 
-**Status**: In Review
+**Status**: In Progress
 **Component**: meta
 **Priority**: High
 **Branch**: fix/codex-runtime-release-0.9.2
@@ -31,10 +31,12 @@ Live filesystem inspection resolved Homebrew Git 2.56.0, gh 2.102.0 and jq 1.8.2
 - Claude authored skill content, release references and shared libraries remain byte-identical to main. Both plugin manifests receive the common release version 0.9.2. Do not change fan-out's dormant topology documentation or other skills.
 - Update CHANGELOG, current repo docs, index and sibling-plan supersession notes without changing their accepted contract prefixes. Prove review-marker preservation outside conduct.
 - Run full local CI, staged-secret checks and pre-merge documentation/code/security review; prepare a PR. Publishing a release still requires its exact post-merge target/title/body confirmation.
+- Native gauntlet gates use a shipped strict JSON Schema and locally validate their final envelopes. Codex 0.160.1 native review does not forward `--output-schema`; preserve native `review/start` through stdio app-server with `experimentalRawEvents`, validate its single raw `final_answer` and matching successful turn, and deterministically map the explicit verdict/findings without another model turn. Never reinterpret malformed output as approval.
+- Pin each round's source HEAD and effective tracked/untracked input fingerprint. Review a private clone of the pinned committed or uncommitted input; check source and snapshot identities before accepting every native result and before applying fixes or appending the ledger. Input drift stops the round without fixes or a ledger append. Preserve the existing uncommitted target surface.
 
 ## Review Focus
 
-The important boundaries are clean worker context versus mailbox wakeups, Codex-only release divergence versus normalized parity, and trusted Homebrew directory writers versus strict executable-file/other-writability checks. Verify every fixer route, first-launch bootstrap and Audit Mode's reuse of the invariant. Do not infer runtime gate availability or successful tag/release publication from this patch.
+The additional Phase 4 boundaries are raw native verdict versus rendered prose, closed nested schema validation, and immutable gate input versus verified fix-baseline transitions (including trivial-then-substantive batches). Verify source/snapshot checks and successful matching turn completion. The original boundaries are clean worker context versus mailbox wakeups, Codex-only release divergence versus normalized parity, and trusted Homebrew directory writers versus strict executable-file/other-writability checks. Verify every fixer route, first-launch bootstrap and Audit Mode's reuse of the invariant. Do not infer runtime gate availability or successful tag/release publication from this patch.
 
 ## Implementation Checklist
 
@@ -69,6 +71,17 @@ The important boundaries are clean worker context versus mailbox wakeups, Codex-
 - Add current docs and below-marker supersession notes to every relevant sibling plan; preserve historical contracts.
 - Verify Claude source/shared-lib byte preservation, every worker call site, normalized release policy placement and plan marker hashes.
 - Run ruff format/check, targeted regression gates and full CI with both lagging-mirror variables absent from the environment. Stage explicit paths, scan staged secrets and create focused commits. Print `git diff main...HEAD --stat`, then run documentation/code/security reviews on that committed scope, address findings in further focused commits and rerun affected/full checks before creating/updating the PR. Review Gates: none disables auto-chaining only; the conductor owns these explicit manual reviews.
+
+### Phase 4: Freeze native gate inputs and enforce strict envelopes
+**Impl files:** plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/native_gates.py, plugins/skein-codex/skills/review-gauntlet/native-gate-schema.json, justfile, README.md, AGENTS.md, CHANGELOG.md
+**Test files:** tests/gauntlet/test_native_gates.py
+**Test command:** `UV_CACHE_DIR=/private/tmp/skein-uv-cache UV_OFFLINE=1 uv run --with pytest python -m pytest tests/gauntlet/test_native_gates.py -q`
+**Goal:** Only strict, completed native results for the pinned input may reach reconciliation, fixes or ledger accounting.
+
+- Keep the native reviewer through `review/start`; capture its raw final answer with app-server `experimentalRawEvents`, validate the explicit verdict and matching successful terminal turn, and map findings deterministically. Rendered prose or missing raw-event support is an error. Adversarial review uses the same shipped schema directly. Both paths return one locally validated envelope to the existing bounded helper; shared libraries remain unchanged.
+- Create an owned private clone with hooks and ambient Git configuration disabled. Capture effective tracked/untracked file bytes, modes and symlink spellings plus HEAD/index state; materialize uncommitted input into the clone when selected. Freeze base/head as commit IDs. Reject unsupported unmerged/submodule input rather than dropping it.
+- Recheck source fingerprint and snapshot state at native boundaries. Keep the round fingerprint fixed until all review results are accepted. Check a separate mutation baseline before every applier/fixer/retry and ledger append; advance it only after Guardrails 4/5 attribute all changed paths to accepted fixes, require a clean checkout and pass full CI. The next review round repins the resulting source. Do not advance a round that encountered input drift.
+- Reproduce prose, malformed/duplicate JSON, strict nested auto-fix rejection, source edits, source HEAD changes, snapshot edits and uncommitted file changes with real Git fixtures and deterministic CLI doubles. Then perform live native/adversarial probes on a frozen fixture before full CI and fresh committed-scope reviews.
 
 ## Technical Specifications
 
@@ -139,6 +152,10 @@ sequenceDiagram
 | Release confirmation | Immutable release payload | Exact destination, target, title and body | Locked existing payload and identity state | Main to user |
 | Release mutation | Confirmation and revalidation | Verified mutation result | Existing tag/release read-back evidence | Main to transport and back |
 
+### Native review input and verdict boundary
+
+The conductor pins base, HEAD and source fingerprint → the adapter creates an owned private clone → native `review/start` emits its raw structured final answer and successful matching completion (or adversarial `codex exec` emits a schema-constrained envelope) → local validation and source/snapshot reverification produce one bounded-gate envelope. Unsupported raw-event runtimes, malformed JSON and ambiguous prose remain errors. Findings stay repository-relative after snapshot-path mapping. The conductor checks its fixed review input before accepting results, then checks the accepted mutation baseline before every fix or ledger operation; verified fix commits are the only permitted baseline transition. Temporary clones are removed; the original checkout is never materialized or edited by the adapter.
+
 ## Testing Notes
 
 Baseline `just check-prompt-parity` and 298 release-contract tests passed before edits. New tests must reproduce obsolete Codex dispatch and reject overly broad/misplaced release normalization. Independent scenario validation covers accepted entrypoint/transport-helper symlink resolution and admin-group Homebrew Cellar directories for both prefixes; non-macOS, prefix-lookalikes, executables outside the matching Cellar, group-writable ancestors above the prefix, and non-admin/outside-prefix/world-writable directories; writable files; unexpected owners; symlinks in the final canonical path; and changed identities. It remains read-only and is not a release publication test. Full `just ci` is required before opening/updating the PR.
@@ -150,6 +167,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 - Exact positioned release policy normalization passes, and negative mutations fail.
 - Claude skill sources, release references and shared libraries are byte-identical to main.
 - Both plugin versions and CHANGELOG are 0.9.2, targeted and full checks pass, and the PR accurately describes final scope.
+- Native/adversarial gates emit strict envelopes from frozen input; clean, seeded-bug, malformed output and drift cases are demonstrated. Every fixer/applier/ledger boundary checks the accepted source baseline.
 - Sibling reviewed contract prefixes and marker status are preserved; delivery remains explicitly unverified until merge/publication/installation.
 
 <!-- reviewed: YYYY-MM-DD @ <hash> -->
@@ -159,6 +177,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 - [x] Phase 1: Correct Codex gauntlet worker lifecycle
 - [x] Phase 2: Correct Codex Homebrew executable preflight
 - [x] Phase 3: Document, validate and prepare 0.9.2
+- [ ] Phase 4: Freeze native gate inputs and enforce strict envelopes
 
 ## Findings
 
@@ -169,6 +188,8 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 ## Issues & Solutions
 
+- **2026-10-07 gauntlet follow-up:** User reported a blocked 0.9.1 run with prose native output, an initially rejected nested auto-fix schema, and concurrent renderer edits. The installed lifecycle mismatch is already corrected by this PR. Inspection of the exact Codex 0.160.1 source confirms that native `review/start` receives no output schema, while ordinary `turn/start` does. A live clean-case probe showed that rendered native prose can omit an explicit clean verdict; a second normalization turn correctly refused to infer one. The replacement app-server raw-event probe retained the native JSON verdict and successful turn. Phase 4 addresses that integration and mutable-input gap; the earlier run has no verdict and its PYTHONPATH observation remains provisional.
+
 - Logic and security review found that an outer Bash process can interpret inherited BASH_ENV or SHELLOPTS/PS4 before its inner `env -i`. A standalone privileged-shell launcher passed subprocess tests, but stronger runtime probes proved that this runtime silently ignores the requested shell. It was removed. The supported native Node launcher supplies argv and a closed environment before process creation; no ambient shell fallback is permitted.
 - Native validation also found that macOS inode values exceed JavaScript exact integer precision. Device/inode metadata is transported as decimal strings, and pin documents are preserved losslessly during reverification.
 - Incremental review required an explicit bridge to the retained same-Bash mutation and raw-pipe templates. The native API directly starts identity-pinned Bash in a closed environment, preserving payload loading, adjacent verification, mutation and cleanup in one child. Native output remains byte buffers; committed blob pipes are never decoded/re-encoded as JavaScript strings.
@@ -177,7 +198,7 @@ Baseline `just check-prompt-parity` and 298 release-contract tests passed before
 
 ## Final Results
 
-[PR #54](https://github.com/vr000m/skein/pull/54) is open with the completed Codex-only implementation and 0.9.2 release metadata. All 336 targeted tests passed (seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Full `just ci` passed at `fb0a861`, and prompt parity passed without drift waivers. The final fresh logic, security, architecture and documentation lenses completed all assigned units with no actionable findings.
+[PR #54](https://github.com/vr000m/skein/pull/54) is open with the completed Codex-only implementation and 0.9.2 release metadata. All 336 targeted tests passed (seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Full `just ci` passed at `fb0a861`, and prompt parity passed without drift waivers. The initial implementation's final fresh logic, security, architecture and documentation lenses completed all assigned units with no actionable findings. The Phase 4 native adapter/schema and 44 regressions are committed in `e4606e2`; all 380 targeted tests passed (44 native input/verdict, seven dispatch, 29 executable-policy/native-launch and 300 release-contract tests). Prompt parity and 187 skill-shape assertions passed. Live bounded native review accepted a clean square-function addition and flagged a seeded addition-instead-of-multiplication bug; adversarial review also flagged that bug. Source/snapshot drift, unsupported raw output and malformed nested proposals fail closed in fixtures. The extension still requires final full CI and fresh committed-scope reviews before PR update. The interrupted PCH run has no accepted verdict; its provisional renderer finding was not validated by these fixtures.
 
 Real native bootstrap, pin reverification, empty-environment, literal-argv, missing-binary and tampered-hash checks passed; Git/gh/jq/HTTPS-helper pins passed with lossless identity roundtrips. After immediately reverifying Bash/cat pins, a native compound call preserved the exact raw bytes `ff00410a`; an explicit empty child environment produced zero bytes. Claude skill sources and shared release files remain byte-identical to main. Canonical marker checks preserved all four marked sibling contract hashes and all six sibling contract prefixes and prior marker statuses.
 
