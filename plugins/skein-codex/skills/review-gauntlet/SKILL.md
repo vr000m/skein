@@ -24,7 +24,7 @@ Three modes are opt-in; nothing here fires without an explicit trigger. `--resum
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
-**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs native `codex exec review` in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
 
 ### Target and Resume Ledger
 
@@ -119,18 +119,37 @@ auto_fix_manifest=""
 ```
 `lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when supplied. `gate_run_bounded` (`lib/gate-bounded.sh`, byte-identical to the Claude mirror's copy) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. The bounded calls pass an authoritative `--gate <name>` so the envelope identity is retained on clean, timeout, and invalid-JSON paths. All three of `gate_run_bounded`, `lib/convergence-ledger.sh` and `lib/run-gate.sh` source `lib/state-path-guard.sh`, the skill's single state-path containment policy: `gauntlet_assert_no_symlink` refuses a `.gauntlet/` path whose leaf or any ancestor up to the worktree root is a symlink, or that contains `..`. `lib/convergence-ledger.sh`'s round-append filter — the `pending_claims`/`fixed_keys` promotion state machine that decides what counts as proven-fixed — lives in `lib/ledger-promote.jq` and is invoked with `jq -f`, so its reasoning is written as jq comments rather than shell-escaped prose. `"$SKILL_DIR"/lib/run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass. Each gate gets its **own** envelope/tool-out pair, scoped to the round — never reuse a path across gates or rounds: `"$SKILL_DIR"/lib/run-gate.sh normalize` reads the envelope by path, so a reused path silently reports the previous gate's (or previous round's) result as this one's.
 
-1. **Code-review gate (`native-codex-review`).** Invoke native Codex review in machine mode through the bounded helper:
-   ```
+### Pin the round input before running gates
+
+Resolve the intended base to an immutable commit ID and require the pinned head to match the intended branch/PR head. At each new round, capture the source input once:
+
+```bash
+round_input="$(python3 -I -S "$SKILL_DIR"/native_gates.py fingerprint --repo "$repo_root")" || exit 2
+round_head="$(printf '%s' "$round_input" | jq -er .head)"
+round_fingerprint="$(printf '%s' "$round_input" | jq -er .fingerprint)"
+round_base="<resolved immutable base commit ID>"
+native_target_args=()
+# Only when the selected target is explicitly uncommitted:
+# native_target_args=(--uncommitted)
+```
+
+`native_gates.py` creates and removes an owned private clone for each native gate, with checkout hooks and ambient Git configuration disabled. Committed input requires a clean source checkout. Uncommitted input preserves staged, unstaged and untracked bytes, modes and symlink spellings. HEAD and the index/effective-input fingerprint are checked before and after native execution; the private snapshot is checked too. Unmerged, submodule, assume-unchanged and skip-worktree input is rejected explicitly. Review targets stay pinned; fixes run only in the original checkout. Missing Python/adapter/schema stops the run. This is Codex-only authored runtime code; shared `lib/` files remain unchanged.
+
+1. **Code-review gate (`native-codex-review`).** Use the same native `review/start` primitive as `codex exec review`, via a private stdio `codex app-server`. Codex 0.160.1 does not forward native `--output-schema`, and rendered review text omits the verdict. The adapter opts into `experimentalRawEvents`, retains the delegate's single raw `final_answer`, requires the matching review turn to complete successfully, and deterministically maps its validated native verdict/findings into the shipped gauntlet schema. Native review remains medium effort on the selected model, with read-only sandbox, approval policy `never` and ephemeral thread. Missing raw events, prose, incomplete/ambiguous output and unsupported runtimes are errors. No second model turn is used. Through the bounded helper:
+   ```bash
    gate_run_bounded --gate codex-review "$budget_s" "$envelope_codex_review" "$toolout_codex_review" -- \
-     codex exec review --output-schema <schema> <--base <branch> | --uncommitted>
+     python3 -I -S "$SKILL_DIR"/native_gates.py run --gate codex-review \
+       --repo "$repo_root" --base "$round_base" --head "$round_head" \
+       --expected "$round_fingerprint" "${native_target_args[@]}"
    ```
-   Use the same target for every native gate in the round. When launched as a subprocess, request medium reasoning with `-c model_reasoning_effort="medium"` when supported.
-2. **Adversarial Codex-review gate (`native-codex-review`).** Invoke the Codex CLI as plain `codex exec` (not `codex exec review`: on codex-cli 0.157.0 `--base`/`--uncommitted` are rejected when combined with a custom prompt, so the adversarial prompt itself must name the diff scope — `git diff <base>...HEAD`, or `git diff HEAD` plus `git ls-files --others --exclude-standard` for uncommitted work — and require exactly one schema-shaped JSON object). Through the same bounded helper:
-   ```
+2. **Adversarial Codex-review gate (`native-codex-review`).** The same adapter uses ordinary `codex exec --ephemeral --sandbox read-only` with the shipped schema directly, at medium effort. Its prompt names the pinned diff (`git diff <base>...<head>`, or `git diff HEAD` plus untracked files) in the frozen clone. **Forbidden flags:** do not pass `--base`/`--uncommitted` to plain `codex exec`; they belong to native review. Through the bounded helper:
+   ```bash
    gate_run_bounded --gate codex-adversarial "$budget_s" "$envelope_codex_adversarial" "$toolout_codex_adversarial" -- \
-     codex exec --ephemeral --sandbox read-only -C "$repo_root" --output-schema <schema> "<adversarial-review prompt>" </dev/null
+     python3 -I -S "$SKILL_DIR"/native_gates.py run --gate codex-adversarial \
+       --repo "$repo_root" --base "$round_base" --head "$round_head" \
+       --expected "$round_fingerprint" "${native_target_args[@]}"
    ```
-   The `<adversarial-review prompt>` must target the same diff as gate 1 by instructing the reviewer to run `git diff <base>...HEAD`, or for uncommitted work `git diff HEAD` plus `git ls-files --others --exclude-standard`; request `-c model_reasoning_effort="medium"` when used from a CLI subprocess. **Forbidden flags:** do not pass `--base` or `--uncommitted` to plain `codex exec`; those flags belong to `codex exec review` and are incompatible with a custom prompt. **Never add `-o` or `--json`:** `gate_run_bounded` captures stdout as the tool-out and requires one JSON object matching the schema.
+   Only the adapter's locally validated final JSON reaches `gate_run_bounded`. Native app-server notifications stay inside the adapter; never send event streams or prose directly to the bounded helper. Do not add `-o` or `--json` to its public invocation.
 3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
 4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` with notes explaining that this is a permanent capability gap (or `skipped` when explicitly configured off); never pretend this gate ran.
 
@@ -161,12 +180,12 @@ jq -n \
   > "$envelope_security_review"
 ```
 
-The Codex gauntlet-owned output adapter/schema for native gates is:
+The executable JSON Schema is shipped at `"$SKILL_DIR"/native-gate-schema.json`; every object is closed (`additionalProperties: false`) with all properties required. Nullable `auto_fix` objects require exactly `kind`, `before`, `after`, `scope`. The adapter rejects duplicate properties, non-finite numbers, multiple documents, wrong gate identities, contradictory status/findings and incomplete native events. The logical envelope shape is:
 
 ```json
 {
   "gate": "string",
-  "status": "approve | needs-attention | skipped | deferred | error",
+  "status": "approve | needs-attention | error",
   "findings": [
     {
       "file": "string",
@@ -188,6 +207,17 @@ The Codex gauntlet-owned output adapter/schema for native gates is:
 Findings from supported gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`. Any `auto_fix` proposal is held aside for Guardrail 2 route logic and stripped before dedup. The bundled reconciler receives only auto-fix-free findings.
 
 ## Convergence Algorithm
+
+Before accepting review results, verify the round input again (including quick mode):
+
+```bash
+python3 -I -S "$SKILL_DIR"/native_gates.py check --repo "$repo_root" \
+  --head "$round_head" --expected "$round_fingerprint" || exit 2
+```
+
+Any `INPUT_DRIFT` error or failed round-input check discards the entire round: stop before fixes and do not append the ledger. A malformed/error native result is unresolved, never approval; do not route findings from that failed native result to a fixer. The snapshot freezes reviewed code even when another checkout edit occurs; source checks prevent accepting that result against changed source state. Changes that are completely reverted between checks cannot alter the frozen review input. Keep the review fingerprint fixed for the whole gate pass. Fixes may advance the separate mutation baseline only through the verified transition below; never repin while reviews are running to hide drift. Quick mode uses the same pin/check rules.
+
+Initialize `mutation_head="$round_head"` and `mutation_fingerprint="$round_fingerprint"` after accepting results. Immediately before **each** trivial applier, fixer dispatch (including retries), and ledger append, run the same `check` command with `--head "$mutation_head" --expected "$mutation_fingerprint"`; failure stops without that mutation/accounting. After an intentional fix commit, Guardrails 4/5 must verify the live commit/diff against the accepted findings and the worker/applier report, attribute every changed path to those fixes, require a clean source checkout and pass full CI. Only then capture a new `mutation_head`/`mutation_fingerprint` for the next mutation or ledger check. This permits a verified trivial-applier commit before a substantive fixer without treating it as external drift. Unrelated edits or commits are never an accepted baseline transition. Each next review round captures its own new pinned input.
 
 After the fixer batch returns:
 

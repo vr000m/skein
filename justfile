@@ -57,6 +57,7 @@ parity-tests:
 # skill-shape, convergence, reuse-wiring, marker, and hook tests).
 gauntlet-tests:
     uv run --with pytest python -m pytest tests/gauntlet/test_codex_agent_api.py -q
+    uv run --with pytest python -m pytest tests/gauntlet/test_native_gates.py -q
     bash tests/gauntlet/test-goal-field-schema.sh
     bash tests/gauntlet/test-goal-injection.sh
     bash tests/gauntlet/test-goal-docs.sh
