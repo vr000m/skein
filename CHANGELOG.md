@@ -4,6 +4,13 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-04
+
+### Fixed
+- Codex `review-gauntlet` now uses `fork_turns="none"` and requires only `spawn_agent` and `wait_agent` for every fixer batch. Delivered final output and terminal status gate report consumption; dispatch failures drain outstanding workers without advancing the ledger.
+- Codex `review-gauntlet` now ships a strict native-gate schema and an adapter that maps the native reviewer’s raw structured verdict without another model turn, reviews private frozen snapshots, and rejects changed inputs before fixes or ledger accounting. Staged, unstaged and untracked review input is preserved; escaping/cyclic snapshot symlinks are refused.
+- Codex `release` now provides a read-only executable metadata adapter with an explicit macOS system-interpreter bootstrap. Canonical Homebrew Cellar executables may traverse root/current-user-owned, admin-group-writable directories; executable-file and world-write restrictions, identity reverification, isolated transport and publication confirmation remain enforced. Claude skill behavior is unchanged.
+
 ## [0.9.1] - 2026-10-03
 
 ### Fixed
@@ -265,7 +272,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/vr000m/skein/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vr000m/skein/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vr000m/skein/compare/v0.8.5...v0.9.0
 [0.8.5]: https://github.com/vr000m/skein/compare/v0.8.4...v0.8.5

@@ -49,12 +49,15 @@ parity-tests:
     bash tests/release/test-presence-differential.sh
     uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
     uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
+    uv run --with pytest python -m pytest plugins/skein-codex/skills/release/tests/test_executable_policy.py -q
     uv run --with pytest python -m pytest tests/parity/test_delete_skills.py -q
     bash tests/auto-fix/test-review-plan-marker-write.sh
 
 # Run the review-gauntlet test suite (schema + injection coverage, plus the
 # skill-shape, convergence, reuse-wiring, marker, and hook tests).
 gauntlet-tests:
+    uv run --with pytest python -m pytest tests/gauntlet/test_codex_agent_api.py -q
+    uv run --with pytest python -m pytest tests/gauntlet/test_native_gates.py -q
     bash tests/gauntlet/test-goal-field-schema.sh
     bash tests/gauntlet/test-goal-injection.sh
     bash tests/gauntlet/test-goal-docs.sh
@@ -175,6 +178,7 @@ ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tes
 # Golden comparisons, negative cases and exit-code contract for the release
 # skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).
 release-script-tests:
+    uv run --with pytest python -m pytest plugins/skein-codex/skills/release/tests/test_executable_policy.py -q
     bash tests/release/test-scripts.sh
     bash tests/release/test-a2-a25-contract.sh
     bash tests/release/test-presence-differential.sh

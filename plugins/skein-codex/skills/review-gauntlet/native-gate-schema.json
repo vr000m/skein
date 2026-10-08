@@ -1,0 +1,130 @@
+{
+  "type": "object",
+  "properties": {
+    "gate": {
+      "type": "string",
+      "enum": [
+        "codex-review",
+        "codex-adversarial"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "needs-attention",
+        "error"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "Critical",
+              "Important",
+              "Minor"
+            ]
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "auto_fix": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "before": {
+                    "type": "string"
+                  },
+                  "after": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "before",
+                  "after",
+                  "scope"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "file",
+          "line",
+          "category",
+          "severity",
+          "confidence",
+          "summary",
+          "evidence",
+          "auto_fix"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "gate",
+    "status",
+    "findings",
+    "notes"
+  ],
+  "additionalProperties": false
+}

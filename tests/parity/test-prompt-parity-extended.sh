@@ -34,6 +34,8 @@ unset RELEASE_LAGGING_MIRROR_OK
 # (between the release-call-lines markers) so the seed cannot drift from it.
 # shellcheck disable=SC1090
 source <(sed -n '/^# BEGIN release-call-lines/,/^# END release-call-lines/p' "$REAL_SCRIPT")
+# shellcheck disable=SC1090
+source <(sed -n '/^# BEGIN release-codex-executable-policy/,/^# END release-codex-executable-policy/p' "$REAL_SCRIPT")
 
 PASS=0
 FAIL=0
@@ -188,6 +190,24 @@ CALL_LINES_PLACEHOLDER
 Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller's behalf.
 EOF
 	seed_release_call_lines "$root"
+	local harness file
+	for harness in skein skein-codex; do
+		file="$root/plugins/$harness/skills/release/SKILL.md"
+		awk -v harness="$harness" -v policy="$RELEASE_CODEX_EXECUTABLE_POLICY" '
+			/Shared workflow contract\./ {
+				print
+				print ""
+				print "<!-- skein:step-2 -->"
+				print "   **Pinned-executable and source-repository invariant:** Fixture invariant."
+				print ""
+				if (harness == "skein-codex") { print policy; print "" }
+				print "<!-- skein:step-3 -->"
+				next
+			}
+			{ print }
+		' "$file" >"$file.new"
+		mv "$file.new" "$file"
+	done
 }
 
 # Replace the CALL_LINES_PLACEHOLDER line in each seeded release SKILL.md with
@@ -1231,6 +1251,46 @@ test_phase4_review_plan_codex_only_allowlist_drift_fails_parity() {
 		_phase4_tamper_allowlist
 }
 
+# The only new release divergence has exact cardinality and a fixed location.
+test_release_codex_executable_policy_boundary() {
+	local tmp case_name root file out rc
+	tmp="$(new_test_tmp_dir)"
+	for case_name in present missing modified duplicated appended misplaced claude-side; do
+		root="$tmp/$case_name"
+		make_fake_root "$root"
+		seed_generic_pair "$root"
+		seed_release_pair_with_documented_divergence "$root"
+		file="$root/plugins/skein-codex/skills/release/SKILL.md"
+		case "$case_name" in
+		missing | modified | appended | misplaced)
+			awk -v policy="$RELEASE_CODEX_EXECUTABLE_POLICY" -v kind="$case_name" '
+				$0 == policy {
+					if (kind == "modified") print "modified " $0
+					if (kind == "appended") print $0 " extra policy text"
+					next
+				}
+				{ print }
+				END { if (kind == "misplaced") print policy }
+			' "$file" >"$file.new"
+			mv "$file.new" "$file"
+			;;
+		duplicated) printf '\n%s\n' "$RELEASE_CODEX_EXECUTABLE_POLICY" >>"$file" ;;
+		claude-side) printf '\n%s\n' "$RELEASE_CODEX_EXECUTABLE_POLICY" >>"$root/plugins/skein/skills/release/SKILL.md" ;;
+		esac
+		set +e
+		out="$(run_script "$root" "release deep-review review-plan" 2>&1)"
+		rc=$?
+		set -e
+		if [[ "$case_name" == present && "$rc" -eq 0 ]]; then
+			_pass "release-codex-executable-policy-$case_name"
+		elif [[ "$case_name" != present && "$rc" -ne 0 && "$out" == *"Codex executable policy"* ]]; then
+			_pass "release-codex-executable-policy-$case_name"
+		else
+			_fail "release-codex-executable-policy-$case_name" "rc=$rc: $out"
+		fi
+	done
+}
+
 test_mirror_commit_required_after_impl
 test_prompt_divergence_detected
 test_ci_parity_prompt_included
@@ -1241,6 +1301,7 @@ test_check_prompt_parity_exits_non_zero_on_mixed_drift
 test_conduct_lagging_mirror_ok_referenced_by_both_runtimes
 test_aggregate_parity_gate_fails_on_live_one_sided_mirror_drift
 test_aggregate_parity_gate_fails_on_missing_managed_mirror_skill_md
+test_release_codex_executable_policy_boundary
 test_release_documented_harness_differences_are_normalized
 test_release_workflow_drift_fails_parity
 test_release_tamper_inside_normalized_divergence_fails_parity

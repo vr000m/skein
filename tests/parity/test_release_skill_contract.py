@@ -34,6 +34,53 @@ RELEASE_SKILLS = [
 ]
 RELEASE_PLAN = ROOT / "docs/dev_plans/20260712-feature-release-skill.md"
 
+
+def test_codex_executable_adapter_is_a_single_positioned_divergence() -> None:
+    claude, codex = (path.read_text() for path in RELEASE_SKILLS)
+    prefix = (
+        "   **Codex executable-preflight adapter (intentional harness divergence):**"
+    )
+    assert prefix not in claude
+    lines = codex.splitlines()
+    positions = [i for i, line in enumerate(lines) if line.startswith(prefix)]
+    assert len(positions) == 1
+    position = positions[0]
+    previous = next(line for line in reversed(lines[:position]) if line.strip())
+    assert previous.startswith(
+        "   **Pinned-executable and source-repository invariant:"
+    )
+    paragraph = lines[position]
+    for token in (
+        "Step 1b bootstrap and Audit Step A1",
+        "[native-launch.md](native-launch.md)",
+        "`node:child_process.spawn` with `shell:false` and an explicit `env:{}`",
+        "do not use an ambient shell fallback",
+        "device/inode identities are decimal strings",
+        '/usr/bin/env -i /usr/bin/python3 -I -S "$SKILL_DIR"/executable_policy.py',
+        "system-interpreter loader before application-tool pinning",
+        "--verify-stdin",
+        "system `admin` group with gid 80",
+        "inside the matching prefix's `Cellar`",
+        "Ancestors above the prefix retain the strict rule",
+        "group/other-writable executable files remain rejected",
+        "changes no filesystem permissions",
+    ):
+        assert token in paragraph
+    assert codex.index("<!-- skein:step-2 -->") < codex.index(prefix)
+    assert codex.index(prefix) < codex.index("<!-- skein:step-3 -->")
+
+
+def test_codex_executable_adapter_tests_are_in_full_ci() -> None:
+    justfile = (ROOT / "justfile").read_text()
+    parity = justfile.split("\nparity-tests:\n", 1)[1].split("\n#", 1)[0]
+    assert (
+        "plugins/skein-codex/skills/release/tests/test_executable_policy.py" in parity
+    )
+    assert "parity-tests" in next(
+        line for line in justfile.splitlines() if line.startswith("ci:")
+    )
+
+
 # --- Lagging-mirror acknowledgment (release-skill restructure, decision 23) --
 # Temporary: while the Claude mirror carries region anchors the Codex mirror
 # does not yet have (Phase 3.5 mirrors them), `release-skill-md` in

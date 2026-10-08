@@ -99,6 +99,8 @@ New tests sweep authored conduct Markdown and the Python diagnostic for obsolete
 
 ## Findings
 
+- **Codex 0.9.2 follow-up (2026-10-04):** The downstream gauntlet now uses the supported fresh spawn/wait lifecycle without worker-close support, superseding this plan’s historical downstream capability check. The conduct worker contract is unchanged. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
+
 - Runtime schema directly verifies fork_turns="none", spawn_agent, and wait_agent; no close operation exists.
 - Plan review: architecture and sequencing used clean-context workers; testing, assumptions, codebase-claims, and the post-reconciliation contradiction pass ran in-session after the runtime thread limit, with best-effort isolation. Two Important architecture findings addressed by the explicit gauntlet boundary and call-flow section; no contradictory fixes. Full findings: `.review-plan/latest-codex.json`.
 - Targeted validation: 245 Codex conduct tests passed; all ten new declarative API checks pass. Prompt parity passed. Authored-source sweep verified clean context across initial dispatch, both fix-loop roles, and advisory review. Historical sibling-plan contract bytes were preserved.

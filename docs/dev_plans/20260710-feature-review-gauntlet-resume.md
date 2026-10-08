@@ -302,3 +302,9 @@ Both mirrors (`plugins/skein/skills/review-gauntlet/`, `plugins/skein-codex/skil
 
 ### Follow-up Work
 - Open the PR, run `/deep-review` + `/security-review`, then flip `**Status**`/`**Completed**` and move this plan's `docs/dev_plans/README.md` row to "Shipped" once merged.
+
+## Contract corrections
+
+- **Codex 0.9.2 follow-up (2026-10-04):** Resumed Codex fixer batches use the same fresh spawn/wait lifecycle as initial and quick-mode batches. The existing target/ledger resume protocol is unchanged. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
+
+- **Codex native-gate follow-up (2026-10-07):** The Codex gate invocation examples are superseded by native `review/start` raw verdict mapping and frozen private input with source checks before fixes/ledger accounting. Uncommitted input remains supported; escaping/cyclic snapshot links are refused. See [the correction plan](20261004-bug-codex-gauntlet-release-runtime.md).

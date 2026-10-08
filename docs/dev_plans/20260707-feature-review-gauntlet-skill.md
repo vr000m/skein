@@ -351,6 +351,8 @@ Context lifecycle — what enters context at each step, and whether it clears or
 
 ## Findings
 
+- **Codex 0.9.2 follow-up (2026-10-04):** Codex gauntlet fixer batches now follow the supported spawn/wait API with `fork_turns="none"`, final-message/terminal-status collection and no worker-close requirement. This supersedes historical Codex dispatch wording only; top-level gates, convergence accounting and Claude behavior are preserved. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
+
 - **Conduct API correction (2026-10-03):** the current Codex conduct contract supersedes this plan's historical worker lifecycle wording: fresh workers use `fork_turns="none"`; required tools are `spawn_agent` and `wait_agent`. Worker-close support is not required. Shared role prompts, phase state, and report contracts are preserved. Other skills, including the downstream gauntlet, retain their separate capability checks. See [the correction plan](20261003-bug-codex-conduct-agent-api.md).
 
 - **Stage 3 (Claude phases 1–6) complete** — commits `ddbbb41` (P1 SKILL.md), `e6b460b` (P2 scripts), `035cab0` (P2 layout fixup), `3051d3e` (P3 Review Gates field), `b475547` (P4 conduct hook), `1e29be0` (P5 fan-out hook), `73438bc` (P6 bundle/tests/docs/cross-links). Gates green: `just parity-tests`, `just gauntlet-tests` (204 assertions across 9 files), `check-mirror-handoff.sh`, `ruff`.
@@ -407,3 +409,5 @@ The `review-gauntlet` skill is implemented in both plugins (`plugins/skein`, `pl
 - PR #12 (`feat: review-gauntlet conductor skill + conduct per-phase Goal field`) merged to `main` as commit `4e09055`, shipped in v0.4.0 (2026-07-10).
 - Codex gates 3 (deep-review) and 4 (security-review) remain permanently deferred pending real Codex nested-spawn primitives and topology confirmation — tracked as an honest capability gap, not a bug.
 - **Session-resume** was flagged as the top-priority gap in the 2026-07-06 Claude Code Insights report — the convergence ledger persisted `{loop_counter, rounds}` per round, but nothing read it back to resume an interrupted session after an API drop. Implemented in [`20260710-feature-review-gauntlet-resume.md`](20260710-feature-review-gauntlet-resume.md) (`--resume`/`--fresh`/`--init`/`--last-decision` on both mirrors, in progress on `feature/review-gauntlet-resume`, pending PR merge).
+
+- **Codex native-gate follow-up (2026-10-07):** The Codex gate invocation examples are superseded by native `review/start` raw verdict mapping and frozen private input with source checks before fixes/ledger accounting. Uncommitted input remains supported; escaping/cyclic snapshot links are refused. See [the correction plan](20261004-bug-codex-gauntlet-release-runtime.md).

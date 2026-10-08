@@ -217,6 +217,8 @@ sequenceDiagram
 
 ## Findings
 
+- **Codex 0.9.2 follow-up (2026-10-04):** Codex-only executable preflight is corrected without altering template validation, conditional jq, shared library bytes or release-note shapes. A single exact policy paragraph is now a registered normalized-workflow divergence. See [the patch plan](20261004-bug-codex-gauntlet-release-runtime.md).
+
 - **Follow-up work (not in scope for this plan):** `/release audit`'s ok/drifted classification — canonical-shape and template-aware alike — has no executable unit-test harness; today and after this plan it is verified only by text-contract assertions against SKILL.md prose (`test_release_skill_contract.py`) and by manual runs. Grilled decision (Decision 8): building a real classification-test harness is a pre-existing gap this plan doesn't create and shouldn't be scoped to close.
 - **Reworded-vs-verbatim body content** (raised in the original bug write-up, deliberately excluded from Requirements): pipecat-context-hub's template asks for a reworded "reader-friendly" body; this plan keeps verbatim-CHANGELOG-copy as the fixed default regardless of template presence. A future plan can add a `body_style: "verbatim" | "reworded"` field if wanted.
 - **AGENTS.md doesn't document the mirror-editing convention explicitly** (review-plan finding, out of scope to fix here): the "Codex half first, then Claude half aligned in the same commit" convention this plan and `AGENTS.md`'s own prose assume is not spelled out verbatim in `AGENTS.md` itself. Worth a small doc fix in a future pass; not blocking this plan.
