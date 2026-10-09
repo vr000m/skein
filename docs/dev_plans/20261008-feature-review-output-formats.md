@@ -2,7 +2,7 @@
 
 **Status**: Not Started
 **Component**: review-skills
-**Assigned to**: Claude (Codex mirror via codex:rescue)
+**Assigned to**: Claude (Claude phases); Codex (Codex phases); shared work as listed
 **Priority**: Medium
 **Branch**: feature/karpathy-output-formats
 **Created**: 2026-10-08
@@ -40,7 +40,7 @@ Facts verified during plan review (2026-10-08 and 2026-10-09, four rounds):
 - R1: Review prose follows a short plain-prose rule (short sentences, one meaning per word, active voice, no filler). It applies to `evidence`, `suggestion` and overall summaries. The gate-1 adversarial prompt gets the rule as one plain sentence. It must NOT touch the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts; it feeds `finding-key.sh`), schemas, severity labels, or any machine-read field. Gate 3 (`security-review`) is out of scope: skein does not author it.
 - R2: A gauntlet or deep-review run with `--report` emits one self-contained HTML report: findings by severity, round-by-round convergence, diff scope. Opt-in; default output is unchanged. A failing report never changes a run's outcome: a guard refusal, a hook failure and a renderer failure all warn, skip the report, and leave the terminal token and exit code unchanged.
 - R3: `show-me` triggers cover review findings, gauntlet convergence, and conduct phase progress, still defer to `plan-view` for plans, and point review findings and gauntlet convergence at the `--report` flag of the review skills (by skill and flag, not by state path).
-- Claude and Codex mirrors stay aligned; path anchors (`${CLAUDE_PLUGIN_ROOT}` vs `$SKILL_DIR`) are never collapsed.
+- Claude and Codex mirrors stay aligned; Claude-owned skill changes and Codex-owned skill changes land in their separate phases, while shared generated scripts come from canonical `scripts/`. Path anchors (`${CLAUDE_PLUGIN_ROOT}` vs `$SKILL_DIR`) are never collapsed.
 - `plugins/skein-pi` is out of scope for R1, R2 and R3, and must receive no copy of the new scripts.
 - `just ci` passes.
 
@@ -54,35 +54,33 @@ Facts verified during plan review (2026-10-08 and 2026-10-09, four rounds):
 
 ## Implementation Checklist
 
-### Phase 1: Plain-prose rule (R1)
+### Phase 1: Claude plain-prose rule (R1)
 
-**Impl files:** `plugins/skein/skills/review-gauntlet/SKILL.md, plugins/skein/skills/deep-review/SKILL.md, plugins/skein/skills/review-plan/SKILL.md, plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/native_gates.py, plugins/skein-codex/skills/deep-review/SKILL.md, plugins/skein-codex/skills/review-plan/SKILL.md`
-**Test files:** `tests/parity/test-prose-rule-parity.sh, justfile`
-**Test command:** `just lint && bash tests/parity/test-prose-rule-parity.sh && bash scripts/check-report-templates.sh && bash tests/gauntlet/test-gauntlet-skill-shape.sh && ./scripts/check-prompt-parity.sh`
-**Goal:** The rule changes how prose is written only; no schema, label, pinned string, or `finding-key.sh` input changes.
+**Impl files:** `plugins/skein/skills/review-gauntlet/SKILL.md, plugins/skein/skills/deep-review/SKILL.md, plugins/skein/skills/review-plan/SKILL.md`
+**Test files:** none
+**Test command:** `just ci`
+**Goal:** Implement the prose rule in Claude-owned prompts without changing schemas, machine-read fields, pinned strings or finding keys.
 
 - Write two named blocks, each between fixed anchor comment lines:
-  - Block A (authoring rule): inserted into every lens prompt template in `deep-review` (5) and `review-plan` (5 lenses plus the Contradiction Pass = 6). Per mirror: 11 occurrences. `review-gauntlet` gets no Block A. (Codex deep-review uses one `### <Name> Lens` header per lens with a shared persistence contract; anchor per header.)
-  - Block B (summary-prose rule): inserted at the orchestrator report step in all three skills. Per mirror: 3 occurrences. In the gauntlet, Block B lands at the existing terminal-status report step (`review-gauntlet/SKILL.md:144-150`); Phase 2's report step wraps those anchors and adds no second Block B.
-- Gate-1 adversarial prompt: add one plain sentence stating the rule. Claude: in the `review-gauntlet/SKILL.md` prose that composes the prompt (around `:118-125`). Codex: the same sentence in the prompt string in `native_gates.py` (via `codex:rescue`). It is not a byte-identical anchored block; a string assert in the parity test checks it exists in both places.
+  - Block A (authoring rule): add to the five Claude deep-review lens prompts and six Claude review-plan prompts (including Contradiction Pass), 11 occurrences total. `review-gauntlet` gets no Block A.
+  - Block B (summary-prose rule): add to the summary-report step in all three Claude skills, 3 occurrences. In the gauntlet, place it at the existing terminal-status report step (`review-gauntlet/SKILL.md:144-150`); Phase 2 wraps those anchors and adds no duplicate Block B.
+- Gate-1 adversarial prompt: add one plain sentence to the Claude-authored `review-gauntlet/SKILL.md` prompt composition (around `:118-125`). The Codex prompt is handled independently in Phase 4.
 - Both blocks state the rule as checkable items (sentence length cap, active voice, one term per concept, no filler), cite ASD-STE100 as inspiration only, and contain the sentence exempting the finding summary line. The sentence names both field names: "the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts)".
 - Keep both blocks harness-neutral so each is byte-identical across mirrors; place them outside the lines pinned by `scripts/check-report-templates.sh`, outside the `GENERIC FINDING SCHEMA AND MERGE` block, and outside any lens output-schema fence.
-- Codex half first via `codex:rescue`, then align the Claude half in the same commit.
-- Parity test: extract each block between its anchors and byte-compare all copies; assert exact occurrence counts per mirror; assert each block contains the exemption sentence; assert no anchor sits inside a schema fence or the GENERIC block; assert the gate-1 sentence in both mirrors.
-- Wire `test-prose-rule-parity.sh` into `justfile` `parity-tests` in the same commit.
+- Keep this phase scoped to Claude files. Phase 4 adds the Codex implementation and then runs the cross-mirror parity test.
 
-### Phase 2: HTML report (R2)
+### Phase 2: Shared HTML report foundation and Claude integration (R2)
 
-**Impl files:** `scripts/render-report.py, scripts/report-hook.sh, scripts/lib/bundle-map.sh, scripts/bundle-appliers.sh, tests/parity/test-applier-bundle-parity.sh, plugins/skein/skills/review-gauntlet/scripts/render-report.py, plugins/skein/skills/review-gauntlet/scripts/report-hook.sh, plugins/skein-codex/skills/review-gauntlet/scripts/render-report.py, plugins/skein-codex/skills/review-gauntlet/scripts/report-hook.sh, plugins/skein/skills/deep-review/scripts/render-report.py, plugins/skein/skills/deep-review/scripts/report-hook.sh, plugins/skein-codex/skills/deep-review/scripts/render-report.py, plugins/skein-codex/skills/deep-review/scripts/report-hook.sh, plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh, plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh, plugins/skein/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein/skills/deep-review/SKILL.md, plugins/skein-codex/skills/deep-review/SKILL.md`
+**Impl files:** `scripts/render-report.py, scripts/report-hook.sh, scripts/lib/bundle-map.sh, scripts/bundle-appliers.sh, tests/parity/test-applier-bundle-parity.sh, generated renderer/hook copies under the Claude and Codex review-gauntlet/deep-review bundles, plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh, plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh, plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh, plugins/skein/skills/review-gauntlet/SKILL.md, plugins/skein/skills/deep-review/SKILL.md`
 **Test files:** `tests/gauntlet/test-render-report.sh, tests/gauntlet/test-gauntlet-skill-shape.sh, tests/gauntlet/test-convergence-ledger.sh, tests/gauntlet/fixtures/render-report/, tests/parity/test-applier-bundle-parity.sh, justfile`
-**Test command:** `just lint && bash tests/gauntlet/test-render-report.sh && bash tests/gauntlet/test-gauntlet-skill-shape.sh && bash tests/gauntlet/test-convergence-ledger.sh && bash tests/parity/test-prose-rule-parity.sh && just check-sync && just lint-python && ./scripts/check-prompt-parity.sh`
+**Test command:** `just lint && bash tests/gauntlet/test-render-report.sh && bash tests/gauntlet/test-gauntlet-skill-shape.sh && bash tests/gauntlet/test-convergence-ledger.sh && just check-sync && just lint-python`
 **Goal:** The renderer only reads files it is handed and writes one contained HTML file; it never calls git or `gh` and never mutates ledger or state. The hook always returns 0, so a report failure never changes a run's decision.
 
 Ordering inside the phase (each step must leave `just ci` green; assertions that need a later step land with that step):
 1. Decision gate: read the existing round-loop writes (`review-gauntlet/SKILL.md:101-110,240-250`) and confirm the real field names of `reconciled.json` and the ledger, including the gate-1 shape (`lens: <gate>`, `confidence`, no `suggestion`, nullable `line`; `lib/run-gate.sh:215-223`). Confirm which guard helpers the hook can source from each skill's bundle (`lib/auto-fix-common.sh` for deep-review; `lib/gauntlet-common.sh` and `lib/state-path-guard.sh` for gauntlet), and whether `persist-common.sh` offers a stricter deep-review check than `af_assert_no_symlink`. Record field names, guard choices and the outcome in `## Findings` (below the marker).
 2. Bundling: canonical `scripts/render-report.py` and `scripts/report-hook.sh`; a `BUNDLE_REPORT=(render-report.py report-hook.sh)` group in `scripts/lib/bundle-map.sh` expanded from both the review-gauntlet and deep-review arms; confirm `lib/auto-fix-common.sh` is bundled into both skills (add it to their bundle entries if not); a `BUNDLE_PI_EXCLUDE` list in `bundle-map.sh` that both `bundle-appliers.sh` (filter the staged tree before the Pi rsync) and the parity test read; widen the `test-applier-bundle-parity.sh` §7 regex to `\.(sh|py)`; add a section asserting Pi's skill `scripts/` contain no `render-report.py` or `report-hook.sh` and equal canonical minus `BUNDLE_REPORT`; `just bundle-appliers`. Renderer, hook and bundle tests plus `justfile` wiring land in the same commit. Between this step and steps 3/4 the bundled files are not yet invoked by any SKILL.md; that bounded state is intentional and `just ci` stays green (`check-sync.sh` walks the declared set; §7 checks referenced-to-bundled only).
-3. Gauntlet (both mirrors): add `gc_run_dir <ledger_path>` to `lib/gauntlet-common.sh` (returns the ledger path minus `.json` plus `/`, calls `gauntlet_assert_no_symlink`, runs `mkdir -p`); SKILL.md prose calls it once for `$run_dir` and uses it for `round-N` (replacing the bare `mkdir -p "$gate_out_dir"`). Extend `convergence-ledger.sh --init --force` to remove that round dir under its own guard, with a test in `test-convergence-ledger.sh`; `--resume` takes `round_n` from the ledger's `rounds` array. Add the `--report` flag and argument-hint; add one named report step that runs on every exit after loop entry that reaches a terminal token (the five tokens at `:144-148`, the `--resume` exit-5 refusal at `:163`, the auto-chain exit-5 report-back at `:81`); error exits (Resume Decision Table exit 4 at `:162`, any other non-zero, `normalize` abort under `set -e`) skip the report. The step wraps the existing Block B anchors. State that gate 2 (`skein:deep-review --verbose`) never receives `--report`. Add the gauntlet gating, terminal-exit and `$run_dir` lifecycle shape assertions to `tests/gauntlet/test-gauntlet-skill-shape.sh` in the same commit.
-4. deep-review (both mirrors): add the `--report` flag and argument-hint, declared a rendering-mode modifier like `--verbose` (composable, changes no lens dispatch; update the argument-rule sentences at `:20-26` and assert them); add the report step. The orchestrator captures the audited envelope once, after Step 4 Apply Suppression and before Step 4.5 auto-fix, to a `mktemp` file outside `.deep-review/` (trap cleanup), and passes it by path; the report is labelled "as reviewed, after suppression, before auto-fix". Add the schema-lockstep note for `render-report.py` outside the `GENERIC FINDING SCHEMA AND MERGE` block (beside the reconcile step near `:636-642`), in both mirrors. Add deep-review's `--report`-gating shape assertions in the same commit. Never before step 2.
+3. Gauntlet: add `gc_run_dir <ledger_path>` and the guarded round-directory lifecycle to `lib/gauntlet-common.sh` and `convergence-ledger.sh` in both mirrors. Wire the report flag and terminal report step into the Claude `review-gauntlet/SKILL.md`; error exits skip reporting. The step wraps the existing Block B anchors. State that gate 2 (`skein:deep-review --verbose`) never receives `--report`. Add Claude-side flag gating, terminal-exit and `$run_dir` lifecycle assertions to the shape test. Codex skill integration is in Phase 5.
+4. Deep-review: wire the report flag, modifier rules and report step into Claude's `deep-review/SKILL.md`. Capture the audited envelope after Step 4 suppression and before Step 4.5 auto-fix to a `mktemp` file outside `.deep-review/`; pass it by path and label the report "as reviewed, after suppression, before auto-fix". Add the `render-report.py` schema-lockstep note outside the GENERIC block. Codex skill integration and its native checks are in Phase 5.
 
 Tasks:
 - Renderer CLI: `render-report.py [--ledger <path>] [--round N=<envelope>]... [--envelope <path>] [--diff-stat <file>] --root <dir> --out <file>`. Gauntlet passes `--ledger` plus one `--round` per round; deep-review passes one `--envelope` and no `--ledger`. Envelopes are reconciler v2 (the audited output). Usage errors exit 2: `--envelope` with `--round`, `--round` without `--ledger`, or no input at all. The renderer asserts `schema_version == 2` on envelopes only and exits non-zero otherwise, like `scripts/render-reconciled-report.sh`; a ledger has no `schema_version` and is never version-checked. With a ledger and no `--round`, it renders a counts-only report and labels it. The renderer never re-implements dedup: the severity section renders the last round's envelope only, and earlier rounds feed the convergence rows. Add it as a third lockstep point (see step 4).
@@ -94,20 +92,51 @@ Tasks:
 - `report-hook.sh` takes `--base/--head`, the envelope or ledger paths, and `--root`/`--out`; runs `command -v python3` (soft dependency; warn and skip when absent), runs the first-layer guard, runs `git check-ignore` on the output path and warns if it is not ignored, runs the renderer, logs any failure as a warning, and always exits 0. Two environment overrides keep it testable: `SKEIN_REPORT_RENDERER` (path to a stub renderer) and `SKEIN_REPORT_NOW` (fixed timestamp for fixtures).
 - `--report` is not forwarded by `conduct`'s auto-chain; running with the report requires invoking the gauntlet directly.
 - Existing tests this phase edits: `tests/parity/test-applier-bundle-parity.sh` (§7 regex, Pi section), `tests/gauntlet/test-gauntlet-skill-shape.sh` (gating, terminal-exit and `$run_dir` assertions), `tests/gauntlet/test-convergence-ledger.sh` (round-dir removal).
-- `justfile` wiring: `test-prose-rule-parity.sh` and `test-show-me-triggers.sh` go to `parity-tests`; `test-render-report.sh` goes to `gauntlet-tests`.
+- `justfile` wiring: `test-render-report.sh` goes to `gauntlet-tests` here; the prose and show-me parity tests are wired in their Codex-owned phases (4 and 6).
 
-### Phase 3: show-me triggers (R3)
+### Phase 3: Claude show-me triggers (R3)
 
-**Impl files:** `plugins/skein/skills/show-me/SKILL.md, plugins/skein-codex/skills/show-me/SKILL.md, docs/BACKLOG.md`
-**Test files:** `tests/parity/test-show-me-triggers.sh, justfile`
-**Test command:** `just lint && bash tests/parity/test-show-me-triggers.sh`
+**Impl files:** `plugins/skein/skills/show-me/SKILL.md, docs/BACKLOG.md`
+**Test files:** none
+**Test command:** `just ci`
 
 - Add bullets under "When to reach for a visual" for review findings, gauntlet convergence, and conduct phase progress; update the frontmatter `description`.
-- Wrap the new bullets in fixed anchor comment lines so they can be byte-compared across mirrors.
 - Under "Composing with other skills", point review findings and gauntlet convergence at the `--report` flag of `review-gauntlet` and `deep-review` (skill and flag, not a path); keep conduct phase progress as a plain mermaid or table trigger; keep the "defer to plan-view" note.
-- Preserve the sanctioned Claude/Codex divergence (the Mermaid and HTML-artifact bullets, currently lines 32-33); anchor on that content, not line numbers.
-- New test asserts the three triggers and the `--report` pointer appear in both mirrors and byte-compares the anchored new bullets across mirrors; wire into `justfile` `parity-tests` in the same commit.
+- Preserve Claude's existing visual-format guidance.
 - Add the Pi follow-up entry to `docs/BACKLOG.md`.
+
+### Phase 4: Codex plain-prose implementation (R1)
+
+**Impl files:** `plugins/skein-codex/skills/deep-review/SKILL.md, plugins/skein-codex/skills/review-plan/SKILL.md, plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/review-gauntlet/native_gates.py`
+**Test files:** `tests/parity/test-prose-rule-parity.sh, justfile`
+**Test command:** `just lint && bash tests/parity/test-prose-rule-parity.sh && bash scripts/check-report-templates.sh && ./scripts/check-prompt-parity.sh`
+**Goal:** Implement Codex's native prompt and prose changes independently, then verify the shared blocks against Claude.
+
+- Add Block A to the five Codex deep-review lenses and six review-plan lenses, including Contradiction Pass; add Block B to the three Codex report steps.
+- Add the gate-1 sentence to the Codex prompt string in `native_gates.py`; test it separately from the byte-identical prose blocks.
+- Implement this phase in the Codex workstream. Do not use `codex:rescue` as a replacement for the phase.
+- Add and wire the parity test: assert per-mirror counts, byte-identical anchored blocks, the finding-summary exemption, anchor placement, and gate-1 sentence presence in both implementations.
+
+### Phase 5: Codex HTML report integration (R2)
+
+**Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md, plugins/skein-codex/skills/deep-review/SKILL.md`
+**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh, tests/parity/test-applier-bundle-parity.sh`
+**Test command:** `just lint && bash tests/gauntlet/test-gauntlet-skill-shape.sh && bash tests/parity/test-applier-bundle-parity.sh && just check-sync && ./scripts/check-prompt-parity.sh && just ci`
+**Goal:** Add Codex-native hook dispatch and prove the completed cross-harness behavior.
+
+- Add Codex argument handling and report steps using its existing dispatch idiom and `$SKILL_DIR` script anchors. Do not forward `--report` to gate 2.
+- Cover terminal and resume paths, error-path skipping, default-output invariance, and deep-review envelope capture after suppression and before auto-fix.
+- Run the cross-mirror shape, bundle and prompt-parity checks after Codex integration lands.
+
+### Phase 6: Codex show-me triggers (R3)
+
+**Impl files:** `plugins/skein-codex/skills/show-me/SKILL.md`
+**Test files:** `tests/parity/test-show-me-triggers.sh, justfile`
+**Test command:** `just lint && bash tests/parity/test-show-me-triggers.sh && ./scripts/check-prompt-parity.sh && just ci`
+**Goal:** Implement Codex's visual guidance separately and close the show-me mirror contract.
+
+- Add the three triggers and `--report` pointers, preserving Codex's sanctioned Mermaid/HTML guidance and the plan-view deferral.
+- Anchor the shared bullets and test their byte identity, presence in both mirrors, and the `--report` pointers. Wire the test into `parity-tests`.
 
 ## Technical Specifications
 
@@ -137,6 +166,7 @@ Tasks:
 - Decision (grilled, round 3): renderer CLI is `--ledger`, repeatable `--round N=<envelope>` and `--envelope`; the `schema_version` check applies to envelopes only; a ledger with no rounds renders a labelled counts-only report. The ledger and diff-stat get Integration Seams rows.
 - Decision (round 4, recommended resolution applied on "fix all"): `$run_dir` is owned by `gc_run_dir` in `lib/gauntlet-common.sh` beside `gc_ledger_path` (one derivation, one guard call, both mirrors). `--fresh` removes the round dir inside `convergence-ledger.sh --init --force` under its own guard, so there is no prose `rm -rf`; `--resume` takes `round_n` from the ledger's `rounds` array.
 - Decision (round 4, recommended resolution applied on "fix all"): the hook has two diff modes only (`--base/--head`, or none). The orchestrator resolves `--pr <N>` to OIDs; the hook never calls `gh`. No uncommitted mode, because neither skill defines one.
+- Decision (2026-10-09): Codex mirror work is separated from Claude implementation into Phases 4-6. This supersedes the earlier assignment to route Codex changes through `codex:rescue`; Claude phases own only `plugins/skein/`, Codex phases own `plugins/skein-codex/`, and Phase 2's canonical/generated report assets plus byte-mirrored gauntlet helpers are shared work.
 - Decision (grilled, round 2): `$run_dir` is `.gauntlet/<ledger-stem>/`; counts-only convergence remains the fallback when a round dir is absent, and the report labels it.
 - Decision (grilled, round 2): the deep-review report name `report-<harness>.html` is a latest-run view per harness, matching `latest-<harness>.json`; only the gauntlet report is per-target and per-author (ledger stem).
 - R1 is two blocks (authoring rule, summary-prose rule), each byte-identical across mirrors, because finding prose is authored in lens prompts, not only at report rendering. The finding summary line is exempt to keep `finding-key.sh` keys stable across rounds and resumed ledgers.
@@ -157,7 +187,7 @@ Tasks:
 | Scope flags | orchestrator (resolves target to OIDs) | report-hook.sh | `--base <oid> --head <oid>`, or none (renders "diff scope unavailable"); the hook never calls `gh` |
 | Diff stat file | report-hook.sh (`mktemp`, trap cleanup, outside state dirs) | render-report.py `--diff-stat` | Plain `--stat` text with a header line (capture mode, time; `SKEIN_REPORT_NOW` overrides the clock); absent flag renders "diff scope unavailable" and exits 0; given-but-unreadable path exits non-zero |
 | Output path | report-hook.sh first-layer guard (`af_assert_no_symlink` plus textual check; gauntlet also `gauntlet_assert_no_symlink`) | render-report.py | Hook refuses (warn, skip, exit 0) before the renderer runs; renderer re-refuses out-of-root, symlink or `..` paths; writes via temp file and rename |
-| Rule blocks A and B | Phase 1 | parity test | Per-block byte-identical across their file sets; exact counts asserted (A = 11, B = 3 per mirror); gate-1 sentence string-asserted |
+| Rule blocks A and B | Phases 1 and 4 | Phase 4 parity test | Per-block byte-identical across their file sets; exact counts asserted (A = 11, B = 3 per mirror); gate-1 sentence string-asserted |
 | Bundle map | `scripts/lib/bundle-map.sh` (`BUNDLE_REPORT`, `BUNDLE_PI_EXCLUDE`) | `check-sync.sh`, `bundle-appliers.sh`, bundle-parity test | Every bundled copy byte-identical to canonical; Pi gets none (asserted in the bundle-parity test); no undeclared files |
 | `$run_dir` | `gc_run_dir` in `lib/gauntlet-common.sh` (both mirrors) | gauntlet SKILL.md round loop, report hook | `.gauntlet/<ledger-stem>/` guarded and created by `gc_run_dir`; removed by `convergence-ledger.sh --init --force`; `round_n` from the ledger on `--resume`; absent round dirs trigger the counts-only fallback |
 
@@ -243,18 +273,18 @@ Context lifecycle:
 - Default-unchanged and flow shape assertions (each lands in the step that adds the behaviour): the report step and flag are gated on `--report` in both skills and both mirrors; gate 2 never receives `--report`; every gauntlet terminal-token exit routes through the one report step and error exits skip it; a guard refusal leaves the terminal token unchanged; deep-review's argument-rule sentences list `--report` as a rendering-mode modifier; deep-review captures the envelope after Step 4 and before Step 4.5; `$run_dir` comes from `gc_run_dir`, `--fresh` goes through `--init --force`, and `--resume` derives `round_n` from the ledger.
 - `test-convergence-ledger.sh`: `--init --force` removes the round dir, refuses a symlinked path, and leaves other `.gauntlet/` files alone.
 - Bundle guard: widened §7 regex catches a `.py` reference with no `bundle_extra_for`/`BUNDLE_REPORT` entry; a Pi section asserts Pi's skill `scripts/` hold no copy and equal canonical minus `BUNDLE_REPORT`, using `BUNDLE_PI_EXCLUDE`.
-- Phase 1 parity test: per-block byte-compare, exact counts (A = 11, B = 3 per mirror), exemption sentence, anchor placement outside the GENERIC block, gate-1 sentence in both mirrors. Phase 2's command also runs it, since Phase 2 edits the same SKILL.md files.
-- Phase 3 test: three triggers and `--report` pointer present in both mirrors; anchored new bullets byte-identical.
+- Phase 4 prose parity test: per-block byte-compare, exact counts (A = 11, B = 3 per mirror), exemption sentence, anchor placement outside the GENERIC block, and gate-1 sentence in both mirrors.
+- Phase 6 show-me parity test: three triggers and `--report` pointer present in both mirrors; anchored new bullets byte-identical.
 
 ## Acceptance Criteria
 
-- Blocks A and B present with the exact counts and byte-identical per block; the gate-1 sentence present in both mirrors; `finding-key.sh` inputs untouched; Phase 1 changes no existing test.
+- Claude's Blocks A and B land in Phase 1; Codex's independently authored blocks and gate-1 sentence land in Phase 4; byte-identity, exact counts, summary-key preservation and schema-fence placement pass the Phase 4 parity test.
 - `just check-sync` green with the report group bundled; mirrors byte-identical to canonical; `plugins/skein-pi` holds no copy, asserted by a test that reads `BUNDLE_PI_EXCLUDE`.
 - Fixture-based renderer and hook tests green, including failure, containment, guard-refusal and safety vectors.
 - Default (no `--report`) gauntlet and deep-review output unchanged, asserted by the shape tests; a failing report leaves the terminal token and exit code unchanged.
-- `show-me` lists the three triggers and the `--report` pointer in both mirrors; new test green.
+- Claude show-me guidance lands in Phase 3; Codex guidance lands independently in Phase 6; both mirrors pass the trigger and `--report` parity test.
 - `$run_dir` comes from `gc_run_dir` in both gauntlet mirrors, with `--fresh` removal and `--resume` derivation tested; gauntlet shape and ledger tests green.
-- `just ci` green; Codex halves (including `native_gates.py`) authored via `codex:rescue`.
+- `just ci` green; Codex prompt, skill and show-me changes are completed in Phases 4-6 as a separate Codex-owned implementation track.
 - Manual dogfood (not CI, recorded in `## Final Results`): run `scripts/render-report.py` directly on the state the installed gauntlet leaves; expect the counts-only fallback while the plugin cache is at 0.8.5. Once a later plugin install shows the new flag (how the cache refreshes is unverified), run the full `--report` path.
 - `docs/BACKLOG.md` has the Pi follow-up entry.
 
@@ -263,9 +293,12 @@ Context lifecycle:
 
 ## Progress
 
-- [ ] Phase 1: Plain-prose rule (R1)
-- [ ] Phase 2: HTML report (R2)
-- [ ] Phase 3: show-me triggers (R3)
+- [ ] Phase 1: Claude plain-prose rule (R1)
+- [ ] Phase 2: Shared HTML report foundation and Claude integration (R2)
+- [ ] Phase 3: Claude show-me triggers (R3)
+- [ ] Phase 4: Codex plain-prose implementation (R1)
+- [ ] Phase 5: Codex HTML report integration (R2)
+- [ ] Phase 6: Codex show-me triggers (R3)
 
 ## Findings
 
