@@ -277,6 +277,18 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Logic),
 **Location** (file_path:line), **Finding**, **Evidence**, **Suggestion**.
 If the code is logically sound, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Security Lens (model: opus, effort: high)
@@ -355,6 +367,18 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Security),
 **Location** (file_path:line), **Finding**, **Evidence** (attack vector), **Suggestion** (mitigation).
 If no security issues, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Spec Compliance Lens (model: opus, effort: high) — only when Review Focus lists specs
@@ -430,6 +454,18 @@ For each finding: **Severity** (Critical=violates MUST / Important=violates SHOU
 **Category** (Spec), **Location** (file_path:line), **Finding** (requirement not met),
 **Evidence** (exact spec section and RFC 2119 keyword), **Suggestion** (what to change).
 If the code complies with all referenced specs, say so.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Architecture Lens (model: opus, effort: high)
@@ -508,6 +544,18 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Architecture),
 **Location** (file_path:line), **Finding**, **Evidence** (pattern/convention violated), **Suggestion**.
 If the architecture is sound, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Documentation Lens (model: haiku, effort: low)
@@ -586,6 +634,18 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Documen
 **Location** (file_path or "missing file"), **Finding**, **Evidence** (what changed that makes this stale),
 **Suggestion** (specific doc update needed).
 If documentation is up to date, say so.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before report emission.
@@ -767,6 +827,12 @@ The `Reconciliation:` summary line is always rendered (zeros for empty input). T
 `scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the Step 5 template, so its absence under `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/` is expected, not a broken install.
 
 If the review is clean, say so concisely and call out any residual risks or skipped lenses.
+
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+<!-- END PROSE RULE BLOCK B -->
 
 **Continuation report format (incremental re-review mode only).** When `--continue` ran in incremental re-review mode (HEAD advanced past stored `head_commit`), the report header MUST make the scope explicit and partition findings:
 

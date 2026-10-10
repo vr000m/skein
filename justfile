@@ -36,6 +36,7 @@ parity-tests:
     bash tests/parity/test-no-manual-apply-fallback.sh
     bash tests/parity/test-anchor-path-with-spaces.sh
     bash tests/parity/test-conduct-marker-parity.sh
+    bash tests/parity/test-prose-rule-claude.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
     bash tests/parity/test-managed-skills-parity.sh
