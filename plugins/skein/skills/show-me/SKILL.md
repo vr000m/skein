@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, or drafting a PR description — anywhere a picture would answer the question faster than paragraphs.
+description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, drafting a PR description, presenting review findings, gauntlet convergence, or conduct phase progress — anywhere a picture would answer the question faster than paragraphs.
 argument-hint: "[topic or question to visualize]"
 ---
 
@@ -17,6 +17,11 @@ Prefer a diagram, sketch, or artifact over prose when one communicates the point
 - Explaining interactions or data flow between systems/components → **mermaid diagram**
 - Explaining what changed in code, config, or control flow → **diff**
 - Explaining a complex layout, comparison, or concept prose can't carry → **HTML artifact**
+<!-- BEGIN SHOW-ME REVIEW TRIGGERS -->
+- Presenting review findings (from `review-gauntlet` or `deep-review`) → **HTML report** via the `--report` flag of `review-gauntlet` or `deep-review`, not a long prose list
+- Showing gauntlet convergence across rounds → **HTML report** via the `--report` flag of `review-gauntlet`
+- Showing conduct phase progress → a plain **mermaid** diagram or **table**; no report flag is needed
+<!-- END SHOW-ME REVIEW TRIGGERS -->
 
 When none of these fit better than a sentence or two, just write the sentence. Not every answer needs a picture.
 
@@ -37,4 +42,5 @@ When none of these fit better than a sentence or two, just write the sentence. N
 
 - **PR descriptions** (`skein:update-docs`, or manual `gh pr edit`/`gh pr create`): when summarizing a branch's changes, consider a mermaid diagram (data/control flow that changed) or a file tree (which files own which responsibility) or a diff snippet instead of prose-only summary. Stay within the markdown-safe formats above — no HTML artifacts in a PR body.
 - **`skein:plan-view`** already does this at the corpus/single-plan level with its own constrained widget toolkit (state machines, compare views, timelines) gated on source-sha caching — don't route through `show-me` for plan-view's `--rich` output; that toolkit's determinism-up-to-LLM-variance contract is deliberate and separate from this skill's freeform judgment call.
+- **Review findings and gauntlet convergence** (`review-gauntlet`, `deep-review`): point the user at the `--report` flag of those skills for an HTML report instead of hand-building one. `conduct` does not forward `--report` through its auto-chain, so invoke the gauntlet directly. `conduct` phase progress stays a plain mermaid diagram or table.
 - **`skein:dev-plan`**: its `## Architecture & Call Flow` section (component graph, sequence diagram) is exactly the kind of visual this skill recommends — no need to invoke `show-me` separately when already following `dev-plan`'s own template.
