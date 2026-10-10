@@ -316,7 +316,7 @@ Context lifecycle:
 - Deep-review report step deletes its scratch files and omits suppressed and applied-auto-fix findings; asserted by the shape tests in both mirrors.
 - After Phase 6, Claude runs `skein:review-gauntlet` on the Phase 4-6 diff and records the result in `## Final Results`; Codex has confirmed the items listed under `### Ownership and execution`.
 
-<!-- reviewed: 2026-10-09 @ c3bdda0ed93de77889f533f2d83e6cbe28475771 -->
+<!-- reviewed: 2026-10-10 @ 3d06678c7f82e89fbba11344a2ad281f5e1e948b -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
