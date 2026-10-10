@@ -76,6 +76,8 @@ gauntlet-tests:
     bash tests/gauntlet/test-finding-key.sh
     bash tests/gauntlet/test-claimed-findings.sh
     bash tests/gauntlet/test-status-row.sh
+    bash tests/gauntlet/test-render-report.sh
+    bash tests/gauntlet/test-report-shape-claude.sh
 
 # Phase 2 disk-first streamed lens results: persist-lens-result.sh (writer),
 # collect-lens-results.sh (reader/merge), persist-deep-review-state.sh's

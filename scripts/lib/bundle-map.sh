@@ -40,6 +40,23 @@ BUNDLE_SHARED=(
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh)
 
+# The opt-in HTML report pair, bundled into exactly the two skills whose
+# SKILL.md invokes the report hook (review-gauntlet and deep-review). It is a
+# named group, expanded from both `bundle_extra_for` arms, so the pair is added
+# ONCE. review-plan has no report step and never receives it. Pi gets none of
+# it: see BUNDLE_PI_EXCLUDE.
+# shellcheck disable=SC2034  # consumed by sourcing scripts
+BUNDLE_REPORT=(render-report.py report-hook.sh)
+
+# Files that exist in the canonical bundle but must NOT reach plugins/skein-pi.
+# Pi is out of scope for the report (Pi-native rewrites with their own state),
+# so shipping it a copy would break "bundled == operative" there. Read by BOTH
+# scripts/bundle-appliers.sh (filters the staged tree before the Pi rsync) and
+# tests/parity/test-applier-bundle-parity.sh (asserts Pi holds none of these
+# and equals canonical minus this list), so membership has one source of truth.
+# shellcheck disable=SC2034  # consumed by sourcing scripts
+BUNDLE_PI_EXCLUDE=("${BUNDLE_REPORT[@]}")
+
 # Skills that receive a bundled pipeline.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_SKILLS=(deep-review review-plan review-gauntlet)
@@ -120,10 +137,12 @@ bundle_extra_for() {
 	deep-review)
 		printf 'persist-deep-review-state.sh\n'
 		printf '%s\n' "${BUNDLE_LENS[@]}"
+		printf '%s\n' "${BUNDLE_REPORT[@]}"
 		;;
 	review-gauntlet)
 		printf 'finding-key.sh\n'
 		printf 'claimed-findings.sh\n'
+		printf '%s\n' "${BUNDLE_REPORT[@]}"
 		;;
 	*)
 		printf 'bundle-map: unknown skill %s\n' "$1" >&2

@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "summary": {"raw": 1, "merged": 0, "unique": 1, "related": 0, "dropped": 0},
+  "findings": [
+    {"severity": "Critical", "category": "x\" onmouseover=\"alert(1)", "file": "\"><img src=x onerror=alert(1)>.py", "line": 3,
+     "summary": "<script>alert('xss')</script>",
+     "lenses": ["<b>bold</b>"],
+     "evidence": "</pre><script src=\"http://evil.example/x.js\"></script>",
+     "suggestion": "<a href=\"javascript:alert(1)\">click</a> & more"}
+  ],
+  "related": []
+}

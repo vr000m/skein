@@ -4,6 +4,7 @@
 #
 # Usage:
 #   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+#   convergence-ledger.sh --run-dir --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
 #       [--cap 10] [--k 2]
 #   convergence-ledger.sh --ledger <path> [--target <target>] --count <N> \
@@ -18,6 +19,23 @@
 #   4 - --last-decision ledger not found
 #   5 - --last-decision reached a terminal decision
 #   6 - --init refused to overwrite an existing ledger
+#
+# --run-dir derives the per-run round directory from the ledger path: the
+# ledger file's path with the trailing `.json` removed (`<ledger-stem>/`, e.g.
+# `.gauntlet/ledger-claude-<slug>-<digest12>/`). It runs
+# `gauntlet_assert_no_symlink` on that directory AND on the sibling report path
+# `<ledger-stem>.report.html` (a refusal exits 1 with the guard's diagnostic;
+# the orchestrator then skips the report with a warning), runs `mkdir -p`, and
+# prints the directory on stdout. It never deletes anything. The ledger path
+# has one owner (`gc_ledger_path`); this mode only derives from it, so the
+# stem is exactly the basename of the ledger without `.json`. A ledger path not
+# ending in `.json` is a usage error (exit 2).
+#
+# A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
+# prior run's stale round dir and would collide with the new run's `round-1/`.
+# Both `--init` and `--init --force` therefore remove it (under the same guard)
+# right before they write the fresh ledger. `--init` refused with exit 6
+# touches nothing.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
@@ -122,6 +140,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+       convergence-ledger.sh --run-dir --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
        convergence-ledger.sh --ledger <path> [--target <target>] --count <N> --structural <N> \
               --local <N> --pass-type <full|confirm> --quarantine <N> \
@@ -150,7 +169,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--init)
 		if [[ "$MODE" != "append" && "$MODE" != "init" ]]; then
-			echo "convergence-ledger: --init cannot be combined with --last-decision" >&2
+			echo "convergence-ledger: --init cannot be combined with --last-decision or --run-dir" >&2
 			usage
 			exit 2
 		fi
@@ -158,11 +177,19 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--last-decision)
 		if [[ "$MODE" != "append" && "$MODE" != "last-decision" ]]; then
-			echo "convergence-ledger: --last-decision cannot be combined with --init" >&2
+			echo "convergence-ledger: --last-decision cannot be combined with --init or --run-dir" >&2
 			usage
 			exit 2
 		fi
 		MODE="last-decision"
+		;;
+	--run-dir)
+		if [[ "$MODE" != "append" && "$MODE" != "run-dir" ]]; then
+			echo "convergence-ledger: --run-dir cannot be combined with --init or --last-decision" >&2
+			usage
+			exit 2
+		fi
+		MODE="run-dir"
 		;;
 	--force)
 		FORCE=1
@@ -527,6 +554,30 @@ ledger_assert_no_symlink() {
 	gauntlet_assert_no_symlink "$1" convergence-ledger
 }
 
+# ledger_run_dir <ledger-path> — print the derived round dir: the ledger path
+# without its trailing `.json`. Returns 1 (no output) for a path that does not
+# end in `.json`.
+ledger_run_dir() {
+	local ledger_path="$1" stem
+	stem="${ledger_path%.json}"
+	[[ "$stem" != "$ledger_path" && -n "${stem##*/}" ]] || return 1
+	printf '%s' "$stem"
+}
+
+# clear_stale_run_dir <ledger-path> — remove a pre-existing `<ledger-stem>/`
+# (a prior run's round dir) under the state-path guard. A guard refusal exits
+# 1 before anything is removed. Called only when a fresh ledger is about to be
+# written, i.e. when any existing round dir is stale by construction.
+clear_stale_run_dir() {
+	local run_dir
+	run_dir="$(ledger_run_dir "$1")" || return 0
+	[[ -e "$run_dir" || -L "$run_dir" ]] || return 0
+	if ! ledger_assert_no_symlink "$run_dir"; then
+		exit 1
+	fi
+	rm -rf -- "$run_dir"
+}
+
 write_fresh_ledger() {
 	local ledger_path="$1"
 	local target="$2"
@@ -737,7 +788,30 @@ init)
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
 		exit 6
 	fi
+	clear_stale_run_dir "$LEDGER_PATH"
 	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+	;;
+run-dir)
+	if [[ "$FORCE" -eq 1 ]]; then
+		echo "convergence-ledger: --force is only valid with --init" >&2
+		exit 2
+	fi
+	if [[ "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --run-dir cannot be combined with round-input flags" >&2
+		exit 2
+	fi
+	if ! run_dir="$(ledger_run_dir "$LEDGER_PATH")"; then
+		echo "convergence-ledger: --run-dir needs a --ledger path ending in .json (got '$LEDGER_PATH')" >&2
+		exit 2
+	fi
+	if ! ledger_assert_no_symlink "$run_dir"; then
+		exit 1
+	fi
+	if ! ledger_assert_no_symlink "$run_dir.report.html"; then
+		exit 1
+	fi
+	mkdir -p "$run_dir"
+	printf '%s\n' "$run_dir"
 	;;
 last-decision)
 	if [[ "$FORCE" -eq 1 ]]; then

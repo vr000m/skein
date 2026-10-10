@@ -63,9 +63,13 @@ fi
 # Track every temp ledger we create so we can clean up unconditionally on
 # exit, including on early failure.
 TMP_LEDGERS=()
+TMP_DIRS=()
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via trap cleanup EXIT
 cleanup() {
 	local f
+	for f in "${TMP_DIRS[@]:-}"; do
+		[[ -n "$f" && -d "$f" ]] && rm -rf "$f"
+	done
 	for f in "${TMP_LEDGERS[@]:-}"; do
 		[[ -n "$f" && -e "$f" ]] && rm -f "$f"
 	done
@@ -487,6 +491,157 @@ forced_rounds="$(jq -r '.rounds | length' "$INIT_L")"
 assert_eq "$forced_target" "branch:init-forced" "--init --force truncates and reinitializes with the new target"
 assert_eq "$forced_counter" "0" "--init --force resets loop_counter back to 0"
 assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old rounds gone)"
+
+# --- 15b. --run-dir and stale round-dir clearing (output-formats Phase 2) ---
+
+RD_BASE="$(mktemp -d)"
+RD_BASE="$(cd "$RD_BASE" && pwd -P)"
+TMP_DIRS+=("$RD_BASE")
+rd_tree_hash() {
+	(cd "$1" && find . \( -type f -o -type l \) -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 2>/dev/null)
+}
+
+RD_L="$RD_BASE/ledger-claude-x.json"
+RD_STEM="$RD_BASE/ledger-claude-x"
+set +e
+rd_out="$("$LEDGER_SCRIPT" --run-dir --ledger "$RD_L" 2>"$TMP_SINK")"
+rd_rc=$?
+set -e
+assert_eq "$rd_rc" "0" "--run-dir exits 0"
+assert_eq "$rd_out" "$RD_STEM" "--run-dir prints <ledger-stem> (ledger path without .json)"
+if [[ -d "$RD_STEM" ]]; then
+	pass "--run-dir creates the round directory"
+else
+	fail "--run-dir did not create $RD_STEM"
+fi
+if [[ ! -e "$RD_L" ]]; then
+	pass "--run-dir never creates or touches the ledger file"
+else
+	fail "--run-dir created the ledger file"
+fi
+printf 'keep\n' >"$RD_STEM/keep.txt"
+mkdir -p "$RD_STEM/round-1"
+printf '{}\n' >"$RD_STEM/round-1/reconciled.json"
+rd_before="$(rd_tree_hash "$RD_BASE")"
+rd_out2="$("$LEDGER_SCRIPT" --run-dir --ledger "$RD_L")"
+assert_eq "$rd_out2" "$RD_STEM" "--run-dir is idempotent (same directory printed)"
+assert_eq "$(rd_tree_hash "$RD_BASE")" "$rd_before" "--run-dir never deletes or alters existing round files"
+
+for bad in "--force" "--count 1" "--structural 0" "--local 0" "--pass-type full" "--quarantine 0"; do
+	set +e
+	# shellcheck disable=SC2086  # intentional word-split of the flag/value pair
+	"$LEDGER_SCRIPT" --run-dir --ledger "$RD_L" $bad >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	assert_eq "$rc" "2" "--run-dir rejects '$bad' with exit 2"
+done
+set +e
+"$LEDGER_SCRIPT" --run-dir --ledger "$RD_BASE/ledger-no-ext" >"$TMP_SINK" 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "2" "--run-dir rejects a ledger path not ending in .json (exit 2)"
+if [[ ! -e "$RD_BASE/ledger-no-ext" ]]; then
+	pass "--run-dir with a non-.json path creates nothing"
+else
+	fail "--run-dir with a non-.json path created a directory"
+fi
+set +e
+"$LEDGER_SCRIPT" --run-dir --init --ledger "$RD_L" --target t >"$TMP_SINK" 2>&1
+rc_a=$?
+"$LEDGER_SCRIPT" --run-dir --last-decision --ledger "$RD_L" >"$TMP_SINK" 2>&1
+rc_b=$?
+set -e
+assert_eq "$rc_a" "2" "--run-dir cannot be combined with --init (exit 2)"
+assert_eq "$rc_b" "2" "--run-dir cannot be combined with --last-decision (exit 2)"
+
+# Symlink refusals: exit 1, nothing created or deleted behind the link.
+RD_OUT_DIR="$RD_BASE/behind-link"
+mkdir -p "$RD_OUT_DIR"
+printf 'precious\n' >"$RD_OUT_DIR/precious.txt"
+ln -s "$RD_OUT_DIR" "$RD_BASE/ledger-sym"
+rd_before="$(rd_tree_hash "$RD_OUT_DIR")"
+set +e
+"$LEDGER_SCRIPT" --run-dir --ledger "$RD_BASE/ledger-sym.json" >"$TMP_SINK" 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "1" "--run-dir refuses a symlinked <stem> with exit 1"
+assert_eq "$(rd_tree_hash "$RD_OUT_DIR")" "$rd_before" "--run-dir wrote nothing through the symlinked <stem>"
+if [[ -L "$RD_BASE/ledger-sym" ]]; then
+	pass "--run-dir left the symlinked <stem> in place (never deletes)"
+else
+	fail "--run-dir removed the symlinked <stem>"
+fi
+
+ln -s "$RD_OUT_DIR/report-target.html" "$RD_BASE/ledger-rep.report.html"
+set +e
+"$LEDGER_SCRIPT" --run-dir --ledger "$RD_BASE/ledger-rep.json" >"$TMP_SINK" 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "1" "--run-dir refuses a symlinked <stem>.report.html with exit 1"
+if [[ ! -e "$RD_OUT_DIR/report-target.html" && ! -e "$RD_BASE/ledger-rep" ]]; then
+	pass "--run-dir created nothing when the report path is a symlink"
+else
+	fail "--run-dir proceeded despite a symlinked report path"
+fi
+
+# --init and --init --force clear a stale <stem>/ and nothing else.
+seed_stale() {
+	mkdir -p "$1/round-1" "$1/round-2"
+	printf '{}\n' >"$1/round-1/reconciled.json"
+	printf '{}\n' >"$1/round-2/reconciled.json"
+}
+RD_I="$RD_BASE/ledger-init.json"
+RD_I_STEM="$RD_BASE/ledger-init"
+seed_stale "$RD_I_STEM"
+printf 'REPORT\n' >"$RD_BASE/ledger-init.report.html"
+printf 'OTHER\n' >"$RD_BASE/ledger-other.json"
+mkdir -p "$RD_BASE/ledger-other"
+printf 'sibling\n' >"$RD_BASE/ledger-other/round-1.json"
+rd_sibling="$(rd_tree_hash "$RD_BASE/ledger-other")$(shasum -a 256 <"$RD_BASE/ledger-other.json")$(shasum -a 256 <"$RD_BASE/ledger-init.report.html")"
+"$LEDGER_SCRIPT" --init --ledger "$RD_I" --target "branch:rd"
+if [[ -f "$RD_I" && ! -e "$RD_I_STEM" ]]; then
+	pass "--init clears a stale <stem>/ and writes the fresh ledger"
+else
+	fail "--init did not clear the stale <stem>/ (ledger=$([[ -f "$RD_I" ]] && echo yes || echo no), stem=$([[ -e "$RD_I_STEM" ]] && echo present || echo gone))"
+fi
+assert_eq "$(rd_tree_hash "$RD_BASE/ledger-other")$(shasum -a 256 <"$RD_BASE/ledger-other.json")$(shasum -a 256 <"$RD_BASE/ledger-init.report.html")" "$rd_sibling" \
+	"--init leaves .report.html and other .gauntlet files untouched"
+
+# --init refused with exit 6 touches nothing.
+seed_stale "$RD_I_STEM"
+rd_before="$(rd_tree_hash "$RD_BASE/ledger-init")$(shasum -a 256 <"$RD_I")"
+set +e
+"$LEDGER_SCRIPT" --init --ledger "$RD_I" --target "branch:rd" >"$TMP_SINK" 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "6" "--init over an existing ledger still exits 6"
+assert_eq "$(rd_tree_hash "$RD_BASE/ledger-init")$(shasum -a 256 <"$RD_I")" "$rd_before" "--init refused with exit 6 leaves <stem>/ and the ledger untouched"
+
+# --init --force clears too.
+"$LEDGER_SCRIPT" --init --force --ledger "$RD_I" --target "branch:rd2"
+if [[ ! -e "$RD_I_STEM" && "$(jq -r '.target' "$RD_I")" == "branch:rd2" ]]; then
+	pass "--init --force clears a stale <stem>/ and rewrites the ledger"
+else
+	fail "--init --force left the stale <stem>/ or did not rewrite the ledger"
+fi
+assert_eq "$(rd_tree_hash "$RD_BASE/ledger-other")$(shasum -a 256 <"$RD_BASE/ledger-other.json")$(shasum -a 256 <"$RD_BASE/ledger-init.report.html")" "$rd_sibling" \
+	"--init --force leaves .report.html and other .gauntlet files untouched"
+
+# --init over a symlinked <stem> is refused (exit 1) and removes nothing.
+RD_S_L="$RD_BASE/ledger-symi.json"
+ln -s "$RD_OUT_DIR" "$RD_BASE/ledger-symi"
+rd_before="$(rd_tree_hash "$RD_OUT_DIR")"
+set +e
+"$LEDGER_SCRIPT" --init --force --ledger "$RD_S_L" --target t >"$TMP_SINK" 2>&1
+rc=$?
+set -e
+assert_eq "$rc" "1" "--init --force refuses a symlinked <stem> with exit 1"
+assert_eq "$(rd_tree_hash "$RD_OUT_DIR")" "$rd_before" "--init --force deleted nothing behind a symlinked <stem>"
+if [[ ! -e "$RD_S_L" ]]; then
+	pass "--init --force wrote no ledger after the guard refusal"
+else
+	fail "--init --force wrote a ledger despite the guard refusal"
+fi
 
 # --- 16. gc_ledger_path: sourced directly from gauntlet-common.sh (both mirrors) ---
 # This needs its own sourcing harness since the script is normally invoked as

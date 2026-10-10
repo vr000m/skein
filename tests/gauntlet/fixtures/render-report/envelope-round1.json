@@ -1,0 +1,1 @@
+{"schema_version": 2, "findings": [{"severity": "Minor", "category": "c", "file": "r1.py", "line": 1, "summary": "ROUND-ONE-ONLY"}]}

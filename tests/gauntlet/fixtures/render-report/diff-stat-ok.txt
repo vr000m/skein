@@ -1,0 +1,3 @@
+# diff-stat mode=range base=aaaa head=bbbb time=2026-01-01T00:00:00Z
+ a.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)

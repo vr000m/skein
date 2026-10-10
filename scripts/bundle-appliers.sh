@@ -57,6 +57,16 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	chmod +x "$stage"/*.sh "$stage"/lib/*.sh
 	# write-review-marker.py is an executable entrypoint; keep its bit set.
 	[[ -f "$stage/write-review-marker.py" ]] && chmod +x "$stage/write-review-marker.py"
+	[[ -f "$stage/render-report.py" ]] && chmod +x "$stage/render-report.py"
+
+	# Pi receives the staged tree minus BUNDLE_PI_EXCLUDE (bundle-map.sh owns
+	# the list). Build the filtered copy once per skill.
+	pi_stage="$stage_root/$skill/pi-scripts"
+	mkdir -p "$pi_stage"
+	cp -R "$stage/." "$pi_stage/"
+	for excluded in "${BUNDLE_PI_EXCLUDE[@]}"; do
+		rm -f "$pi_stage/$excluded"
+	done
 
 	for mirror in "${MIRRORS[@]}"; do
 		if [[ "$mirror" == "plugins/skein-pi" && "$skill" != "review-plan" && "$skill" != "deep-review" ]]; then
@@ -64,7 +74,11 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 		fi
 		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
 		mkdir -p "$dest"
-		rsync -a --delete "$stage/" "$dest/"
+		if [[ "$mirror" == "plugins/skein-pi" ]]; then
+			rsync -a --delete "$pi_stage/" "$dest/"
+		else
+			rsync -a --delete "$stage/" "$dest/"
+		fi
 		count=$((count + 1))
 		printf 'bundled %s -> %s/skills/%s/scripts\n' "$skill" "$mirror" "$skill"
 	done
