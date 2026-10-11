@@ -33,9 +33,12 @@
 #
 # A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
 # prior run's stale round dir and would collide with the new run's `round-1/`.
-# Both `--init` and `--init --force` therefore remove it (under the same guard)
-# right before they write the fresh ledger. `--init` refused with exit 6
-# touches nothing.
+# Both `--init` and `--init --force` therefore remove it, and the stale sibling
+# `<ledger-stem>.report.html`, after the ledger-path guards pass and right
+# before they write the fresh ledger — but only when the ledger's parent dir is
+# named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
+# entries, and only when the report is a regular non-symlink file. `--init`
+# refused (exit 6, or a guard refusal) touches nothing.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
@@ -564,18 +567,80 @@ ledger_run_dir() {
 	printf '%s' "$stem"
 }
 
-# clear_stale_run_dir <ledger-path> — remove a pre-existing `<ledger-stem>/`
-# (a prior run's round dir) under the state-path guard. A guard refusal exits
-# 1 before anything is removed. Called only when a fresh ledger is about to be
-# written, i.e. when any existing round dir is stale by construction.
+# ledger_in_gauntlet_dir <ledger-path> — 0 when the ledger's parent directory
+# is named `.gauntlet`. The only shape `gc_ledger_path` ever produces; any other
+# parent means the caller pointed --ledger somewhere this script does not own,
+# so nothing beside the ledger may be deleted.
+ledger_in_gauntlet_dir() {
+	local parent
+	parent="$(dirname "$1")"
+	[[ "${parent##*/}" == ".gauntlet" ]]
+}
+
+# run_dir_is_rounds_only <dir> — 0 when <dir> is a directory whose every entry
+# (dotfiles included) is named `round-*`, i.e. it has the shape --run-dir and
+# the orchestrator's per-round `mkdir -p` create, and nothing else.
+run_dir_is_rounds_only() {
+	local dir="$1" entry restore
+	local -a entries=()
+	[[ -d "$dir" ]] || return 1
+	restore="$(shopt -p nullglob dotglob || true)"
+	shopt -s nullglob dotglob
+	entries=("$dir"/*)
+	eval "$restore"
+	for entry in ${entries[@]+"${entries[@]}"}; do
+		[[ "${entry##*/}" == round-* ]] || return 1
+	done
+	return 0
+}
+
+# clear_stale_run_dir <ledger-path> — remove a prior run's artifacts beside the
+# ledger: the round dir `<ledger-stem>/` and the report `<ledger-stem>.report.html`.
+# Called only when a fresh ledger is about to be written (i.e. any existing
+# round dir is stale by construction), and only AFTER the ledger path itself
+# passed every guard.
+#
+# Deletes nothing unless the ledger's parent directory is named `.gauntlet`
+# (otherwise `--ledger docs/plan.json` would delete `docs/plan/`). The round
+# dir is removed only when it contains nothing but `round-*` entries; any other
+# shape is left in place with a warning. A symlinked round dir is refused under
+# the state-path guard (exit 1, nothing removed). The report is removed only
+# when the guard accepts it and it is a regular file; otherwise it is left in
+# place with a warning.
 clear_stale_run_dir() {
-	local run_dir
+	local run_dir report
 	run_dir="$(ledger_run_dir "$1")" || return 0
-	[[ -e "$run_dir" || -L "$run_dir" ]] || return 0
-	if ! ledger_assert_no_symlink "$run_dir"; then
+	ledger_in_gauntlet_dir "$1" || return 0
+	if [[ -e "$run_dir" || -L "$run_dir" ]]; then
+		if ! ledger_assert_no_symlink "$run_dir"; then
+			exit 1
+		fi
+		if run_dir_is_rounds_only "$run_dir"; then
+			rm -rf -- "$run_dir"
+		else
+			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of round-* entries only)" >&2
+		fi
+	fi
+	report="$run_dir.report.html"
+	if [[ -e "$report" || -L "$report" ]]; then
+		if ledger_assert_no_symlink "$report" && [[ -f "$report" ]]; then
+			rm -f -- "$report"
+		else
+			echo "convergence-ledger: warning: leaving $report in place (not a regular file)" >&2
+		fi
+	fi
+}
+
+# assert_fresh_ledger_path <ledger-path> — every guard write_fresh_ledger runs,
+# hoisted so --init can run them BEFORE clear_stale_run_dir deletes anything:
+# a refused init must leave the prior run's round files intact.
+assert_fresh_ledger_path() {
+	if ! ledger_assert_no_symlink "$(dirname "$1")"; then
 		exit 1
 	fi
-	rm -rf -- "$run_dir"
+	if ! ledger_assert_no_symlink "$1"; then
+		exit 1
+	fi
 }
 
 write_fresh_ledger() {
@@ -586,12 +651,7 @@ write_fresh_ledger() {
 	local tmp
 	# Guard BEFORE mkdir -p: mkdir follows a symlinked component, so the
 	# check has to happen while there is still nothing to create.
-	if ! ledger_assert_no_symlink "$(dirname "$ledger_path")"; then
-		exit 1
-	fi
-	if ! ledger_assert_no_symlink "$ledger_path"; then
-		exit 1
-	fi
+	assert_fresh_ledger_path "$ledger_path"
 	mkdir -p "$(dirname "$ledger_path")"
 	# In-directory template, not a bare `mktemp`: the atomicity this write
 	# path asserts comes from `mv` being a same-filesystem rename(2). A bare
@@ -788,6 +848,8 @@ init)
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
 		exit 6
 	fi
+	# Guards first, then clear, then write: a refused init deletes nothing.
+	assert_fresh_ledger_path "$LEDGER_PATH"
 	clear_stale_run_dir "$LEDGER_PATH"
 	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
 	;;
