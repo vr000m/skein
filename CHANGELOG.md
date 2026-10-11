@@ -4,6 +4,14 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- Opt-in `--report` for `review-gauntlet` and `deep-review`: writes a throwaway, self-contained HTML report (inline CSS, no script) through the bundled `render-report.py` and `report-hook.sh`. Claude and Codex mirrors only; the Pi package does not ship them. A failing report never changes a run's outcome.
+- `convergence-ledger.sh --run-dir` derives the per-run round directory from the ledger path and guards it; `--init` clears only stale `<stem>/` round directories under `.gauntlet/`.
+- Plain-prose rule (short sentences, active voice, one term per concept, no filler) for review findings and summaries in `review-gauntlet`, `deep-review` and `review-plan`, on both mirrors.
+
+### Changed
+- `show-me` triggers now cover review findings, gauntlet convergence and conduct phase progress.
+
 ## [0.9.2] - 2026-10-04
 
 ### Fixed
