@@ -171,6 +171,18 @@ For each finding return:
 
 If the reviewed logic is sound, say so concisely.
 
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
+
 ### Security Lens
 
 Look for:
@@ -192,6 +204,18 @@ For each finding return:
 - `suggestion`
 
 If no security issues are present, say so concisely.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 
 ### Spec Compliance Lens
 
@@ -215,6 +239,18 @@ For each finding return:
 
 If the diff complies with the referenced specs, say so concisely.
 
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
+
 ### Architecture Lens
 
 Look for:
@@ -236,6 +272,18 @@ For each finding return:
 
 If the architecture is sound, say so concisely.
 
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
+
 ### Documentation Lens
 
 Look for:
@@ -256,6 +304,18 @@ For each finding return:
 - `suggestion`
 
 If the documentation is up to date, say so concisely.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+## Plain-Prose Rule
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+<!-- END PROSE RULE BLOCK A -->
 
 ## Orchestration
 
@@ -644,6 +704,12 @@ The `Reconciliation:` summary line is always rendered (zeros for empty input). T
 `scripts/render-reconciled-report.sh` is a shared reference renderer for both `deep-review` and `review-plan` that encodes these rendering rules and is exercised by `tests/reconciliation/test-renderer.sh`. It is a repo-only reference implementation — deliberately **not** bundled into the installed skill (see `scripts/lib/bundle-map.sh`); the running review renders by hand from the `## Output` template, so its absence under `"$SKILL_DIR"/scripts/` is expected, not a broken install.
 
 If the review is clean, say so concisely and note any residual risks or lenses that were skipped.
+
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+<!-- END PROSE RULE BLOCK B -->
 
 Continuation report format, incremental re-review mode only:
 

@@ -232,6 +232,12 @@ After the fixer batch returns:
 
 Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine, regressed-key, or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
 
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+<!-- END PROSE RULE BLOCK B -->
+
 ### Resume Decision Table
 
 `--resume` branches on `convergence-ledger.sh --last-decision`'s exit code first, then uses the printed token only inside the non-terminal branch:
