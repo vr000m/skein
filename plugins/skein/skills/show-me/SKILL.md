@@ -18,7 +18,7 @@ Prefer a diagram, sketch, or artifact over prose when one communicates the point
 - Explaining what changed in code, config, or control flow → **diff**
 - Explaining a complex layout, comparison, or concept prose can't carry → **HTML artifact**
 <!-- BEGIN SHOW-ME REVIEW TRIGGERS -->
-- Presenting review findings (from `review-gauntlet` or `deep-review`) → **HTML report** via the `--report` flag of `review-gauntlet` or `deep-review`, not a long prose list
+- Presenting review findings → when a review is being run and its `--report` flag is available (`review-gauntlet`, `deep-review`), pass `--report` for an **HTML report**; for findings that already exist (including `/code-review` or `/security-review` output), build the **HTML artifact** view directly with show-me instead of rerunning a review; not a long prose list
 - Showing gauntlet convergence across rounds → **HTML report** via the `--report` flag of `review-gauntlet`
 - Showing conduct phase progress → a plain **mermaid** diagram or **table**; no report flag is needed
 <!-- END SHOW-ME REVIEW TRIGGERS -->
@@ -42,5 +42,5 @@ When none of these fit better than a sentence or two, just write the sentence. N
 
 - **PR descriptions** (`skein:update-docs`, or manual `gh pr edit`/`gh pr create`): when summarizing a branch's changes, consider a mermaid diagram (data/control flow that changed) or a file tree (which files own which responsibility) or a diff snippet instead of prose-only summary. Stay within the markdown-safe formats above — no HTML artifacts in a PR body.
 - **`skein:plan-view`** already does this at the corpus/single-plan level with its own constrained widget toolkit (state machines, compare views, timelines) gated on source-sha caching — don't route through `show-me` for plan-view's `--rich` output; that toolkit's determinism-up-to-LLM-variance contract is deliberate and separate from this skill's freeform judgment call.
-- **Review findings and gauntlet convergence** (`review-gauntlet`, `deep-review`): point the user at the `--report` flag of those skills for an HTML report instead of hand-building one. `conduct` does not forward `--report` through its auto-chain, so invoke the gauntlet directly. `conduct` phase progress stays a plain mermaid diagram or table.
+- **Review findings and gauntlet convergence** (`review-gauntlet`, `deep-review`): when one of those reviews is about to run, pass its `--report` flag for an HTML report. For findings already in hand (including `/code-review` or `/security-review` output), build the HTML artifact view directly; do not rerun a review just to get a report. `conduct` does not forward `--report` through its auto-chain, so invoke the gauntlet directly. `conduct` phase progress stays a plain mermaid diagram or table.
 - **`skein:dev-plan`**: its `## Architecture & Call Flow` section (component graph, sequence diagram) is exactly the kind of visual this skill recommends — no need to invoke `show-me` separately when already following `dev-plan`'s own template.

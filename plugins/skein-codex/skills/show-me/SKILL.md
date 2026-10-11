@@ -18,7 +18,7 @@ Prefer a diagram, sketch, or artifact over prose when one communicates the point
 - Explaining what changed in code, config, or control flow → **diff**
 - Explaining a complex layout, comparison, or concept prose can't carry → **HTML artifact**
 <!-- BEGIN SHOW-ME REVIEW TRIGGERS -->
-- Presenting review findings (from `review-gauntlet` or `deep-review`) → **HTML report** via the `--report` flag of `review-gauntlet` or `deep-review`, not a long prose list
+- Presenting review findings → when a review is being run and its `--report` flag is available (`review-gauntlet`, `deep-review`), pass `--report` for an **HTML report**; for findings that already exist (including `/code-review` or `/security-review` output), build the **HTML artifact** view directly with show-me instead of rerunning a review; not a long prose list
 - Showing gauntlet convergence across rounds → **HTML report** via the `--report` flag of `review-gauntlet`
 - Showing conduct phase progress → a plain **mermaid** diagram or **table**; no report flag is needed
 <!-- END SHOW-ME REVIEW TRIGGERS -->

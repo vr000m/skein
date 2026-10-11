@@ -73,6 +73,8 @@ in_block "names review-gauntlet" 'review-gauntlet'
 in_block "names deep-review" 'deep-review'
 in_block "conduct progress mentions mermaid" 'mermaid'
 in_block "conduct progress mentions table" 'table'
+in_block "existing findings (incl. /code-review, /security-review) get a direct show-me view" 'already exist.*/code-review.*/security-review.*directly with show-me'
+in_block "existing findings do not trigger a review rerun" 'instead of rerunning a review'
 
 # Around the block: plan-view deferral preserved, no report file path given.
 rc=0
