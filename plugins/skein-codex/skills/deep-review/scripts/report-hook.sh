@@ -8,23 +8,32 @@
 # failure never changes a run's terminal token or exit code. The hook never
 # calls gh, never writes ledger or state files, and writes only the report
 # (through the renderer) plus a scratch diff-stat file under mktemp that it
-# removes on every exit path.
+# removes on every exit path. With --cleanup it also deletes the scratch
+# --envelope and --suppress-keys files it was handed, on every exit path.
 #
 # Usage:
 #   report-hook.sh --root <dir> --out <file>
 #       [--ledger <path>] [--round N=<envelope>]... [--envelope <path>]
-#       [--suppress-keys <file>] [--base <oid> --head <oid>]
+#       [--suppress-keys <file>] [--base <oid> --head <oid>] [--cleanup]
 #
 #   --root/--out    repo root and the report path. --out must sit directly
 #                   under <root>/.gauntlet or <root>/.deep-review.
 #   --base/--head   diff scope as two commit ids. With neither (or only one),
 #                   the report renders "diff scope unavailable".
+#   --cleanup       after rendering, whatever the outcome (success, guard
+#                   refusal, renderer failure, bad arguments), delete the
+#                   --envelope and --suppress-keys files. Each is deleted only
+#                   when it is a regular, non-symlink file named
+#                   `skein-report-*` directly inside the system temp dir
+#                   (`${TMPDIR:-/tmp}`) with no `..` in its path; anything
+#                   else is left in place with a warning. This lets skill
+#                   prose drop scratch files without an `rm` of its own.
 #   other flags     passed to render-report.py unchanged.
 #
 # stdout: `report written: <out>` on success; nothing otherwise.
 # stderr: `report-hook: warning: ...` lines.
 #
-# Environment overrides (for tests):
+# Environment overrides (for tests; ignored unless SKEIN_REPORT_TEST=1):
 #   SKEIN_REPORT_RENDERER  path to an executable that replaces render-report.py
 #   SKEIN_REPORT_NOW       fixed timestamp for the diff-stat header and report
 #
@@ -42,17 +51,30 @@ set -uo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIFF_TMP=""
+CLEANUP=0
+CLEANUP_PATHS=()
 
-# shellcheck disable=SC2329  # invoked indirectly through the EXIT trap
-cleanup() {
-	[[ -n "$DIFF_TMP" ]] && rm -f "$DIFF_TMP"
-	exit 0
-}
-trap cleanup EXIT
+# Test-only overrides are honoured only under SKEIN_REPORT_TEST=1, so a stray
+# environment variable can never swap the renderer or pin the timestamp.
+TEST_MODE=0
+[[ "${SKEIN_REPORT_TEST:-}" == "1" ]] && TEST_MODE=1
 
 warn() {
 	printf 'report-hook: warning: %s\n' "$*" >&2
 }
+
+# shellcheck disable=SC2329  # invoked indirectly through the EXIT trap
+cleanup() {
+	[[ -n "$DIFF_TMP" ]] && rm -f "$DIFF_TMP"
+	if [[ "$CLEANUP" -eq 1 ]]; then
+		local p
+		for p in ${CLEANUP_PATHS[@]+"${CLEANUP_PATHS[@]}"}; do
+			cleanup_scratch "$p"
+		done
+	fi
+	exit 0
+}
+trap cleanup EXIT
 
 # norm_path <path> — absolutise against $PWD (no symlink resolution), collapse
 # runs of `/`, and drop a trailing `/`.
@@ -69,6 +91,50 @@ has_dotdot() {
 	*/../*) return 0 ;;
 	*) return 1 ;;
 	esac
+}
+
+# cleanup_scratch <path> — delete one scratch input named by --cleanup, only
+# when it is a regular non-symlink `skein-report-*` file directly inside the
+# system temp dir. Anything else is left in place with a warning.
+# shellcheck disable=SC2329  # invoked indirectly through cleanup (EXIT trap)
+cleanup_scratch() {
+	local p="$1" p_n tmp_n
+	[[ -n "$p" ]] || return 0
+	tmp_n="$(norm_path "${TMPDIR:-/tmp}")"
+	p_n="$(norm_path "$p")"
+	if has_dotdot "$p" || [[ "${p_n%/*}" != "$tmp_n" || "${p_n##*/}" != skein-report-* ]]; then
+		warn "--cleanup: not deleting $p (only skein-report-* files directly in $tmp_n)"
+		return 0
+	fi
+	if [[ -L "$p_n" || ! -f "$p_n" ]]; then
+		[[ -e "$p_n" || -L "$p_n" ]] || return 0
+		warn "--cleanup: not deleting $p (not a regular file)"
+		return 0
+	fi
+	rm -f -- "$p_n" || warn "--cleanup: could not delete $p"
+}
+
+# prescan_cleanup <args...> — record --cleanup and the scratch inputs before
+# the real parse, so a parse that stops early still cleans up.
+prescan_cleanup() {
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--cleanup)
+			CLEANUP=1
+			shift
+			;;
+		--envelope | --suppress-keys)
+			[[ $# -ge 2 ]] || return 0
+			CLEANUP_PATHS+=("$2")
+			shift 2
+			;;
+		--root | --out | --base | --head | --ledger | --round)
+			[[ $# -ge 2 ]] || return 0
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
 }
 
 # first_layer_guard <root> <out> — 0 when the output path may be written.
@@ -110,7 +176,9 @@ first_layer_guard() {
 # mode=failed, so the report can say why the scope is unavailable.
 capture_diff_stat() {
 	local root="$1" base="$2" head="$3" now tmp_root mode="range"
-	now="${SKEIN_REPORT_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+	now=""
+	[[ "$TEST_MODE" -eq 1 ]] && now="${SKEIN_REPORT_NOW:-}"
+	[[ -n "$now" ]] || now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	tmp_root="${TMPDIR:-/tmp}"
 	if ! DIFF_TMP="$(mktemp "${tmp_root%/}/skein-report-diffstat.XXXXXX")"; then
 		DIFF_TMP=""
@@ -121,7 +189,7 @@ capture_diff_stat() {
 	if [[ ! "$base" =~ ^[0-9a-fA-F]{4,64}$ || ! "$head" =~ ^[0-9a-fA-F]{4,64}$ ]]; then
 		mode="failed"
 		warn "--base/--head must be commit ids; the report will say the diff scope is unavailable"
-	elif ! stat_out="$(git -C "$root" diff --stat "${base}...${head}" -- 2>/dev/null)"; then
+	elif ! stat_out="$(git -C "$root" diff --no-color --stat=200 "${base}...${head}" -- 2>/dev/null)"; then
 		mode="failed"
 		stat_out=""
 		warn "git diff --stat ${base}...${head} failed; the report will say the diff scope is unavailable"
@@ -136,9 +204,13 @@ main() {
 	local root="" out="" base="" head="" arg
 	local -a pass_args=()
 
+	prescan_cleanup "$@"
 	while [[ $# -gt 0 ]]; do
 		arg="$1"
 		case "$arg" in
+		--cleanup)
+			shift
+			;;
 		--root | --out | --base | --head | --ledger | --round | --envelope | --suppress-keys)
 			if [[ $# -lt 2 ]]; then
 				warn "$arg needs a value; skipping the report"
@@ -179,7 +251,7 @@ main() {
 	fi
 
 	local rc=0
-	if [[ -n "${SKEIN_REPORT_RENDERER:-}" ]]; then
+	if [[ "$TEST_MODE" -eq 1 && -n "${SKEIN_REPORT_RENDERER:-}" ]]; then
 		"$SKEIN_REPORT_RENDERER" ${pass_args[@]+"${pass_args[@]}"} --root "$root" --out "$out" || rc=$?
 	else
 		python3 "$HOOK_DIR/render-report.py" ${pass_args[@]+"${pass_args[@]}"} --root "$root" --out "$out" || rc=$?

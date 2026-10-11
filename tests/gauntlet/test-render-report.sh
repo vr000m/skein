@@ -150,6 +150,39 @@ assert_has "$OUT" 'as reviewed; suppressed and auto-fixed findings omitted' "env
 run_r --envelope "$FIX/envelope-round1.json" --root "$R" --out "$OUT"
 assert_lacks "$OUT" 'id="sev-other"' "Other section absent when no finding needs it"
 
+echo "== renderer: severity aliases (case-insensitive) =="
+ALIAS_ENV="$SANDBOX/envelope-aliases.json"
+cat >"$ALIAS_ENV" <<'JSON'
+{"schema_version":2,"findings":[
+{"severity":"high","category":"c","file":"h.py","line":1,"summary":"ALIAS-HIGH"},
+{"severity":"CRITICAL","category":"c","file":"h.py","line":2,"summary":"ALIAS-CRIT-UPPER"},
+{"severity":"Medium","category":"c","file":"h.py","line":3,"summary":"ALIAS-MEDIUM"},
+{"severity":"important","category":"c","file":"h.py","line":4,"summary":"ALIAS-IMPORTANT-LOWER"},
+{"severity":"LOW","category":"c","file":"h.py","line":5,"summary":"ALIAS-LOW"},
+{"severity":"minor","category":"c","file":"h.py","line":6,"summary":"ALIAS-MINOR-LOWER"},
+{"severity":"severe","category":"c","file":"h.py","line":7,"summary":"ALIAS-UNKNOWN"}
+]}
+JSON
+run_r --envelope "$ALIAS_ENV" --root "$R" --out "$OUT"
+assert_eq "$RC" "0" "alias envelope renders"
+# section_of SUMMARY — the severity section id that contains SUMMARY.
+section_of() {
+	python3 - "$OUT" "$1" <<'PY'
+import re, sys
+page = open(sys.argv[1], encoding="utf-8").read()
+for sec in re.findall(r'<section class="sev-[A-Za-z]+" id="(sev-[a-z]+)">(.*?)</section>', page, re.S):
+    if sys.argv[2] in sec[1]:
+        print(sec[0])
+PY
+}
+assert_eq "$(section_of ALIAS-HIGH)" "sev-critical" "high maps to Critical"
+assert_eq "$(section_of ALIAS-CRIT-UPPER)" "sev-critical" "CRITICAL (any case) maps to Critical"
+assert_eq "$(section_of ALIAS-MEDIUM)" "sev-important" "Medium maps to Important"
+assert_eq "$(section_of ALIAS-IMPORTANT-LOWER)" "sev-important" "important (lowercase) maps to Important"
+assert_eq "$(section_of ALIAS-LOW)" "sev-minor" "LOW maps to Minor"
+assert_eq "$(section_of ALIAS-MINOR-LOWER)" "sev-minor" "minor (lowercase) maps to Minor"
+assert_eq "$(section_of ALIAS-UNKNOWN)" "sev-other" "an unknown severity stays Other"
+
 echo "== renderer: empty findings =="
 run_r --envelope "$FIX/envelope-empty.json" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "findings: [] exits 0"
@@ -227,10 +260,26 @@ run_r --ledger "$FIX/ledger.json" --round "2=$FIX/envelope-round2.json" \
 	--round "3=$SANDBOX/missing-r3.json" --round "1=$FIX/envelope-round1.json" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "missing round envelope is not an error"
 assert_has "$OUT" 'round 3: envelope missing' "missing round is marked"
-assert_has "$OUT" 'ROUND-TWO-ONLY' "severity section shows the highest PRESENT round"
-assert_lacks "$OUT" 'ROUND-ONE-ONLY' "earlier round findings are not rendered"
-assert_has "$OUT" 'Round 2 (latest round with an envelope)' "the rendered round is named"
+assert_has "$OUT" 'round 3: envelope missing — findings unavailable' "highest round missing: findings section says unavailable"
+assert_lacks "$OUT" 'ROUND-TWO-ONLY' "highest round missing: an older round's findings are not shown as current"
+assert_lacks "$OUT" 'ROUND-ONE-ONLY' "highest round missing: round 1 findings are not shown either"
+assert_lacks "$OUT" 'id="sev-' "highest round missing: no severity sections"
+assert_has "$OUT" '<table>' "highest round missing: the convergence table is kept"
 assert_has "$OUT" 'branch:fixture' "ledger target shown"
+
+rm -f "$OUT"
+run_r --ledger "$FIX/ledger.json" --round "2=$FIX/envelope-round2.json" --round "1=$FIX/envelope-round1.json" \
+	--root "$R" --out "$OUT"
+assert_has "$OUT" 'ROUND-TWO-ONLY' "severity section shows the highest round when its envelope is present"
+assert_lacks "$OUT" 'ROUND-ONE-ONLY' "earlier round findings are not rendered"
+assert_has "$OUT" 'Round 2 (latest round)' "the rendered round is named"
+
+# The ledger records 2 rounds but only round 1 is supplied: round 2 is the
+# highest ledger round, so its findings are unavailable (no fallback to 1).
+rm -f "$OUT"
+run_r --ledger "$FIX/ledger.json" --round "1=$FIX/envelope-round1.json" --root "$R" --out "$OUT"
+assert_has "$OUT" 'round 2: envelope missing — findings unavailable' "highest LEDGER round without an envelope is unavailable"
+assert_lacks "$OUT" 'ROUND-ONE-ONLY' "no fallback to round 1 when the ledger's highest round has no envelope"
 
 echo "== renderer: usage errors (exit 2) =="
 usage_case() {
@@ -256,14 +305,46 @@ usage_case "missing --root" --ledger "$FIX/ledger.json" --out "$OUT"
 
 echo "== renderer: suppress-keys =="
 KEYS="$SANDBOX/keys.tsv"
-printf 'a.py\t10\tlogic\nc.md\t\tdocs\nd.md\t\tdocs\n' >"$KEYS"
+printf 'a.py\t10\tlogic\nc.md\t\tdocs\tminor-null-line\nd.md\t\tdocs\tminor-neg-line\n' >"$KEYS"
 run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "suppress render exits 0"
-assert_lacks "$OUT" 'crit-one' "exact 3-field match drops the finding"
-assert_lacks "$OUT" 'minor-null-line' "empty line field matches a null line"
-assert_lacks "$OUT" 'minor-neg-line' "empty line field matches the -1 sentinel"
+assert_lacks "$OUT" 'crit-one' "exact 3-field match drops an anchored finding"
+assert_lacks "$OUT" 'minor-null-line' "empty line field (4-field key) matches a null line"
+assert_lacks "$OUT" 'minor-neg-line' "empty line field (4-field key) matches the -1 sentinel"
 assert_has "$OUT" 'imp-one' "unmatched finding kept"
 assert_has "$OUT" '3 finding(s) omitted.' "omitted count reported in envelope mode"
+
+printf 'c.md\t\tdocs\nd.md\t\tdocs\n' >"$KEYS"
+run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_has "$OUT" 'minor-null-line' "a legacy 3-field key never drops an unanchored (null-line) finding"
+assert_has "$OUT" 'minor-neg-line' "a legacy 3-field key never drops an unanchored (-1 line) finding"
+
+printf 'a.py\t10\tlogic\tcrit-one\nb.py\t20\tlogic\tnot-the-summary\n' >"$KEYS"
+run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'crit-one' "a 4-field key with a matching summary drops an anchored finding"
+assert_has "$OUT" 'imp-one' "a 4-field key with a different summary keeps an anchored finding"
+
+echo "== renderer: unanchored findings of one category are suppressed individually =="
+UNANCH_ENV="$SANDBOX/envelope-unanchored.json"
+cat >"$UNANCH_ENV" <<'JSON'
+{"schema_version":2,"findings":[
+{"severity":"Minor","category":"docs","file":"","line":null,"summary":"UNANCHORED-ONE"},
+{"severity":"Minor","category":"docs","file":"","line":null,"summary":"UNANCHORED-TWO\twith a tab"}
+]}
+JSON
+printf '\t\tdocs\tUNANCHORED-ONE\n' >"$KEYS"
+run_r --envelope "$UNANCH_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'UNANCHORED-ONE' "the keyed unanchored finding is dropped"
+assert_has "$OUT" 'UNANCHORED-TWO' "the other unanchored finding of the same category is kept"
+assert_has "$OUT" '1 finding(s) omitted.' "exactly one unanchored finding omitted"
+printf '\t\tdocs\tUNANCHORED-TWO with a tab\n' >"$KEYS"
+run_r --envelope "$UNANCH_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'UNANCHORED-TWO' "a summary tab is matched as one space"
+assert_has "$OUT" 'UNANCHORED-ONE' "only the keyed finding is dropped"
+printf '\t\tdocs\n' >"$KEYS"
+run_r --envelope "$UNANCH_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_has "$OUT" 'UNANCHORED-ONE' "an empty-file 3-field key does not match every unanchored finding (one)"
+assert_has "$OUT" 'UNANCHORED-TWO' "an empty-file 3-field key does not match every unanchored finding (two)"
 
 printf 'a.py\t11\tlogic\na.py\t10\tother\nb.py\t\tlogic\nbroken-no-tabs\nonly\ttwo\n' >"$KEYS"
 run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
@@ -340,10 +421,12 @@ assert_eq "$(find "$R2" -type f | wc -l | tr -d ' ')" "1" "exactly one file writ
 echo "== renderer: SKEIN_REPORT_NOW determinism =="
 A="$R2/.gauntlet/a.html"
 B="$R2/.gauntlet/b.html"
-SKEIN_REPORT_NOW="2026-02-03T04:05:06Z" python3 "$RENDERER" --ledger "$FIX/ledger.json" --root "$R2" --out "$A"
-SKEIN_REPORT_NOW="2026-02-03T04:05:06Z" python3 "$RENDERER" --ledger "$FIX/ledger.json" --root "$R2" --out "$B"
+SKEIN_REPORT_TEST=1 SKEIN_REPORT_NOW="2026-02-03T04:05:06Z" python3 "$RENDERER" --ledger "$FIX/ledger.json" --root "$R2" --out "$A"
+SKEIN_REPORT_TEST=1 SKEIN_REPORT_NOW="2026-02-03T04:05:06Z" python3 "$RENDERER" --ledger "$FIX/ledger.json" --root "$R2" --out "$B"
 assert_eq "$(hash_file "$A")" "$(hash_file "$B")" "same inputs and SKEIN_REPORT_NOW give byte-identical reports"
 assert_has "$A" '2026-02-03T04:05:06Z' "the fixed timestamp is rendered"
+SKEIN_REPORT_NOW="2026-02-03T04:05:06Z" python3 "$RENDERER" --ledger "$FIX/ledger.json" --root "$R2" --out "$A"
+assert_lacks "$A" '2026-02-03T04:05:06Z' "SKEIN_REPORT_NOW is ignored without SKEIN_REPORT_TEST=1"
 
 # ---------------------------------------------------------------- hook
 
@@ -463,6 +546,7 @@ printf '%s\n' "$@" >"${STUB_ARGS:?}"
 exit "${STUB_RC:-0}"
 EOF
 chmod +x "$STUB"
+export SKEIN_REPORT_TEST=1
 STUB_ARGS="$SANDBOX/stub-args.txt" SKEIN_REPORT_RENDERER="$STUB" run_h --root "$REPO" --out "$HOUT" \
 	--ledger "$FIX/ledger.json" --suppress-keys "$KEYS"
 assert_eq "$HRC" "0" "stub renderer: exit 0"
@@ -477,6 +561,18 @@ assert_has "$HERR" 'renderer failed (exit 7)' "stub failure: warning carries the
 assert_eq "$(cat "$HSTDOUT")" "" "stub failure: no 'report written' line"
 SKEIN_REPORT_RENDERER="$SANDBOX/not-an-executable" run_h --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json"
 assert_eq "$HRC" "0" "nonexistent renderer path: exit 0"
+unset SKEIN_REPORT_TEST
+: >"$SANDBOX/stub-args.txt"
+STUB_ARGS="$SANDBOX/stub-args.txt" SKEIN_REPORT_RENDERER="$STUB" run_h --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json"
+assert_eq "$(wc -c <"$SANDBOX/stub-args.txt" | tr -d ' ')" "0" "SKEIN_REPORT_RENDERER is ignored without SKEIN_REPORT_TEST=1"
+assert_has "$HOUT" '<!DOCTYPE html>' "without SKEIN_REPORT_TEST=1 the real renderer writes the report"
+TMPDIR="$SCRATCH_TMP" SKEIN_REPORT_NOW="2001-01-01T00:00:00Z" run_h --root "$REPO" --out "$HOUT" \
+	--ledger "$FIX/ledger.json" --base "$BASE" --head "$HEAD_OID"
+assert_lacks "$HOUT" '2001-01-01T00:00:00Z' "SKEIN_REPORT_NOW is ignored by the hook without SKEIN_REPORT_TEST=1"
+TMPDIR="$SCRATCH_TMP" SKEIN_REPORT_TEST=1 SKEIN_REPORT_NOW="2001-01-01T00:00:00Z" run_h --root "$REPO" --out "$HOUT" \
+	--ledger "$FIX/ledger.json" --base "$BASE" --head "$HEAD_OID"
+assert_has "$HOUT" 'time=2001-01-01T00:00:00Z' "SKEIN_REPORT_NOW pins the diff-stat header under SKEIN_REPORT_TEST=1"
+rm -f "$HOUT"
 
 echo "== hook: python3 absent =="
 NOPY="$(new_dir)"
@@ -521,6 +617,77 @@ mkdir -p "$NOGIT/.gauntlet"
 run_h --root "$NOGIT" --out "$NOGIT/.gauntlet/r.html" --ledger "$FIX/ledger.json" --base "$BASE" --head "$HEAD_OID"
 assert_eq "$HRC" "0" "non-git root: exit 0"
 assert_has "$NOGIT/.gauntlet/r.html" 'mode=failed' "non-git root: report still written, scope unavailable"
+
+echo "== hook: diff stat ignores color.ui=always =="
+git -C "$REPO" config color.ui always
+git -C "$REPO" config color.diff always
+TMPDIR="$SCRATCH_TMP" run_h --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json" --base "$BASE" --head "$HEAD_OID"
+assert_has "$HOUT" 'f.txt' "color.ui=always: diff stat still captured"
+if LC_ALL=C grep -q $'\x1b' "$HOUT"; then
+	fail "color.ui=always: ANSI escape leaked into the report"
+else
+	pass "color.ui=always: no ANSI escape in the report (--no-color)"
+fi
+assert_lacks "$HOUT" '[m' "color.ui=always: no escaped colour reset sequence in the report"
+git -C "$REPO" config --unset color.ui
+git -C "$REPO" config --unset color.diff
+
+echo "== hook: --cleanup deletes only its own scratch inputs =="
+CL_TMP="$(new_dir)"
+cl_env="$CL_TMP/skein-report-envelope.AAAAAA"
+cl_keys="$CL_TMP/skein-report-keys.BBBBBB"
+cl_seed() {
+	cp "$FIX/envelope-severities.json" "$cl_env"
+	printf 'a.py\t10\tlogic\n' >"$cl_keys"
+}
+cl_seed
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --envelope "$cl_env" --suppress-keys "$cl_keys" --cleanup
+assert_eq "$HRC" "0" "--cleanup success: exit 0"
+assert_has "$HSTDOUT" "report written: $DOUT" "--cleanup success: report written"
+assert_lacks "$DOUT" 'crit-one' "--cleanup: suppress keys were applied before deletion"
+if [[ ! -e "$cl_env" && ! -e "$cl_keys" ]]; then pass "--cleanup deletes envelope and keys after success"; else fail "--cleanup left scratch inputs after success"; fi
+cl_seed
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$REPO/elsewhere.html" --envelope "$cl_env" --suppress-keys "$cl_keys" --cleanup
+assert_eq "$HRC" "0" "--cleanup after a guard refusal: exit 0"
+if [[ ! -e "$cl_env" && ! -e "$cl_keys" ]]; then pass "--cleanup deletes scratch inputs after a guard refusal"; else fail "--cleanup left scratch inputs after a guard refusal"; fi
+cl_seed
+printf 'not json' >"$cl_env"
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --envelope "$cl_env" --suppress-keys "$cl_keys" --cleanup
+assert_has "$HERR" 'renderer failed' "--cleanup after a renderer failure: warning"
+if [[ ! -e "$cl_env" && ! -e "$cl_keys" ]]; then pass "--cleanup deletes scratch inputs after a renderer failure"; else fail "--cleanup left scratch inputs after a renderer failure"; fi
+cl_seed
+TMPDIR="$CL_TMP" run_h --envelope "$cl_env" --cleanup --suppress-keys "$cl_keys" --bogus
+assert_eq "$HRC" "0" "--cleanup with a bad argument: exit 0"
+if [[ ! -e "$cl_env" && ! -e "$cl_keys" ]]; then pass "--cleanup deletes scratch inputs even when argument parsing stops early"; else fail "--cleanup left scratch inputs after a bad argument"; fi
+cl_seed
+TMPDIR="$CL_TMP" run_h --suppress-keys "$cl_keys" --cleanup
+assert_eq "$HRC" "0" "--cleanup with only --suppress-keys (envelope-missing skip path): exit 0"
+if [[ ! -e "$cl_keys" ]]; then pass "--cleanup removes the keys file on the envelope-missing skip path"; else fail "--cleanup left the keys file on the skip path"; fi
+cl_seed
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --envelope "$cl_env" --suppress-keys "$cl_keys"
+if [[ -e "$cl_env" && -e "$cl_keys" ]]; then pass "without --cleanup the scratch inputs are kept"; else fail "scratch inputs deleted without --cleanup"; fi
+# Refusals: outside the temp dir, wrong name, nested, symlink, '..'.
+CL_OUT="$(new_dir)"
+printf 'keep\n' >"$CL_OUT/skein-report-keys.CCCCCC"
+cp "$FIX/envelope-severities.json" "$CL_TMP/envelope.json"
+mkdir -p "$CL_TMP/sub"
+printf 'keep\n' >"$CL_TMP/sub/skein-report-keys.DDDDDD"
+printf 'keep\n' >"$CL_OUT/target.txt"
+ln -s "$CL_OUT/target.txt" "$CL_TMP/skein-report-keys.LINK"
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --envelope "$CL_TMP/envelope.json" \
+	--suppress-keys "$CL_OUT/skein-report-keys.CCCCCC" --cleanup
+assert_eq "$HRC" "0" "--cleanup refusal: exit 0"
+assert_has "$HERR" '--cleanup: not deleting' "--cleanup refusal: warning"
+if [[ -f "$CL_OUT/skein-report-keys.CCCCCC" ]]; then pass "--cleanup refuses a file outside the temp dir"; else fail "--cleanup deleted a file outside the temp dir"; fi
+if [[ -f "$CL_TMP/envelope.json" ]]; then pass "--cleanup refuses a file not named skein-report-*"; else fail "--cleanup deleted a non-skein-report file"; fi
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --envelope "$cl_env" \
+	--suppress-keys "$CL_TMP/sub/skein-report-keys.DDDDDD" --cleanup
+if [[ -f "$CL_TMP/sub/skein-report-keys.DDDDDD" ]]; then pass "--cleanup refuses a file nested below the temp dir"; else fail "--cleanup deleted a nested file"; fi
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --suppress-keys "$CL_TMP/skein-report-keys.LINK" --envelope "$cl_env" --cleanup
+if [[ -L "$CL_TMP/skein-report-keys.LINK" && -f "$CL_OUT/target.txt" ]]; then pass "--cleanup refuses a symlink and leaves its target"; else fail "--cleanup removed a symlink or its target"; fi
+printf 'keep\n' >"$CL_TMP/skein-report-keys.EEEEEE"
+TMPDIR="$CL_TMP" run_h --root "$REPO" --out "$DOUT" --suppress-keys "$CL_TMP/sub/../skein-report-keys.EEEEEE" --envelope "$cl_env" --cleanup
+if [[ -f "$CL_TMP/skein-report-keys.EEEEEE" ]]; then pass "--cleanup refuses a path containing '..'"; else fail "--cleanup deleted through a '..' path"; fi
 
 echo "== hook: check-ignore warning =="
 NOIGN="$(new_dir)"

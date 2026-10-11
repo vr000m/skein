@@ -888,30 +888,33 @@ Runs only when `--report` was passed, after Step 5 (and therefore after both Ste
 
 **Shell state does not span Bash tool calls.** `$report_envelope` and `$report_keys` below stand for the literal paths `mktemp` printed (the envelope path was noted in Step 3.5; note the keys path when you create it). Substitute those literal paths in every later call, and set `REPO_ROOT="$(git rev-parse --show-toplevel)"`, `BASE_COMMIT` and `HEAD_COMMIT` (literal values from Step 0) in the same call as the hook. An empty variable makes the hook skip the report with a warning rather than fail loudly.
 
-1. **Build the suppress-keys file.** Create a second scratch file with `mktemp`, outside `.deep-review/`: `report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"`. Write one key per line, `file<TAB>line<TAB>category`, with an empty `line` field for a finding with no line (null, absent, or the reconciler's `-1`), and `file` spelled as in the audited envelope. Include a key for (a) each finding that Step 4 suppression dropped, and (b) each finding an applied auto-fix fixed, when `--auto-fix=trivial` ran. For (b), read the manifest the applier reported (`apply-auto-fix-code: manifest written to <path>` on stderr; `.deep-review/auto-fix-<unix>-<pid>.json`, a JSON array of `{kind, file, line, status, commit_sha, before_sha}`) and take every entry whose `status` is `applied`. The manifest has no category, so take it from the audited envelope's finding with the same `file` and `line` that carried an `auto_fix` block:
+1. **Build the suppress-keys file.** Create a second scratch file with `mktemp`, outside `.deep-review/`: `report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"`. Write one key per line, `file<TAB>line<TAB>category`, with an empty `line` field for a finding with no line (null, absent, or the reconciler's `-1`), and `file` spelled as in the audited envelope. For an **unanchored** finding (empty `file` or empty `line`), append a fourth field, `file<TAB>line<TAB>category<TAB>summary`: the finding's `summary` (else `finding`) copied verbatim, with each tab, CR and LF replaced by one space. A 3-field key never drops an unanchored finding, so without the summary one key would otherwise cover every unanchored finding of that category. Include a key for (a) each finding that Step 4 suppression dropped, and (b) each finding an applied auto-fix fixed, when `--auto-fix=trivial` ran. For (b), read the manifest the applier reported (`apply-auto-fix-code: manifest written to <path>` on stderr; `.deep-review/auto-fix-<unix>-<pid>.json`, a JSON array of `{kind, file, line, status, commit_sha, before_sha}`) and take every entry whose `status` is `applied`. The manifest has no category, so take it from the audited envelope's finding with the same `file` and `line` that carried an `auto_fix` block:
 
    ```
    jq -r --slurpfile env "$report_envelope" '
      .[] | select(.status == "applied") as $m
      | $env[0].findings[] | select(has("auto_fix") and .file == $m.file and (.line | tostring) == ($m.line | tostring))
-     | [.file, (if .line == null or .line == -1 then "" else (.line | tostring) end), .category] | join("\t")
+     | (if .line == null or .line == -1 then "" else (.line | tostring) end) as $ln
+     | [(.file // ""), $ln, .category]
+       + (if (.file // "") == "" or $ln == "" then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
+     | join("\t")
    ' "<manifest path>" >> "$report_keys"
    ```
 
-   The renderer drops a finding only when all three fields match exactly. It is a filter, never a dedup.
-2. **Call the bundled hook once**, passing both scratch files by path. `--base`/`--head` are the `BASE_COMMIT`/`HEAD_COMMIT` already resolved in Step 0 and persisted as `base_commit`/`head_commit`; omit both if they are unknown (the report then says the diff scope is unavailable). The output is the latest-run view for this harness, like `latest-claude.json`:
+   The renderer drops an anchored finding when all three fields match exactly, and an unanchored finding only when all four fields match. It is a filter, never a dedup.
+2. **Call the bundled hook once**, passing both scratch files by path, with `--cleanup`. `--base`/`--head` are the `BASE_COMMIT`/`HEAD_COMMIT` already resolved in Step 0 and persisted as `base_commit`/`head_commit`; omit both if they are unknown (the report then says the diff scope is unavailable). The output is the latest-run view for this harness, like `latest-claude.json`:
 
    ```
    "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/report-hook.sh \
      --root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-claude.html" \
      --envelope "$report_envelope" --suppress-keys "$report_keys" \
-     --base "$BASE_COMMIT" --head "$HEAD_COMMIT"
+     --base "$BASE_COMMIT" --head "$HEAD_COMMIT" --cleanup
    ```
 
-3. **Delete both scratch files right after the hook returns, success or failure**: `rm -f "$report_envelope" "$report_keys"`. Shell state does not span Bash tool calls, so no `trap` can own them; this prose step does.
+3. **`--cleanup` deletes both scratch files when the hook returns, success or failure.** The hook removes its own `--envelope` and `--suppress-keys` inputs on every exit path, and only `skein-report-*` regular files directly inside the system temp dir; anything else stays with a warning. Shell state does not span Bash tool calls, so no `trap` in this prose can own them; the hook does. This skill's prose runs no `rm` of its own.
 4. Relay the hook's `report written: <path>` line and any `report-hook: warning:` lines. The report is labelled "as reviewed; suppressed and auto-fixed findings omitted". The hook always exits 0: a guard refusal, a missing `python3`, a failing `git` or a failing renderer each warn and skip the report. None of them changes the findings, the Step 5 output, or the exit status.
 
-If `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/report-hook.sh` is absent, or no audited envelope file was captured (a run that did not reach Step 3.5), warn and skip the report, then still delete any scratch file created. Never abort the review for a report problem.
+If `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/report-hook.sh` is absent, or no audited envelope file was captured (a run that did not reach Step 3.5), warn and skip the report, then still delete any scratch file created: when the hook is present but the envelope is missing, call it with `--cleanup` and only `--suppress-keys "$report_keys"` (it skips the render and removes the file); when the hook itself is absent, name the scratch paths in the warning so the user can remove them. Never abort the review for a report problem.
 
 ## Deep Review Rules
 

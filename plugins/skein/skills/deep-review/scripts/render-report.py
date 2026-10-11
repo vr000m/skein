@@ -17,19 +17,34 @@ Inputs:
   --round N=PATH  the reconciled envelope of gauntlet round N (repeatable). A
                   PATH that does not exist renders as "round N: envelope
                   missing". Flag order is irrelevant; a duplicate N is a usage
-                  error. The severity section renders the highest-numbered
-                  PRESENT round only; earlier rounds feed the convergence rows.
+                  error. The severity section renders the highest round
+                  (the larger of the ledger's round count and the highest N)
+                  only. When that round's envelope is missing the section says
+                  "round N: envelope missing \u2014 findings unavailable" rather than
+                  showing an older round's findings as current; earlier rounds
+                  feed the convergence rows.
   --envelope      one reconciler v2 envelope (deep-review). Mutually exclusive
                   with --round.
-  --suppress-keys one key per line, `file<TAB>line<TAB>category`, empty line
-                  for a null line. A finding is dropped only when all three
-                  fields match exactly. A missing file means no filtering.
+  --suppress-keys one key per line, `file<TAB>line<TAB>category` for an
+                  anchored finding (non-empty file and line), or
+                  `file<TAB>line<TAB>category<TAB>summary` for an unanchored
+                  one (empty file and/or empty line; empty line for null, absent
+                  or -1). `summary` is the finding's `summary` (else `finding`)
+                  with each tab, CR and LF replaced by one space. An anchored
+                  finding is dropped by a matching 3-field key, or a matching
+                  4-field key whose summary also matches; an unanchored finding
+                  only by a 4-field key matching all four fields, so one key
+                  never drops every unanchored finding of a category. A
+                  missing file means no filtering.
   --diff-stat     file written by report-hook.sh: an optional header line
                   `# diff-stat mode=<range|failed> ...` followed by
                   `git diff --stat` text. An absent flag renders "diff scope
                   unavailable". A given-but-unreadable path is a failure.
   --root, --out   output containment: --out must sit inside --root, with no
                   `..` and no symlink component below --root.
+
+Environment (tests only): SKEIN_REPORT_NOW fixes the "generated" timestamp,
+and is honoured only when SKEIN_REPORT_TEST=1 is also set.
 
 Exit codes:
   0  report written
@@ -58,6 +73,15 @@ from datetime import datetime, timezone
 PROG = "render-report"
 SEVERITIES = ("Critical", "Important", "Minor")
 OTHER = "Other"
+# Case-insensitive severity aliases; anything else lands in Other.
+SEVERITY_ALIASES = {
+    "critical": "Critical",
+    "high": "Critical",
+    "important": "Important",
+    "medium": "Important",
+    "minor": "Minor",
+    "low": "Minor",
+}
 EXPECTED_SCHEMA = 2
 SUPPRESSED_LABEL = "as reviewed; suppressed and auto-fixed findings omitted"
 
@@ -144,6 +168,15 @@ def norm_line(value: object) -> str:
     return "" if number == -1 else str(number)
 
 
+def norm_summary(value: object) -> str:
+    """Summary as it appears in a suppress key: tab/CR/LF each become a space."""
+    return re.sub(r"[\t\r\n]", " ", str(value or ""))
+
+
+def finding_summary(finding: dict) -> str:
+    return norm_summary(finding.get("summary") or finding.get("finding") or "")
+
+
 def finding_tuple(finding: dict) -> tuple[str, str, str]:
     return (
         str(finding.get("file") or ""),
@@ -152,7 +185,16 @@ def finding_tuple(finding: dict) -> tuple[str, str, str]:
     )
 
 
-def load_suppress_keys(path: str | None) -> set[tuple[str, str, str]]:
+def is_suppressed(finding: dict, suppress: set[tuple[str, ...]]) -> bool:
+    """True when a suppress key drops this finding (see --suppress-keys)."""
+    base = finding_tuple(finding)
+    if (*base, finding_summary(finding)) in suppress:
+        return True
+    anchored = bool(base[0]) and bool(base[1])
+    return anchored and base in suppress
+
+
+def load_suppress_keys(path: str | None) -> set[tuple[str, ...]]:
     if not path or not os.path.exists(path):
         return set()
     try:
@@ -160,15 +202,15 @@ def load_suppress_keys(path: str | None) -> set[tuple[str, str, str]]:
             lines = fh.read().splitlines()
     except (OSError, UnicodeDecodeError) as exc:
         raise Failure(f"suppress-keys unreadable: {path} ({exc})") from None
-    keys: set[tuple[str, str, str]] = set()
+    keys: set[tuple[str, ...]] = set()
     for line in lines:
         if not line.strip():
             continue
-        parts = line.split("\t", 2)
-        if len(parts) != 3:
+        parts = line.split("\t", 3)
+        if len(parts) < 3:
             continue
-        file_part, line_part, category = parts
-        keys.add((file_part, "" if line_part == "-1" else line_part, category))
+        parts[1] = "" if parts[1] == "-1" else parts[1]
+        keys.add(tuple(parts))
     return keys
 
 
@@ -264,16 +306,18 @@ def bucket_findings(findings: list) -> dict[str, list[dict]]:
         if not isinstance(finding, dict):
             continue
         severity = finding.get("severity")
-        key = severity if severity in SEVERITIES else OTHER
+        key = OTHER
+        if isinstance(severity, str):
+            key = SEVERITY_ALIASES.get(severity.strip().lower(), OTHER)
         buckets[key].append(finding)
     return buckets
 
 
 def render_severity(
-    envelope: dict, suppress: set[tuple[str, str, str]], label_suppressed: bool
+    envelope: dict, suppress: set[tuple[str, ...]], label_suppressed: bool
 ) -> tuple[str, int]:
     findings = [f for f in envelope["findings"] if isinstance(f, dict)]
-    kept = [f for f in findings if finding_tuple(f) not in suppress]
+    kept = [f for f in findings if not is_suppressed(f, suppress)]
     omitted = len(findings) - len(kept)
     buckets = bucket_findings(kept)
     parts = []
@@ -485,9 +529,10 @@ def run(argv: list[str]) -> int:
 
     # timezone.utc, not datetime.UTC: stock macOS python3 is 3.9
     now_utc = datetime.now(timezone.utc)  # noqa: UP017
-    generated = os.environ.get("SKEIN_REPORT_NOW") or now_utc.strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
-    )
+    fixed_now = ""
+    if os.environ.get("SKEIN_REPORT_TEST") == "1":
+        fixed_now = os.environ.get("SKEIN_REPORT_NOW", "")
+    generated = fixed_now or now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
     diff = load_diff_stat(args.diff_stat)
     suppress = load_suppress_keys(args.suppress_keys)
 
@@ -512,13 +557,20 @@ def run(argv: list[str]) -> int:
                 present.add(n)
         convergence_html = render_convergence(ledger, round_paths, present)
         severity_html, total = "", None
-        if envelopes:
-            top = max(envelopes)
-            severity_html, total = render_severity(envelopes[top], suppress, False)
-            severity_html = (
-                f'<p class="note">Round {top} (latest round with an envelope).</p>'
-                + severity_html
-            )
+        if round_paths:
+            # The highest round the run reached, by the ledger or by a flag.
+            top = max([len(ledger["rounds"]), *round_paths])
+            if top in envelopes:
+                severity_html, total = render_severity(envelopes[top], suppress, False)
+                severity_html = (
+                    f'<p class="note">Round {top} (latest round).</p>' + severity_html
+                )
+            else:
+                # Never fall back to an older round: its findings are not current.
+                severity_html = (
+                    f'<p class="note">round {top}: envelope missing \u2014 '
+                    "findings unavailable</p>"
+                )
         page = render_page(
             "review-gauntlet",
             generated,
