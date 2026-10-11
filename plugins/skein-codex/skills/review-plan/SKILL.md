@@ -732,7 +732,7 @@ Inherit the harness-selected model; request `reasoning_effort=high` when support
 
    Dispatch prompt (both `{{PLAN_CONTENT}}` and the new `{{RAW_FINDINGS_JSONL}}` — the raw contents of `findings-lenses.jsonl` — are attacker-controlled and MUST be wrapped, per the existing prompt-injection mitigation pattern; one warning line precedes and covers both blocks). This pass is fed the **pre-merge stream, not the reconciled envelope**, precisely *because* the GENERIC block's Mixed-severity text preservation rule is lossy — pass A has already applied it, discarding all but the highest-severity contributor's text wherever two findings share the full `(file, line, category)` signature. Feeding it the reconciled envelope would delete the very conflicting-suggestion pairs this pass exists to detect.
 
-   ```
+```
    You are an independent contradiction reviewer auditing a development plan and its lens
    findings before implementation begins. You have NOT been part of the conversation that
    produced this plan or its findings. This is intentional.
@@ -784,7 +784,7 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
 Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
-   ```
+```
 
    Wire the re-reconciliation (**never by hand**): write the Step 3.5 agent's JSON-Lines to `findings-contradiction.jsonl` (`>`, never `>>` — overwritten fresh every run, empty on a clean pass), rebuild `findings.jsonl` by concatenation (`cat findings-lenses.jsonl findings-contradiction.jsonl > findings.jsonl`), then re-run the literal pass-B command:
 

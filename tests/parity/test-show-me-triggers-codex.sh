@@ -59,6 +59,8 @@ in_block() { # in_block <description> <ERE>
 }
 
 in_block "review findings trigger" 'review finding'
+in_block "existing findings do not require rerunning review" 'already exist.*directly with show-me|instead of rerunning a review'
+in_block "existing findings include code/security review output" '/code-review|/security-review'
 in_block "gauntlet convergence trigger" 'gauntlet.*convergence|convergence.*gauntlet'
 in_block "conduct phase progress trigger" 'conduct.*phase progress|phase progress.*conduct'
 in_block "review findings names review-gauntlet and --report" 'review-gauntlet.*--report|--report.*review-gauntlet'

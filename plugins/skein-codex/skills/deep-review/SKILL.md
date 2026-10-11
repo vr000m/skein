@@ -773,11 +773,11 @@ Do not silently re-list prior findings as if they were freshly surfaced.
 Run this step after the normal Step 5 output only when `--report` was passed. Without the flag,
 do not create scratch files or call the hook.
 
-1. Create a scratch suppress-keys file outside `.deep-review/`. Add one `file<TAB>line<TAB>category`
-   tuple per finding suppressed in Step 4, using the audited envelope's exact values. Use an empty
-   line field for null, absent, or `-1` lines. Do not interpolate finding text into shell code; write
-   the tuple data as file content. The suppress-keys contract is one key per line with an empty
-   line field for null, absent, or `-1`.
+1. Create a scratch suppress-keys file outside `.deep-review/`. For an anchored finding (non-empty
+   `file` and line), add `file<TAB>line<TAB>category`. For an unanchored finding (empty `file` or
+   line), add `file<TAB>line<TAB>category<TAB>summary`, using the finding's `summary` (else
+   `finding`) with each tab, CR and LF replaced by one space. Use an empty line field for null,
+   absent, or `-1` lines. Do not interpolate finding text into shell code; write keys as file data.
 2. If Step 4.5 applied trivial fixes, append tuples for those fixes by joining the applier's
    `.deep-review/auto-fix-<unix>-<pid>.json` manifest to the audited envelope. The manifest is an
    array of `{kind, file, line, status, commit_sha, before_sha}` objects and has no category. For
@@ -790,29 +790,41 @@ do not create scratch files or call the hook.
    jq -r --slurpfile env "$report_envelope" '
      .[] | select(.status == "applied") as $m
      | $env[0].findings[] | select(has("auto_fix") and .file == $m.file and (.line | tostring) == ($m.line | tostring))
-     | [.file, (if .line == null or .line == -1 then "" else (.line | tostring) end), .category] | join("\t")
+     | (if .line == null or .line == -1 then "" else (.line | tostring) end) as $ln
+     | [(.file // ""), $ln, .category]
+       + (if (.file // "") == "" or $ln == "" then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
+     | join("\t")
    ' "<manifest path>" >> "$report_keys"
    ```
 
-   The renderer filters only exact `(file, line, category)` matches. This report represents the
-   findings as reviewed, with suppressed and applied-auto-fixed findings omitted.
-3. Call the bundled hook once with the audited envelope and suppress-keys file. Resolve the same
-   root, base and head used by this review; omit both commit flags if either is unavailable. Keep
-   this hook call and scratch-file cleanup in one shell call:
+   A 3-field key suppresses only an anchored finding. An unanchored finding is suppressed only
+   when all four fields match, so one missing-line key cannot hide every finding in a category.
+   This report omits suppressed and applied-auto-fixed findings after review.
+3. Call the bundled hook once with the audited envelope and suppress-keys file. Shell state does
+   not span calls: set `REPO_ROOT` and the literal base/head commit values from Step 0 in this same
+   call. If either commit value is unavailable, omit both flags. Pass `--cleanup`; the hook removes
+   its own validated scratch inputs on every exit path. Keep the call in one shell command:
 
    ```bash
+   report_envelope="<exact captured envelope path from Step 3.5>"
+   report_keys="<exact path printed by mktemp in the preceding step>"
    REPO_ROOT="$(git rev-parse --show-toplevel)"
-   "$SKILL_DIR"/scripts/report-hook.sh \
-     --root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-codex.html" \
-     --envelope "$report_envelope" --suppress-keys "$report_keys" \
-     --base "$BASE_COMMIT" --head "$HEAD_COMMIT"
+   BASE_COMMIT="<literal base commit from Step 0, or empty>"
+   HEAD_COMMIT="<literal head commit from Step 0, or empty>"
+   report_args=(--root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-codex.html"
+     --envelope "$report_envelope" --suppress-keys "$report_keys")
+   if [[ -n "$BASE_COMMIT" && -n "$HEAD_COMMIT" ]]; then
+     report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")
+   fi
+   report_args+=(--cleanup)
+   "$SKILL_DIR"/scripts/report-hook.sh "${report_args[@]}"
    ```
 
-4. Delete both scratch files immediately after the hook returns, regardless of success:
-   `rm -f "$report_envelope" "$report_keys"`. Bind the exact captured envelope path in this same
-   call. If the hook is absent, print a warning and run the same cleanup command. Keep hook
-   invocation and deletion in the same shell call; shell variables and traps do not persist across
-   calls.
+4. The hook deletes both scratch inputs when `--cleanup` is passed, including on renderer failure,
+   guard refusal, or argument errors. It only removes `skein-report-*` regular files directly in
+   the system temp directory; other paths remain with a warning. If the hook is absent, print a
+   warning and run `rm -f "$report_envelope" "$report_keys"` on the exact paths recorded from
+   `mktemp`.
 5. Relay `report written: <path>` and any `report-hook: warning:` lines. The hook always exits 0;
    guard refusal, missing Python, git failure, or renderer failure warns and skips the report without
    changing findings, normal output, or the run's exit status.

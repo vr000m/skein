@@ -104,6 +104,21 @@ awk '
 ' "${FILES[2]}" || rc=$?
 check "review-plan Block A reaches each dispatched prompt after Output" "$rc"
 
+# Block A is at column 0. Its surrounding fences must not be indented as list
+# content, or CommonMark can end the list item and split the prompt block.
+for f in "${FILES[@]}"; do
+	name="$(basename "$(dirname "$f")")"
+	out="$(awk '
+		/^[[:space:]]*```/ { last = $0; lastnr = NR; if (pend) { chk(); pend = 0 } }
+		/^<!-- BEGIN PROSE RULE BLOCK A -->$/ { if (match(last, /^   +```/)) print lastnr ": fence above Block A indented 3+" }
+		/^<!-- END PROSE RULE BLOCK A -->$/ { pend = 1 }
+		function chk() { if (match($0, /^   +```/)) print NR ": fence below Block A indented 3+" }
+	' "$f")"
+	rc=0
+	[ -z "$out" ] || rc=1
+	check "Block A fences in $name do not carry list-item indentation${out:+ ($out)}" "$rc"
+done
+
 # Blocks must carry the finding-key exemption and sit outside generic schema
 # blocks and inner schema fences (the outer prompt fences are expected).
 for tag in A B; do
@@ -137,6 +152,10 @@ GATE1='Write each finding in plain prose: short sentences, active voice, one ter
 rc=0
 grep -qF "$GATE1" "$GATE" || rc=1
 check "Codex gate-1 prompt contains plain-prose sentence" "$rc"
+GATE1_EXEMPT='Keep exact values (file, line, category, severity, summary text copied from source) unchanged.'
+rc=0
+grep -qF "$GATE1_EXEMPT" "$GATE" || rc=1
+check "Codex gate-1 prompt preserves exact machine-read values" "$rc"
 
 echo
 echo "Passed: $PASS  Failed: $FAIL"

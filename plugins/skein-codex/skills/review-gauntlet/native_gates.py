@@ -579,6 +579,7 @@ Do not edit files or delegate. Find actionable logic/security/regression defects
 Return one schema-shaped JSON object with gate codex-adversarial. Use approve only with zero findings,
 needs-attention with findings, or error when review cannot complete. Use Critical/Important/Minor severity.
 Write each finding in plain prose: short sentences, active voice, one term per concept, no filler.
+Keep exact values (file, line, category, severity, summary text copied from source) unchanged.
 Optional auto-fix proposals must contain kind, before, after, scope exactly; otherwise use null.
 """
             output = codex(

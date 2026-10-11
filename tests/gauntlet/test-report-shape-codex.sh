@@ -111,6 +111,7 @@ has "$DEEP" 'audit-auto-fix-eligibility.sh --skill deep-review <envelope> > "$re
 echo '== deep-review: suppression and applied-fix keys =='
 # shellcheck disable=SC2016
 has "$DEEP" 'report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"' 'suppression keys use scratch file'
+has "$DEEP" 'file<TAB>line<TAB>category<TAB>summary' 'unanchored findings use summary-specific suppress keys'
 has "$DEEP" 'status == "applied"' 'applied auto-fix entries are selected'
 # shellcheck disable=SC2016
 has "$DEEP" '.file == $m.file' 'applied entries join to envelope findings by file'
@@ -122,20 +123,29 @@ has "$DEEP" 'report_envelope' 'applied keys are joined against captured envelope
 # shellcheck disable=SC2016
 has "$DEEP" 'retain the `(file, line, category)` tuple for every finding suppressed here' 'suppressed findings retain exact tuple keys'
 # shellcheck disable=SC2016
-has "$DEEP" 'line field for null, absent, or `-1` lines' 'suppression tuples normalize absent line values'
+has "$DEEP" 'Use an empty line field for null,' 'suppression tuples normalize absent line values'
 has "$DEEP" 'Step 5.5 writes these tuples alongside applied auto-fix tuples to the scratch suppress-keys file.' 'suppressed keys are written beside applied keys'
 has "$DEEP" 'if .line == null or .line == -1 then ""' 'applied key tuples normalize null and sentinel lines'
+has "$DEEP" 'gsub("[\t\r\n]"; " ")' 'summary keys flatten tabs and line breaks'
 # shellcheck disable=SC2016
-has "$DEEP" 'The renderer filters only exact `(file, line, category)` matches.' 'report suppression filters exact tuple matches'
-has "$DEEP" 'suppressed and applied-auto-fixed findings omitted' 'report documents suppressed and applied findings'
+has "$DEEP" 'A 3-field key suppresses only an anchored finding.' 'legacy keys cannot suppress every unanchored finding'
+has "$DEEP" 'This report omits suppressed and applied-auto-fixed findings after review.' 'report documents suppressed and applied findings'
 # shellcheck disable=SC2016
 has "$DEEP" '--envelope "$report_envelope" --suppress-keys "$report_keys"' 'hook receives envelope and suppress keys'
+# shellcheck disable=SC2016 # intentionally checks the literal prompt text
+has "$DEEP" 'report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")' 'known report range is passed to hook'
+has "$DEEP" 'report_args+=(--cleanup)' 'safe cleanup is passed to hook'
+has "$DEEP" 'BASE_COMMIT="<literal base commit from Step 0, or empty>"' 'base commit is rebound in the report call'
+has "$DEEP" 'HEAD_COMMIT="<literal head commit from Step 0, or empty>"' 'head commit is rebound in the report call'
+has "$DEEP" 'report_envelope="<exact captured envelope path from Step 3.5>"' 'envelope path is rebound in the report call'
+has "$DEEP" 'report_keys="<exact path printed by mktemp in the preceding step>"' 'keys path is rebound in the report call'
 # shellcheck disable=SC2016
 assert_eq "$(count_re "$DEEP" '^[[:space:]]*"\$SKILL_DIR"/scripts/report-hook\.sh')" 1 'one deep-review hook invocation uses Codex anchor'
 # shellcheck disable=SC2016
-assert_eq "$(count_fixed "$DEEP" 'rm -f "$report_envelope" "$report_keys"')" 1 'both scratch files are removed'
-has "$DEEP" 'regardless of success' 'scratch cleanup covers hook success and failure'
-has "$DEEP" 'If the hook is absent, print a warning and run the same cleanup command.' 'warning path also cleans scratch files'
+assert_eq "$(count_fixed "$DEEP" 'rm -f "$report_envelope" "$report_keys"')" 1 'manual cleanup remains only for a missing hook'
+# shellcheck disable=SC2016 # intentionally checks the literal prompt text
+has "$DEEP" 'when `--cleanup` is passed' 'hook cleanup is opt-in'
+has "$DEEP" 'If the hook is absent, print a' 'warning path also cleans scratch files'
 # shellcheck disable=SC2016
 has "$DEEP" '--out "$REPO_ROOT/.deep-review/report-codex.html"' 'Codex report has its own latest-run path'
 lacks_re "$DEEP" '\$\{CLAUDE_PLUGIN_ROOT\}' 'Codex deep-review uses no Claude path anchor'
