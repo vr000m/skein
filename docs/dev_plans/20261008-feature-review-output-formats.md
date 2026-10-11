@@ -325,8 +325,8 @@ Context lifecycle:
 - [x] Phase 1: Claude plain-prose rule (R1) [Claude]
 - [x] Phase 2: Shared HTML report foundation and Claude integration (R2) [Claude]
 - [x] Phase 3: Claude show-me triggers (R3) [Claude]
-- [ ] Phase 4: Codex plain-prose implementation (R1) [Codex]
-- [ ] Phase 5: Codex HTML report integration (R2) [Codex]
+- [x] Phase 4: Codex plain-prose implementation (R1) [Codex]
+- [x] Phase 5: Codex HTML report integration (R2) [Codex]
 - [ ] Phase 6: Codex show-me triggers (R3) [Codex]
 
 ## Findings

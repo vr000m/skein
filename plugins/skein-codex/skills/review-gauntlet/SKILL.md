@@ -1,7 +1,7 @@
 ---
 name: review-gauntlet
 description: Chains the supported Codex review gates into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
-argument-hint: "[--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]"
+argument-hint: "[--resume] [--fresh] [--report] [--plan <path>] [<branch> | --pr <N>]"
 ---
 
 # Review Gauntlet: Codex Convergence Loop Across Review Gates
@@ -20,7 +20,7 @@ This skill is a **conductor** in the mold of `skein:conduct`, with Option A spli
 
 Three modes are opt-in; nothing here fires without an explicit trigger. `--resume` and `--fresh` modify only standalone/full loop startup; they do not make absent `Review Gates` markers run.
 
-1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source. `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
+1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--report] [--plan <path>] [<branch> | --pr <N>]`. Resolve the diff target the same way `deep-review` does: explicit branch/commit range, `--pr <N>` via `gh pr diff`, or the current branch against its merge base. `--plan <path>` supplies Guardrail 1's design-intent source. Without a plan, ambiguous design conflicts default to quarantine because there is no trusted design-intent source. `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek). `--report` is a rendering-mode modifier: it leaves gate selection, convergence decisions and default output unchanged, and opts into the [terminal report step](#terminal-report-step---report-only). The deep-review slot never receives `--report`; this gauntlet renders from its round envelopes.
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
@@ -67,6 +67,13 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 ```
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
+
+**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`; it is idempotent and never clears the directory. A guard refusal exits non-zero: stop before round 1 and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` clear a stale round directory under the same guard. For each round, set `round_n` from the ledger's `.rounds | length` plus one, so resume never overwrites a completed round:
+
+```bash
+run_dir="$("$SKILL_DIR"/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
+round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
+```
 
 **Auto-chain loop entry** (modes 2/3 — `conduct`/`fan-out` invoke this skill with no operator present to supply `--resume`/`--fresh`): never blind-`--init` first. A prior interrupted auto-chained run's ledger sitting at this target would make a bare `--init` refuse with exit 6, and there is no operator to answer "pass `--resume` or `--fresh`" — that would dead-end the auto-chain on every resume-after-interruption of a `full`-mode run. Instead, peek first, against the same target:
 
@@ -150,7 +157,7 @@ native_target_args=()
        --expected "$round_fingerprint" "${native_target_args[@]}"
    ```
    Only the adapter's locally validated final JSON reaches `gate_run_bounded`. Native app-server notifications stay inside the adapter; never send event streams or prose directly to the bounded helper. Do not add `-o` or `--json` to its public invocation.
-3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
+3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. Never pass `--report`: this gauntlet owns its report and renders from the pooled round envelopes. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
 4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` with notes explaining that this is a permanent capability gap (or `skipped` when explicitly configured off); never pretend this gate ran.
 
 Slots 3 and 4 do not use `gate_run_bounded`. The conductor constructs their
@@ -231,6 +238,42 @@ After the fixer batch returns:
 - **Stop condition 5: `regression`.** A finding the ledger previously confirmed fixed has reappeared. Every round, compute each reconciled finding's regression key via the bundled `scripts/finding-key.sh` (`sha1(file|category|normalised summary)`, lowercase + whitespace-collapse only, no digit-stripping, deliberately distinct from the reconciler's line-anchored `(file, line, category)` dedup key — a finding that shifts line across rounds must still match) and pass the full list to `convergence-ledger.sh --present-keys <file>`. When the fixer claims a fix, its report uses the literal `{claimed:[...]}` shape with finding objects; the orchestrator derives their keys with `finding-key.sh` and passes those keys via `--claimed-keys <file>`. **The ledger itself owns claimed->fixed promotion** — the conductor passes only what it observed this round (`--present-keys`) and what the fixer claimed this round (`--claimed-keys`); it never computes or asserts a `fixed_keys` set of its own. A claim is recorded as pending and is evaluated only against the **NEXT** complete full pass (`pass_type: full`, `--unresolved 0`, and a supplied `--present-keys` file): a pending key is promoted only when absent from that next pass's present keys, while a still-present claim is dropped without promotion. `regression` slots in the decision priority **after `success`/`success_with_quarantine`, before `cap`**, and fires on **both** pass types (a previously-fixed bug reappearing during a `pass_type: confirm` round is exactly as much a regression as one reappearing on a full pass). `regression` is terminal — halt and hand the reappeared finding(s) back to the operator with the round history.
 
 Report terminal status, native gates that ran, permanent capability gaps that stayed deferred/gated, findings fixed per round, and the quarantine, regressed-key, or non-convergence rationale when present. Never collapse a permanent gap into a claimed clean review; the terminal report must distinguish "ran and passed" from "deferred (permanent capability gap)".
+
+### Terminal report step (`--report` only)
+
+Run this step after any terminal ledger decision, including terminal success, regression, cap,
+non-convergence, and a `--resume`/auto-chain peek that returns exit 5. A non-terminal round does not
+render a report. Without `--report`, do nothing and preserve the existing text output.
+
+Enumerate rounds from the ledger's `.rounds` array, in ascending order, and pass each existing
+`$run_dir/round-N/reconciled.json` as `--round N=<path>`. Missing per-round files are omitted so the
+renderer can mark partial rounds from the ledger. The report uses the counts-only fallback when no
+round envelope exists. Pass the ledger and resolved immutable diff OIDs when available:
+
+```bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+BASE_OID="<resolved immutable base commit ID>"
+HEAD_OID="<resolved immutable head commit ID>"
+report_args=(--ledger "$ledger_path")
+round_count="$(jq -r '.rounds | length' "$ledger_path")"
+for ((n=1; n<=round_count; n++)); do
+  envelope="$run_dir/round-$n/reconciled.json"
+  [[ -f "$envelope" ]] && report_args+=(--round "$n=$envelope")
+done
+report_out="${ledger_path%.json}.report.html"
+scope_args=()
+if [[ -n "$BASE_OID" && -n "$HEAD_OID" ]]; then
+  scope_args=(--base "$BASE_OID" --head "$HEAD_OID")
+fi
+"$SKILL_DIR"/scripts/report-hook.sh --root "$REPO_ROOT" --out "$report_out" \
+  "${report_args[@]}" "${scope_args[@]}"
+```
+
+Resolve the OIDs from the review target, including when a terminal ledger is reached directly by
+resume; omit both flags when either OID is unavailable. The hook always exits 0. Relay its
+`report written: <path>` line and any warning; a guard refusal, missing Python, git failure, or
+renderer failure cannot change the terminal token, ledger, normal output, or exit status. If the
+bundled hook is absent, warn and skip the report.
 
 <!-- BEGIN PROSE RULE BLOCK B -->
 Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.

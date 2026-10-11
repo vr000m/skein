@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: "Run a multi-lens code review with fresh Codex subagents and strict triage/suppression rules. Use after implementation or when a plan's Review Focus needs targeted review."
-argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial] [--verbose]"
+argument-hint: "[path/to/plan.md | --pr NUMBER | --full | --continue | --auto-fix=trivial] [--verbose] [--report]"
 ---
 
 # Deep Review: Multi-Lens Code Review
@@ -25,20 +25,20 @@ to delegate further.
 
 ## Input Resolution
 
-1. If the first argument is a readable plan file path — or the first argument is `--verbose` and
+1. If the first argument is a readable plan file path — or the first argument is `--verbose` or `--report` and
    the second argument is a readable plan file path — load it as the review brief and use its
    `## Review Focus` section to steer lens prompts.
 2. If the arguments are `--pr` with a number, or a PR URL/number directly, optionally combined
-   with `--verbose` in either position, review that PR's diff.
-3. If the arguments are `--continue`, optionally combined with `--verbose` in either position,
+   with `--verbose` and/or `--report` in either position, review that PR's diff.
+3. If the arguments are `--continue`, optionally combined with `--verbose` and/or `--report` in either position,
    follow the continuation rules in [Persisted Run State](#persisted-run-state); the diff range
    depends on prior state.
-4. If the arguments are `--full`, optionally combined with `--verbose` in either position, or no
-   explicit argument is provided (or only `--verbose` is provided), review the current branch diff
+4. If the arguments are `--full`, optionally combined with `--verbose` and/or `--report` in either position, or no
+   explicit argument is provided (or only `--verbose` and/or `--report` is provided), review the current branch diff
    against the merge base with the default branch.
 5. If no target can be resolved, ask the user for a plan path or PR reference.
 
-`--verbose` is a rendering-mode modifier, composable with any of the five resolution rules above — it does not change which diff range or target is resolved, only how the `## Output` section renders the resulting findings.
+`--verbose` is a rendering-mode modifier, composable with any of the five resolution rules above — it does not change which diff range or target is resolved, only how the `## Output` section renders the resulting findings. `--report` is also a rendering-mode modifier: it changes no target, lenses, suppression, or findings. It adds the opt-in HTML report step after the normal output. Without the flag, output and scratch-file behavior stay unchanged.
 
 Input resolution questions are part of setup. It is fine to ask the user which PR, commit range,
 plan, or branch diff to review when that target is ambiguous or missing.
@@ -553,6 +553,17 @@ Procedure:
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
+
+   **With `--report` only:** capture the audit script's stdout in a `mktemp` file outside `.deep-review/`; that stdout is the envelope content. Do not hand-assemble JSON. Record the exact path printed by `mktemp` and substitute it in the later report call; shell variables do not survive separate Bash calls. Without `--report`, create no report scratch files.
+
+   ```bash
+   report_envelope="$(mktemp "${TMPDIR:-/tmp}/skein-report-envelope.XXXXXX")"
+   "$SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope> > "$report_envelope"
+   ```
+
+   The capture is independent of whether Step 4.5 runs before suppression. Step 5.5 removes this scratch file after the hook returns.
+
+   **Schema lockstep (outside the GENERIC block):** `scripts/render-report.py` also consumes the v2 envelope and asserts `schema_version == 2`. When the envelope shape changes, update that consumer with the producer and other consumers.
 4. **Render the annotated JSON into the report template.** Use the report template in the [Output](#output) section: the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
 5. **Emit the rendered report.** Hand off to suppression and triage. The annotated reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
 
@@ -619,6 +630,8 @@ Matching rules:
 - Compare the normalized description against the finding text
 - Suppress only when the checklist description matches the finding's file path, named symbol, or
   specific pattern — not when it matches only a category-level description
+- With `--report`, retain the `(file, line, category)` tuple for every finding suppressed here.
+  Step 5.5 writes these tuples alongside applied auto-fix tuples to the scratch suppress-keys file.
 
 If the merge-base `AGENTS.md` or the `## Review Checklist` section is missing, continue without
 suppression.
@@ -754,6 +767,58 @@ the accepted changes, then rerun `/deep-review` if the snapshot changed.
 The "New findings" `#### Minor` subsection **MUST** follow the same compact-by-default rule as the main `## Output` template — render each Minor finding as a single `- **[Category]**: [one-line summary] (file:line)` line by default, with `--verbose` restoring full `Lenses:`/`Evidence:`/`Suggestion:` detail. This is a firm requirement, not a "confirm if applicable" item. The "Prior findings" list (already one-line per finding) is unaffected and needs no change. **The JSON pointer footer applies to every rendered report, including this continuation template** — the "every rendered report" rule stated earlier for the main `## Output` template is not restated per-template; this continuation template ends with the same `**Full findings JSON**:`/`**Next steps**:` pair, in the same fixed order, before the `--verbose`/footer/JSON-pointer rules recur below.
 
 Do not silently re-list prior findings as if they were freshly surfaced.
+
+### 5.5. Render the HTML Report (`--report` only)
+
+Run this step after the normal Step 5 output only when `--report` was passed. Without the flag,
+do not create scratch files or call the hook.
+
+1. Create a scratch suppress-keys file outside `.deep-review/`. Add one `file<TAB>line<TAB>category`
+   tuple per finding suppressed in Step 4, using the audited envelope's exact values. Use an empty
+   line field for null, absent, or `-1` lines. Do not interpolate finding text into shell code; write
+   the tuple data as file content. The suppress-keys contract is one key per line with an empty
+   line field for null, absent, or `-1`.
+2. If Step 4.5 applied trivial fixes, append tuples for those fixes by joining the applier's
+   `.deep-review/auto-fix-<unix>-<pid>.json` manifest to the audited envelope. The manifest is an
+   array of `{kind, file, line, status, commit_sha, before_sha}` objects and has no category. For
+   each `status == "applied"` entry, take the category from each audited finding with an `auto_fix`
+   block and the same `file` and `line`:
+
+   ```bash
+   report_envelope="<exact captured envelope path>"
+   report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"
+   jq -r --slurpfile env "$report_envelope" '
+     .[] | select(.status == "applied") as $m
+     | $env[0].findings[] | select(has("auto_fix") and .file == $m.file and (.line | tostring) == ($m.line | tostring))
+     | [.file, (if .line == null or .line == -1 then "" else (.line | tostring) end), .category] | join("\t")
+   ' "<manifest path>" >> "$report_keys"
+   ```
+
+   The renderer filters only exact `(file, line, category)` matches. This report represents the
+   findings as reviewed, with suppressed and applied-auto-fixed findings omitted.
+3. Call the bundled hook once with the audited envelope and suppress-keys file. Resolve the same
+   root, base and head used by this review; omit both commit flags if either is unavailable. Keep
+   this hook call and scratch-file cleanup in one shell call:
+
+   ```bash
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
+   "$SKILL_DIR"/scripts/report-hook.sh \
+     --root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-codex.html" \
+     --envelope "$report_envelope" --suppress-keys "$report_keys" \
+     --base "$BASE_COMMIT" --head "$HEAD_COMMIT"
+   ```
+
+4. Delete both scratch files immediately after the hook returns, regardless of success:
+   `rm -f "$report_envelope" "$report_keys"`. Bind the exact captured envelope path in this same
+   call. If the hook is absent, print a warning and run the same cleanup command. Keep hook
+   invocation and deletion in the same shell call; shell variables and traps do not persist across
+   calls.
+5. Relay `report written: <path>` and any `report-hook: warning:` lines. The hook always exits 0;
+   guard refusal, missing Python, git failure, or renderer failure warns and skips the report without
+   changing findings, normal output, or the run's exit status.
+
+If the bundled hook is absent or no audited envelope was captured, warn and skip report generation,
+then remove any scratch file created. Never fail the review because of a report problem.
 
 ## Deep Review Rules
 
