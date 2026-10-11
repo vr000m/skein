@@ -886,6 +886,8 @@ Do not silently re-list prior findings as if they were freshly surfaced. The `(c
 
 Runs only when `--report` was passed, after Step 5 (and therefore after both Step 4 and Step 4.5). Without the flag this step does not exist: do not create scratch files and do not call the hook.
 
+**Shell state does not span Bash tool calls.** `$report_envelope` and `$report_keys` below stand for the literal paths `mktemp` printed (the envelope path was noted in Step 3.5; note the keys path when you create it). Substitute those literal paths in every later call, and set `REPO_ROOT="$(git rev-parse --show-toplevel)"`, `BASE_COMMIT` and `HEAD_COMMIT` (literal values from Step 0) in the same call as the hook. An empty variable makes the hook skip the report with a warning rather than fail loudly.
+
 1. **Build the suppress-keys file.** Create a second scratch file with `mktemp`, outside `.deep-review/`: `report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"`. Write one key per line, `file<TAB>line<TAB>category`, with an empty `line` field for a finding with no line (null, absent, or the reconciler's `-1`), and `file` spelled as in the audited envelope. Include a key for (a) each finding that Step 4 suppression dropped, and (b) each finding an applied auto-fix fixed, when `--auto-fix=trivial` ran. For (b), read the manifest the applier reported (`apply-auto-fix-code: manifest written to <path>` on stderr; `.deep-review/auto-fix-<unix>-<pid>.json`, a JSON array of `{kind, file, line, status, commit_sha, before_sha}`) and take every entry whose `status` is `applied`. The manifest has no category, so take it from the audited envelope's finding with the same `file` and `line` that carried an `auto_fix` block:
 
    ```
