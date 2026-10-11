@@ -1518,6 +1518,65 @@ def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
     assert "position 1" in (result.diagnostic or "")
 
 
+def test_completed_phase_window_accepts_codex_suffix_after_checked_claude_phases():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=True),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="4", title="Codex four", is_complete=True),
+        conductor.Phase(position=4, label="5", title="Codex five", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+            {"index": 4, "label": "5", "title": "Codex five"},
+        ]
+    }
+
+    assert conductor._completed_phase_prefix_error(state, phases) is None
+
+
+def test_completed_phase_window_rejects_unchecked_gap_before_codex_suffix():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=False),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="4", title="Codex four", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+        ]
+    }
+
+    error = conductor._completed_phase_prefix_error(state, phases)
+
+    assert error is not None
+    assert "incomplete phase precedes" in error
+    assert "Phase 2: Claude two" in error
+
+
+def test_completed_phase_window_rejects_inserted_phase_before_stored_position():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=True),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="3a", title="Inserted", is_complete=True),
+        conductor.Phase(position=4, label="4", title="Codex four", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+        ]
+    }
+
+    error = conductor._completed_phase_prefix_error(state, phases)
+
+    assert error is not None
+    assert "completed phase prefix no longer matches" in error
+    assert "position 4" in error
+
+
 # ---------------------------------------------------------------------------
 # C1: repo-default test-cmd fallback (SKILL.md Step 5)
 # ---------------------------------------------------------------------------

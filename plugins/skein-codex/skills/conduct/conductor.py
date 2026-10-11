@@ -671,14 +671,51 @@ def _completed_phase_prefix_error(state: dict, phases: list[Phase]) -> str | Non
             f"completed phase count {len(completed)} exceeds parsed phase count "
             f"{len(phases)}"
         )
-    for idx, entry in enumerate(completed):
+    if not completed:
+        return None
+
+    first = completed[0]
+    if not isinstance(first, dict):
+        return "completed phase entry 1 is not an object"
+    start = first.get("index")
+    if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+        return "completed phase entry 1 has an invalid document position"
+    if start >= len(phases):
+        return (
+            f"completed phase position {start + 1} exceeds parsed phase count "
+            f"{len(phases)}"
+        )
+
+    # A harness may own a suffix of a shared plan. Phases before its first
+    # recorded completion are valid gaps only when the reviewed Progress
+    # section already marks them complete for another owner/run.
+    for phase in phases[:start]:
+        if not phase.is_complete:
+            return (
+                "incomplete phase precedes the stored completed phase window at "
+                f"position {phase.position + 1}: Phase {phase.label}: {phase.title}"
+            )
+
+    for offset, entry in enumerate(completed):
         if not isinstance(entry, dict):
-            return f"completed phase entry {idx + 1} is not an object"
-        expected = phases[idx]
+            return f"completed phase entry {offset + 1} is not an object"
+        position = start + offset
+        if position >= len(phases):
+            return (
+                f"completed phase position {position + 1} exceeds parsed phase count "
+                f"{len(phases)}"
+            )
+        expected = phases[position]
+        if entry.get("index") != position:
+            return (
+                "completed phase prefix no longer matches reviewed plan at "
+                f"position {position + 1}: state records document position "
+                f"{entry.get('index')}; plan has position {position}"
+            )
         if entry.get("label") != expected.label or entry.get("title") != expected.title:
             return (
                 "completed phase prefix no longer matches reviewed plan at "
-                f"position {idx + 1}: state has Phase {entry.get('label')}: "
+                f"position {position + 1}: state has Phase {entry.get('label')}: "
                 f"{entry.get('title')}; plan has Phase {expected.label}: "
                 f"{expected.title}"
             )
