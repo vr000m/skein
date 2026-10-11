@@ -327,7 +327,7 @@ Context lifecycle:
 - [x] Phase 3: Claude show-me triggers (R3) [Claude]
 - [x] Phase 4: Codex plain-prose implementation (R1) [Codex]
 - [x] Phase 5: Codex HTML report integration (R2) [Codex]
-- [ ] Phase 6: Codex show-me triggers (R3) [Codex]
+- [x] Phase 6: Codex show-me triggers (R3) [Codex]
 
 ## Findings
 

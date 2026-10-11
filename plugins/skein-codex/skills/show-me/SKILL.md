@@ -17,6 +17,11 @@ Prefer a diagram, sketch, or artifact over prose when one communicates the point
 - Explaining interactions or data flow between systems/components → **mermaid diagram**
 - Explaining what changed in code, config, or control flow → **diff**
 - Explaining a complex layout, comparison, or concept prose can't carry → **HTML artifact**
+<!-- BEGIN SHOW-ME REVIEW TRIGGERS -->
+- Presenting review findings (from `review-gauntlet` or `deep-review`) → **HTML report** via the `--report` flag of `review-gauntlet` or `deep-review`, not a long prose list
+- Showing gauntlet convergence across rounds → **HTML report** via the `--report` flag of `review-gauntlet`
+- Showing conduct phase progress → a plain **mermaid** diagram or **table**; no report flag is needed
+<!-- END SHOW-ME REVIEW TRIGGERS -->
 
 When none of these fit better than a sentence or two, just write the sentence. Not every answer needs a picture.
 
