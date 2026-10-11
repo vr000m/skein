@@ -157,12 +157,33 @@ for f in "${FILES[@]}"; do
 	check "anchors in $name outside GENERIC block and inner schema fences${out:+ ($out)}" "$rc"
 done
 
+# Block A sits at column 0, so the fence around it must not carry list-item
+# content indentation (3+ spaces): a column-0 line ends the list item, which
+# splits the fence and breaks CommonMark rendering (review-plan 2.5 regression).
+for f in "${FILES[@]}"; do
+	name="$(basename "$(dirname "$f")")"
+	out="$(awk '
+		/^[[:space:]]*```/ { last = $0; lastnr = NR; if (pend) { chk(); pend = 0 } }
+		/^<!-- BEGIN PROSE RULE BLOCK A -->$/ { if (match(last, /^   +```/)) print lastnr ": fence above Block A indented 3+" }
+		/^<!-- END PROSE RULE BLOCK A -->$/ { pend = 1 }
+		function chk() { if (match($0, /^   +```/)) print NR ": fence below Block A indented 3+" }
+	' "$f")"
+	rc=0
+	[ -z "$out" ] || rc=1
+	check "fences around Block A in $name carry no list-item indentation${out:+ ($out)}" "$rc"
+done
+
 # Gate-1 sentence: exactly one full line in review-gauntlet.
 GATE1='Write each finding in plain prose: short sentences, active voice, one term per concept, no filler.'
 c="$(grep -cF -- "$GATE1" "$GAUNTLET" || true)" # list-item continuation may indent the line
 rc=0
 [ "$c" -ge 1 ] || rc=1
 check "gate-1 sentence present as its own line in review-gauntlet (count $c)" "$rc"
+GATE1_EXEMPT="$GATE1 Keep exact values (file, line, category, severity, summary text copied from source) unchanged."
+c="$(grep -cF -- "$GATE1_EXEMPT" "$GAUNTLET" || true)"
+rc=0
+[ "$c" -ge 1 ] || rc=1
+check "gate-1 sentence carries the exact-values exemption on the same line (count $c)" "$rc"
 
 echo
 echo "Passed: $PASS  Failed: $FAIL"
