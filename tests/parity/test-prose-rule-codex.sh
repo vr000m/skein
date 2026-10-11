@@ -89,21 +89,20 @@ rc=0
 for f in "${FILES[@]}"; do [ "$(count_line "$f" '<!-- BEGIN PROSE RULE BLOCK B -->')" -eq 1 ] || rc=1; done
 check "Block B appears once in each Codex skill" "$rc"
 
-# In each review-plan lens prompt, Block A follows its output instructions and
-# precedes the next persistence contract. This keeps it out of the hashed
-# contract while making it part of the lens's response guidance.
+# In each review-plan lens prompt, Block A follows its output instructions
+# inside the dispatched prompt fence and before the separate persistence contract.
 rc=0
 awk '
-	/^[[:space:]]*## Output$/ { in_output = 1; next }
+	/^[[:space:]]*```/ { fence = !fence; next }
+	/^[[:space:]]*## Output$/ { in_output = 1; if (!fence) bad = 1; next }
 	/^[[:space:]]*## Lens Persistence Contract/ { in_output = 0 }
 	/^<!-- BEGIN PROSE RULE BLOCK A -->$/ {
-		if (!in_output) bad = 1
+		if (!in_output || !fence) bad = 1
 		count++
-		in_output = 0
 	}
 	END { if (count != 6 || bad) exit 1 }
 ' "${FILES[2]}" || rc=$?
-check "review-plan Block A follows Output and stays outside persistence contracts" "$rc"
+check "review-plan Block A reaches each dispatched prompt after Output" "$rc"
 
 # Blocks must carry the finding-key exemption and sit outside generic schema
 # blocks and inner schema fences (the outer prompt fences are expected).
@@ -125,9 +124,13 @@ for tag in A B; do
 	done
 	doc="$TMP/$tag.codex.1.body"
 	rc=0
-	# shellcheck disable=SC2016 # literal backticks are part of the pinned text
-	grep -qF 'the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts)' "$doc" || rc=1
-	check "Block $tag includes finding-key exemption sentence" "$rc"
+	# shellcheck disable=SC2016 # backticks are literal text being tested
+	grep -qF 'Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.' "$doc" || rc=1
+	check "Block $tag names machine-constrained values" "$rc"
+	rc=0
+	# shellcheck disable=SC2016 # backticks are literal text being tested
+	grep -qF 'Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.' "$doc" || rc=1
+	check "Block $tag keeps tool-read prose fields in scope" "$rc"
 done
 
 GATE1='Write each finding in plain prose: short sentences, active voice, one term per concept, no filler.'

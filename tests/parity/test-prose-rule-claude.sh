@@ -116,9 +116,13 @@ for tag in A B; do
 	done
 	if [ -n "$first" ]; then
 		rc=0
-		# shellcheck disable=SC2016 # literal backticks intended
-		grep -qF 'the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts)' "$first" || rc=$?
-		check "Block $tag contains exemption sentence naming both fields" "$rc"
+		# shellcheck disable=SC2016 # backticks are literal text being tested
+		grep -qF 'Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.' "$first" || rc=$?
+		check "Block $tag names machine-constrained values" "$rc"
+		rc=0
+		# shellcheck disable=SC2016 # backticks are literal text being tested
+		grep -qF 'Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.' "$first" || rc=$?
+		check "Block $tag keeps tool-read prose fields in scope" "$rc"
 		rc=0
 		grep -qE 'model:|effort:|reasoning_effort=' "$first" && rc=1
 		check "Block $tag has no model:/effort:/reasoning_effort= tokens" "$rc"

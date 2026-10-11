@@ -209,7 +209,7 @@ Start with a one-line summary of architectural quality, then list findings group
 If the plan is architecturally sound, say so. Do not manufacture findings. A clean lens is a valid outcome.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -217,7 +217,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: architecture -->
@@ -316,7 +317,7 @@ Start with a one-line summary, then list findings grouped by severity (Critical,
 If the plan sequencing is sound, say so. Do not manufacture findings. A clean lens is a valid outcome.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -324,7 +325,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: sequencing -->
@@ -425,7 +427,7 @@ Start with a one-line summary, then list findings grouped by severity (Critical,
 If the plan satisfies its referenced specs and has proportional test coverage, say so. Do not manufacture findings. A clean lens is a valid outcome.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -433,7 +435,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: spec-and-testing -->
@@ -538,7 +541,7 @@ Start with a one-line summary, then list findings grouped by severity (Critical,
 If every factual claim in the plan is either verifiable from the codebase or already named as an assumption, say so. Do not manufacture findings. A clean lens is a valid outcome.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -546,7 +549,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: assumptions -->
@@ -644,7 +648,7 @@ Start with a one-line summary (e.g. "Verified N references; M missing"), then li
 If every reference checks out, say so. Do not manufacture findings. A clean lens is a valid outcome.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -652,7 +656,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: codebase-claims -->
@@ -727,7 +732,7 @@ Procedure:
    conflicting locations in evidence prose in every case, anchored or not.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -735,7 +740,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
    ```
 
@@ -856,7 +862,8 @@ The `Reconciliation:` summary line is always rendered (zeros for empty input). T
 <!-- BEGIN PROSE RULE BLOCK B -->
 Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK B -->
 
 **Default rendering (no `--verbose`): Minor findings are compact.** Critical and Important findings render exactly as shown above — full `Lenses:`/`Evidence:`/`Suggestion:`/optional `Related findings:` sub-bullets. Minor findings instead render as a single line: `- **[Category]**: [one-line finding] (file:line)` — the reconciled envelope's `summary` field (the GENERIC block's serialized field name; review-plan's lens *prompts* call this field `finding` pre-serialization, but Step 3 writes it into the envelope's `summary` key) rendered unabridged (no hard truncation, even at its up-to-two-sentence length), with a parenthesized `(file:line)` instead of the Critical/Important convention, and no `Evidence:`/`Suggestion:`/`Lenses:` sub-bullets. When the Minor finding has a "Related findings" cross-reference, append a terse inline suffix instead of the full sub-bullet: `- **[Category]**: [finding] (file:line) — see also [Other Category] at same location`. When the Minor finding has no usable location (either `file` is empty or `line` is absent — a narrower, rendering-only test than the GENERIC block's fully-unanchored merge-signature definition; a partially-anchored finding, e.g. `file` set but `line` missing, still counts as unanchored *here*, even though it is NOT unanchored for merge/relate purposes), omit the location segment and the "see also" suffix entirely: `- **[Category]**: [one-line finding]`. The `[AUTO-FIXABLE]` marker is unaffected by this and still appears on the title line whenever `auto_fix_status` is `would_apply` — compact mode only omits `Evidence:`/`Suggestion:` prose, never the marker. This is a display-only switch: it does not drop any underlying data — every finding still carries all five fields (Severity, Category, Location, Evidence, Suggestion) in the reconciled envelope; only the *rendered* Minor tier omits Evidence/Suggestion prose from display. The compact line is always a single physical line even when the underlying `summary` field contains embedded newlines — embedded newlines are collapsed to spaces when rendering the compact form. The Codex-only `**Dispatch**:` line (when present) is unaffected by this rule — it is not part of per-finding rendering.

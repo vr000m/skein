@@ -281,7 +281,7 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Logic),
 If the code is logically sound, say so. Do not manufacture findings.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -289,7 +289,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 
@@ -371,7 +372,7 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Securit
 If no security issues, say so. Do not manufacture findings.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -379,7 +380,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 
@@ -458,7 +460,7 @@ For each finding: **Severity** (Critical=violates MUST / Important=violates SHOU
 If the code complies with all referenced specs, say so.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -466,7 +468,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 
@@ -548,7 +551,7 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Archite
 If the architecture is sound, say so. Do not manufacture findings.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -556,7 +559,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 
@@ -638,7 +642,7 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Documen
 If documentation is up to date, say so.
 
 <!-- BEGIN PROSE RULE BLOCK A -->
-## Plain-Prose Rule
+**Plain-Prose Rule**
 
 Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
 - Sentences: 20 words or fewer.
@@ -646,7 +650,8 @@ Write `evidence`, `suggestion` and any overall summary in plain prose. Check eac
 - Terms: one term per concept. Do not rename a thing mid-finding.
 - Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, file paths, line numbers, code, or any other field a tool reads. Write those exactly as the output format above defines them.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK A -->
 ```
 
@@ -844,7 +849,8 @@ If the review is clean, say so concisely and call out any residual risks or skip
 <!-- BEGIN PROSE RULE BLOCK B -->
 Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK B -->
 
 **Continuation report format (incremental re-review mode only).** When `--continue` ran in incremental re-review mode (HEAD advanced past stored `head_commit`), the report header MUST make the scope explicit and partition findings:

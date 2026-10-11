@@ -168,7 +168,8 @@ Report the terminal status, the gates passed, the findings fixed per round, and 
 <!-- BEGIN PROSE RULE BLOCK B -->
 Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
 
-Exemption: do not apply this rule to the finding summary line (`summary` in deep-review, `finding` in review-plan lens prompts), severity labels, category values, status tokens, file paths, line numbers, code, or any other field a tool reads.
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
 <!-- END PROSE RULE BLOCK B -->
 
 ### Terminal report step (`--report` only)
