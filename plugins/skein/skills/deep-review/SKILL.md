@@ -886,7 +886,7 @@ Do not silently re-list prior findings as if they were freshly surfaced. The `(c
 
 Runs only when `--report` was passed, after Step 5 (and therefore after both Step 4 and Step 4.5). Without the flag this step does not exist: do not create scratch files and do not call the hook.
 
-**Shell state does not span Bash tool calls.** Set every variable the hook call uses in that same call, as the fence in step 2 does. Substitute the literal paths `mktemp` printed (the envelope path was noted in Step 3.5; note the keys path when you create it) and the literal `base_commit`/`head_commit` values from Step 0. In the `jq` call in step 1, substitute the literal envelope path for `$report_envelope` as well.
+**Shell state does not span Bash tool calls.** Set every variable the hook call uses in that same call, as the fence in step 2 does. Substitute the literal paths `mktemp` printed (the envelope path was noted in Step 3.5; note the keys path when you create it) and the literal `base_commit`/`head_commit` values from Step 0. In the `jq` call in step 1, substitute the literal paths for `$report_envelope` and `$report_keys` as well.
 
 1. **Build the suppress-keys file.** Create a second scratch file with `mktemp`, outside `.deep-review/`: `report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"`. Write one key per line, `file<TAB>line<TAB>category`, with an empty `line` field for a finding with no line (null, absent, or the reconciler's `-1`), and `file` spelled as in the audited envelope. For an **unanchored** finding (empty `file` or empty `line`), append a fourth field, `file<TAB>line<TAB>category<TAB>summary`: the finding's `summary` (else `finding`) copied verbatim, with each tab, CR and LF replaced by one space. A 3-field key never drops an unanchored finding, so without the summary one key would otherwise cover every unanchored finding of that category. Include a key for (a) each finding that Step 4 suppression dropped, and (b) each finding an applied auto-fix fixed, when `--auto-fix=trivial` ran. For (b), read the manifest the applier reported (`apply-auto-fix-code: manifest written to <path>` on stderr; `.deep-review/auto-fix-<unix>-<pid>.json`, a JSON array of `{kind, file, line, status, commit_sha, before_sha}`) and take every entry whose `status` is `applied`. The manifest has no category, so take it from the audited envelope's finding with the same `file` and `line` that carried an `auto_fix` block:
 
@@ -902,7 +902,7 @@ Runs only when `--report` was passed, after Step 5 (and therefore after both Ste
    ```
 
    The renderer drops an anchored finding when all three fields match exactly, and an unanchored finding only when all four fields match. It is a filter, never a dedup.
-2. **Call the bundled hook once**, passing both scratch files by path, with `--cleanup`. `--base`/`--head` are the `BASE_COMMIT`/`HEAD_COMMIT` already resolved in Step 0 and persisted as `base_commit`/`head_commit`; the `${...:+...}` guard drops both when either is empty (the report then says the diff scope is unavailable). The output is the latest-run view for this harness, like `latest-claude.json`:
+2. **Call the bundled hook once**, passing both scratch files by path, with `--cleanup`. `--base`/`--head` are the `BASE_COMMIT`/`HEAD_COMMIT` already resolved in Step 0 and persisted as `base_commit`/`head_commit`; the `if` guard drops both when either is empty (the report then says the diff scope is unavailable). Build the flags as an array, as below: a `:+` word-list expansion is split into separate arguments by bash but passed as one argument by zsh (the shell Claude Code's Bash tool uses on macOS), which the hook rejects as an unknown argument. The output is the latest-run view for this harness, like `latest-claude.json`:
 
    ```
    REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -910,10 +910,12 @@ Runs only when `--report` was passed, after Step 5 (and therefore after both Ste
    report_keys="<literal keys path from step 1>"
    BASE_COMMIT="<base_commit from Step 0, or empty if unknown>"
    HEAD_COMMIT="<head_commit from Step 0, or empty if unknown>"
-   "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/report-hook.sh \
-     --root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-claude.html" \
-     --envelope "$report_envelope" --suppress-keys "$report_keys" \
-     ${BASE_COMMIT:+${HEAD_COMMIT:+--base "$BASE_COMMIT" --head "$HEAD_COMMIT"}} --cleanup
+   report_args=(--root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-claude.html"
+     --envelope "$report_envelope" --suppress-keys "$report_keys")
+   if [[ -n "$BASE_COMMIT" && -n "$HEAD_COMMIT" ]]; then
+     report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")
+   fi
+   "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/report-hook.sh "${report_args[@]}" --cleanup
    ```
 
 3. **`--cleanup` deletes both scratch files when the hook returns, success or failure.** The hook removes its own `--envelope` and `--suppress-keys` inputs on every exit path, and only `skein-report-*` regular files directly inside the system temp dir; anything else stays with a warning. Shell state does not span Bash tool calls, so no `trap` in this prose can own them; the hook does. This skill's prose runs no `rm` of its own.

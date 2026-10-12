@@ -134,6 +134,9 @@ echo "== review-gauntlet: hook call =="
 assert_eq "$(count_re "$GAUNTLET" '^"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/review-gauntlet/scripts/report-hook\.sh')" "1" "exactly one report-hook.sh invocation"
 has "$GAUNTLET" '--out "$report_out" --ledger "$ledger_path"' "hook gets --out and --ledger"
 has "$GAUNTLET" 'report_out="${ledger_path%.json}.report.html"' "report path sits beside the ledger"
+# The exit-5 resume path never ran the gate block that defines $repo_root, and shell state does not span Bash
+# calls, so the report fence must define it itself or the hook is handed --root "" and skips the report.
+assert_eq "$(printf '%s\n' "$inside" | grep -cF 'repo_root="$(git rev-parse --show-toplevel)"' || true)" "1" "the report fence defines repo_root itself"
 has "$GAUNTLET" '--round 1="$run_dir/round-1/reconciled.json"' "rounds passed as --round N=<run_dir>/round-N/reconciled.json"
 has "$GAUNTLET" "jq -r '.rounds | length' \"\$ledger_path\"" "rounds enumerated from the ledger, not globbed"
 has "$GAUNTLET" 'The hook always exits 0' "hook exit-0 contract documented"
@@ -164,7 +167,12 @@ has "$DEEP" 'Without the flag this step does not exist: do not create scratch fi
 has "$DEEP" 'report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"' "keys scratch file comes from mktemp"
 assert_eq "$(count_fixed "$DEEP" 'rm -f "$report_envelope" "$report_keys"')" "0" "Step 5.5 prose runs no rm -f on the scratch files"
 lacks_re "$DEEP" '^[^`]*`rm -f "\$report_' "no rm of a report scratch file anywhere in skill prose"
-has "$DEEP" '--base "$BASE_COMMIT" --head "$HEAD_COMMIT"}} --cleanup' "the hook call passes --cleanup so the hook deletes both scratch files"
+has "$DEEP" '"${report_args[@]}" --cleanup' "the hook call passes --cleanup so the hook deletes both scratch files"
+has "$DEEP" 'report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")' "base/head are appended as separate array elements"
+# zsh (the Bash tool's shell on macOS) passes a ${VAR:+--flag "$VAR"} word list as ONE argument; the hook then
+# rejects it as an unknown argument and the report is silently skipped. Arrays work in both shells.
+lacks_re "$DEEP" '\$\{[A-Za-z_]+:\+' "no :+ word-list expansion in a fence (zsh does not split it)"
+has "$DEEP" 'substitute the literal paths for `$report_envelope` and `$report_keys`' "the jq call substitutes both scratch paths"
 has "$DEEP" 'report_keys="<literal keys path from step 1>"' "the hook fence binds its own variables (shell state does not span Bash calls)"
 has "$DEEP" 'file<TAB>line<TAB>category<TAB>summary' "unanchored findings get a 4-field suppress key with the summary"
 has "$DEEP" 'success or failure' "scratch removal covers failure too"

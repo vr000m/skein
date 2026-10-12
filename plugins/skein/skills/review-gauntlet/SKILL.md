@@ -180,9 +180,10 @@ Every terminal-token exit routes through this one step, after the terminal summa
 
 1. Resolve the diff scope to two commit ids. For `--pr <N>`: `gh pr view <N> --json baseRefOid,headRefOid` (the hook never calls `gh`). For a branch or commit range: `git merge-base <base> HEAD` and `git rev-parse HEAD`, or `git rev-parse` of each end of an explicit range. If resolution fails, pass neither flag; the report then says the diff scope is unavailable. There is no uncommitted-changes mode.
 2. Enumerate the rounds from the ledger, never by globbing: pass `--round N=<run_dir>/round-N/reconciled.json` for each N from 1 to the length of the ledger's `.rounds` (`jq -r '.rounds | length' "$ledger_path"`). A round whose file is missing (a ledger carried over from an older plugin version, or a round that errored before reconcile) is marked "envelope missing" in the report; it is not an error.
-3. Call the bundled hook once. `--out` is the report path beside the ledger, `<ledger-stem>.report.html`:
+3. Call the bundled hook once. `--out` is the report path beside the ledger, `<ledger-stem>.report.html`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block that defines `$repo_root`, so the fence below defines it itself. If `$ledger_path` or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger) (`gc_ledger_path`, then the single `--run-dir` call):
 
 ```bash
+repo_root="$(git rev-parse --show-toplevel)"
 report_out="${ledger_path%.json}.report.html"
 "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/scripts/report-hook.sh \
   --root "$repo_root" --out "$report_out" --ledger "$ledger_path" \
