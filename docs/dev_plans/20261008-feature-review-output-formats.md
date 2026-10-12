@@ -1,6 +1,6 @@
 # Task: Review-output formats (plain prose, HTML report, show-me triggers)
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: review-skills
 **Assigned to**: Claude (Phases 1-3 and all common items: docs, canonical scripts, byte-mirrored helpers); Codex (Phases 4-6, implemented, tested and reviewed by Codex)
 **Priority**: Medium
