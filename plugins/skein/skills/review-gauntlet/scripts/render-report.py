@@ -281,6 +281,11 @@ def fmt_location(finding: dict) -> str:
 
 def render_finding(finding: dict) -> str:
     summary = str(finding.get("summary") or finding.get("finding") or "(no summary)")
+    marker = (
+        ' <span class="auto-fixable">[AUTO-FIXABLE]</span>'
+        if finding.get("auto_fix_status") == "would_apply"
+        else ""
+    )
     lenses = finding.get("lenses")
     if isinstance(lenses, list) and lenses:
         lens_text = ", ".join(str(x) for x in lenses)
@@ -302,7 +307,7 @@ def render_finding(finding: dict) -> str:
     if suggestion:
         rows.append(("Suggestion", suggestion))
     body = "".join(f"<dt>{esc(k)}</dt><dd>{esc(v)}</dd>" for k, v in rows)
-    return f"<article><h3>{esc(summary)}</h3><dl>{body}</dl></article>"
+    return f"<article><h3>{esc(summary)}{marker}</h3><dl>{body}</dl></article>"
 
 
 def bucket_findings(findings: list) -> dict[str, list[dict]]:

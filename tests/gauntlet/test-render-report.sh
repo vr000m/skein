@@ -304,6 +304,12 @@ usage_case "missing --out" --ledger "$FIX/ledger.json" --root "$R"
 usage_case "missing --root" --ledger "$FIX/ledger.json" --out "$OUT"
 
 echo "== renderer: suppress-keys =="
+AUDIT_ENV="$SANDBOX/envelope-audited.json"
+printf '{"schema_version":2,"findings":[{"severity":"Important","category":"logic","file":"a.py","line":9,"summary":"AUDITED-FIX","auto_fix_status":"would_apply"},{"severity":"Important","category":"logic","file":"b.py","line":10,"summary":"AUDITED-REJECT","auto_fix_status":"rejected"}]}' >"$AUDIT_ENV"
+run_r --envelope "$AUDIT_ENV" --root "$R" --out "$OUT"
+assert_has "$OUT" '[AUTO-FIXABLE]' "audited would_apply status is marked auto-fixable"
+assert_eq "$(grep -oF '[AUTO-FIXABLE]' "$OUT" | wc -l | tr -d ' ')" "1" "only would_apply findings receive the marker"
+
 KEYS="$SANDBOX/keys.tsv"
 printf 'a.py\t10\tlogic\nc.md\t\tdocs\tminor-null-line\nd.md\t\tdocs\tminor-neg-line\n' >"$KEYS"
 run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
@@ -596,6 +602,9 @@ STUB_RC=7 STUB_ARGS="$SANDBOX/stub-args.txt" SKEIN_REPORT_RENDERER="$STUB" run_h
 assert_eq "$HRC" "0" "stub exiting 7: hook still exits 0"
 assert_has "$HERR" 'renderer failed (exit 7)' "stub failure: warning carries the exit code"
 assert_eq "$(cat "$HSTDOUT")" "" "stub failure: no 'report written' line"
+printf 'STALE-REPORT\n' >"$HOUT"
+STUB_RC=7 STUB_ARGS="$SANDBOX/stub-args.txt" SKEIN_REPORT_RENDERER="$STUB" run_h --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json"
+assert_lacks "$HOUT" 'STALE-REPORT' "renderer failure invalidates stale latest-run report"
 SKEIN_REPORT_RENDERER="$SANDBOX/not-an-executable" run_h --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json"
 assert_eq "$HRC" "0" "nonexistent renderer path: exit 0"
 unset SKEIN_REPORT_TEST

@@ -25,9 +25,10 @@ to delegate further.
 
 ## Input Resolution
 
-1. If the first argument is a readable plan file path — or the first argument is `--verbose` or `--report` and
-   the second argument is a readable plan file path — load it as the review brief and use its
-   `## Review Focus` section to steer lens prompts.
+1. If a readable plan file path is supplied with no modifiers, load it as the review brief. If one or
+   both modifiers (`--verbose`, `--report`) precede the path, resolve the first remaining argument
+   as the plan path; modifiers may also follow the path. Use its `## Review Focus` section to steer
+   lens prompts.
 2. If the arguments are `--pr` with a number, or a PR URL/number directly, optionally combined
    with `--verbose` and/or `--report` in either position, review that PR's diff.
 3. If the arguments are `--continue`, optionally combined with `--verbose` and/or `--report` in either position,

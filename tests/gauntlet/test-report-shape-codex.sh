@@ -97,6 +97,8 @@ lacks_re "$GAUNTLET" 'skein:deep-review[^`]*`--report`[^.]*(pass|forward|append)
 lacks_re "$GAUNTLET" '\$\{CLAUDE_PLUGIN_ROOT\}' 'Codex gauntlet uses no Claude path anchor'
 
 echo '== deep-review: flag gating and default output =='
+# shellcheck disable=SC2016
+has "$DEEP" 'modifiers (`--verbose`, `--report`) precede the path' 'plan resolution accepts modifiers before path in either order'
 assert_eq "$(sed -n '1,8p' "$DEEP" | grep -c 'argument-hint:.*--report' || true)" 1 'argument-hint lists --report'
 # shellcheck disable=SC2016
 has "$DEEP" '`--report` is also a rendering-mode modifier' '--report does not change review input'

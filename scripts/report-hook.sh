@@ -238,6 +238,12 @@ main() {
 	fi
 
 	first_layer_guard "$root" "$out" || return 0
+	# A latest-run pathname must never keep showing an older report when this
+	# invocation cannot produce a replacement.
+	if [[ -e "$out" ]] && ! rm -f -- "$out"; then
+		warn "could not invalidate the existing report $out; skipping the report"
+		return 0
+	fi
 
 	if ! git -C "$root" check-ignore -q -- "$out" 2>/dev/null; then
 		warn "$out is not git-ignored (or git could not check it); do not commit the report"
