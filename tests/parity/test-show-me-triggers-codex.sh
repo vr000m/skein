@@ -74,6 +74,13 @@ rc=0
 grep -qF 'plan-view' "$CODEX_SKILL" || rc=$?
 check "Codex plan-view deferral remains present" "$rc"
 
+CODEX_DESCRIPTION="$(sed -n '3p' "$CODEX_SKILL")"
+for trigger in 'review findings' 'gauntlet convergence' 'conduct phase progress'; do
+	rc=0
+	printf '%s\n' "$CODEX_DESCRIPTION" | grep -qiF "$trigger" || rc=$?
+	check "Codex description advertises $trigger" "$rc"
+done
+
 rc=0
 grep -qF 'Mermaid' "$CODEX_SKILL" && grep -qF 'HTML artifacts' "$CODEX_SKILL" || rc=1
 check "Codex Mermaid and HTML guidance remains present" "$rc"

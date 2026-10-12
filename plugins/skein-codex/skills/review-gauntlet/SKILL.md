@@ -68,11 +68,12 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`; it is idempotent and never clears the directory. A guard refusal exits non-zero: stop before round 1 and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` clear a stale round directory under the same guard. For each round, set `round_n` from the ledger's `.rounds | length` plus one, so resume never overwrites a completed round:
+**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`. For each round, set `round_n` from the ledger's `.rounds | length` plus one, then call `--prepare-round "$round_n" --ledger "$ledger_path"` before creating or writing the round directory. This guarded operation clears only that unfinished round's directory, preserving all completed rounds. A guard refusal exits non-zero: stop before the round and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` retain their existing stale-run cleanup behavior:
 
 ```bash
 run_dir="$("$SKILL_DIR"/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
 round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
+"$SKILL_DIR"/lib/convergence-ledger.sh --prepare-round "$round_n" --ledger "$ledger_path"
 ```
 
 **Auto-chain loop entry** (modes 2/3 — `conduct`/`fan-out` invoke this skill with no operator present to supply `--resume`/`--fresh`): never blind-`--init` first. A prior interrupted auto-chained run's ledger sitting at this target would make a bare `--init` refuse with exit 6, and there is no operator to answer "pass `--resume` or `--fresh`" — that would dead-end the auto-chain on every resume-after-interruption of a `full`-mode run. Instead, peek first, against the same target:

@@ -73,7 +73,8 @@ has "$GAUNTLET" 'gate_out_dir="$run_dir/round-$round_n"' 'round gate output deri
 has "$GAUNTLET" 'round_n="$(( $(jq -r '\''.rounds | length'\'' "$ledger_path") + 1 ))"' 'resume derives round number from ledger'
 has "$GAUNTLET" '--init --force' 'fresh run clears prior run directory through guarded init'
 has "$GAUNTLET" 'never re-initialize' 'resume preserves existing run directory'
-has "$GAUNTLET" 'it is idempotent and never clears the directory' 'run-dir creation is idempotent'
+has "$GAUNTLET" '--prepare-round' 'unfinished round is prepared before writing'
+has "$GAUNTLET" 'clears only that unfinished round' 'round preparation preserves completed rounds'
 # shellcheck disable=SC2016
 lacks_re "$GAUNTLET" 'rm -rf[^`]*run_dir|rm -rf[^`]*ledger-stem' 'skill prose does not directly remove run_dir'
 

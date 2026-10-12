@@ -5,6 +5,7 @@
 # Usage:
 #   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
 #   convergence-ledger.sh --run-dir --ledger <path>
+#   convergence-ledger.sh --prepare-round <N> --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
 #       [--cap 10] [--k 2]
 #   convergence-ledger.sh --ledger <path> [--target <target>] --count <N> \
@@ -144,6 +145,7 @@ usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
        convergence-ledger.sh --run-dir --ledger <path>
+       convergence-ledger.sh --prepare-round <N> --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
        convergence-ledger.sh --ledger <path> [--target <target>] --count <N> --structural <N> \
               --local <N> --pass-type <full|confirm> --quarantine <N> \
@@ -167,6 +169,7 @@ FORCE=0
 ROUND_ARG_SEEN=0
 PRESENT_KEYS_FILE=""
 CLAIMED_KEYS_FILE=""
+PREPARE_ROUND=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -193,6 +196,19 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		fi
 		MODE="run-dir"
+		;;
+	--prepare-round)
+		if [[ "$MODE" != "append" && "$MODE" != "prepare-round" ]]; then
+			echo "convergence-ledger: --prepare-round cannot be combined with another mode" >&2
+			exit 2
+		fi
+		MODE="prepare-round"
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		PREPARE_ROUND="$1"
 		;;
 	--force)
 		FORCE=1
@@ -877,6 +893,26 @@ run-dir)
 	fi
 	mkdir -p "$run_dir"
 	printf '%s\n' "$run_dir"
+	;;
+prepare-round)
+	ledger_name="${LEDGER_PATH##*/}"
+	if [[ "$FORCE" -eq 1 || "$ROUND_ARG_SEEN" -eq 1 || ! "$PREPARE_ROUND" =~ ^[1-9][0-9]*$ ]]; then
+		echo "convergence-ledger: --prepare-round needs a positive round number and no round-input flags" >&2
+		exit 2
+	fi
+	if ! ledger_in_gauntlet_dir "$LEDGER_PATH" || [[ "$ledger_name" != ledger-*.json ]]; then
+		echo "convergence-ledger: --prepare-round only accepts an owned .gauntlet ledger path" >&2
+		exit 2
+	fi
+	if ! run_dir="$(ledger_run_dir "$LEDGER_PATH")"; then
+		echo "convergence-ledger: --prepare-round needs a --ledger path ending in .json" >&2
+		exit 2
+	fi
+	ledger_assert_no_symlink "$run_dir" || exit 1
+	ledger_assert_no_symlink "$run_dir/round-$PREPARE_ROUND" || exit 1
+	mkdir -p "$run_dir/round-$PREPARE_ROUND"
+	rm -rf -- "$run_dir/round-$PREPARE_ROUND"
+	mkdir -- "$run_dir/round-$PREPARE_ROUND"
 	;;
 last-decision)
 	if [[ "$FORCE" -eq 1 ]]; then

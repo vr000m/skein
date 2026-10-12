@@ -232,16 +232,16 @@ main() {
 		esac
 	done
 
-	if ! command -v python3 >/dev/null 2>&1; then
-		warn "python3 not found; skipping the report"
-		return 0
-	fi
-
 	first_layer_guard "$root" "$out" || return 0
 	# A latest-run pathname must never keep showing an older report when this
 	# invocation cannot produce a replacement.
 	if [[ -e "$out" ]] && ! rm -f -- "$out"; then
 		warn "could not invalidate the existing report $out; skipping the report"
+		return 0
+	fi
+
+	if ! command -v python3 >/dev/null 2>&1; then
+		warn "python3 not found; skipping the report"
 		return 0
 	fi
 

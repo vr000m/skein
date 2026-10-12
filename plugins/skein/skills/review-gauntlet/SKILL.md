@@ -72,10 +72,12 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` is the one place that derives, guards and creates it, and prints it on stdout. Call it once after `$ledger_path` is known (standalone, auto-chain and `--resume` alike) to define `$run_dir`; it is idempotent and never deletes anything, so re-run that same call if shell state was lost between tool calls:
+**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` retain their existing stale-run cleanup behavior:
 
 ```bash
 run_dir="$("${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
+round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --prepare-round "$round_n" --ledger "$ledger_path"
 ```
 
 It runs the same `gauntlet_assert_no_symlink` guard as every other ledger write, on the directory **and** on the sibling report path `<ledger-stem>.report.html`. A refusal exits non-zero (exit 1, `refusing to operate on symlink: <path>`): stop before round 1 exactly as for a ledger refusal, and treat it as a finding about the checkout, never as a reason to retarget. The round number is read from the ledger, not from memory: a fresh loop is round 1, and `--resume` takes `round_n` from the ledger's `rounds` array as `round_n = <length of .rounds> + 1` (`jq -r '.rounds | length' "$ledger_path"`), so a resumed run never overwrites a finished round's files. `--fresh` (`--init --force`) and a plain `--init` both clear a stale `<ledger-stem>/` inside the ledger script under that same guard (a fresh ledger has zero rounds, so any existing round dir is a prior run's); there is no `rm -rf` in this skill's prose.

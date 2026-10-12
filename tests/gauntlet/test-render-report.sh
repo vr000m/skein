@@ -622,6 +622,7 @@ rm -f "$HOUT"
 
 echo "== hook: python3 absent =="
 NOPY="$(new_dir)"
+printf 'STALE-REPORT\n' >"$HOUT"
 for tool in bash dirname git mktemp date rm cat head sed tr cut; do
 	p="$(command -v "$tool" 2>/dev/null || true)"
 	[[ -n "$p" && "$p" == /* ]] && ln -s "$p" "$NOPY/$tool"
@@ -630,7 +631,7 @@ HRC=0
 PATH="$NOPY" "$NOPY/bash" "$HOOK" --root "$REPO" --out "$HOUT" --ledger "$FIX/ledger.json" >"$HSTDOUT" 2>"$HERR" || HRC=$?
 assert_eq "$HRC" "0" "python3 absent: exit 0"
 assert_has "$HERR" 'python3 not found' "python3 absent: warning"
-if [[ ! -e "$HOUT" ]]; then pass "python3 absent: no report"; else fail "python3 absent: report written"; fi
+if [[ ! -e "$HOUT" ]]; then pass "python3 absent: stale report invalidated"; else fail "python3 absent: stale report remains"; fi
 
 echo "== hook: diff scope handling =="
 # --base without --head

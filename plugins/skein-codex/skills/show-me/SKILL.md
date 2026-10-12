@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, or drafting a PR description — anywhere a picture would answer the question faster than paragraphs.
+description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, drafting a PR description, presenting review findings, gauntlet convergence, or conduct phase progress — anywhere a picture would answer the question faster than paragraphs.
 argument-hint: "[topic or question to visualize]"
 ---
 

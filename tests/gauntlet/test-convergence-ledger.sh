@@ -501,8 +501,9 @@ rd_tree_hash() {
 	(cd "$1" && find . \( -type f -o -type l \) -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 2>/dev/null)
 }
 
-RD_L="$RD_BASE/ledger-claude-x.json"
-RD_STEM="$RD_BASE/ledger-claude-x"
+mkdir -p "$RD_BASE/.gauntlet"
+RD_L="$RD_BASE/.gauntlet/ledger-claude-x.json"
+RD_STEM="$RD_BASE/.gauntlet/ledger-claude-x"
 set +e
 rd_out="$("$LEDGER_SCRIPT" --run-dir --ledger "$RD_L" 2>"$TMP_SINK")"
 rd_rc=$?
@@ -526,6 +527,37 @@ rd_before="$(rd_tree_hash "$RD_BASE")"
 rd_out2="$("$LEDGER_SCRIPT" --run-dir --ledger "$RD_L")"
 assert_eq "$rd_out2" "$RD_STEM" "--run-dir is idempotent (same directory printed)"
 assert_eq "$(rd_tree_hash "$RD_BASE")" "$rd_before" "--run-dir never deletes or alters existing round files"
+
+# Preparing an unfinished round clears only that exact round directory, while
+# preserving completed rounds and unrelated run-directory entries.
+mkdir -p "$RD_STEM/round-2"
+printf 'keep completed\n' >"$RD_STEM/round-1/reconciled.json"
+printf 'stale\n' >"$RD_STEM/round-2/fixer-report.json"
+printf 'keep\n' >"$RD_STEM/notes.txt"
+"$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_L" >"$TMP_SINK"
+if [[ -d "$RD_STEM/round-2" ]] && [[ -z "$(find "$RD_STEM/round-2" -mindepth 1 -print -quit)" ]]; then
+	pass "--prepare-round clears unfinished round artifacts"
+else
+	fail "--prepare-round left unfinished round artifacts"
+fi
+assert_eq "$(cat "$RD_STEM/round-1/reconciled.json")" "keep completed" "--prepare-round preserves completed rounds"
+assert_eq "$(cat "$RD_STEM/notes.txt")" "keep" "--prepare-round preserves unrelated run-dir entries"
+RD_PREP_TARGET="$RD_BASE/prepare-target"
+mkdir -p "$RD_PREP_TARGET"
+printf 'precious\n' >"$RD_PREP_TARGET/precious.txt"
+ln -s "$RD_PREP_TARGET" "$RD_STEM/round-3"
+rd_before="$(rd_tree_hash "$RD_PREP_TARGET")"
+set +e
+"$LEDGER_SCRIPT" --prepare-round 3 --ledger "$RD_L" >"$TMP_SINK" 2>&1
+rd_prepare_rc=$?
+set -e
+assert_eq "$rd_prepare_rc" "1" "--prepare-round refuses a symlinked unfinished-round directory"
+assert_eq "$(rd_tree_hash "$RD_PREP_TARGET")" "$rd_before" "--prepare-round does not modify data behind a symlink"
+set +e
+"$LEDGER_SCRIPT" --prepare-round 0 --ledger "$RD_L" >"$TMP_SINK" 2>&1
+rd_prepare_bad_rc=$?
+set -e
+assert_eq "$rd_prepare_bad_rc" "2" "--prepare-round rejects a non-positive round number"
 
 for bad in "--force" "--count 1" "--structural 0" "--local 0" "--pass-type full" "--quarantine 0"; do
 	set +e
