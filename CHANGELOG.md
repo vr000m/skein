@@ -12,6 +12,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 ### Changed
 - `show-me` triggers now cover review findings, gauntlet convergence and conduct phase progress.
 
+### Fixed
+- Codex `conduct --resume` now accepts a Codex-owned suffix of a shared plan: the stored `completed_phases` may start after earlier phases that `## Progress` already marks complete. Gaps, insertions and edits inside the stored window still fail closed.
+
 ## [0.9.2] - 2026-10-04
 
 ### Fixed

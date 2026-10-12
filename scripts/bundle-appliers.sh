@@ -59,17 +59,22 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	[[ -f "$stage/write-review-marker.py" ]] && chmod +x "$stage/write-review-marker.py"
 	[[ -f "$stage/render-report.py" ]] && chmod +x "$stage/render-report.py"
 
-	# Pi receives the staged tree minus BUNDLE_PI_EXCLUDE (bundle-map.sh owns
-	# the list). Build the filtered copy once per skill.
+	# Pi bundles only review-plan and deep-review, and receives the staged tree
+	# minus BUNDLE_PI_EXCLUDE (bundle-map.sh owns the list). Build the filtered
+	# copy once per Pi-bundled skill.
+	pi_bundled=0
+	[[ "$skill" == "review-plan" || "$skill" == "deep-review" ]] && pi_bundled=1
 	pi_stage="$stage_root/$skill/pi-scripts"
-	mkdir -p "$pi_stage"
-	cp -R "$stage/." "$pi_stage/"
-	for excluded in "${BUNDLE_PI_EXCLUDE[@]}"; do
-		rm -f "$pi_stage/$excluded"
-	done
+	if [[ "$pi_bundled" -eq 1 ]]; then
+		mkdir -p "$pi_stage"
+		cp -R "$stage/." "$pi_stage/"
+		for excluded in "${BUNDLE_PI_EXCLUDE[@]}"; do
+			rm -f "$pi_stage/$excluded"
+		done
+	fi
 
 	for mirror in "${MIRRORS[@]}"; do
-		if [[ "$mirror" == "plugins/skein-pi" && "$skill" != "review-plan" && "$skill" != "deep-review" ]]; then
+		if [[ "$mirror" == "plugins/skein-pi" && "$pi_bundled" -eq 0 ]]; then
 			continue
 		fi
 		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
