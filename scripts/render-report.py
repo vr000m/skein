@@ -310,9 +310,21 @@ def render_finding(finding: dict) -> str:
     return f"<article><h3>{esc(summary)}{marker}</h3><dl>{body}</dl></article>"
 
 
-def render_related(related: object) -> str:
+def render_related(
+    related: object, findings: list[dict], kept_findings: list[dict]
+) -> str:
     if not isinstance(related, list) or not related:
         return ""
+    all_categories: dict[tuple[str, str], set[str]] = {}
+    kept_categories: dict[tuple[str, str], set[str]] = {}
+    for finding in findings:
+        anchor = (str(finding.get("file") or ""), norm_line(finding.get("line")))
+        category = str(finding.get("category") or "")
+        all_categories.setdefault(anchor, set()).add(category)
+    for finding in kept_findings:
+        anchor = (str(finding.get("file") or ""), norm_line(finding.get("line")))
+        category = str(finding.get("category") or "")
+        kept_categories.setdefault(anchor, set()).add(category)
     rows = []
     for item in related:
         if not isinstance(item, dict):
@@ -320,6 +332,15 @@ def render_related(related: object) -> str:
         location = fmt_location(item)
         categories = item.get("categories")
         if isinstance(categories, list):
+            anchor = (str(item.get("file") or ""), norm_line(item.get("line")))
+            if anchor in all_categories:
+                categories = [
+                    value
+                    for value in categories
+                    if str(value) in kept_categories.get(anchor, set())
+                ]
+            if not categories:
+                continue
             category_text = ", ".join(str(value) for value in categories)
         else:
             category_text = ""
@@ -363,7 +384,7 @@ def render_severity(
         )
         if stats:
             parts.append(f'<p class="meta">Reconciliation: {stats}</p>')
-    parts.append(render_related(envelope.get("related")))
+    parts.append(render_related(envelope.get("related"), findings, kept))
     if label_suppressed:
         parts.append(f'<p class="note">{esc(SUPPRESSED_LABEL)}</p>')
         if omitted:

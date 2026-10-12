@@ -199,6 +199,19 @@ assert_has "$OUT" 'Related findings' "related cross-reference section rendered"
 assert_has "$OUT" 'src/shared.py:42' "related location rendered"
 assert_has "$OUT" 'security, correctness' "related categories rendered"
 
+RELATED_SUPPRESS_ENV="$SANDBOX/envelope-related-suppressed.json"
+cat >"$RELATED_SUPPRESS_ENV" <<'JSON'
+{"schema_version":2,"summary":{"raw":2,"merged":0,"unique":2,"related":1,"dropped":0},"findings":[{"severity":"Important","category":"security","file":"src/shared.py","line":42,"summary":"DROP-RELATED"},{"severity":"Important","category":"correctness","file":"src/shared.py","line":42,"summary":"KEEP-RELATED"}],"related":[{"file":"src/shared.py","line":42,"categories":["security","correctness"]}]}
+JSON
+RELATED_SUPPRESS_KEYS="$SANDBOX/related-suppress-keys.tsv"
+printf 'src/shared.py\t42\tsecurity\n' >"$RELATED_SUPPRESS_KEYS"
+run_r --envelope "$RELATED_SUPPRESS_ENV" --suppress-keys "$RELATED_SUPPRESS_KEYS" --root "$R" --out "$OUT"
+assert_eq "$RC" "0" "related suppression envelope renders"
+assert_lacks "$OUT" 'DROP-RELATED' "suppressed related finding is omitted"
+assert_has "$OUT" 'src/shared.py:42' "surviving related finding location remains"
+assert_has "$OUT" 'correctness' "surviving related category remains"
+assert_lacks "$OUT" 'security' "suppressed related category does not leak"
+
 echo "== renderer: escaping and injection =="
 run_r --envelope "$FIX/envelope-inject.json" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "injection fixture renders"

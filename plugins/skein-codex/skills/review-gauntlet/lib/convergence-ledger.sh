@@ -665,6 +665,9 @@ clear_stale_run_dir() {
 	ledger_in_gauntlet_dir "$1" || return 0
 	ledger_name="${1##*/}"
 	[[ "$ledger_name" == ledger-*.json ]] || return 0
+	# A .gauntlet basename and ledger namespace are not ownership evidence:
+	# only the active checkout's state directory may authorize stale cleanup.
+	ledger_in_current_checkout "$1" || return 0
 	if [[ -e "$run_dir" || -L "$run_dir" ]]; then
 		if ! ledger_assert_no_symlink "$run_dir"; then
 			exit 1
