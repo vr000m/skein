@@ -588,8 +588,8 @@ ledger_run_dir() {
 # parent means the caller pointed --ledger somewhere this script does not own,
 # so nothing beside the ledger may be deleted.
 ledger_in_gauntlet_dir() {
-	local parent
-	parent="$(dirname "$1")"
+	local parent="${1%/*}"
+	[[ "$parent" != "$1" ]] || parent="."
 	[[ "${parent##*/}" == ".gauntlet" ]]
 }
 
@@ -598,10 +598,25 @@ ledger_in_gauntlet_dir() {
 # A matching basename alone (or a .git entry in an arbitrary temp directory)
 # is not ownership evidence for destructive round preparation.
 ledger_in_current_checkout() {
-	local parent repo_root
-	parent="$(dirname "$1")"
-	[[ "$parent" == /* ]] || parent="$PWD/$parent"
-	repo_root="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || return 1
+	local parent repo_root cwd candidate
+	parent="${1%/*}"
+	[[ "$parent" != "$1" ]] || parent="."
+	cwd="$(builtin pwd -P)" || return 1
+	[[ "$parent" == /* ]] || parent="$cwd/$parent"
+	while [[ "$parent" == *//* ]]; do parent="${parent//\/\//\/}"; done
+	while [[ "$parent" == */ && "$parent" != "/" ]]; do parent="${parent%/}"; done
+	repo_root=""
+	candidate="$cwd"
+	while :; do
+		if [[ ! -L "$candidate" && (-e "$candidate/.git" || -L "$candidate/.git") ]]; then
+			repo_root="$candidate"
+			break
+		fi
+		[[ "$candidate" != "/" ]] || break
+		candidate="${candidate%/*}"
+		[[ -n "$candidate" ]] || candidate="/"
+	done
+	[[ -n "$repo_root" ]] || return 1
 	[[ "$parent" == "$repo_root/.gauntlet" ]]
 }
 
@@ -641,6 +656,7 @@ run_dir_is_rounds_only() {
 	eval "$restore"
 	for entry in ${entries[@]+"${entries[@]}"}; do
 		[[ "${entry##*/}" == round-* ]] || return 1
+		round_dir_is_runtime_owned "$entry" || return 1
 	done
 	return 0
 }
@@ -944,6 +960,17 @@ prepare-round)
 	fi
 	if ! run_dir="$(ledger_run_dir "$LEDGER_PATH")"; then
 		echo "convergence-ledger: --prepare-round needs a --ledger path ending in .json" >&2
+		exit 2
+	fi
+	if [[ ! -f "$LEDGER_PATH" || ! -r "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: ledger not found or unreadable at $LEDGER_PATH" >&2
+		exit 4
+	fi
+	validate_ledger_shape "$LEDGER_PATH"
+	validate_ledger_root_fields "$LEDGER_PATH"
+	completed_rounds="$(jq -r '.rounds | length' "$LEDGER_PATH")"
+	if [[ "$PREPARE_ROUND" -ne $((completed_rounds + 1)) ]]; then
+		echo "convergence-ledger: --prepare-round requires the next unfinished round ($((completed_rounds + 1)))" >&2
 		exit 2
 	fi
 	ledger_assert_no_symlink "$run_dir" || exit 1

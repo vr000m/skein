@@ -531,8 +531,11 @@ rd_out2="$("$LEDGER_SCRIPT" --run-dir --ledger "$RD_L")"
 assert_eq "$rd_out2" "$RD_STEM" "--run-dir is idempotent (same directory printed)"
 assert_eq "$(rd_tree_hash "$RD_BASE")" "$rd_before" "--run-dir never deletes or alters existing round files"
 
-# Preparing an unfinished round clears only that exact round directory, while
-# preserving completed rounds and unrelated run-directory entries.
+# The fixture ledger must reflect completed round 1 before round 2 can be
+# prepared. The next round alone may be cleared and reused.
+cat >"$RD_L" <<'EOF'
+{"loop_counter":1,"cap":10,"k":2,"rounds":[{"count":1,"structural_tally":0,"local_tally":1,"pass_type":"confirm","quarantine_size":0}]}
+EOF
 mkdir -p "$RD_STEM/round-2"
 printf 'keep completed\n' >"$RD_STEM/round-1/reconciled.json"
 printf 'stale\n' >"$RD_STEM/round-2/fixer-report.json"
@@ -545,8 +548,35 @@ else
 fi
 assert_eq "$(cat "$RD_STEM/round-1/reconciled.json")" "keep completed" "--prepare-round preserves completed rounds"
 assert_eq "$(cat "$RD_STEM/notes.txt")" "keep" "--prepare-round preserves unrelated run-dir entries"
+mkdir -p "$RD_BASE/subdir" "$RD_BASE/fake-bin"
+cat >"$RD_BASE/fake-bin/dirname" <<'EOF'
+#!/bin/sh
+case "$1" in
+*/convergence-ledger.sh | */gauntlet-common.sh) printf '%s\n' "${1%/*}" ;;
+*) printf '%s\n' "$RD_BASE/fake-victim/.gauntlet" ;;
+esac
+EOF
+for cmd in env git; do
+	printf '#!/bin/sh\nprintf "%%s\\n" "/fake-victim"\nexit 0\n' >"$RD_BASE/fake-bin/$cmd"
+done
+chmod +x "$RD_BASE/fake-bin/dirname" "$RD_BASE/fake-bin/env" "$RD_BASE/fake-bin/git"
+(cd "$RD_BASE/subdir" && PATH="$RD_BASE/fake-bin:$PATH" "$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_L") >"$TMP_SINK"
+if [[ -d "$RD_STEM/round-2" ]]; then
+	pass "--prepare-round ownership works from a checkout subdirectory without dirname/env/git"
+else
+	fail "--prepare-round failed from a checkout subdirectory without external ownership commands"
+fi
+set +e
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 1 --ledger "$RD_L") >"$TMP_SINK" 2>&1
+rd_completed_rc=$?
+set -e
+assert_eq "$rd_completed_rc" "2" "--prepare-round refuses a round already recorded complete"
+assert_eq "$(cat "$RD_STEM/round-1/reconciled.json")" "keep completed" "--prepare-round leaves completed round artifacts untouched"
 mkdir -p "$RD_STEM/round-4"
 printf 'user data\n' >"$RD_STEM/round-4/precious.txt"
+# Record rounds 2 and 3 as complete so round 4 is the next unfinished round.
+jq '.rounds += [{"count":1,"structural_tally":0,"local_tally":1,"pass_type":"confirm","quarantine_size":0},{"count":1,"structural_tally":0,"local_tally":1,"pass_type":"confirm","quarantine_size":0}] | .loop_counter=3' "$RD_L" >"$TMP_SINK"
+mv "$TMP_SINK" "$RD_L"
 set +e
 (cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 4 --ledger "$RD_L") >"$TMP_SINK" 2>&1
 rd_unknown_rc=$?
@@ -557,6 +587,9 @@ RD_PREP_TARGET="$RD_BASE/prepare-target"
 mkdir -p "$RD_PREP_TARGET"
 printf 'precious\n' >"$RD_PREP_TARGET/precious.txt"
 ln -s "$RD_PREP_TARGET" "$RD_STEM/round-3"
+# Restore progress to two completed rounds before asking to prepare round 3.
+jq '.rounds |= .[:2] | .loop_counter=2' "$RD_L" >"$TMP_SINK"
+mv "$TMP_SINK" "$RD_L"
 rd_before="$(rd_tree_hash "$RD_PREP_TARGET")"
 set +e
 (cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 3 --ledger "$RD_L") >"$TMP_SINK" 2>&1
@@ -569,6 +602,17 @@ set +e
 rd_prepare_bad_rc=$?
 set -e
 assert_eq "$rd_prepare_bad_rc" "2" "--prepare-round rejects a non-positive round number"
+set +e
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_BASE/.gauntlet/ledger-missing.json") >"$TMP_SINK" 2>&1
+rd_missing_rc=$?
+set -e
+assert_eq "$rd_missing_rc" "4" "--prepare-round rejects a missing ledger"
+printf '{malformed\n' >"$RD_BASE/.gauntlet/ledger-malformed.json"
+set +e
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_BASE/.gauntlet/ledger-malformed.json") >"$TMP_SINK" 2>&1
+rd_malformed_rc=$?
+set -e
+assert_eq "$rd_malformed_rc" "2" "--prepare-round rejects a malformed ledger"
 
 # A basename-shaped ledger outside a checkout must never authorize deletion.
 RD_VICTIM="$(mktemp -d)"
@@ -749,6 +793,29 @@ if [[ "$rd_err" == *leaving* ]]; then
 	pass "--init warns when it leaves a non-round-shaped <stem>/ in place"
 else
 	fail "--init gave no warning for a non-round-shaped <stem>/ (stderr: $rd_err)"
+fi
+RD_NESTED_STEM="$RD_G/ledger-nested"
+mkdir -p "$RD_NESTED_STEM/round-1/nested"
+printf 'user data\n' >"$RD_NESTED_STEM/round-1/nested/precious.txt"
+set +e
+rd_nested_err="$(cd "$RD_BASE" && "$LEDGER_SCRIPT" --init --force --ledger "$RD_G/ledger-nested.json" --target t 2>&1 >/dev/null)"
+rc=$?
+set -e
+assert_eq "$rc" "0" "--init --force succeeds when nested user data blocks stale cleanup"
+assert_eq "$(cat "$RD_NESTED_STEM/round-1/nested/precious.txt")" "user data" "--init --force preserves nested user content in stale round directories"
+if [[ "$rd_nested_err" == *leaving* ]]; then
+	pass "--init --force warns when nested user data blocks stale cleanup"
+else
+	fail "--init --force did not warn when nested user data blocked stale cleanup"
+fi
+RD_DS_STEM="$RD_G/ledger-ds-store"
+seed_stale "$RD_DS_STEM"
+printf 'finder metadata\n' >"$RD_DS_STEM/.DS_Store"
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --init --force --ledger "$RD_G/ledger-ds-store.json" --target t) >"$TMP_SINK" 2>&1
+if [[ -f "$RD_DS_STEM/.DS_Store" ]]; then
+	pass "--init --force preserves the existing top-level .DS_Store cleanup exception"
+else
+	fail "--init --force removed a top-level .DS_Store"
 fi
 RD_H_STEM="$RD_G/ledger-dot"
 seed_stale "$RD_H_STEM"
