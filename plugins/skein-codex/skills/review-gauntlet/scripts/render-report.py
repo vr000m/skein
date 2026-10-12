@@ -310,6 +310,29 @@ def render_finding(finding: dict) -> str:
     return f"<article><h3>{esc(summary)}{marker}</h3><dl>{body}</dl></article>"
 
 
+def render_related(related: object) -> str:
+    if not isinstance(related, list) or not related:
+        return ""
+    rows = []
+    for item in related:
+        if not isinstance(item, dict):
+            continue
+        location = fmt_location(item)
+        categories = item.get("categories")
+        if isinstance(categories, list):
+            category_text = ", ".join(str(value) for value in categories)
+        else:
+            category_text = ""
+        rows.append(f"<tr><td>{esc(location)}</td><td>{esc(category_text)}</td></tr>")
+    if not rows:
+        return ""
+    return (
+        '<section class="related"><h3>Related findings</h3>'
+        '<div class="tablewrap"><table><tr><th>Location</th>'
+        f"<th>Categories</th></tr>{''.join(rows)}</table></div></section>"
+    )
+
+
 def bucket_findings(findings: list) -> dict[str, list[dict]]:
     buckets: dict[str, list[dict]] = {s: [] for s in (*SEVERITIES, OTHER)}
     for finding in findings:
@@ -340,6 +363,7 @@ def render_severity(
         )
         if stats:
             parts.append(f'<p class="meta">Reconciliation: {stats}</p>')
+    parts.append(render_related(envelope.get("related")))
     if label_suppressed:
         parts.append(f'<p class="note">{esc(SUPPRESSED_LABEL)}</p>')
         if omitted:

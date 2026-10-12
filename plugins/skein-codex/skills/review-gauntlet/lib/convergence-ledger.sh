@@ -593,6 +593,41 @@ ledger_in_gauntlet_dir() {
 	[[ "${parent##*/}" == ".gauntlet" ]]
 }
 
+# ledger_in_current_checkout <ledger-path> — require the ledger's .gauntlet
+# directory to be the one directly under the caller's actual checkout root.
+# A matching basename alone (or a .git entry in an arbitrary temp directory)
+# is not ownership evidence for destructive round preparation.
+ledger_in_current_checkout() {
+	local parent repo_root
+	parent="$(dirname "$1")"
+	[[ "$parent" == /* ]] || parent="$PWD/$parent"
+	repo_root="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)" || return 1
+	[[ "$parent" == "$repo_root/.gauntlet" ]]
+}
+
+# A round directory is removable only when its direct children are regular
+# files produced by the orchestrator. Unknown names, nested directories,
+# symlinks, and special files are treated as user data and preserved.
+round_dir_is_runtime_owned() {
+	local dir="$1" entry name
+	local -a entries=()
+	[[ -d "$dir" && ! -L "$dir" ]] || return 1
+	local restore
+	restore="$(shopt -p nullglob dotglob || true)"
+	shopt -s nullglob dotglob
+	entries=("$dir"/*)
+	eval "$restore"
+	for entry in ${entries[@]+"${entries[@]}"}; do
+		[[ -f "$entry" && ! -L "$entry" ]] || return 1
+		name="${entry##*/}"
+		case "$name" in
+		*.envelope.json | *.tool-out.json | *.normalized.jsonl | autofix-cache.jsonl | findings.jsonl | reconciled.json | route_output.json | annotated-envelope.json | present-keys.txt | claimed-findings.jsonl | claimed-keys.txt | fixer-report.json | status-rows.json) ;;
+		*) return 1 ;;
+		esac
+	done
+	return 0
+}
+
 # run_dir_is_rounds_only <dir> — 0 when <dir> is a directory whose every entry
 # (dotfiles included) is named `round-*`, i.e. it has the shape --run-dir and
 # the orchestrator's per-round `mkdir -p` create, and nothing else.
@@ -900,7 +935,7 @@ prepare-round)
 		echo "convergence-ledger: --prepare-round needs a positive round number and no round-input flags" >&2
 		exit 2
 	fi
-	if ! ledger_in_gauntlet_dir "$LEDGER_PATH" || [[ "$ledger_name" != ledger-*.json ]]; then
+	if ! ledger_in_gauntlet_dir "$LEDGER_PATH" || ! ledger_in_current_checkout "$LEDGER_PATH" || [[ "$ledger_name" != ledger-*.json ]]; then
 		echo "convergence-ledger: --prepare-round only accepts an owned .gauntlet ledger path" >&2
 		exit 2
 	fi
@@ -910,9 +945,15 @@ prepare-round)
 	fi
 	ledger_assert_no_symlink "$run_dir" || exit 1
 	ledger_assert_no_symlink "$run_dir/round-$PREPARE_ROUND" || exit 1
-	mkdir -p "$run_dir/round-$PREPARE_ROUND"
-	rm -rf -- "$run_dir/round-$PREPARE_ROUND"
-	mkdir -- "$run_dir/round-$PREPARE_ROUND"
+	if [[ -e "$run_dir/round-$PREPARE_ROUND" ]]; then
+		if round_dir_is_runtime_owned "$run_dir/round-$PREPARE_ROUND"; then
+			rm -rf -- "$run_dir/round-$PREPARE_ROUND"
+		else
+			echo "convergence-ledger: refusing to clear round directory containing non-runtime content" >&2
+			exit 1
+		fi
+	fi
+	mkdir -p -- "$run_dir/round-$PREPARE_ROUND"
 	;;
 last-decision)
 	if [[ "$FORCE" -eq 1 ]]; then

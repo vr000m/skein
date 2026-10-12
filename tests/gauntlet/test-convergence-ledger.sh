@@ -496,6 +496,9 @@ assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old
 
 RD_BASE="$(mktemp -d)"
 RD_BASE="$(cd "$RD_BASE" && pwd -P)"
+# Treat the fixture as a checkout so repo-owned ledger operations remain
+# covered after the CLI requires a checkout-bound .gauntlet directory.
+git init -q "$RD_BASE"
 TMP_DIRS+=("$RD_BASE")
 rd_tree_hash() {
 	(cd "$1" && find . \( -type f -o -type l \) -print0 | LC_ALL=C sort -z | xargs -0 shasum -a 256 2>/dev/null)
@@ -534,7 +537,7 @@ mkdir -p "$RD_STEM/round-2"
 printf 'keep completed\n' >"$RD_STEM/round-1/reconciled.json"
 printf 'stale\n' >"$RD_STEM/round-2/fixer-report.json"
 printf 'keep\n' >"$RD_STEM/notes.txt"
-"$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_L" >"$TMP_SINK"
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 2 --ledger "$RD_L") >"$TMP_SINK"
 if [[ -d "$RD_STEM/round-2" ]] && [[ -z "$(find "$RD_STEM/round-2" -mindepth 1 -print -quit)" ]]; then
 	pass "--prepare-round clears unfinished round artifacts"
 else
@@ -542,22 +545,42 @@ else
 fi
 assert_eq "$(cat "$RD_STEM/round-1/reconciled.json")" "keep completed" "--prepare-round preserves completed rounds"
 assert_eq "$(cat "$RD_STEM/notes.txt")" "keep" "--prepare-round preserves unrelated run-dir entries"
+mkdir -p "$RD_STEM/round-4"
+printf 'user data\n' >"$RD_STEM/round-4/precious.txt"
+set +e
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 4 --ledger "$RD_L") >"$TMP_SINK" 2>&1
+rd_unknown_rc=$?
+set -e
+assert_eq "$rd_unknown_rc" "1" "--prepare-round refuses unknown round content"
+assert_eq "$(cat "$RD_STEM/round-4/precious.txt")" "user data" "--prepare-round preserves unknown round content"
 RD_PREP_TARGET="$RD_BASE/prepare-target"
 mkdir -p "$RD_PREP_TARGET"
 printf 'precious\n' >"$RD_PREP_TARGET/precious.txt"
 ln -s "$RD_PREP_TARGET" "$RD_STEM/round-3"
 rd_before="$(rd_tree_hash "$RD_PREP_TARGET")"
 set +e
-"$LEDGER_SCRIPT" --prepare-round 3 --ledger "$RD_L" >"$TMP_SINK" 2>&1
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 3 --ledger "$RD_L") >"$TMP_SINK" 2>&1
 rd_prepare_rc=$?
 set -e
 assert_eq "$rd_prepare_rc" "1" "--prepare-round refuses a symlinked unfinished-round directory"
 assert_eq "$(rd_tree_hash "$RD_PREP_TARGET")" "$rd_before" "--prepare-round does not modify data behind a symlink"
 set +e
-"$LEDGER_SCRIPT" --prepare-round 0 --ledger "$RD_L" >"$TMP_SINK" 2>&1
+(cd "$RD_BASE" && "$LEDGER_SCRIPT" --prepare-round 0 --ledger "$RD_L") >"$TMP_SINK" 2>&1
 rd_prepare_bad_rc=$?
 set -e
 assert_eq "$rd_prepare_bad_rc" "2" "--prepare-round rejects a non-positive round number"
+
+# A basename-shaped ledger outside a checkout must never authorize deletion.
+RD_VICTIM="$(mktemp -d)"
+TMP_DIRS+=("$RD_VICTIM")
+mkdir -p "$RD_VICTIM/.gauntlet/ledger-attack/round-1"
+printf 'precious\n' >"$RD_VICTIM/.gauntlet/ledger-attack/round-1/precious.txt"
+set +e
+"$LEDGER_SCRIPT" --prepare-round 1 --ledger "$RD_VICTIM/.gauntlet/ledger-attack.json" >"$TMP_SINK" 2>&1
+rd_outside_rc=$?
+set -e
+assert_eq "$rd_outside_rc" "2" "--prepare-round rejects a .gauntlet path outside a checkout"
+assert_eq "$(cat "$RD_VICTIM/.gauntlet/ledger-attack/round-1/precious.txt")" "precious" "--prepare-round preserves outside victim content"
 
 for bad in "--force" "--count 1" "--structural 0" "--local 0" "--pass-type full" "--quarantine 0"; do
 	set +e

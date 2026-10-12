@@ -188,6 +188,17 @@ run_r --envelope "$FIX/envelope-empty.json" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "findings: [] exits 0"
 assert_has "$OUT" 'None.' "empty severity bucket renders None."
 
+echo "== renderer: related finding cross-references =="
+RELATED_ENV="$SANDBOX/envelope-related.json"
+cat >"$RELATED_ENV" <<'JSON'
+{"schema_version":2,"summary":{"raw":2,"merged":0,"unique":2,"related":1,"dropped":0},"findings":[],"related":[{"file":"src/shared.py","line":42,"categories":["security","correctness"]}]}
+JSON
+run_r --envelope "$RELATED_ENV" --root "$R" --out "$OUT"
+assert_eq "$RC" "0" "related envelope renders"
+assert_has "$OUT" 'Related findings' "related cross-reference section rendered"
+assert_has "$OUT" 'src/shared.py:42' "related location rendered"
+assert_has "$OUT" 'security, correctness' "related categories rendered"
+
 echo "== renderer: escaping and injection =="
 run_r --envelope "$FIX/envelope-inject.json" --root "$R" --out "$OUT"
 assert_eq "$RC" "0" "injection fixture renders"
