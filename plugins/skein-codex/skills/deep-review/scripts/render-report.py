@@ -114,7 +114,7 @@ def read_json_file(path: str, what: str) -> object:
         raise Failure(f"{what} is empty: {path}")
     try:
         return json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise Failure(f"{what} is not valid JSON: {path} ({exc})") from None
 
 
@@ -163,7 +163,8 @@ def norm_line(value: object) -> str:
         return ""
     try:
         number = int(value)  # type: ignore[call-overload]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: JSON `1e999` parses to inf, which int() rejects.
         return str(value)
     return "" if number == -1 else str(number)
 
@@ -198,10 +199,14 @@ def load_suppress_keys(path: str | None) -> set[tuple[str, ...]]:
     if not path or not os.path.exists(path):
         return set()
     try:
-        with open(path, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
+        with open(path, encoding="utf-8", newline="") as fh:
+            raw = fh.read()
     except (OSError, UnicodeDecodeError) as exc:
         raise Failure(f"suppress-keys unreadable: {path} ({exc})") from None
+    # Split on LF (and CRLF) only, never str.splitlines(): that also breaks on
+    # \x0b, \x0c, \x1c-\x1e, \x85, U+2028 and U+2029, which norm_summary leaves
+    # inside a summary, so such a key would be cut in two and never match.
+    lines = raw.replace("\r\n", "\n").split("\n")
     keys: set[tuple[str, ...]] = set()
     for line in lines:
         if not line.strip():
@@ -481,7 +486,9 @@ def write_contained(out_abs: str, content: str) -> None:
     try:
         fd = os.open(tmp, flags, 0o644)
         created = True
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        # errors="replace": finding text is untrusted JSON, and a lone surrogate
+        # escape (`"\ud800"`) survives html.escape but cannot be encoded as UTF-8.
+        with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as fh:
             fh.write(content)
         os.replace(tmp, out_abs)
     except OSError as exc:

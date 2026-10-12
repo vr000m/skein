@@ -346,6 +346,43 @@ run_r --envelope "$UNANCH_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
 assert_has "$OUT" 'UNANCHORED-ONE' "an empty-file 3-field key does not match every unanchored finding (one)"
 assert_has "$OUT" 'UNANCHORED-TWO' "an empty-file 3-field key does not match every unanchored finding (two)"
 
+echo "== renderer: a key summary holding a Unicode line separator still matches =="
+# str.splitlines() would cut this key at U+2028 / form feed and never match;
+# the key file is split on LF only, because only tab, CR and LF are normalised.
+SEP_ENV="$SANDBOX/envelope-linesep.json"
+cat >"$SEP_ENV" <<'JSON'
+{"schema_version":2,"findings":[
+{"severity":"Minor","category":"docs","file":"","line":null,"summary":"SEP-ONE a b\fc"},
+{"severity":"Minor","category":"docs","file":"","line":null,"summary":"SEP-TWO"}
+]}
+JSON
+printf '\t\tdocs\tSEP-ONE a\xe2\x80\xa8b\x0cc\n' >"$KEYS"
+run_r --envelope "$SEP_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'SEP-ONE' "a summary with U+2028 and a form feed is matched by its key"
+assert_has "$OUT" 'SEP-TWO' "the other unanchored finding is kept"
+assert_has "$OUT" '1 finding(s) omitted.' "exactly one finding omitted for the separator key"
+
+echo "== renderer: hostile JSON values fail cleanly, never with a traceback =="
+# JSON `1e999` parses to inf (int() raises OverflowError); a lone surrogate
+# escape survives html.escape but cannot be encoded as UTF-8.
+INF_ENV="$SANDBOX/envelope-inf-line.json"
+printf '{"schema_version":2,"findings":[{"severity":"Minor","category":"x","file":"a.py","line":1e999,"summary":"INF-LINE"}]}' >"$INF_ENV"
+run_r --envelope "$INF_ENV" --root "$R" --out "$OUT"
+assert_eq "$RC" "0" "an infinite line number renders instead of crashing"
+assert_has "$OUT" 'INF-LINE' "the infinite-line finding is still shown"
+assert_lacks_re "$ERR" 'Traceback' "no traceback for an infinite line number"
+SUR_ENV="$SANDBOX/envelope-surrogate.json"
+printf '{"schema_version":2,"findings":[{"severity":"Minor","category":"x","file":"a.py","line":3,"summary":"SURROGATE \\ud800 TEXT"}]}' >"$SUR_ENV"
+run_r --envelope "$SUR_ENV" --root "$R" --out "$OUT"
+assert_eq "$RC" "0" "a lone surrogate in finding text renders instead of crashing"
+assert_has "$OUT" 'SURROGATE' "the surrogate finding is still shown"
+assert_lacks_re "$ERR" 'Traceback' "no traceback for a lone surrogate"
+DEEP_ENV="$SANDBOX/envelope-deep-nest.json"
+python3 -c 'import sys; sys.stdout.write("[" * 200000)' >"$DEEP_ENV"
+run_r --envelope "$DEEP_ENV" --root "$R" --out "$OUT"
+assert_eq "$RC" "1" "a deeply nested JSON input is a clean failure"
+assert_lacks_re "$ERR" 'Traceback' "no traceback for a deeply nested JSON input"
+
 printf 'a.py\t11\tlogic\na.py\t10\tother\nb.py\t\tlogic\nbroken-no-tabs\nonly\ttwo\n' >"$KEYS"
 run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
 assert_has "$OUT" 'crit-one' "wrong line does not match"
