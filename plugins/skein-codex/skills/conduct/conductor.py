@@ -1896,7 +1896,19 @@ def conduct(opts: ConductOptions) -> ConductResult:
                 state["status"] = "running"
             _persist_state(opts, state)
 
-        phases = [p for p in all_phases if not p.is_complete]
+        completed_positions = {
+            entry.get("index")
+            for entry in state.get("completed_phases", [])
+            if isinstance(entry, dict)
+        }
+        # The loop indexes this window by the state's completed-phase count.
+        # Retain recorded phases even when Progress also marks them complete so
+        # both values use the same coordinate system on resume.
+        phases = [
+            p
+            for p in all_phases
+            if not p.is_complete or p.position in completed_positions
+        ]
         max_phases_cap = (
             opts.max_phases if opts.max_phases is not None else len(phases) + 1
         )
