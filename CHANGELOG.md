@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-11
+
 ### Added
 - Opt-in `--report` for `review-gauntlet` and `deep-review`: writes a throwaway, self-contained HTML report (inline CSS, no script) through the bundled `render-report.py` and `report-hook.sh`. Claude and Codex mirrors only; the Pi package does not ship them. A failing report never changes a run's outcome.
 - `convergence-ledger.sh --run-dir` derives the per-run round directory from the ledger path and guards it; `--init` clears only stale `<stem>/` round directories under `.gauntlet/`.
@@ -283,7 +285,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/vr000m/skein/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/vr000m/skein/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vr000m/skein/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vr000m/skein/compare/v0.8.5...v0.9.0
