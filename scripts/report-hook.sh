@@ -63,7 +63,7 @@ warn() {
 	printf 'report-hook: warning: %s\n' "$*" >&2
 }
 
-# shellcheck disable=SC2329  # invoked indirectly through the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly through the EXIT trap
 cleanup() {
 	[[ -n "$DIFF_TMP" ]] && rm -f "$DIFF_TMP"
 	if [[ "$CLEANUP" -eq 1 ]]; then
@@ -96,7 +96,7 @@ has_dotdot() {
 # cleanup_scratch <path> — delete one scratch input named by --cleanup, only
 # when it is a regular non-symlink `skein-report-*` file directly inside the
 # system temp dir. Anything else is left in place with a warning.
-# shellcheck disable=SC2329  # invoked indirectly through cleanup (EXIT trap)
+# shellcheck disable=SC2317,SC2329  # invoked indirectly through cleanup (EXIT trap)
 cleanup_scratch() {
 	local p="$1" p_n tmp_n
 	[[ -n "$p" ]] || return 0
