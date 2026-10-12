@@ -118,8 +118,13 @@ has "$DEEP" '.file == $m.file' 'applied entries join to envelope findings by fil
 # shellcheck disable=SC2016
 has "$DEEP" '(.line | tostring) == ($m.line | tostring)' 'applied entries join to envelope findings by line'
 has "$DEEP" 'has("auto_fix")' 'applied entries join only auto-fix candidates'
+# shellcheck disable=SC2016
+has "$DEEP" '.auto_fix.kind == $m.kind' 'applied entries join by proposed fix kind'
+# shellcheck disable=SC2016
+has "$DEEP" 'select($matches | length == 1)' 'ambiguous category matches remain visible'
 has "$DEEP" 'join("\t")' 'applied and suppressed keys serialize as tab-separated tuples'
 has "$DEEP" 'report_envelope' 'applied keys are joined against captured envelope'
+has "$DEEP" 'If any command after the envelope capture fails before the hook runs' 'pre-hook failures trigger immediate scratch cleanup'
 # shellcheck disable=SC2016
 has "$DEEP" 'retain the `(file, line, category)` tuple for every finding suppressed here' 'suppressed findings retain exact tuple keys'
 # shellcheck disable=SC2016

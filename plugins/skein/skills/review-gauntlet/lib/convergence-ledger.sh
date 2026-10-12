@@ -601,16 +601,19 @@ run_dir_is_rounds_only() {
 # passed every guard.
 #
 # Deletes nothing unless the ledger's parent directory is named `.gauntlet`
-# (otherwise `--ledger docs/plan.json` would delete `docs/plan/`). The round
+# and its basename starts with `ledger-` (the namespace gc_ledger_path owns;
+# otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
 # dir is removed only when it contains nothing but `round-*` entries; any other
 # shape is left in place with a warning. A symlinked round dir is refused under
 # the state-path guard (exit 1, nothing removed). The report is removed only
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
-	local run_dir report
+	local run_dir report ledger_name
 	run_dir="$(ledger_run_dir "$1")" || return 0
 	ledger_in_gauntlet_dir "$1" || return 0
+	ledger_name="${1##*/}"
+	[[ "$ledger_name" == ledger-*.json ]] || return 0
 	if [[ -e "$run_dir" || -L "$run_dir" ]]; then
 		if ! ledger_assert_no_symlink "$run_dir"; then
 			exit 1

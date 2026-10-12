@@ -165,8 +165,8 @@ echo "== deep-review: Step 5.5 =="
 has "$DEEP" '### 5.5. Render the HTML Report (`--report` only)' "Step 5.5 heading present"
 has "$DEEP" 'Without the flag this step does not exist: do not create scratch files and do not call the hook.' "Step 5.5 is gated on --report"
 has "$DEEP" 'report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"' "keys scratch file comes from mktemp"
-assert_eq "$(count_fixed "$DEEP" 'rm -f "$report_envelope" "$report_keys"')" "0" "Step 5.5 prose runs no rm -f on the scratch files"
-lacks_re "$DEEP" '^[^`]*`rm -f "\$report_' "no rm of a report scratch file anywhere in skill prose"
+has "$DEEP" 'If any command after the envelope capture fails before the hook runs' "pre-hook failure removes scratch files immediately"
+has "$DEEP" 'On the normal path, the hook owns cleanup.' "normal cleanup remains hook-owned"
 has "$DEEP" '"${report_args[@]}" --cleanup' "the hook call passes --cleanup so the hook deletes both scratch files"
 has "$DEEP" 'report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")' "base/head are appended as separate array elements"
 # zsh (the Bash tool's shell on macOS) passes a ${VAR:+--flag "$VAR"} word list as ONE argument; the hook then
@@ -175,6 +175,10 @@ lacks_re "$DEEP" '\$\{[A-Za-z_]+:\+' "no :+ word-list expansion in a fence (zsh 
 has "$DEEP" 'substitute the literal paths for `$report_envelope` and `$report_keys`' "the jq call substitutes both scratch paths"
 has "$DEEP" 'report_keys="<literal keys path from step 1>"' "the hook fence binds its own variables (shell state does not span Bash calls)"
 has "$DEEP" 'file<TAB>line<TAB>category<TAB>summary' "unanchored findings get a 4-field suppress key with the summary"
+# shellcheck disable=SC2016
+has "$DEEP" '.auto_fix.kind == $m.kind' "applied entries join by proposed fix kind"
+# shellcheck disable=SC2016
+has "$DEEP" 'select($matches | length == 1)' "ambiguous category matches remain visible"
 has "$DEEP" 'success or failure' "scratch removal covers failure too"
 has "$DEEP" 'warn and skip the report, then still delete any scratch file created' "skip path still deletes scratch files"
 assert_eq "$(count_re "$DEEP" '^[[:space:]]*"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/report-hook\.sh')" "1" "exactly one report-hook.sh invocation"

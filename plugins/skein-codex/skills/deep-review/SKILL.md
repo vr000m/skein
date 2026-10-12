@@ -561,7 +561,7 @@ Procedure:
    "$SKILL_DIR"/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope> > "$report_envelope"
    ```
 
-   The capture is independent of whether Step 4.5 runs before suppression. Step 5.5 removes this scratch file after the hook returns.
+   The capture is independent of whether Step 4.5 runs before suppression. Step 5.5 removes this scratch file after the hook returns. If the audit command fails, immediately remove the exact envelope path printed by `mktemp` and stop the report workflow.
 
    **Schema lockstep (outside the GENERIC block):** `scripts/render-report.py` also consumes the v2 envelope and asserts `schema_version == 2`. When the envelope shape changes, update that consumer with the producer and other consumers.
 4. **Render the annotated JSON into the report template.** Use the report template in the [Output](#output) section: the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
@@ -781,15 +781,19 @@ do not create scratch files or call the hook.
 2. If Step 4.5 applied trivial fixes, append tuples for those fixes by joining the applier's
    `.deep-review/auto-fix-<unix>-<pid>.json` manifest to the audited envelope. The manifest is an
    array of `{kind, file, line, status, commit_sha, before_sha}` objects and has no category. For
-   each `status == "applied"` entry, take the category from each audited finding with an `auto_fix`
-   block and the same `file` and `line`:
+   each `status == "applied"` entry, match audited findings with an `auto_fix` block by `kind`,
+   `file`, and `line`. Emit a suppress key only when exactly one finding matches; if multiple
+   categories share that location and kind, leave them visible because the manifest cannot identify
+   which category the applier fixed:
 
    ```bash
    report_envelope="<exact captured envelope path>"
    report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"
    jq -r --slurpfile env "$report_envelope" '
      .[] | select(.status == "applied") as $m
-     | $env[0].findings[] | select(has("auto_fix") and .file == $m.file and (.line | tostring) == ($m.line | tostring))
+     | [$env[0].findings[] | select(has("auto_fix") and .auto_fix.kind == $m.kind and .file == $m.file and (.line | tostring) == ($m.line | tostring))] as $matches
+     | select($matches | length == 1)
+     | $matches[]
      | (if .line == null or .line == -1 then "" else (.line | tostring) end) as $ln
      | [(.file // ""), $ln, .category]
        + (if (.file // "") == "" or $ln == "" then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
@@ -819,6 +823,11 @@ do not create scratch files or call the hook.
    report_args+=(--cleanup)
    "$SKILL_DIR"/scripts/report-hook.sh "${report_args[@]}"
    ```
+
+   If any command after the envelope capture fails before the hook runs, immediately remove the
+   exact envelope path recorded from `mktemp`; if the suppress-keys file has already been created,
+   remove its exact recorded path too. Then stop the report workflow. On the normal path, leave
+   cleanup to the hook.
 
 4. The hook deletes both scratch inputs when `--cleanup` is passed, including on renderer failure,
    guard refusal, or argument errors. It only removes `skein-report-*` regular files directly in

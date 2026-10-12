@@ -638,6 +638,18 @@ fi
 assert_eq "$(rd_tree_hash "$RD_G/ledger-other")$(shasum -a 256 <"$RD_G/ledger-other.json")$(shasum -a 256 <"$RD_G/ledger-other.report.html")" "$rd_sibling" \
 	"--init --force leaves other .gauntlet files untouched"
 
+# A caller-supplied ledger basename must not make unrelated cache artifacts
+# look like this ledger's owned run directory. Only the reserved `ledger-`
+# namespace may authorize stale run-artifact cleanup.
+RD_CACHE_LEDGER="$RD_G/cache.json"
+mkdir -p "$RD_G/cache/round-1"
+printf 'CACHE\n' >"$RD_G/cache/round-1/payload"
+printf 'CACHE-REPORT\n' >"$RD_G/cache.report.html"
+rd_cache_before="$(rd_tree_hash "$RD_G/cache")$(shasum -a 256 <"$RD_G/cache.report.html")"
+"$LEDGER_SCRIPT" --init --force --ledger "$RD_CACHE_LEDGER" --target "branch:cache"
+assert_eq "$(rd_tree_hash "$RD_G/cache")$(shasum -a 256 <"$RD_G/cache.report.html")" "$rd_cache_before" \
+	"--init with a non-owned cache basename leaves its round directory and report intact"
+
 # Finding 1: outside a .gauntlet parent, --init deletes NOTHING beside the
 # ledger (`--ledger docs/plan.json` must never delete docs/plan/).
 RD_DOCS="$RD_BASE/docs"
