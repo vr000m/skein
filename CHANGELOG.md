@@ -4,18 +4,19 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-10-11
+## [0.10.0] - 2026-10-12
 
 ### Added
-- Opt-in `--report` for `review-gauntlet` and `deep-review`: writes a throwaway, self-contained HTML report (inline CSS, no script) through the bundled `render-report.py` and `report-hook.sh`. Claude and Codex mirrors only; the Pi package does not ship them. A failing report never changes a run's outcome.
-- `convergence-ledger.sh --run-dir` derives the per-run round directory from the ledger path and guards it; `--init` clears only stale `<stem>/` round directories under `.gauntlet/`.
-- Plain-prose rule (short sentences, active voice, one term per concept, no filler) for review findings and summaries in `review-gauntlet`, `deep-review` and `review-plan`, on both mirrors.
+- Opt-in `--report` for `review-gauntlet` and `deep-review`: writes a throwaway, self-contained HTML report (inline CSS, no script, all text escaped) through the bundled `render-report.py` and `report-hook.sh`. It shows severity counts, findings, convergence across gauntlet rounds and the diff scope. Claude and Codex mirrors only; the Pi package does not ship them. The report is written only under `.gauntlet/` or `.deep-review/` with symlink and `..` checks, and a failing report never changes a run's outcome, terminal token or exit code.
+- `convergence-ledger.sh --run-dir` derives and guards the per-run round directory from the ledger path. `--init` clears a stale `<stem>/` only when the ledger sits in `.gauntlet/` and the directory holds only `round-*` entries, and also removes the stale `<stem>.report.html`.
+- Plain-prose rule (short sentences, active voice, one term per concept, no filler) for review findings and summaries in `review-gauntlet`, `deep-review` and `review-plan`, on both mirrors. Exact machine-read values (file, line, category, severity, summary text) are exempt.
 
 ### Changed
 - `show-me` triggers now cover review findings, gauntlet convergence and conduct phase progress.
 
 ### Fixed
 - Codex `conduct --resume` now accepts a Codex-owned suffix of a shared plan: the stored `completed_phases` may start after earlier phases that `## Progress` already marks complete. Gaps, insertions and edits inside the stored window still fail closed.
+- Codex `conduct --resume` no longer skips a phase or reports "All phases complete" early when a phase is both recorded as complete and ticked in `## Progress`.
 
 ## [0.9.2] - 2026-10-04
 
