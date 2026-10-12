@@ -1,6 +1,6 @@
 ---
 name: show-me
-description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, or drafting a PR description — anywhere a picture would answer the question faster than paragraphs.
+description: Picks a visual format — pseudocode, call tree, component tree, file tree, mermaid diagram, diff, or HTML artifact — instead of prose when a diagram would make the answer clearer. Use when explaining logic/algorithms, runtime control flow, UI structure, architecture, data flow, what changed in a diff, drafting a PR description, presenting review findings, gauntlet convergence, or conduct phase progress — anywhere a picture would answer the question faster than paragraphs.
 argument-hint: "[topic or question to visualize]"
 ---
 
@@ -17,6 +17,11 @@ Prefer a diagram, sketch, or artifact over prose when one communicates the point
 - Explaining interactions or data flow between systems/components → **mermaid diagram**
 - Explaining what changed in code, config, or control flow → **diff**
 - Explaining a complex layout, comparison, or concept prose can't carry → **HTML artifact**
+<!-- BEGIN SHOW-ME REVIEW TRIGGERS -->
+- Presenting review findings → when a review is being run and its `--report` flag is available (`review-gauntlet`, `deep-review`), pass `--report` for an **HTML report**; for findings that already exist (including `/code-review` or `/security-review` output), build the **HTML artifact** view directly with show-me instead of rerunning a review; not a long prose list
+- Showing gauntlet convergence across rounds → **HTML report** via the `--report` flag of `review-gauntlet`
+- Showing conduct phase progress → a plain **mermaid** diagram or **table**; no report flag is needed
+<!-- END SHOW-ME REVIEW TRIGGERS -->
 
 When none of these fit better than a sentence or two, just write the sentence. Not every answer needs a picture.
 

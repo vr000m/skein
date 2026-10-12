@@ -2192,19 +2192,23 @@ r7g2b_extra="$(
 	. "$ROOT_DIR/scripts/lib/bundle-map.sh"
 	bundle_extra_for review-gauntlet
 )"
-# R11/F2 added claimed-findings.sh beside finding-key.sh. This stays an
+# R11/F2 added claimed-findings.sh beside finding-key.sh; the review-output
+# plan then added the shared report pair (render-report.py, report-hook.sh,
+# the BUNDLE_REPORT group). This stays an
 # EXACT-EQUALITY allowlist rather than a "does not contain persist-common"
 # substring check: the rule being defended is that review-gauntlet's extras
 # are a closed, deliberately-chosen set, so a new entry has to be added here
 # consciously. Both entries are gauntlet-only claim/regression-key machinery
 # that deep-review and review-plan have no concept of.
 r7g2b_expected="finding-key.sh
-claimed-findings.sh"
+claimed-findings.sh
+render-report.py
+report-hook.sh"
 if [[ "$r7g2b_extra" != "$r7g2b_expected" ]]; then
 	r7g2b_bad="$r7g2b_bad [bundle_extra_for review-gauntlet = '$r7g2b_extra', expected '$r7g2b_expected']"
 fi
 if [[ -z "$r7g2b_bad" ]]; then
-	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh + claimed-findings.sh"
+	pass "R7-G2b: the authored guard sources no generated lib, and review-gauntlet's bundle extras are still exactly finding-key.sh + claimed-findings.sh + the report pair"
 else
 	fail "R7-G2b:$r7g2b_bad"
 fi

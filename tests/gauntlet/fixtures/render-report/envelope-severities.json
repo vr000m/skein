@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "summary": {"raw": 6, "merged": 1, "unique": 5, "related": 0, "dropped": 0},
+  "findings": [
+    {"severity": "Critical", "category": "logic", "file": "a.py", "line": 10, "summary": "crit-one", "lenses": ["logic"], "evidence": "ev-crit", "suggestion": "fix-crit"},
+    {"severity": "Important", "category": "logic", "file": "b.py", "line": 20, "summary": "imp-one", "lenses": ["logic", "security"]},
+    {"severity": "Minor", "category": "docs", "file": "c.md", "line": null, "summary": "minor-null-line", "lenses": ["docs"]},
+    {"severity": "Minor", "category": "docs", "file": "d.md", "line": -1, "summary": "minor-neg-line", "lenses": ["docs"]},
+    {"severity": "Bogus", "category": "misc", "file": "e.py", "line": 5, "summary": "other-bogus", "lenses": ["arch"]},
+    {"category": "misc", "file": "f.py", "line": 6, "summary": "other-missing-severity", "lenses": ["arch"]}
+  ],
+  "related": []
+}

@@ -1,7 +1,7 @@
 ---
 name: review-gauntlet
 description: Chains the review gates (adversarial Codex review, deep-review, security-review) into one convergence loop, applying fixes via isolated fixer subagents until findings stop appearing. Use when the user says "review gauntlet", "run the review gates", "run all reviews", "review loop until clean", or invokes this skill directly with a plan path, branch, or `--pr`.
-argument-hint: "[--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]"
+argument-hint: "[--resume] [--fresh] [--report] [--plan <path>] [<branch> | --pr <N>]"
 ---
 
 # Review Gauntlet: Chained Convergence Loop Across Review Gates
@@ -22,9 +22,11 @@ This skill is a **conductor**, in the mold of `skein:conduct`, but with a delibe
 
 Three modes, all opt-in — nothing here ever fires without an explicit trigger, so a 10-loop run is never a surprise spend. `--resume` and `--fresh` modify only loop startup; they do not make an absent `Review Gates` marker run.
 
-1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--plan <path>] [<branch> | --pr <N>]`. Resolves the diff target the same way `deep-review` does: an explicit branch/commit-range argument, or `--pr <N>` via `gh pr diff`, or (absent both) the current branch against its merge base. `--plan <path>` supplies the dev-plan used as Guardrail 1's design-intent source; without it, fixer dispatches carry no plan context and Guardrail 1 degrades to "no design-intent source available" (still enforced — a fixer with no plan context cannot claim a finding matches design intent, so ambiguous conflicts default to quarantine). `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
+1. **Standalone**: `review-gauntlet [--resume] [--fresh] [--report] [--plan <path>] [<branch> | --pr <N>]`. Resolves the diff target the same way `deep-review` does: an explicit branch/commit-range argument, or `--pr <N>` via `gh pr diff`, or (absent both) the current branch against its merge base. `--plan <path>` supplies the dev-plan used as Guardrail 1's design-intent source; without it, fixer dispatches carry no plan context and Guardrail 1 degrades to "no design-intent source available" (still enforced — a fixer with no plan context cannot claim a finding matches design intent, so ambiguous conflicts default to quarantine). `--resume` reads the prior ledger for the resolved target and resumes only from a round boundary. `--fresh` discards an existing ledger for the resolved target by mapping the loop-entry init call to `--init --force`; without `--fresh`, a non-resume invocation refuses to overwrite an existing ledger. **If both `--resume` and `--fresh` are passed, `--fresh` wins**: an explicit discard instruction is stronger than a resume request, so the invocation behaves exactly as `--fresh` alone (discard-and-init, never peek).
 2. **dev-plan marker**: a plan's header carries `**Review Gates:** none | full` (default `none`, an inline field above the `/review-plan` marker — plans have no YAML frontmatter). `conduct` and `fan-out` read this field and invoke `review-gauntlet --plan <plan-path>` only when it is `full`.
 3. **conduct/fan-out auto-chain**: mechanical readers of mode 2; they add no new trigger surface, they just call this skill when the marker opts in.
+
+`--report` is a rendering-mode modifier, like `--resume` and `--fresh` it changes nothing about which gates run or how the loop decides. Without it the terminal output is exactly what it was before the flag existed. With it, the terminal report step (see [Terminal report step](#terminal-report-step---report-only)) writes one self-contained HTML report. `conduct`'s auto-chain does not forward `--report`: to get a report, invoke this skill directly. The deep-review slot (gate 2 below) never receives `--report`; this skill renders its own report from the pooled round envelopes.
 
 Both standalone and auto-chain invocation reach the convergence loop and its 10-loop cap — there is no single-pass mode anymore.
 
@@ -70,6 +72,16 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
+**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` retain their existing stale-run cleanup behavior:
+
+```bash
+run_dir="$("${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
+round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --prepare-round "$round_n" --ledger "$ledger_path"
+```
+
+It runs the same `gauntlet_assert_no_symlink` guard as every other ledger write, on the directory **and** on the sibling report path `<ledger-stem>.report.html`. A refusal exits non-zero (exit 1, `refusing to operate on symlink: <path>`): stop before round 1 exactly as for a ledger refusal, and treat it as a finding about the checkout, never as a reason to retarget. The round number is read from the ledger, not from memory: a fresh loop is round 1, and `--resume` takes `round_n` from the ledger's `rounds` array as `round_n = <length of .rounds> + 1` (`jq -r '.rounds | length' "$ledger_path"`), so a resumed run never overwrites a finished round's files. `--fresh` (`--init --force`) and a plain `--init` both clear a stale `<ledger-stem>/` inside the ledger script under that same guard (a fresh ledger has zero rounds, so any existing round dir is a prior run's); there is no `rm -rf` in this skill's prose.
+
 **Auto-chain loop entry** (modes 2/3 — `conduct`/`fan-out` invoke this skill with no operator present to supply `--resume`/`--fresh`): never blind-`--init` first. A prior interrupted auto-chained run's ledger sitting at this target would make a bare `--init` refuse with exit 6, and there is no operator to answer "pass `--resume` or `--fresh`" — that would dead-end the auto-chain on every resume-after-interruption of a `full`-mode run. Instead, peek first, against the same target:
 
 ```bash
@@ -94,10 +106,11 @@ Do not attempt to "fix" this by wrapping `skein:deep-review` in an `Agent` call 
 
 Every round runs these three gates in this order. Findings from all three are pooled and reconciled before the fixer is dispatched.
 
-Before running any gate, declare the round-scoped output directory and **all three** envelope/tool-out paths together — this is what makes the status-row block below, and the key-file wiring, reference variables that actually exist, rather than only the gate-1 pair:
+Before running any gate, declare the round-scoped output directory and **all three** envelope/tool-out paths together — this is what makes the status-row block below, and the key-file wiring, reference variables that actually exist, rather than only the gate-1 pair. `$run_dir` is the directory defined by the single `--run-dir` call in [Target and Resume Ledger](#target-and-resume-ledger), and `$round_n` comes from the ledger's `rounds` array (`length + 1`, as stated there):
 
 ```bash
 repo_root="$(git rev-parse --show-toplevel)"
+round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
 gate_out_dir="$run_dir/round-$round_n"; mkdir -p "$gate_out_dir"
 envelope_codex_adversarial="$gate_out_dir/codex-adversarial.envelope.json"
 toolout_codex_adversarial="$gate_out_dir/codex-adversarial.tool-out.json"
@@ -122,11 +135,15 @@ auto_fix_manifest=""
    gate_run_bounded --gate codex-adversarial "$budget_s" "$envelope_codex_adversarial" "$toolout_codex_adversarial" -- \
      codex exec --ephemeral --sandbox read-only -C "$repo_root" --output-schema <schema> "<adversarial-review prompt>" </dev/null
    ```
+   Compose `<adversarial-review prompt>` to include this plain-prose line verbatim:
+
+   Write each finding in plain prose: short sentences, active voice, one term per concept, no filler. Keep exact values (file, line, category, severity, summary text copied from source) unchanged.
+
    `lens-budget.sh --kind codex` computes the wall-clock budget (20m floor, 45m cap, `2×` the size-scaled lens budget in between); `--gate-timeout <seconds>` overrides the computed value outright when the operator supplies one. `gate_run_bounded` (in the new harness-neutral `lib/gate-bounded.sh`, byte-identical across mirrors) enforces the budget synchronously via process-group kill — GNU/Homebrew `timeout --kill-after` when on PATH, else a `python3 os.setsid` shim — and writes an envelope on **every** exit: a clean exit jq-wraps the tool's own JSON with `duration_s` stamped in; an expiry removes the half-written tool output and writes `status: "skipped"`, `notes: "DEGRADED: timeout after <N>s"` instead. The leading `--gate codex-adversarial` stamps `.gate` on all three of `gate_run_bounded`'s exit paths (clean, expiry, error), overriding whatever the tool self-reported — this is what keeps gate identity attached even when the gate times out or crashes before it ever got to self-report one. All three of `gate_run_bounded`, `lib/convergence-ledger.sh` and `lib/run-gate.sh` source `lib/state-path-guard.sh`, the skill's single state-path containment policy: `gauntlet_assert_no_symlink` refuses a `.gauntlet/` path whose leaf or any ancestor up to the worktree root is a symlink, or that contains `..`. `lib/convergence-ledger.sh`'s round-append filter — the `pending_claims`/`fixed_keys` promotion state machine that decides what counts as proven-fixed — lives in `lib/ledger-promote.jq` and is invoked with `jq -f`, so its reasoning is written as jq comments rather than shell-escaped prose. `run-gate.sh normalize` reads **only** the envelope, never the raw tool output, so a killed gate can never be mistaken for a clean pass. An optional Claude-side `run_in_background` + `Monitor` on the same invocation is a UX convenience only — non-load-bearing, Claude-only; the shell-level budget above is what actually bounds the gate. **Forbidden flags:** do not pass `--base` or `--uncommitted` to plain `codex exec`; those flags belong to `codex exec review` and are incompatible with a custom prompt. The gauntlet-owned schema is:
    ```json
    { "gate": "string", "status": "approve | needs-attention | skipped | deferred | error", "findings": [ { "file": "string", "line": "integer|null", "category": "string", "severity": "string", "confidence": "number|null", "summary": "string", "evidence": "string", "auto_fix": "object|null" } ], "notes": "string|null" }
    ```
-2. **`skein:deep-review` (5 lenses).** Invoke as `skein:deep-review --verbose`, directly at conductor top level (not as a nested Agent), per the Delegation Pattern above. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed — without it, gate 2's Minor findings would silently normalize with missing evidence. `skein:deep-review` has no shell-level budget wrapper of its own, so the conductor constructs `$envelope_deep_review` by hand from its own wall clock and the gate's returned findings, stamping every envelope field itself: `gate: "deep-review"`, `status` (`approve` if zero findings else `needs-attention`), `findings`, `duration_s` (measured around the invocation), `degraded_reason: null`.
+2. **`skein:deep-review` (5 lenses).** Invoke as `skein:deep-review --verbose`, directly at conductor top level (not as a nested Agent), per the Delegation Pattern above. This slot **never receives `--report`**, even when the gauntlet itself was run with it: the gauntlet renders its own report from the pooled round envelopes. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed — without it, gate 2's Minor findings would silently normalize with missing evidence. `skein:deep-review` has no shell-level budget wrapper of its own, so the conductor constructs `$envelope_deep_review` by hand from its own wall clock and the gate's returned findings, stamping every envelope field itself: `gate: "deep-review"`, `status` (`approve` if zero findings else `needs-attention`), `findings`, `duration_s` (measured around the invocation), `degraded_reason: null`.
 3. **Security-review gate.** `/security-review`. Same hand-construction as gate 2: build `$envelope_security_review` with `gate: "security-review"`, `status`, `findings`, `duration_s` (wall clock around the invocation), `degraded_reason: null`.
 
 Findings from all three gates are normalized to `(file, line, category, severity, confidence, summary, evidence)`; any `auto_fix` proposal a gate emits is **held aside** for the fixer's route logic (Guardrail 2) and stripped from the payload before dedup. Only the `auto_fix`-free findings are deduped on `(file, line, category, …)` by the bundled reconciler before the fixer sees them (see [Reuse](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) for the exact invocation and why the payload must be `auto_fix`-free).
@@ -147,7 +164,39 @@ After the fixer batch returns (see [Guardrails](#guardrails) below for what it f
   4. **`success_with_quarantine`.** The loop converges clean (stop condition 1 fires) but the quarantine queue is non-empty. This is a distinct terminal status from plain `success` — the operator must review the quarantine queue before treating the branch as done.
   5. **`regression`.** A finding the ledger previously confirmed fixed has reappeared. Every round, compute each reconciled finding's **regression key** via the bundled `scripts/finding-key.sh` (`sha1` over length-prefixed `file` (verbatim) `+` `category` (lowercased) `+` normalised `summary` (lowercase + whitespace-collapse, **no** digit-stripping), deliberately **not** the reconciler's line-anchored `(file, line, category)` dedup key — a finding that shifts to a different line across rounds must still match) and pass the full list to `convergence-ledger.sh --present-keys <file>` as a newline-separated key list, **every round, including a clean full pass where the file is legitimately empty** — omitting `--present-keys` on a full pass silently suppresses promotion (see [Reuse: bundled scripts only](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) below). When the fixer claims a fix, derive keys from the claimed finding(s) via `finding-key.sh` and pass them via `--claimed-keys <file>` — schema `{claimed:[finding...]}` on the fixer's own report (finding *objects*, not pre-computed keys — see Guardrail 2's Fixer output schema), never passed without `--present-keys` in the same call. **The ledger itself owns claimed→fixed promotion, and that promotion is DEFERRED to the next full pass, never same-round**: a key claimed fixed this round is, by construction, still present in this same round's `--present-keys` (the gates ran before the fix), so it cannot prove itself this round. Instead the ledger holds it as a *pending claim* and only evaluates it on a later round that is a **complete full pass with evidence** (`pass_type: full`, `--unresolved 0`, and `--present-keys` actually supplied) — absent from that round's present set, it promotes into the cumulative `fixed_keys` set; still present, it is dropped (never promoted, never auto-retried — the fixer must claim it again on some later round that actually shows it gone). `regression` slots in the decision priority **after `success`/`success_with_quarantine`, before `cap`**, and fires on **both** pass types (a previously-fixed bug reappearing during a `pass_type: confirm` round is exactly as much a regression as one reappearing on a full pass) whenever this round's `--present-keys` intersects the ledger's cumulative `fixed_keys`. `regression` is terminal — halt and hand the reappeared finding(s) back to the operator with the round history; do not keep looping past it (the loop already proved it could fix this once — a second appearance means the fix did not hold or was reverted, which is an operator decision, not another fixer dispatch).
 
+<!-- BEGIN REPORT STEP -->
 Report the terminal status, the gates passed, the findings fixed per round, and (for `success_with_quarantine`, `regression`, or `non-converge`) the full quarantine queue / regressed-key / non-convergence rationale.
+
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK B -->
+
+### Terminal report step (`--report` only)
+
+Runs only when `--report` was passed. Without the flag this step does not exist: do nothing here and do not call the hook.
+
+Every terminal-token exit routes through this one step, after the terminal summary above: `success`, `success_with_quarantine`, `regression`, `cap`, `non-converge`, and the resume/auto-chain exit-5 paths that report an already-terminal ledger. **Error exits skip it** (a script error, an ambiguous ledger, a missing ledger on `--resume`, a guard refusal): no report is attempted and the exit is reported exactly as before.
+
+1. Resolve the diff scope to two commit ids. For `--pr <N>`: `gh pr view <N> --json baseRefOid,headRefOid` (the hook never calls `gh`). For a branch or commit range: `git merge-base <base> HEAD` and `git rev-parse HEAD`, or `git rev-parse` of each end of an explicit range. If resolution fails, pass neither flag; the report then says the diff scope is unavailable. There is no uncommitted-changes mode.
+2. Enumerate the rounds from the ledger, never by globbing: pass `--round N=<run_dir>/round-N/reconciled.json` for each N from 1 to the length of the ledger's `.rounds` (`jq -r '.rounds | length' "$ledger_path"`). A round whose file is missing (a ledger carried over from an older plugin version, or a round that errored before reconcile) is marked "envelope missing" in the report; it is not an error.
+3. Call the bundled hook once. `--out` is the report path beside the ledger, `<ledger-stem>.report.html`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block that defines `$repo_root`, so the fence below defines it itself. If `$ledger_path` or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger) (`gc_ledger_path`, then the single `--run-dir` call):
+
+```bash
+repo_root="$(git rev-parse --show-toplevel)"
+report_out="${ledger_path%.json}.report.html"
+"${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/scripts/report-hook.sh \
+  --root "$repo_root" --out "$report_out" --ledger "$ledger_path" \
+  --round 1="$run_dir/round-1/reconciled.json" [--round N=... for each further round] \
+  [--base "<base-oid>" --head "<head-oid>"]
+```
+
+4. Relay the hook's `report written: <path>` line (and any `report-hook: warning:` lines) to the operator. The hook always exits 0 and never writes anything under `.gauntlet/` except the report. A guard refusal, a missing `python3`, a failing `git` or a failing renderer each produce a warning and no report; none of them changes the terminal token, the exit code, or the ledger. The renderer reads only the files it is handed; it never calls `git` or `gh`.
+
+If `${CLAUDE_PLUGIN_ROOT}/skills/review-gauntlet/scripts/report-hook.sh` is absent, warn and skip the report (do not abort the run: the report is opt-in and never decides the outcome).
+<!-- END REPORT STEP -->
 
 ### Resume Decision Table
 
@@ -160,7 +209,7 @@ Report the terminal status, the gates passed, the findings fixed per round, and 
 | exit 0 + `confirm` | Run the confirm-pass gate sequence before returning to the full loop. |
 | exit 0 + `no-rounds` | Treat the existing empty ledger as a fresh run and start at gate 1 without reinitializing it. |
 | exit 4 | Missing ledger: stop and tell the operator there is nothing to resume for the resolved target. |
-| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `regression`, `cap`, or `non-converge`): refuse to resume and report the terminal token. |
+| exit 5 | Terminal ledger (`success`, `success_with_quarantine`, `regression`, `cap`, or `non-converge`): refuse to resume and report the terminal token (then run the [terminal report step](#terminal-report-step---report-only) if `--report` was passed). |
 | any other non-zero exit | Stop and surface the script error; do not run gates against an ambiguous ledger. |
 
 ### What Resume Cannot Restore

@@ -4,6 +4,8 @@
 #
 # Usage:
 #   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+#   convergence-ledger.sh --run-dir --ledger <path>
+#   convergence-ledger.sh --prepare-round <N> --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
 #       [--cap 10] [--k 2]
 #   convergence-ledger.sh --ledger <path> [--target <target>] --count <N> \
@@ -18,6 +20,26 @@
 #   4 - --last-decision ledger not found
 #   5 - --last-decision reached a terminal decision
 #   6 - --init refused to overwrite an existing ledger
+#
+# --run-dir derives the per-run round directory from the ledger path: the
+# ledger file's path with the trailing `.json` removed (`<ledger-stem>/`, e.g.
+# `.gauntlet/ledger-claude-<slug>-<digest12>/`). It runs
+# `gauntlet_assert_no_symlink` on that directory AND on the sibling report path
+# `<ledger-stem>.report.html` (a refusal exits 1 with the guard's diagnostic;
+# the orchestrator then skips the report with a warning), runs `mkdir -p`, and
+# prints the directory on stdout. It never deletes anything. The ledger path
+# has one owner (`gc_ledger_path`); this mode only derives from it, so the
+# stem is exactly the basename of the ledger without `.json`. A ledger path not
+# ending in `.json` is a usage error (exit 2).
+#
+# A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
+# prior run's stale round dir and would collide with the new run's `round-1/`.
+# Both `--init` and `--init --force` therefore remove it, and the stale sibling
+# `<ledger-stem>.report.html`, after the ledger-path guards pass and right
+# before they write the fresh ledger — but only when the ledger's parent dir is
+# named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
+# entries, and only when the report is a regular non-symlink file. `--init`
+# refused (exit 6, or a guard refusal) touches nothing.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
@@ -122,6 +144,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+       convergence-ledger.sh --run-dir --ledger <path>
+       convergence-ledger.sh --prepare-round <N> --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
        convergence-ledger.sh --ledger <path> [--target <target>] --count <N> --structural <N> \
               --local <N> --pass-type <full|confirm> --quarantine <N> \
@@ -145,12 +169,13 @@ FORCE=0
 ROUND_ARG_SEEN=0
 PRESENT_KEYS_FILE=""
 CLAIMED_KEYS_FILE=""
+PREPARE_ROUND=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--init)
 		if [[ "$MODE" != "append" && "$MODE" != "init" ]]; then
-			echo "convergence-ledger: --init cannot be combined with --last-decision" >&2
+			echo "convergence-ledger: --init cannot be combined with --last-decision or --run-dir" >&2
 			usage
 			exit 2
 		fi
@@ -158,11 +183,32 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--last-decision)
 		if [[ "$MODE" != "append" && "$MODE" != "last-decision" ]]; then
-			echo "convergence-ledger: --last-decision cannot be combined with --init" >&2
+			echo "convergence-ledger: --last-decision cannot be combined with --init or --run-dir" >&2
 			usage
 			exit 2
 		fi
 		MODE="last-decision"
+		;;
+	--run-dir)
+		if [[ "$MODE" != "append" && "$MODE" != "run-dir" ]]; then
+			echo "convergence-ledger: --run-dir cannot be combined with --init or --last-decision" >&2
+			usage
+			exit 2
+		fi
+		MODE="run-dir"
+		;;
+	--prepare-round)
+		if [[ "$MODE" != "append" && "$MODE" != "prepare-round" ]]; then
+			echo "convergence-ledger: --prepare-round cannot be combined with another mode" >&2
+			exit 2
+		fi
+		MODE="prepare-round"
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		PREPARE_ROUND="$1"
 		;;
 	--force)
 		FORCE=1
@@ -527,6 +573,149 @@ ledger_assert_no_symlink() {
 	gauntlet_assert_no_symlink "$1" convergence-ledger
 }
 
+# ledger_run_dir <ledger-path> — print the derived round dir: the ledger path
+# without its trailing `.json`. Returns 1 (no output) for a path that does not
+# end in `.json`.
+ledger_run_dir() {
+	local ledger_path="$1" stem
+	stem="${ledger_path%.json}"
+	[[ "$stem" != "$ledger_path" && -n "${stem##*/}" ]] || return 1
+	printf '%s' "$stem"
+}
+
+# ledger_in_gauntlet_dir <ledger-path> — 0 when the ledger's parent directory
+# is named `.gauntlet`. The only shape `gc_ledger_path` ever produces; any other
+# parent means the caller pointed --ledger somewhere this script does not own,
+# so nothing beside the ledger may be deleted.
+ledger_in_gauntlet_dir() {
+	local parent="${1%/*}"
+	[[ "$parent" != "$1" ]] || parent="."
+	[[ "${parent##*/}" == ".gauntlet" ]]
+}
+
+# ledger_in_current_checkout <ledger-path> — require the ledger's .gauntlet
+# directory to be the one directly under the caller's actual checkout root.
+# A matching basename alone (or a .git entry in an arbitrary temp directory)
+# is not ownership evidence for destructive round preparation.
+ledger_in_current_checkout() {
+	local parent repo_root cwd candidate
+	parent="${1%/*}"
+	[[ "$parent" != "$1" ]] || parent="."
+	cwd="$(builtin pwd -P)" || return 1
+	[[ "$parent" == /* ]] || parent="$cwd/$parent"
+	while [[ "$parent" == *//* ]]; do parent="${parent//\/\//\/}"; done
+	while [[ "$parent" == */ && "$parent" != "/" ]]; do parent="${parent%/}"; done
+	repo_root=""
+	candidate="$cwd"
+	while :; do
+		if [[ ! -L "$candidate" && (-e "$candidate/.git" || -L "$candidate/.git") ]]; then
+			repo_root="$candidate"
+			break
+		fi
+		[[ "$candidate" != "/" ]] || break
+		candidate="${candidate%/*}"
+		[[ -n "$candidate" ]] || candidate="/"
+	done
+	[[ -n "$repo_root" ]] || return 1
+	[[ "$parent" == "$repo_root/.gauntlet" ]]
+}
+
+# A round directory is removable only when its direct children are regular
+# files produced by the orchestrator. Unknown names, nested directories,
+# symlinks, and special files are treated as user data and preserved.
+round_dir_is_runtime_owned() {
+	local dir="$1" entry name
+	local -a entries=()
+	[[ -d "$dir" && ! -L "$dir" ]] || return 1
+	local restore
+	restore="$(shopt -p nullglob dotglob || true)"
+	shopt -s nullglob dotglob
+	entries=("$dir"/*)
+	eval "$restore"
+	for entry in ${entries[@]+"${entries[@]}"}; do
+		[[ -f "$entry" && ! -L "$entry" ]] || return 1
+		name="${entry##*/}"
+		case "$name" in
+		*.envelope.json | *.tool-out.json | *.normalized.jsonl | autofix-cache.jsonl | findings.jsonl | reconciled.json | route_output.json | annotated-envelope.json | present-keys.txt | claimed-findings.jsonl | claimed-keys.txt | fixer-report.json | status-rows.json) ;;
+		*) return 1 ;;
+		esac
+	done
+	return 0
+}
+
+# run_dir_is_rounds_only <dir> — 0 when <dir> is a directory whose every entry
+# (dotfiles included) is named `round-*`, i.e. it has the shape --run-dir and
+# the orchestrator's per-round `mkdir -p` create, and nothing else.
+run_dir_is_rounds_only() {
+	local dir="$1" entry restore
+	local -a entries=()
+	[[ -d "$dir" ]] || return 1
+	restore="$(shopt -p nullglob dotglob || true)"
+	shopt -s nullglob dotglob
+	entries=("$dir"/*)
+	eval "$restore"
+	for entry in ${entries[@]+"${entries[@]}"}; do
+		[[ "${entry##*/}" == round-* ]] || return 1
+		round_dir_is_runtime_owned "$entry" || return 1
+	done
+	return 0
+}
+
+# clear_stale_run_dir <ledger-path> — remove a prior run's artifacts beside the
+# ledger: the round dir `<ledger-stem>/` and the report `<ledger-stem>.report.html`.
+# Called only when a fresh ledger is about to be written (i.e. any existing
+# round dir is stale by construction), and only AFTER the ledger path itself
+# passed every guard.
+#
+# Deletes nothing unless the ledger's parent directory is named `.gauntlet`
+# and its basename starts with `ledger-` (the namespace gc_ledger_path owns;
+# otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
+# dir is removed only when it contains nothing but `round-*` entries; any other
+# shape is left in place with a warning. A symlinked round dir is refused under
+# the state-path guard (exit 1, nothing removed). The report is removed only
+# when the guard accepts it and it is a regular file; otherwise it is left in
+# place with a warning.
+clear_stale_run_dir() {
+	local run_dir report ledger_name
+	run_dir="$(ledger_run_dir "$1")" || return 0
+	ledger_in_gauntlet_dir "$1" || return 0
+	ledger_name="${1##*/}"
+	[[ "$ledger_name" == ledger-*.json ]] || return 0
+	# A .gauntlet basename and ledger namespace are not ownership evidence:
+	# only the active checkout's state directory may authorize stale cleanup.
+	ledger_in_current_checkout "$1" || return 0
+	if [[ -e "$run_dir" || -L "$run_dir" ]]; then
+		if ! ledger_assert_no_symlink "$run_dir"; then
+			exit 1
+		fi
+		if run_dir_is_rounds_only "$run_dir"; then
+			rm -rf -- "$run_dir"
+		else
+			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of round-* entries only)" >&2
+		fi
+	fi
+	report="$run_dir.report.html"
+	if [[ -e "$report" || -L "$report" ]]; then
+		if ledger_assert_no_symlink "$report" && [[ -f "$report" ]]; then
+			rm -f -- "$report"
+		else
+			echo "convergence-ledger: warning: leaving $report in place (not a regular file)" >&2
+		fi
+	fi
+}
+
+# assert_fresh_ledger_path <ledger-path> — every guard write_fresh_ledger runs,
+# hoisted so --init can run them BEFORE clear_stale_run_dir deletes anything:
+# a refused init must leave the prior run's round files intact.
+assert_fresh_ledger_path() {
+	if ! ledger_assert_no_symlink "$(dirname "$1")"; then
+		exit 1
+	fi
+	if ! ledger_assert_no_symlink "$1"; then
+		exit 1
+	fi
+}
+
 write_fresh_ledger() {
 	local ledger_path="$1"
 	local target="$2"
@@ -535,12 +724,7 @@ write_fresh_ledger() {
 	local tmp
 	# Guard BEFORE mkdir -p: mkdir follows a symlinked component, so the
 	# check has to happen while there is still nothing to create.
-	if ! ledger_assert_no_symlink "$(dirname "$ledger_path")"; then
-		exit 1
-	fi
-	if ! ledger_assert_no_symlink "$ledger_path"; then
-		exit 1
-	fi
+	assert_fresh_ledger_path "$ledger_path"
 	mkdir -p "$(dirname "$ledger_path")"
 	# In-directory template, not a bare `mktemp`: the atomicity this write
 	# path asserts comes from `mv` being a same-filesystem rename(2). A bare
@@ -737,7 +921,69 @@ init)
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
 		exit 6
 	fi
+	# Guards first, then clear, then write: a refused init deletes nothing.
+	assert_fresh_ledger_path "$LEDGER_PATH"
+	clear_stale_run_dir "$LEDGER_PATH"
 	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+	;;
+run-dir)
+	if [[ "$FORCE" -eq 1 ]]; then
+		echo "convergence-ledger: --force is only valid with --init" >&2
+		exit 2
+	fi
+	if [[ "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --run-dir cannot be combined with round-input flags" >&2
+		exit 2
+	fi
+	if ! run_dir="$(ledger_run_dir "$LEDGER_PATH")"; then
+		echo "convergence-ledger: --run-dir needs a --ledger path ending in .json (got '$LEDGER_PATH')" >&2
+		exit 2
+	fi
+	if ! ledger_assert_no_symlink "$run_dir"; then
+		exit 1
+	fi
+	if ! ledger_assert_no_symlink "$run_dir.report.html"; then
+		exit 1
+	fi
+	mkdir -p "$run_dir"
+	printf '%s\n' "$run_dir"
+	;;
+prepare-round)
+	ledger_name="${LEDGER_PATH##*/}"
+	if [[ "$FORCE" -eq 1 || "$ROUND_ARG_SEEN" -eq 1 || ! "$PREPARE_ROUND" =~ ^[1-9][0-9]*$ ]]; then
+		echo "convergence-ledger: --prepare-round needs a positive round number and no round-input flags" >&2
+		exit 2
+	fi
+	if ! ledger_in_gauntlet_dir "$LEDGER_PATH" || ! ledger_in_current_checkout "$LEDGER_PATH" || [[ "$ledger_name" != ledger-*.json ]]; then
+		echo "convergence-ledger: --prepare-round only accepts an owned .gauntlet ledger path" >&2
+		exit 2
+	fi
+	if ! run_dir="$(ledger_run_dir "$LEDGER_PATH")"; then
+		echo "convergence-ledger: --prepare-round needs a --ledger path ending in .json" >&2
+		exit 2
+	fi
+	if [[ ! -f "$LEDGER_PATH" || ! -r "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: ledger not found or unreadable at $LEDGER_PATH" >&2
+		exit 4
+	fi
+	validate_ledger_shape "$LEDGER_PATH"
+	validate_ledger_root_fields "$LEDGER_PATH"
+	completed_rounds="$(jq -r '.rounds | length' "$LEDGER_PATH")"
+	if [[ "$PREPARE_ROUND" -ne $((completed_rounds + 1)) ]]; then
+		echo "convergence-ledger: --prepare-round requires the next unfinished round ($((completed_rounds + 1)))" >&2
+		exit 2
+	fi
+	ledger_assert_no_symlink "$run_dir" || exit 1
+	ledger_assert_no_symlink "$run_dir/round-$PREPARE_ROUND" || exit 1
+	if [[ -e "$run_dir/round-$PREPARE_ROUND" ]]; then
+		if round_dir_is_runtime_owned "$run_dir/round-$PREPARE_ROUND"; then
+			rm -rf -- "$run_dir/round-$PREPARE_ROUND"
+		else
+			echo "convergence-ledger: refusing to clear round directory containing non-runtime content" >&2
+			exit 1
+		fi
+	fi
+	mkdir -p -- "$run_dir/round-$PREPARE_ROUND"
 	;;
 last-decision)
 	if [[ "$FORCE" -eq 1 ]]; then

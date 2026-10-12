@@ -1,0 +1,1 @@
+# diff-stat mode=failed base=zz head=yy time=2026-01-01T00:00:00Z

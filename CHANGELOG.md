@@ -4,6 +4,20 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-12
+
+### Added
+- Opt-in `--report` for `review-gauntlet` and `deep-review`: writes a throwaway, self-contained HTML report (inline CSS, no script, all text escaped) through the bundled `render-report.py` and `report-hook.sh`. It shows severity counts, findings, convergence across gauntlet rounds and the diff scope. Claude and Codex mirrors only; the Pi package does not ship them. The report is written only under `.gauntlet/` or `.deep-review/` with symlink and `..` checks, and a failing report never changes a run's outcome, terminal token or exit code.
+- `convergence-ledger.sh --run-dir` derives and guards the per-run round directory from the ledger path. `--init` clears a stale `<stem>/` only when the ledger sits in `.gauntlet/` and the directory holds only `round-*` entries, and also removes the stale `<stem>.report.html`.
+- Plain-prose rule (short sentences, active voice, one term per concept, no filler) for review findings and summaries in `review-gauntlet`, `deep-review` and `review-plan`, on both mirrors. Exact machine-read values (file, line, category, severity, summary text) are exempt.
+
+### Changed
+- `show-me` triggers now cover review findings, gauntlet convergence and conduct phase progress.
+
+### Fixed
+- Codex `conduct --resume` now accepts a Codex-owned suffix of a shared plan: the stored `completed_phases` may start after earlier phases that `## Progress` already marks complete. Gaps, insertions and edits inside the stored window still fail closed.
+- Codex `conduct --resume` no longer skips a phase or reports "All phases complete" early when a phase is both recorded as complete and ticked in `## Progress`.
+
 ## [0.9.2] - 2026-10-04
 
 ### Fixed
@@ -272,7 +286,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/vr000m/skein/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/vr000m/skein/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/vr000m/skein/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/vr000m/skein/compare/v0.8.5...v0.9.0

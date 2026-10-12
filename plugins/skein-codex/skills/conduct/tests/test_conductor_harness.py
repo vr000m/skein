@@ -135,6 +135,35 @@ PLAN_TWO_PHASES = """\
 - [ ] two
 """
 
+PLAN_THREE_PHASES = """\
+# Scratch
+## Implementation Checklist
+
+### Phase 1: First
+
+**Impl files:** src/a.py
+**Test files:** tests/test_a.py
+**Test command:** `true`
+
+- [ ] one
+
+### Phase 2: Second
+
+**Impl files:** src/b.py
+**Test files:** tests/test_b.py
+**Test command:** `true`
+
+- [ ] two
+
+### Phase 3: Third
+
+**Impl files:** src/c.py
+**Test files:** tests/test_c.py
+**Test command:** `true`
+
+- [ ] three
+"""
+
 PLAN_NO_TEST_CMD = """\
 # Scratch
 ## Implementation Checklist
@@ -381,6 +410,87 @@ def test_multi_phase_via_resume_advances_one_phase_at_a_time(repo):
     assert second.status == "awaiting_user"
     assert len(second.state["completed_phases"]) == 2
     assert [p["label"] for p in second.state["completed_phases"]] == ["1", "2"]
+
+
+@pytest.mark.parametrize(
+    ("recorded_labels", "expected_label"),
+    [
+        (["1"], "2"),
+        (["1", "2"], "3"),
+    ],
+)
+def test_resume_runs_first_phase_neither_checked_nor_recorded(
+    repo, recorded_labels, expected_label
+):
+    plan = _scratch_plan(repo, PLAN_THREE_PHASES)
+    progress = [
+        "",
+        "## Progress",
+        "",
+        *[
+            f"- [{'x' if label in recorded_labels else ' '}] Phase {label}: {title}"
+            for label, title in [("1", "First"), ("2", "Second"), ("3", "Third")]
+        ],
+        "",
+    ]
+    plan.write_text(plan.read_text() + "\n".join(progress))
+
+    head = _git(["rev-parse", "HEAD"], repo).stdout.strip()
+    phases = [("1", "First"), ("2", "Second"), ("3", "Third")]
+    state_dir = repo / ".conduct"
+    state_dir.mkdir()
+    _state_file(repo, plan).write_text(
+        json.dumps(
+            {
+                "plan_path": str(plan),
+                "plan_content_hash": compute_plan_hash(plan),
+                "base_sha": head,
+                "completed_phases": [
+                    {
+                        "index": index,
+                        "label": label,
+                        "title": title,
+                        "commit_sha": head,
+                        "tests": "passed",
+                        "iterations": 0,
+                    }
+                    for index, (label, title) in enumerate(phases)
+                    if label in recorded_labels
+                ],
+                "iteration_count": 0,
+                "status": "awaiting_user",
+                "blocker": None,
+            }
+        )
+    )
+
+    spawner = StubSpawner(repo)
+    spawner.script(
+        "implementer",
+        0,
+        lambda req, r: (
+            _stage(r, f"src/{req.phase_label}.py", "value = 1\n"),
+            _impl_report(0, [f"src/{req.phase_label}.py"]),
+        )[1],
+    )
+    spawner.script("test-writer", 0, lambda req, r: _test_report())
+
+    result = conduct(
+        ConductOptions(
+            plan_path=plan,
+            repo_root=repo,
+            spawn=spawner,
+            test_runner=StubTestRunner(queue=[_passing()]),
+            resume=True,
+        )
+    )
+
+    assert result.status == "awaiting_user"
+    assert spawner.calls[0].phase_label == expected_label
+    assert [p["label"] for p in result.state["completed_phases"]] == [
+        *recorded_labels,
+        expected_label,
+    ]
 
 
 def test_state_file_id_disambiguates_same_basename_plans(repo):
@@ -1516,6 +1626,65 @@ def test_resume_blocks_when_reviewed_edit_changes_completed_phase_prefix(repo):
     assert result.status == "blocked"
     assert "completed phase prefix" in result.summary
     assert "position 1" in (result.diagnostic or "")
+
+
+def test_completed_phase_window_accepts_codex_suffix_after_checked_claude_phases():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=True),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="4", title="Codex four", is_complete=True),
+        conductor.Phase(position=4, label="5", title="Codex five", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+            {"index": 4, "label": "5", "title": "Codex five"},
+        ]
+    }
+
+    assert conductor._completed_phase_prefix_error(state, phases) is None
+
+
+def test_completed_phase_window_rejects_unchecked_gap_before_codex_suffix():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=False),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="4", title="Codex four", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+        ]
+    }
+
+    error = conductor._completed_phase_prefix_error(state, phases)
+
+    assert error is not None
+    assert "incomplete phase precedes" in error
+    assert "Phase 2: Claude two" in error
+
+
+def test_completed_phase_window_rejects_inserted_phase_before_stored_position():
+    phases = [
+        conductor.Phase(position=0, label="1", title="Claude one", is_complete=True),
+        conductor.Phase(position=1, label="2", title="Claude two", is_complete=True),
+        conductor.Phase(position=2, label="3", title="Claude three", is_complete=True),
+        conductor.Phase(position=3, label="3a", title="Inserted", is_complete=True),
+        conductor.Phase(position=4, label="4", title="Codex four", is_complete=True),
+    ]
+    state = {
+        "completed_phases": [
+            {"index": 3, "label": "4", "title": "Codex four"},
+        ]
+    }
+
+    error = conductor._completed_phase_prefix_error(state, phases)
+
+    assert error is not None
+    assert "completed phase prefix no longer matches" in error
+    assert "position 4" in error
 
 
 # ---------------------------------------------------------------------------

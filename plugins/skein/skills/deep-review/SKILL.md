@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: Thorough multi-lens code review using parallel subagents with clean context. Spawns independent reviewers for logic, security, spec compliance, architecture, and documentation — catching issues that single-pass reviews miss. Use when the user says "deep review", "thorough review", "audit code", or "/deep-review". Complements built-in /review and /security-review.
-argument-hint: "[path/to/review-target|PR] [--full] [--continue] [--auto-fix=trivial] [--verbose]"
+argument-hint: "[path/to/review-target|PR] [--full] [--continue] [--auto-fix=trivial] [--verbose] [--report]"
 ---
 
 # Deep Review: Multi-Lens Code Audit
@@ -17,13 +17,15 @@ Run a thorough review by splitting the work into independent lenses. Each lens g
 ## Input Resolution
 
 1. If the first argument is a readable plan file path, load it as the review brief and use its `## Review Focus` section to steer lens prompts.
-2. If the arguments are `--pr` with a number (or a PR URL), optionally combined with `--verbose` in either position, review that PR's diff via `gh pr diff`.
+2. If the arguments are `--pr` with a number (or a PR URL), optionally combined with `--verbose` and/or `--report` in any position, review that PR's diff via `gh pr diff`.
 3. If the user provides another explicit target (file path, branch name, commit range), use it directly.
-4. If the arguments are exactly `--continue`, optionally combined with `--verbose`, follow the continuation rules in [Review State](#review-state) — the diff range depends on prior state.
-5. If the arguments are exactly `--full`, optionally combined with `--verbose`, or no argument is provided (or only `--verbose` is provided), review the current branch diff against the merge base.
+4. If the arguments are exactly `--continue`, optionally combined with `--verbose` and/or `--report`, follow the continuation rules in [Review State](#review-state) — the diff range depends on prior state.
+5. If the arguments are exactly `--full`, optionally combined with `--verbose` and/or `--report`, or no argument is provided (or only `--verbose` and/or `--report` is provided), review the current branch diff against the merge base.
 6. If no target can be resolved, ask the user for a plan path or PR reference.
 
 `--verbose` is a rendering-mode modifier, composable with any of the six resolution rules above — it does not change which diff range or target is resolved, only how Step 5 renders the resulting findings.
+
+`--report` is also a rendering-mode modifier, composable with all six rules and with `--verbose`: it does not change which diff range or target is resolved, which lenses run, or any finding. It only adds the opt-in [HTML report step](#55-render-the-html-report---report-only) after Step 5. Without `--report` the output is unchanged, and nothing in that step runs.
 
 If a plan file is supplied, treat it as the author-supplied review brief. If the plan's branch does not match the current branch or the requested PR, call out the mismatch before proceeding.
 
@@ -277,6 +279,19 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Logic),
 **Location** (file_path:line), **Finding**, **Evidence**, **Suggestion**.
 If the code is logically sound, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Security Lens (model: opus, effort: high)
@@ -355,6 +370,19 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Security),
 **Location** (file_path:line), **Finding**, **Evidence** (attack vector), **Suggestion** (mitigation).
 If no security issues, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Spec Compliance Lens (model: opus, effort: high) — only when Review Focus lists specs
@@ -430,6 +458,19 @@ For each finding: **Severity** (Critical=violates MUST / Important=violates SHOU
 **Category** (Spec), **Location** (file_path:line), **Finding** (requirement not met),
 **Evidence** (exact spec section and RFC 2119 keyword), **Suggestion** (what to change).
 If the code complies with all referenced specs, say so.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Architecture Lens (model: opus, effort: high)
@@ -508,6 +549,19 @@ This on-disk record is authoritative — your final reply is a fallback only. Pe
 For each finding: **Severity** (Critical/Important/Minor), **Category** (Architecture),
 **Location** (file_path:line), **Finding**, **Evidence** (pattern/convention violated), **Suggestion**.
 If the architecture is sound, say so. Do not manufacture findings.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 #### Documentation Lens (model: haiku, effort: low)
@@ -586,6 +640,19 @@ For each finding: **Severity** (Critical/Important/Minor), **Category** (Documen
 **Location** (file_path or "missing file"), **Finding**, **Evidence** (what changed that makes this stale),
 **Suggestion** (specific doc update needed).
 If documentation is up to date, say so.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 
 After all lens subagents return, proceed to Step 3.5 (Reconcile Findings) before report emission.
@@ -647,6 +714,17 @@ Procedure:
    ```
 
    The audit emits the same v2 envelope with `auto_fix_status` annotations. The renderer reads only this annotated envelope so `[AUTO-FIXABLE]` reflects the exact allowlist and drift gates the applier will use.
+
+   **With `--report` only:** run this same audit command with its stdout redirected to a scratch file, so the audited envelope exists on disk for the report step. The audit script's own stdout is the file's content — never hand-assemble the JSON. Create the file with `mktemp` **outside** `.deep-review/` and note the path `mktemp` prints (shell variables do not survive between Bash tool calls):
+
+   ```
+   report_envelope="$(mktemp "${TMPDIR:-/tmp}/skein-report-envelope.XXXXXX")"
+   "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/audit-auto-fix-eligibility.sh --skill deep-review <envelope> > "$report_envelope"
+   ```
+
+   Then use that file as the audited envelope for the rest of the run. Step 5.5 deletes it. The capture is the same in any order of Step 4 and Step 4.5, because the report step runs after both. If the audit command fails, immediately remove the exact envelope path printed by `mktemp` and stop the report workflow.
+
+   **Schema lockstep (outside the GENERIC block):** `scripts/render-report.py` is a third consumer of the v2 envelope, next to `scripts/reconcile-findings.sh` (producer) and `scripts/render-reconciled-report.sh` (consumer). It asserts `schema_version == 2` on envelopes. When the envelope shape changes, bump the version in lockstep in all three.
 4. **Render the annotated JSON into the report template.** Use the report template in [Step 5](#5-present-findings): the `Reconciliation:` summary line is populated from the script's `summary` block; each finding renders the `Lenses:` field (always populated, sorted alphabetically and deduped); merged findings whose same-`(file, line)`-different-category counterparts appear in the script's `related` block render the `Related findings:` subsection.
 5. **Emit the rendered report.** Hand off to Step 4 (Apply Suppression) and Step 5 (Present Findings). The annotated reconciled JSON is the ground truth for both the suppression match keys and the rendered output — do not re-merge findings downstream.
 
@@ -768,6 +846,13 @@ The `Reconciliation:` summary line is always rendered (zeros for empty input). T
 
 If the review is clean, say so concisely and call out any residual risks or skipped lenses.
 
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK B -->
+
 **Continuation report format (incremental re-review mode only).** When `--continue` ran in incremental re-review mode (HEAD advanced past stored `head_commit`), the report header MUST make the scope explicit and partition findings:
 
 ```markdown
@@ -796,6 +881,49 @@ If the review is clean, say so concisely and call out any residual risks or skip
 The "New findings" `#### Minor` subsection **MUST** follow the same compact-by-default rule as the main Step 5 template — render each Minor finding as a single `- **[Category]**: [one-line summary] (file:line)` line by default, with `--verbose` restoring full `Lenses:`/`Evidence:`/`Suggestion:` detail. This is a firm requirement, not a "confirm if applicable" item. The "Prior findings" list (already one-line per finding) is unaffected and needs no change. **The JSON pointer footer applies to every rendered report, including this continuation template** — the "every rendered report" rule stated earlier for the main Step 5 template is not restated per-template; this continuation template ends with the same `**Full findings JSON**:`/`**Next steps**:` pair, in the same fixed order, before the `--verbose`/footer/JSON-pointer rules recur below.
 
 Do not silently re-list prior findings as if they were freshly surfaced. The `(continuation)` suffix on the header and the explicit "Range reviewed this run" line are required so the user can distinguish a fresh review from an incremental one at a glance.
+
+### 5.5. Render the HTML Report (`--report` only)
+
+Runs only when `--report` was passed, after Step 5 (and therefore after both Step 4 and Step 4.5). Without the flag this step does not exist: do not create scratch files and do not call the hook.
+
+**Shell state does not span Bash tool calls.** Set every variable the hook call uses in that same call, as the fence in step 2 does. Substitute the literal paths `mktemp` printed (the envelope path was noted in Step 3.5; note the keys path when you create it) and the literal `base_commit`/`head_commit` values from Step 0. In the `jq` call in step 1, substitute the literal paths for `$report_envelope` and `$report_keys` as well.
+
+1. **Build the suppress-keys file.** Create a second scratch file with `mktemp`, outside `.deep-review/`: `report_keys="$(mktemp "${TMPDIR:-/tmp}/skein-report-keys.XXXXXX")"`. Write one key per line, `file<TAB>line<TAB>category`, with an empty `line` field for a finding with no line (null, absent, or the reconciler's `-1`), and `file` spelled as in the audited envelope. For an **unanchored** finding (empty `file` or empty `line`), append a fourth field, `file<TAB>line<TAB>category<TAB>summary`: the finding's `summary` (else `finding`) copied verbatim, with each tab, CR and LF replaced by one space. A 3-field key never drops an unanchored finding, so without the summary one key would otherwise cover every unanchored finding of that category. Include a key for (a) each finding that Step 4 suppression dropped, and (b) each finding an applied auto-fix fixed, when `--auto-fix=trivial` ran. For (b), read the manifest the applier reported (`apply-auto-fix-code: manifest written to <path>` on stderr; `.deep-review/auto-fix-<unix>-<pid>.json`, a JSON array of `{kind, file, line, status, commit_sha, before_sha}`) and take every entry whose `status` is `applied`. The manifest has no category, so match audited findings by `kind`, `file`, and `line`, and emit a suppress key only when exactly one finding matches. If multiple categories share that location and kind, leave them visible because the manifest cannot identify which category the applier fixed:
+
+   ```
+   jq -r --slurpfile env "$report_envelope" '
+     .[] | select(.status == "applied") as $m
+     | [$env[0].findings[] | select(has("auto_fix") and .auto_fix.kind == $m.kind and .file == $m.file and (.line | tostring) == ($m.line | tostring))] as $matches
+     | select($matches | length == 1)
+     | $matches[]
+     | (if .line == null or .line == -1 then "" else (.line | tostring) end) as $ln
+     | [(.file // ""), $ln, .category]
+       + (if (.file // "") == "" or $ln == "" then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
+     | join("\t")
+   ' "<manifest path>" >> "$report_keys"
+   ```
+
+   The renderer drops an anchored finding when all three fields match exactly, and an unanchored finding only when all four fields match. It is a filter, never a dedup.
+2. **Call the bundled hook once**, passing both scratch files by path, with `--cleanup`. `--base`/`--head` are the `BASE_COMMIT`/`HEAD_COMMIT` already resolved in Step 0 and persisted as `base_commit`/`head_commit`; the `if` guard drops both when either is empty (the report then says the diff scope is unavailable). Build the flags as an array, as below: a `:+` word-list expansion is split into separate arguments by bash but passed as one argument by zsh (the shell Claude Code's Bash tool uses on macOS), which the hook rejects as an unknown argument. The output is the latest-run view for this harness, like `latest-claude.json`:
+
+   ```
+   REPO_ROOT="$(git rev-parse --show-toplevel)"
+   report_envelope="<literal envelope path from Step 3.5>"
+   report_keys="<literal keys path from step 1>"
+   BASE_COMMIT="<base_commit from Step 0, or empty if unknown>"
+   HEAD_COMMIT="<head_commit from Step 0, or empty if unknown>"
+   report_args=(--root "$REPO_ROOT" --out "$REPO_ROOT/.deep-review/report-claude.html"
+     --envelope "$report_envelope" --suppress-keys "$report_keys")
+   if [[ -n "$BASE_COMMIT" && -n "$HEAD_COMMIT" ]]; then
+     report_args+=(--base "$BASE_COMMIT" --head "$HEAD_COMMIT")
+   fi
+   "${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/report-hook.sh "${report_args[@]}" --cleanup
+   ```
+
+3. **`--cleanup` deletes both scratch files when the hook returns, success or failure.** The hook removes its own `--envelope` and `--suppress-keys` inputs on every exit path, and only `skein-report-*` regular files directly inside the system temp dir; anything else stays with a warning. If any command after the envelope capture fails before the hook runs, immediately remove the exact envelope path recorded from `mktemp`; if the suppress-keys file has already been created, remove its exact recorded path too, then stop the report workflow. On the normal path, the hook owns cleanup.
+4. Relay the hook's `report written: <path>` line and any `report-hook: warning:` lines. The report is labelled "as reviewed; suppressed and auto-fixed findings omitted". The hook always exits 0: a guard refusal, a missing `python3`, a failing `git` or a failing renderer each warn and skip the report. None of them changes the findings, the Step 5 output, or the exit status.
+
+If `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/scripts/report-hook.sh` is absent, or no audited envelope file was captured (a run that did not reach Step 3.5), warn and skip the report, then still delete any scratch file created: when the hook is present but the envelope is missing, call it with `--cleanup` and only `--suppress-keys "$report_keys"` (it skips the render and removes the file); when the hook itself is absent, name the scratch paths in the warning so the user can remove them. Never abort the review for a report problem.
 
 ## Deep Review Rules
 

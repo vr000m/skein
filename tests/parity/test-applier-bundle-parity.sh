@@ -76,6 +76,64 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	done
 done
 
+# --- 2b. Pi exclusion: Pi gets the canonical bundle MINUS BUNDLE_PI_EXCLUDE ---
+# plugins/skein-pi is out of scope for the opt-in HTML report, so it must hold
+# no copy of the BUNDLE_REPORT pair, and every Pi skill scripts/ tree must equal
+# the canonical bundle minus BUNDLE_PI_EXCLUDE (bundle-map.sh owns both lists).
+# Pi bundles only deep-review and review-plan (bundle-appliers.sh skips the
+# review-gauntlet Pi tree); a review-gauntlet Pi scripts/ dir, if one ever
+# appears, is held to the same no-report rule.
+pi_excluded() {
+	local name="$1" ex
+	for ex in "${BUNDLE_PI_EXCLUDE[@]}"; do
+		[[ "$name" == "$ex" ]] && return 0
+	done
+	return 1
+}
+if [[ "${#BUNDLE_PI_EXCLUDE[@]}" -eq 0 ]]; then
+	fail "Pi exclusion: BUNDLE_PI_EXCLUDE is empty -- the check would be vacuous"
+fi
+for skill in "${BUNDLE_SKILLS[@]}"; do
+	pi_dest="$ROOT_DIR/plugins/skein-pi/skills/$skill/scripts"
+	if [[ ! -d "$pi_dest" ]]; then
+		if [[ "$skill" == "deep-review" || "$skill" == "review-plan" ]]; then
+			fail "Pi exclusion: missing plugins/skein-pi/skills/$skill/scripts"
+		fi
+		continue
+	fi
+	for ex in "${BUNDLE_PI_EXCLUDE[@]}"; do
+		if [[ -e "$pi_dest/$ex" ]]; then
+			fail "Pi exclusion: plugins/skein-pi/skills/$skill/scripts/$ex must not exist"
+		else
+			pass "Pi exclusion: plugins/skein-pi/skills/$skill/scripts holds no $ex"
+		fi
+	done
+	[[ "$skill" == "deep-review" || "$skill" == "review-plan" ]] || continue
+	pi_files=("${BUNDLE_SHARED[@]}" "$(bundle_applier_for "$skill")")
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] && pi_files+=("$extra")
+	done < <(bundle_extra_for "$skill")
+	for f in "${pi_files[@]}"; do
+		pi_excluded "$f" && continue
+		if [[ ! -f "$pi_dest/$f" ]]; then
+			fail "Pi exclusion: missing plugins/skein-pi/skills/$skill/scripts/$f"
+		elif ! cmp -s "$SRC/$f" "$pi_dest/$f"; then
+			fail "Pi exclusion: drift plugins/skein-pi/skills/$skill/scripts/$f != canonical scripts/$f"
+		else
+			pass "Pi exclusion: byte-identical plugins/skein-pi/skills/$skill/scripts/$f"
+		fi
+	done
+	while IFS= read -r found; do
+		rel="${found#"$pi_dest"/}"
+		declared=0
+		for f in "${pi_files[@]}"; do
+			pi_excluded "$f" && continue
+			[[ "$rel" == "$f" ]] && declared=1 && break
+		done
+		[[ "$declared" -eq 0 ]] && fail "Pi exclusion: unexpected file plugins/skein-pi/skills/$skill/scripts/$rel"
+	done < <(find "$pi_dest" -type f -not -path '*/__pycache__/*' 2>/dev/null)
+done
+
 # --- 3. Drift-injection: prove the comparison detects a mutated copy --------
 drift_tmp="$(mktemp -d)"
 trap 'rm -rf "$drift_tmp"' EXIT
@@ -297,11 +355,11 @@ while IFS= read -r skill_ref; do
 	else
 		fail "bundle reference: $skill_ref is named by a SKILL.md but is not bundled into:$ref_missing -- register it in scripts/lib/bundle-map.sh (BUNDLE_SHARED or bundle_extra_for) and re-run 'just bundle-appliers'"
 	fi
-done < <(grep -rhoE 'skills/[a-z0-9-]+/scripts/[A-Za-z0-9._-]+\.sh' \
+done < <(grep -rhoE 'skills/[a-z0-9-]+/scripts/[A-Za-z0-9._-]+\.(sh|py)' \
 	"$BUNDLE_REF_ROOT"/plugins/*/skills/*/SKILL.md 2>/dev/null | sort -u)
 
 if [[ "$bundle_ref_seen" -eq 0 ]]; then
-	fail "bundle reference: no skills/<skill>/scripts/<X>.sh reference found in any SKILL.md -- the enumeration is vacuous"
+	fail "bundle reference: no skills/<skill>/scripts/<X>.(sh|py) reference found in any SKILL.md -- the enumeration is vacuous"
 fi
 
 # ---------------------------------------------------------------------------
@@ -319,7 +377,8 @@ if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" && 
 	done
 	printf '%s\n' \
 		'Run skills/deep-review/scripts/present.sh then' \
-		'skills/deep-review/scripts/not-bundled.sh to finish.' \
+		'skills/deep-review/scripts/not-bundled.sh and' \
+		'skills/deep-review/scripts/not-bundled.py to finish.' \
 		>"$r9g8_fixture/plugins/skein/skills/deep-review/SKILL.md"
 	r9g8_rc=0
 	r9g8_out="$(PARITY_BUNDLE_REF_ROOT="$r9g8_fixture" bash "${BASH_SOURCE[0]}" 2>&1)" || r9g8_rc=$?
@@ -333,6 +392,11 @@ if [[ -z "${PARITY_BUNDLE_REF_ROOT:-}" && -z "${PARITY_GAUNTLET_LIB_ROOT:-}" && 
 		pass "R9-G8a: the failure names the unbundled script"
 	else
 		fail "R9-G8a: the failure does not name not-bundled.sh"
+	fi
+	if grep -q 'bundle reference: skills/deep-review/scripts/not-bundled.py is named by a SKILL.md' <<<"$r9g8_out"; then
+		pass "R9-G8a: an unbundled .py reference also makes §7 fail and is named"
+	else
+		fail "R9-G8a: the widened §7 regex does not catch an unbundled .py reference"
 	fi
 	if grep -q 'bundle reference: skills/deep-review/scripts/present.sh resolves in both mirrors' <<<"$r9g8_out"; then
 		pass "R9-G8a: a genuinely bundled reference still passes in the same fixture"

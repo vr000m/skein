@@ -36,6 +36,10 @@ parity-tests:
     bash tests/parity/test-no-manual-apply-fallback.sh
     bash tests/parity/test-anchor-path-with-spaces.sh
     bash tests/parity/test-conduct-marker-parity.sh
+    bash tests/parity/test-prose-rule-claude.sh
+    bash tests/parity/test-prose-rule-codex.sh
+    bash tests/parity/test-show-me-triggers-claude.sh
+    bash tests/parity/test-show-me-triggers-codex.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
     bash tests/parity/test-managed-skills-parity.sh
@@ -75,6 +79,9 @@ gauntlet-tests:
     bash tests/gauntlet/test-finding-key.sh
     bash tests/gauntlet/test-claimed-findings.sh
     bash tests/gauntlet/test-status-row.sh
+    bash tests/gauntlet/test-render-report.sh
+    bash tests/gauntlet/test-report-shape-claude.sh
+    bash tests/gauntlet/test-report-shape-codex.sh
 
 # Phase 2 disk-first streamed lens results: persist-lens-result.sh (writer),
 # collect-lens-results.sh (reader/merge), persist-deep-review-state.sh's

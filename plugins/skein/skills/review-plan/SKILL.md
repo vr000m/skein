@@ -207,6 +207,19 @@ Return findings as a structured list. Each finding has these fields:
 Start with a one-line summary of architectural quality, then list findings grouped by severity (Critical, Important, Minor).
 
 If the plan is architecturally sound, say so. Do not manufacture findings. A clean lens is a valid outcome.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: architecture -->
 
@@ -302,6 +315,19 @@ Return findings as a structured list. Each finding has these fields:
 Start with a one-line summary, then list findings grouped by severity (Critical, Important, Minor).
 
 If the plan sequencing is sound, say so. Do not manufacture findings. A clean lens is a valid outcome.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: sequencing -->
 
@@ -399,6 +425,19 @@ Return findings as a structured list. Each finding has these fields:
 Start with a one-line summary, then list findings grouped by severity (Critical, Important, Minor).
 
 If the plan satisfies its referenced specs and has proportional test coverage, say so. Do not manufacture findings. A clean lens is a valid outcome.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: spec-and-testing -->
 
@@ -500,6 +539,19 @@ Return findings as a structured list. Each finding has these fields:
 Start with a one-line summary, then list findings grouped by severity (Critical, Important, Minor).
 
 If every factual claim in the plan is either verifiable from the codebase or already named as an assumption, say so. Do not manufacture findings. A clean lens is a valid outcome.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: assumptions -->
 
@@ -594,6 +646,19 @@ Return findings as a structured list. Each finding has these fields:
 Start with a one-line summary (e.g. "Verified N references; M missing"), then list findings grouped by severity (Critical, Important, Minor).
 
 If every reference checks out, say so. Do not manufacture findings. A clean lens is a valid outcome.
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
 ```
 <!-- END GENERIC LENS PROMPT: codebase-claims -->
 
@@ -626,7 +691,7 @@ Procedure:
 
    Dispatch prompt (both `{{PLAN_CONTENT}}` and the new `{{RAW_FINDINGS_JSONL}}` — the raw contents of `findings-lenses.jsonl` — are attacker-controlled and MUST be wrapped, per the existing prompt-injection mitigation pattern; one warning line precedes and covers both blocks). This pass is fed the **pre-merge stream, not the reconciled envelope**, precisely *because* the GENERIC block's Mixed-severity text preservation rule is lossy — pass A has already applied it, discarding all but the highest-severity contributor's text wherever two findings share the full `(file, line, category)` signature. Feeding it the reconciled envelope would delete the very conflicting-suggestion pairs this pass exists to detect.
 
-   ```
+```
    You are an independent contradiction reviewer auditing a development plan and its lens
    findings before implementation begins. You have NOT been part of the conversation that
    produced this plan or its findings. This is intentional.
@@ -665,7 +730,20 @@ Procedure:
    run may share the same (file, line) — on collision, re-anchor the second finding to its second
    conflicting location; if that also collides, emit it unanchored (file: "", line: null). Name both
    conflicting locations in evidence prose in every case, anchored or not.
-   ```
+
+<!-- BEGIN PROSE RULE BLOCK A -->
+**Plain-Prose Rule**
+
+Write `evidence`, `suggestion` and any overall summary in plain prose. Check each item before you answer (ASD-STE100 is the inspiration, not a conformance target):
+- Sentences: 20 words or fewer.
+- Voice: active. Name who or what acts.
+- Terms: one term per concept. Do not rename a thing mid-finding.
+- Filler: cut it ("it should be noted that", "in order to", "basically", hedges with no stated reason).
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK A -->
+```
 
    Wire the re-reconciliation (**never by hand**): write the Step 3.5 agent's JSON-Lines to `findings-contradiction.jsonl` (`>`, never `>>` — overwritten fresh every run, empty on a clean pass), rebuild `findings.jsonl` by concatenation (`cat findings-lenses.jsonl findings-contradiction.jsonl > findings.jsonl`), then re-run the literal pass-B command:
 
@@ -780,6 +858,13 @@ Update the plan with `/dev-plan update` for any accepted changes.
 ```
 
 The `Reconciliation:` summary line is always rendered (zeros for empty input). The `dropped=D` term is appended only when the reconciler's `summary.dropped` is greater than zero, surfacing JSON-Lines parse failures into the rendered header so the user notices without reading stderr. **`**Contradictions**: N` is orchestrator-computed prose, not renderer output** — the orchestrator derives N with `jq '[.findings[] | select(.category == "Contradiction")] | length'` over pass B's post-audit envelope (or pass A's under the fallback) and renders it immediately after `**Reconciliation**:` and before `**Fallback**:`. Unlike `**Fallback**:`, it is **always rendered, including `N=0`**, so `--batch`/CI runs — which skip Step 6.4 entirely and never grill anything — still surface that contradictions were detected. The `Fallback:` line is emitted only when at least one lens or pass fell back to `opus` this run (per the Step 2 "Fable fallback" bullet) — omit it entirely on a run where everything dispatched cleanly at `fable`, rather than rendering an empty or "none" placeholder. The `Lenses:` field replaces the prior `[Lens] / [Category]` prefix and uniformly handles ≥1 source lens — single-source findings show `Lenses: [<one>]`; merged findings show every source lens, sorted alphabetically and deduped. The `Related findings:` subsection is emitted only when the GENERIC block's same-`(file, line)`-different-category cross-reference rule applies; it cites the other category and its severity tier.
+
+<!-- BEGIN PROSE RULE BLOCK B -->
+Write the summary prose in plain language (ASD-STE100 is the inspiration, not a conformance target): sentences of 20 words or fewer, active voice, one term per concept, no filler.
+
+Keep these machine-read values exact: `summary`/`finding`, severity/category labels, status tokens, paths, line numbers, and code.
+Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even when tools read them.
+<!-- END PROSE RULE BLOCK B -->
 
 **Default rendering (no `--verbose`): Minor findings are compact.** Critical and Important findings render exactly as shown above — full `Lenses:`/`Evidence:`/`Suggestion:`/optional `Related findings:` sub-bullets. Minor findings instead render as a single line: `- **[Category]**: [one-line finding] (file:line)` — the reconciled envelope's `summary` field (the GENERIC block's serialized field name; review-plan's lens *prompts* call this field `finding` pre-serialization, but Step 3 writes it into the envelope's `summary` key) rendered unabridged (no hard truncation, even at its up-to-two-sentence length), with a parenthesized `(file:line)` instead of the Critical/Important convention, and no `Evidence:`/`Suggestion:`/`Lenses:` sub-bullets. When the Minor finding has a "Related findings" cross-reference, append a terse inline suffix instead of the full sub-bullet: `- **[Category]**: [finding] (file:line) — see also [Other Category] at same location`. When the Minor finding has no usable location (either `file` is empty or `line` is absent — a narrower, rendering-only test than the GENERIC block's fully-unanchored merge-signature definition; a partially-anchored finding, e.g. `file` set but `line` missing, still counts as unanchored *here*, even though it is NOT unanchored for merge/relate purposes), omit the location segment and the "see also" suffix entirely: `- **[Category]**: [one-line finding]`. The `[AUTO-FIXABLE]` marker is unaffected by this and still appears on the title line whenever `auto_fix_status` is `would_apply` — compact mode only omits `Evidence:`/`Suggestion:` prose, never the marker. This is a display-only switch: it does not drop any underlying data — every finding still carries all five fields (Severity, Category, Location, Evidence, Suggestion) in the reconciled envelope; only the *rendered* Minor tier omits Evidence/Suggestion prose from display. The compact line is always a single physical line even when the underlying `summary` field contains embedded newlines — embedded newlines are collapsed to spaces when rendering the compact form. The Codex-only `**Dispatch**:` line (when present) is unaffected by this rule — it is not part of per-finding rendering.
 

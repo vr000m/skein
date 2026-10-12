@@ -25,3 +25,7 @@ Convention: group by originating feature. When an item lands, move it to the rel
 - Make the Codex "sequential" strategy a real two-step flow instead of spawning implementer and test-writer in the same iteration-0 pass with only a different summary label.
 - Unify the main success path and hook-retry completion path so handback strategy reporting cannot drift or lie after post-hook retries.
 - Route all outward-facing diagnostics through the same redaction helper; validation, lint, stalled-test, and hook-failure handbacks still bypass the scrubber.
+
+## Review output formats (from `docs/dev_plans/20261008-feature-review-output-formats.md`)
+
+- **Pi follow-up** — `plugins/skein-pi` was out of scope for the plain-prose rule, the shared HTML `--report` flow, and the show-me review triggers. Pi has Pi-native rewrites with their own state (`.deep-review/latest-pi.json`, `lib/review_gauntlet.py`); port the three changes there in a separate branch.

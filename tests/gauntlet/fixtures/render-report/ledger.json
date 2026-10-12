@@ -1,0 +1,5 @@
+{"schema_version": 99, "target": "branch:fixture", "loop_counter": 2, "cap": 5, "k": 2,
+ "rounds": [
+  {"pass_type": "full", "count": 4, "structural_tally": 1, "local_tally": 3, "quarantine_size": 0, "unresolved_gates": 0},
+  {"pass_type": "confirm", "count": 0, "structural_tally": 0, "local_tally": 0, "quarantine_size": 0, "unresolved_gates": 0}
+ ]}
