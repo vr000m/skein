@@ -178,9 +178,9 @@ fi
 # --- 6. Authored-lib mirror parity: review-gauntlet's lib/ scripts are hand- --
 # maintained in both plugins (not canonical-bundled from scripts/), so byte-
 # identity has to be checked mirror-to-mirror directly. run-gate.sh,
-# convergence-ledger.sh, and gate-bounded.sh are documented as byte-identical
-# across runtimes (gate-bounded.sh is harness-neutral: it has no
-# runtime-specific anchor to resolve, so both copies are the same file);
+# convergence-ledger.sh, gate-bounded.sh, resolve-plan.sh, and
+# write-design-deltas.sh are documented as byte-identical across runtimes
+# (they are harness-neutral and have no runtime-specific anchor to resolve);
 # gauntlet-common.sh legitimately diverges (it resolves a runtime-specific
 # anchor: ${CLAUDE_PLUGIN_ROOT} on Claude, $SKILL_DIR on Codex) so it is
 # intentionally excluded from this check. state-path-guard.sh (round 6) is the
@@ -193,7 +193,7 @@ fi
 # `jq -f` -- a drifted copy changes what the ledger treats as proven-fixed
 # with no shell diff to notice. Hence the enumeration below walks *.jq as
 # well as *.sh.
-GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh state-path-guard.sh ledger-promote.jq)
+GAUNTLET_LIB_PARITY_FILES=(run-gate.sh convergence-ledger.sh gate-bounded.sh state-path-guard.sh resolve-plan.sh write-design-deltas.sh ledger-promote.jq)
 for f in "${GAUNTLET_LIB_PARITY_FILES[@]}"; do
 	claude_f="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/$f"
 	codex_f="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/$f"

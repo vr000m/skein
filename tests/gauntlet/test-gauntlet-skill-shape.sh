@@ -865,6 +865,8 @@ assert_guardrail8_for() {
 		"$label: missing contract evidence blocks the applied claim"
 	assert_grep_i "$file" 'scratch copy' \
 		"$label: real-data or failure-injection checks use a scratch copy"
+	assert_grep_i "$file" 'design delta' \
+		"$label: Guardrail 8 records in-contract design deltas"
 
 	rm -f "$section"
 }
@@ -876,6 +878,39 @@ assert_grep_i "$SKILL_MD" 'seam still moving' \
 	"Claude mirror: documents the conductor-side seam tripwire"
 assert_grep_i "$CODEX_SKILL_MD" 'seam still moving' \
 	"Codex mirror: documents the conductor-side seam tripwire"
+
+for design_delta_md in "$SKILL_MD" "$CODEX_SKILL_MD"; do
+	if [[ "$design_delta_md" == "$SKILL_MD" ]]; then
+		design_delta_label="Claude mirror"
+	else
+		design_delta_label="Codex mirror"
+	fi
+	assert_grep_fixed "$design_delta_md" 'design_deltas' \
+		"$design_delta_label: fixer schema includes design_deltas"
+	assert_grep_fixed "$design_delta_md" 'lib/resolve-plan.sh' \
+		"$design_delta_label: terminal sink references resolve-plan.sh"
+	assert_grep_fixed "$design_delta_md" 'lib/write-design-deltas.sh' \
+		"$design_delta_label: terminal sink references write-design-deltas.sh"
+done
+
+assert_grep_fixed "$CODEX_SKILL_MD" 'PLAN_PATH="${PLAN_PATH:-}"' \
+	"Codex mirror: terminal sink carries the parsed --plan value"
+assert_grep_fixed "$CODEX_SKILL_MD" 'HEAD_OID="${round_head:-${resolved_head_oid:-}}"' \
+	"Codex mirror: terminal sink carries the reviewed head"
+assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${canonical_target#branch:}"' \
+	"Codex mirror: terminal sink derives an explicit branch from the review target"
+assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${pr_head_ref:-}"' \
+	"Codex mirror: terminal sink carries the PR head ref"
+assert_grep_fixed "$CODEX_SKILL_MD" '--head "$resolver_head"' \
+	"Codex mirror: plan resolution diffs the reviewed head"
+assert_grep_fixed "$CODEX_SKILL_MD" 'malformed fixer report skipped' \
+	"Codex mirror: malformed fixer reports warn and skip independently"
+assert_grep_fixed "$CODEX_SKILL_MD" 'non-array design_deltas skipped' \
+	"Codex mirror: non-array design deltas warn and skip independently"
+assert_grep_fixed "$CODEX_SKILL_MD" 'using sidecar' \
+	"Codex mirror: plan resolution failures degrade to the sidecar"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
+	"Codex mirror: terminal sink cannot replace the terminal status"
 
 # ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
