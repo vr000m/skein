@@ -229,6 +229,7 @@ Initialize `mutation_head="$round_head"` and `mutation_fingerprint="$round_finge
 
 After the fixer batch returns:
 
+- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, stop and escalate to the operator. This changes neither the ledger's counts nor any stop condition.
 - The fixer self-classifies each applied fix's blast radius as `local` or `structural`. Trust that classification; there is no deterministic backstop.
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
@@ -343,6 +344,8 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
+For a finding in Guardrail 8's scope, also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. A fix that lacks any of these is not applied. Keep its finding out of `claimed` and the `--claimed-keys` file, and name the gap in the next brief.
+
 ### Guardrail 5 - run the full CI recipe after every fixer round
 
 Every fixer brief's Constraints section must require `just ci` (the whole lint + test recipe, backgrounded so it cannot hit the foreground timeout), not a hand-picked subset of `just` recipes chosen from the touched files' directories. The conductor also runs `just ci` itself after the fixer's commit (and after the trivial-fix applier's commit) and treats a non-zero exit as an incomplete round: fix or revert before appending to the ledger, never append a count tally on top of a red suite.
@@ -364,6 +367,22 @@ Every fixer brief's Constraints section must carry this requirement unconditiona
 If the sweep shows another call site relying on the old invariant, the fix is not complete: the fixer must either preserve that invariant or report the conflict, and must not report the finding as applied on the strength of the reported line alone. Guardrail 6 makes the fixer look backward from the reported line to the cause; this guardrail makes it look sideways to other call sites of the same mechanism, since a fix can satisfy Guardrail 6 fully and still break a second call site. Typical shapes: a `HEAD`-equality precondition added to the shared commit-resolution step breaks re-sync, whose tag legitimately points at a historical commit; a forced tag fetch (`git fetch --tags --force origin`) added to the shared pre-confirmation path silently force-moves every local tag that also exists on origin, destroying the local-only-tag recovery path Step 4/5 depend on. Each fix is correct about the line it was given and wrong about the mechanism behind it, which is why the trigger above covers an added precondition, not flags alone.
 
 This is a fixer-prompt requirement with no deterministic mechanical backstop; the parity test pins only that this section and its key phrases exist.
+
+### Guardrail 8 - design the whole contract before editing, then verify the whole state space
+
+This guardrail fires when a finding touches a mechanism with a contract: producer/consumer, writer/reader, serialize/deserialize, a state machine, or a validation rule. Every fixer brief's Constraints section must carry this requirement unconditionally. The fixer evaluates the trigger at fix-authoring time, not the conductor at brief-construction time.
+
+Before any edit, the fixer's report must carry a short contract statement for each finding in scope. It has three parts:
+
+1. **Invariant.** State the invariant in one sentence. Examples: `save()` succeeding implies `load()` round-trips equal; a reset is prescribed only when records would be stranded.
+2. **Both sides.** Name both sides of the contract and every call site of each in a grep list. Name where the contract is enforced, usually the producer or writer, so the fix lands there and not only on the reported line. If the fix adds validation to one side only, say so explicitly and explain why the other side needs none.
+3. **State space.** Enumerate the dimensions, such as keyword state x vector state x open mode. State which cells the fix changes and which cells it leaves unchanged.
+
+Guardrail 3 still requires the single regression test. Beyond it, require a table-driven or round-trip test over the whole state space, not only the reported cell. Also require a mutation check: revert the fix, confirm the new test fails, restore the fix, and report the result. Where real data or a failure-injection run is cheap and safe, run it on a scratch copy, never the live data, and report the result.
+
+The fixer must not report the finding as applied without the contract statement, the whole-space test, and the mutation-check result. This is a fixer-prompt requirement with no deterministic backstop. The parity test pins only that this section and its key phrases exist.
+
+Guardrails 3, 6, and 7 do not cover this contract. A test for the reported case can pass while the contract stays one-sided. Root-cause analysis and a call-site sweep can still leave the producer and consumer, or other state-space cells, inconsistent.
 
 ## Reuse: bundled scripts only, never relative-path into deep-review
 

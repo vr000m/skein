@@ -826,6 +826,58 @@ assert_guardrail7_for "$SKILL_MD" "Claude mirror"
 assert_guardrail7_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
+# Guardrail 8: a contract fix states the invariant, both sides, and full state
+# space before editing, then proves the whole space and mutation-checks the
+# test. Pinned on BOTH mirrors so a section dropped from one twin cannot leave
+# the suite green.
+# ---------------------------------------------------------------------------
+
+assert_guardrail8_for() {
+	local file="$1" label="$2" section
+	assert_grep_i "$file" 'guardrail 8' \
+		"$label: documents Guardrail 8 heading/label"
+
+	section="$(extract_section "$file" 'guardrail 8')"
+	if [[ ! -s "$section" ]]; then
+		fail "$label: could not extract a Guardrail 8 section from $file"
+		rm -f "$section"
+		return
+	fi
+
+	file="$section"
+	assert_grep_i "$file" 'invariant' \
+		"$label: requires a one-sentence contract invariant"
+	assert_grep_i "$file" 'both sides' \
+		"$label: requires both sides and their call sites"
+	assert_grep_i "$file" 'state space' \
+		"$label: requires the contract state space"
+	assert_grep_i "$file" 'mutation' \
+		"$label: requires a mutation check"
+	assert_grep_i "$file" 'table-driven|round-trip' \
+		"$label: requires a whole-space table-driven or round-trip test"
+	assert_grep_i "$file" 'one side only|one-sided' \
+		"$label: requires an explicit justification for a one-sided fix"
+	assert_grep_i "$file" 'unconditional' \
+		"$label: the constraint rides in every fixer brief unconditionally"
+	assert_grep_i "$file" 'fix.authoring time|fixer evaluates the trigger' \
+		"$label: the fixer evaluates the trigger at fix-authoring time"
+	assert_grep_i "$file" 'must not report the finding as applied' \
+		"$label: missing contract evidence blocks the applied claim"
+	assert_grep_i "$file" 'scratch copy' \
+		"$label: real-data or failure-injection checks use a scratch copy"
+
+	rm -f "$section"
+}
+
+assert_guardrail8_for "$SKILL_MD" "Claude mirror"
+assert_guardrail8_for "$CODEX_SKILL_MD" "Codex mirror"
+
+assert_grep_i "$SKILL_MD" 'seam still moving' \
+	"Claude mirror: documents the conductor-side seam tripwire"
+assert_grep_i "$CODEX_SKILL_MD" 'seam still moving' \
+	"Codex mirror: documents the conductor-side seam tripwire"
+
+# ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and
 # `pipefail`.
 #
