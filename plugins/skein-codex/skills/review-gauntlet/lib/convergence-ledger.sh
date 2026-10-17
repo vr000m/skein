@@ -3,7 +3,8 @@
 # for the review-gauntlet conductor loop.
 #
 # Usage:
-#   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+#   convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
+#       [--review-base <oid> --review-head <oid> --review-branch <name>]
 #   convergence-ledger.sh --run-dir --ledger <path>
 #   convergence-ledger.sh --prepare-round <N> --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
@@ -143,7 +144,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
 	cat >&2 <<'EOF'
-usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
+              [--review-base <oid> --review-head <oid> --review-branch <name>]
        convergence-ledger.sh --run-dir --ledger <path>
        convergence-ledger.sh --prepare-round <N> --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
@@ -170,6 +172,13 @@ ROUND_ARG_SEEN=0
 PRESENT_KEYS_FILE=""
 CLAIMED_KEYS_FILE=""
 PREPARE_ROUND=""
+REVIEW_BASE=""
+REVIEW_HEAD=""
+REVIEW_BRANCH=""
+REVIEW_SCOPE_ARG_COUNT=0
+REVIEW_BASE_SEEN=0
+REVIEW_HEAD_SEEN=0
+REVIEW_BRANCH_SEEN=0
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -228,6 +237,28 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		TARGET="$1"
+		;;
+	--review-base | --review-head | --review-branch)
+		flag="$1"
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		case "$flag" in
+		--review-base)
+			REVIEW_BASE="$1"
+			REVIEW_BASE_SEEN=1
+			;;
+		--review-head)
+			REVIEW_HEAD="$1"
+			REVIEW_HEAD_SEEN=1
+			;;
+		--review-branch)
+			REVIEW_BRANCH="$1"
+			REVIEW_BRANCH_SEEN=1
+			;;
+		esac
 		;;
 	--count)
 		shift
@@ -522,6 +553,13 @@ validate_ledger_root_fields() {
 		def is_int: type == "number" and (. | floor) == . and . >= 0;
 		. as $root
 		| ($root.loop_counter | is_int)
+		and (($root | has("run_id") | not) or
+		     ($root.run_id | type == "string" and test("^[0-9a-f]{20}$")))
+		and (($root | has("review_scope") | not) or
+		     ($root.review_scope | type == "object"
+		      and (.base_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.head_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.branch | type == "string" and (test("[\\r\\n]") | not))))
 		and all(["cap", "k"][];
 			. as $f
 			| ($root[$f] == null) or ($root[$f] | is_int))
@@ -721,7 +759,10 @@ write_fresh_ledger() {
 	local target="$2"
 	local cap="$3"
 	local k="$4"
-	local tmp
+	local review_base="$5"
+	local review_head="$6"
+	local review_branch="$7"
+	local tmp run_id
 	# Guard BEFORE mkdir -p: mkdir follows a symlinked component, so the
 	# check has to happen while there is still nothing to create.
 	assert_fresh_ledger_path "$ledger_path"
@@ -732,17 +773,29 @@ write_fresh_ledger() {
 	# (tmpfs on Linux CI), making the `mv` a copy-then-unlink with no such
 	# guarantee. Same template shape `persist_atomic_write` already uses.
 	tmp="$(mktemp "$(dirname "$ledger_path")/.ledger.XXXXXX")"
+	# Reuse the already-random temp basename as per-init entropy. The stored
+	# digest stays stable as rounds are appended; --init --force gets a new one.
+	run_id="$(printf '%s' "$tmp" | gc_sha1 | cut -c1-20)"
+	if [[ ! "$run_id" =~ ^[0-9a-f]{20}$ ]]; then
+		rm -f "$tmp"
+		echo "convergence-ledger: cannot derive run id" >&2
+		exit 2
+	fi
 	# fixed_keys/pending_claimed are deliberately NOT written here: a ledger
 	# that never sees --present-keys/--claimed-keys must stay byte-for-byte
 	# identical to the pre-Phase-3 shape (no key-tracking pollution). Both
 	# fields are added lazily, only once a round actually supplies one of
 	# those flags — see the append-mode handler below.
-	if [[ -n "$target" ]]; then
-		jq -n --arg target "$target" --argjson cap "$cap" --argjson k "$k" \
-			'{target: $target, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 && -n "$target" ]]; then
+		jq -n --arg target "$target" --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			--arg base_oid "$review_base" --arg head_oid "$review_head" --arg branch "$review_branch" \
+			'{target: $target, run_id: $run_id, review_scope: {base_oid: $base_oid, head_oid: $head_oid, branch: $branch}, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+	elif [[ -n "$target" ]]; then
+		jq -n --arg target "$target" --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			'{target: $target, run_id: $run_id, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
 	else
-		jq -n --argjson cap "$cap" --argjson k "$k" \
-			'{cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+		jq -n --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			'{run_id: $run_id, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
 	fi
 	mv "$tmp" "$ledger_path"
 }
@@ -758,7 +811,7 @@ ensure_ledger_for_append() {
 		validate_ledger_root_fields "$LEDGER_PATH"
 		check_target_match "$LEDGER_PATH" "$TARGET"
 	else
-		write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+		write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K" "$REVIEW_BASE" "$REVIEW_HEAD" "$REVIEW_BRANCH"
 	fi
 }
 
@@ -904,8 +957,14 @@ decision_from_ledger() {
 	echo "continue"
 }
 
+REVIEW_SCOPE_ARG_COUNT=$((REVIEW_BASE_SEEN + REVIEW_HEAD_SEEN + REVIEW_BRANCH_SEEN))
 validate_common_args
 gc_have_jq
+
+if [[ "$MODE" != "init" && "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
+	echo "convergence-ledger: reviewed-scope flags are only valid with --init" >&2
+	exit 2
+fi
 
 case "$MODE" in
 init)
@@ -917,6 +976,16 @@ init)
 		echo "convergence-ledger: --init cannot be combined with round-input flags" >&2
 		exit 2
 	fi
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 0 && "$REVIEW_SCOPE_ARG_COUNT" -ne 3 ]]; then
+		echo "convergence-ledger: --review-base, --review-head and --review-branch must be supplied together" >&2
+		exit 2
+	fi
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 ]]; then
+		if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || "$REVIEW_BRANCH" == *$'\n'* || "$REVIEW_BRANCH" == *$'\r'* ]]; then
+			echo "convergence-ledger: invalid reviewed scope" >&2
+			exit 2
+		fi
+	fi
 	if [[ -e "$LEDGER_PATH" && "$FORCE" -eq 0 ]]; then
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
 		exit 6
@@ -924,7 +993,7 @@ init)
 	# Guards first, then clear, then write: a refused init deletes nothing.
 	assert_fresh_ledger_path "$LEDGER_PATH"
 	clear_stale_run_dir "$LEDGER_PATH"
-	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K" "$REVIEW_BASE" "$REVIEW_HEAD" "$REVIEW_BRANCH"
 	;;
 run-dir)
 	if [[ "$FORCE" -eq 1 ]]; then

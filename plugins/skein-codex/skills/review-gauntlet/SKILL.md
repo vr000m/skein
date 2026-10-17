@@ -44,12 +44,18 @@ The ledger also persists the `--cap`/`--k` values in force when it was created (
 . "$SKILL_DIR"/lib/gauntlet-common.sh
 canonical_target="<pr:N-or-branch:name>"
 ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+resolved_base_oid="<immutable reviewed base oid>"
+resolved_head_oid="<immutable reviewed head oid>"
+review_branch="<reviewed branch or PR head ref>"
+review_scope_args=(--review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch")
 ```
+
+Bind those three reviewed-scope values during the initial target resolution, before any gate or ledger startup decision. A fresh ledger stores them atomically with its opaque run ID. A resume reads that stored scope; it never overwrites it with a newly resolved branch or PR head.
 
 **Standalone loop entry** (mode 1 — an operator is present to supply `--resume`/`--fresh`): for a non-`--resume` loop, initialize once before round 1:
 
 ```bash
-"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"
+"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target" "${review_scope_args[@]}"
 ```
 
 Every write path into the ledger first runs `ledger_assert_no_symlink`: it **refuses — it never redirects, and never falls back to another path** — when the ledger path, or any directory component of it strictly inside the worktree, is a symlink, exiting 1 with `refusing to operate on symlink: <path>`. The threat is a **tracked symlink** committed into the repository: `.gauntlet/` is gitignored, but a tracked symlink at that exact path still materialises on checkout, and `mkdir -p` follows it — so a malicious clone could point `.gauntlet/` outside the repo and have every ledger write land on an arbitrary user-writable file. Components that do not exist yet are checked too, since those are precisely the ones `mkdir -p` is about to create. Treat that refusal as a finding about the checkout, not as a bug to route around: **do not** retarget `--ledger` at another path to get past it.
@@ -57,7 +63,7 @@ Every write path into the ledger first runs `ledger_assert_no_symlink`: it **ref
 If that exits because the ledger already exists (exit 6), stop and tell the operator a prior run's ledger exists for this target. They must pass `--resume` to continue it or `--fresh` to discard it. `--fresh` maps to:
 
 ```bash
-"$SKILL_DIR"/lib/convergence-ledger.sh --init --force --ledger "$ledger_path" --target "$canonical_target"
+"$SKILL_DIR"/lib/convergence-ledger.sh --init --force --ledger "$ledger_path" --target "$canonical_target" "${review_scope_args[@]}"
 ```
 
 For `--resume` alone, never initialize. Run the read-only peek against the same target:
@@ -82,7 +88,7 @@ round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
 "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target"
 ```
 
-- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` (not `--force`; there is nothing to discard) and start at gate 1.
+- **Exit 4** (no ledger for this target yet): nothing to resume — initialize fresh with plain `--init` plus `"${review_scope_args[@]}"` (not `--force`; there is nothing to discard) and start at gate 1.
 - **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
 - **Exit 5** (terminal — `success`/`success_with_quarantine`/`regression`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
 
@@ -243,7 +249,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. Collect each round fixer report's `design_deltas` into one run-level file. Resolve the base, head, and branch from the reviewed target, never from the conductor's current checkout. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent.
+Run this step after every terminal ledger decision. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Collect each round fixer report's `design_deltas` into one run-level file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent.
 
 ```bash
 # Carry the parsed --plan value and reviewed target into the terminal sink.
@@ -263,26 +269,82 @@ run_design_delta_sink() {
   esac
 
   target_key="$(basename "${ledger_path%.json}")"
-  run_id=""
-  if declare -F gc_sha1 >/dev/null; then
-    run_id="codex-$(gc_sha1 < "$ledger_path" | cut -c1-12)"
-  fi
-  if [[ ! "$run_id" =~ ^codex-[0-9a-f]{12}$ ]]; then
-    echo "warning: cannot derive design delta run id; continuing terminal handoff" >&2
-    return 0
-  fi
   state_dir="$(dirname "$ledger_path")"
   run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
   delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
   resolution_file="$state_dir/design-deltas-$target_key.resolution.json"
 
   . "$SKILL_DIR"/lib/state-path-guard.sh
-  if ! gauntlet_assert_no_symlink "$state_dir" design-delta-sink ||
-    ! gauntlet_assert_no_symlink "$run_deltas_file" design-delta-sink ||
-    ! gauntlet_assert_no_symlink "$delta_items_file" design-delta-sink ||
-    ! gauntlet_assert_no_symlink "$resolution_file" design-delta-sink; then
-    echo "warning: unsafe design delta sink path; continuing terminal handoff" >&2
+  for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
+    if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
+      echo "warning: unsafe design delta sink path; continuing terminal handoff" >&2
+      return 0
+    fi
+  done
+
+  ledger_run_id="$(jq -r '.run_id // empty' "$ledger_path" 2>/dev/null || true)"
+  if [[ ! "$ledger_run_id" =~ ^[0-9a-f]{20}$ ]] && declare -F gc_sha1 >/dev/null; then
+    legacy_seed="$(jq -c '{target:(.target // ""),cap:(.cap // null),k:(.k // null),first_round:(.rounds[0] // null)}' "$ledger_path" 2>/dev/null || true)"
+    [[ -n "$legacy_seed" ]] && ledger_run_id="$(printf '%s' "$legacy_seed" | gc_sha1 | cut -c1-20)"
+  fi
+  run_id="codex-${ledger_run_id:0:12}"
+  if [[ ! "$run_id" =~ ^codex-[0-9a-f]{12}$ ]]; then
+    echo "warning: cannot derive design delta run id; continuing terminal handoff" >&2
     return 0
+  fi
+
+  ledger_scope=false
+  if jq -e 'has("review_scope")' "$ledger_path" >/dev/null 2>&1; then
+    if ! jq -e '
+      .review_scope | type == "object"
+      and (.base_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+      and (.head_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+      and (.branch | type == "string")
+    ' "$ledger_path" >/dev/null 2>&1; then
+      echo "warning: invalid reviewed scope in ledger; continuing terminal handoff" >&2
+      return 0
+    fi
+    ledger_scope=true
+    BASE_OID="$(jq -r '.review_scope.base_oid' "$ledger_path")"
+    HEAD_OID="$(jq -r '.review_scope.head_oid' "$ledger_path")"
+    branch_name="$(jq -r '.review_scope.branch' "$ledger_path")"
+  fi
+
+  scope_file="$state_dir/design-deltas-$target_key-$run_id.scope.json"
+  if ! gauntlet_assert_no_symlink "$scope_file" design-delta-sink; then
+    echo "warning: unsafe design delta scope path; continuing terminal handoff" >&2
+    return 0
+  fi
+  if [[ -e "$scope_file" ]]; then
+    if ! jq -e --arg run_id "$run_id" --arg target "$canonical_target" --argjson enforce_scope "$ledger_scope" \
+      --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" '
+      type == "object"
+      and .run_id == $run_id
+      and .target == $target
+      and (.base_oid | type == "string" and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and (.head_oid | type == "string" and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and (.branch | type == "string")
+      and (($enforce_scope | not) or (.base_oid == $base_oid and .head_oid == $head_oid and .branch == $branch))
+    ' "$scope_file" >/dev/null 2>&1; then
+      echo "warning: invalid persisted design delta scope; continuing terminal handoff" >&2
+      return 0
+    fi
+    BASE_OID="$(jq -r '.base_oid' "$scope_file")"
+    HEAD_OID="$(jq -r '.head_oid' "$scope_file")"
+    branch_name="$(jq -r '.branch' "$scope_file")"
+  else
+    scope_tmp="$(mktemp "$state_dir/.design-delta-scope.XXXXXX")" || {
+      echo "warning: cannot create design delta scope; continuing terminal handoff" >&2
+      return 0
+    }
+    if ! jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
+      --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" \
+      '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp" ||
+      ! mv "$scope_tmp" "$scope_file"; then
+      rm -f "$scope_tmp"
+      echo "warning: cannot persist design delta scope; continuing terminal handoff" >&2
+      return 0
+    fi
   fi
 
   if ! : > "$delta_items_file"; then
@@ -292,6 +354,10 @@ run_design_delta_sink() {
     [[ "$rounds_n" =~ ^[0-9]+$ ]] || rounds_n=0
     for ((n = 1; n <= rounds_n; n++)); do
       report="$run_dir/round-$n/fixer-report.json"
+      if ! gauntlet_assert_no_symlink "$report" design-delta-sink; then
+        echo "warning: unsafe fixer report skipped: $report" >&2
+        continue
+      fi
       [[ -f "$report" ]] || continue
       if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
         echo "warning: malformed fixer report skipped: $report" >&2
@@ -354,7 +420,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 

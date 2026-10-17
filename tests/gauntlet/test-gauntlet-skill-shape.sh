@@ -355,6 +355,12 @@ assert_resume_shape_for() {
 	assert_grep_fixed "$file" "${ledger_invoke_prefix}/lib/convergence-ledger.sh --init --force --ledger \"\$ledger_path\" --target \"\$canonical_target\"" \
 		"$label: write-side wiring documents \`--fresh\` mapping to \`--init --force\`"
 
+	assert_grep_fixed "$file" 'review_scope_args=(--review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch")' \
+		"$label: loop entry binds the immutable reviewed scope for ledger initialization"
+
+	assert_grep_fixed "$file" '--target "$canonical_target" "${review_scope_args[@]}"' \
+		"$label: fresh ledger initialization persists the reviewed scope atomically"
+
 	# The per-round append call binds --ledger/--target either as a direct
 	# literal invocation (Claude mirror) or, since the Phase 3 C1/C2 wiring
 	# needs to conditionally append --claimed-keys, via a `ledger_args=(...)`
@@ -929,14 +935,22 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'resolution_file="$state_dir/design-deltas-$
 	"Codex mirror: sink names its ledger-adjacent resolution"
 assert_grep_fixed "$CODEX_SKILL_MD" '. "$SKILL_DIR"/lib/state-path-guard.sh' \
 	"Codex mirror: sink loads the single state-path policy"
-assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$state_dir" design-delta-sink' \
-	"Codex mirror: sink guards its ledger-adjacent working directory"
-assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$resolution_file" design-delta-sink' \
-	"Codex mirror: sink guards its ledger-adjacent working files"
-assert_grep_fixed "$CODEX_SKILL_MD" 'if declare -F gc_sha1 >/dev/null; then' \
-	"Codex mirror: sink guards the already-sourced portable hash helper"
-assert_grep_fixed "$CODEX_SKILL_MD" 'run_id="codex-$(gc_sha1 < "$ledger_path" | cut -c1-12)"' \
-	"Codex mirror: sink derives its run id with the portable hash helper"
+assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do' \
+	"Codex mirror: sink guards its ledger, run directory, and working files before reads or writes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$report" design-delta-sink' \
+	"Codex mirror: sink guards each fixer report before reading it"
+assert_grep_fixed "$CODEX_SKILL_MD" 'ledger_run_id="$(jq -r '\''.run_id // empty'\'' "$ledger_path"' \
+	"Codex mirror: sink reads the stable run id stored by ledger initialization"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run_id="codex-${ledger_run_id:0:12}"' \
+	"Codex mirror: sink derives its section identity from the stable ledger run id"
+assert_grep_fixed "$CODEX_SKILL_MD" 'HEAD_OID="$(jq -r '\''.review_scope.head_oid'\'' "$ledger_path")"' \
+	"Codex mirror: terminal resume restores the reviewed head directly from the ledger"
+assert_grep_fixed "$CODEX_SKILL_MD" 'first_round:(.rounds[0] // null)' \
+	"Codex mirror: legacy ledgers use an append-stable first-round projection"
+assert_grep_fixed "$CODEX_SKILL_MD" 'scope_file="$state_dir/design-deltas-$target_key-$run_id.scope.json"' \
+	"Codex mirror: reviewed scope is persisted per ledger run"
+assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$(jq -r '\''.base_oid'\'' "$scope_file")"' \
+	"Codex mirror: resume reloads the immutable reviewed base from persisted scope"
 assert_not_grep "$CODEX_SKILL_MD" 'run_id=.*\. "\$SKILL_DIR"/lib/gauntlet-common\.sh;' \
 	"Codex mirror: run-id derivation does not re-source gauntlet-common.sh"
 assert_grep_fixed "$CODEX_SKILL_MD" 'hand back to the operator the way Guardrail 1' \
@@ -980,9 +994,17 @@ assert_grep_fixed "$SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$targe
 assert_grep_fixed "$SKILL_MD" '. "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh' \
 	"Claude mirror: sink loads the single state-path policy"
 assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$guarded" design-delta-sink' \
-	"Claude mirror: sink guards every working path before writing"
-assert_grep_fixed "$SKILL_MD" 'if declare -F gc_sha1 > /dev/null; then' \
-	"Claude mirror: sink guards the already-sourced portable hash helper"
+	"Claude mirror: sink guards its ledger, run directory, and working files"
+assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$report" design-delta-sink' \
+	"Claude mirror: sink guards each fixer report before reading it"
+assert_grep_fixed "$SKILL_MD" 'ledger_run_id="$(jq -r '\''.run_id // empty'\'' "$ledger_path"' \
+	"Claude mirror: sink reads the stable run id stored by ledger initialization"
+assert_grep_fixed "$SKILL_MD" 'run_id="claude-${ledger_run_id:0:12}"' \
+	"Claude mirror: sink derives its section identity from the stable ledger run id"
+assert_grep_fixed "$SKILL_MD" 'HEAD_OID="$(jq -r '\''.review_scope.head_oid'\'' "$ledger_path")"' \
+	"Claude mirror: terminal resume restores the reviewed head directly from the ledger"
+assert_grep_fixed "$SKILL_MD" 'scope_file="$state_dir/design-deltas-$target_key-$run_id.scope.json"' \
+	"Claude mirror: reviewed scope is persisted per ledger run"
 assert_not_grep "$SKILL_MD" 'run_id=.*gauntlet-common\.sh;' \
 	"Claude mirror: run-id derivation does not re-source gauntlet-common.sh"
 assert_not_grep "$SKILL_MD" 'shasum -a 256 "\$ledger_path"' \

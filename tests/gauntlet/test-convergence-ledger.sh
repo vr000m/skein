@@ -469,9 +469,15 @@ else
 	fail "--init on an absent path creates a fresh ledger file (file not created)"
 fi
 init_target="$(jq -r '.target' "$INIT_L")"
+init_run_id="$(jq -r '.run_id' "$INIT_L")"
 init_counter="$(jq -r '.loop_counter' "$INIT_L")"
 init_rounds="$(jq -r '.rounds | length' "$INIT_L")"
 assert_eq "$init_target" "branch:init-fresh" "--init records the given --target"
+if [[ "$init_run_id" =~ ^[0-9a-f]{20}$ ]]; then
+	pass "--init records a stable opaque run id"
+else
+	fail "--init run id has the wrong shape: $init_run_id"
+fi
 assert_eq "$init_counter" "0" "--init creates loop_counter == 0"
 assert_eq "$init_rounds" "0" "--init creates an empty rounds array"
 
@@ -484,13 +490,51 @@ assert_eq "$reinit_exit" "6" "--init on an existing path without --force refuses
 # Populate the existing ledger with a round + distinct target, then --force
 # reinitialize and confirm the old state is gone.
 "$LEDGER_SCRIPT" --ledger "$INIT_L" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+assert_eq "$(jq -r '.run_id' "$INIT_L")" "$init_run_id" "appending a round preserves the run id"
 "$LEDGER_SCRIPT" --init --force --ledger "$INIT_L" --target "branch:init-forced"
 forced_target="$(jq -r '.target' "$INIT_L")"
+forced_run_id="$(jq -r '.run_id' "$INIT_L")"
 forced_counter="$(jq -r '.loop_counter' "$INIT_L")"
 forced_rounds="$(jq -r '.rounds | length' "$INIT_L")"
 assert_eq "$forced_target" "branch:init-forced" "--init --force truncates and reinitializes with the new target"
+if [[ "$forced_run_id" =~ ^[0-9a-f]{20}$ && "$forced_run_id" != "$init_run_id" ]]; then
+	pass "--init --force assigns a fresh run id"
+else
+	fail "--init --force did not replace the run id ($init_run_id -> $forced_run_id)"
+fi
 assert_eq "$forced_counter" "0" "--init --force resets loop_counter back to 0"
 assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old rounds gone)"
+
+SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$SCOPE_L")
+scope_base="$(printf 'a%.0s' {1..40})"
+scope_head="$(printf 'b%.0s' {1..40})"
+"$LEDGER_SCRIPT" --init --ledger "$SCOPE_L" --target "branch:scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope
+if jq -e --arg base "$scope_base" --arg head "$scope_head" \
+	'.review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope"}' "$SCOPE_L" >/dev/null; then
+	pass "--init atomically records the immutable reviewed scope"
+else
+	fail "--init did not record the reviewed scope"
+fi
+"$LEDGER_SCRIPT" --ledger "$SCOPE_L" --count 1 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+if jq -e --arg head "$scope_head" '.review_scope.head_oid == $head' "$SCOPE_L" >/dev/null; then
+	pass "appending a round preserves the reviewed scope"
+else
+	fail "appending a round changed the reviewed scope"
+fi
+
+BAD_SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BAD_SCOPE_L")
+set +e
+"$LEDGER_SCRIPT" --init --ledger "$BAD_SCOPE_L" --target "branch:bad-scope" --review-base "$scope_base" >/dev/null 2>&1
+bad_scope_rc=$?
+set -e
+if [[ "$bad_scope_rc" -eq 2 && ! -e "$BAD_SCOPE_L" ]]; then
+	pass "--init rejects a partial reviewed scope before writing"
+else
+	fail "--init partial reviewed scope was not rejected atomically (rc=$bad_scope_rc)"
+fi
 
 # --- 15b. --run-dir and stale round-dir clearing (output-formats Phase 2) ---
 
@@ -973,16 +1017,16 @@ else
 	fail "convergence-ledger.sh is byte-identical across the Claude and Codex mirrors"
 fi
 
-# --- 18. Phase 3 golden/byte-parity: flag-absent behaviour is UNCHANGED ---
+# --- 18. Phase 3 golden/byte-parity: flag-absent key behaviour is unchanged -
 # Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
 # Goal: "Existing ledger decisions are byte-for-byte unchanged when the key
 # flags [--present-keys/--claimed-keys] are absent." This locks the exact
 # on-disk ledger shape produced by an append call that never mentions the new
 # flags: no present_keys/claimed_keys/fixed_keys pollution, decision tokens
 # unchanged from the pre-Phase-3 golden values asserted in sections 1-17
-# above. The golden JSON below is constructed inline (via jq, not a checked-in
-# fixture) from the documented pre-Phase-3 schema, so this test does not
-# depend on a byte-identical fixture surviving unrelated formatting drift.
+# above. The run_id added later is injected from the fresh ledger because its
+# opaque value is intentionally different per initialization. The rest of the
+# golden JSON is constructed inline (via jq, not a checked-in fixture).
 
 golden_flag_absent_round() {
 	local label="$1" count="$2" structural="$3" local_="$4" pass_type="$5" quarantine="$6" expected_json="$7"
@@ -993,8 +1037,9 @@ golden_flag_absent_round() {
 		--quarantine "$quarantine" >/dev/null
 	local actual
 	actual="$(jq -S . "$ledger")"
-	local expected
-	expected="$(jq -S . <<<"$expected_json")"
+	local expected run_id
+	run_id="$(jq -r '.run_id' "$ledger")"
+	expected="$(jq -S --arg run_id "$run_id" '. + {run_id:$run_id}' <<<"$expected_json")"
 	assert_eq "$actual" "$expected" "$label: flag-absent append produces byte-for-byte-identical ledger shape (no present_keys/claimed_keys/fixed_keys pollution)"
 }
 
@@ -1799,6 +1844,47 @@ rlok_rc=0
 rlok_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_ok" 2>/dev/null)" || rlok_rc=$?
 assert_eq "$rlok_out" "no-rounds" "R12-root-e/control: a round-less ledger with cap:null/k:null still prints no-rounds"
 assert_eq "$rlok_rc" "0" "R12-root-e2/control: ...and still exits 0"
+
+# (f) A present run_id is schema, not advisory metadata. An invalid value
+# must fail before a sink can turn it into an unstable or unsafe section id.
+L_rl_run_id="$(
+	handmade_ledger <<'EOF'
+{
+  "run_id": "not-a-run-id",
+  "loop_counter": 0,
+  "cap": 10,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlrun_rc=0
+rlrun_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_run_id" 2>/dev/null)" || rlrun_rc=$?
+if [[ "$rlrun_rc" -eq 2 && -z "$rlrun_out" ]]; then
+	pass "R12-root-f: a malformed run_id exits 2 before the no-rounds short-circuit"
+else
+	fail "R12-root-f: expected exit 2 with empty stdout (rc=$rlrun_rc, out='$rlrun_out')"
+fi
+
+L_rl_scope="$(
+	handmade_ledger <<'EOF'
+{
+  "run_id": "aaaaaaaaaaaaaaaaaaaa",
+  "review_scope": {"base_oid":"bad","head_oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","branch":"feature/x"},
+  "loop_counter": 0,
+  "cap": 10,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlscope_rc=0
+rlscope_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_scope" 2>/dev/null)" || rlscope_rc=$?
+if [[ "$rlscope_rc" -eq 2 && -z "$rlscope_out" ]]; then
+	pass "R12-root-g: a malformed persisted reviewed scope exits 2"
+else
+	fail "R12-root-g: expected exit 2 with empty stdout (rc=$rlscope_rc, out='$rlscope_out')"
+fi
 
 # --- R12/F9: the round-append filter is a jq FILE, run directly -----------
 # The pending_claims/fixed_keys promotion state machine used to be an inline

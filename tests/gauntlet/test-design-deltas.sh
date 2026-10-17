@@ -571,6 +571,47 @@ run_symlink_test() {
 	fi
 }
 
+run_input_symlink_test() {
+	local repo outside_resolution outside_deltas plan before rc
+	repo="$WORKDIR/symlink-inputs"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+
+	outside_resolution="$WORKDIR/outside-resolution.json"
+	cp "$repo/resolution.json" "$outside_resolution"
+	rm "$repo/resolution.json"
+	ln -s "$outside_resolution" "$repo/resolution.json"
+	set +e
+	run_writer_id "$WRITER" "$repo" run-one >/dev/null 2>&1
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 2 && "$(hash_file "$plan")" == "$before" ]]; then
+		pass "write refuses a symlinked resolution input before reading it"
+	else
+		fail "symlinked resolution input exit $rc or changed the plan"
+	fi
+
+	rm "$repo/resolution.json"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	outside_deltas="$WORKDIR/outside-deltas.json"
+	cp "$repo/deltas.json" "$outside_deltas"
+	rm "$repo/deltas.json"
+	ln -s "$outside_deltas" "$repo/deltas.json"
+	set +e
+	run_writer_id "$WRITER" "$repo" run-one >/dev/null 2>&1
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 2 && "$(hash_file "$plan")" == "$before" ]]; then
+		pass "write refuses a symlinked deltas input before reading it"
+	else
+		fail "symlinked deltas input exit $rc or changed the plan"
+	fi
+}
+
 run_empty_test() {
 	local repo out
 	repo="$WORKDIR/empty"
@@ -590,6 +631,7 @@ run_provenance_test
 run_gnu_stat_test
 run_bash32_static_tests
 run_symlink_test
+run_input_symlink_test
 run_empty_test
 run_mutation_checks
 

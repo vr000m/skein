@@ -65,6 +65,8 @@ JQ="$(command -v jq || true)"
 [[ -n "$JQ" && -x "$JQ" ]] || die_env "jq is required"
 [[ -d "$REPO_ROOT" ]] || die_env "repo root is not a directory: $REPO_ROOT"
 REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || die_env "cannot resolve repo root"
+gauntlet_assert_no_symlink "$RESOLUTION" write-design-deltas || exit 2
+gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || exit 2
 [[ -f "$RESOLUTION" && -r "$RESOLUTION" ]] || die_usage "resolution file is not readable"
 [[ -f "$DELTAS" && -r "$DELTAS" ]] || die_usage "deltas file is not readable"
 

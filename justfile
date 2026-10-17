@@ -67,6 +67,7 @@ gauntlet-tests:
     bash tests/gauntlet/test-goal-docs.sh
     bash tests/gauntlet/test-gauntlet-skill-shape.sh
     bash tests/gauntlet/test-design-deltas.sh
+    bash tests/gauntlet/test-design-delta-sink-codex.sh
     bash tests/gauntlet/test-design-delta-sink-claude.sh
     bash tests/gauntlet/test-convergence-ledger.sh
     bash tests/gauntlet/test-run-gate.sh
