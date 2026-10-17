@@ -1010,60 +1010,104 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'If several fixers ran, merge their `claimed
 	"Codex mirror: one merged fixer report feeds each round"
 assert_grep_fixed "$CODEX_SKILL_MD" 'dispatch one follow-up fixer in the same round whose brief names the missing piece' \
 	"Codex mirror: Guardrail 8 has one defined follow-up dispatch"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Proceed to the ledger call with only the tally the repository confirms' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Proceed to the ledger call with only the durable tally the repository confirms' \
 	"Codex mirror: incomplete Guardrail 8 work has defined ledger accounting"
 assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning' \
 	"Codex mirror: quick-mode fixer deltas reach the terminal sink"
+assert_grep_fixed "$CODEX_SKILL_MD" 'prepare_quick_design_delta_state() {' \
+	"Codex mirror: quick mode has executable ledger startup wiring"
+assert_grep_fixed "$CODEX_SKILL_MD" 'uses plain `--init` only on exit 4, reuses the ledger on exit 0 or 5, never uses `--init --force`' \
+	"Codex mirror: quick startup documents the auto-chain reuse contract"
+assert_grep_fixed "$CODEX_SKILL_MD" '"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"' \
+	"Codex mirror: quick startup initializes an empty ledger without force"
 assert_grep_fixed "$CODEX_SKILL_MD" 'A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it.' \
 	"Codex mirror: quick reports are outside the full-mode ledger enumeration"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' \
-	"Codex mirror: incomplete Guardrail 8 findings are named and quarantined"
-assert_grep_fixed "$CODEX_SKILL_MD" 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' \
-	"Codex mirror: Guardrail 8 quarantine blocks plain success"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' \
-	"Codex mirror: convergence call defines the complete quarantine tally"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard.' \
+	"Codex mirror: incomplete Guardrail 8 findings persist under the guarded run directory"
+assert_grep_fixed "$CODEX_SKILL_MD" '`--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor'"'"'s Guardrail 4 check passes.' \
+	"Codex mirror: Guardrail 8 quarantine survives resume until verified"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries' \
+	"Codex mirror: every later round includes durable Guardrail 8 quarantine"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.' \
+	"Codex mirror: convergence call derives quarantine from durable state"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
 	"Codex mirror: documents the rendered design-delta structure"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
 	"Codex mirror: documents sanitizer order and the bare-URL residual"
 
-guardrail_quarantine_contract_present() {
+codex_guardrail_quarantine_contract_present() {
 	local file="$1"
-	grep -Fq 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' "$file" &&
-		grep -Fq 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' "$file" &&
-		grep -Fq 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' "$file"
+	grep -Fq 'open-guardrail8.jsonl' "$file" &&
+		grep -Fq 'Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result' "$file" &&
+		grep -Fq 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present' "$file"
 }
 
 guardrail_quarantine_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-mutant.XXXXXX")"
-sed 's/count it in that round/count it outside that round/' "$CODEX_SKILL_MD" >"$guardrail_quarantine_mutant"
-if guardrail_quarantine_contract_present "$guardrail_quarantine_mutant"; then
-	fail "Codex mirror: mutation removing Guardrail 8 quarantine accounting survived the contract pins"
+sed 's/open-guardrail8\.jsonl/open-guardrail8-removed.jsonl/g; /Remove an entry only when/d' "$CODEX_SKILL_MD" >"$guardrail_quarantine_mutant"
+if codex_guardrail_quarantine_contract_present "$guardrail_quarantine_mutant"; then
+	fail "Codex mirror: mutation removing durable Guardrail 8 quarantine survived the contract pins"
 else
-	pass "Codex mirror: mutation removing Guardrail 8 quarantine accounting is caught"
+	pass "Codex mirror: mutation removing durable Guardrail 8 quarantine is caught"
 fi
 rm -f "$guardrail_quarantine_mutant"
 
+guardrail8_count_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-guardrail8-count.XXXXXX")"
+printf '%s\n%s\n' '{"key":"a","file":"a","summary":"a","round":1}' '{"key":"b","file":"b","summary":"b","round":2}' >"$guardrail8_count_file"
+guardrail8_open_count="$(awk 'END { print NR + 0 }' "$guardrail8_count_file")"
+design_conflict_count=3
+if [[ "$((design_conflict_count + guardrail8_open_count))" -eq 5 ]]; then
+	pass "Codex mirror: durable Guardrail 8 lines contribute to every quarantine tally"
+else
+	fail "Codex mirror: durable Guardrail 8 tally execution"
+fi
+rm -f "$guardrail8_count_file"
+
+tripwire_line="$(grep -nF 'Before dispatching this round'"'"'s fixer, after reconciling' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
+fixer_dispatch_line="$(grep -nF 'run the trivial-fix applier before dispatching the fixer subagent for the same round' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
+if [[ -n "$tripwire_line" && -n "$fixer_dispatch_line" && "$tripwire_line" -lt "$fixer_dispatch_line" ]]; then
+	pass "Codex mirror: seam tripwire runs before this round's fixer dispatch"
+else
+	fail "Codex mirror: seam tripwire ordering does not prevent the point-fix dispatch"
+fi
+
 assert_grep_fixed "$SKILL_MD" 'Guardrail 4 separately quarantines an unverified Guardrail 8 edit so it cannot converge as plain success.' \
 	"Claude mirror: Guardrail 2 names the Guardrail 8 quarantine trigger"
-assert_grep_fixed "$SKILL_MD" 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' \
-	"Claude mirror: incomplete Guardrail 8 findings are named and quarantined"
-assert_grep_fixed "$SKILL_MD" 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' \
-	"Claude mirror: Guardrail 8 quarantine blocks plain success"
-assert_grep_fixed "$SKILL_MD" 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' \
-	"Claude mirror: convergence call defines the complete quarantine tally"
 assert_grep_fixed "$SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
 	"Claude mirror: documents the rendered design-delta structure"
 assert_grep_fixed "$SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
 	"Claude mirror: documents sanitizer order and the bare-URL residual"
+assert_grep_fixed "$SKILL_MD" 'Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard.' \
+	"Claude mirror: incomplete Guardrail 8 findings persist under the guarded run directory"
+assert_grep_fixed "$SKILL_MD" '`--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor'"'"'s Guardrail 4 check passes.' \
+	"Claude mirror: Guardrail 8 quarantine survives resume until verified"
+assert_grep_fixed "$SKILL_MD" 'Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries' \
+	"Claude mirror: every later round includes durable Guardrail 8 quarantine"
+assert_grep_fixed "$SKILL_MD" 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.' \
+	"Claude mirror: convergence call derives quarantine from durable state"
 
-claude_quarantine_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-claude-quarantine-mutant.XXXXXX")"
-sed 's/count it in that round/count it outside that round/' "$SKILL_MD" >"$claude_quarantine_mutant"
-if guardrail_quarantine_contract_present "$claude_quarantine_mutant"; then
-	fail "Claude mirror: mutation removing Guardrail 8 quarantine accounting survived the contract pins"
+claude_guardrail_quarantine_contract_present() {
+	local file="$1"
+	grep -Fq 'open-guardrail8.jsonl' "$file" &&
+		grep -Fq 'Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result' "$file" &&
+		grep -Fq 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present' "$file"
+}
+
+claude_guardrail_quarantine_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-mutant.XXXXXX")"
+sed 's/open-guardrail8\.jsonl/open-guardrail8-removed.jsonl/g; /Remove an entry only when/d' "$SKILL_MD" >"$claude_guardrail_quarantine_mutant"
+if claude_guardrail_quarantine_contract_present "$claude_guardrail_quarantine_mutant"; then
+	fail "Claude mirror: mutation removing durable Guardrail 8 quarantine survived the contract pins"
 else
-	pass "Claude mirror: mutation removing Guardrail 8 quarantine accounting is caught"
+	pass "Claude mirror: mutation removing durable Guardrail 8 quarantine is caught"
 fi
-rm -f "$claude_quarantine_mutant"
+rm -f "$claude_guardrail_quarantine_mutant"
+
+claude_tripwire_line="$(grep -nF 'Before dispatching this round'"'"'s fixer, after reconciling' "$SKILL_MD" | head -1 | cut -d: -f1)"
+claude_fixer_dispatch_line="$(grep -nF 'Ordering is not optional: run the trivial-fix applier *before* dispatching' "$SKILL_MD" | head -1 | cut -d: -f1)"
+if [[ -n "$claude_tripwire_line" && -n "$claude_fixer_dispatch_line" && "$claude_tripwire_line" -lt "$claude_fixer_dispatch_line" ]]; then
+	pass "Claude mirror: seam tripwire runs before this round's fixer dispatch"
+else
+	fail "Claude mirror: seam tripwire ordering does not prevent the point-fix dispatch"
+fi
 
 # The Claude sink is a different implementation (it resolves the reviewed
 # target itself with `gh`/`git` instead of reading round variables), so it gets
@@ -1132,7 +1176,7 @@ assert_grep_fixed "$SKILL_MD" 'If several fixers ran, merge their `claimed` and 
 	"Claude mirror: several fixers merge into one round report"
 assert_grep_fixed "$SKILL_MD" 'dispatch one follow-up fixer in the same round whose brief names the missing piece' \
 	"Claude mirror: Guardrail 8 has one defined follow-up dispatch"
-assert_grep_fixed "$SKILL_MD" 'Proceed to the ledger call with only the tally the repository confirms.' \
+assert_grep_fixed "$SKILL_MD" 'Proceed to the ledger call with only the durable tally the repository confirms' \
 	"Claude mirror: incomplete Guardrail 8 work has defined ledger accounting"
 assert_not_grep "$SKILL_MD" 'design_delta_quick_round' \
 	"Claude mirror: no quick-mode sink round (Claude has no quick mode)"

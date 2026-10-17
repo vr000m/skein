@@ -101,7 +101,7 @@ Decisions (grilled 2026-10-16):
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
-- [x] Review-fix coverage passes: Codex sink 25/25, Claude sink 50/50, writer/resolver 224/224, convergence ledger 214/214, skill shape 342/342, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
+- [x] Review-fix coverage passes: Codex sink 26/26, Claude sink 50/50, writer/resolver 232/232, convergence ledger 214/214, skill shape 350/350, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
 - [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
 ## Acceptance Criteria
@@ -120,7 +120,7 @@ Decisions (grilled 2026-10-16):
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
 - [ ] Phase 3: Verify the Claude mirror (done: code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review; open: final `just ci` after the gauntlet fixes)
-- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-3 fixed in aaebcff, 11e4a9e and 4ac7844; round 4 fixes in progress, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
+- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in progress, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
 

@@ -181,11 +181,15 @@ marker_line=0
 findings_count=0
 findings_line=0
 findings_end=0
+unclosed_fence=0
 # Both awk consumers share marker.py's deliberately simple fence machine:
-# any indented ``` or ~~~ prefix toggles state, regardless of the remaining text.
+# any ASCII-whitespace-indented ``` or ~~~ prefix toggles state, regardless of
+# the remaining text. Plans containing whitespace or line separators that
+# Python treats specially but this C-locale awk cannot reproduce are routed to
+# the sidecar. False positives such as a prose NBSP are benign by design.
 FENCE_AWK_SOURCE='
 	function fence_text(line) {
-	  sub(/^[ \t]*/, "", line)
+	  sub(/^[[:space:]]*/, "", line)
 	  return line
 	}
 	function fence_line(line, text) {
@@ -195,8 +199,34 @@ FENCE_AWK_SOURCE='
 	  return 1
 	}
 '
+
+plan_has_python_only_whitespace() {
+	local path="$1" needle
+	local -a needles
+	needles=(
+		$'\v' $'\f' $'\034' $'\035' $'\036' $'\037'
+		$'\302\205' $'\302\240' $'\341\232\200'
+		$'\342\200\200' $'\342\200\201' $'\342\200\202' $'\342\200\203'
+		$'\342\200\204' $'\342\200\205' $'\342\200\206' $'\342\200\207'
+		$'\342\200\210' $'\342\200\211' $'\342\200\212' $'\342\200\250'
+		$'\342\200\251' $'\342\200\257' $'\342\201\237' $'\343\200\200'
+	)
+	for needle in "${needles[@]}"; do
+		if LC_ALL=C grep -q "$needle" "$path"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	read -r marker_count marker_line findings_count findings_line findings_end < <(awk "$FENCE_AWK_SOURCE"'
+	if plan_has_python_only_whitespace "$REPO_ROOT/$plan"; then
+		sidecar_reason="resolved plan contains unsupported Python whitespace or line separators"
+		plan_is_safe=0
+	fi
+fi
+if [[ "$plan_is_safe" -eq 1 ]]; then
+	read -r marker_count marker_line findings_count findings_line findings_end unclosed_fence < <(LC_ALL=C awk "$FENCE_AWK_SOURCE"'
     function is_review_marker(line, trimmed) {
       trimmed = line
       sub(/[[:space:]]*$/, "", trimmed)
@@ -231,46 +261,24 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
           }
         }
       }
-      printf "%d %d %d %d %d\n", marker_count, marker_line, findings_count, findings_line, findings_end
+	  printf "%d %d %d %d %d %d\n", marker_count, marker_line, findings_count, findings_line, findings_end, in_fence ? 1 : 0
     }
   ' "$REPO_ROOT/$plan")
-	if [[ "$marker_count" -ne 1 ]]; then
+	if [[ "$unclosed_fence" -ne 0 ]]; then
+		sidecar_reason="resolved plan has an unclosed code fence"
+		plan_is_safe=0
+	elif [[ "$marker_count" -ne 1 ]]; then
 		sidecar_reason="resolved plan has $marker_count review markers"
 		plan_is_safe=0
 	elif [[ "$findings_count" -ne 1 ]]; then
 		sidecar_reason="resolved plan has $findings_count Findings sections after its review marker"
 		plan_is_safe=0
 	fi
-	# The sibling conduct skill owns marker.py. When both it and python3 are
-	# present, fail closed if this writer did not select the same marker line.
-	# Installed bundles without either retain the dependency-free awk path.
-	marker_authority="$SCRIPT_DIR/../../conduct/marker.py"
-	python_bin="$(command -v python3 || true)"
-	if [[ "$plan_is_safe" -eq 1 && -n "$python_bin" && -f "$marker_authority" ]]; then
-		authority_marker_line="$(
-			PYTHONDONTWRITEBYTECODE=1 "$python_bin" - "$marker_authority" "$REPO_ROOT/$plan" <<'PY'
-import importlib.util
-import sys
-from pathlib import Path
-
-spec = importlib.util.spec_from_file_location("skein_marker", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-assert spec.loader is not None
-spec.loader.exec_module(module)
-index = module.last_marker_index(Path(sys.argv[2]).read_text(encoding="utf-8").splitlines())
-print(0 if index is None else index + 1)
-PY
-		)" || authority_marker_line=""
-		if [[ "$authority_marker_line" != "$marker_line" ]]; then
-			sidecar_reason="writer marker does not match marker.py"
-			plan_is_safe=0
-		fi
-	fi
 fi
 
 upsert_section() {
 	local input="$1" output="$2" start_line="$3" end_line="$4"
-	awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
+	LC_ALL=C awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
     function emit_payload(    line) {
       while ((getline line < payload) > 0) print line
       close(payload)
@@ -344,8 +352,15 @@ fi
 
 state_dir="$REPO_ROOT/.gauntlet"
 sidecar="$state_dir/design-deltas-$TARGET_KEY.md"
+sidecar_rel=".gauntlet/design-deltas-$TARGET_KEY.md"
 gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
 gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
+GIT="$(command -v git || true)"
+if [[ -n "$GIT" ]] && "$GIT" -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+	if "$GIT" -C "$REPO_ROOT" ls-files --error-unmatch -- "$sidecar_rel" >/dev/null 2>&1; then
+		die_env "refusing to overwrite tracked sidecar: $sidecar_rel"
+	fi
+fi
 mkdir -p "$state_dir" || die_env "cannot create .gauntlet directory"
 gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
 gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2

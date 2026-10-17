@@ -24,7 +24,33 @@ Three modes are opt-in; nothing here fires without an explicit trigger. `--resum
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
-**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. Before preparing the quick round, derive `canonical_target` and the immutable reviewed scope exactly as in Target and Resume Ledger, then call `prepare_quick_design_delta_state`: it derives `ledger_path`, peeks with `--last-decision`, uses plain `--init` only on exit 4, reuses the ledger on exit 0 or 5, never uses `--init --force`, derives `run_dir`, and prepares but never appends the next round. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. A second quick invocation reuses the same ledger and prepares the same still-unappended round slot. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+
+```bash
+prepare_quick_design_delta_state() {
+  if ! declare -F gc_ledger_path >/dev/null; then
+    . "$SKILL_DIR"/lib/gauntlet-common.sh
+  fi
+  ledger_path="$(gc_ledger_path "$canonical_target" codex)" || return 1
+  quick_ledger_rc=0
+  "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target" >/dev/null || quick_ledger_rc=$?
+  case "$quick_ledger_rc" in
+    4)
+      "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target" \
+        --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
+      ;;
+    0|5) ;;
+    *)
+      echo "warning: quick-mode ledger startup failed; stopping before gates" >&2
+      return 1
+      ;;
+  esac
+  run_dir="$("$SKILL_DIR"/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")" || return 1
+  quick_round_count="$(jq -er '.rounds | select(type == "array") | length' "$ledger_path")" || return 1
+  round_n="$((quick_round_count + 1))"
+  "$SKILL_DIR"/lib/convergence-ledger.sh --prepare-round "$round_n" --ledger "$ledger_path" || return 1
+}
+```
 
 ### Target and Resume Ledger
 
@@ -235,7 +261,6 @@ Initialize `mutation_head="$round_head"` and `mutation_fingerprint="$round_finge
 
 After the fixer batch returns:
 
-- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
 - The fixer self-classifies each applied fix's blast radius as `local` or `structural`. Trust that classification; there is no deterministic backstop.
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
@@ -549,10 +574,12 @@ When the fixer judges a finding to conflict with stated design intent:
 
 ### Guardrail 2 - fix everything else regardless of confidence
 
-The only ordinary quarantine trigger is a design/architecture conflict. Guardrail 4 separately quarantines an unverified Guardrail 8 edit so it cannot converge as plain success. Do not use confidence as a fix threshold. Apply by route:
+The only ordinary quarantine trigger is a design/architecture conflict. Guardrail 4 separately persists an unverified Guardrail 8 edit so it cannot converge as plain success. Do not use confidence as a fix threshold. Apply by route:
 
 - **Trivial/allowlisted** findings (`docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort`) go through the bundled `apply-auto-fix-code.sh`.
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
+
+**Seam tripwire (conductor-side, judgment, no ledger change).** Before dispatching this round's fixer, after reconciling, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
 
 **Ordering is not optional: run the trivial-fix applier before dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7) so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index. If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing next pass and stalling convergence. Within each round: reconcile -> route -> applier (trivial) + commit -> then fixer subagent (substantive).
 
@@ -580,7 +607,9 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
-For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit. Name each such unverified finding in the report and count it in that round's `--quarantine <N>` tally. A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains. Proceed to the ledger call with only the tally the repository confirms.
+For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit.
+
+Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard. `--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor's Guardrail 4 check passes. Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries; a later clean round therefore remains `success_with_quarantine` while any entry survives. Proceed to the ledger call with only the durable tally the repository confirms.
 
 ### Guardrail 5 - run the full CI recipe after every fixer round
 
@@ -705,7 +734,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   fi
   "$SKILL_DIR"/lib/convergence-ledger.sh "${ledger_args[@]}"
   ```
-  Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.
+  Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.
   `--present-keys <file>` is a newline-separated list of every reconciled finding's regression key this round (via `scripts/finding-key.sh`) and is passed on every round, including a clean full pass where the file is legitimately empty. `--claimed-keys <file>` is the keyed list formed from the applied trivial and substantive finding objects above; pass it only when `$claimed_keys_file` is non-empty. Using `--claimed-keys` without `--present-keys` is an error, so never do that. Claims are evaluated for deferred promotion only on the next complete full pass with `--unresolved 0` and supplied present-key evidence.
 
 `run-gate.sh reconcile` invokes this skill's bundled `reconcile-findings.sh` without `--skill`. Gate findings passed into reconcile must not carry `auto_fix` blocks.

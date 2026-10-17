@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Executes the Codex SKILL.md terminal design-delta sink fence. Covers the
 # persisted review scope, stable run identity, and guarded fixer-report reads.
-# shellcheck disable=SC2016,SC2034  # bash -c probes are literal; SKILL.md fence consumes conductor variables.
+# shellcheck disable=SC2016,SC2030,SC2031,SC2034,SC2154  # extracted SKILL.md functions assign caller-owned state.
 
 set -euo pipefail
 
@@ -39,6 +39,12 @@ SINK_FN="$WORKDIR/sink-fn.sh"
 sed -n '/^run_design_delta_sink() {$/,/^run_design_delta_sink || true$/p' "$SKILL_MD" | sed '$d' >"$SINK_FN"
 if [[ ! -s "$SINK_FN" ]] || ! grep -q '^}$' "$SINK_FN"; then
 	echo "FAIL: could not extract run_design_delta_sink from $SKILL_MD"
+	exit 1
+fi
+QUICK_FN="$WORKDIR/quick-fn.sh"
+sed -n '/^prepare_quick_design_delta_state() {$/,/^}$/p' "$SKILL_MD" >"$QUICK_FN"
+if [[ ! -s "$QUICK_FN" ]] || ! grep -q '^}$' "$QUICK_FN"; then
+	echo "FAIL: could not extract prepare_quick_design_delta_state from $SKILL_MD"
 	exit 1
 fi
 
@@ -171,7 +177,7 @@ run_invalid_round_count_probe() {
 }
 
 run_quick_round_probe() {
-	local sink_fn="$1" repo plan base_oid reviewed_head ledger_run_id quick_a_hash quick_b_hash
+	local quick_fn="$1" sink_fn="$2" repo plan base_oid reviewed_head ledger_run_id quick_a_hash quick_b_hash
 	repo="$WORKDIR/quick-round-$RANDOM"
 	init_fixture "$repo"
 	plan="$repo/docs/dev_plans/$PLAN_NAME"
@@ -182,22 +188,31 @@ run_quick_round_probe() {
 		# shellcheck source=/dev/null
 		. "$LIB/gauntlet-common.sh"
 		# shellcheck source=/dev/null
+		. "$quick_fn"
+		# shellcheck source=/dev/null
 		. "$sink_fn"
 		canonical_target=branch:feature/widget
 		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
-		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
-			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
-		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		[[ ! -e "$ledger_path" ]]
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$reviewed_head"
+		review_branch=feature/widget
+		prepare_quick_design_delta_state
+		[[ -f "$ledger_path" && -d "$run_dir" && "$round_n" -eq 1 ]]
 		ledger_run_id="$(jq -r '.run_id' "$ledger_path")"
-		write_round "$run_dir" 1 quick-one
-		quick_a_hash="$(gc_sha1 <"$run_dir/round-1/fixer-report.json")"
+		write_round "$run_dir" "$round_n" quick-one
+		quick_a_hash="$(gc_sha1 <"$run_dir/round-$round_n/fixer-report.json")"
 		PLAN_PATH=""
-		design_delta_quick_round=1
+		design_delta_quick_round="$round_n"
 		run_design_delta_sink
-		write_round "$run_dir" 1 quick-two
-		quick_b_hash="$(gc_sha1 <"$run_dir/round-1/fixer-report.json")"
+		prepare_quick_design_delta_state
+		write_round "$run_dir" "$round_n" quick-two
+		quick_b_hash="$(gc_sha1 <"$run_dir/round-$round_n/fixer-report.json")"
+		design_delta_quick_round="$round_n"
 		run_design_delta_sink
-		write_round "$run_dir" 1 quick-one
+		prepare_quick_design_delta_state
+		write_round "$run_dir" "$round_n" quick-one
+		design_delta_quick_round="$round_n"
 		run_design_delta_sink
 		jq -e '.rounds | length == 0' "$ledger_path" >/dev/null
 		write_round "$run_dir" 1 full-one
@@ -207,6 +222,10 @@ run_quick_round_probe() {
 		run_design_delta_sink
 		printf '%s\n%s\n%s\n' "$ledger_run_id" "$quick_a_hash" "$quick_b_hash" >"$repo/quick-run-id"
 	) >"$repo/quick.out" 2>"$repo/quick.err"
+	if [[ ! -f "$repo/quick-run-id" ]]; then
+		sed -n '1,80p' "$repo/quick.err" >&2
+		return 1
+	fi
 	ledger_run_id="$(sed -n '1p' "$repo/quick-run-id")"
 	quick_a_hash="$(sed -n '2p' "$repo/quick-run-id")"
 	quick_b_hash="$(sed -n '3p' "$repo/quick-run-id")"
@@ -347,10 +366,10 @@ else
 	fail "malformed ledger round count became an empty delta run"
 fi
 
-if run_quick_round_probe "$SINK_FN"; then
-	pass "quick sections are content-addressed, rerun idempotently, and are not re-read by full mode"
+if run_quick_round_probe "$QUICK_FN" "$SINK_FN"; then
+	pass "quick mode initializes empty state, reuses its ledger, and keeps content-addressed sections"
 else
-	fail "quick-mode section identity dropped or duplicated design deltas"
+	fail "quick-mode startup or section identity contract"
 fi
 
 seam_mutant="$WORKDIR/seam-mutant.sh"
@@ -379,7 +398,7 @@ fi
 
 quick_mutant="$WORKDIR/quick-mutant.sh"
 sed 's/if \[\[ -n "${design_delta_quick_round:-}" \]\]; then/if false; then/' "$SINK_FN" >"$quick_mutant"
-if run_quick_round_probe "$quick_mutant"; then
+if run_quick_round_probe "$QUICK_FN" "$quick_mutant"; then
 	fail "mutation quick-round collection survived its regression probe"
 else
 	pass "mutation quick-round collection is caught by the executed sink probe"
@@ -387,10 +406,18 @@ fi
 
 quick_identity_mutant="$WORKDIR/quick-identity-mutant.sh"
 sed 's/section_run_id="${run_id}-quick-${quick_report_digest:0:12}"/section_run_id="${run_id}-quick-round-${design_delta_quick_round}"/' "$SINK_FN" >"$quick_identity_mutant"
-if run_quick_round_probe "$quick_identity_mutant"; then
+if run_quick_round_probe "$QUICK_FN" "$quick_identity_mutant"; then
 	fail "mutation quick-section identity survived its regression probe"
 else
 	pass "mutation quick-section identity is caught by the executed sink probe"
+fi
+
+quick_init_mutant="$WORKDIR/quick-init-mutant.sh"
+sed 's/ --init / --last-decision /' "$QUICK_FN" >"$quick_init_mutant"
+if run_quick_round_probe "$quick_init_mutant" "$SINK_FN"; then
+	fail "mutation removing quick-mode plain init survived its regression probe"
+else
+	pass "mutation removing quick-mode plain init is caught by the empty-state probe"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused
