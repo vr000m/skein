@@ -95,7 +95,7 @@ run_sink() {
 	local repo="$1" target="$2" rounds="$3" plan="${4:-}" prefix="${5:-}"
 	(
 		cd "$repo"
-		export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+		export CLAUDE_PLUGIN_ROOT="${SINK_PLUGIN_ROOT:-$PLUGIN_ROOT}"
 		[[ -z "$prefix" ]] || export PATH="$prefix:$PATH"
 		# shellcheck source=/dev/null
 		. "$LIB/gauntlet-common.sh"
@@ -131,12 +131,12 @@ out="$(run_sink "$repo" branch:feature/widget 10)"
 unset -f setup_hook
 check "implicit branch: prints the plan path" grep -Fq "Design deltas: docs/dev_plans/$PLAN_NAME" <<<"$out"
 check "implicit branch: sink exits 0" grep -Fq 'rc=0' <<<"$out"
-check "implicit branch: round 2 delta written" plan_has "$repo" 'Summary: round-two'
-check "implicit branch: round 10 delta written" plan_has "$repo" 'Summary: round-ten'
+check "implicit branch: round 2 delta written" plan_has "$repo" 'Summary: "round-two"'
+check "implicit branch: round 10 delta written" plan_has "$repo" 'Summary: "round-ten"'
 check "implicit branch: a round beyond the ledger is not read" bash -c '! grep -Fq "beyond-ledger" "$1"' _ "$repo/docs/dev_plans/$PLAN_NAME"
 check "implicit branch: rounds are in numeric order" bash -c '
-	two="$(grep -n "Summary: round-two" "$1" | cut -d: -f1)"
-	ten="$(grep -n "Summary: round-ten" "$1" | cut -d: -f1)"
+	two="$(grep -n "Summary: \"round-two\"" "$1" | cut -d: -f1)"
+	ten="$(grep -n "Summary: \"round-ten\"" "$1" | cut -d: -f1)"
 	[[ -n "$two" && -n "$ten" && "$two" -lt "$ten" ]]' _ "$repo/docs/dev_plans/$PLAN_NAME"
 
 # --- 2. a finished sink leaves the run dir clearable by a fresh --init -------
@@ -163,7 +163,7 @@ for range in 'branch:main..feature/widget' 'branch:main...feature/widget'; do
 	out="$(run_sink "$repo" "$range" 1)"
 	unset -f setup_hook
 	check "range $range: plan from the range diff" grep -Fq "Design deltas: docs/dev_plans/$RANGE_PLAN" <<<"$out"
-	check "range $range: delta written" plan_has "$repo" 'Summary: range-delta' "$RANGE_PLAN"
+	check "range $range: delta written" plan_has "$repo" 'Summary: "range-delta"' "$RANGE_PLAN"
 done
 
 # --- 4. pr:<N> through a fake gh ---------------------------------------------
@@ -187,7 +187,7 @@ setup_hook() { write_round "$1" 1 pr-delta; }
 out="$(run_sink "$repo" pr:42 1 "" "$fake_bin")"
 unset -f setup_hook
 check "pr: plan from gh base/head OIDs, not the checked-out HEAD" grep -Fq "Design deltas: docs/dev_plans/$RANGE_PLAN" <<<"$out"
-check "pr: delta written" plan_has "$repo" 'Summary: pr-delta' "$RANGE_PLAN"
+check "pr: delta written" plan_has "$repo" 'Summary: "pr-delta"' "$RANGE_PLAN"
 
 # gh failure: the sink must degrade to the sidecar and leave the plan alone.
 repo="$(new_fixture pr-fail "$RANGE_PLAN")"
@@ -201,7 +201,7 @@ out="$(run_sink "$repo" pr:42 1 "" "$fail_bin")"
 unset -f setup_hook
 check "pr: gh failure leaves the plan unchanged" bash -c '[[ "$(git -C "$1" hash-object "$1/docs/dev_plans/$2")" == "$3" ]]' _ "$repo" "$RANGE_PLAN" "$before"
 check "pr: gh failure routes deltas to the .gauntlet sidecar" bash -c 'grep -Fq "Design deltas: .gauntlet/design-deltas-" <<<"$1"' _ "$out"
-check "pr: sidecar holds the delta" bash -c 'grep -Fl "Summary: sidecar-delta" "$1"/.gauntlet/design-deltas-*.md >/dev/null' _ "$repo"
+check "pr: sidecar holds the delta" bash -c 'grep -Fl "Summary: \"sidecar-delta\"" "$1"/.gauntlet/design-deltas-*.md >/dev/null' _ "$repo"
 
 # --- 5. explicit --plan ------------------------------------------------------
 repo="$(new_fixture explicit 20261016-nothing-relevant.md)"
@@ -254,7 +254,7 @@ probe_seam() {
 	[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
 		git -C "$repo" diff --quiet &&
 		grep -Fq 'Design deltas: .gauntlet/design-deltas-' <<<"$out" &&
-		grep -Fl 'Summary: seam-delta' "$repo"/.gauntlet/design-deltas-*.md >/dev/null 2>&1
+		grep -Fl 'Summary: "seam-delta"' "$repo"/.gauntlet/design-deltas-*.md >/dev/null 2>&1
 }
 check "seam escalation: plan bytes unchanged, delta lands in the sidecar" probe_seam
 # Control: the same fixture without the flag edits the plan, so the probe is not vacuous.
@@ -262,7 +262,7 @@ repo="$(new_fixture seam-control "$PLAN_NAME")"
 setup_hook() { write_round "$1" 1 seam-delta; }
 out="$(run_sink "$repo" branch:feature/widget 1)"
 unset -f setup_hook
-check "seam control: without the flag the diff-touched plan is the sink" plan_has "$repo" 'Summary: seam-delta'
+check "seam control: without the flag the diff-touched plan is the sink" plan_has "$repo" 'Summary: "seam-delta"'
 seam_mutant="$WORKDIR/seam-mutant.sh"
 sed 's/if \[\[ "${design_delta_sidecar_only:-false}" == true \]\]; then/if false; then/' "$SINK_FN" >"$seam_mutant"
 check "mutation: dropping the sidecar-only branch is caught" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$seam_mutant"
@@ -270,6 +270,49 @@ if probe_seam "$seam_mutant"; then
 	fail "mutation seam-sidecar-only survived its regression probe"
 else
 	pass "mutation seam-sidecar-only is caught by the executed sink probe"
+fi
+
+# The writer must receive --sidecar-only (never a forged --resolution) and
+# report its own reason. A shim plugin root logs the writer's argv and stdout.
+shim_root="$WORKDIR/shim-root"
+mkdir -p "$shim_root/skills/review-gauntlet"
+cp -R "$LIB" "$shim_root/skills/review-gauntlet/lib"
+cat >"$shim_root/skills/review-gauntlet/lib/write-design-deltas.sh" <<SHIM
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >"$WORKDIR/writer.args"
+"$LIB/write-design-deltas.sh" "\$@" | tee "$WORKDIR/writer.out"
+exit "\${PIPESTATUS[0]}"
+SHIM
+chmod +x "$shim_root/skills/review-gauntlet/lib/write-design-deltas.sh"
+# probe_seam_handoff [sink-fn] -> 0 when the writer ran in sidecar-only mode and gave the reason
+probe_seam_handoff() {
+	local repo before out
+	repo="$(new_fixture "seam-handoff-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	: >"$WORKDIR/writer.args"
+	: >"$WORKDIR/writer.out"
+	setup_hook() { write_round "$1" 1 seam-delta; }
+	out="$(SINK_FN="${1:-$SINK_FN}" SINK_PLUGIN_ROOT="$shim_root" design_delta_sidecar_only=true run_sink "$repo" branch:feature/widget 1)"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
+		grep -Fq -- '--sidecar-only' "$WORKDIR/writer.args" &&
+		! grep -Fq -- '--resolution' "$WORKDIR/writer.args" &&
+		[[ "$(jq -r '.reason' "$WORKDIR/writer.out")" == 'seam-tripwire escalation is sidecar-only' ]] &&
+		grep -Fl 'Summary: "seam-delta"' "$repo"/.gauntlet/design-deltas-*.md >/dev/null 2>&1
+}
+check "seam escalation: writer gets --sidecar-only and reports its own reason" probe_seam_handoff
+# Mutant: the previous forged status-none resolution passed through --resolution.
+forged_mutant="$WORKDIR/forged-mutant.sh"
+forged_src="$(cat "$SINK_FN")"
+forged_old='writer_args+=(--sidecar-only)'
+forged_new='jq -cn '"'"'{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}'"'"' >"$resolution_file"; writer_args+=(--resolution "$resolution_file")'
+printf '%s\n' "${forged_src/"$forged_old"/$forged_new}" >"$forged_mutant"
+check "mutation: sidecar-only handoff was rewritten" bash -c 'grep -Fq -- "$3" "$1" && ! grep -Fq -- "$3" "$2"' _ "$SINK_FN" "$forged_mutant" "$forged_old"
+if probe_seam_handoff "$forged_mutant"; then
+	fail "mutation forged-resolution survived its regression probe"
+else
+	pass "mutation forged-resolution is caught by the executed sink probe"
 fi
 
 # --- 9. a non-integer ledger round count fails closed ------------------------
@@ -290,6 +333,33 @@ probe_rounds() {
 		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]]
 }
 check "non-integer round count: warning, exit 0, plan unchanged" probe_rounds
+# probe_rounds_array [sink-fn] -> 0 when a non-array .rounds fails closed.
+# `.rounds | length` of the string "x" is the integer 1, so only the array
+# check refuses it.
+probe_rounds_array() {
+	local repo before out
+	repo="$(new_fixture "rounds-array-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	setup_hook() {
+		write_round "$1" 1 rounds-delta
+		jq '.rounds = "x"' "$ledger_path" >"$ledger_path.tmp" && mv "$ledger_path.tmp" "$ledger_path"
+	}
+	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:feature/widget 1)"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		! grep -Fq 'Design deltas:' <<<"$out" &&
+		grep -Fq 'ledger round count is not an integer' "$WORKDIR/sink.err" &&
+		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]]
+}
+check "non-array rounds: warning, exit 0, no Design deltas line, plan unchanged" probe_rounds_array
+array_mutant="$WORKDIR/rounds-array-mutant.sh"
+sed 's/\.rounds | select(type == "array") | length/.rounds | length/' "$SINK_FN" >"$array_mutant"
+check "mutation: rounds array check was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$array_mutant"
+if probe_rounds_array "$array_mutant"; then
+	fail "mutation rounds-array survived its regression probe"
+else
+	pass "mutation rounds-array is caught by the executed sink probe"
+fi
 rounds_mutant="$WORKDIR/rounds-mutant.sh"
 sed 's/if \[\[ ! "$round_count" =~ ^\[0-9\]+\$ \]\]; then/if false; then/' "$SINK_FN" >"$rounds_mutant"
 check "mutation: rounds integer check was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$rounds_mutant"
@@ -299,7 +369,38 @@ else
 	pass "mutation rounds-integer is caught by the executed sink probe"
 fi
 
-# --- 10. option guards on range ends and PR numbers --------------------------
+# --- 10. a two-dot range records its left endpoint as the review base -------
+# The resolver diffs base...head, so plan resolution is the same either way;
+# the observable is the persisted scope's base_oid.
+# probe_two_dot [sink-fn] -> 0 when base_oid is the left endpoint, not merge-base
+probe_two_dot() {
+	local repo out side_oid mb_oid
+	repo="$(new_fixture "two-dot-$RANDOM" "$RANGE_PLAN")"
+	git -C "$repo" switch -qc side main
+	printf 'side\n' >"$repo/side.txt"
+	git -C "$repo" add side.txt
+	git -C "$repo" commit -qm side
+	git -C "$repo" switch -q feature/widget
+	side_oid="$(git -C "$repo" rev-parse side)"
+	mb_oid="$(git -C "$repo" merge-base side feature/widget)"
+	[[ "$side_oid" != "$mb_oid" ]] || return 1
+	setup_hook() { write_round "$1" 1 two-dot-delta; }
+	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:side..feature/widget 1)"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		[[ "$(jq -r '.base_oid' "$repo"/.gauntlet/design-deltas-*.scope.json)" == "$side_oid" ]]
+}
+check "two-dot range: left endpoint is the recorded review base" probe_two_dot
+two_dot_mutant="$WORKDIR/two-dot-mutant.sh"
+sed 's/if \[\[ "$range_kind" == two-dot \]\]; then/if false; then/' "$SINK_FN" >"$two_dot_mutant"
+check "mutation: two-dot base rule was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$two_dot_mutant"
+if probe_two_dot "$two_dot_mutant"; then
+	fail "mutation two-dot-left-endpoint survived its regression probe"
+else
+	pass "mutation two-dot-left-endpoint is caught by the executed sink probe"
+fi
+
+# --- 11. option guards on range ends and PR numbers --------------------------
 real_git="$(command -v git)"
 log_bin="$WORKDIR/log-bin"
 mkdir -p "$log_bin"
@@ -363,7 +464,7 @@ else
 	pass "mutation pr-numeric is caught by the executed sink probe"
 fi
 
-# --- 11. a failed working-file reset never consumes stale state ---------------
+# --- 12. a failed working-file reset never consumes stale state ---------------
 # probe_reset [sink-fn] -> 0 when an unwritable stale items file aborts the sink
 probe_reset() {
 	local repo before out

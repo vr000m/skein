@@ -101,7 +101,7 @@ run_seam_sidecar_probe() {
 	) >"$repo/seam.out" 2>"$repo/seam.err"
 	sidecar="$(find "$repo/.gauntlet" -maxdepth 1 -name 'design-deltas-*.md' -print | head -1)"
 	[[ "$before" == "$(hash_file "$plan")" ]] &&
-		[[ -n "$sidecar" ]] && grep -Fq 'Summary: seam-delta' "$sidecar" &&
+		[[ -n "$sidecar" ]] && grep -Fq 'Summary: "seam-delta"' "$sidecar" &&
 		grep -Fq 'Design deltas: .gauntlet/design-deltas-' "$repo/seam.out"
 }
 
@@ -142,6 +142,58 @@ run_reset_failure_probe() {
 	[[ "$before" == "$(hash_file "$plan")" ]] &&
 		grep -Fq 'cannot initialize design delta collection' "$repo/reset.err" &&
 		! grep -Eq 'stale-delta|stale-array|current-delta' "$plan"
+}
+
+run_invalid_round_count_probe() {
+	local sink_fn="$1" repo base_oid reviewed_head
+	repo="$WORKDIR/invalid-round-count-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = "malformed"' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		PLAN_PATH=""
+		run_design_delta_sink
+	) >"$repo/round-count.out" 2>"$repo/round-count.err"
+	grep -Fq 'invalid ledger round count' "$repo/round-count.err" &&
+		! grep -Fq 'Design deltas: none' "$repo/round-count.out"
+}
+
+run_quick_round_probe() {
+	local sink_fn="$1" repo base_oid reviewed_head
+	repo="$WORKDIR/quick-round-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		write_round "$run_dir" 1 quick-delta
+		PLAN_PATH=""
+		design_delta_quick_round=1
+		run_design_delta_sink
+	) >"$repo/quick.out" 2>"$repo/quick.err"
+	grep -Fq 'Summary: "quick-delta"' "$repo/docs/dev_plans/$PLAN_NAME" &&
+		grep -Fq 'Design deltas: docs/dev_plans/' "$repo/quick.out"
 }
 
 # A resume after the reviewed branch moves must reuse the first sink call's
@@ -188,8 +240,8 @@ scope_file="$(sed -n '2p' "$WORKDIR/resume-paths")"
 check "resume: the ledger run id survives appended rounds" bash -c '[[ "$(jq -r .run_id "$1")" =~ ^[0-9a-f]{20}$ ]]' _ "$ledger_path"
 check "resume: ledger initialization owns the immutable reviewed head" bash -c '[[ "$(jq -r .review_scope.head_oid "$1")" == "$2" ]]' _ "$ledger_path" "$reviewed_head"
 check "resume: persisted scope keeps the original reviewed head" bash -c '[[ "$(jq -r .head_oid "$1")" == "$2" ]]' _ "$scope_file" "$reviewed_head"
-check "resume: first delta remains present once" bash -c '[[ "$(grep -Fc "Summary: first-delta" "$1")" -eq 1 ]]' _ "$plan"
-check "resume: second delta is added to the same section" grep -Fq 'Summary: second-delta' "$plan"
+check "resume: first delta remains present once" bash -c '[[ "$(grep -Fc "Summary: \"first-delta\"" "$1")" -eq 1 ]]' _ "$plan"
+check "resume: second delta is added to the same section" grep -Fq 'Summary: "second-delta"' "$plan"
 check "resume: one stable run section is present" bash -c '[[ "$(grep -c "^### Gauntlet design deltas (run codex-" "$1")" -eq 1 ]]' _ "$plan"
 check "resume: no sidecar is created after shell state is lost" bash -c '! compgen -G "$1/.gauntlet/design-deltas-*.md" >/dev/null' _ "$repo"
 
@@ -214,8 +266,44 @@ init_fixture "$repo"
 	unset round_base round_head resolved_base_oid resolved_head_oid pr_head_ref
 	run_design_delta_sink
 ) >"$WORKDIR/range.out" 2>"$WORKDIR/range.err"
-check "range target: split head slug resolves the diff-touched plan" grep -Fq 'Summary: range-delta' "$repo/docs/dev_plans/$PLAN_NAME"
+check "range target: split head slug resolves the diff-touched plan" grep -Fq 'Summary: "range-delta"' "$repo/docs/dev_plans/$PLAN_NAME"
 check "range target: guarded Git revision calls avoid sidecar fallback" bash -c '! compgen -G "$1/.gauntlet/design-deltas-*.md" >/dev/null' _ "$repo"
+
+# An explicit two-dot range uses its resolved left endpoint, not its merge base.
+repo="$WORKDIR/two-dot-base"
+init_fixture "$repo"
+git -C "$repo" switch -q main
+git -C "$repo" switch -qc left
+printf 'left-only\n' >"$repo/left.txt"
+git -C "$repo" add left.txt
+git -C "$repo" commit -qm left
+left_oid="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" switch -q feature/widget
+merge_base="$(git -C "$repo" merge-base left feature/widget)"
+(
+	cd "$repo"
+	# shellcheck source=/dev/null
+	. "$LIB/gauntlet-common.sh"
+	# shellcheck source=/dev/null
+	. "$SINK_FN"
+	canonical_target=branch:left..feature/widget
+	ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+	"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" >/dev/null
+	run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+	jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+	mv "$ledger_path.tmp" "$ledger_path"
+	write_round "$run_dir" 1 two-dot-delta
+	PLAN_PATH=""
+	unset round_base round_head resolved_base_oid resolved_head_oid pr_head_ref
+	run_design_delta_sink
+	target_key="$(basename "${ledger_path%.json}")"
+	ledger_run_id="$(jq -r .run_id "$ledger_path")"
+	printf '%s\n' "${ledger_path%/*}/design-deltas-$target_key-codex-${ledger_run_id:0:12}.scope.json" >"$WORKDIR/two-dot-scope-path"
+) >"$WORKDIR/two-dot.out" 2>"$WORKDIR/two-dot.err"
+scope_file="$(sed -n '1p' "$WORKDIR/two-dot-scope-path")"
+check "two-dot range: fixture left endpoint differs from merge base" bash -c '[[ "$1" != "$2" ]]' _ "$left_oid" "$merge_base"
+check "two-dot range: persisted review base is the resolved left endpoint" bash -c '[[ "$(jq -r .base_oid "$1")" == "$2" ]]' _ "$scope_file" "$left_oid"
+check "two-dot range: diff-touched plan receives the delta" grep -Fq 'Summary: "two-dot-delta"' "$repo/docs/dev_plans/$PLAN_NAME"
 
 if run_seam_sidecar_probe "$SINK_FN"; then
 	pass "seam escalation: sink is sidecar-only and leaves the tracked plan unchanged"
@@ -227,6 +315,18 @@ if run_reset_failure_probe "$SINK_FN"; then
 	pass "reset failure: sink aborts before stale working files are consumed"
 else
 	fail "reset failure: sink consumed stale state or omitted its warning"
+fi
+
+if run_invalid_round_count_probe "$SINK_FN"; then
+	pass "malformed ledger round count fails closed without a none claim"
+else
+	fail "malformed ledger round count became an empty delta run"
+fi
+
+if run_quick_round_probe "$SINK_FN"; then
+	pass "quick mode consumes its prepared fixer report before returning"
+else
+	fail "quick mode lost its prepared design deltas"
 fi
 
 seam_mutant="$WORKDIR/seam-mutant.sh"
@@ -243,6 +343,22 @@ if run_reset_failure_probe "$reset_mutant"; then
 	fail "mutation reset-fail-closed survived its regression probe"
 else
 	pass "mutation reset-fail-closed is caught by the executed sink probe"
+fi
+
+round_count_mutant="$WORKDIR/round-count-mutant.sh"
+sed '/invalid ledger round count/{N;d;}' "$SINK_FN" >"$round_count_mutant"
+if run_invalid_round_count_probe "$round_count_mutant"; then
+	fail "mutation malformed-round fail-closed survived its regression probe"
+else
+	pass "mutation malformed-round fail-closed is caught by the executed sink probe"
+fi
+
+quick_mutant="$WORKDIR/quick-mutant.sh"
+sed 's/if \[\[ -n "${design_delta_quick_round:-}" \]\]; then/if false; then/' "$SINK_FN" >"$quick_mutant"
+if run_quick_round_probe "$quick_mutant"; then
+	fail "mutation quick-round collection survived its regression probe"
+else
+	pass "mutation quick-round collection is caught by the executed sink probe"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused

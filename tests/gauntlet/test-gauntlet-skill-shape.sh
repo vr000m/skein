@@ -918,7 +918,9 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'range_base="${branch_name%%...*}"; range_he
 	"Codex mirror: terminal sink splits three-dot branch ranges"
 assert_grep_fixed "$CODEX_SKILL_MD" 'git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
 	"Codex mirror: range head resolution guards revision options"
-assert_grep_fixed "$CODEX_SKILL_MD" 'git merge-base -- "$range_base" "$range_head"' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$(git rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
+	"Codex mirror: two-dot ranges use the resolved left endpoint"
+assert_grep_fixed "$CODEX_SKILL_MD" 'git merge-base --end-of-options "$range_base" "$range_head"' \
 	"Codex mirror: merge-base guards revision options"
 assert_grep_fixed "$CODEX_SKILL_MD" '[[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD' \
 	"Codex mirror: literal HEAD maps to the current branch for slug narrowing"
@@ -936,8 +938,12 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
 	"Codex mirror: terminal sink cannot replace the terminal status"
 assert_grep_fixed "$CODEX_SKILL_MD" 'design delta sink needs canonical_target, ledger_path and run_dir; skipping' \
 	"Codex mirror: sink skips instead of writing to the filesystem root when its inputs are unset"
-assert_grep_fixed "$CODEX_SKILL_MD" 'rounds_n="$(jq -r '\''.rounds | length'\'' "$ledger_path" 2>/dev/null || true)"' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'rounds_n="$(jq -er '\''.rounds | select(type == "array") | length'\'' "$ledger_path" 2>/dev/null || true)"' \
 	"Codex mirror: sink derives its round count from the ledger"
+assert_grep_fixed "$CODEX_SKILL_MD" 'invalid ledger round count; continuing terminal handoff' \
+	"Codex mirror: malformed round counts fail closed"
+assert_grep_fixed "$CODEX_SKILL_MD" 'first_report_n="$design_delta_quick_round"' \
+	"Codex mirror: quick mode consumes only its prepared report"
 assert_grep_fixed "$CODEX_SKILL_MD" 'report="$run_dir/round-$n/fixer-report.json"' \
 	"Codex mirror: sink enumerates rounds from the ledger"
 assert_not_grep "$CODEX_SKILL_MD" 'for report in "\$run_dir"/round-\*' \
@@ -970,14 +976,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$(jq -r '\''.base_oid'\'' "$scope
 	"Codex mirror: resume reloads the immutable reviewed base from persisted scope"
 assert_not_grep "$CODEX_SKILL_MD" 'run_id=.*\. "\$SKILL_DIR"/lib/gauntlet-common\.sh;' \
 	"Codex mirror: run-id derivation does not re-source gauntlet-common.sh"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token.' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token.' \
 	"Codex mirror: terminal sink intro includes the seam-tripwire trigger"
 assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1' \
 	"Codex mirror: seam-tripwire handback is sidecar-only, renders requested reports, and follows the structural halt"
 assert_grep_fixed "$CODEX_SKILL_MD" '[[ "${design_delta_sidecar_only:-false}" == true ]]' \
 	"Codex mirror: seam-tripwire mode forces the sink away from tracked plans"
-assert_grep_fixed "$CODEX_SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
-	"Codex mirror: seam-tripwire mode supplies an explicit sidecar resolution"
+assert_grep_fixed "$CODEX_SKILL_MD" 'writer_args+=(--sidecar-only)' \
+	"Codex mirror: seam-tripwire mode delegates sidecar policy to the writer"
+assert_not_grep "$CODEX_SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
+	"Codex mirror: sink does not forge a resolver result for sidecar-only mode"
 assert_grep_fixed "$CODEX_SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
 	"Codex mirror: sink resets every ledger-adjacent working file as one precondition"
 assert_grep_fixed "$CODEX_SKILL_MD" 'cannot initialize design delta collection; continuing terminal handoff' \
@@ -986,6 +994,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" '(.path | type == "string") and (.reason | t
 	"Codex mirror: sink consumer validates the stable result envelope"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Every `design_deltas` field value must be a string' \
 	"Codex mirror: fixer schema requires string-valued design deltas"
+assert_grep_fixed "$CODEX_SKILL_MD" 'writes the fixer'"'"'s JSON report verbatim to `$gate_out_dir/fixer-report.json`' \
+	"Codex mirror: conductor persists the fixer report before verification"
+assert_grep_fixed "$CODEX_SKILL_MD" 'If several fixers ran, merge their `claimed` and `design_deltas` arrays into that single file.' \
+	"Codex mirror: one merged fixer report feeds each round"
+assert_grep_fixed "$CODEX_SKILL_MD" 'dispatch one follow-up fixer in the same round whose brief names the missing piece' \
+	"Codex mirror: Guardrail 8 has one defined follow-up dispatch"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Proceed to the ledger call with only the tally the repository confirms' \
+	"Codex mirror: incomplete Guardrail 8 work has defined ledger accounting"
+assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning' \
+	"Codex mirror: quick-mode fixer deltas reach the terminal sink"
 
 # The Claude sink is a different implementation (it resolves the reviewed
 # target itself with `gh`/`git` instead of reading round variables), so it gets
@@ -1032,8 +1050,32 @@ assert_grep_fixed "$SKILL_MD" 'If the seam moves again after that redesign round
 	"Claude mirror: seam-tripwire handback uses the one cross-mirror sentence"
 assert_grep_fixed "$SKILL_MD" '[[ "${design_delta_sidecar_only:-false}" == true ]]' \
 	"Claude mirror: seam-tripwire mode forces the sink away from tracked plans"
-assert_grep_fixed "$SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
-	"Claude mirror: seam-tripwire mode supplies an explicit sidecar resolution"
+assert_grep_fixed "$SKILL_MD" 'writer_args+=(--sidecar-only)' \
+	"Claude mirror: seam-tripwire mode delegates sidecar policy to the writer"
+assert_not_grep "$SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
+	"Claude mirror: sink does not forge a resolver result for sidecar-only mode"
+assert_grep_fixed "$SKILL_MD" 'passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited' \
+	"Claude mirror: sidecar-only intro sentence matches the Codex wording"
+assert_grep_fixed "$SKILL_MD" 'Sidecar-only mode bypasses resolution and lets the writer report its own reason.' \
+	"Claude mirror: post-sink prose says sidecar-only bypasses resolution"
+assert_grep_fixed "$SKILL_MD" 'BASE_OID="$(git rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
+	"Claude mirror: two-dot ranges use the guarded, resolved left endpoint"
+assert_grep_fixed "$SKILL_MD" '*..*) range_base="${branch_name%%..*}"; range_head="${branch_name##*..}"; range_kind=two-dot ;;' \
+	"Claude mirror: terminal sink tags two-dot branch ranges"
+assert_grep_fixed "$SKILL_MD" 'An explicit two-dot range `a..b` uses its left endpoint `a` as the review base' \
+	"Claude mirror: prose states the two-dot left-endpoint rule"
+assert_grep_fixed "$SKILL_MD" ".rounds | select(type == \"array\") | length" \
+	"Claude mirror: sink requires an array-valued ledger rounds field"
+assert_grep_fixed "$SKILL_MD" 'writes the fixer'"'"'s JSON report verbatim to `$gate_out_dir/fixer-report.json`' \
+	"Claude mirror: conductor owns fixer-report persistence before Guardrail 4"
+assert_grep_fixed "$SKILL_MD" 'If several fixers ran, merge their `claimed` and `design_deltas` arrays into that single file.' \
+	"Claude mirror: several fixers merge into one round report"
+assert_grep_fixed "$SKILL_MD" 'dispatch one follow-up fixer in the same round whose brief names the missing piece' \
+	"Claude mirror: Guardrail 8 has one defined follow-up dispatch"
+assert_grep_fixed "$SKILL_MD" 'Proceed to the ledger call with only the tally the repository confirms.' \
+	"Claude mirror: incomplete Guardrail 8 work has defined ledger accounting"
+assert_not_grep "$SKILL_MD" 'design_delta_quick_round' \
+	"Claude mirror: no quick-mode sink round (Claude has no quick mode)"
 assert_grep_fixed "$SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
 	"Claude mirror: sink resets every ledger-adjacent working file as one precondition"
 assert_grep_fixed "$SKILL_MD" '(.path | type == "string") and (.reason | type == "string")' \
