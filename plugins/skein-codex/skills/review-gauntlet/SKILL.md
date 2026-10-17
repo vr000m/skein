@@ -249,7 +249,9 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected rounds: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-round-<N>` for its single prepared round. Thus different quick rounds accumulate, a same-round rerun replaces only itself, and a later full-mode section coexists with them. Collect each selected fixer report's `design_deltas` into one sink file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
+Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected reports: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-<report-sha1-prefix>` from the exact persisted fixer-report bytes. Thus distinct quick reports accumulate, an identical-report rerun replaces only itself, and a later full-mode section coexists with them. A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it. Collect each selected fixer report's `design_deltas` into one sink file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
+
+Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens. Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.
 
 ```bash
 # Carry the parsed --plan value and reviewed target into the terminal sink.
@@ -366,13 +368,12 @@ run_design_delta_sink() {
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
     return 0
   fi
-  section_run_id="$run_id"
+  quick_report_digest=""
   if [[ -n "${design_delta_quick_round:-}" ]]; then
     if [[ ! "$design_delta_quick_round" =~ ^[1-9][0-9]*$ ]]; then
       echo "warning: invalid quick-mode design delta round; continuing terminal handoff" >&2
       return 0
     fi
-    section_run_id="${run_id}-quick-round-${design_delta_quick_round}"
     first_report_n="$design_delta_quick_round"
     round_count="$design_delta_quick_round"
   else
@@ -390,6 +391,12 @@ run_design_delta_sink() {
       continue
     fi
     [[ -f "$report" ]] || continue
+    if [[ -n "${design_delta_quick_round:-}" ]]; then
+      quick_report_digest="$(gc_sha1 < "$report")" || {
+        echo "warning: cannot hash quick-mode fixer report; continuing terminal handoff" >&2
+        return 0
+      }
+    fi
     if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
       echo "warning: malformed fixer report skipped: $report" >&2
       continue
@@ -408,6 +415,14 @@ run_design_delta_sink() {
   if ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
     echo "warning: design delta collection failed; using an empty array" >&2
     printf '[]\n' > "$run_deltas_file" || return 0
+  fi
+  section_run_id="$run_id"
+  if [[ -n "${design_delta_quick_round:-}" ]]; then
+    if [[ ! "$quick_report_digest" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "warning: cannot derive quick-mode design delta identity; continuing terminal handoff" >&2
+      return 0
+    fi
+    section_run_id="${run_id}-quick-${quick_report_digest:0:12}"
   fi
 
   resolver_base="${BASE_OID:-__review_base_unavailable__}"
@@ -456,7 +471,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives that round its own section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 
@@ -534,7 +549,7 @@ When the fixer judges a finding to conflict with stated design intent:
 
 ### Guardrail 2 - fix everything else regardless of confidence
 
-The only quarantine trigger is a design/architecture conflict. Do not use confidence as a fix threshold. Apply by route:
+The only ordinary quarantine trigger is a design/architecture conflict. Guardrail 4 separately quarantines an unverified Guardrail 8 edit so it cannot converge as plain success. Do not use confidence as a fix threshold. Apply by route:
 
 - **Trivial/allowlisted** findings (`docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort`) go through the bundled `apply-auto-fix-code.sh`.
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
@@ -565,7 +580,7 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
-For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit. Proceed to the ledger call with only the tally the repository confirms.
+For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit. Name each such unverified finding in the report and count it in that round's `--quarantine <N>` tally. A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains. Proceed to the ledger call with only the tally the repository confirms.
 
 ### Guardrail 5 - run the full CI recipe after every fixer round
 
@@ -690,6 +705,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   fi
   "$SKILL_DIR"/lib/convergence-ledger.sh "${ledger_args[@]}"
   ```
+  Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.
   `--present-keys <file>` is a newline-separated list of every reconciled finding's regression key this round (via `scripts/finding-key.sh`) and is passed on every round, including a clean full pass where the file is legitimately empty. `--claimed-keys <file>` is the keyed list formed from the applied trivial and substantive finding objects above; pass it only when `$claimed_keys_file` is non-empty. Using `--claimed-keys` without `--present-keys` is an error, so never do that. Claims are evaluated for deferred promotion only on the next complete full pass with `--unresolved 0` and supplied present-key evidence.
 
 `run-gate.sh reconcile` invokes this skill's bundled `reconcile-findings.sh` without `--skill`. Gate findings passed into reconcile must not carry `auto_fix` blocks.

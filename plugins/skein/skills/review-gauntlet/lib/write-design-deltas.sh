@@ -93,13 +93,18 @@ output_tmp=""
 trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
 "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
-  def inert_codepoints:
+  def strip_variations:
     explode
     | reduce .[] as $cp ("";
         if (($cp >= 6155 and $cp <= 6159) or
             ($cp >= 65024 and $cp <= 65039) or
             ($cp >= 917760 and $cp <= 917999)) then .
-        elif $cp == 38 then . + "&amp;"
+        else . + ([$cp] | implode)
+        end);
+  def inert_codepoints:
+    explode
+    | reduce .[] as $cp ("";
+        if $cp == 38 then . + "&amp;"
         elif $cp == 60 then . + "&lt;"
         elif $cp == 62 then . + "&gt;"
         elif $cp == 91 then . + "&#91;"
@@ -114,8 +119,9 @@ trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
       .[:2000]
       | gsub("[\\r\\n\\p{Zs}\\p{Zl}\\p{Zp}]+"; " ")
       | gsub("[\\p{Cc}\\p{Cf}\\p{Co}\\p{Cn}]"; "")
-      | inert_codepoints
+      | strip_variations
       | if length > 500 then .[0:497] + "..." else . end
+      | inert_codepoints
     end;
   def token: clean | @json;
   "### Gauntlet design deltas (run \($run_id))",
@@ -175,36 +181,17 @@ marker_line=0
 findings_count=0
 findings_line=0
 findings_end=0
-# Both awk consumers share this fence machine. Indentation follows marker.py;
-# a backtick in a backtick fence info string keeps that line as ordinary prose.
+# Both awk consumers share marker.py's deliberately simple fence machine:
+# any indented ``` or ~~~ prefix toggles state, regardless of the remaining text.
 FENCE_AWK_SOURCE='
 	function fence_text(line) {
 	  sub(/^[ \t]*/, "", line)
 	  return line
 	}
-	function fence_line(line, text, char, count, rest) {
+	function fence_line(line, text) {
 	  text = fence_text(line)
-	  if (in_fence) {
-	    if (substr(text, 1, 1) != fence_char) return 0
-	    count = 0
-	    while (substr(text, count + 1, 1) == fence_char) count++
-	    rest = substr(text, count + 1)
-	    if (count >= fence_len && rest ~ /^[[:space:]]*$/) {
-	      in_fence = 0
-	      return 1
-	    }
-	    return 0
-	  }
-	  char = substr(text, 1, 1)
-	  if (char != "`" && char != "~") return 0
-	  count = 0
-	  while (substr(text, count + 1, 1) == char) count++
-	  if (count < 3) return 0
-	  rest = substr(text, count + 1)
-	  if (char == "`" && index(rest, "`") > 0) return 0
-	  in_fence = 1
-	  fence_char = char
-	  fence_len = count
+	  if (substr(text, 1, 3) != "```" && substr(text, 1, 3) != "~~~") return 0
+	  in_fence = !in_fence
 	  return 1
 	}
 '
@@ -253,6 +240,31 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 	elif [[ "$findings_count" -ne 1 ]]; then
 		sidecar_reason="resolved plan has $findings_count Findings sections after its review marker"
 		plan_is_safe=0
+	fi
+	# The sibling conduct skill owns marker.py. When both it and python3 are
+	# present, fail closed if this writer did not select the same marker line.
+	# Installed bundles without either retain the dependency-free awk path.
+	marker_authority="$SCRIPT_DIR/../../conduct/marker.py"
+	python_bin="$(command -v python3 || true)"
+	if [[ "$plan_is_safe" -eq 1 && -n "$python_bin" && -f "$marker_authority" ]]; then
+		authority_marker_line="$(
+			PYTHONDONTWRITEBYTECODE=1 "$python_bin" - "$marker_authority" "$REPO_ROOT/$plan" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("skein_marker", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+index = module.last_marker_index(Path(sys.argv[2]).read_text(encoding="utf-8").splitlines())
+print(0 if index is None else index + 1)
+PY
+		)" || authority_marker_line=""
+		if [[ "$authority_marker_line" != "$marker_line" ]]; then
+			sidecar_reason="writer marker does not match marker.py"
+			plan_is_safe=0
+		fi
 	fi
 fi
 

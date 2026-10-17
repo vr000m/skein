@@ -368,7 +368,9 @@ Before fence.
 fenced bytes must survive
 ```
 
-```inline``` is how we quote.
+```a`b
+marker.py treats this info string as a fence opener.
+~~~
 
 After fence.
 
@@ -497,6 +499,7 @@ payloads = {
     ),
     "pre-cut": "\u180b" * 2000 + "AFTER-BUDGET",
     "over-length": "x" * 501,
+    "entity-cap": "`" * 501,
 }
 
 def clean(value):
@@ -518,9 +521,10 @@ def clean(value):
         if 0x180B <= cp <= 0x180F or 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:
             continue
         stripped.append(char)
+    source = "".join(stripped)
+    source = source[:497] + "..." if len(source) > 500 else source
     escape = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "[": "&#91;", "\\": "&#92;", "]": "&#93;", "`": "&#96;"}
-    rendered = "".join(escape.get(char, char) for char in stripped)
-    rendered = rendered[:497] + "..." if len(rendered) > 500 else rendered
+    rendered = "".join(escape.get(char, char) for char in source)
     return html.unescape(rendered)
 
 rows = []
@@ -563,10 +567,13 @@ for index, wanted in enumerate(expected):
         value = json.loads(token)
         parsed[label] = html.unescape(value)
         found.append(label)
-    assert parsed == wanted
+    assert parsed == wanted, (index, parsed, wanted, record)
 assert found == labels * len(expected)
 ordinary = "Az09 CJK=漢 emoji=😀 | a & b | x; y | a < b | [link] | `ticks` | \\ | -> | &amp; | https://example.invalid/a"
 assert any(all(fragment in line for fragment in ("a &amp; b", "x; y", "a &lt; b", "&#91;link&#93;", "&#96;ticks&#96;", "&#92;", "-&gt;", "&amp;amp;", "https://example.invalid/a")) for line in body)
+entity_tokens = [json.loads(line.split(": ", 1)[1]) for line in body if "&#96;" in line]
+assert "&#96;" * 497 + "..." in entity_tokens
+assert all(html.unescape(token) == "`" * 497 + "..." for token in entity_tokens if token.startswith("&#96;" * 100))
 assert ordinary in [row["File"] for row in expected] + [row["Summary"] for row in expected] + [row["Decision"] for row in expected] + [row["Rationale"] for row in expected] + [row["Cells"] for row in expected]
 assert all("AFTER-BUDGET" not in line for line in body)
 PY
@@ -710,7 +717,7 @@ marker_format_case() {
 			[[ "$before_head" == "$(head -n 7 "$plan")" ]] &&
 			grep -Fq 'Summary: "first"' "$plan"
 	else
-		jq -e '.sink == "sidecar" and .reason == "resolved plan has 0 review markers"' >/dev/null <<<"$out" &&
+		jq -e '.sink == "sidecar"' >/dev/null <<<"$out" &&
 			[[ "$before" == "$(hash_file "$plan")" ]]
 	fi
 }
@@ -732,7 +739,7 @@ fenced-tilde|sidecar|~~~\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n~~~
 fenced-info|sidecar|```markdown\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n```
 fenced-four-space|sidecar|    ```\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n    ```
 after-unclosed-fence|sidecar|```\n<!-- reviewed: 2026-10-16 @ HEX40 -->
-inline-backticks|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->\n\n```inline``` is how we quote.'
+inline-backticks|sidecar|<!-- reviewed: 2026-10-16 @ HEX40 -->\n\n```inline``` is a marker.py fence opener.'
 
 marker_format_rows() {
 	local h40 h39 h41 hup
@@ -761,45 +768,156 @@ run_marker_format_tests() {
 	done < <(marker_format_rows)
 }
 
-marker_python_sink() {
-	local plan="$1"
-	python3 - "$MARKER_PY" "$plan" <<'PY'
+marker_authority_table() {
+	local fixture_dir="$1"
+	python3 - "$MARKER_PY" "$fixture_dir" <<'PY'
 import importlib.util
+import re
 import sys
+from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("skein_marker", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
-print("plan" if module.read_marker(sys.argv[2]) is not None else "sidecar")
+for path in sorted(Path(sys.argv[2]).glob("case-*.md")):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    markers = list(module._scan_marker_lines(lines, include_placeholder=False))
+    last = markers[-1] if markers else None
+    in_fence = False
+    findings = 0
+    for index, line in enumerate(lines):
+        if module.FENCE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence and last is not None and index > last and re.fullmatch(r"## Findings\s*", line):
+            findings += 1
+    print(path.name, len(markers), 0 if last is None else last + 1, findings, sep="\t")
 PY
 }
 
+write_fence_fixture() {
+	local plan="$1" opener="$2" info="$3" closer_kind="$4" layout="$5"
+	local char closer marker_a marker_b
+	char="${opener:0:1}"
+	marker_a='<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
+	marker_b='<!-- reviewed: 2026-10-16 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->'
+	case "$closer_kind" in
+	same) closer="$opener" ;;
+	other) [[ "$char" == '`' ]] && closer='~~~' || closer='```' ;;
+	shorter) closer="${opener%?}" ;;
+	longer) closer="${opener}${char}" ;;
+	indented) closer="    $opener" ;;
+	trailing) closer="$opener trailing" ;;
+	absent) closer="" ;;
+	esac
+	{
+		printf '# Plan\n\n## Objective\n\nProtected.\n\n'
+		case "$layout" in before | before-inside | before-after) printf '%s\n' "$marker_a" ;; esac
+		printf '%s%s\n' "$opener" "$info"
+		case "$layout" in
+		inside) printf '%s\n' "$marker_a" ;;
+		before-inside) printf '%s\n' "$marker_b" ;;
+		inside-after) printf '%s\n' "$marker_a" ;;
+		esac
+		[[ -n "$closer" ]] && printf '%s\n' "$closer"
+		case "$layout" in
+		after) printf '%s\n' "$marker_a" ;;
+		before-after | inside-after) printf '%s\n' "$marker_b" ;;
+		esac
+		printf '\n## Findings\n\nExisting finding.\n\n## Progress\n'
+	} >"$plan"
+}
+
 run_marker_differential_probe() {
-	local writer="$1" label marker repo plan python_sink writer_sink out
-	while IFS='|' read -r label _ marker; do
-		repo="$WORKDIR/marker-differential-$label-${writer##*/}-$RANDOM"
-		init_repo "$repo"
-		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
-		{
-			printf '# Plan\n\n'
-			printf '%b\n\n' "$marker"
-			printf '## Findings\n\nExisting finding.\n'
-		} >"$plan"
-		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
-		write_standard_deltas "$repo" first
-		python_sink="$(marker_python_sink "$plan")"
-		out="$(run_writer_id "$writer" "$repo" run-one)"
-		writer_sink="$(jq -r '.sink' <<<"$out")"
-		[[ "$python_sink" == "$writer_sink" ]] || return 1
-	done < <(marker_format_rows)
+	local writer="$1" repo plan_dir fixture_dir resolution_dir result_dir fixture_name fixture_stem expectations opener info closer layout marker_count authority_line findings_count
+	local expected_sink out before_plan before_prefix after_prefix delta_line total checked repro_id repro_seen batch_failed pid
+	local -a openers infos closers layouts pids
+	openers=('```' '````' '~~~' '~~~~')
+	infos=('' 'plain' 'a`b' 'a~b')
+	closers=(same other shorter longer indented trailing absent)
+	layouts=(before inside after before-inside before-after inside-after)
+	repo="$WORKDIR/marker-differential-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	plan_dir="$repo/docs/dev_plans"
+	write_standard_deltas "$repo" first
+	fixture_dir="$repo/fence-originals"
+	resolution_dir="$repo/fence-resolutions"
+	result_dir="$repo/fence-results"
+	mkdir -p "$fixture_dir" "$resolution_dir" "$result_dir"
+	expectations="$repo/fence-expectations.tsv"
+	total=0
+	checked=0
+	repro_id=""
+	repro_seen=0
+	for opener in "${openers[@]}"; do
+		for info in "${infos[@]}"; do
+			for closer in "${closers[@]}"; do
+				for layout in "${layouts[@]}"; do
+					fixture_name="$(printf 'case-%04d.md' "$total")"
+					write_fence_fixture "$fixture_dir/$fixture_name" "$opener" "$info" "$closer" "$layout"
+					cp "$fixture_dir/$fixture_name" "$plan_dir/$fixture_name"
+					printf '{"status":"unique","plan":"docs/dev_plans/%s","reason":"test"}\n' "$fixture_name" >"$resolution_dir/$fixture_name.json"
+					if [[ "$opener" == '```' && "$info" == 'a`b' && "$closer" == other ]]; then
+						repro_id="$fixture_name"
+					fi
+					total=$((total + 1))
+				done
+			done
+		done
+	done
+	marker_authority_table "$fixture_dir" >"$expectations" || return 1
+	batch_failed=0
+	pids=()
+	while IFS=$'\t' read -r fixture_name _ _ _; do
+		fixture_stem="${fixture_name%.md}"
+		"$writer" --repo-root "$repo" --resolution "$resolution_dir/$fixture_name.json" \
+			--deltas "$repo/deltas.json" --run-id run-one --target-key "ledger-$fixture_stem" \
+			>"$result_dir/$fixture_name.json" 2>"$result_dir/$fixture_name.err" &
+		pids[${#pids[@]}]=$!
+		if [[ "${#pids[@]}" -eq 8 ]]; then
+			for pid in "${pids[@]}"; do
+				wait "$pid" || batch_failed=1
+			done
+			pids=()
+		fi
+	done <"$expectations"
+	for pid in "${pids[@]}"; do
+		wait "$pid" || batch_failed=1
+	done
+	[[ "$batch_failed" -eq 0 ]] || return 1
+	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count; do
+		plan="$plan_dir/$fixture_name"
+		before_plan="$(hash_file "$fixture_dir/$fixture_name")"
+		expected_sink=sidecar
+		[[ "$marker_count" -eq 1 && "$findings_count" -eq 1 ]] && expected_sink=plan
+		before_prefix=""
+		if [[ "$authority_line" -gt 0 ]]; then
+			before_prefix="$(head -n "$authority_line" "$fixture_dir/$fixture_name" | shasum -a 256 | awk '{print $1}')"
+		fi
+		out="$(cat "$result_dir/$fixture_name.json")"
+		if [[ "$(jq -r '.sink' <<<"$out")" != "$expected_sink" ]]; then
+			echo "marker differential mismatch: fixture=$fixture_name authority=$marker_count/$authority_line/$findings_count output=$out" >&2
+			cat "$result_dir/$fixture_name.err" >&2
+			return 1
+		fi
+		if [[ "$expected_sink" == plan ]]; then
+			after_prefix="$(head -n "$authority_line" "$plan" | shasum -a 256 | awk '{print $1}')"
+			delta_line="$(grep -n '^### Gauntlet design deltas (run run-one)$' "$plan" | cut -d: -f1)"
+			[[ "$before_prefix" == "$after_prefix" && "$delta_line" -gt "$authority_line" ]] || return 1
+		else
+			[[ "$before_plan" == "$(hash_file "$plan")" ]] || return 1
+		fi
+		[[ "$fixture_name" == "$repro_id" ]] && repro_seen=1
+		checked=$((checked + 1))
+	done <"$expectations"
+	[[ "$total" -eq 672 && "$checked" -eq 672 && "$repro_seen" -eq 1 ]]
 }
 
 run_marker_differential_test() {
 	if run_marker_differential_probe "$WRITER"; then
-		pass "writer and marker.py agree on the shared marker fixture table"
+		pass "writer and marker.py agree across all 672 fence and marker-state cells"
 	else
-		fail "writer and marker.py disagree on the shared marker fixture table"
+		fail "writer and marker.py disagree across the full fence and marker state space"
 	fi
 }
 
@@ -963,7 +1081,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant differential_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant inline_fence_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant sidecar_only_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -992,11 +1110,6 @@ run_mutation_checks() {
 	chmod +x "$hexcase_mutant"
 	mutation_expect_failure marker-hex-case run_marker_format_probe "$hexcase_mutant"
 
-	differential_mutant="$mutant_dir/differential-writer.sh"
-	sed 's#@ \[0-9a-f\]+ -->#@ [0-9a-fA-F]+ -->#' "$WRITER" >"$differential_mutant"
-	chmod +x "$differential_mutant"
-	mutation_expect_failure marker-differential run_marker_differential_probe "$differential_mutant"
-
 	interval_mutant="$mutant_dir/interval-writer.sh"
 	sed 's@return line ~ /^(#|##|###) /@return line ~ /^#{1,3} /@' "$WRITER" >"$interval_mutant"
 	chmod +x "$interval_mutant"
@@ -1019,10 +1132,17 @@ run_mutation_checks() {
 	chmod +x "$fenced_mutant"
 	mutation_expect_failure fenced-upsert-boundary run_fenced_upsert_probe "$fenced_mutant"
 
-	inline_fence_mutant="$mutant_dir/inline-fence-writer.sh"
-	sed '/if (char == "`" && index(rest, "`") > 0) return 0/d' "$WRITER" >"$inline_fence_mutant"
-	chmod +x "$inline_fence_mutant"
-	mutation_expect_failure inline-backtick-fence run_fenced_upsert_probe "$inline_fence_mutant"
+	commonmark_mutant="$mutant_dir/commonmark-fence-writer.sh"
+	awk '
+	  /text = fence_text\(line\)/ {
+	    print
+	    print "\t  if (substr(text, 1, 3) == \"```\" && index(substr(text, 4), \"`\") > 0) return 0"
+	    next
+	  }
+	  { print }
+	' "$WRITER" >"$commonmark_mutant"
+	chmod +x "$commonmark_mutant"
+	mutation_expect_failure commonmark-fence-classifier run_marker_differential_probe "$commonmark_mutant"
 
 	sanitize_mutant="$mutant_dir/sanitize-writer.sh"
 	sed 's/elif \$cp == 60 then \. + "&lt;"/elif $cp == 60 then . + "<"/' "$WRITER" >"$sanitize_mutant"
@@ -1074,6 +1194,15 @@ run_mutation_checks() {
 	sed 's/then \. + "&amp;"/then . + "&amp (semicolon) "/' "$WRITER" >"$entity_mutant"
 	chmod +x "$entity_mutant"
 	mutation_expect_failure single-pass-entity run_field_boundary_probe "$entity_mutant"
+
+	entity_order_mutant="$mutant_dir/entity-order-writer.sh"
+	awk '
+	  /\| if length > 500 then/ { cap = $0; next }
+	  /\| inert_codepoints/ { print; print cap; next }
+	  { print }
+	' "$WRITER" >"$entity_order_mutant"
+	chmod +x "$entity_order_mutant"
+	mutation_expect_failure source-cap-before-entities run_field_boundary_probe "$entity_order_mutant"
 
 	shape_mutant="$mutant_dir/result-shape-writer.sh"
 	sed 's/{sink:"none",path:"",reason:""}/{sink:"none"}/' "$WRITER" >"$shape_mutant"

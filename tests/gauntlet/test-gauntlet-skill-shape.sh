@@ -944,8 +944,10 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'ledger round count is not an integer; conti
 	"Codex mirror: malformed round counts fail closed"
 assert_grep_fixed "$CODEX_SKILL_MD" 'first_report_n="$design_delta_quick_round"' \
 	"Codex mirror: quick mode consumes only its prepared report"
-assert_grep_fixed "$CODEX_SKILL_MD" 'section_run_id="${run_id}-quick-round-${design_delta_quick_round}"' \
-	"Codex mirror: each quick round owns a distinct section identity"
+assert_grep_fixed "$CODEX_SKILL_MD" 'quick_report_digest="$(gc_sha1 < "$report")"' \
+	"Codex mirror: quick identity hashes the exact persisted fixer-report bytes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'section_run_id="${run_id}-quick-${quick_report_digest:0:12}"' \
+	"Codex mirror: each distinct quick report owns a content-addressed section identity"
 assert_grep_fixed "$CODEX_SKILL_MD" 'report="$run_dir/round-$round_i/fixer-report.json"' \
 	"Codex mirror: sink enumerates rounds from the ledger"
 assert_not_grep "$CODEX_SKILL_MD" 'for report in "\$run_dir"/round-\*' \
@@ -1012,6 +1014,56 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'Proceed to the ledger call with only the ta
 	"Codex mirror: incomplete Guardrail 8 work has defined ledger accounting"
 assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning' \
 	"Codex mirror: quick-mode fixer deltas reach the terminal sink"
+assert_grep_fixed "$CODEX_SKILL_MD" 'A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it.' \
+	"Codex mirror: quick reports are outside the full-mode ledger enumeration"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' \
+	"Codex mirror: incomplete Guardrail 8 findings are named and quarantined"
+assert_grep_fixed "$CODEX_SKILL_MD" 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' \
+	"Codex mirror: Guardrail 8 quarantine blocks plain success"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' \
+	"Codex mirror: convergence call defines the complete quarantine tally"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
+	"Codex mirror: documents the rendered design-delta structure"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
+	"Codex mirror: documents sanitizer order and the bare-URL residual"
+
+guardrail_quarantine_contract_present() {
+	local file="$1"
+	grep -Fq 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' "$file" &&
+		grep -Fq 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' "$file" &&
+		grep -Fq 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' "$file"
+}
+
+guardrail_quarantine_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-mutant.XXXXXX")"
+sed 's/count it in that round/count it outside that round/' "$CODEX_SKILL_MD" >"$guardrail_quarantine_mutant"
+if guardrail_quarantine_contract_present "$guardrail_quarantine_mutant"; then
+	fail "Codex mirror: mutation removing Guardrail 8 quarantine accounting survived the contract pins"
+else
+	pass "Codex mirror: mutation removing Guardrail 8 quarantine accounting is caught"
+fi
+rm -f "$guardrail_quarantine_mutant"
+
+assert_grep_fixed "$SKILL_MD" 'Guardrail 4 separately quarantines an unverified Guardrail 8 edit so it cannot converge as plain success.' \
+	"Claude mirror: Guardrail 2 names the Guardrail 8 quarantine trigger"
+assert_grep_fixed "$SKILL_MD" 'Name each such unverified finding in the report and count it in that round'"'"'s `--quarantine <N>` tally.' \
+	"Claude mirror: incomplete Guardrail 8 findings are named and quarantined"
+assert_grep_fixed "$SKILL_MD" 'A later clean full pass therefore returns `success_with_quarantine`, not `success`, while any remains.' \
+	"Claude mirror: Guardrail 8 quarantine blocks plain success"
+assert_grep_fixed "$SKILL_MD" 'Set `--quarantine` to the design-conflict queue size plus every named Guardrail 8 finding left open by Guardrail 4.' \
+	"Claude mirror: convergence call defines the complete quarantine tally"
+assert_grep_fixed "$SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
+	"Claude mirror: documents the rendered design-delta structure"
+assert_grep_fixed "$SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
+	"Claude mirror: documents sanitizer order and the bare-URL residual"
+
+claude_quarantine_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-claude-quarantine-mutant.XXXXXX")"
+sed 's/count it in that round/count it outside that round/' "$SKILL_MD" >"$claude_quarantine_mutant"
+if guardrail_quarantine_contract_present "$claude_quarantine_mutant"; then
+	fail "Claude mirror: mutation removing Guardrail 8 quarantine accounting survived the contract pins"
+else
+	pass "Claude mirror: mutation removing Guardrail 8 quarantine accounting is caught"
+fi
+rm -f "$claude_quarantine_mutant"
 
 # The Claude sink is a different implementation (it resolves the reviewed
 # target itself with `gh`/`git` instead of reading round variables), so it gets

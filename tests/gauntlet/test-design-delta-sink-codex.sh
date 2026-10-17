@@ -171,7 +171,7 @@ run_invalid_round_count_probe() {
 }
 
 run_quick_round_probe() {
-	local sink_fn="$1" repo plan base_oid reviewed_head ledger_run_id
+	local sink_fn="$1" repo plan base_oid reviewed_head ledger_run_id quick_a_hash quick_b_hash
 	repo="$WORKDIR/quick-round-$RANDOM"
 	init_fixture "$repo"
 	plan="$repo/docs/dev_plans/$PLAN_NAME"
@@ -190,27 +190,33 @@ run_quick_round_probe() {
 		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
 		ledger_run_id="$(jq -r '.run_id' "$ledger_path")"
 		write_round "$run_dir" 1 quick-one
+		quick_a_hash="$(gc_sha1 <"$run_dir/round-1/fixer-report.json")"
 		PLAN_PATH=""
 		design_delta_quick_round=1
 		run_design_delta_sink
-		write_round "$run_dir" 1 quick-one-rerun
+		write_round "$run_dir" 1 quick-two
+		quick_b_hash="$(gc_sha1 <"$run_dir/round-1/fixer-report.json")"
 		run_design_delta_sink
-		write_round "$run_dir" 2 quick-two
-		design_delta_quick_round=2
+		write_round "$run_dir" 1 quick-one
 		run_design_delta_sink
-		jq '.rounds = [{}, {}]' "$ledger_path" >"$ledger_path.tmp"
+		jq -e '.rounds | length == 0' "$ledger_path" >/dev/null
+		write_round "$run_dir" 1 full-one
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 		mv "$ledger_path.tmp" "$ledger_path"
 		unset design_delta_quick_round
 		run_design_delta_sink
-		printf '%s\n' "$ledger_run_id" >"$repo/quick-run-id"
+		printf '%s\n%s\n%s\n' "$ledger_run_id" "$quick_a_hash" "$quick_b_hash" >"$repo/quick-run-id"
 	) >"$repo/quick.out" 2>"$repo/quick.err"
 	ledger_run_id="$(sed -n '1p' "$repo/quick-run-id")"
-	[[ "$(grep -Fc "### Gauntlet design deltas (run codex-${ledger_run_id:0:12}-quick-round-1)" "$plan")" -eq 1 ]] &&
-		[[ "$(grep -Fc "### Gauntlet design deltas (run codex-${ledger_run_id:0:12}-quick-round-2)" "$plan")" -eq 1 ]] &&
+	quick_a_hash="$(sed -n '2p' "$repo/quick-run-id")"
+	quick_b_hash="$(sed -n '3p' "$repo/quick-run-id")"
+	[[ "$quick_a_hash" != "$quick_b_hash" ]] &&
+		[[ "$(grep -Fc "### Gauntlet design deltas (run codex-${ledger_run_id:0:12}-quick-${quick_a_hash:0:12})" "$plan")" -eq 1 ]] &&
+		[[ "$(grep -Fc "### Gauntlet design deltas (run codex-${ledger_run_id:0:12}-quick-${quick_b_hash:0:12})" "$plan")" -eq 1 ]] &&
 		[[ "$(grep -Fc "### Gauntlet design deltas (run codex-${ledger_run_id:0:12})" "$plan")" -eq 1 ]] &&
-		[[ "$(grep -Fc 'Summary: "quick-one-rerun"' "$plan")" -eq 2 ]] &&
-		[[ "$(grep -Fc 'Summary: "quick-two"' "$plan")" -eq 2 ]] &&
-		! grep -Fq 'Summary: "quick-one"' "$plan" &&
+		[[ "$(grep -Fc 'Summary: "quick-one"' "$plan")" -eq 1 ]] &&
+		[[ "$(grep -Fc 'Summary: "quick-two"' "$plan")" -eq 1 ]] &&
+		[[ "$(grep -Fc 'Summary: "full-one"' "$plan")" -eq 1 ]] &&
 		[[ "$(grep -Fc 'Design deltas: docs/dev_plans/' "$repo/quick.out")" -eq 4 ]]
 }
 
@@ -342,7 +348,7 @@ else
 fi
 
 if run_quick_round_probe "$SINK_FN"; then
-	pass "quick sections accumulate by round, rerun idempotently, and coexist with full mode"
+	pass "quick sections are content-addressed, rerun idempotently, and are not re-read by full mode"
 else
 	fail "quick-mode section identity dropped or duplicated design deltas"
 fi
@@ -380,7 +386,7 @@ else
 fi
 
 quick_identity_mutant="$WORKDIR/quick-identity-mutant.sh"
-sed 's/--run-id "$section_run_id"/--run-id "$run_id"/' "$SINK_FN" >"$quick_identity_mutant"
+sed 's/section_run_id="${run_id}-quick-${quick_report_digest:0:12}"/section_run_id="${run_id}-quick-round-${design_delta_quick_round}"/' "$SINK_FN" >"$quick_identity_mutant"
 if run_quick_round_probe "$quick_identity_mutant"; then
 	fail "mutation quick-section identity survived its regression probe"
 else
