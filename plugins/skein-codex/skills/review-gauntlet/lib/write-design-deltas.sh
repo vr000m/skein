@@ -184,9 +184,10 @@ findings_end=0
 unclosed_fence=0
 # Both awk consumers share marker.py's deliberately simple fence machine:
 # any ASCII-whitespace-indented ``` or ~~~ prefix toggles state, regardless of
-# the remaining text. Plans containing whitespace or line separators that
-# Python treats specially but this C-locale awk cannot reproduce are routed to
-# the sidecar. False positives such as a prose NBSP are benign by design.
+# the remaining text. Plans containing whitespace, line separators, or lone
+# carriage returns that Python treats as line boundaries but this C-locale awk
+# cannot reproduce are routed to the sidecar. CRLF and a final-byte CR remain
+# supported. False positives such as a prose NBSP are benign by design.
 FENCE_AWK_SOURCE='
 	function fence_text(line) {
 	  sub(/^[[:space:]]*/, "", line)
@@ -203,6 +204,22 @@ FENCE_AWK_SOURCE='
 plan_has_python_only_whitespace() {
 	local path="$1" needle
 	local -a needles
+	# BEGIN LONE-CR DIFFERENTIAL GUARD
+	# awk strips only LF record separators. A CR before another byte is therefore
+	# a Python-only line boundary; a CR at record end is CRLF or the final byte.
+	if LC_ALL=C awk -v cr=$'\r' '
+	  {
+	    rest = $0
+	    while ((position = index(rest, cr)) != 0) {
+	      if (position < length(rest)) found = 1
+	      rest = substr(rest, position + 1)
+	    }
+	  }
+	  END { exit(found ? 0 : 1) }
+	' "$path"; then
+		return 0
+	fi
+	# END LONE-CR DIFFERENTIAL GUARD
 	needles=(
 		$'\v' $'\f' $'\034' $'\035' $'\036' $'\037'
 		$'\302\205' $'\302\240' $'\341\232\200'
@@ -221,7 +238,7 @@ plan_has_python_only_whitespace() {
 
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	if plan_has_python_only_whitespace "$REPO_ROOT/$plan"; then
-		sidecar_reason="resolved plan contains unsupported Python whitespace or line separators"
+		sidecar_reason="resolved plan contains unsupported Python whitespace, line separators, or lone carriage returns"
 		plan_is_safe=0
 	fi
 fi

@@ -999,6 +999,116 @@ run_whitespace_semantics_test() {
 	fi
 }
 
+write_review_markers() {
+	local marker_count="$1"
+	if [[ "$marker_count" -ge 1 ]]; then
+		printf '<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n'
+	fi
+	if [[ "$marker_count" -ge 2 ]]; then
+		printf '<!-- reviewed: 2026-10-16 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->\n'
+	fi
+}
+
+write_lone_cr_fixture() {
+	local plan="$1" position="$2" marker_count="$3"
+	{
+		printf '# Plan\n\n## Objective\n\n'
+		case "$position" in
+		none) printf 'text\n' ;;
+		crlf) printf 'text\r\n' ;;
+		mid-line) printf 'text\rcontinuation\n' ;;
+		line-start) printf '\rtext\n' ;;
+		doubled-crlf) printf 'text\r\r\n' ;;
+		before-fence) printf 'text\r```\n' ;;
+		before-marker)
+			printf 'text\r'
+			if [[ "$marker_count" -eq 0 ]]; then
+				printf 'not-a-review-marker\n'
+			else
+				write_review_markers "$marker_count"
+			fi
+			;;
+		before-findings) ;;
+		last-byte) ;;
+		esac
+		if [[ "$position" != before-marker ]]; then
+			write_review_markers "$marker_count"
+		fi
+		if [[ "$position" == before-findings ]]; then
+			printf 'text\r## Findings\n\nExisting finding.\n\n## Progress\n\nDone.\n'
+		else
+			printf '\n## Findings\n\nExisting finding.\n\n## Progress\n\nDone.\n'
+		fi
+		if [[ "$position" == last-byte ]]; then
+			printf '\r'
+		fi
+	} >"$plan"
+}
+
+run_lone_cr_semantics_probe() {
+	local writer="$1" repo plan fixture_dir expectations position requested_marker_count fixture_name
+	local marker_count authority_line findings_count expected_sink out before before_prefix after_prefix delta_line
+	local total checked crlf_plan_seen
+	local -a positions marker_counts
+	positions=(none crlf mid-line line-start last-byte doubled-crlf before-fence before-marker before-findings)
+	marker_counts=(0 1 2)
+	repo="$WORKDIR/lone-cr-semantics-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	fixture_dir="$repo/lone-cr-originals"
+	mkdir -p "$fixture_dir"
+	write_standard_deltas "$repo" first
+	total=0
+	checked=0
+	crlf_plan_seen=0
+	for position in "${positions[@]}"; do
+		for requested_marker_count in "${marker_counts[@]}"; do
+			fixture_name="case-lonecr-$position-markers-$requested_marker_count.md"
+			write_lone_cr_fixture "$fixture_dir/$fixture_name" "$position" "$requested_marker_count"
+			cp "$fixture_dir/$fixture_name" "$repo/docs/dev_plans/$fixture_name"
+			total=$((total + 1))
+		done
+	done
+	expectations="$repo/lone-cr-expectations.tsv"
+	marker_authority_table "$fixture_dir" >"$expectations" || return 1
+	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count; do
+		position="${fixture_name#case-lonecr-}"
+		position="${position%-markers-*}"
+		plan="$repo/docs/dev_plans/$fixture_name"
+		before="$(hash_file "$plan")"
+		before_prefix=""
+		if [[ "$authority_line" -gt 0 ]]; then
+			before_prefix="$(head -n "$authority_line" "$plan" | shasum -a 256 | awk '{print $1}')"
+		fi
+		printf '{"status":"unique","plan":"docs/dev_plans/%s","reason":"test"}\n' "$fixture_name" >"$repo/resolution.json"
+		out="$(run_writer_id "$writer" "$repo" "run-$checked")" || return 1
+		expected_sink=sidecar
+		if [[ "$position" == none || "$position" == crlf || "$position" == last-byte ]]; then
+			[[ "$marker_count" -eq 1 && "$findings_count" -eq 1 ]] && expected_sink=plan
+		else
+			jq -e '.reason | contains("lone carriage return")' >/dev/null <<<"$out" || return 1
+		fi
+		[[ "$(jq -r '.sink' <<<"$out")" == "$expected_sink" ]] || return 1
+		if [[ "$expected_sink" == plan ]]; then
+			after_prefix="$(head -n "$authority_line" "$plan" | shasum -a 256 | awk '{print $1}')"
+			delta_line="$(grep -n '^### Gauntlet design deltas (run ' "$plan" | cut -d: -f1)"
+			[[ "$before_prefix" == "$after_prefix" && "$delta_line" -gt "$authority_line" ]] || return 1
+			[[ "$position" == crlf ]] && crlf_plan_seen=1
+		else
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		fi
+		checked=$((checked + 1))
+	done <"$expectations"
+	[[ "$total" -eq 27 && "$checked" -eq 27 && "$crlf_plan_seen" -eq 1 ]]
+}
+
+run_lone_cr_semantics_test() {
+	if run_lone_cr_semantics_probe "$WRITER"; then
+		pass "writer matches marker.py or fails closed across lone-CR position x marker-count cells"
+	else
+		fail "Python splitlines and awk lone-CR contract"
+	fi
+}
+
 run_no_runtime_python_probe() {
 	local writer="$1" repo plan out
 	repo="$WORKDIR/no-runtime-python-${writer##*/}-$RANDOM"
@@ -1220,7 +1330,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant python_mutant tracked_sidecar_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -1292,6 +1402,15 @@ run_mutation_checks() {
 	sed 's/if plan_has_python_only_whitespace /if false \&\& plan_has_python_only_whitespace /' "$WRITER" >"$whitespace_mutant"
 	chmod +x "$whitespace_mutant"
 	mutation_expect_failure python-whitespace run_whitespace_semantics_probe "$whitespace_mutant"
+
+	lone_cr_mutant="$mutant_dir/lone-cr-writer.sh"
+	awk '
+	  /# BEGIN LONE-CR DIFFERENTIAL GUARD/ { skip = 1; next }
+	  /# END LONE-CR DIFFERENTIAL GUARD/ { skip = 0; next }
+	  !skip { print }
+	' "$WRITER" >"$lone_cr_mutant"
+	chmod +x "$lone_cr_mutant"
+	mutation_expect_failure lone-carriage-return run_lone_cr_semantics_probe "$lone_cr_mutant"
 
 	python_mutant="$mutant_dir/runtime-python-writer.sh"
 	sed '/REPO_ROOT=.*pwd -P/a\
@@ -1488,6 +1607,7 @@ run_marker_format_tests
 run_marker_differential_test
 run_unclosed_fence_test
 run_whitespace_semantics_test
+run_lone_cr_semantics_test
 run_no_runtime_python_test
 run_awk_interval_test
 run_sidecar_only_matrix_test

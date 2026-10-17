@@ -101,7 +101,7 @@ Decisions (grilled 2026-10-16):
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
-- [x] Review-fix coverage passes: Codex sink 26/26, Claude sink 50/50, writer/resolver 232/232, convergence ledger 214/214, skill shape 350/350, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
+- [x] Review-fix coverage passes: Codex sink 26/26, Claude sink 50/50, writer/resolver 234/234, convergence ledger 214/214, skill shape 350/350, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
 - [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
 ## Acceptance Criteria
