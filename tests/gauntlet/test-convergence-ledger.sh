@@ -745,7 +745,7 @@ else
 fi
 
 # --init and --init --force clear a stale <stem>/ containing recognized
-# writer-owned entries (round-* plus open-guardrail8.jsonl) and the stale
+# writer-owned entries (round-*, open-guardrail8.jsonl, seam-tripwire.json) and the stale
 # <stem>.report.html, and nothing else. They only ever act inside a directory
 # named .gauntlet (the shape gc_ledger_path produces).
 RD_G="$RD_BASE/.gauntlet"
@@ -767,6 +767,7 @@ run_open_guardrail8_cleanup_probe() {
 	mkdir -p "$stem/round-1"
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	printf '{"round":1,"seams":[],"redesign_dispatched":false}\n' >"$stem/seam-tripwire.json"
 	if [[ "$mode" == force ]]; then
 		printf '{"target":"old"}\n' >"$ledger"
 		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
@@ -787,12 +788,13 @@ run_open_guardrail8_unknown_probe() {
 	mkdir -p "$stem/round-1"
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	printf '{"round":1,"seams":[],"redesign_dispatched":false}\n' >"$stem/seam-tripwire.json"
 	printf 'keep\n' >"$stem/unknown.txt"
 	set +e
 	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
 	rc=$?
 	set -e
-	[[ "$rc" -eq 0 && -f "$stem/open-guardrail8.jsonl" && -f "$stem/unknown.txt" ]] &&
+	[[ "$rc" -eq 0 && -f "$stem/open-guardrail8.jsonl" && -f "$stem/seam-tripwire.json" && -f "$stem/unknown.txt" ]] &&
 		grep -Fq 'leaving' "$TMP_SINK"
 }
 
@@ -818,13 +820,35 @@ run_open_guardrail8_symlink_probe() {
 		grep -Fq 'refusing to operate on symlink' "$TMP_SINK"
 }
 
+run_seam_tripwire_symlink_probe() {
+	local script="$1" repo ledger stem outside before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-seam-symlink.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	outside="$repo/outside.json"
+	printf 'precious\n' >"$outside"
+	before="$(shasum -a 256 <"$outside")"
+	ln -s "$outside" "$stem/seam-tripwire.json"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -L "$stem/seam-tripwire.json" && "$before" == "$(shasum -a 256 <"$outside")" ]] &&
+		grep -Fq 'refusing to operate on symlink' "$TMP_SINK"
+}
+
 if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" plain; then
-	pass "Codex --init clears round-* plus open-guardrail8.jsonl"
+	pass "Codex --init clears round-*, open-guardrail8.jsonl, and seam-tripwire.json"
 else
 	fail "Codex --init did not clear every writer-owned run file"
 fi
 if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" force; then
-	pass "Codex --init --force clears round-* plus open-guardrail8.jsonl"
+	pass "Codex --init --force clears round-*, open-guardrail8.jsonl, and seam-tripwire.json"
 else
 	fail "Codex --init --force did not clear every writer-owned run file"
 fi
@@ -838,6 +862,11 @@ if run_open_guardrail8_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
 else
 	fail "Codex stale cleanup did not refuse a symlinked open-guardrail8.jsonl"
 fi
+if run_seam_tripwire_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a symlinked seam-tripwire.json"
+else
+	fail "Codex stale cleanup did not refuse a symlinked seam-tripwire.json"
+fi
 RD_MUTANT_LIB="$(mktemp -d)"
 TMP_DIRS+=("$RD_MUTANT_LIB")
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_MUTANT_LIB/gauntlet-common.sh"
@@ -849,6 +878,18 @@ if run_open_guardrail8_cleanup_probe "$RD_MUTANT_LIB/convergence-ledger.sh" plai
 	fail "mutation removing open-guardrail8.jsonl ownership survived stale-cleanup regression"
 else
 	pass "mutation removing open-guardrail8.jsonl ownership is caught by stale-cleanup regression"
+fi
+RD_SEAM_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_SEAM_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_SEAM_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_SEAM_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_SEAM_MUTANT_LIB/ledger-promote.jq"
+sed 's/seam-tripwire\.json) /seam-tripwire-removed.json) /' "$CODEX_LEDGER_SCRIPT" >"$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing seam-tripwire.json ownership survived stale-cleanup regression"
+else
+	pass "mutation removing seam-tripwire.json ownership is caught by stale-cleanup regression"
 fi
 RD_I="$RD_G/ledger-init.json"
 RD_I_STEM="$RD_G/ledger-init"

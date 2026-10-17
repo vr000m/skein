@@ -138,10 +138,16 @@ trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
 if [[ "$SIDECAR_ONLY" -eq 1 ]]; then
 	status="none"
 	plan=""
+	plan_path_has_control=false
 	sidecar_reason="seam-tripwire escalation is sidecar-only"
 else
 	status="$("$JQ" -r '.status' "$RESOLUTION")"
-	plan="$("$JQ" -r '.plan' "$RESOLUTION")"
+	plan_path_has_control="$("$JQ" -r '.plan | test("[\u0000-\u001f\u007f]")' "$RESOLUTION")"
+	if [[ "$plan_path_has_control" == true ]]; then
+		plan=""
+	else
+		plan="$("$JQ" -r '.plan' "$RESOLUTION")"
+	fi
 	sidecar_reason=""
 fi
 
@@ -168,10 +174,14 @@ regular_nonsymlink_plan() {
 
 plan_is_safe=0
 if [[ "$status" == "explicit" || "$status" == "unique" ]]; then
-	if [[ -n "$plan" && "$plan" != /* ]] && ! has_parent_component "$plan" && regular_nonsymlink_plan "$plan"; then
+	if [[ "$plan_path_has_control" == true ]]; then
+		sidecar_reason="resolved plan path contains a control byte"
+	elif [[ -n "$plan" && "$plan" != /* ]] && ! has_parent_component "$plan" && regular_nonsymlink_plan "$plan"; then
 		plan_is_safe=1
 	fi
-	[[ "$plan_is_safe" -eq 1 ]] || sidecar_reason="resolved plan is unavailable or unsafe"
+	if [[ "$plan_is_safe" -ne 1 && -z "$sidecar_reason" ]]; then
+		sidecar_reason="resolved plan is unavailable or unsafe"
+	fi
 elif [[ "$SIDECAR_ONLY" -eq 0 ]]; then
 	sidecar_reason="plan resolution is $status"
 fi
@@ -221,7 +231,6 @@ plan_has_python_only_whitespace() {
 	fi
 	# END LONE-CR DIFFERENTIAL GUARD
 	needles=(
-		$'\v' $'\f' $'\034' $'\035' $'\036' $'\037'
 		$'\302\205' $'\302\240' $'\341\232\200'
 		$'\342\200\200' $'\342\200\201' $'\342\200\202' $'\342\200\203'
 		$'\342\200\204' $'\342\200\205' $'\342\200\206' $'\342\200\207'
@@ -234,6 +243,17 @@ plan_has_python_only_whitespace() {
 		fi
 	done
 	return 1
+}
+
+# The writer and marker.py must receive the same byte stream. tr, unlike awk
+# on macOS, counts NUL and every other byte in the C locale. Delete the sole
+# allowlist (TAB, LF, CR, printable ASCII, and high bytes); any remainder is a
+# control byte whose record semantics are not portable across the two readers.
+plan_has_disallowed_control_byte() {
+	local path="$1" count
+	count="$(LC_ALL=C tr -d '\011\012\015\040-\176\200-\377' <"$path" | wc -c)"
+	count="${count//[[:space:]]/}"
+	[[ "$count" != 0 ]]
 }
 
 # marker.py's MARKER_RE is case-sensitive and begins with the literal ASCII
@@ -249,6 +269,12 @@ plan_has_non_ascii_marker_candidate() {
 	' "$path"
 }
 
+if [[ "$plan_is_safe" -eq 1 ]]; then
+	if plan_has_disallowed_control_byte "$REPO_ROOT/$plan"; then
+		sidecar_reason="resolved plan contains a disallowed control byte"
+		plan_is_safe=0
+	fi
+fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	if plan_has_python_only_whitespace "$REPO_ROOT/$plan"; then
 		sidecar_reason="resolved plan contains unsupported Python whitespace, line separators, or lone carriage returns"
@@ -395,7 +421,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 	plan_mode="$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path" 2>/dev/null)" || die_env "cannot read plan mode"
 	[[ "$plan_mode" =~ ^[0-7]{3,4}$ ]] || die_env "cannot read plan mode"
 	upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || die_env "cannot update resolved plan"
-	if cmp -s <(head -n "$((marker_line - 1))" "$plan_path") <(head -n "$((marker_line - 1))" "$output_tmp"); then
+	if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
 		chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
 		mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
 		output_tmp=""
@@ -404,7 +430,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 	fi
 	rm -f "$output_tmp"
 	output_tmp=""
-	sidecar_reason="plan rewrite would change bytes above review marker"
+	sidecar_reason="plan rewrite would change bytes through review marker"
 fi
 
 state_dir="$REPO_ROOT/.gauntlet"

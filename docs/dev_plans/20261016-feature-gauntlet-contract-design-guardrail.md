@@ -67,7 +67,7 @@ Decisions (grilled 2026-10-16):
 ### Files to Modify
 - `plugins/skein/skills/review-gauntlet/SKILL.md`, `plugins/skein-codex/skills/review-gauntlet/SKILL.md` - Guardrail 8, tripwire, fixer schema, terminal sink.
 - `tests/gauntlet/test-gauntlet-skill-shape.sh`, `tests/gauntlet/test-design-delta-sink-{codex,claude}.sh`, `tests/gauntlet/test-convergence-ledger.sh`, `tests/parity/test-applier-bundle-parity.sh`, `justfile` - pins, executed sink coverage, stable-run coverage, parity registration, recipe wiring.
-- `AGENTS.md`, `CHANGELOG.md` - lib list, test list, release notes.
+- `AGENTS.md`, `CHANGELOG.md`, `README.md`, `docs/dev_plans/README.md` - lib list, test list, release notes, review-gauntlet row, plan index row.
 
 ### New Files to Create
 - `plugins/{skein,skein-codex}/skills/review-gauntlet/lib/resolve-plan.sh` - plan resolution (explicit, diff-touched, branch slug, never guesses).
@@ -101,7 +101,7 @@ Decisions (grilled 2026-10-16):
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
-- [x] Review-fix coverage passes: Codex sink 26/26, Claude sink 50/50, writer/resolver 241/241, convergence ledger 219/219, skill shape 352/352, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
+- [x] Review-fix coverage passes: Codex sink 26/26, Claude sink 50/50, writer/resolver 250/250, convergence ledger 221/221, skill shape 358/358, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
 - [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
 ## Acceptance Criteria
@@ -120,7 +120,7 @@ Decisions (grilled 2026-10-16):
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
 - [ ] Phase 3: Verify the Claude mirror (done: code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review; open: final `just ci` after the gauntlet fixes)
-- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 found 9 more (marker-line Unicode rule, shape-based same-run replacement, run-dir discard of open-guardrail8.jsonl, resolver quoting, docs) and its fixes are in progress, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
+- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 found 12 more (control-byte allowlist, durable seam-tripwire state, plan-path control bytes, review_scope branch rule, docs) and its fixes are in progress, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
 

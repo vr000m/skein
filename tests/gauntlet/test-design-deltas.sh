@@ -1284,6 +1284,188 @@ run_lone_cr_semantics_test() {
 	fi
 }
 
+write_byte_fixture() {
+	local plan="$1" byte="$2" octal
+	octal="$(printf '%03o' "$byte")"
+	{
+		printf '# Plan\n\n## Objective\n\nordinary '
+		printf '%b' "\\$octal"
+		printf '\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n\n## Progress\n\nDone.\n'
+	} >"$plan"
+}
+
+run_plan_byte_allowlist_probe() {
+	local writer="$1" repo plan byte out expected actual before
+	repo="$WORKDIR/byte-allowlist-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" byte-space
+	for ((byte = 0; byte <= 255; byte++)); do
+		write_byte_fixture "$plan" "$byte"
+		rm -f "$repo/.gauntlet/design-deltas-ledger-codex-widget.md"
+		before="$(hash_file "$plan")"
+		out="$(run_writer_id "$writer" "$repo" "byte-$byte")" || return 1
+		expected=plan
+		case "$byte" in
+		0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 11 | 12 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 127) expected=sidecar ;;
+		esac
+		actual="$(jq -r '.sink' <<<"$out")"
+		[[ "$actual" == "$expected" ]] || {
+			echo "byte allowlist mismatch: byte=$byte expected=$expected actual=$actual" >&2
+			return 1
+		}
+		if [[ "$expected" == sidecar ]]; then
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		fi
+	done
+}
+
+run_plan_byte_allowlist_test() {
+	if run_plan_byte_allowlist_probe "$WRITER"; then
+		pass "writer byte allowlist covers every 0x00-0xff value and rejects only disallowed controls"
+	else
+		fail "writer byte allowlist state space"
+	fi
+}
+
+write_nul_fixture() {
+	local plan="$1" position="$2"
+	{
+		printf '# Plan\n\n## Objective\n\n'
+		[[ "$position" == before-marker ]] && printf 'before\0marker\n'
+		[[ "$position" == mid-file ]] && printf 'middle\0content\n'
+		if [[ "$position" == marker-end ]]; then
+			printf '<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\0\n'
+		else
+			printf '<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n'
+		fi
+		[[ "$position" == after-marker ]] && printf 'after\0marker\n'
+		if [[ "$position" == findings-heading ]]; then
+			printf '\n## Findings\0\n\nExisting.\n'
+		else
+			printf '\n## Findings\n\nExisting.\n'
+		fi
+		printf '\n## Progress\n\nDone.\n'
+	} >"$plan"
+}
+
+run_nul_differential_probe() {
+	local writer="$1" repo fixture_dir expectations position plan before out authority_count
+	repo="$WORKDIR/nul-differential-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	fixture_dir="$repo/nul-originals"
+	mkdir -p "$fixture_dir"
+	write_standard_deltas "$repo" nul-space
+	for position in marker-end mid-file findings-heading before-marker after-marker; do
+		write_nul_fixture "$fixture_dir/case-$position.md" "$position"
+		cp "$fixture_dir/case-$position.md" "$repo/docs/dev_plans/case-$position.md"
+	done
+	expectations="$repo/nul-marker-authority.tsv"
+	marker_authority_table "$fixture_dir" >"$expectations" || return 1
+	for position in marker-end mid-file findings-heading before-marker after-marker; do
+		plan="$repo/docs/dev_plans/case-$position.md"
+		before="$(hash_file "$plan")"
+		authority_count="$(awk -F '\t' -v name="case-$position.md" '$1 == name { print $2 }' "$expectations")"
+		[[ -n "$authority_count" ]] || return 1
+		write_resolution "$repo" unique "docs/dev_plans/case-$position.md"
+		out="$(run_writer_id "$writer" "$repo" "nul-$position")" || return 1
+		jq -e '.sink == "sidecar" and (.reason | contains("control byte"))' >/dev/null <<<"$out" || return 1
+		[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		if [[ "$position" == marker-end ]]; then
+			[[ "$authority_count" -eq 0 ]] || return 1
+		else
+			[[ "$authority_count" -eq 1 ]] || return 1
+		fi
+	done
+}
+
+run_nul_differential_test() {
+	if run_nul_differential_probe "$WRITER"; then
+		pass "NUL marker, heading, before, after, and mid-file cells agree with marker.py or fail closed"
+	else
+		fail "NUL writer/marker.py differential contract"
+	fi
+}
+
+run_normal_plan_byte_probe() {
+	local writer="$1" repo plan out
+	repo="$WORKDIR/normal-plan-bytes-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	printf '# Plan\r\n\r\n## Objective\r\n\r\nTabbed:\tvalue — ok.\r\n\r\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\r\n\r\n## Findings\r\n\r\nExisting.\r\n' >"$plan"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" normal-bytes
+	out="$(run_writer_id "$writer" "$repo" normal-bytes)" || return 1
+	jq -e '.sink == "plan"' >/dev/null <<<"$out" && grep -Fq 'Summary: "normal-bytes"' "$plan"
+}
+
+run_normal_plan_byte_test() {
+	if run_normal_plan_byte_probe "$WRITER"; then
+		pass "normal TAB, CRLF, and em-dash plan remains writable"
+	else
+		fail "normal allowed plan bytes"
+	fi
+}
+
+run_control_path_probe() {
+	local writer="$1" resolver="$2" repo outside component rel outside_plan before out rc kind
+	repo="$WORKDIR/control-path-${writer##*/}-${resolver##*/}-$RANDOM"
+	init_repo "$repo"
+	outside="$WORKDIR/control-path-outside-$RANDOM"
+	mkdir -p "$outside"
+	outside_plan="$outside/escape.md"
+	printf '# Outside\n' >"$outside_plan"
+	before="$(hash_file "$outside_plan")"
+	write_standard_deltas "$repo" control-path
+	for kind in lf tab cr del; do
+		case "$kind" in
+		lf) component=$'a\nb' ;;
+		tab) component=$'a\tb' ;;
+		cr) component=$'a\rb' ;;
+		del) component=$'a\177b' ;;
+		esac
+		ln -s "$outside" "$repo/$component"
+		rel="$component/escape.md"
+		write_resolution "$repo" explicit "$rel"
+		out="$(run_writer_id "$writer" "$repo" "control-path-$kind")" || return 1
+		jq -e '.sink == "sidecar" and (.reason | contains("plan path contains a control byte"))' >/dev/null <<<"$out" || return 1
+		[[ "$before" == "$(hash_file "$outside_plan")" ]] || return 1
+		set +e
+		"$resolver" --repo-root "$repo" --base main --branch feature/widget --plan "$rel" >/dev/null 2>&1
+		rc=$?
+		set -e
+		[[ "$rc" -eq 1 && "$before" == "$(hash_file "$outside_plan")" ]] || return 1
+	done
+
+	# JSON can carry a NUL even though argv and shell variables cannot.
+	jq -cn '{status:"explicit",plan:"docs/\u0000escape.md",reason:"test"}' >"$repo/resolution.json"
+	out="$(run_writer_id "$writer" "$repo" nul-path)" || return 1
+	jq -e '.sink == "sidecar" and (.reason | contains("plan path contains a control byte"))' >/dev/null <<<"$out"
+}
+
+run_control_path_test() {
+	if run_control_path_probe "$WRITER" "$RESOLVER"; then
+		pass "writer and resolver reject control-byte explicit paths before component walks"
+	else
+		fail "control-byte explicit plan path contract"
+	fi
+}
+
+run_marker_line_cmp_probe() {
+	local writer="$1" repo plan before out
+	repo="$WORKDIR/marker-line-cmp-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" marker-cmp
+	before="$(hash_file "$plan")"
+	out="$(run_writer_id "$writer" "$repo" marker-cmp)" || return 1
+	jq -e '.sink == "sidecar" and (.reason | contains("through review marker"))' >/dev/null <<<"$out" &&
+		[[ "$before" == "$(hash_file "$plan")" ]]
+}
+
 run_no_runtime_python_probe() {
 	local writer="$1" repo plan out
 	repo="$WORKDIR/no-runtime-python-${writer##*/}-$RANDOM"
@@ -1517,7 +1699,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -1610,6 +1792,40 @@ run_mutation_checks() {
 	' "$WRITER" >"$lone_cr_mutant"
 	chmod +x "$lone_cr_mutant"
 	mutation_expect_failure lone-carriage-return run_lone_cr_semantics_probe "$lone_cr_mutant"
+
+	byte_allowlist_mutant="$mutant_dir/byte-allowlist-writer.sh"
+	sed 's/if plan_has_disallowed_control_byte /if false \&\& plan_has_disallowed_control_byte /' "$WRITER" >"$byte_allowlist_mutant"
+	chmod +x "$byte_allowlist_mutant"
+	mutation_expect_failure plan-byte-allowlist run_nul_differential_probe "$byte_allowlist_mutant"
+
+	marker_output_mutant="$mutant_dir/marker-output-writer.sh"
+	sed '/upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end"/a\
+marker_output_tmp="${output_tmp}.marker"\
+LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"$marker_output_tmp"\
+mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
+	chmod +x "$marker_output_mutant"
+	if run_marker_line_cmp_probe "$marker_output_mutant"; then
+		pass "marker-line cmp guard catches a rewritten marker byte"
+	else
+		fail "marker-line cmp guard did not catch a rewritten marker byte"
+	fi
+	marker_cmp_mutant="$mutant_dir/marker-cmp-writer.sh"
+	sed 's/head -n "$marker_line"/head -n "$((marker_line - 1))"/g' "$marker_output_mutant" >"$marker_cmp_mutant"
+	chmod +x "$marker_cmp_mutant"
+	mutation_expect_failure marker-line-cmp run_marker_line_cmp_probe "$marker_cmp_mutant"
+
+	control_path_writer_mutant="$mutant_dir/control-path-writer.sh"
+	sed '/plan_path_has_control=.*test/c\
+\tplan_path_has_control=false' "$WRITER" >"$control_path_writer_mutant"
+	chmod +x "$control_path_writer_mutant"
+	control_path_resolver_mutant="$mutant_dir/control-path-resolver.sh"
+	sed '/has_control_byte "$input" \&\& return 1/d' "$RESOLVER" >"$control_path_resolver_mutant"
+	chmod +x "$control_path_resolver_mutant"
+	if run_control_path_probe "$control_path_writer_mutant" "$control_path_resolver_mutant" >/dev/null 2>&1; then
+		fail "mutation control-plan-path survived run_control_path_probe"
+	else
+		pass "mutation control-plan-path is caught by run_control_path_probe"
+	fi
 
 	python_mutant="$mutant_dir/runtime-python-writer.sh"
 	sed '/REPO_ROOT=.*pwd -P/a\
@@ -1814,6 +2030,10 @@ run_unicode_marker_candidate_test
 run_unclosed_fence_test
 run_whitespace_semantics_test
 run_lone_cr_semantics_test
+run_plan_byte_allowlist_test
+run_nul_differential_test
+run_normal_plan_byte_test
+run_control_path_test
 run_no_runtime_python_test
 run_awk_interval_test
 run_sidecar_only_matrix_test

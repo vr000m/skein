@@ -36,13 +36,15 @@
 # A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
 # prior run's stale round dir and would collide with the new run's `round-1/`.
 # Both `--init` and `--init --force` therefore remove it, including the
-# writer-owned `open-guardrail8.jsonl` file, and remove the stale sibling
+# writer-owned `open-guardrail8.jsonl` and `seam-tripwire.json` files, and remove the stale sibling
 # `<ledger-stem>.report.html`, after the ledger-path guards pass and right
 # before they write the fresh ledger — but only when the ledger's parent dir is
 # named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
-# entries and optional `open-guardrail8.jsonl`, and only when the report is a
+# entries and optional `open-guardrail8.jsonl` / `seam-tripwire.json`, and only when the report is a
 # regular non-symlink file. `--init`
 # refused (exit 6, or a guard refusal) touches nothing.
+# Target/run-keyed `design-deltas-*.scope.json` files sit beside the ledger,
+# are small immutable sink evidence, and are intentionally retained.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
@@ -685,7 +687,8 @@ round_dir_is_runtime_owned() {
 
 # run_dir_is_rounds_only <dir> — 0 when <dir> contains only writer-owned run
 # entries: runtime-owned `round-*` directories plus the optional regular,
-# non-symlink `open-guardrail8.jsonl` written by Guardrail 4.
+# non-symlink `open-guardrail8.jsonl` written by Guardrail 4 and optional
+# regular, non-symlink `seam-tripwire.json` written by the seam tripwire.
 run_dir_is_rounds_only() {
 	local dir="$1" entry restore
 	local -a entries=()
@@ -698,6 +701,7 @@ run_dir_is_rounds_only() {
 		case "${entry##*/}" in
 		round-*) round_dir_is_runtime_owned "$entry" || return 1 ;;
 		open-guardrail8.jsonl) [[ -f "$entry" && ! -L "$entry" ]] || return 1 ;;
+		seam-tripwire.json) [[ -f "$entry" && ! -L "$entry" ]] || return 1 ;;
 		*) return 1 ;;
 		esac
 	done
@@ -715,12 +719,12 @@ run_dir_is_rounds_only() {
 # otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
 # dir is removed only when it contains recognized writer-owned entries; any
 # other shape is left in place with a warning. A symlinked round dir or
-# `open-guardrail8.jsonl` is refused under
+# `open-guardrail8.jsonl` or `seam-tripwire.json` is refused under
 # the state-path guard (exit 1, nothing removed). The report is removed only
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
-	local run_dir report ledger_name open_guardrail8
+	local run_dir report ledger_name open_guardrail8 seam_tripwire
 	run_dir="$(ledger_run_dir "$1")" || return 0
 	ledger_in_gauntlet_dir "$1" || return 0
 	ledger_name="${1##*/}"
@@ -736,10 +740,14 @@ clear_stale_run_dir() {
 		if [[ -e "$open_guardrail8" || -L "$open_guardrail8" ]]; then
 			ledger_assert_no_symlink "$open_guardrail8" || exit 1
 		fi
+		seam_tripwire="$run_dir/seam-tripwire.json"
+		if [[ -e "$seam_tripwire" || -L "$seam_tripwire" ]]; then
+			ledger_assert_no_symlink "$seam_tripwire" || exit 1
+		fi
 		if run_dir_is_rounds_only "$run_dir"; then
 			rm -rf -- "$run_dir"
 		else
-			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of round-* entries only)" >&2
+			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of recognized writer-owned entries only)" >&2
 		fi
 	fi
 	report="$run_dir.report.html"

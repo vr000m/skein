@@ -85,6 +85,13 @@ has_parent_component() {
 	esac
 }
 
+has_control_byte() {
+	local count
+	count="$(printf '%s' "$1" | LC_ALL=C tr -d '\040-\176\200-\377' | wc -c)"
+	count="${count//[[:space:]]/}"
+	[[ "$count" != 0 ]]
+}
+
 regular_nonsymlink_file() {
 	local path="$1" rel="$2" found current part
 	local -a parts
@@ -104,6 +111,7 @@ regular_nonsymlink_file() {
 normalize_explicit_plan() {
 	local input="$1" rel abs
 	[[ -n "$input" ]] || return 1
+	has_control_byte "$input" && return 1
 	has_parent_component "$input" && return 1
 	if [[ "$input" == /* ]]; then
 		case "$input" in
@@ -121,7 +129,7 @@ normalize_explicit_plan() {
 }
 
 if [[ "$PLAN_SEEN" -eq 1 ]]; then
-	explicit_plan="$(normalize_explicit_plan "$PLAN")" || die_usage "--plan must name a regular non-symlink file inside repo root without '..'"
+	explicit_plan="$(normalize_explicit_plan "$PLAN")" || die_usage "--plan must name a regular non-symlink file inside repo root without '..' or control bytes"
 	emit explicit "$explicit_plan" "explicit plan"
 	exit 0
 fi
