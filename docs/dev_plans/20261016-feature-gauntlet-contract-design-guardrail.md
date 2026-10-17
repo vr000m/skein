@@ -91,7 +91,7 @@ Decisions (grilled 2026-10-16):
 ### Test Approach
 - [x] Shape tests pin Guardrail 8 and the sink on both mirrors.
 - [x] Table-driven marker, sidecar, head and sanitization probes, each with a mutation check.
-- [ ] Executed test of the Claude-side base/head derivation.
+- [x] Executed test of the Claude-side base/head derivation: `tests/gauntlet/test-design-delta-sink-claude.sh` runs the SKILL.md sink fence in scratch repos (implicit branch, `a..b`, `a...b`, `pr:<N>` through a fake `gh`, `gh` failure, unset context, symlinked working file) with mutation checks.
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope, but should be tracked.

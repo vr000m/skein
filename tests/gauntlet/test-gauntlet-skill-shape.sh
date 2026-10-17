@@ -911,6 +911,84 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'using sidecar' \
 	"Codex mirror: plan resolution failures degrade to the sidecar"
 assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
 	"Codex mirror: terminal sink cannot replace the terminal status"
+assert_grep_fixed "$CODEX_SKILL_MD" 'design delta sink needs canonical_target, ledger_path and run_dir; skipping' \
+	"Codex mirror: sink skips instead of writing to the filesystem root when its inputs are unset"
+assert_grep_fixed "$CODEX_SKILL_MD" 'rounds_n="$(jq -r '\''.rounds | length'\'' "$ledger_path" 2>/dev/null || true)"' \
+	"Codex mirror: sink derives its round count from the ledger"
+assert_grep_fixed "$CODEX_SKILL_MD" 'report="$run_dir/round-$n/fixer-report.json"' \
+	"Codex mirror: sink enumerates rounds from the ledger"
+assert_not_grep "$CODEX_SKILL_MD" 'for report in "\$run_dir"/round-\*' \
+	"Codex mirror: sink never globs round directories (stale rounds would leak deltas)"
+assert_grep_fixed "$CODEX_SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
+	"Codex mirror: sink keeps working files beside the ledger"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"' \
+	"Codex mirror: sink names its ledger-adjacent delta array"
+assert_grep_fixed "$CODEX_SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"' \
+	"Codex mirror: sink names its ledger-adjacent delta items"
+assert_grep_fixed "$CODEX_SKILL_MD" 'resolution_file="$state_dir/design-deltas-$target_key.resolution.json"' \
+	"Codex mirror: sink names its ledger-adjacent resolution"
+assert_grep_fixed "$CODEX_SKILL_MD" '. "$SKILL_DIR"/lib/state-path-guard.sh' \
+	"Codex mirror: sink loads the single state-path policy"
+assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$state_dir" design-delta-sink' \
+	"Codex mirror: sink guards its ledger-adjacent working directory"
+assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$resolution_file" design-delta-sink' \
+	"Codex mirror: sink guards its ledger-adjacent working files"
+assert_grep_fixed "$CODEX_SKILL_MD" 'if declare -F gc_sha1 >/dev/null; then' \
+	"Codex mirror: sink guards the already-sourced portable hash helper"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run_id="codex-$(gc_sha1 < "$ledger_path" | cut -c1-12)"' \
+	"Codex mirror: sink derives its run id with the portable hash helper"
+assert_not_grep "$CODEX_SKILL_MD" 'run_id=.*\. "\$SKILL_DIR"/lib/gauntlet-common\.sh;' \
+	"Codex mirror: run-id derivation does not re-source gauntlet-common.sh"
+assert_grep_fixed "$CODEX_SKILL_MD" 'hand back to the operator the way Guardrail 1' \
+	"Codex mirror: seam-tripwire handback follows the structural-halt path"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run the terminal design delta sink first so recorded deltas are not lost' \
+	"Codex mirror: seam-tripwire handback preserves design deltas"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Every `design_deltas` field value must be a string' \
+	"Codex mirror: fixer schema requires string-valued design deltas"
+
+# The Claude sink is a different implementation (it resolves the reviewed
+# target itself with `gh`/`git` instead of reading round variables), so it gets
+# its own pins; the Codex pins above say nothing about it.
+assert_grep_fixed "$SKILL_MD" 'PLAN_PATH="${PLAN_PATH:-}"' \
+	"Claude mirror: terminal sink carries the parsed --plan value"
+assert_grep_fixed "$SKILL_MD" 'gh pr view "${canonical_target#pr:}"' \
+	"Claude mirror: terminal sink resolves a PR target from the PR itself"
+assert_grep_fixed "$SKILL_MD" 'branch_name="${canonical_target#branch:}"' \
+	"Claude mirror: terminal sink derives an explicit branch from the review target"
+assert_grep_fixed "$SKILL_MD" '--head "$resolver_head"' \
+	"Claude mirror: plan resolution diffs the reviewed head"
+assert_grep_fixed "$SKILL_MD" 'malformed fixer report skipped' \
+	"Claude mirror: malformed fixer reports warn and skip independently"
+assert_grep_fixed "$SKILL_MD" 'non-array design_deltas skipped' \
+	"Claude mirror: non-array design deltas warn and skip independently"
+assert_grep_fixed "$SKILL_MD" 'using sidecar' \
+	"Claude mirror: plan resolution failures degrade to the sidecar"
+assert_grep_fixed "$SKILL_MD" 'run_design_delta_sink || true' \
+	"Claude mirror: terminal sink cannot replace the terminal status"
+assert_grep_fixed "$SKILL_MD" 'design delta sink needs canonical_target, ledger_path and run_dir; skipping' \
+	"Claude mirror: sink skips instead of writing to the filesystem root when its inputs are unset"
+assert_grep_fixed "$SKILL_MD" 'report="$run_dir/round-$round_i/fixer-report.json"' \
+	"Claude mirror: sink enumerates rounds from the ledger"
+assert_not_grep "$SKILL_MD" 'for report in "\$run_dir"/round-\*' \
+	"Claude mirror: sink never globs round directories (stale rounds would leak deltas)"
+assert_grep_fixed "$SKILL_MD" '[terminal design delta sink](#terminal-design-delta-sink)' \
+	"Claude mirror: the seam-tripwire escalation runs the terminal design delta sink"
+assert_grep_fixed "$SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
+	"Claude mirror: sink keeps working files beside the ledger, not in the run dir"
+assert_grep_fixed "$SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"' \
+	"Claude mirror: sink names its ledger-adjacent delta items"
+assert_grep_fixed "$SKILL_MD" '. "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh' \
+	"Claude mirror: sink loads the single state-path policy"
+assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$guarded" design-delta-sink' \
+	"Claude mirror: sink guards every working path before writing"
+assert_grep_fixed "$SKILL_MD" 'if declare -F gc_sha1 > /dev/null; then' \
+	"Claude mirror: sink guards the already-sourced portable hash helper"
+assert_not_grep "$SKILL_MD" 'run_id=.*gauntlet-common\.sh;' \
+	"Claude mirror: run-id derivation does not re-source gauntlet-common.sh"
+assert_not_grep "$SKILL_MD" 'shasum -a 256 "\$ledger_path"' \
+	"Claude mirror: run id uses gc_sha1, not a bare shasum"
+assert_not_grep "$SKILL_MD" '_file="\$run_dir/' \
+	"Claude mirror: sink writes no working file into the run dir (it would block stale-run cleanup)"
 
 # ---------------------------------------------------------------------------
 # (G11) The convergence key-extraction block must be TOTAL under `set -u` and

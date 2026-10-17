@@ -154,7 +154,7 @@ Findings from all three gates are normalized to `(file, line, category, severity
 
 After the fixer batch returns (see [Guardrails](#guardrails) below for what it fixes and how):
 
-- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, stop and escalate to the operator. This changes neither the ledger's counts nor any stop condition.
+- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, stop and escalate to the operator. This escalation has no ledger terminal token, so before reporting it, run the [terminal design delta sink](#terminal-design-delta-sink), and the report step when `--report` was passed. This changes neither the ledger's counts nor any of the five stop conditions below.
 - The fixer **self-classifies** each applied fix's blast radius as `local` or `structural`. **Trust the LLM's classification — there is no mechanical/deterministic backstop.** Line-count or file-count heuristics cannot catch races, deadlocks, or protocol-state mismanagement; only judgment can.
 - **Any `structural` fix in the round → restart from gate 1**, full corpus. A structural change can reintroduce a class of bug any of the three gates would catch, not just the one that flagged it originally.
 - **Only `local` fixes in the round → run one confirming pass**, not a full restart. A confirming pass re-runs the gates but is tagged `pass_type: confirm`.
@@ -177,12 +177,16 @@ Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even wh
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision. It does not depend on `--report` or `--plan`. Collect each round fixer report's `design_deltas` into one run-level file. Resolve the base, head, and branch from the reviewed target, never from the conductor's current checkout. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent.
+Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block. So run the block below in one Bash call that first sets four inputs. Source `lib/gauntlet-common.sh`. Set `canonical_target`. Re-derive `ledger_path` with `gc_ledger_path` and `run_dir` with the single `--run-dir` call, exactly as in [Target and Resume Ledger](#target-and-resume-ledger). Set `PLAN_PATH` to the parsed `--plan` value, or to an empty string when that flag is absent. If any input is missing, the sink warns and skips. Its three working files sit beside the ledger in `.gauntlet/`, not in `$run_dir`, because `convergence-ledger.sh` clears a stale run dir only when it holds `round-*` entries alone; each path passes `gauntlet_assert_no_symlink` before it is written. Collect the `design_deltas` of each completed round's fixer report into one run-level file. Enumerate the rounds from the ledger, never by globbing, so a stale `round-N/` directory cannot leak deltas. Resolve the base, head, and branch from `canonical_target`, never from the conductor's current checkout. A `pr:<N>` target uses `gh pr view`. A `branch:` target uses `git rev-parse` and `git merge-base` on its own ref or range. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar.
 
 ```bash
 # Carry the parsed --plan value and reviewed target into the terminal sink.
 run_design_delta_sink() {
   PLAN_PATH="${PLAN_PATH:-}"
+  if [[ -z "${canonical_target:-}" || -z "${ledger_path:-}" || -z "${run_dir:-}" ]]; then
+    echo "warning: design delta sink needs canonical_target, ledger_path and run_dir; skipping" >&2
+    return 0
+  fi
   REPO_ROOT="$(git rev-parse --show-toplevel)"
   BASE_OID=""
   HEAD_OID=""
@@ -205,19 +209,41 @@ run_design_delta_sink() {
       HEAD_OID="$(git rev-parse --verify --quiet "${range_head}^{commit}" 2>/dev/null || true)"
       BASE_OID="$(git merge-base "$range_base" "$range_head" 2>/dev/null || true)"
       [[ "$branch_name" == *..* ]] && branch_name="$range_head"
+      # A literal HEAD would slug-match any plan whose name contains "head".
+      [[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
       ;;
   esac
 
   target_key="$(basename "${ledger_path%.json}")"
-  run_id="claude-$(shasum -a 256 "$ledger_path" | awk '{print substr($1,1,12)}')"
-  run_deltas_file="$run_dir/design-deltas.json"
-  delta_items_file="$run_dir/design-delta-items.jsonl"
-  resolution_file="$run_dir/plan-resolution.json"
+  # gc_sha1 comes from gauntlet-common.sh, which the caller already sourced for gc_ledger_path.
+  run_id=""
+  if declare -F gc_sha1 > /dev/null; then
+    run_id="claude-$(gc_sha1 < "$ledger_path" | cut -c1-12)"
+  fi
+  if [[ ! "$run_id" =~ ^claude-[0-9a-f]{12}$ ]]; then
+    echo "warning: cannot derive a design delta run id; skipping" >&2
+    return 0
+  fi
+  # Working files sit beside the ledger, not in $run_dir: convergence-ledger.sh clears a
+  # stale run dir only when it holds round-* entries alone.
+  . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh
+  state_dir="$(dirname "$ledger_path")"
+  run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
+  delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
+  resolution_file="$state_dir/design-deltas-$target_key.resolution.json"
+  for guarded in "$state_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
+    if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
+      echo "warning: design delta state path refused; continuing terminal handoff" >&2
+      return 0
+    fi
+  done
 
   if ! : > "$delta_items_file"; then
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
   else
-    for report in "$run_dir"/round-*/fixer-report.json; do
+    round_count="$(jq -r '.rounds | length' "$ledger_path" 2>/dev/null || echo 0)"
+    for ((round_i = 1; round_i <= ${round_count:-0}; round_i++)); do
+      report="$run_dir/round-$round_i/fixer-report.json"
       [[ -f "$report" ]] || continue
       if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
         echo "warning: malformed fixer report skipped: $report" >&2
@@ -280,7 +306,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Reports are read from the ledger's completed rounds, in round order. Every fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 
@@ -346,7 +372,7 @@ The **only** quarantine trigger is a design/architecture conflict (Guardrail 1) 
 
 **Ordering is not optional: run the trivial-fix applier *before* dispatching the fixer subagent for the same round.** `apply-auto-fix-code.sh` refuses to start against a dirty worktree (it exits 7 so its auto-fix commits contain exactly the tested fix and its rollback path can assume a clean index). If the fixer's substantive edits land first, the worktree is dirty and every allowlisted trivial fix is silently skipped that round — reappearing in the next gate pass and stalling convergence. So within each round: reconcile → route → **applier (trivial envelope) → commit** → **then** fixer subagent (substantive findings). The applier's own commits leave a clean worktree for the fixer that follows.
 
-**Fixer output schema.** In addition to its blast-radius self-classification (`local`/`structural`) and quarantine report (Guardrail 1), every fixer dispatch's report includes `{claimed:[finding...], design_deltas:[{file, summary, decision, rationale, cells}...]}` — one finding OBJECT (`{file, line, category, summary}`, i.e. the same shape reconciled findings already carry) for every finding it just fixed this round, trivial and substantive alike, NOT a pre-computed key. Key derivation lives in exactly one place, the orchestrator (via `scripts/finding-key.sh`), so the fixer never needs to resolve a bundled script path or reproduce the normalisation itself — see [Convergence Decision](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) below for how the orchestrator turns `claimed` into the `--claimed-keys` file. The fixer reports **only what it observed and fixed** — it never asserts a key is durably fixed; the ledger owns that promotion, and that promotion is deferred to a later complete full pass, never evaluated against this same round (see [Stop condition 5](#convergence-algorithm) above). A finding the fixer quarantines or defers (Guardrail 1) **must never** appear in `claimed` — only an applied fix belongs there. A `design_deltas` entry records an in-phase contract decision (see Guardrail 8); design deltas never appear in `claimed`.
+**Fixer output schema.** In addition to its blast-radius self-classification (`local`/`structural`) and quarantine report (Guardrail 1), every fixer dispatch's report includes `{claimed:[finding...], design_deltas:[{file, summary, decision, rationale, cells}...]}` — one finding OBJECT (`{file, line, category, summary}`, i.e. the same shape reconciled findings already carry) for every finding it just fixed this round, trivial and substantive alike, NOT a pre-computed key. Key derivation lives in exactly one place, the orchestrator (via `scripts/finding-key.sh`), so the fixer never needs to resolve a bundled script path or reproduce the normalisation itself — see [Convergence Decision](#reuse-bundled-scripts-only-never-relative-path-into-deep-review) below for how the orchestrator turns `claimed` into the `--claimed-keys` file. The fixer reports **only what it observed and fixed** — it never asserts a key is durably fixed; the ledger owns that promotion, and that promotion is deferred to a later complete full pass, never evaluated against this same round (see [Stop condition 5](#convergence-algorithm) above). A finding the fixer quarantines or defers (Guardrail 1) **must never** appear in `claimed` — only an applied fix belongs there. A `design_deltas` entry records an in-phase contract decision (see Guardrail 8); design deltas never appear in `claimed`. Every `design_deltas` field value must be a string: the sink renders any non-string value as `(invalid)` and the content is lost.
 
 ### Guardrail 3 — a substantive bug fix requires a regression test, not just a re-review
 

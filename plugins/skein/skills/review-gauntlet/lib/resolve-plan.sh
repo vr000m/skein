@@ -143,17 +143,18 @@ slug="$(printf '%s' "$BRANCH" | tr '[:upper:]' '[:lower:]')"
 slug="$(printf '%s' "$slug" | sed -E 's#^(feature|bug|fix|chore|docs)/##')"
 
 filter_slug() {
-	local candidate name lower
+	local candidate name lower stem
 	for candidate in "$@"; do
 		name="${candidate##*/}"
 		lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
-		if [[ -n "$slug" && "$lower" == *"$slug"* ]]; then
+		stem="${lower%.md}"
+		if [[ -n "$slug" && "-$stem-" == *"-$slug-"* ]]; then
 			printf '%s\n' "$candidate"
 		fi
 	done
 }
 
-diff_output="$($GIT -C "$REPO_ROOT" diff --name-only "$base_oid"..."$head_oid" 2>/dev/null)" || die_env "cannot diff base '$BASE' against head '$HEAD'"
+diff_output="$($GIT -C "$REPO_ROOT" diff --name-only --diff-filter=d "$base_oid"..."$head_oid" 2>/dev/null)" || die_env "cannot diff base '$BASE' against head '$HEAD'"
 diff_candidates=()
 while IFS= read -r candidate; do
 	[[ -n "$candidate" ]] || continue
@@ -166,7 +167,12 @@ if [[ "${#diff_candidates[@]}" -eq 1 ]]; then
 fi
 
 if [[ "${#diff_candidates[@]}" -gt 1 ]]; then
-	mapfile -t narrowed < <(filter_slug "${diff_candidates[@]}")
+	narrowed=()
+	while IFS= read -r line; do
+		if [[ -n "$line" ]]; then
+			narrowed+=("$line")
+		fi
+	done < <(filter_slug ${diff_candidates[@]+"${diff_candidates[@]}"})
 	if [[ "${#narrowed[@]}" -eq 1 ]]; then
 		emit unique "${narrowed[0]}" "branch slug matched one changed plan"
 	else
@@ -181,7 +187,12 @@ while IFS= read -r candidate; do
 	all_candidates+=("${candidate#"$REPO_ROOT"/}")
 done < <(find "$REPO_ROOT/docs/dev_plans" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*.md' -print 2>/dev/null | sort)
 
-mapfile -t narrowed < <(filter_slug "${all_candidates[@]}")
+narrowed=()
+while IFS= read -r line; do
+	if [[ -n "$line" ]]; then
+		narrowed+=("$line")
+	fi
+done < <(filter_slug ${all_candidates[@]+"${all_candidates[@]}"})
 case "${#narrowed[@]}" in
 1) emit unique "${narrowed[0]}" "branch slug matched one plan" ;;
 0) emit none "" "no matching plan" ;;
