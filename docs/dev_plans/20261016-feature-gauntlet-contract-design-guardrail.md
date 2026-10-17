@@ -20,6 +20,7 @@ Decisions (grilled 2026-10-16):
 - The fixer resolves in-contract ripple effects itself and logs each as a design delta. It escalates via Guardrail 1 only when a delta contradicts or expands the plan's stated intent.
 - Deltas are written even without `--plan`. The plan is the one diff-touched plan, narrowed by branch slug. Otherwise the deltas go to `.gauntlet/design-deltas-<target>.md`. The sink never guesses.
 - The merge-bar (stop on "no blocking findings") is deferred.
+- Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures are tracked in #56 and stay out of this PR.
 
 ## Requirements
 
@@ -49,7 +50,8 @@ Decisions (grilled 2026-10-16):
 **Test files:** `tests/gauntlet/test-design-deltas.sh`
 **Test command:** `just gauntlet-tests`
 **Goal:** The Claude terminal block derives base, head and branch correctly for `--pr`, a branch, and a range.
-- Execute the `gh pr view` / `git merge-base` derivation in a scratch repo. Today it has only had a syntax check and shellcheck.
+- Execute the `gh pr view` / `git merge-base` derivation in a scratch repo (done: `tests/gauntlet/test-design-delta-sink-claude.sh`).
+- Tighten the writer's marker match, reword the Guardrail 4 disposition, move the Claude sink out of the report anchors (done, grill follow-up).
 - Run a second fresh-thread Codex review of the final fix round.
 - Apply the `/code-review xhigh --fix` results, then run `just ci`.
 
@@ -100,7 +102,7 @@ Decisions (grilled 2026-10-16):
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope, but should be tracked.
 - [x] Review-fix coverage passes: Codex sink 11/11, Claude sink 23/23, writer/resolver 121/121, convergence ledger 214/214, skill shape 277/277, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
-- [ ] Final `just ci` after the code-review fixes.
+- [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
 ## Acceptance Criteria
 
@@ -117,7 +119,7 @@ Decisions (grilled 2026-10-16):
 
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
-- [ ] Phase 3: Verify the Claude mirror
+- [x] Phase 3: Verify the Claude mirror (code-review fixes 6db9ffc; grill follow-up pending commit)
 - [ ] Phase 4: Gauntlet and PR
 
 ## Findings

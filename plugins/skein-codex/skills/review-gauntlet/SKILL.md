@@ -527,7 +527,7 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 If the fixer's summary claims edits, commits, or a test addition that the live diff does not show, treat the round as incomplete. Do not pass a count/structural/local tally to `convergence-ledger.sh` that assumes work the repo state does not confirm. This mirrors the same discipline applied to gate output (Failure and Error Handling): a subagent's self-report is a claim, not a verified fact, until checked against something external to it.
 
-For a finding in Guardrail 8's scope, also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. A fix that lacks any of these is not applied. Keep its finding out of `claimed` and the `--claimed-keys` file, and name the gap in the next brief.
+For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. A fix that lacks any of these stays in the tree but is not counted as applied: its finding stays open, out of `claimed` and the `--claimed-keys` file, and the next brief names the missing piece; the conductor does not revert the edit.
 
 ### Guardrail 5 - run the full CI recipe after every fixer round
 

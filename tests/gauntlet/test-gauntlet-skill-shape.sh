@@ -290,6 +290,13 @@ fi
 
 CODEX_SKILL_MD="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/SKILL.md"
 
+assert_grep_i "$CODEX_SKILL_MD" 'conductor, not the fixer.s self-declaration, decides whether Guardrail 8 applies' \
+	"Codex mirror: Guardrail 4 makes the conductor decide contract scope"
+assert_grep_i "$CODEX_SKILL_MD" 'stays in the tree but is not counted as applied' \
+	"Codex mirror: Guardrail 4 leaves incomplete contract edits in the tree"
+assert_grep_i "$CODEX_SKILL_MD" 'conductor does not revert the edit' \
+	"Codex mirror: Guardrail 4 forbids conductor reversion of an incomplete contract edit"
+
 assert_resume_shape_for() {
 	local file="$1" label="$2" anchor_pattern="$3" ledger_invoke_prefix="$4"
 
@@ -977,6 +984,12 @@ assert_grep_fixed "$SKILL_MD" 'non-array design_deltas skipped' \
 	"Claude mirror: non-array design deltas warn and skip independently"
 assert_grep_fixed "$SKILL_MD" 'using sidecar' \
 	"Claude mirror: plan resolution failures degrade to the sidecar"
+assert_grep_i "$SKILL_MD" 'conductor, not the fixer.s self-declaration, decides whether Guardrail 8 applies' \
+	"Claude mirror: Guardrail 4 makes the conductor decide contract scope"
+assert_grep_i "$SKILL_MD" 'stays in the tree but is not counted as applied' \
+	"Claude mirror: Guardrail 4 leaves incomplete contract edits in the tree"
+assert_grep_i "$SKILL_MD" 'conductor does not revert the edit' \
+	"Claude mirror: Guardrail 4 forbids conductor reversion of an incomplete contract edit"
 assert_grep_fixed "$SKILL_MD" 'run_design_delta_sink || true' \
 	"Claude mirror: terminal sink cannot replace the terminal status"
 assert_grep_fixed "$SKILL_MD" 'design delta sink needs canonical_target, ledger_path and run_dir; skipping' \

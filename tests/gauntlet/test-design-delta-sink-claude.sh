@@ -64,7 +64,7 @@ init_repo() {
 
 write_plan() {
 	local repo="$1" name="$2"
-	printf '# Plan\n\n## Objective\n\nx\n\n<!-- reviewed: 2026-10-16 @ abc -->\n\n## Findings\n\nExisting.\n\n## Progress\n\nDone.\n' \
+	printf '# Plan\n\n## Objective\n\nx\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n\n## Progress\n\nDone.\n' \
 		>"$repo/docs/dev_plans/$name"
 	git -C "$repo" add "docs/dev_plans/$name"
 	git -C "$repo" commit -qm "plan $name"

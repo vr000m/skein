@@ -175,9 +175,15 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
       fence_len = count
       return 1
     }
+    function is_review_marker(line, trimmed) {
+      trimmed = line
+      sub(/[[:space:]]*$/, "", trimmed)
+      if (length(trimmed) != 72) return 0
+      return trimmed ~ /^<!-- reviewed: [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] @ [0-9a-f]+ -->$/
+    }
     {
       if (fence_line($0) || in_fence) next
-      if ($0 ~ /^<!-- reviewed: .* -->$/) {
+      if (is_review_marker($0)) {
         marker_count++
         marker_line = NR
       }
@@ -223,7 +229,7 @@ upsert_section() {
       close(payload)
     }
     function is_heading(line) {
-      return line ~ /^#{1,3} /
+      return line ~ /^(#|##|###) /
     }
     {
       lines[NR] = $0

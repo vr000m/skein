@@ -55,7 +55,7 @@ init_fixture() {
 	git -C "$repo" add docs/dev_plans/README.md
 	git -C "$repo" commit -qm base
 	git -C "$repo" switch -qc feature/widget
-	printf '# Plan\n\n## Objective\n\nx\n\n<!-- reviewed: 2026-10-16 @ abc -->\n\n## Findings\n\nExisting.\n\n## Progress\n\nDone.\n' \
+	printf '# Plan\n\n## Objective\n\nx\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n\n## Progress\n\nDone.\n' \
 		>"$repo/docs/dev_plans/$PLAN_NAME"
 	git -C "$repo" add "docs/dev_plans/$PLAN_NAME"
 	git -C "$repo" commit -qm plan

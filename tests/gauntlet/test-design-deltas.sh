@@ -219,7 +219,7 @@ write_shape_plan() {
 			printf '## Findings\n\nAbove marker only.\n\n'
 		fi
 		if [[ "$markers" -ge 1 ]]; then
-			printf '<!-- reviewed: 2026-10-16 @ first -->\n\n'
+			printf '<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n'
 		fi
 		case "$findings" in
 		none | above-only) ;;
@@ -228,7 +228,7 @@ write_shape_plan() {
 		inside-fence) printf '```markdown\n## Findings\n```\n\n' ;;
 		esac
 		if [[ "$markers" -eq 2 ]]; then
-			printf '<!-- reviewed: 2026-10-16 @ second -->\n\n'
+			printf '<!-- reviewed: 2026-10-16 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->\n\n'
 		fi
 		printf '## Progress\n\nDone.\n'
 	} >"$plan"
@@ -426,6 +426,72 @@ run_marker_probe() {
 	jq -e '.sink == "sidecar"' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$plan")" ]]
 }
 
+marker_format_case() {
+	local writer="$1" label="$2" expect="$3" marker="$4" repo plan before before_head out
+	repo="$WORKDIR/marker-format-$label-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	{
+		printf '# Plan\n\n## Objective\n\nProtected prefix.\n\n'
+		printf '%b\n\n' "$marker"
+		printf '## Findings\n\nExisting finding.\n'
+	} >"$plan"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+	before_head="$(head -n 7 "$plan")"
+	out="$(run_writer_id "$writer" "$repo" run-one)"
+	if [[ "$expect" == plan ]]; then
+		jq -e '.sink == "plan"' >/dev/null <<<"$out" &&
+			[[ "$before_head" == "$(head -n 7 "$plan")" ]] &&
+			grep -Fq 'Summary: first' "$plan"
+	else
+		jq -e '.sink == "sidecar" and .reason == "resolved plan has 0 review markers"' >/dev/null <<<"$out" &&
+			[[ "$before" == "$(hash_file "$plan")" ]]
+	fi
+}
+
+# label|expected sink|marker (printf %b escapes expanded)
+MARKER_FORMAT_ROWS='valid|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->
+trailing-space|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->\0040\0040
+trailing-tab|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->\t
+trailing-crlf|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->\r
+placeholder|sidecar|<!-- reviewed: YYYY-MM-DD @ <hash> -->
+hex-39|sidecar|<!-- reviewed: 2026-10-16 @ HEX39 -->
+hex-41|sidecar|<!-- reviewed: 2026-10-16 @ HEX41 -->
+hex-uppercase|sidecar|<!-- reviewed: 2026-10-16 @ HEXUP -->
+bad-date-short|sidecar|<!-- reviewed: 2026-1-16 @ HEX40 -->
+bad-date-text|sidecar|<!-- reviewed: YYYY-10-16 @ HEX40 -->
+indented|sidecar|  <!-- reviewed: 2026-10-16 @ HEX40 -->
+fenced|sidecar|```\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n```'
+
+marker_format_rows() {
+	local h40 h39 h41 hup
+	h40="$(printf 'a%.0s' $(seq 1 40))"
+	h39="${h40#a}"
+	h41="${h40}a"
+	hup="$(printf 'A%.0s' $(seq 1 40))"
+	printf '%s\n' "$MARKER_FORMAT_ROWS" | sed -e "s/HEX40/$h40/" -e "s/HEX39/$h39/" -e "s/HEX41/$h41/" -e "s/HEXUP/$hup/"
+}
+
+run_marker_format_probe() {
+	local writer="$1" label expect marker
+	while IFS='|' read -r label expect marker; do
+		marker_format_case "$writer" "$label" "$expect" "$marker" || return 1
+	done < <(marker_format_rows)
+}
+
+run_marker_format_tests() {
+	local label expect marker
+	while IFS='|' read -r label expect marker; do
+		if marker_format_case "$WRITER" "$label" "$expect" "$marker"; then
+			pass "marker format $label routes to the $expect sink"
+		else
+			fail "marker format $label did not route to the $expect sink"
+		fi
+	done < <(marker_format_rows)
+}
+
 run_head_probe() {
 	local resolver="$1" repo base_oid feature_oid out
 	repo="$WORKDIR/head-probe-${resolver##*/}-$RANDOM"
@@ -489,6 +555,24 @@ run_bash32_static_tests() {
 	done
 }
 
+run_awk_interval_probe() {
+	local writer="$1"
+	awk '
+    /awk.*'\''[[:space:]]*$/ { in_awk = 1 }
+    in_awk && /[{][0-9]+(,[0-9]*)?[}]/ { found = 1 }
+    in_awk && /^[[:space:]]*'\''/ { in_awk = 0 }
+    END { exit found ? 1 : 0 }
+  ' "$writer"
+}
+
+run_awk_interval_test() {
+	if run_awk_interval_probe "$WRITER"; then
+		pass "writer awk bodies contain no interval expressions"
+	else
+		fail "writer awk body contains an interval expression"
+	fi
+}
+
 mutation_expect_failure() {
 	local name="$1" probe="$2" mutant="$3" rc
 	set +e
@@ -503,7 +587,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant sidecar_mutant sanitize_mutant bracket_mutant provenance_mutant resolver_mutant stat_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sanitize_mutant bracket_mutant provenance_mutant resolver_mutant stat_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -515,6 +599,27 @@ run_mutation_checks() {
 		"$WRITER" >"$marker_mutant"
 	chmod +x "$marker_mutant"
 	mutation_expect_failure marker-count run_marker_probe "$marker_mutant"
+
+	strict_marker_mutant="$mutant_dir/strict-marker-writer.sh"
+	sed 's#if (length(trimmed) != 72) return 0#if (trimmed ~ /^<!-- reviewed: .* -->$/) return 1#' \
+		"$WRITER" >"$strict_marker_mutant"
+	chmod +x "$strict_marker_mutant"
+	mutation_expect_failure strict-marker-format run_marker_format_probe "$strict_marker_mutant"
+
+	trim_mutant="$mutant_dir/trim-writer.sh"
+	sed 's#sub(/\[\[:space:\]\]\*\$/, "", trimmed)#sub(/ *$/, "", trimmed)#' "$WRITER" >"$trim_mutant"
+	chmod +x "$trim_mutant"
+	mutation_expect_failure marker-trim-spaces-only run_marker_format_probe "$trim_mutant"
+
+	hexcase_mutant="$mutant_dir/hexcase-writer.sh"
+	sed 's#@ \[0-9a-f\]+ -->#@ [0-9a-fA-F]+ -->#' "$WRITER" >"$hexcase_mutant"
+	chmod +x "$hexcase_mutant"
+	mutation_expect_failure marker-hex-case run_marker_format_probe "$hexcase_mutant"
+
+	interval_mutant="$mutant_dir/interval-writer.sh"
+	sed 's@return line ~ /^(#|##|###) /@return line ~ /^#{1,3} /@' "$WRITER" >"$interval_mutant"
+	chmod +x "$interval_mutant"
+	mutation_expect_failure awk-interval run_awk_interval_probe "$interval_mutant"
 
 	sidecar_mutant="$mutant_dir/sidecar-writer.sh"
 	sed 's#upsert_section "$sidecar" "$output_tmp" 0 0 || die_env "cannot update sidecar temp file"#cp "$payload" "$output_tmp" || die_env "cannot update sidecar temp file"#' \
@@ -630,6 +735,8 @@ run_sanitization_test
 run_provenance_test
 run_gnu_stat_test
 run_bash32_static_tests
+run_marker_format_tests
+run_awk_interval_test
 run_symlink_test
 run_input_symlink_test
 run_empty_test
