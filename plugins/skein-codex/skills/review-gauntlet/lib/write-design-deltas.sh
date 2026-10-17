@@ -92,19 +92,30 @@ payload="$(mktemp "${TMPDIR:-/tmp}/design-deltas-payload.XXXXXX")" || die_env "c
 output_tmp=""
 trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
 "$JQ" -r --arg run_id "$RUN_ID" '
-  def html_escape:
+  # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
+  def inert_codepoints:
     explode
-    | map(if . == 38 then "&amp;" elif . == 60 then "&lt;" elif . == 62 then "&gt;" else [.] | implode end)
-    | join("");
+    | reduce .[] as $cp ("";
+        if (($cp >= 6155 and $cp <= 6159) or
+            ($cp >= 65024 and $cp <= 65039) or
+            ($cp >= 917760 and $cp <= 917999)) then .
+        elif $cp == 38 then . + "&amp;"
+        elif $cp == 60 then . + "&lt;"
+        elif $cp == 62 then . + "&gt;"
+        elif $cp == 91 then . + "&#91;"
+        elif $cp == 92 then . + "&#92;"
+        elif $cp == 93 then . + "&#93;"
+        elif $cp == 96 then . + "&#96;"
+        else . + ([$cp] | implode)
+        end);
   def clean:
     if type != "string" then "(invalid)"
     else
-      gsub("[\\r\\n]"; " ")
-      | gsub("[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]"; "")
-      | gsub("[\u0080-\u009f\u00ad\u061c\u180e\u2060-\u2064\ufeff]"; "")
-      | gsub("[\\p{Zs}\\p{Zl}\\p{Zp}]"; " ")
+      .[:2000]
+      | gsub("[\\r\\n\\p{Zs}\\p{Zl}\\p{Zp}]+"; " ")
+      | gsub("[\\p{Cc}\\p{Cf}\\p{Co}\\p{Cn}]"; "")
+      | inert_codepoints
       | if length > 500 then .[0:497] + "..." else . end
-      | html_escape
     end;
   def token: clean | @json;
   "### Gauntlet design deltas (run \($run_id))",
@@ -164,39 +175,41 @@ marker_line=0
 findings_count=0
 findings_line=0
 findings_end=0
+# Both awk consumers share this fence machine. Indentation follows marker.py;
+# a backtick in a backtick fence info string keeps that line as ordinary prose.
+FENCE_AWK_SOURCE='
+	function fence_text(line) {
+	  sub(/^[ \t]*/, "", line)
+	  return line
+	}
+	function fence_line(line, text, char, count, rest) {
+	  text = fence_text(line)
+	  if (in_fence) {
+	    if (substr(text, 1, 1) != fence_char) return 0
+	    count = 0
+	    while (substr(text, count + 1, 1) == fence_char) count++
+	    rest = substr(text, count + 1)
+	    if (count >= fence_len && rest ~ /^[[:space:]]*$/) {
+	      in_fence = 0
+	      return 1
+	    }
+	    return 0
+	  }
+	  char = substr(text, 1, 1)
+	  if (char != "`" && char != "~") return 0
+	  count = 0
+	  while (substr(text, count + 1, 1) == char) count++
+	  if (count < 3) return 0
+	  rest = substr(text, count + 1)
+	  if (char == "`" && index(rest, "`") > 0) return 0
+	  in_fence = 1
+	  fence_char = char
+	  fence_len = count
+	  return 1
+	}
+'
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	read -r marker_count marker_line findings_count findings_line findings_end < <(awk '
-    function strip_indent(line, count) {
-      count = 0
-      while (count < 3 && substr(line, 1, 1) == " ") {
-        line = substr(line, 2)
-        count++
-      }
-      return line
-    }
-    function fence_line(line, text, char, count, rest) {
-      text = strip_indent(line)
-      if (in_fence) {
-        if (substr(text, 1, 1) != fence_char) return 0
-        count = 0
-        while (substr(text, count + 1, 1) == fence_char) count++
-        rest = substr(text, count + 1)
-        if (count >= fence_len && rest ~ /^[[:space:]]*$/) {
-          in_fence = 0
-          return 1
-        }
-        return 0
-      }
-      char = substr(text, 1, 1)
-      if (char != "`" && char != "~") return 0
-      count = 0
-      while (substr(text, count + 1, 1) == char) count++
-      if (count < 3) return 0
-      in_fence = 1
-      fence_char = char
-      fence_len = count
-      return 1
-    }
+	read -r marker_count marker_line findings_count findings_line findings_end < <(awk "$FENCE_AWK_SOURCE"'
     function is_review_marker(line, trimmed) {
       trimmed = line
       sub(/[[:space:]]*$/, "", trimmed)
@@ -245,38 +258,7 @@ fi
 
 upsert_section() {
 	local input="$1" output="$2" start_line="$3" end_line="$4"
-	awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" '
-    function strip_indent(line, count) {
-      count = 0
-      while (count < 3 && substr(line, 1, 1) == " ") {
-        line = substr(line, 2)
-        count++
-      }
-      return line
-    }
-    function fence_line(line, text, char, count, rest) {
-      text = strip_indent(line)
-      if (in_fence) {
-        if (substr(text, 1, 1) != fence_char) return 0
-        count = 0
-        while (substr(text, count + 1, 1) == fence_char) count++
-        rest = substr(text, count + 1)
-        if (count >= fence_len && rest ~ /^[[:space:]]*$/) {
-          in_fence = 0
-          return 1
-        }
-        return 0
-      }
-      char = substr(text, 1, 1)
-      if (char != "`" && char != "~") return 0
-      count = 0
-      while (substr(text, count + 1, 1) == char) count++
-      if (count < 3) return 0
-      in_fence = 1
-      fence_char = char
-      fence_len = count
-      return 1
-    }
+	awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
     function emit_payload(    line) {
       while ((getline line < payload) > 0) print line
       close(payload)

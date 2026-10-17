@@ -249,7 +249,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Collect each round fixer report's `design_deltas` into one run-level file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns.
+Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected rounds: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-round-<N>` for its single prepared round. Thus different quick rounds accumulate, a same-round rerun replaces only itself, and a later full-mode section coexists with them. Collect each selected fixer report's `design_deltas` into one sink file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
 
 ```bash
 # Carry the parsed --plan value and reviewed target into the terminal sink.
@@ -292,7 +292,7 @@ run_design_delta_sink() {
   . "$SKILL_DIR"/lib/state-path-guard.sh
   for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
     if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
-      echo "warning: unsafe design delta sink path; continuing terminal handoff" >&2
+      echo "warning: design delta state path refused; continuing terminal handoff" >&2
       return 0
     fi
   done
@@ -304,7 +304,7 @@ run_design_delta_sink() {
   fi
   run_id="codex-${ledger_run_id:0:12}"
   if [[ ! "$run_id" =~ ^codex-[0-9a-f]{12}$ ]]; then
-    echo "warning: cannot derive design delta run id; continuing terminal handoff" >&2
+    echo "warning: cannot derive a design delta run id; skipping" >&2
     return 0
   fi
 
@@ -327,7 +327,7 @@ run_design_delta_sink() {
 
   scope_file="$state_dir/design-deltas-$target_key-$run_id.scope.json"
   if ! gauntlet_assert_no_symlink "$scope_file" design-delta-sink; then
-    echo "warning: unsafe design delta scope path; continuing terminal handoff" >&2
+    echo "warning: design delta scope path refused; continuing terminal handoff" >&2
     return 0
   fi
   if [[ -e "$scope_file" ]]; then
@@ -366,23 +366,25 @@ run_design_delta_sink() {
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
     return 0
   fi
+  section_run_id="$run_id"
   if [[ -n "${design_delta_quick_round:-}" ]]; then
     if [[ ! "$design_delta_quick_round" =~ ^[1-9][0-9]*$ ]]; then
       echo "warning: invalid quick-mode design delta round; continuing terminal handoff" >&2
       return 0
     fi
+    section_run_id="${run_id}-quick-round-${design_delta_quick_round}"
     first_report_n="$design_delta_quick_round"
-    rounds_n="$design_delta_quick_round"
+    round_count="$design_delta_quick_round"
   else
     first_report_n=1
-    rounds_n="$(jq -er '.rounds | select(type == "array") | length' "$ledger_path" 2>/dev/null || true)"
-    if [[ ! "$rounds_n" =~ ^[0-9]+$ ]]; then
-      echo "warning: invalid ledger round count; continuing terminal handoff" >&2
+    round_count="$(jq -er '.rounds | select(type == "array") | length' "$ledger_path" 2>/dev/null || true)"
+    if [[ ! "$round_count" =~ ^[0-9]+$ ]]; then
+      echo "warning: ledger round count is not an integer; continuing terminal handoff" >&2
       return 0
     fi
   fi
-  for ((n = first_report_n; n <= rounds_n; n++)); do
-    report="$run_dir/round-$n/fixer-report.json"
+  for ((round_i = first_report_n; round_i <= round_count; round_i++)); do
+    report="$run_dir/round-$round_i/fixer-report.json"
     if ! gauntlet_assert_no_symlink "$report" design-delta-sink; then
       echo "warning: unsafe fixer report skipped: $report" >&2
       continue
@@ -428,7 +430,7 @@ run_design_delta_sink() {
     fi
   fi
 
-  writer_args=(--repo-root "$REPO_ROOT" --deltas "$run_deltas_file" --run-id "$run_id" --target-key "$target_key")
+  writer_args=(--repo-root "$REPO_ROOT" --deltas "$run_deltas_file" --run-id "$section_run_id" --target-key "$target_key")
   if [[ "${design_delta_sidecar_only:-false}" == true ]]; then
     writer_args+=(--sidecar-only)
   else
@@ -454,7 +456,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives that round its own section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 

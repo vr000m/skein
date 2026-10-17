@@ -938,13 +938,15 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
 	"Codex mirror: terminal sink cannot replace the terminal status"
 assert_grep_fixed "$CODEX_SKILL_MD" 'design delta sink needs canonical_target, ledger_path and run_dir; skipping' \
 	"Codex mirror: sink skips instead of writing to the filesystem root when its inputs are unset"
-assert_grep_fixed "$CODEX_SKILL_MD" 'rounds_n="$(jq -er '\''.rounds | select(type == "array") | length'\'' "$ledger_path" 2>/dev/null || true)"' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'round_count="$(jq -er '\''.rounds | select(type == "array") | length'\'' "$ledger_path" 2>/dev/null || true)"' \
 	"Codex mirror: sink derives its round count from the ledger"
-assert_grep_fixed "$CODEX_SKILL_MD" 'invalid ledger round count; continuing terminal handoff' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'ledger round count is not an integer; continuing terminal handoff' \
 	"Codex mirror: malformed round counts fail closed"
 assert_grep_fixed "$CODEX_SKILL_MD" 'first_report_n="$design_delta_quick_round"' \
 	"Codex mirror: quick mode consumes only its prepared report"
-assert_grep_fixed "$CODEX_SKILL_MD" 'report="$run_dir/round-$n/fixer-report.json"' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'section_run_id="${run_id}-quick-round-${design_delta_quick_round}"' \
+	"Codex mirror: each quick round owns a distinct section identity"
+assert_grep_fixed "$CODEX_SKILL_MD" 'report="$run_dir/round-$round_i/fixer-report.json"' \
 	"Codex mirror: sink enumerates rounds from the ledger"
 assert_not_grep "$CODEX_SKILL_MD" 'for report in "\$run_dir"/round-\*' \
 	"Codex mirror: sink never globs round directories (stale rounds would leak deltas)"
@@ -960,12 +962,18 @@ assert_grep_fixed "$CODEX_SKILL_MD" '. "$SKILL_DIR"/lib/state-path-guard.sh' \
 	"Codex mirror: sink loads the single state-path policy"
 assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do' \
 	"Codex mirror: sink guards its ledger, run directory, and working files before reads or writes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'design delta state path refused; continuing terminal handoff' \
+	"Codex mirror: state-path warning uses the canonical sink wording"
+assert_grep_fixed "$CODEX_SKILL_MD" 'design delta scope path refused; continuing terminal handoff' \
+	"Codex mirror: scope-path warning uses the canonical sink wording"
 assert_grep_fixed "$CODEX_SKILL_MD" 'gauntlet_assert_no_symlink "$report" design-delta-sink' \
 	"Codex mirror: sink guards each fixer report before reading it"
 assert_grep_fixed "$CODEX_SKILL_MD" 'ledger_run_id="$(jq -r '\''.run_id // empty'\'' "$ledger_path"' \
 	"Codex mirror: sink reads the stable run id stored by ledger initialization"
 assert_grep_fixed "$CODEX_SKILL_MD" 'run_id="codex-${ledger_run_id:0:12}"' \
 	"Codex mirror: sink derives its section identity from the stable ledger run id"
+assert_grep_fixed "$CODEX_SKILL_MD" 'cannot derive a design delta run id; skipping' \
+	"Codex mirror: run-id warning uses the canonical sink wording"
 assert_grep_fixed "$CODEX_SKILL_MD" 'HEAD_OID="$(jq -r '\''.review_scope.head_oid'\'' "$ledger_path")"' \
 	"Codex mirror: terminal resume restores the reviewed head directly from the ledger"
 assert_grep_fixed "$CODEX_SKILL_MD" 'first_round:(.rounds[0] // null)' \

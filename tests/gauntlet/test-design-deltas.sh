@@ -368,6 +368,8 @@ Before fence.
 fenced bytes must survive
 ```
 
+```inline``` is how we quote.
+
 After fence.
 
 ## Progress
@@ -386,7 +388,8 @@ EOF
 		[[ "$once" == "$twice" ]] &&
 		[[ "$(grep -Fc '### Gauntlet design deltas (run run-one)' "$plan")" -eq 2 ]] &&
 		[[ "$(grep -Fc 'Summary: "replacement"' "$plan")" -eq 1 ]] &&
-		! grep -Fq 'Summary: "original"' "$plan"
+		! grep -Fq 'Summary: "original"' "$plan" &&
+		awk '/^### Gauntlet design deltas \(run run-one\)$/{seen=1} /^## Progress$/{exit seen ? 0 : 1} END{if (!seen) exit 1}' "$plan"
 }
 
 run_fenced_upsert_test() {
@@ -394,6 +397,15 @@ run_fenced_upsert_test() {
 		pass "fenced heading lookalikes survive same-run upserts byte-for-byte"
 	else
 		fail "fenced heading lookalikes were treated as real section boundaries"
+	fi
+}
+
+run_shared_fence_source_test() {
+	if [[ "$(grep -Fc 'function fence_line(' "$WRITER")" -eq 1 ]] &&
+		[[ "$(grep -Fc '"$FENCE_AWK_SOURCE"' "$WRITER")" -eq 2 ]]; then
+		pass "marker scan and upsert share one fence implementation"
+	else
+		fail "marker scan and upsert duplicate or bypass the shared fence implementation"
 	fi
 }
 
@@ -421,8 +433,8 @@ run_sanitization_probe() {
 	line="$(grep '^  - File:' "$plan" | head -1)"
 	summary="$(sed -n 's/^  - Summary: //p' "$plan" | head -1)"
 	[[ "$(jq -r . <<<"$summary" | awk '{ print length }')" -eq 500 ]] || return 1
-	[[ "$line" == *'bad&lt;tag&gt;&amp;--&gt;`name[click]'* ]] || return 1
-	grep -Fq '  - Decision: "# heading  next"' "$plan" || return 1
+	[[ "$line" == *'bad &lt;tag&gt;&amp;--&gt;&#96;name&#91;click&#93;'* ]] || return 1
+	grep -Fq '  - Decision: "# heading next"' "$plan" || return 1
 	grep -Fq '  - Rationale: "(invalid)"' "$plan" || return 1
 	grep -Fq '  - Cells: "- item"' "$plan" || return 1
 	grep -Fq '  - File: "12. list"' "$plan" || return 1
@@ -453,6 +465,7 @@ run_field_boundary_probe() {
 	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
 	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
 	python3 - "$repo/deltas.json" "$repo/expected.json" <<'PY'
+import html
 import json
 import sys
 import unicodedata
@@ -470,28 +483,45 @@ payloads = {
     "heading": "# forged heading",
     "marker": "<!-- reviewed: 2026-10-17 @ " + "a" * 40 + " -->",
     "section": "### Gauntlet design deltas (run forged)",
-    "ordinary": "a & b | x; y | a < b | [link] | `ticks` | -> | &amp;",
+    "ordinary": "Az09 CJK=漢 emoji=😀 | a & b | x; y | a < b | [link] | `ticks` | \\ | -> | &amp; | https://example.invalid/a",
     "newlines": "first\r\nsecond\nthird\rfourth",
-    "controls": "a\u0000\u0080\u009f\u00ad\u061c\u180e\u200b\u202e\u2060\u2064\ufeffb",
+    "categories": "a\U000e0049\u206a\ufff9\U0001d173\u180b\ufe0f\U000e0100\ue000\u0378b",
+    "category-sweep": "".join(
+        chars
+        for category in ("Cc", "Cf", "Co", "Cn", "Zs", "Zl", "Zp")
+        for chars in ["".join(
+            chr(cp)
+            for cp in range(0, sys.maxunicode + 1, 257)
+            if unicodedata.category(chr(cp)) == category
+        )[:16]]
+    ),
+    "pre-cut": "\u180b" * 2000 + "AFTER-BUDGET",
     "over-length": "x" * 501,
 }
 
 def clean(value):
-    value = value.replace("\r", " ").replace("\n", " ")
+    value = value[:2000]
     stripped = []
+    folding_space = False
     for char in value:
         cp = ord(char)
-        remove = (
-            0 <= cp <= 9 or cp in (11, 12) or 14 <= cp <= 31 or cp == 127
-            or 128 <= cp <= 159 or cp in (0xAD, 0x61C, 0x180E, 0xFEFF)
-            or 0x200B <= cp <= 0x200F or cp in (0x2028, 0x2029)
-            or 0x202A <= cp <= 0x202E or 0x2060 <= cp <= 0x2064
-            or 0x2066 <= cp <= 0x2069
-        )
-        if not remove:
-            stripped.append(" " if unicodedata.category(char) in ("Zs", "Zl", "Zp") else char)
-    value = "".join(stripped)
-    return value[:497] + "..." if len(value) > 500 else value
+        category = unicodedata.category(char)
+        fold = char in "\r\n" or category in ("Zs", "Zl", "Zp")
+        if fold:
+            if not folding_space:
+                stripped.append(" ")
+            folding_space = True
+            continue
+        folding_space = False
+        if category in ("Cc", "Cf", "Co", "Cn"):
+            continue
+        if 0x180B <= cp <= 0x180F or 0xFE00 <= cp <= 0xFE0F or 0xE0100 <= cp <= 0xE01EF:
+            continue
+        stripped.append(char)
+    escape = {"&": "&amp;", "<": "&lt;", ">": "&gt;", "[": "&#91;", "\\": "&#92;", "]": "&#93;", "`": "&#96;"}
+    rendered = "".join(escape.get(char, char) for char in stripped)
+    rendered = rendered[:497] + "..." if len(rendered) > 500 else rendered
+    return html.unescape(rendered)
 
 rows = []
 expected = []
@@ -510,9 +540,9 @@ with open(sys.argv[2], "w", encoding="utf-8") as handle:
 PY
 	run_writer_id "$writer" "$repo" run-one >/dev/null
 	python3 - "$plan" "$repo/expected.json" <<'PY'
-import html
 import json
 import sys
+import html
 
 labels = ["File", "Summary", "Decision", "Rationale", "Cells"]
 lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
@@ -535,10 +565,69 @@ for index, wanted in enumerate(expected):
         found.append(label)
     assert parsed == wanted
 assert found == labels * len(expected)
-ordinary = "a & b | x; y | a < b | [link] | `ticks` | -> | &amp;"
-assert any(all(fragment in line for fragment in ("a &amp; b", "x; y", "a &lt; b", "[link]", "`ticks`", "-&gt;", "&amp;amp;")) for line in body)
+ordinary = "Az09 CJK=漢 emoji=😀 | a & b | x; y | a < b | [link] | `ticks` | \\ | -> | &amp; | https://example.invalid/a"
+assert any(all(fragment in line for fragment in ("a &amp; b", "x; y", "a &lt; b", "&#91;link&#93;", "&#96;ticks&#96;", "&#92;", "-&gt;", "&amp;amp;", "https://example.invalid/a")) for line in body)
 assert ordinary in [row["File"] for row in expected] + [row["Summary"] for row in expected] + [row["Decision"] for row in expected] + [row["Rationale"] for row in expected] + [row["Cells"] for row in expected]
+assert all("AFTER-BUDGET" not in line for line in body)
 PY
+}
+
+run_bounded_cost_probe() {
+	local writer="$1" repo timeout_bin
+	repo="$WORKDIR/bounded-cost-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	python3 - "$repo/deltas.json" <<'PY'
+import json
+import sys
+
+value = "x" * 400_000
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump([{"file": value, "summary": value, "decision": value, "rationale": value, "cells": value}], handle)
+PY
+	timeout_bin="$(command -v timeout || command -v gtimeout || true)"
+	[[ -n "$timeout_bin" ]] || return 1
+	"$timeout_bin" 10 "$writer" --repo-root "$repo" --resolution "$repo/resolution.json" \
+		--deltas "$repo/deltas.json" --run-id run-one --target-key ledger-codex-widget >/dev/null
+}
+
+run_bounded_cost_test() {
+	if run_bounded_cost_probe "$WRITER"; then
+		pass "400 KB values finish within the fixed-cost timeout"
+	else
+		fail "400 KB values exceeded the fixed-cost timeout"
+	fi
+}
+
+run_invalid_unicode_probe() {
+	local writer="$1" repo plan lone_rc invalid_rc
+	repo="$WORKDIR/invalid-unicode-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	printf '%s\n' '[{"file":"\ud800","summary":"s","decision":"d","rationale":"r","cells":"c"}]' >"$repo/deltas.json"
+	set +e
+	run_writer_id "$writer" "$repo" run-one >/dev/null 2>&1
+	lone_rc=$?
+	printf '[{"file":"\377","summary":"s","decision":"d","rationale":"r","cells":"c"}]\n' >"$repo/deltas.json"
+	run_writer_id "$writer" "$repo" run-two >/dev/null 2>&1
+	invalid_rc=$?
+	set -e
+	[[ "$lone_rc" -eq 1 && "$invalid_rc" -eq 0 ]] && python3 - "$plan" <<'PY'
+import sys
+
+assert "\ufffd" in open(sys.argv[1], encoding="utf-8").read()
+PY
+}
+
+run_invalid_unicode_test() {
+	if run_invalid_unicode_probe "$WRITER"; then
+		pass "lone surrogates are rejected and invalid bytes become inert replacement characters"
+	else
+		fail "invalid Unicode input escaped its defined reject-or-normalize outcome"
+	fi
 }
 
 run_field_boundary_test() {
@@ -638,7 +727,12 @@ hex-uppercase|sidecar|<!-- reviewed: 2026-10-16 @ HEXUP -->
 bad-date-short|sidecar|<!-- reviewed: 2026-1-16 @ HEX40 -->
 bad-date-text|sidecar|<!-- reviewed: YYYY-10-16 @ HEX40 -->
 indented|sidecar|  <!-- reviewed: 2026-10-16 @ HEX40 -->
-fenced|sidecar|```\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n```'
+fenced-backtick|sidecar|```\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n```
+fenced-tilde|sidecar|~~~\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n~~~
+fenced-info|sidecar|```markdown\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n```
+fenced-four-space|sidecar|    ```\n<!-- reviewed: 2026-10-16 @ HEX40 -->\n    ```
+after-unclosed-fence|sidecar|```\n<!-- reviewed: 2026-10-16 @ HEX40 -->
+inline-backticks|plan|<!-- reviewed: 2026-10-16 @ HEX40 -->\n\n```inline``` is how we quote.'
 
 marker_format_rows() {
 	local h40 h39 h41 hup
@@ -869,7 +963,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant differential_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant sanitize_mutant controls_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant length_mutant entity_mutant sidecar_only_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant differential_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant inline_fence_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant sidecar_only_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -925,15 +1019,31 @@ run_mutation_checks() {
 	chmod +x "$fenced_mutant"
 	mutation_expect_failure fenced-upsert-boundary run_fenced_upsert_probe "$fenced_mutant"
 
+	inline_fence_mutant="$mutant_dir/inline-fence-writer.sh"
+	sed '/if (char == "`" && index(rest, "`") > 0) return 0/d' "$WRITER" >"$inline_fence_mutant"
+	chmod +x "$inline_fence_mutant"
+	mutation_expect_failure inline-backtick-fence run_fenced_upsert_probe "$inline_fence_mutant"
+
 	sanitize_mutant="$mutant_dir/sanitize-writer.sh"
-	sed 's/elif \. == 60 then "&lt;"/elif . == 60 then "<"/' "$WRITER" >"$sanitize_mutant"
+	sed 's/elif \$cp == 60 then \. + "&lt;"/elif $cp == 60 then . + "<"/' "$WRITER" >"$sanitize_mutant"
 	chmod +x "$sanitize_mutant"
 	mutation_expect_failure sanitization run_sanitization_probe "$sanitize_mutant"
 
 	controls_mutant="$mutant_dir/controls-writer.sh"
-	sed '/\\u0080-\\u009f/d' "$WRITER" >"$controls_mutant"
+	sed '/gsub("\[\\\\p{Cc}\\\\p{Cf}\\\\p{Co}\\\\p{Cn}\]"; "")/d' "$WRITER" >"$controls_mutant"
 	chmod +x "$controls_mutant"
-	mutation_expect_failure unicode-controls run_sanitization_probe "$controls_mutant"
+	mutation_expect_failure unicode-categories run_field_boundary_probe "$controls_mutant"
+
+	variation_mutant="$mutant_dir/variation-writer.sh"
+	sed -e 's/\$cp >= 6155/\$cp >= 999999/' -e 's/\$cp >= 65024/\$cp >= 999999/' -e 's/\$cp >= 917760/\$cp >= 999999/' \
+		"$WRITER" >"$variation_mutant"
+	chmod +x "$variation_mutant"
+	mutation_expect_failure variation-selectors run_field_boundary_probe "$variation_mutant"
+
+	active_mutant="$mutant_dir/active-markdown-writer.sh"
+	sed 's/elif \$cp == 91 then \. + "&#91;"/elif $cp == 91 then . + "["/' "$WRITER" >"$active_mutant"
+	chmod +x "$active_mutant"
+	mutation_expect_failure active-markdown-map run_field_boundary_probe "$active_mutant"
 
 	field_mutant="$mutant_dir/field-boundary-writer.sh"
 	sed 's/| @json;/;/' "$WRITER" >"$field_mutant"
@@ -941,14 +1051,19 @@ run_mutation_checks() {
 	mutation_expect_failure field-boundary run_field_boundary_probe "$field_mutant"
 
 	separator_mutant="$mutant_dir/separator-writer.sh"
-	sed '/\\p{Zs}.*\\p{Zp}/d' "$WRITER" >"$separator_mutant"
+	sed '/gsub("\[\\\\r\\\\n\\\\p{Zs}\\\\p{Zl}\\\\p{Zp}\]+"; " ")/d' "$WRITER" >"$separator_mutant"
 	chmod +x "$separator_mutant"
 	mutation_expect_failure unicode-separators run_field_boundary_probe "$separator_mutant"
 
 	newline_mutant="$mutant_dir/newline-writer.sh"
-	sed '/gsub("\[\\\\r\\\\n\]"; " ")/d' "$WRITER" >"$newline_mutant"
+	sed '/gsub("\[\\\\r\\\\n\\\\p{Zs}\\\\p{Zl}\\\\p{Zp}\]+"; " ")/d' "$WRITER" >"$newline_mutant"
 	chmod +x "$newline_mutant"
 	mutation_expect_failure newline-normalization run_field_boundary_probe "$newline_mutant"
+
+	precut_mutant="$mutant_dir/precut-writer.sh"
+	sed '/\.\[:2000\]/d' "$WRITER" >"$precut_mutant"
+	chmod +x "$precut_mutant"
+	mutation_expect_failure pre-regex-codepoint-budget run_field_boundary_probe "$precut_mutant"
 
 	length_mutant="$mutant_dir/length-writer.sh"
 	sed 's/if length > 500/if length > 5000/' "$WRITER" >"$length_mutant"
@@ -956,7 +1071,7 @@ run_mutation_checks() {
 	mutation_expect_failure length-cap run_field_boundary_probe "$length_mutant"
 
 	entity_mutant="$mutant_dir/entity-writer.sh"
-	sed 's/then "&amp;"/then "&amp (semicolon) "/' "$WRITER" >"$entity_mutant"
+	sed 's/then \. + "&amp;"/then . + "&amp (semicolon) "/' "$WRITER" >"$entity_mutant"
 	chmod +x "$entity_mutant"
 	mutation_expect_failure single-pass-entity run_field_boundary_probe "$entity_mutant"
 
@@ -1071,8 +1186,11 @@ run_resolver_tests
 run_matrix_tests
 run_replacement_test
 run_fenced_upsert_test
+run_shared_fence_source_test
 run_sanitization_test
 run_field_boundary_test
+run_bounded_cost_test
+run_invalid_unicode_test
 run_provenance_test
 run_gnu_stat_test
 run_bash32_static_tests
