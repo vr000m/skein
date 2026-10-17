@@ -74,7 +74,7 @@ gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || exit 2
 "$JQ" -e 'type == "array"' "$DELTAS" >/dev/null 2>&1 || die_usage "deltas JSON has an invalid shape"
 
 if [[ "$("$JQ" 'length' "$DELTAS")" -eq 0 ]]; then
-	"$JQ" -cn '{sink:"none"}'
+	"$JQ" -cn '{sink:"none",path:"",reason:""}'
 	exit 0
 fi
 
@@ -87,8 +87,10 @@ trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
     else
       gsub("[\\r\\n]"; " ")
       | gsub("[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]"; "")
+      | gsub("[\u0080-\u009f\u00ad\u061c\u180e\u2060-\u2064\ufeff]"; "")
       | if length > 500 then .[0:497] + "..." else . end
       | gsub("&"; "&amp;")
+      | gsub("; "; " (semicolon) ")
       | gsub("\\["; "&#91;")
       | gsub("\\]"; "&#93;")
       | gsub("<"; "&lt;")
@@ -224,6 +226,37 @@ fi
 upsert_section() {
 	local input="$1" output="$2" start_line="$3" end_line="$4"
 	awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" '
+    function strip_indent(line, count) {
+      count = 0
+      while (count < 3 && substr(line, 1, 1) == " ") {
+        line = substr(line, 2)
+        count++
+      }
+      return line
+    }
+    function fence_line(line, text, char, count, rest) {
+      text = strip_indent(line)
+      if (in_fence) {
+        if (substr(text, 1, 1) != fence_char) return 0
+        count = 0
+        while (substr(text, count + 1, 1) == fence_char) count++
+        rest = substr(text, count + 1)
+        if (count >= fence_len && rest ~ /^[[:space:]]*$/) {
+          in_fence = 0
+          return 1
+        }
+        return 0
+      }
+      char = substr(text, 1, 1)
+      if (char != "`" && char != "~") return 0
+      count = 0
+      while (substr(text, count + 1, 1) == char) count++
+      if (count < 3) return 0
+      in_fence = 1
+      fence_char = char
+      fence_len = count
+      return 1
+    }
     function emit_payload(    line) {
       while ((getline line < payload) > 0) print line
       close(payload)
@@ -238,7 +271,9 @@ upsert_section() {
       if (end_line == 0) end_line = NR + 1
       target = "### Gauntlet design deltas (run " run_id ")"
       target_line = 0
+      in_fence = 0
       for (i = start_line + 1; i < end_line; i++) {
+        if (fence_line(lines[i]) || in_fence) continue
         if (lines[i] == target) {
           target_line = i
           break
@@ -246,7 +281,9 @@ upsert_section() {
       }
       if (target_line) {
         section_end = end_line
+        in_fence = 0
         for (i = target_line + 1; i < end_line; i++) {
+          if (fence_line(lines[i]) || in_fence) continue
           if (is_heading(lines[i])) {
             section_end = i
             break

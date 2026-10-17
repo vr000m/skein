@@ -8,6 +8,7 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 RESOLVER="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/resolve-plan.sh"
 WRITER="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/write-design-deltas.sh"
 STATE_GUARD="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
+MARKER_PY="$ROOT_DIR/scripts/marker.py"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/skein-design-deltas.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
@@ -170,13 +171,13 @@ run_resolver_tests() {
 	out="$("$RESOLVER" --repo-root "$repo" --base "$base_oid" --head "$feature_oid" --branch feature/widget)"
 	assert_json "$out" '.status == "unique" and (.plan | contains("widget"))' "resolve uses explicit reviewed head"
 
-	repo="$WORKDIR/zero-unique"
+	repo="$WORKDIR/zero-diff-historic-slug"
 	init_repo "$repo"
-	add_plan "$repo" 20261016-feature-widget.md
+	add_plan "$repo" 20260101-feature-old-ledger-history.md
 	commit_plans "$repo" plan
-	git -C "$repo" switch -qc feature/widget
-	out="$(resolve_case "$repo" feature/widget)"
-	assert_json "$out" '.status == "unique" and (.plan | contains("widget"))' "resolve zero-diff plan by branch slug"
+	git -C "$repo" switch -qc fix/ledger
+	out="$(resolve_case "$repo" fix/ledger)"
+	assert_json "$out" '.status == "none" and .plan == "" and .reason == "no changed plan"' "resolve zero-diff historic slug match as none"
 
 	repo="$WORKDIR/none"
 	init_repo "$repo"
@@ -208,6 +209,11 @@ hash_above_unique_marker() {
 	local plan="$1" marker_line
 	marker_line="$(awk '/^<!-- reviewed: .* -->$/{print NR; exit}' "$plan")"
 	head -n "$((marker_line - 1))" "$plan" | shasum -a 256 | awk '{print $1}'
+}
+
+assert_result_shape() {
+	local json="$1" label="$2"
+	assert_json "$json" 'type == "object" and (keys | sort) == ["path","reason","sink"] and (.sink | type == "string") and (.path | type == "string") and (.reason | type == "string")' "$label result has the stable three-key envelope"
 }
 
 write_shape_plan() {
@@ -258,23 +264,25 @@ matrix_case() {
 
 	out="$(run_writer_id "$writer" "$repo" run-one)"
 	assert_json "$out" ".sink == \"$expected_sink\"" "$label fresh routes to $expected_sink"
-	if [[ "$markers" -eq 1 ]]; then
+	assert_result_shape "$out" "$label fresh"
+	if [[ "$expected_sink" == "sidecar" && "$before_plan" == "$(hash_file "$plan")" ]]; then
+		pass "$label fresh leaves the whole plan unchanged"
+	elif [[ "$expected_sink" == "sidecar" ]]; then
+		fail "$label fresh changed the plan while reporting sidecar"
+	elif [[ "$markers" -eq 1 ]]; then
 		after_prefix="$(hash_above_unique_marker "$plan")"
 		if [[ "$before_prefix" == "$after_prefix" ]]; then
 			pass "$label fresh preserves bytes above marker"
 		else
 			fail "$label fresh changed bytes above marker"
 		fi
-	elif [[ "$expected_sink" == "sidecar" && "$before_plan" == "$(hash_file "$plan")" ]]; then
-		pass "$label fresh leaves ambiguous plan unchanged"
-	else
-		fail "$label fresh changed ambiguous plan"
 	fi
 	first_hash="$(hash_file "$plan")"
 	[[ -f "$sidecar" ]] && first_hash="$first_hash:$(hash_file "$sidecar")"
 
 	out="$(run_writer_id "$writer" "$repo" run-one)"
 	assert_json "$out" ".sink == \"$expected_sink\"" "$label same run routes to $expected_sink"
+	assert_result_shape "$out" "$label same run"
 	rerun_hash="$(hash_file "$plan")"
 	[[ -f "$sidecar" ]] && rerun_hash="$rerun_hash:$(hash_file "$sidecar")"
 	if [[ "$first_hash" == "$rerun_hash" ]]; then
@@ -286,6 +294,7 @@ matrix_case() {
 	write_standard_deltas "$repo" second
 	out="$(run_writer_id "$writer" "$repo" run-two)"
 	assert_json "$out" ".sink == \"$expected_sink\"" "$label different run routes to $expected_sink"
+	assert_result_shape "$out" "$label different run"
 	if [[ "$expected_sink" == "plan" ]]; then
 		count="$(grep -Ec '^### Gauntlet design deltas \(run run-(one|two)\)$' "$plan")"
 	else
@@ -295,6 +304,11 @@ matrix_case() {
 		pass "$label different runs accumulate"
 	else
 		fail "$label different runs did not accumulate"
+	fi
+	if [[ "$expected_sink" == "sidecar" && "$before_plan" == "$(hash_file "$plan")" ]]; then
+		pass "$label all sidecar writes leave the whole plan unchanged"
+	elif [[ "$expected_sink" == "sidecar" ]]; then
+		fail "$label sidecar rerun changed the plan"
 	fi
 }
 
@@ -329,6 +343,55 @@ run_replacement_test() {
 	fi
 }
 
+run_fenced_upsert_probe() {
+	local writer="$1" repo plan fence_before fence_after once twice
+	repo="$WORKDIR/fenced-upsert-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	cat >"$plan" <<'EOF'
+# Plan
+
+<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->
+
+## Findings
+
+Before fence.
+
+```markdown
+### Gauntlet design deltas (run run-one)
+## x
+fenced bytes must survive
+```
+
+After fence.
+
+## Progress
+EOF
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	fence_before="$(sed -n '/^```markdown$/,/^```$/p' "$plan" | shasum -a 256 | awk '{print $1}')"
+	write_standard_deltas "$repo" original
+	run_writer_id "$writer" "$repo" run-one >/dev/null
+	write_standard_deltas "$repo" replacement
+	run_writer_id "$writer" "$repo" run-one >/dev/null
+	once="$(hash_file "$plan")"
+	run_writer_id "$writer" "$repo" run-one >/dev/null
+	twice="$(hash_file "$plan")"
+	fence_after="$(sed -n '/^```markdown$/,/^```$/p' "$plan" | shasum -a 256 | awk '{print $1}')"
+	[[ "$fence_before" == "$fence_after" ]] &&
+		[[ "$once" == "$twice" ]] &&
+		[[ "$(grep -Fc '### Gauntlet design deltas (run run-one)' "$plan")" -eq 2 ]] &&
+		[[ "$(grep -Fc 'Summary: replacement' "$plan")" -eq 1 ]] &&
+		! grep -Fq 'Summary: original' "$plan"
+}
+
+run_fenced_upsert_test() {
+	if run_fenced_upsert_probe "$WRITER"; then
+		pass "fenced heading lookalikes survive same-run upserts byte-for-byte"
+	else
+		fail "fenced heading lookalikes were treated as real section boundaries"
+	fi
+}
+
 run_sanitization_probe() {
 	local writer="$1" repo plan line summary
 	repo="$WORKDIR/sanitize-${writer##*/}-$RANDOM"
@@ -337,7 +400,7 @@ run_sanitization_probe() {
 	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
 	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
 	jq -cn --arg long "$(printf 'x%.0s' {1..501})" '[{
-	  file:"bad\u0000\u001b\u2028\u2029<tag>&-->`name[click](http://evil.example)![img](http://evil.example/x.png)\u202e\u200b",
+		  file:"bad\u0000\u001b\u0080\u009f\u00ad\u061c\u180e\u2028\u2029<tag>&-->`name[click](http://evil.example)![img](http://evil.example/x.png)\u202e\u200b\u2060\u2064\ufeff",
 	  summary:$long,
 	  decision:"# heading\r\nnext",
 	  rationale:42,
@@ -362,7 +425,12 @@ run_sanitization_probe() {
 	[[ "$(grep -Fo '(invalid)' "$plan" | wc -l | tr -d ' ')" -ge 5 ]] || return 1
 	! grep '^- File:' "$plan" | grep -q '`\|-->' || return 1
 	[[ "$line" != *'['* && "$line" != *']'* ]] || return 1
-	jq -Rs -e '(contains("\u202e") or contains("\u200b")) | not' "$plan" >/dev/null || return 1
+	jq -Rs -e '
+	  (contains("\u0080") or contains("\u009f") or contains("\u00ad") or
+	   contains("\u061c") or contains("\u180e") or contains("\u200b") or
+	   contains("\u202e") or contains("\u2060") or contains("\u2064") or
+	   contains("\ufeff")) | not
+	' "$plan" >/dev/null || return 1
 	[[ -z "$(LC_ALL=C tr -d '\11\12\40-\176' <"$plan")" ]] || return 1
 }
 
@@ -371,6 +439,35 @@ run_sanitization_test() {
 		pass "untrusted fields are one-line capped escaped plain text"
 	else
 		fail "untrusted field sanitization contract"
+	fi
+}
+
+run_field_boundary_probe() {
+	local writer="$1" repo plan line hostile label
+	repo="$WORKDIR/field-boundary-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	hostile='value; File: forged; Summary: forged; Decision: forged; Rationale: forged; Cells: forged'
+	jq -cn --arg hostile "$hostile" '[{file:$hostile,summary:$hostile,decision:$hostile,rationale:$hostile,cells:$hostile}]' >"$repo/deltas.json"
+	run_writer_id "$writer" "$repo" run-one >/dev/null
+	line="$(grep '^- File:' "$plan")"
+	[[ "$(grep -c '^- File:' "$plan")" -eq 1 ]] || return 1
+	for label in File Summary Decision Rationale Cells; do
+		[[ "$line" == *"(semicolon) $label: forged"* ]] || return 1
+	done
+	[[ "$(grep -Fo '; Summary: ' <<<"$line" | wc -l | tr -d ' ')" -eq 1 ]] || return 1
+	[[ "$(grep -Fo '; Decision: ' <<<"$line" | wc -l | tr -d ' ')" -eq 1 ]] || return 1
+	[[ "$(grep -Fo '; Rationale: ' <<<"$line" | wc -l | tr -d ' ')" -eq 1 ]] || return 1
+	[[ "$(grep -Fo '; Cells: ' <<<"$line" | wc -l | tr -d ' ')" -eq 1 ]]
+}
+
+run_field_boundary_test() {
+	if run_field_boundary_probe "$WRITER"; then
+		pass "hostile values in every field cannot forge adjacent field labels"
+	else
+		fail "rendered field grammar is ambiguous under hostile values"
 	fi
 }
 
@@ -492,6 +589,83 @@ run_marker_format_tests() {
 	done < <(marker_format_rows)
 }
 
+marker_python_sink() {
+	local plan="$1"
+	python3 - "$MARKER_PY" "$plan" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("skein_marker", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+print("plan" if module.read_marker(sys.argv[2]) is not None else "sidecar")
+PY
+}
+
+run_marker_differential_probe() {
+	local writer="$1" label marker repo plan python_sink writer_sink out
+	while IFS='|' read -r label _ marker; do
+		repo="$WORKDIR/marker-differential-$label-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+		{
+			printf '# Plan\n\n'
+			printf '%b\n\n' "$marker"
+			printf '## Findings\n\nExisting finding.\n'
+		} >"$plan"
+		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+		write_standard_deltas "$repo" first
+		python_sink="$(marker_python_sink "$plan")"
+		out="$(run_writer_id "$writer" "$repo" run-one)"
+		writer_sink="$(jq -r '.sink' <<<"$out")"
+		[[ "$python_sink" == "$writer_sink" ]] || return 1
+	done < <(marker_format_rows)
+}
+
+run_marker_differential_test() {
+	if run_marker_differential_probe "$WRITER"; then
+		pass "writer and marker.py agree on the shared marker fixture table"
+	else
+		fail "writer and marker.py disagree on the shared marker fixture table"
+	fi
+}
+
+run_zero_diff_probe() {
+	local resolver="$1" repo out
+	repo="$WORKDIR/zero-diff-probe-${resolver##*/}-$RANDOM"
+	init_repo "$repo"
+	add_plan "$repo" 20260101-feature-old-ledger-history.md
+	commit_plans "$repo" plan
+	git -C "$repo" switch -qc fix/ledger
+	out="$("$resolver" --repo-root "$repo" --base main --branch fix/ledger)"
+	jq -e '.status == "none" and .plan == ""' >/dev/null <<<"$out"
+}
+
+run_sidecar_plan_unchanged_probe() {
+	local writer="$1" repo plan before out
+	repo="$WORKDIR/sidecar-unchanged-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 above-only
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+	out="$(run_writer_id "$writer" "$repo" run-one)"
+	jq -e '.sink == "sidecar"' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$plan")" ]]
+}
+
+run_result_shape_probe() {
+	local writer="$1" repo out
+	repo="$WORKDIR/result-shape-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	jq -cn '[]' >"$repo/deltas.json"
+	out="$(run_writer_id "$writer" "$repo" run-one)"
+	jq -e '(keys | sort) == ["path","reason","sink"] and .sink == "none" and .path == "" and .reason == ""' >/dev/null <<<"$out"
+}
+
 run_head_probe() {
 	local resolver="$1" repo base_oid feature_oid out
 	repo="$WORKDIR/head-probe-${resolver##*/}-$RANDOM"
@@ -587,7 +761,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sanitize_mutant bracket_mutant provenance_mutant resolver_mutant stat_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant differential_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant sanitize_mutant controls_mutant field_mutant shape_mutant bracket_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -616,6 +790,11 @@ run_mutation_checks() {
 	chmod +x "$hexcase_mutant"
 	mutation_expect_failure marker-hex-case run_marker_format_probe "$hexcase_mutant"
 
+	differential_mutant="$mutant_dir/differential-writer.sh"
+	sed 's#@ \[0-9a-f\]+ -->#@ [0-9a-fA-F]+ -->#' "$WRITER" >"$differential_mutant"
+	chmod +x "$differential_mutant"
+	mutation_expect_failure marker-differential run_marker_differential_probe "$differential_mutant"
+
 	interval_mutant="$mutant_dir/interval-writer.sh"
 	sed 's@return line ~ /^(#|##|###) /@return line ~ /^#{1,3} /@' "$WRITER" >"$interval_mutant"
 	chmod +x "$interval_mutant"
@@ -627,10 +806,36 @@ run_mutation_checks() {
 	chmod +x "$sidecar_mutant"
 	mutation_expect_failure sidecar-upsert run_sidecar_probe "$sidecar_mutant"
 
+	sidecar_plan_mutant="$mutant_dir/sidecar-plan-writer.sh"
+	sed 's#state_dir="$REPO_ROOT/.gauntlet"#printf '\''mutated\\n'\'' >> "$REPO_ROOT/$plan"\nstate_dir="$REPO_ROOT/.gauntlet"#' \
+		"$WRITER" >"$sidecar_plan_mutant"
+	chmod +x "$sidecar_plan_mutant"
+	mutation_expect_failure sidecar-plan-unchanged run_sidecar_plan_unchanged_probe "$sidecar_plan_mutant"
+
+	fenced_mutant="$mutant_dir/fenced-upsert-writer.sh"
+	sed '/if (fence_line(lines\[i\]) || in_fence) continue/d' "$WRITER" >"$fenced_mutant"
+	chmod +x "$fenced_mutant"
+	mutation_expect_failure fenced-upsert-boundary run_fenced_upsert_probe "$fenced_mutant"
+
 	sanitize_mutant="$mutant_dir/sanitize-writer.sh"
 	sed '/gsub("<"; "&lt;")/d' "$WRITER" >"$sanitize_mutant"
 	chmod +x "$sanitize_mutant"
 	mutation_expect_failure sanitization run_sanitization_probe "$sanitize_mutant"
+
+	controls_mutant="$mutant_dir/controls-writer.sh"
+	sed '/\\u0080-\\u009f/d' "$WRITER" >"$controls_mutant"
+	chmod +x "$controls_mutant"
+	mutation_expect_failure unicode-controls run_sanitization_probe "$controls_mutant"
+
+	field_mutant="$mutant_dir/field-boundary-writer.sh"
+	sed '/gsub("; "; " (semicolon) ")/d' "$WRITER" >"$field_mutant"
+	chmod +x "$field_mutant"
+	mutation_expect_failure field-boundary run_field_boundary_probe "$field_mutant"
+
+	shape_mutant="$mutant_dir/result-shape-writer.sh"
+	sed 's/{sink:"none",path:"",reason:""}/{sink:"none"}/' "$WRITER" >"$shape_mutant"
+	chmod +x "$shape_mutant"
+	mutation_expect_failure result-envelope run_result_shape_probe "$shape_mutant"
 
 	bracket_mutant="$mutant_dir/bracket-writer.sh"
 	sed '/&#91;/d' "$WRITER" >"$bracket_mutant"
@@ -646,6 +851,12 @@ run_mutation_checks() {
 	sed 's/"$base_oid"\.\.\."$head_oid"/"$base_oid"...HEAD/' "$RESOLVER" >"$resolver_mutant"
 	chmod +x "$resolver_mutant"
 	mutation_expect_failure reviewed-head run_head_probe "$resolver_mutant"
+
+	zero_diff_mutant="$mutant_dir/zero-diff-resolver.sh"
+	sed 's#emit none "" "no changed plan"#emit unique "docs/dev_plans/20260101-feature-old-ledger-history.md" "branch slug matched one plan"#' \
+		"$RESOLVER" >"$zero_diff_mutant"
+	chmod +x "$zero_diff_mutant"
+	mutation_expect_failure zero-diff-plan run_zero_diff_probe "$zero_diff_mutant"
 
 	stat_mutant="$mutant_dir/stat-writer.sh"
 	sed '/plan_mode=.*stat -c/c\
@@ -725,17 +936,20 @@ run_empty_test() {
 	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
 	jq -cn '[]' >"$repo/deltas.json"
 	out="$(run_writer_id "$WRITER" "$repo" run-one)"
-	assert_json "$out" '.sink == "none" and (keys | length) == 1' "write treats empty deltas as a no-op"
+	assert_json "$out" '.sink == "none" and .path == "" and .reason == "" and (keys | sort) == ["path","reason","sink"]' "write treats empty deltas as a stable-envelope no-op"
 }
 
 run_resolver_tests
 run_matrix_tests
 run_replacement_test
+run_fenced_upsert_test
 run_sanitization_test
+run_field_boundary_test
 run_provenance_test
 run_gnu_stat_test
 run_bash32_static_tests
 run_marker_format_tests
+run_marker_differential_test
 run_awk_interval_test
 run_symlink_test
 run_input_symlink_test

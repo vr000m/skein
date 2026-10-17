@@ -240,6 +240,158 @@ check "symlinked working file: nothing written through the link" bash -c '[[ ! -
 check "symlinked working file: sink still exits 0" grep -Fq 'rc=0' <<<"$out"
 check "symlinked working file: the refusal is reported" grep -Fq 'refusing to operate on symlink' "$WORKDIR/sink.err"
 
+# --- 8. seam-tripwire escalation is sidecar-only -----------------------------
+# The escalation is resumable, and apply-auto-fix-code.sh refuses a dirty
+# worktree on --resume, so even a diff-touched plan must stay byte-identical.
+# probe_seam [sink-fn] -> 0 when no tracked file changed and the sidecar holds the delta
+probe_seam() {
+	local repo before out
+	repo="$(new_fixture "seam-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	setup_hook() { write_round "$1" 1 seam-delta; }
+	out="$(SINK_FN="${1:-$SINK_FN}" design_delta_sidecar_only=true run_sink "$repo" branch:feature/widget 1)"
+	unset -f setup_hook
+	[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
+		git -C "$repo" diff --quiet &&
+		grep -Fq 'Design deltas: .gauntlet/design-deltas-' <<<"$out" &&
+		grep -Fl 'Summary: seam-delta' "$repo"/.gauntlet/design-deltas-*.md >/dev/null 2>&1
+}
+check "seam escalation: plan bytes unchanged, delta lands in the sidecar" probe_seam
+# Control: the same fixture without the flag edits the plan, so the probe is not vacuous.
+repo="$(new_fixture seam-control "$PLAN_NAME")"
+setup_hook() { write_round "$1" 1 seam-delta; }
+out="$(run_sink "$repo" branch:feature/widget 1)"
+unset -f setup_hook
+check "seam control: without the flag the diff-touched plan is the sink" plan_has "$repo" 'Summary: seam-delta'
+seam_mutant="$WORKDIR/seam-mutant.sh"
+sed 's/if \[\[ "${design_delta_sidecar_only:-false}" == true \]\]; then/if false; then/' "$SINK_FN" >"$seam_mutant"
+check "mutation: dropping the sidecar-only branch is caught" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$seam_mutant"
+if probe_seam "$seam_mutant"; then
+	fail "mutation seam-sidecar-only survived its regression probe"
+else
+	pass "mutation seam-sidecar-only is caught by the executed sink probe"
+fi
+
+# --- 9. a non-integer ledger round count fails closed ------------------------
+# probe_rounds [sink-fn] -> 0 when the sink warns, exits 0 and leaves the plan alone
+probe_rounds() {
+	local repo before out
+	repo="$(new_fixture "rounds-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	setup_hook() {
+		write_round "$1" 1 rounds-delta
+		# `.rounds | length` of a number is its absolute value: 1.5 here.
+		jq '.rounds = 1.5' "$ledger_path" >"$ledger_path.tmp" && mv "$ledger_path.tmp" "$ledger_path"
+	}
+	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:feature/widget 1)"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		grep -Fq 'ledger round count is not an integer' "$WORKDIR/sink.err" &&
+		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]]
+}
+check "non-integer round count: warning, exit 0, plan unchanged" probe_rounds
+rounds_mutant="$WORKDIR/rounds-mutant.sh"
+sed 's/if \[\[ ! "$round_count" =~ ^\[0-9\]+\$ \]\]; then/if false; then/' "$SINK_FN" >"$rounds_mutant"
+check "mutation: rounds integer check was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$rounds_mutant"
+if probe_rounds "$rounds_mutant"; then
+	fail "mutation rounds-integer survived its regression probe"
+else
+	pass "mutation rounds-integer is caught by the executed sink probe"
+fi
+
+# --- 10. option guards on range ends and PR numbers --------------------------
+real_git="$(command -v git)"
+log_bin="$WORKDIR/log-bin"
+mkdir -p "$log_bin"
+cat >"$log_bin/git" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$WORKDIR/git.log"
+exec "$real_git" "\$@"
+EOF
+cat >"$log_bin/gh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$WORKDIR/gh.log"
+exit 1
+EOF
+chmod +x "$log_bin/git" "$log_bin/gh"
+
+# probe_dash_range <target> [sink-fn] -> 0 when the dash end only reaches git after --end-of-options
+probe_dash_range() {
+	local repo before out
+	repo="$(new_fixture "dash-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	: >"$WORKDIR/git.log"
+	setup_hook() { write_round "$1" 1 dash-delta; }
+	out="$(SINK_FN="${2:-$SINK_FN}" run_sink "$repo" "$1" 1 "" "$log_bin")"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
+		grep -Eq '^(merge-base|rev-parse --verify --quiet) .*--all' "$WORKDIR/git.log" &&
+		! grep -E '^(merge-base|rev-parse --verify --quiet) ' "$WORKDIR/git.log" | grep -F -- '--all' | grep -vqF -- '--end-of-options'
+}
+dash_mutant="$WORKDIR/dash-mutant.sh"
+sed 's/ --end-of-options / /' "$SINK_FN" >"$dash_mutant"
+check "mutation: option guard was removed" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$dash_mutant"
+for dash_target in 'branch:--all..feature/widget' 'branch:main..--all'; do
+	check "dash range end $dash_target: reaches git only after --end-of-options" probe_dash_range "$dash_target"
+	if probe_dash_range "$dash_target" "$dash_mutant"; then
+		fail "mutation option-guard survived for $dash_target"
+	else
+		pass "mutation option-guard is caught for $dash_target"
+	fi
+done
+
+# probe_pr_suffix [sink-fn] -> 0 when a non-numeric PR suffix never reaches gh
+probe_pr_suffix() {
+	local repo out
+	repo="$(new_fixture "prsuffix-$RANDOM" "$PLAN_NAME")"
+	: >"$WORKDIR/gh.log"
+	setup_hook() { write_round "$1" 1 suffix-delta; }
+	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" 'pr:--repo=evil/x' 1 "" "$log_bin")"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		grep -Fq 'refused non-numeric PR target' "$WORKDIR/sink.err" &&
+		[[ ! -s "$WORKDIR/gh.log" ]]
+}
+check "pr: a non-numeric suffix is refused before gh runs" probe_pr_suffix
+pr_mutant="$WORKDIR/pr-mutant.sh"
+sed 's/if \[\[ ! "$pr_number" =~ ^\[0-9\]+\$ \]\]; then/if false; then/' "$SINK_FN" >"$pr_mutant"
+check "mutation: PR number check was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$pr_mutant"
+if probe_pr_suffix "$pr_mutant"; then
+	fail "mutation pr-numeric survived its regression probe"
+else
+	pass "mutation pr-numeric is caught by the executed sink probe"
+fi
+
+# --- 11. a failed working-file reset never consumes stale state ---------------
+# probe_reset [sink-fn] -> 0 when an unwritable stale items file aborts the sink
+probe_reset() {
+	local repo before out
+	repo="$(new_fixture "reset-$RANDOM" "$PLAN_NAME")"
+	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
+	setup_hook() {
+		local items="${1%/*}/design-deltas-${1##*/}.items.jsonl"
+		write_round "$1" 1 current-delta
+		jq -cn '{file:"stale",summary:"stale-delta",decision:"d",rationale:"r",cells:"c"}' >"$items"
+		chmod 400 "$items"
+	}
+	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:feature/widget 1)"
+	unset -f setup_hook
+	grep -Fq 'rc=0' <<<"$out" &&
+		grep -Fq 'cannot initialize design delta collection' "$WORKDIR/sink.err" &&
+		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
+		! grep -rqF 'stale-delta' "$repo/.gauntlet" --include='design-deltas-*.md'
+}
+check "reset failure: sink aborts before stale working files are consumed" probe_reset
+reset_mutant="$WORKDIR/reset-mutant.sh"
+sed '/cannot initialize design delta collection/{n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
+check "mutation: reset return was removed" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$reset_mutant"
+if probe_reset "$reset_mutant"; then
+	fail "mutation reset-fail-closed survived its regression probe"
+else
+	pass "mutation reset-fail-closed is caught by the executed sink probe"
+fi
+
 echo
 echo "$pass_count passed, $fail_count failed"
 [[ "$fail_count" -eq 0 ]]

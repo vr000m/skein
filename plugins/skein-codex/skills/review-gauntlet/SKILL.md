@@ -235,7 +235,7 @@ Initialize `mutation_head="$round_head"` and `mutation_fingerprint="$round_finge
 
 After the fixer batch returns:
 
-- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, hand back to the operator the way Guardrail 1's structural halt does, and run the terminal design delta sink first so recorded deltas are not lost. This adds no ledger token and no stop condition and changes neither the ledger's counts nor the convergence decision.
+- **Seam tripwire (conductor-side, judgment, no ledger change).** After reconciling a round's findings, compare each finding with the files, functions, and seams the previous round's fixer touched. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. Do not dispatch another point fix. Build the next fixer brief as a contract-level redesign of the whole mechanism. Require a full Guardrail 8 contract statement for the entire mechanism and one change set that replaces the point patches. If the seam moves again after that redesign round, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
 - The fixer self-classifies each applied fix's blast radius as `local` or `structural`. Trust that classification; there is no deterministic backstop.
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
@@ -249,7 +249,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Collect each round fixer report's `design_deltas` into one run-level file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent.
+Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Collect each round fixer report's `design_deltas` into one run-level file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and forces a `status: none` resolution so no tracked plan is edited.
 
 ```bash
 # Carry the parsed --plan value and reviewed target into the terminal sink.
@@ -264,7 +264,18 @@ run_design_delta_sink() {
   HEAD_OID="${round_head:-${resolved_head_oid:-}}"
   branch_name=""
   case "$canonical_target" in
-    branch:*) branch_name="${canonical_target#branch:}" ;;
+    branch:*)
+      branch_name="${canonical_target#branch:}"
+      case "$branch_name" in
+        *...*) range_base="${branch_name%%...*}"; range_head="${branch_name##*...}" ;;
+        *..*) range_base="${branch_name%%..*}"; range_head="${branch_name##*..}" ;;
+        *) range_base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"; range_head="$branch_name" ;;
+      esac
+      HEAD_OID="$(git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}" 2>/dev/null || true)"
+      BASE_OID="$(git merge-base -- "$range_base" "$range_head" 2>/dev/null || true)"
+      [[ "$branch_name" == *..* ]] && branch_name="$range_head"
+      [[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+      ;;
     pr:*) branch_name="${pr_head_ref:-}" ;;
   esac
 
@@ -347,34 +358,34 @@ run_design_delta_sink() {
     fi
   fi
 
-  if ! : > "$delta_items_file"; then
+  if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
-  else
-    rounds_n="$(jq -r '.rounds | length' "$ledger_path" 2>/dev/null || true)"
-    [[ "$rounds_n" =~ ^[0-9]+$ ]] || rounds_n=0
-    for ((n = 1; n <= rounds_n; n++)); do
-      report="$run_dir/round-$n/fixer-report.json"
-      if ! gauntlet_assert_no_symlink "$report" design-delta-sink; then
-        echo "warning: unsafe fixer report skipped: $report" >&2
-        continue
-      fi
-      [[ -f "$report" ]] || continue
-      if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
-        echo "warning: malformed fixer report skipped: $report" >&2
-        continue
-      fi
-      if ! jq -e 'has("design_deltas")' "$report" >/dev/null; then
-        continue
-      fi
-      if ! jq -e '.design_deltas | type == "array"' "$report" >/dev/null; then
-        echo "warning: non-array design_deltas skipped: $report" >&2
-        continue
-      fi
-      if ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
-        echo "warning: unreadable design_deltas skipped: $report" >&2
-      fi
-    done
+    return 0
   fi
+  rounds_n="$(jq -r '.rounds | length' "$ledger_path" 2>/dev/null || true)"
+  [[ "$rounds_n" =~ ^[0-9]+$ ]] || rounds_n=0
+  for ((n = 1; n <= rounds_n; n++)); do
+    report="$run_dir/round-$n/fixer-report.json"
+    if ! gauntlet_assert_no_symlink "$report" design-delta-sink; then
+      echo "warning: unsafe fixer report skipped: $report" >&2
+      continue
+    fi
+    [[ -f "$report" ]] || continue
+    if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
+      echo "warning: malformed fixer report skipped: $report" >&2
+      continue
+    fi
+    if ! jq -e 'has("design_deltas")' "$report" >/dev/null; then
+      continue
+    fi
+    if ! jq -e '.design_deltas | type == "array"' "$report" >/dev/null; then
+      echo "warning: non-array design_deltas skipped: $report" >&2
+      continue
+    fi
+    if ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
+      echo "warning: unreadable design_deltas skipped: $report" >&2
+    fi
+  done
   if ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
     echo "warning: design delta collection failed; using an empty array" >&2
     printf '[]\n' > "$run_deltas_file" || return 0
@@ -385,7 +396,9 @@ run_design_delta_sink() {
   resolve_args=(--repo-root "$REPO_ROOT" --base "$resolver_base" --head "$resolver_head" --branch "$branch_name")
   [[ -n "$PLAN_PATH" ]] && resolve_args+=(--plan "$PLAN_PATH")
   resolution_reason=""
-  if ! "$SKILL_DIR"/lib/resolve-plan.sh "${resolve_args[@]}" > "$resolution_file"; then
+  if [[ "${design_delta_sidecar_only:-false}" == true ]]; then
+    jq -cn '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' > "$resolution_file" || return 0
+  elif ! "$SKILL_DIR"/lib/resolve-plan.sh "${resolve_args[@]}" > "$resolution_file"; then
     resolution_reason="plan resolver failed"
     echo "warning: design delta plan resolution failed; using sidecar" >&2
   elif ! jq -e 'type == "object" and (.status | IN("explicit", "unique", "none", "ambiguous")) and (.plan | type == "string") and (.reason | type == "string")' "$resolution_file" >/dev/null 2>&1; then
@@ -405,7 +418,7 @@ run_design_delta_sink() {
     echo "warning: design delta write failed; continuing terminal handoff" >&2
     return 0
   fi
-  if ! sink_name="$(jq -er '.sink' <<< "$sink_json" 2>/dev/null)"; then
+  if ! sink_name="$(jq -er 'select(type == "object" and (.sink | IN("none", "plan", "sidecar")) and (.path | type == "string") and (.reason | type == "string")) | .sink' <<< "$sink_json" 2>/dev/null)"; then
     echo "warning: unusable design delta sink result; continuing terminal handoff" >&2
   elif [[ "$sink_name" == "none" ]]; then
     echo "Design deltas: none"

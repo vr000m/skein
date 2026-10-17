@@ -100,7 +100,7 @@ Decisions (grilled 2026-10-16):
 - [x] Executed Codex resume test proves appended rounds retain one section identity, persisted scope keeps the original reviewed head after the branch moves, and symlinked fixer reports are refused. Writer tests also refuse symlinked resolution and delta inputs.
 
 ### Test Results
-- [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope, but should be tracked.
+- [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
 - [x] Review-fix coverage passes: Codex sink 11/11, Claude sink 23/23, writer/resolver 121/121, convergence ledger 214/214, skill shape 277/277, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
 - [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
@@ -119,8 +119,8 @@ Decisions (grilled 2026-10-16):
 
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
-- [x] Phase 3: Verify the Claude mirror (code-review fixes 6db9ffc; grill follow-up pending commit)
-- [ ] Phase 4: Gauntlet and PR
+- [ ] Phase 3: Verify the Claude mirror (done: code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review; open: final `just ci` after the gauntlet fixes)
+- [ ] Phase 4: Gauntlet and PR (gauntlet round 1 in progress; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
 

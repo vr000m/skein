@@ -181,20 +181,4 @@ if [[ "${#diff_candidates[@]}" -gt 1 ]]; then
 	exit 0
 fi
 
-all_candidates=()
-while IFS= read -r candidate; do
-	[[ -n "$candidate" ]] || continue
-	all_candidates+=("${candidate#"$REPO_ROOT"/}")
-done < <(find "$REPO_ROOT/docs/dev_plans" -maxdepth 1 -type f -name '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*.md' -print 2>/dev/null | sort)
-
-narrowed=()
-while IFS= read -r line; do
-	if [[ -n "$line" ]]; then
-		narrowed+=("$line")
-	fi
-done < <(filter_slug ${all_candidates[@]+"${all_candidates[@]}"})
-case "${#narrowed[@]}" in
-1) emit unique "${narrowed[0]}" "branch slug matched one plan" ;;
-0) emit none "" "no matching plan" ;;
-*) emit ambiguous "" "branch slug matched multiple plans" ;;
-esac
+emit none "" "no changed plan"

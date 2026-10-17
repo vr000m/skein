@@ -69,6 +69,81 @@ write_round() {
 		>"$run_dir/round-$round/fixer-report.json"
 }
 
+hash_file() {
+	shasum -a 256 "$1" | awk '{print $1}'
+}
+
+run_seam_sidecar_probe() {
+	local sink_fn="$1" repo plan before base_oid reviewed_head sidecar
+	repo="$WORKDIR/seam-sidecar-$RANDOM"
+	init_fixture "$repo"
+	plan="$repo/docs/dev_plans/$PLAN_NAME"
+	before="$(hash_file "$plan")"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 seam-delta
+		PLAN_PATH=""
+		design_delta_sidecar_only=true
+		run_design_delta_sink
+	) >"$repo/seam.out" 2>"$repo/seam.err"
+	sidecar="$(find "$repo/.gauntlet" -maxdepth 1 -name 'design-deltas-*.md' -print | head -1)"
+	[[ "$before" == "$(hash_file "$plan")" ]] &&
+		[[ -n "$sidecar" ]] && grep -Fq 'Summary: seam-delta' "$sidecar" &&
+		grep -Fq 'Design deltas: .gauntlet/design-deltas-' "$repo/seam.out"
+}
+
+run_reset_failure_probe() {
+	local sink_fn="$1" repo plan before base_oid reviewed_head
+	repo="$WORKDIR/reset-failure-$RANDOM"
+	init_fixture "$repo"
+	plan="$repo/docs/dev_plans/$PLAN_NAME"
+	before="$(hash_file "$plan")"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 current-delta
+		target_key="$(basename "${ledger_path%.json}")"
+		state_dir="$(dirname "$ledger_path")"
+		delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
+		jq -cn '{file:"stale",summary:"stale-delta",decision:"d",rationale:"r",cells:"c"}' >"$delta_items_file"
+		chmod 400 "$delta_items_file"
+		printf '[{"file":"stale","summary":"stale-array","decision":"d","rationale":"r","cells":"c"}]\n' \
+			>"$state_dir/design-deltas-$target_key.deltas.json"
+		printf '{"status":"unique","plan":"docs/dev_plans/%s","reason":"stale"}\n' "$PLAN_NAME" \
+			>"$state_dir/design-deltas-$target_key.resolution.json"
+		PLAN_PATH=""
+		run_design_delta_sink
+	) >"$repo/reset.out" 2>"$repo/reset.err"
+	[[ "$before" == "$(hash_file "$plan")" ]] &&
+		grep -Fq 'cannot initialize design delta collection' "$repo/reset.err" &&
+		! grep -Eq 'stale-delta|stale-array|current-delta' "$plan"
+}
+
 # A resume after the reviewed branch moves must reuse the first sink call's
 # immutable base/head scope and the ledger's stable run id.
 repo="$WORKDIR/resume"
@@ -117,6 +192,58 @@ check "resume: first delta remains present once" bash -c '[[ "$(grep -Fc "Summar
 check "resume: second delta is added to the same section" grep -Fq 'Summary: second-delta' "$plan"
 check "resume: one stable run section is present" bash -c '[[ "$(grep -c "^### Gauntlet design deltas (run codex-" "$1")" -eq 1 ]]' _ "$plan"
 check "resume: no sidecar is created after shell state is lost" bash -c '! compgen -G "$1/.gauntlet/design-deltas-*.md" >/dev/null' _ "$repo"
+
+# A literal range target is split before it reaches the resolver. The narrowed
+# branch slug is the range head, never the raw `base..head` string.
+repo="$WORKDIR/range"
+init_fixture "$repo"
+(
+	cd "$repo"
+	# shellcheck source=/dev/null
+	. "$LIB/gauntlet-common.sh"
+	# shellcheck source=/dev/null
+	. "$SINK_FN"
+	canonical_target=branch:main..feature/widget
+	ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+	"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" >/dev/null
+	run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+	jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+	mv "$ledger_path.tmp" "$ledger_path"
+	write_round "$run_dir" 1 range-delta
+	PLAN_PATH=""
+	unset round_base round_head resolved_base_oid resolved_head_oid pr_head_ref
+	run_design_delta_sink
+) >"$WORKDIR/range.out" 2>"$WORKDIR/range.err"
+check "range target: split head slug resolves the diff-touched plan" grep -Fq 'Summary: range-delta' "$repo/docs/dev_plans/$PLAN_NAME"
+check "range target: guarded Git revision calls avoid sidecar fallback" bash -c '! compgen -G "$1/.gauntlet/design-deltas-*.md" >/dev/null' _ "$repo"
+
+if run_seam_sidecar_probe "$SINK_FN"; then
+	pass "seam escalation: sink is sidecar-only and leaves the tracked plan unchanged"
+else
+	fail "seam escalation: sink edited the plan or lost its sidecar delta"
+fi
+
+if run_reset_failure_probe "$SINK_FN"; then
+	pass "reset failure: sink aborts before stale working files are consumed"
+else
+	fail "reset failure: sink consumed stale state or omitted its warning"
+fi
+
+seam_mutant="$WORKDIR/seam-mutant.sh"
+sed 's/if \[\[ "${design_delta_sidecar_only:-false}" == true \]\]; then/if false; then/' "$SINK_FN" >"$seam_mutant"
+if run_seam_sidecar_probe "$seam_mutant"; then
+	fail "mutation seam-sidecar-only survived its regression probe"
+else
+	pass "mutation seam-sidecar-only is caught by the executed sink probe"
+fi
+
+reset_mutant="$WORKDIR/reset-mutant.sh"
+sed '/cannot initialize design delta collection/{n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
+if run_reset_failure_probe "$reset_mutant"; then
+	fail "mutation reset-fail-closed survived its regression probe"
+else
+	pass "mutation reset-fail-closed is caught by the executed sink probe"
+fi
 
 # A fixer report is an input read, so a symlink at that path must be refused
 # and its external target must never be consumed as review data.

@@ -912,6 +912,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'HEAD_OID="${round_head:-${resolved_head_oid
 	"Codex mirror: terminal sink carries the reviewed head"
 assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${canonical_target#branch:}"' \
 	"Codex mirror: terminal sink derives an explicit branch from the review target"
+assert_grep_fixed "$CODEX_SKILL_MD" 'range_base="${branch_name%%..*}"; range_head="${branch_name##*..}"' \
+	"Codex mirror: terminal sink splits two-dot branch ranges"
+assert_grep_fixed "$CODEX_SKILL_MD" 'range_base="${branch_name%%...*}"; range_head="${branch_name##*...}"' \
+	"Codex mirror: terminal sink splits three-dot branch ranges"
+assert_grep_fixed "$CODEX_SKILL_MD" 'git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
+	"Codex mirror: range head resolution guards revision options"
+assert_grep_fixed "$CODEX_SKILL_MD" 'git merge-base -- "$range_base" "$range_head"' \
+	"Codex mirror: merge-base guards revision options"
+assert_grep_fixed "$CODEX_SKILL_MD" '[[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD' \
+	"Codex mirror: literal HEAD maps to the current branch for slug narrowing"
 assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${pr_head_ref:-}"' \
 	"Codex mirror: terminal sink carries the PR head ref"
 assert_grep_fixed "$CODEX_SKILL_MD" '--head "$resolver_head"' \
@@ -960,10 +970,20 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$(jq -r '\''.base_oid'\'' "$scope
 	"Codex mirror: resume reloads the immutable reviewed base from persisted scope"
 assert_not_grep "$CODEX_SKILL_MD" 'run_id=.*\. "\$SKILL_DIR"/lib/gauntlet-common\.sh;' \
 	"Codex mirror: run-id derivation does not re-source gauntlet-common.sh"
-assert_grep_fixed "$CODEX_SKILL_MD" 'hand back to the operator the way Guardrail 1' \
-	"Codex mirror: seam-tripwire handback follows the structural-halt path"
-assert_grep_fixed "$CODEX_SKILL_MD" 'run the terminal design delta sink first so recorded deltas are not lost' \
-	"Codex mirror: seam-tripwire handback preserves design deltas"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token.' \
+	"Codex mirror: terminal sink intro includes the seam-tripwire trigger"
+assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1' \
+	"Codex mirror: seam-tripwire handback is sidecar-only, renders requested reports, and follows the structural halt"
+assert_grep_fixed "$CODEX_SKILL_MD" '[[ "${design_delta_sidecar_only:-false}" == true ]]' \
+	"Codex mirror: seam-tripwire mode forces the sink away from tracked plans"
+assert_grep_fixed "$CODEX_SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
+	"Codex mirror: seam-tripwire mode supplies an explicit sidecar resolution"
+assert_grep_fixed "$CODEX_SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
+	"Codex mirror: sink resets every ledger-adjacent working file as one precondition"
+assert_grep_fixed "$CODEX_SKILL_MD" 'cannot initialize design delta collection; continuing terminal handoff' \
+	"Codex mirror: reset failure warns before returning"
+assert_grep_fixed "$CODEX_SKILL_MD" '(.path | type == "string") and (.reason | type == "string")' \
+	"Codex mirror: sink consumer validates the stable result envelope"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Every `design_deltas` field value must be a string' \
 	"Codex mirror: fixer schema requires string-valued design deltas"
 
@@ -972,8 +992,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'Every `design_deltas` field value must be a
 # its own pins; the Codex pins above say nothing about it.
 assert_grep_fixed "$SKILL_MD" 'PLAN_PATH="${PLAN_PATH:-}"' \
 	"Claude mirror: terminal sink carries the parsed --plan value"
-assert_grep_fixed "$SKILL_MD" 'gh pr view "${canonical_target#pr:}"' \
+assert_grep_fixed "$SKILL_MD" 'gh pr view "$pr_number"' \
 	"Claude mirror: terminal sink resolves a PR target from the PR itself"
+assert_grep_fixed "$SKILL_MD" 'if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then' \
+	"Claude mirror: terminal sink validates the PR number before calling gh"
+assert_grep_fixed "$SKILL_MD" 'git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
+	"Claude mirror: range head resolution guards revision options"
+assert_grep_fixed "$SKILL_MD" 'git merge-base --end-of-options "$range_base" "$range_head"' \
+	"Claude mirror: merge-base guards revision options"
+assert_grep_fixed "$SKILL_MD" 'if [[ ! "$round_count" =~ ^[0-9]+$ ]]; then' \
+	"Claude mirror: sink requires an integer ledger round count"
 assert_grep_fixed "$SKILL_MD" 'branch_name="${canonical_target#branch:}"' \
 	"Claude mirror: terminal sink derives an explicit branch from the review target"
 assert_grep_fixed "$SKILL_MD" '--head "$resolver_head"' \
@@ -998,8 +1026,18 @@ assert_grep_fixed "$SKILL_MD" 'report="$run_dir/round-$round_i/fixer-report.json
 	"Claude mirror: sink enumerates rounds from the ledger"
 assert_not_grep "$SKILL_MD" 'for report in "\$run_dir"/round-\*' \
 	"Claude mirror: sink never globs round directories (stale rounds would leak deltas)"
-assert_grep_fixed "$SKILL_MD" '[terminal design delta sink](#terminal-design-delta-sink)' \
-	"Claude mirror: the seam-tripwire escalation runs the terminal design delta sink"
+assert_grep_fixed "$SKILL_MD" 'Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token.' \
+	"Claude mirror: terminal sink intro includes the seam-tripwire trigger"
+assert_grep_fixed "$SKILL_MD" 'If the seam moves again after that redesign round, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1'"'"'s structural halt does; this adds no ledger token and changes neither the ledger'"'"'s counts nor the convergence decision.' \
+	"Claude mirror: seam-tripwire handback uses the one cross-mirror sentence"
+assert_grep_fixed "$SKILL_MD" '[[ "${design_delta_sidecar_only:-false}" == true ]]' \
+	"Claude mirror: seam-tripwire mode forces the sink away from tracked plans"
+assert_grep_fixed "$SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
+	"Claude mirror: seam-tripwire mode supplies an explicit sidecar resolution"
+assert_grep_fixed "$SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
+	"Claude mirror: sink resets every ledger-adjacent working file as one precondition"
+assert_grep_fixed "$SKILL_MD" '(.path | type == "string") and (.reason | type == "string")' \
+	"Claude mirror: sink consumer validates the stable result envelope"
 assert_grep_fixed "$SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
 	"Claude mirror: sink keeps working files beside the ledger, not in the run dir"
 assert_grep_fixed "$SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"' \
