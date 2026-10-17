@@ -100,7 +100,7 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`. For each round, set `round_n` from the ledger's `.rounds | length` plus one, then call `--prepare-round "$round_n" --ledger "$ledger_path"` before creating or writing the round directory. This guarded operation clears only that unfinished round's directory, preserving all completed rounds. A guard refusal exits non-zero: stop before the round and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` retain their existing stale-run cleanup behavior:
+**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`. For each round, set `round_n` from the ledger's `.rounds | length` plus one, then call `--prepare-round "$round_n" --ledger "$ledger_path"` before creating or writing the round directory. This guarded operation clears only that unfinished round's directory, preserving all completed rounds. A guard refusal exits non-zero: stop before the round and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` discard every recognized writer-owned run entry (`round-*` plus `open-guardrail8.jsonl`) while refusing unknown entries or symlinks:
 
 ```bash
 run_dir="$("$SKILL_DIR"/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
@@ -726,9 +726,23 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
 - **Convergence decision** (after the status rows are printed for the round):
   ```
   . "$SKILL_DIR"/lib/gauntlet-common.sh
+  . "$SKILL_DIR"/lib/state-path-guard.sh
+  derive_quarantine_count() {
+    local open_file="$run_dir/open-guardrail8.jsonl" open_count=0
+    if [[ -e "$open_file" || -L "$open_file" ]]; then
+      gauntlet_assert_no_symlink "$open_file" guardrail8-quarantine || return 1
+      if [[ ! -f "$open_file" ]]; then
+        echo "review-gauntlet: open Guardrail 8 state is not a regular file" >&2
+        return 1
+      fi
+      open_count="$(awk 'END { print NR + 0 }' "$open_file")" || return 1
+    fi
+    printf '%s\n' "$((design_conflict_count + open_count))"
+  }
   canonical_target="<pr:N-or-branch:name>"
   ledger_path="$(gc_ledger_path "$canonical_target" codex)"
-  ledger_args=(--ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N> --present-keys "$present_keys_file")
+  quarantine_count="$(derive_quarantine_count)" || exit 1
+  ledger_args=(--ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine "$quarantine_count" --unresolved <N> --present-keys "$present_keys_file")
   if [[ -s "$claimed_keys_file" ]]; then
     ledger_args+=(--claimed-keys "$claimed_keys_file")
   fi

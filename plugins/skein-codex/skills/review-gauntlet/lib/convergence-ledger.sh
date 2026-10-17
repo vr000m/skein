@@ -35,11 +35,13 @@
 #
 # A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
 # prior run's stale round dir and would collide with the new run's `round-1/`.
-# Both `--init` and `--init --force` therefore remove it, and the stale sibling
+# Both `--init` and `--init --force` therefore remove it, including the
+# writer-owned `open-guardrail8.jsonl` file, and remove the stale sibling
 # `<ledger-stem>.report.html`, after the ledger-path guards pass and right
 # before they write the fresh ledger — but only when the ledger's parent dir is
 # named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
-# entries, and only when the report is a regular non-symlink file. `--init`
+# entries and optional `open-guardrail8.jsonl`, and only when the report is a
+# regular non-symlink file. `--init`
 # refused (exit 6, or a guard refusal) touches nothing.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
@@ -681,9 +683,9 @@ round_dir_is_runtime_owned() {
 	return 0
 }
 
-# run_dir_is_rounds_only <dir> — 0 when <dir> is a directory whose every entry
-# (dotfiles included) is named `round-*`, i.e. it has the shape --run-dir and
-# the orchestrator's per-round `mkdir -p` create, and nothing else.
+# run_dir_is_rounds_only <dir> — 0 when <dir> contains only writer-owned run
+# entries: runtime-owned `round-*` directories plus the optional regular,
+# non-symlink `open-guardrail8.jsonl` written by Guardrail 4.
 run_dir_is_rounds_only() {
 	local dir="$1" entry restore
 	local -a entries=()
@@ -693,8 +695,11 @@ run_dir_is_rounds_only() {
 	entries=("$dir"/*)
 	eval "$restore"
 	for entry in ${entries[@]+"${entries[@]}"}; do
-		[[ "${entry##*/}" == round-* ]] || return 1
-		round_dir_is_runtime_owned "$entry" || return 1
+		case "${entry##*/}" in
+		round-*) round_dir_is_runtime_owned "$entry" || return 1 ;;
+		open-guardrail8.jsonl) [[ -f "$entry" && ! -L "$entry" ]] || return 1 ;;
+		*) return 1 ;;
+		esac
 	done
 	return 0
 }
@@ -708,13 +713,14 @@ run_dir_is_rounds_only() {
 # Deletes nothing unless the ledger's parent directory is named `.gauntlet`
 # and its basename starts with `ledger-` (the namespace gc_ledger_path owns;
 # otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
-# dir is removed only when it contains nothing but `round-*` entries; any other
-# shape is left in place with a warning. A symlinked round dir is refused under
+# dir is removed only when it contains recognized writer-owned entries; any
+# other shape is left in place with a warning. A symlinked round dir or
+# `open-guardrail8.jsonl` is refused under
 # the state-path guard (exit 1, nothing removed). The report is removed only
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
-	local run_dir report ledger_name
+	local run_dir report ledger_name open_guardrail8
 	run_dir="$(ledger_run_dir "$1")" || return 0
 	ledger_in_gauntlet_dir "$1" || return 0
 	ledger_name="${1##*/}"
@@ -725,6 +731,10 @@ clear_stale_run_dir() {
 	if [[ -e "$run_dir" || -L "$run_dir" ]]; then
 		if ! ledger_assert_no_symlink "$run_dir"; then
 			exit 1
+		fi
+		open_guardrail8="$run_dir/open-guardrail8.jsonl"
+		if [[ -e "$open_guardrail8" || -L "$open_guardrail8" ]]; then
+			ledger_assert_no_symlink "$open_guardrail8" || exit 1
 		fi
 		if run_dir_is_rounds_only "$run_dir"; then
 			rm -rf -- "$run_dir"

@@ -78,7 +78,7 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` retain their existing stale-run cleanup behavior:
+**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` discard every recognized writer-owned run entry (`round-*` plus `open-guardrail8.jsonl`) while refusing unknown entries or symlinks:
 
 ```bash
 run_dir="$("${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
@@ -589,9 +589,23 @@ When the plan is silent on a new design consideration, check its scope. If it is
   Then call the ledger:
   ```
   . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/gauntlet-common.sh
+  . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh
+  derive_quarantine_count() {
+    local open_file="$run_dir/open-guardrail8.jsonl" open_count=0
+    if [[ -e "$open_file" || -L "$open_file" ]]; then
+      gauntlet_assert_no_symlink "$open_file" guardrail8-quarantine || return 1
+      if [[ ! -f "$open_file" ]]; then
+        echo "review-gauntlet: open Guardrail 8 state is not a regular file" >&2
+        return 1
+      fi
+      open_count="$(awk 'END { print NR + 0 }' "$open_file")" || return 1
+    fi
+    printf '%s\n' "$((design_conflict_count + open_count))"
+  }
   canonical_target="<pr:N-or-branch:name>"
   ledger_path="$(gc_ledger_path "$canonical_target" claude)"
-  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine <N> --unresolved <N> --present-keys "$present_keys_file" [--claimed-keys "$claimed_keys_file"]
+  quarantine_count="$(derive_quarantine_count)" || exit 1
+  "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --ledger "$ledger_path" --target "$canonical_target" --count <N> --structural <N> --local <N> --pass-type <full|confirm> --quarantine "$quarantine_count" --unresolved <N> --present-keys "$present_keys_file" [--claimed-keys "$claimed_keys_file"]
   ```
   Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.
   **`--present-keys` is passed on every round, including a clean full pass, where the file is legitimately empty** — omitting it on a full pass suppresses promotion (the ledger's `$present_supplied` gate treats an omitted flag differently from a supplied-but-empty file; see `convergence-ledger.sh`'s header). **`--claimed-keys` is passed only when `$claimed_keys_file` is non-empty, and never without `--present-keys`** — passing one without the other is a usage error (exit 2). Both flags are optional as a *pair*: omitting both on a ledger that has never used either (no `fixed_keys` on disk yet) reproduces the exact pre-Phase-3 decision behavior; once used, they persist for the life of that ledger. **A quarantined or deferred finding must never appear in `claimed`** (Guardrail 1). `gc_ledger_path` is a shell function, not an executable — every call site must source `gauntlet-common.sh` first, as shown above and in [Target and Resume Ledger](#target-and-resume-ledger).

@@ -1030,6 +1030,8 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'Every subsequent round sets `--quarantine <
 	"Codex mirror: every later round includes durable Guardrail 8 quarantine"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.' \
 	"Codex mirror: convergence call derives quarantine from durable state"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Plain `--init` and `--init --force` discard every recognized writer-owned run entry (`round-*` plus `open-guardrail8.jsonl`) while refusing unknown entries or symlinks' \
+	"Codex mirror: fresh init discards all and only recognized run-owned entries"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
 	"Codex mirror: documents the rendered design-delta structure"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
@@ -1051,16 +1053,65 @@ else
 fi
 rm -f "$guardrail_quarantine_mutant"
 
-guardrail8_count_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-guardrail8-count.XXXXXX")"
-printf '%s\n%s\n' '{"key":"a","file":"a","summary":"a","round":1}' '{"key":"b","file":"b","summary":"b","round":2}' >"$guardrail8_count_file"
-guardrail8_open_count="$(awk 'END { print NR + 0 }' "$guardrail8_count_file")"
-design_conflict_count=3
-if [[ "$((design_conflict_count + guardrail8_open_count))" -eq 5 ]]; then
-	pass "Codex mirror: durable Guardrail 8 lines contribute to every quarantine tally"
+run_guardrail8_quarantine_derivation_probe() {
+	local skill_md="$1" function_file repo run_dir open_file without_state with_state
+	function_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-guardrail8-function.XXXXXX")"
+	sed -n '/^  derive_quarantine_count() {$/,/^  }$/p' "$skill_md" | sed 's/^  //' >"$function_file"
+	if [[ ! -s "$function_file" ]] || ! grep -Fq 'design_conflict_count + open_count' "$function_file"; then
+		rm -f "$function_file"
+		return 1
+	fi
+	repo="$(mktemp -d "${TMPDIR:-/tmp}/gauntlet-guardrail8-repo.XXXXXX")"
+	git init -q "$repo"
+	run_dir="$repo/.gauntlet/ledger-test"
+	mkdir -p "$run_dir"
+	open_file="$run_dir/open-guardrail8.jsonl"
+	without_state="$({
+		# shellcheck source=/dev/null
+		. "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
+		# shellcheck source=/dev/null
+		. "$function_file"
+		# shellcheck disable=SC2034  # consumed by the extracted function
+		design_conflict_count=3
+		derive_quarantine_count
+	})" || {
+		rm -rf "$repo"
+		rm -f "$function_file"
+		return 1
+	}
+	printf '%s\n%s\n' '{"key":"a"}' '{"key":"b"}' >"$open_file"
+	with_state="$({
+		# shellcheck source=/dev/null
+		. "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
+		# shellcheck source=/dev/null
+		. "$function_file"
+		# shellcheck disable=SC2034  # consumed by the extracted function
+		design_conflict_count=3
+		derive_quarantine_count
+	})" || {
+		rm -rf "$repo"
+		rm -f "$function_file"
+		return 1
+	}
+	rm -rf "$repo"
+	rm -f "$function_file"
+	[[ "$without_state" -eq 3 && "$with_state" -eq 5 ]]
+}
+
+if run_guardrail8_quarantine_derivation_probe "$CODEX_SKILL_MD"; then
+	pass "Codex mirror: executable durable Guardrail 8 derivation contributes open lines to quarantine"
 else
-	fail "Codex mirror: durable Guardrail 8 tally execution"
+	fail "Codex mirror: executable durable Guardrail 8 quarantine derivation"
 fi
-rm -f "$guardrail8_count_file"
+
+guardrail8_derivation_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-derivation-mutant.XXXXXX")"
+sed 's/design_conflict_count + open_count/design_conflict_count + 0/' "$CODEX_SKILL_MD" >"$guardrail8_derivation_mutant"
+if run_guardrail8_quarantine_derivation_probe "$guardrail8_derivation_mutant"; then
+	fail "Codex mirror: mutation dropping durable Guardrail 8 lines survived the executable derivation probe"
+else
+	pass "Codex mirror: mutation dropping durable Guardrail 8 lines is caught by the executable derivation probe"
+fi
+rm -f "$guardrail8_derivation_mutant"
 
 tripwire_line="$(grep -nF 'Before dispatching this round'"'"'s fixer, after reconciling' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
 fixer_dispatch_line="$(grep -nF 'run the trivial-fix applier before dispatching the fixer subagent for the same round' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
@@ -1206,7 +1257,9 @@ assert_not_grep "$SKILL_MD" 'run_id=.*gauntlet-common\.sh;' \
 	"Claude mirror: run-id derivation does not re-source gauntlet-common.sh"
 assert_not_grep "$SKILL_MD" 'shasum -a 256 "\$ledger_path"' \
 	"Claude mirror: run id uses gc_sha1, not a bare shasum"
-assert_not_grep "$SKILL_MD" '_file="\$run_dir/' \
+# open_file is the one read-only $run_dir path (the durable Guardrail 8 queue read by
+# derive_quarantine_count), so the pattern excludes names ending in "n_file".
+assert_not_grep "$SKILL_MD" '[^n]_file="\$run_dir/' \
 	"Claude mirror: sink writes no working file into the run dir (it would block stale-run cleanup)"
 
 # ---------------------------------------------------------------------------

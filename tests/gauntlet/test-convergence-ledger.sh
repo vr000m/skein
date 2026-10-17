@@ -26,6 +26,7 @@ set -euo pipefail
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh"
 CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
+CODEX_LEDGER_SCRIPT="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh"
 
 # gc_hash FILE — hash via gauntlet-common.sh's own gc_sha1 helper (not a
 # hand-rolled shasum/sha1sum fallback) so this test never drifts from the
@@ -743,9 +744,10 @@ else
 	fail "--run-dir proceeded despite a symlinked report path"
 fi
 
-# --init and --init --force clear a stale <stem>/ (round-* entries only) and
-# the stale <stem>.report.html, and nothing else. They only ever act inside a
-# directory named .gauntlet (the shape gc_ledger_path produces).
+# --init and --init --force clear a stale <stem>/ containing recognized
+# writer-owned entries (round-* plus open-guardrail8.jsonl) and the stale
+# <stem>.report.html, and nothing else. They only ever act inside a directory
+# named .gauntlet (the shape gc_ledger_path produces).
 RD_G="$RD_BASE/.gauntlet"
 mkdir -p "$RD_G"
 seed_stale() {
@@ -753,6 +755,101 @@ seed_stale() {
 	printf '{}\n' >"$1/round-1/reconciled.json"
 	printf '{}\n' >"$1/round-2/reconciled.json"
 }
+
+run_open_guardrail8_cleanup_probe() {
+	local script="$1" mode="$2" repo ledger stem
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-$mode.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	if [[ "$mode" == force ]]; then
+		printf '{"target":"old"}\n' >"$ledger"
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
+	fi
+	[[ -f "$ledger" && ! -e "$stem" ]]
+}
+
+run_open_guardrail8_unknown_probe() {
+	local script="$1" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-unknown.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	printf 'keep\n' >"$stem/unknown.txt"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 0 && -f "$stem/open-guardrail8.jsonl" && -f "$stem/unknown.txt" ]] &&
+		grep -Fq 'leaving' "$TMP_SINK"
+}
+
+run_open_guardrail8_symlink_probe() {
+	local script="$1" repo ledger stem outside before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-symlink.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	outside="$repo/outside.jsonl"
+	printf 'precious\n' >"$outside"
+	before="$(shasum -a 256 <"$outside")"
+	ln -s "$outside" "$stem/open-guardrail8.jsonl"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -L "$stem/open-guardrail8.jsonl" && "$before" == "$(shasum -a 256 <"$outside")" ]] &&
+		grep -Fq 'refusing to operate on symlink' "$TMP_SINK"
+}
+
+if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" plain; then
+	pass "Codex --init clears round-* plus open-guardrail8.jsonl"
+else
+	fail "Codex --init did not clear every writer-owned run file"
+fi
+if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" force; then
+	pass "Codex --init --force clears round-* plus open-guardrail8.jsonl"
+else
+	fail "Codex --init --force did not clear every writer-owned run file"
+fi
+if run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup preserves open-guardrail8.jsonl when an unknown entry blocks ownership"
+else
+	fail "Codex stale cleanup removed or ignored unknown run-dir content"
+fi
+if run_open_guardrail8_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a symlinked open-guardrail8.jsonl"
+else
+	fail "Codex stale cleanup did not refuse a symlinked open-guardrail8.jsonl"
+fi
+RD_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_MUTANT_LIB/ledger-promote.jq"
+sed 's/open-guardrail8\.jsonl) /open-guardrail8-removed.jsonl) /' "$CODEX_LEDGER_SCRIPT" >"$RD_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing open-guardrail8.jsonl ownership survived stale-cleanup regression"
+else
+	pass "mutation removing open-guardrail8.jsonl ownership is caught by stale-cleanup regression"
+fi
 RD_I="$RD_G/ledger-init.json"
 RD_I_STEM="$RD_G/ledger-init"
 seed_stale "$RD_I_STEM"

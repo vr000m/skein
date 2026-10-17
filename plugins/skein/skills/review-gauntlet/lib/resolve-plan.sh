@@ -154,12 +154,22 @@ filter_slug() {
 	done
 }
 
-diff_output="$($GIT -C "$REPO_ROOT" diff --name-only --diff-filter=d "$base_oid"..."$head_oid" 2>/dev/null)" || die_env "cannot diff base '$BASE' against head '$HEAD'"
 diff_candidates=()
-while IFS= read -r candidate; do
-	[[ -n "$candidate" ]] || continue
+diff_succeeded=0
+while IFS= read -r -d '' candidate; do
+	if [[ -z "$candidate" ]]; then
+		diff_succeeded=1
+		continue
+	fi
 	is_plan_candidate "$candidate" && diff_candidates+=("$candidate")
-done <<<"$diff_output"
+done < <(
+	if "$GIT" -C "$REPO_ROOT" -c core.quotepath=false diff --name-only -z --diff-filter=d "$base_oid"..."$head_oid" 2>/dev/null; then
+		# Git cannot emit an empty pathname. A second NUL after its final path is
+		# therefore an unambiguous success record that survives process substitution.
+		printf '\0'
+	fi
+)
+[[ "$diff_succeeded" -eq 1 ]] || die_env "cannot diff base '$BASE' against head '$HEAD'"
 
 if [[ "${#diff_candidates[@]}" -eq 1 ]]; then
 	emit unique "${diff_candidates[0]}" "one changed plan"

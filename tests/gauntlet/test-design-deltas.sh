@@ -63,7 +63,7 @@ resolve_case() {
 }
 
 run_resolver_tests() {
-	local repo out rc base_oid feature_oid
+	local repo out rc base_oid feature_oid real_git shim_dir
 
 	repo="$WORKDIR/explicit"
 	init_repo "$repo"
@@ -100,6 +100,29 @@ run_resolver_tests() {
 	out="$(resolve_case "$repo" feature/widget)"
 	assert_json "$out" '.status == "unique" and .plan == "docs/dev_plans/20261016-feature-widget.md"' "resolve one changed plan"
 
+	real_git="$(command -v git)"
+	shim_dir="$repo/failing-git"
+	mkdir -p "$shim_dir"
+	cat >"$shim_dir/git" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+	if [[ "$arg" == diff ]]; then
+		exit 70
+	fi
+done
+exec "$REAL_GIT" "$@"
+SH
+	chmod +x "$shim_dir/git"
+	set +e
+	REAL_GIT="$real_git" PATH="$shim_dir:$PATH" "$RESOLVER" --repo-root "$repo" --base main --branch feature/widget >"$repo/failing-diff.out" 2>"$repo/failing-diff.err"
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 2 ]] && grep -Fq "cannot diff base 'main' against head 'HEAD'" "$repo/failing-diff.err"; then
+		pass "resolve preserves environment-error exit 2 when git diff fails after ref validation"
+	else
+		fail "resolve failing git diff returned rc=$rc without the environment-error diagnostic"
+	fi
+
 	repo="$WORKDIR/diff-narrow"
 	init_repo "$repo"
 	git -C "$repo" switch -qc feature/widget
@@ -117,6 +140,23 @@ run_resolver_tests() {
 	commit_plans "$repo" plans
 	out="$(resolve_case "$repo" feature/shared)"
 	assert_json "$out" '.status == "ambiguous" and .plan == ""' "resolve ambiguous changed plans"
+
+	repo="$WORKDIR/diff-nonascii-unique"
+	init_repo "$repo"
+	git -C "$repo" switch -qc feature/cafe
+	add_plan "$repo" '20261016-feature-café.md'
+	commit_plans "$repo" plan
+	out="$(resolve_case "$repo" feature/cafe)"
+	assert_json "$out" '.status == "unique" and .plan == "docs/dev_plans/20261016-feature-café.md"' "resolve one non-ASCII-named changed plan without git C-quoting"
+
+	repo="$WORKDIR/diff-nonascii-ambiguous"
+	init_repo "$repo"
+	git -C "$repo" switch -qc feature/shared
+	add_plan "$repo" '20261016-feature-shared-café.md'
+	add_plan "$repo" 20261016-feature-shared-plain.md
+	commit_plans "$repo" plans
+	out="$(resolve_case "$repo" feature/shared)"
+	assert_json "$out" '.status == "ambiguous" and .plan == ""' "resolve counts non-ASCII and ASCII changed plans as ambiguous"
 
 	repo="$WORKDIR/zero-substring-ui"
 	init_repo "$repo"
@@ -345,6 +385,64 @@ run_replacement_test() {
 		pass "same run replacement is stable and unique"
 	else
 		fail "same run replacement is not stable and unique"
+	fi
+}
+
+run_foreign_boundary_probe() {
+	local writer="$1" label content repo plan fixture suffix_before suffix_after once twice count
+	while IFS='|' read -r label content; do
+		repo="$WORKDIR/foreign-boundary-${label}-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 1 one-below
+		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+		write_standard_deltas "$repo" original
+		run_writer_id "$writer" "$repo" run-one >/dev/null || return 1
+		fixture="$repo/foreign.md"
+		printf '%b\n' "$content" >"$fixture"
+		awk -v fixture="$fixture" '
+		  { print }
+		  !inserted && /^  - Cells: / {
+		    print ""
+		    while ((getline line < fixture) > 0) print line
+		    close(fixture)
+		    inserted = 1
+		  }
+		' "$plan" >"$plan.tmp"
+		mv "$plan.tmp" "$plan"
+		suffix_before="$(awk -v first="$(sed -n '1p' "$fixture")" 'seen || $0 == first { seen=1; print }' "$plan" | shasum -a 256 | awk '{print $1}')"
+		write_standard_deltas "$repo" replacement
+		run_writer_id "$writer" "$repo" run-one >/dev/null || return 1
+		suffix_after="$(awk -v first="$(sed -n '1p' "$fixture")" 'seen || $0 == first { seen=1; print }' "$plan" | shasum -a 256 | awk '{print $1}')"
+		[[ "$suffix_before" == "$suffix_after" ]] || return 1
+		once="$(hash_file "$plan")"
+		run_writer_id "$writer" "$repo" run-one >/dev/null || return 1
+		twice="$(hash_file "$plan")"
+		[[ "$once" == "$twice" ]] || return 1
+		write_standard_deltas "$repo" second-run
+		run_writer_id "$writer" "$repo" run-two >/dev/null || return 1
+		count="$(grep -Ec '^### Gauntlet design deltas \(run run-(one|two)\)$' "$plan")"
+		[[ "$count" -eq 2 ]] || return 1
+	done <<'EOF'
+setext|Unrelated subsection\n--------------------\nKeep me.
+atx-one| # One-space heading\nKeep me.
+atx-two|  ## Two-space heading\nKeep me.
+atx-three|   ### Three-space heading\nKeep me.
+atx-four|#### Level four\nKeep me.
+table|| Column | Value |\n| --- | --- |\n| A | B |
+comment|<!-- unrelated comment -->\nKeep me.
+fence|```text\nfenced bytes\n```\nKeep me.
+blockquote|> quoted bytes\nKeep me.
+list|- unrelated item\nKeep me.
+prose|Plain prose must survive.\nKeep me.
+EOF
+}
+
+run_foreign_boundary_test() {
+	if run_foreign_boundary_probe "$WRITER"; then
+		pass "same-run replacement preserves every non-rendered Markdown boundary byte-for-byte"
+	else
+		fail "same-run replacement consumed content outside the rendered section shape"
 	fi
 }
 
@@ -882,7 +980,7 @@ run_marker_differential_probe() {
 			pids=()
 		fi
 	done <"$expectations"
-	for pid in "${pids[@]}"; do
+	for pid in ${pids[@]+"${pids[@]}"}; do
 		wait "$pid" || batch_failed=1
 	done
 	[[ "$batch_failed" -eq 0 ]] || return 1
@@ -919,6 +1017,83 @@ run_marker_differential_test() {
 		pass "writer and marker.py agree across all 672 fence and marker-state cells"
 	else
 		fail "writer and marker.py disagree across the full fence and marker state space"
+	fi
+}
+
+run_unicode_marker_candidate_probe() {
+	local writer="$1" repo plan fixture_dir expectations fixture_name label expected_sink expected_authority authority_count out before
+	repo="$WORKDIR/unicode-marker-candidates-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	fixture_dir="$repo/unicode-marker-originals"
+	mkdir -p "$fixture_dir"
+	write_standard_deltas "$repo" first
+	while IFS='|' read -r fixture_name label expected_sink expected_authority; do
+		plan="$fixture_dir/$fixture_name"
+		case "$label" in
+		fullwidth-date)
+			printf '# Plan\n\n<!-- reviewed: ２０２６-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		fullwidth-hash)
+			printf '# Plan\n\n<!-- reviewed: 2026-10-16 @ ａaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		arabic-digits)
+			printf '# Plan\n\n<!-- reviewed: ٢٠٢٦-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		nbsp-marker)
+			printf '# Plan\n\n<!-- reviewed:\302\2402026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		nonmarker-em-dash)
+			printf '# Plan \342\200\224 ordinary Unicode\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		lookalike-below)
+			printf '# Plan\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n\n<!-- reviewed: ２０２６-10-17 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->\n' >"$plan"
+			;;
+		lookalike-above)
+			printf '# Plan\n\n<!-- reviewed: ２０２６-10-15 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			;;
+		esac
+		cp "$plan" "$repo/docs/dev_plans/$fixture_name"
+	done <<'EOF'
+case-unicode-01.md|fullwidth-date|sidecar|1
+case-unicode-02.md|fullwidth-hash|sidecar|0
+case-unicode-03.md|arabic-digits|sidecar|1
+case-unicode-04.md|nbsp-marker|sidecar|0
+case-unicode-05.md|nonmarker-em-dash|plan|1
+case-unicode-06.md|lookalike-below|sidecar|2
+case-unicode-07.md|lookalike-above|sidecar|2
+EOF
+	expectations="$repo/unicode-marker-authority.tsv"
+	marker_authority_table "$fixture_dir" >"$expectations" || return 1
+	[[ "$(wc -l <"$expectations" | tr -d ' ')" -eq 7 ]] || return 1
+	while IFS='|' read -r fixture_name label expected_sink expected_authority; do
+		plan="$repo/docs/dev_plans/$fixture_name"
+		before="$(hash_file "$plan")"
+		authority_count="$(awk -F '\t' -v name="$fixture_name" '$1 == name { print $2 }' "$expectations")"
+		[[ "$authority_count" == "$expected_authority" ]] || return 1
+		printf '{"status":"unique","plan":"docs/dev_plans/%s","reason":"test"}\n' "$fixture_name" >"$repo/resolution.json"
+		out="$(run_writer_id "$writer" "$repo" "run-$label")" || return 1
+		[[ "$(jq -r '.sink' <<<"$out")" == "$expected_sink" ]] || return 1
+		if [[ "$expected_sink" == sidecar ]]; then
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		else
+			grep -Fq 'Summary: "first"' "$plan" || return 1
+		fi
+	done <<'EOF'
+case-unicode-01.md|fullwidth-date|sidecar|1
+case-unicode-02.md|fullwidth-hash|sidecar|0
+case-unicode-03.md|arabic-digits|sidecar|1
+case-unicode-04.md|nbsp-marker|sidecar|0
+case-unicode-05.md|nonmarker-em-dash|plan|1
+case-unicode-06.md|lookalike-below|sidecar|2
+case-unicode-07.md|lookalike-above|sidecar|2
+EOF
+}
+
+run_unicode_marker_candidate_test() {
+	if run_unicode_marker_candidate_probe "$WRITER"; then
+		pass "marker.py authority plus non-ASCII marker-candidate cells fail closed without rejecting ordinary Unicode"
+	else
+		fail "non-ASCII marker-candidate differential contract"
 	fi
 }
 
@@ -1249,6 +1424,18 @@ run_head_probe() {
 	jq -e '.status == "unique" and (.plan | contains("widget"))' >/dev/null <<<"$out"
 }
 
+run_quoted_path_probe() {
+	local resolver="$1" repo out
+	repo="$WORKDIR/quoted-path-probe-${resolver##*/}-$RANDOM"
+	init_repo "$repo"
+	git -C "$repo" switch -qc feature/shared
+	add_plan "$repo" '20261016-feature-shared-café.md'
+	add_plan "$repo" 20261016-feature-shared-plain.md
+	commit_plans "$repo" plans
+	out="$("$resolver" --repo-root "$repo" --base main --branch feature/shared)"
+	jq -e '.status == "ambiguous" and .plan == ""' >/dev/null <<<"$out"
+}
+
 run_gnu_stat_probe() {
 	local writer="$1" repo plan out shim_dir
 	repo="$WORKDIR/gnu-stat-${writer##*/}-$RANDOM"
@@ -1330,7 +1517,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant
+	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant
 	mutant_dir="$WORKDIR/mutants"
 	mkdir -p "$mutant_dir"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
@@ -1360,7 +1547,8 @@ run_mutation_checks() {
 	mutation_expect_failure marker-hex-case run_marker_format_probe "$hexcase_mutant"
 
 	interval_mutant="$mutant_dir/interval-writer.sh"
-	sed 's@return line ~ /^(#|##|###) /@return line ~ /^#{1,3} /@' "$WRITER" >"$interval_mutant"
+	sed '/function rendered_token(line, prefix, token) {/a\
+      if (line ~ /^x{1,3}$/) return 0' "$WRITER" >"$interval_mutant"
 	chmod +x "$interval_mutant"
 	mutation_expect_failure awk-interval run_awk_interval_probe "$interval_mutant"
 
@@ -1377,7 +1565,8 @@ run_mutation_checks() {
 	mutation_expect_failure sidecar-plan-unchanged run_sidecar_plan_unchanged_probe "$sidecar_plan_mutant"
 
 	fenced_mutant="$mutant_dir/fenced-upsert-writer.sh"
-	sed '/if (fence_line(lines\[i\]) || in_fence) continue/d' "$WRITER" >"$fenced_mutant"
+	sed -e '/if (fence_line(lines\[i\]) || in_fence) continue/d' \
+		-e 's/candidate_end = rendered_section_end(i, end_line)/candidate_end = end_line/' "$WRITER" >"$fenced_mutant"
 	chmod +x "$fenced_mutant"
 	mutation_expect_failure fenced-upsert-boundary run_fenced_upsert_probe "$fenced_mutant"
 
@@ -1392,6 +1581,16 @@ run_mutation_checks() {
 	' "$WRITER" >"$commonmark_mutant"
 	chmod +x "$commonmark_mutant"
 	mutation_expect_failure commonmark-fence-classifier run_marker_differential_probe "$commonmark_mutant"
+
+	unicode_marker_mutant="$mutant_dir/unicode-marker-writer.sh"
+	sed 's/if plan_has_non_ascii_marker_candidate /if false \&\& plan_has_non_ascii_marker_candidate /' "$WRITER" >"$unicode_marker_mutant"
+	chmod +x "$unicode_marker_mutant"
+	mutation_expect_failure unicode-marker-candidate run_unicode_marker_candidate_probe "$unicode_marker_mutant"
+
+	rendered_boundary_mutant="$mutant_dir/rendered-boundary-writer.sh"
+	sed 's/candidate_end = rendered_section_end(i, end_line)/candidate_end = end_line/' "$WRITER" >"$rendered_boundary_mutant"
+	chmod +x "$rendered_boundary_mutant"
+	mutation_expect_failure rendered-section-boundary run_foreign_boundary_probe "$rendered_boundary_mutant"
 
 	unclosed_mutant="$mutant_dir/unclosed-fence-writer.sh"
 	sed 's/if \[\[ "$unclosed_fence" -ne 0 \]\]; then/if false; then/' "$WRITER" >"$unclosed_mutant"
@@ -1504,6 +1703,11 @@ python3 -c '\''import pathlib'\''' "$WRITER" >"$python_mutant"
 	chmod +x "$resolver_mutant"
 	mutation_expect_failure reviewed-head run_head_probe "$resolver_mutant"
 
+	quote_path_mutant="$mutant_dir/quoted-path-resolver.sh"
+	sed -e 's/ -c core\.quotepath=false//' -e 's/ --name-only -z / --name-only /' -e "s/read -r -d '' candidate/read -r candidate/" "$RESOLVER" >"$quote_path_mutant"
+	chmod +x "$quote_path_mutant"
+	mutation_expect_failure git-quoted-plan-path run_quoted_path_probe "$quote_path_mutant"
+
 	zero_diff_mutant="$mutant_dir/zero-diff-resolver.sh"
 	sed 's#emit none "" "no changed plan"#emit unique "docs/dev_plans/20260101-feature-old-ledger-history.md" "branch slug matched one plan"#' \
 		"$RESOLVER" >"$zero_diff_mutant"
@@ -1594,6 +1798,7 @@ run_empty_test() {
 run_resolver_tests
 run_matrix_tests
 run_replacement_test
+run_foreign_boundary_test
 run_fenced_upsert_test
 run_shared_fence_source_test
 run_sanitization_test
@@ -1605,6 +1810,7 @@ run_gnu_stat_test
 run_bash32_static_tests
 run_marker_format_tests
 run_marker_differential_test
+run_unicode_marker_candidate_test
 run_unclosed_fence_test
 run_whitespace_semantics_test
 run_lone_cr_semantics_test
