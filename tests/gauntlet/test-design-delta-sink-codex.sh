@@ -356,6 +356,82 @@ run_quick_no_report_probe() {
 	grep -Fxq 'Design deltas: none' "$repo/quick-none.out"
 }
 
+run_quick_stale_scope_probe() {
+	local quick_fn="$1" repo base_oid reviewed_head advanced_head
+	repo="$WORKDIR/quick-stale-scope-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$quick_fn"
+		canonical_target=branch:feature/widget
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$reviewed_head"
+		review_branch=feature/widget
+		prepare_quick_design_delta_state
+		printf 'advance\n' >advance.txt
+		git add advance.txt
+		git commit -qm advance
+		advanced_head="$(git rev-parse HEAD)"
+		resolved_head_oid="$advanced_head"
+		if prepare_quick_design_delta_state; then
+			exit 1
+		fi
+	) >"$repo/stale.out" 2>"$repo/stale.err"
+	grep -Fq 'quick-mode ledger review scope is stale' "$repo/stale.err"
+}
+
+run_report_failure_matrix_probe() {
+	local quick_fn="$1" sink_fn="$2" mode state repo base_oid reviewed_head report
+	for mode in full quick; do
+		for state in unsafe malformed non-array; do
+			repo="$WORKDIR/report-failure-$mode-$state-$RANDOM"
+			init_fixture "$repo"
+			base_oid="$(git -C "$repo" rev-parse main)"
+			reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+			(
+				cd "$repo"
+				# shellcheck source=/dev/null
+				. "$LIB/gauntlet-common.sh"
+				# shellcheck source=/dev/null
+				. "$quick_fn"
+				# shellcheck source=/dev/null
+				. "$sink_fn"
+				canonical_target=branch:feature/widget
+				resolved_base_oid="$base_oid"
+				resolved_head_oid="$reviewed_head"
+				review_branch=feature/widget
+				prepare_quick_design_delta_state
+				report="$run_dir/round-$round_n/fixer-report.json"
+				mkdir -p "${report%/*}"
+				case "$state" in
+				unsafe)
+					printf '{"design_deltas":[]}\n' >"$repo/outside-report.json"
+					ln -s "$repo/outside-report.json" "$report"
+					;;
+				malformed) printf '{bad json\n' >"$report" ;;
+				non-array) printf '{"design_deltas":{}}\n' >"$report" ;;
+				esac
+				PLAN_PATH=""
+				if [[ "$mode" == quick ]]; then
+					design_delta_quick_round="$round_n"
+				else
+					jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+					mv "$ledger_path.tmp" "$ledger_path"
+					unset design_delta_quick_round
+				fi
+				run_design_delta_sink
+			) >"$repo/matrix.out" 2>"$repo/matrix.err"
+			grep -Fq 'Design deltas: unknown — one or more selected fixer reports could not be collected' "$repo/matrix.err" || return 1
+			! grep -Fq 'Design deltas: none' "$repo/matrix.out" || return 1
+		done
+	done
+}
+
 run_transient_legacy_scope_probe() {
 	local sink_fn="$1" repo ledger_path scope_file
 	repo="$WORKDIR/transient-legacy-scope-$RANDOM"
@@ -825,6 +901,18 @@ else
 	fail "quick-mode no-report terminal output"
 fi
 
+if run_quick_stale_scope_probe "$QUICK_FN"; then
+	pass "quick mode rejects ledger reuse after the reviewed branch advances"
+else
+	fail "quick-mode stale review_scope rejection"
+fi
+
+if run_report_failure_matrix_probe "$QUICK_FN" "$SINK_FN"; then
+	pass "full and quick report-failure table maps unsafe, malformed, and non-array inputs to unknown, never zero"
+else
+	fail "total fixer-report collection-result state space"
+fi
+
 if run_transient_legacy_scope_probe "$SINK_FN"; then
 	pass "legacy scope persistence retries after transient OID resolution failure"
 else
@@ -929,6 +1017,22 @@ else
 	pass "mutation removing quick-mode plain init is caught by the empty-state probe"
 fi
 
+quick_scope_mutant="$WORKDIR/quick-scope-mutant.sh"
+sed '/if ! jq -e --arg base "$resolved_base_oid"/,/^[[:space:]]*fi$/d' "$QUICK_FN" >"$quick_scope_mutant"
+if run_quick_stale_scope_probe "$quick_scope_mutant"; then
+	fail "mutation removing quick-mode scope equality survived branch advancement"
+else
+	pass "branch-advancement probe catches removal of quick-mode scope equality"
+fi
+
+collection_total_mutant="$WORKDIR/collection-total-mutant.sh"
+sed '/if \[\[ "\$collection_complete" != true \]\]; then/,/^[[:space:]]*fi$/d' "$SINK_FN" >"$collection_total_mutant"
+if run_report_failure_matrix_probe "$QUICK_FN" "$collection_total_mutant"; then
+	fail "mutation removing total collection completeness survived the report-failure table"
+else
+	pass "report-failure table catches removal of total collection completeness"
+fi
+
 scope_empty_mutant="$WORKDIR/scope-empty-mutant.sh"
 sed 's/if \[\[ -n "$BASE_OID" && -n "$HEAD_OID" \]\]; then/if true; then/' "$SINK_FN" >"$scope_empty_mutant"
 if run_transient_legacy_scope_probe "$scope_empty_mutant"; then
@@ -1023,7 +1127,9 @@ else
 	fail "report symlink: external JSON changed"
 fi
 check "report symlink: external delta is not written to the plan" bash -c '! grep -Fq escaped-delta "$1"' _ "$repo/docs/dev_plans/$PLAN_NAME"
-check "report symlink: terminal sink remains non-load-bearing" grep -Fq 'Design deltas: none' "$WORKDIR/symlink.out"
+check "report symlink: terminal sink reports unknown and remains non-load-bearing" bash -c \
+	'grep -Fq "Design deltas: unknown" "$1" && ! grep -Fq "Design deltas: none" "$2"' _ \
+	"$WORKDIR/symlink.err" "$WORKDIR/symlink.out"
 
 echo
 echo "$pass_count passed, $fail_count failed"

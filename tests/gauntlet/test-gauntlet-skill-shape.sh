@@ -932,6 +932,10 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'malformed fixer report skipped' \
 	"Codex mirror: malformed fixer reports warn and skip independently"
 assert_grep_fixed "$CODEX_SKILL_MD" 'non-array design_deltas skipped' \
 	"Codex mirror: non-array design deltas warn and skip independently"
+assert_grep_fixed "$CODEX_SKILL_MD" 'if [[ "$collection_complete" != true ]]; then' \
+	"Codex mirror: incomplete selected-report collection cannot become a known empty array"
+assert_grep_fixed "$CODEX_SKILL_MD" 'quick-mode ledger review scope is stale; stopping before gates' \
+	"Codex mirror: quick startup rejects target reuse when immutable scope changed"
 assert_grep_fixed "$CODEX_SKILL_MD" 'using sidecar' \
 	"Codex mirror: plan resolution failures degrade to the sidecar"
 assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
@@ -1474,6 +1478,8 @@ assert_grep_fixed "$SKILL_MD" 'malformed fixer report skipped' \
 	"Claude mirror: malformed fixer reports warn and skip independently"
 assert_grep_fixed "$SKILL_MD" 'non-array design_deltas skipped' \
 	"Claude mirror: non-array design deltas warn and skip independently"
+assert_grep_fixed "$SKILL_MD" 'if [[ "$collection_complete" != true ]]; then' \
+	"Claude mirror: incomplete selected-report collection cannot become a known empty array"
 assert_grep_fixed "$SKILL_MD" 'using sidecar' \
 	"Claude mirror: plan resolution failures degrade to the sidecar"
 assert_grep_i "$SKILL_MD" 'conductor, not the fixer.s self-declaration, decides whether Guardrail 8 applies' \

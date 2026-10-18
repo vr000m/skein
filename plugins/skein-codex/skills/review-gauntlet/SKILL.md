@@ -39,7 +39,14 @@ prepare_quick_design_delta_state() {
       "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target" \
         --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
       ;;
-    0|5) ;;
+    0|5)
+      if ! jq -e --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" '
+        .review_scope == {base_oid:$base,head_oid:$head,branch:$branch}
+      ' "$ledger_path" >/dev/null 2>&1; then
+        echo "warning: quick-mode ledger review scope is stale; stopping before gates" >&2
+        return 1
+      fi
+      ;;
     *)
       echo "warning: quick-mode ledger startup failed; stopping before gates" >&2
       return 1
@@ -471,9 +478,11 @@ run_design_delta_sink() {
     return 0
   fi
   quick_report_digest=""
+  collection_complete=true
   if [[ -n "${design_delta_quick_round:-}" ]]; then
     if [[ ! "$design_delta_quick_round" =~ ^[1-9][0-9]*$ ]]; then
       echo "warning: invalid quick-mode design delta round; continuing terminal handoff" >&2
+      report_unknown_design_deltas "invalid quick-mode report selection"
       return 0
     fi
     first_report_n="$design_delta_quick_round"
@@ -483,6 +492,7 @@ run_design_delta_sink() {
     round_count="$(jq -er '.rounds | select(type == "array") | length' "$ledger_path" 2>/dev/null || true)"
     if [[ ! "$round_count" =~ ^[0-9]+$ ]]; then
       echo "warning: ledger round count is not an integer; continuing terminal handoff" >&2
+      report_unknown_design_deltas "ledger round count is unavailable"
       return 0
     fi
   fi
@@ -490,17 +500,20 @@ run_design_delta_sink() {
     report="$run_dir/round-$round_i/fixer-report.json"
     if ! gauntlet_assert_no_symlink "$report" design-delta-sink; then
       echo "warning: unsafe fixer report skipped: $report" >&2
+      collection_complete=false
       continue
     fi
     [[ -f "$report" ]] || continue
     if [[ -n "${design_delta_quick_round:-}" ]]; then
       quick_report_digest="$(gc_sha1 < "$report")" || {
         echo "warning: cannot hash quick-mode fixer report; continuing terminal handoff" >&2
+        report_unknown_design_deltas "cannot identify the quick-mode fixer report"
         return 0
       }
     fi
     if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
       echo "warning: malformed fixer report skipped: $report" >&2
+      collection_complete=false
       continue
     fi
     if ! jq -e 'has("design_deltas")' "$report" >/dev/null; then
@@ -508,13 +521,19 @@ run_design_delta_sink() {
     fi
     if ! jq -e '.design_deltas | type == "array"' "$report" >/dev/null; then
       echo "warning: non-array design_deltas skipped: $report" >&2
+      collection_complete=false
       continue
     fi
     if ! design_delta_write_path_is_untracked "$delta_items_file" ||
       ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
       echo "warning: unreadable design_deltas skipped: $report" >&2
+      collection_complete=false
     fi
   done
+  if [[ "$collection_complete" != true ]]; then
+    report_unknown_design_deltas "one or more selected fixer reports could not be collected"
+    return 0
+  fi
   if ! design_delta_write_path_is_untracked "$run_deltas_file" ||
     ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
     echo "warning: design delta collection failed; continuing terminal handoff" >&2
@@ -620,7 +639,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. An absent `design_deltas` value is a known empty contribution. An unsafe, malformed, non-array, or unreadable selected report makes the whole collection unknown: warn `Design deltas: unknown — <reason>`, stop the sink, and never manufacture `[]` from the remaining reports. This total collection-result contract is identical in full and quick mode; only a complete collection can be counted as known zero or passed to the writer as known nonzero. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so known non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. Here, "established" requires a complete collection. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A known non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 

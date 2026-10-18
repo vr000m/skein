@@ -150,6 +150,7 @@ cleanup_writer_temps() {
 	remove_writer_temp "${payload:-}"
 	remove_writer_temp "${authority_tmp:-}"
 	remove_writer_temp "${post_authority_tmp:-}"
+	remove_writer_temp "${plan_snapshot:-}"
 	remove_writer_temp "${output_tmp:-}"
 }
 
@@ -188,6 +189,7 @@ esac
 payload="$(create_private_temp "$scratch_dir/design-deltas-payload.XXXXXX")" || drop_nonempty "cannot create a private payload temp file"
 authority_tmp=""
 post_authority_tmp=""
+plan_snapshot=""
 output_tmp=""
 trap cleanup_writer_temps EXIT
 if ! "$JQ" -r --arg run_id "$RUN_ID" '
@@ -285,6 +287,18 @@ if [[ "$status" == "explicit" || "$status" == "unique" ]]; then
 	fi
 elif [[ "$SIDECAR_ONLY" -eq 0 ]]; then
 	sidecar_reason="plan resolution is $status"
+fi
+
+# All parsing and candidate generation use one private source snapshot. The
+# live plan is compared byte-for-byte with this snapshot immediately before
+# replacement, so a concurrent edit anywhere in the file routes to sidecar
+# instead of being overwritten.
+if [[ "$plan_is_safe" -eq 1 ]]; then
+	if ! plan_snapshot="$(create_private_temp "$scratch_dir/design-deltas-plan.XXXXXX")" ||
+		! cp "$REPO_ROOT/$plan" "$plan_snapshot"; then
+		sidecar_reason="cannot snapshot resolved plan"
+		plan_is_safe=0
+	fi
 fi
 
 marker_count=0
@@ -411,19 +425,19 @@ plan_hash = marker.compute_plan_hash(plan_path)
 print(f"{0 if selected is None else selected + 1}\t{plan_hash}")'
 
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	if plan_has_disallowed_control_byte "$REPO_ROOT/$plan"; then
+	if plan_has_disallowed_control_byte "$plan_snapshot"; then
 		sidecar_reason="resolved plan contains a disallowed control byte"
 		plan_is_safe=0
 	fi
 fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	if plan_has_python_only_whitespace "$REPO_ROOT/$plan"; then
+	if plan_has_python_only_whitespace "$plan_snapshot"; then
 		sidecar_reason="resolved plan contains unsupported Python whitespace, line separators, or lone carriage returns"
 		plan_is_safe=0
 	fi
 fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	if plan_has_non_ascii_marker_candidate "$REPO_ROOT/$plan"; then
+	if plan_has_non_ascii_marker_candidate "$plan_snapshot"; then
 		sidecar_reason="resolved plan contains a non-ASCII review-marker candidate"
 		plan_is_safe=0
 	fi
@@ -435,7 +449,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		sidecar_reason="cannot create a private marker.py authority temp file before plan edit"
 		plan_is_safe=0
 	else
-		marker_authority_query "$REPO_ROOT/$plan" >"$authority_tmp" 2>/dev/null || authority_rc=$?
+		marker_authority_query "$plan_snapshot" >"$authority_tmp" 2>/dev/null || authority_rc=$?
 		if [[ "$authority_rc" -ne 0 ]]; then
 			case "$authority_rc" in
 			124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
@@ -497,7 +511,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
       }
 	  printf "%d %d %d %d %d %d\n", marker_count, marker_line, findings_count, findings_line, findings_end, in_fence ? 1 : 0
     }
-  ' "$REPO_ROOT/$plan")
+  ' "$plan_snapshot")
 	if [[ "$unclosed_fence" -ne 0 ]]; then
 		sidecar_reason="resolved plan has an unclosed code fence"
 		plan_is_safe=0
@@ -613,13 +627,13 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 			plan_is_safe=0
 		fi
 		if [[ "$plan_is_safe" -eq 1 ]]; then
-			upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || {
+			upsert_section "$plan_snapshot" "$output_tmp" "$findings_line" "$findings_end" || {
 				sidecar_reason="cannot update resolved plan temp file"
 				plan_is_safe=0
 			}
 		fi
 		if [[ "$plan_is_safe" -eq 1 ]]; then
-			if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
+			if cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then
 				# BEGIN POST-EDIT MARKER AUTHORITY CHECK
 				post_authority_rc=0
 				if ! post_authority_tmp="$(create_private_temp "$scratch_dir/design-deltas-authority.XXXXXX")"; then
@@ -633,13 +647,17 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 					if [[ "$post_authority_output" != *$'\n'* && "$post_authority_line" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
 						remove_writer_temp "$post_authority_tmp"
 						post_authority_tmp=""
-						if write_path_is_untracked "$output_tmp" && regular_nonsymlink_plan "$plan" && chmod "$plan_mode" "$output_tmp" && mv "$output_tmp" "$plan_path"; then
+						if ! cmp -s "$plan_snapshot" "$plan_path"; then
+							sidecar_reason="resolved plan changed after snapshot"
+							plan_is_safe=0
+						elif write_path_is_untracked "$output_tmp" && regular_nonsymlink_plan "$plan" && chmod "$plan_mode" "$output_tmp" && mv "$output_tmp" "$plan_path"; then
 							output_tmp=""
 							"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
 							exit 0
+						else
+							sidecar_reason="cannot safely replace resolved plan"
+							plan_is_safe=0
 						fi
-						sidecar_reason="cannot safely replace resolved plan"
-						plan_is_safe=0
 					else
 						sidecar_reason="marker.py authority changed across the proposed plan edit"
 					fi

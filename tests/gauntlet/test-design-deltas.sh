@@ -240,6 +240,54 @@ SH
 	assert_json "$out" '.status == "none" and .plan == ""' "resolve no plan"
 }
 
+run_resolver_endpoint_probe() {
+	local resolver="$1" repo merge_base left_oid feature_oid out
+	repo="$WORKDIR/resolver-endpoints-${resolver##*/}-$RANDOM"
+	init_repo "$repo"
+	add_plan "$repo" 20261018-feature-widget.md
+	commit_plans "$repo" seed
+	merge_base="$(git -C "$repo" rev-parse HEAD)"
+	git -C "$repo" switch -qc left
+	printf '\nleft-side edit\n' >>"$repo/docs/dev_plans/20261018-feature-widget.md"
+	commit_plans "$repo" left
+	left_oid="$(git -C "$repo" rev-parse HEAD)"
+	git -C "$repo" switch -q main
+	git -C "$repo" switch -qc feature/widget
+	feature_oid="$(git -C "$repo" rev-parse HEAD)"
+
+	# Literal two-dot endpoints include the net tree difference from the left
+	# side; a second merge-base conversion would incorrectly return none.
+	out="$("$resolver" --repo-root "$repo" --base "$left_oid" --head "$feature_oid" --branch feature/widget)" || return 1
+	jq -e '.status == "unique" and .plan == "docs/dev_plans/20261018-feature-widget.md"' >/dev/null <<<"$out" || return 1
+
+	# Three-dot and implicit callers pass their merge base as BASE. Directly
+	# diffing those already-resolved endpoints preserves their prior semantics.
+	printf '# Feature plan\n' >"$repo/docs/dev_plans/20261018-feature-only.md"
+	commit_plans "$repo" feature
+	feature_oid="$(git -C "$repo" rev-parse HEAD)"
+	for branch in feature/three-dot feature/implicit; do
+		out="$("$resolver" --repo-root "$repo" --base "$merge_base" --head "$feature_oid" --branch "$branch")" || return 1
+		jq -e '.status == "unique" and .plan == "docs/dev_plans/20261018-feature-only.md"' >/dev/null <<<"$out" || return 1
+	done
+}
+
+run_resolver_endpoint_contract_test() {
+	local mutant
+	if run_resolver_endpoint_probe "$RESOLVER"; then
+		pass "resolver endpoint table preserves two-dot net changes and pre-resolved three-dot/implicit merge bases"
+	else
+		fail "resolver endpoint state space"
+	fi
+	mutant="$WORKDIR/resolver-three-dot-mutant.sh"
+	sed 's/"$base_oid"\.\."$head_oid"/"$base_oid"..."$head_oid"/' "$RESOLVER" >"$mutant"
+	chmod +x "$mutant"
+	if run_resolver_endpoint_probe "$mutant"; then
+		fail "mutation restoring resolver merge-base conversion survived the endpoint table"
+	else
+		pass "resolver endpoint table catches restoration of merge-base conversion"
+	fi
+}
+
 write_resolution() {
 	local repo="$1" status="$2" plan="$3"
 	jq -cn --arg status "$status" --arg plan "$plan" '{status:$status,plan:$plan,reason:"test"}' >"$repo/resolution.json"
@@ -1633,7 +1681,7 @@ run_marker_py_absent_test() {
 make_pythonless_path() {
 	local path_dir="$1" tool real
 	mkdir -p "$path_dir"
-	for tool in awk basename cat chmod cmp cut dirname env find git grep head jq mkdir mktemp mv pwd readlink rm sed sort stat tr wc; do
+	for tool in awk basename cat chmod cmp cp cut dirname env find git grep head jq mkdir mktemp mv pwd readlink rm sed sort stat tr wc; do
 		real="$(command -v "$tool" || true)"
 		[[ -n "$real" ]] && ln -s "$real" "$path_dir/$tool"
 	done
@@ -1724,6 +1772,65 @@ run_post_edit_authority_test() {
 		pass "post-edit marker.py disagreement discards the temp plan and uses the sidecar"
 	else
 		fail "post-edit marker.py authority guard"
+	fi
+}
+
+run_concurrent_plan_edit_probe() {
+	local writer="$1" repo plan before shim_dir real_python counter out
+	repo="$WORKDIR/concurrent-plan-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" concurrent
+	before="$(hash_file "$plan")"
+	shim_dir="$repo/python-shim"
+	mkdir -p "$shim_dir"
+	real_python="$(command -v python3)"
+	counter="$repo/python-count"
+	cat >"$shim_dir/python3" <<'SH'
+#!/usr/bin/env bash
+count=0
+[[ -f "$PYTHON_COUNT" ]] && count="$(cat "$PYTHON_COUNT")"
+count=$((count + 1))
+printf '%s\n' "$count" >"$PYTHON_COUNT"
+if [[ "$count" -eq 2 ]]; then
+  printf '\nconcurrent operator edit\n' >>"$LIVE_PLAN"
+fi
+exec "$REAL_PYTHON" "$@"
+SH
+	chmod +x "$shim_dir/python3"
+	out="$(PYTHON_COUNT="$counter" LIVE_PLAN="$plan" REAL_PYTHON="$real_python" PATH="$shim_dir:$PATH" \
+		run_writer_id "$writer" "$repo" concurrent)" || return 1
+	jq -e '.sink == "sidecar" and .reason == "resolved plan changed after snapshot"' >/dev/null <<<"$out" &&
+		grep -Fq 'concurrent operator edit' "$plan" &&
+		! grep -Fq 'Summary: "concurrent"' "$plan" &&
+		[[ "$before" != "$(hash_file "$plan")" ]]
+}
+
+run_concurrent_plan_edit_test() {
+	local mutant_root mutant_dir mutant
+	if run_concurrent_plan_edit_probe "$WRITER"; then
+		pass "full-source snapshot preserves a concurrent below-marker edit and routes deltas to sidecar"
+	else
+		fail "concurrent plan snapshot/revalidation contract"
+	fi
+	mutant_root="$WORKDIR/concurrent-mutant/skills"
+	mutant_dir="$mutant_root/review-gauntlet/lib"
+	mkdir -p "$mutant_dir" "$mutant_root/conduct"
+	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
+	cp "$MARKER_PY" "$mutant_root/conduct/marker.py"
+	mutant="$mutant_dir/write-design-deltas.sh"
+	awk '
+	  /if ! cmp -s "\$plan_snapshot" "\$plan_path"; then/ { skip = 1; next }
+	  skip && /elif write_path_is_untracked/ { sub(/^.*elif /, "\t\t\t\t\t\tif "); skip = 0 }
+	  { print }
+	' "$WRITER" >"$mutant"
+	chmod +x "$mutant"
+	if run_concurrent_plan_edit_probe "$mutant"; then
+		fail "mutation removing full-source revalidation survived concurrent edit injection"
+	else
+		pass "concurrent edit injection catches removal of full-source revalidation"
 	fi
 }
 
@@ -2145,7 +2252,7 @@ run_mutation_checks() {
 	mutation_expect_failure plan-byte-allowlist run_nul_differential_probe "$byte_allowlist_mutant"
 
 	marker_output_mutant="$mutant_dir/marker-output-writer.sh"
-	sed 's#if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then#if LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"${output_tmp}.marker" \&\& mv "${output_tmp}.marker" "$output_tmp" \&\& cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then#' \
+	sed 's#if cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then#if LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"${output_tmp}.marker" \&\& mv "${output_tmp}.marker" "$output_tmp" \&\& cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then#' \
 		"$WRITER" >"$marker_output_mutant"
 	chmod +x "$marker_output_mutant"
 	if run_marker_line_cmp_probe "$marker_output_mutant"; then
@@ -2316,7 +2423,7 @@ run_mutation_checks() {
 	mutation_expect_failure provenance-line run_provenance_probe "$provenance_mutant"
 
 	resolver_mutant="$mutant_dir/head-resolver.sh"
-	sed 's/"$base_oid"\.\.\."$head_oid"/"$base_oid"...HEAD/' "$RESOLVER" >"$resolver_mutant"
+	sed 's/"$base_oid"\.\."$head_oid"/"$base_oid"..HEAD/' "$RESOLVER" >"$resolver_mutant"
 	chmod +x "$resolver_mutant"
 	mutation_expect_failure reviewed-head run_head_probe "$resolver_mutant"
 
@@ -2803,6 +2910,7 @@ SH
 }
 
 run_resolver_tests
+run_resolver_endpoint_contract_test
 run_matrix_tests
 run_replacement_test
 run_foreign_boundary_test
@@ -2831,6 +2939,7 @@ run_isolated_marker_authority_test
 run_marker_py_absent_test
 run_python_failure_tests
 run_post_edit_authority_test
+run_concurrent_plan_edit_test
 run_awk_interval_test
 run_sidecar_only_matrix_test
 run_tracked_sidecar_test

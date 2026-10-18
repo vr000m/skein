@@ -171,7 +171,11 @@ while IFS= read -r -d '' candidate; do
 	fi
 	is_plan_candidate "$candidate" && diff_candidates+=("$candidate")
 done < <(
-	if "$GIT" -C "$REPO_ROOT" -c core.quotepath=false diff --name-only -z --diff-filter=d "$base_oid"..."$head_oid" 2>/dev/null; then
+	# BASE and HEAD are already the immutable endpoints selected by the caller:
+	# two-dot targets pass their literal left endpoint, while three-dot and
+	# implicit targets pass their resolved merge base. Diff those endpoints
+	# directly so the resolver does not apply merge-base semantics a second time.
+	if "$GIT" -C "$REPO_ROOT" -c core.quotepath=false diff --name-only -z --diff-filter=d "$base_oid".."$head_oid" 2>/dev/null; then
 		# Git cannot emit an empty pathname. A second NUL after its final path is
 		# therefore an unambiguous success record that survives process substitution.
 		printf '\0'

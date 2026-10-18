@@ -526,7 +526,15 @@ probe_reset() {
 }
 check "reset failure: sink aborts before stale working files are consumed" probe_reset
 reset_mutant="$WORKDIR/reset-mutant.sh"
-sed '/cannot initialize design delta collection/{n;n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
+awk '
+	/^[[:space:]]*if ! design_delta_write_path_is_untracked "\$delta_items_file" \|\|/ {
+		print "  if false; then"
+		skip = 1
+		next
+	}
+	skip && /echo "warning: cannot initialize design delta collection/ { skip = 0 }
+	!skip { print }
+' "$SINK_FN" >"$reset_mutant"
 check "mutation: reset return was removed" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$reset_mutant"
 if probe_reset "$reset_mutant"; then
 	fail "mutation reset-fail-closed survived its regression probe"
@@ -554,6 +562,38 @@ SH
 	grep -Fq 'Design deltas: unknown — collection failed or the items file is unreadable' "$WORKDIR/sink.err" &&
 		! grep -Fq 'Design deltas: none' <<<"$out"
 }
+
+probe_report_failure_matrix() {
+	local sink_fn="$1" state repo out report
+	for state in unsafe malformed non-array; do
+		repo="$(new_fixture "report-failure-$state-$RANDOM" "$PLAN_NAME")"
+		setup_hook() {
+			report="$1/round-1/fixer-report.json"
+			mkdir -p "${report%/*}"
+			case "$state" in
+			unsafe)
+				printf '{"design_deltas":[]}\n' >"$repo/outside-report.json"
+				ln -s "$repo/outside-report.json" "$report"
+				;;
+			malformed) printf '{bad json\n' >"$report" ;;
+			non-array) printf '{"design_deltas":{}}\n' >"$report" ;;
+			esac
+		}
+		out="$(SINK_FN="$sink_fn" run_sink "$repo" branch:feature/widget 1)"
+		unset -f setup_hook
+		grep -Fq 'Design deltas: unknown — one or more selected fixer reports could not be collected' "$WORKDIR/sink.err" || return 1
+		! grep -Fq 'Design deltas: none' <<<"$out" || return 1
+	done
+}
+
+check "Claude full-mode report-failure table maps unsafe, malformed, and non-array inputs to unknown" probe_report_failure_matrix "$SINK_FN"
+collection_total_mutant="$WORKDIR/collection-total-mutant.sh"
+sed '/if \[\[ "\$collection_complete" != true \]\]; then/,/^[[:space:]]*fi$/d' "$SINK_FN" >"$collection_total_mutant"
+if probe_report_failure_matrix "$collection_total_mutant"; then
+	fail "mutation removing total collection completeness survived the Claude report-failure table"
+else
+	pass "Claude report-failure table catches removal of total collection completeness"
+fi
 check "Claude mirror pending: failed jq collection with non-empty items reports unknown, never none" probe_collection_failure
 
 # --- 13. tracked working paths are immutable under clean/hostile Git env ----
