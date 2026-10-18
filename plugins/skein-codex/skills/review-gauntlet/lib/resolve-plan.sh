@@ -134,11 +134,11 @@ if [[ "$PLAN_SEEN" -eq 1 ]]; then
 	exit 0
 fi
 
-if ! base_oid="$($GIT -C "$REPO_ROOT" rev-parse --verify --quiet "$BASE^{commit}")"; then
+if ! base_oid="$($GIT -C "$REPO_ROOT" rev-parse --verify --quiet --end-of-options "$BASE^{commit}")"; then
 	emit none "" "base ref not found"
 	exit 0
 fi
-if ! head_oid="$($GIT -C "$REPO_ROOT" rev-parse --verify --quiet "$HEAD^{commit}")"; then
+if ! head_oid="$($GIT -C "$REPO_ROOT" rev-parse --verify --quiet --end-of-options "$HEAD^{commit}")"; then
 	emit none "" "head ref not found"
 	exit 0
 fi

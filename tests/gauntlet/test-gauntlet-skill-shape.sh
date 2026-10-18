@@ -916,13 +916,13 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'range_base="${branch_name%%..*}"; range_hea
 	"Codex mirror: terminal sink splits two-dot branch ranges"
 assert_grep_fixed "$CODEX_SKILL_MD" 'range_base="${branch_name%%...*}"; range_head="${branch_name##*...}"' \
 	"Codex mirror: terminal sink splits three-dot branch ranges"
-assert_grep_fixed "$CODEX_SKILL_MD" 'git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
+assert_grep_fixed "$CODEX_SKILL_MD" '"${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
 	"Codex mirror: range head resolution guards revision options"
-assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$(git rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
 	"Codex mirror: two-dot ranges use the resolved left endpoint"
-assert_grep_fixed "$CODEX_SKILL_MD" 'git merge-base --end-of-options "$range_base" "$range_head"' \
+assert_grep_fixed "$CODEX_SKILL_MD" '"${clean_git[@]}" merge-base --end-of-options "$range_base" "$range_head"' \
 	"Codex mirror: merge-base guards revision options"
-assert_grep_fixed "$CODEX_SKILL_MD" '[[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD' \
+assert_grep_fixed "$CODEX_SKILL_MD" '[[ "$branch_name" == HEAD ]] && branch_name="$("${clean_git[@]}" symbolic-ref --quiet --short HEAD' \
 	"Codex mirror: literal HEAD maps to the current branch for slug narrowing"
 assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${pr_head_ref:-}"' \
 	"Codex mirror: terminal sink carries the PR head ref"
@@ -996,8 +996,12 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'writer_args+=(--sidecar-only)' \
 	"Codex mirror: seam-tripwire mode delegates sidecar policy to the writer"
 assert_not_grep "$CODEX_SKILL_MD" '{status:"none",plan:"",reason:"seam-tripwire escalation is sidecar-only"}' \
 	"Codex mirror: sink does not forge a resolver result for sidecar-only mode"
-assert_grep_fixed "$CODEX_SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
-	"Codex mirror: sink resets every ledger-adjacent working file as one precondition"
+assert_grep_fixed "$CODEX_SKILL_MD" 'design_delta_write_path_is_untracked() {' \
+	"Codex mirror: sink defines one trackedness helper inside the executable fence"
+assert_grep_fixed "$CODEX_SKILL_MD" '-u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR' \
+	"Codex mirror: trackedness checks scrub caller Git repository and index overrides"
+assert_grep_fixed "$CODEX_SKILL_MD" '! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
+	"Codex mirror: sink resets every proven-untracked ledger-adjacent working file as one precondition"
 assert_grep_fixed "$CODEX_SKILL_MD" 'cannot initialize design delta collection; continuing terminal handoff' \
 	"Codex mirror: reset failure warns before returning"
 assert_grep_fixed "$CODEX_SKILL_MD" '(.path | type == "string") and (.reason | type == "string")' \
@@ -1022,7 +1026,7 @@ assert_grep_fixed "$CODEX_SKILL_MD" '"$SKILL_DIR"/lib/convergence-ledger.sh --in
 	"Codex mirror: quick startup initializes an empty ledger without force"
 assert_grep_fixed "$CODEX_SKILL_MD" 'A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it.' \
 	"Codex mirror: quick reports are outside the full-mode ledger enumeration"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard.' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Before every create, replace, append, truncate, or delete, guard the path with the existing state-path guard and the same scrubbed-Git trackedness rule as the seam-tripwire block' \
 	"Codex mirror: incomplete Guardrail 8 findings persist under the guarded run directory"
 assert_grep_fixed "$CODEX_SKILL_MD" '`--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor'"'"'s Guardrail 4 check passes.' \
 	"Codex mirror: Guardrail 8 quarantine survives resume until verified"
@@ -1132,7 +1136,9 @@ fi
 seam_tripwire_contract_present() {
 	local file="$1" read_line dispatch_line write_line
 	grep -Fq '$run_dir/seam-tripwire.json' "$file" || return 1
-	grep -Fq 'integer `round`, `seams` as an array of objects with string `file` and `function_or_contract` fields, and boolean `redesign_dispatched`' "$file" || return 1
+	grep -Fq 'integer `round`, and `seams` as an array of objects with string `file` and `function_or_contract` fields plus boolean `redesign_dispatched`' "$file" || return 1
+	grep -Fq 'There is no round-level redesign flag.' "$file" || return 1
+	grep -Fq 'Only when that matching seam'"'"'s own stored `redesign_dispatched` is true' "$file" || return 1
 	grep -Fq '`--resume` performs this same guarded read before dispatch' "$file" || return 1
 	grep -Fq 'gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire || exit 1' "$file" || return 1
 	read_line="$(grep -nF 'read and validate it; `--resume` performs this same guarded read before dispatch' "$file" | head -1 | cut -d: -f1)"
@@ -1171,8 +1177,8 @@ run_seam_tripwire_schema_probe() {
 		rm -f "$filter_file"
 		return 1
 	fi
-	valid='{"round":2,"seams":[{"file":"a.sh","function_or_contract":"writer/reader"}],"redesign_dispatched":true}'
-	invalid='{"round":2,"seams":[{"file":"a.sh","function_or_contract":"writer/reader"}],"redesign_dispatched":"true"}'
+	valid='{"round":2,"seams":[{"file":"a.sh","function_or_contract":"writer/reader","redesign_dispatched":true}]}'
+	invalid='{"round":2,"seams":[{"file":"a.sh","function_or_contract":"writer/reader","redesign_dispatched":"true"}]}'
 	jq -e -f "$filter_file" >/dev/null <<<"$valid" &&
 		! jq -e -f "$filter_file" >/dev/null 2>&1 <<<"$invalid"
 	rc=$?
@@ -1189,13 +1195,54 @@ for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
 		fail "$probe_label: extracted seam-tripwire schema contract"
 	fi
 	seam_schema_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-schema-mutant.XXXXXX")"
-	sed 's/\.redesign_dispatched | type == "boolean"/.redesign_dispatched | type == "string"/' "$probe_skill" >"$seam_schema_mutant"
+	sed 's/(\.redesign_dispatched | type == "boolean")/(.redesign_dispatched | type == "string")/' "$probe_skill" >"$seam_schema_mutant"
 	if run_seam_tripwire_schema_probe "$seam_schema_mutant"; then
 		fail "$probe_label: mutation weakening the seam-tripwire schema survived the executable probe"
 	else
 		pass "$probe_label: mutation weakening the seam-tripwire schema is caught"
 	fi
 	rm -f "$seam_schema_mutant"
+done
+
+run_seam_tripwire_action_probe() {
+	local skill_md="$1" function_file state_file point redesign escalate
+	function_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-action.XXXXXX")"
+	state_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-state.XXXXXX")"
+	sed -n '/^seam_tripwire_action_for_finding() {$/,/^}$/p' "$skill_md" >"$function_file"
+	cat >"$state_file" <<'JSON'
+{"round":2,"seams":[{"file":"a.sh","function_or_contract":"contract-a","redesign_dispatched":true},{"file":"b.sh","function_or_contract":"contract-b","redesign_dispatched":false}]}
+JSON
+	if [[ ! -s "$function_file" ]]; then
+		rm -f "$function_file" "$state_file"
+		return 1
+	fi
+	# shellcheck source=/dev/null
+	. "$function_file"
+	# shellcheck disable=SC2034  # consumed by the extracted function.
+	seam_tripwire_file="$state_file"
+	escalate="$(seam_tripwire_action_for_finding a.sh contract-a)"
+	redesign="$(seam_tripwire_action_for_finding b.sh contract-b)"
+	point="$(seam_tripwire_action_for_finding c.sh contract-c)"
+	rm -f "$function_file" "$state_file"
+	[[ "$escalate" == escalate && "$redesign" == redesign && "$point" == point-fix ]]
+}
+
+for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
+	probe_label="${probe_entry%%|*}"
+	probe_skill="${probe_entry#*|}"
+	if run_seam_tripwire_action_probe "$probe_skill"; then
+		pass "$probe_label: redesign state is evaluated per matching seam"
+	else
+		fail "$probe_label: per-seam redesign decision matrix"
+	fi
+	seam_action_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-action-mutant.XXXXXX")"
+	sed 's/any($matching\[\]; \.redesign_dispatched)/any($matching[]; true)/' "$probe_skill" >"$seam_action_mutant"
+	if run_seam_tripwire_action_probe "$seam_action_mutant"; then
+		fail "$probe_label: mutation escalating a point-fixed seam survived the two-seam cell"
+	else
+		pass "$probe_label: two-seam cell catches cross-seam escalation"
+	fi
+	rm -f "$seam_action_mutant"
 done
 
 run_review_scope_branch_probe() {
@@ -1252,7 +1299,7 @@ assert_grep_fixed "$SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summ
 	"Claude mirror: documents the rendered design-delta structure"
 assert_grep_fixed "$SKILL_MD" 'Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.' \
 	"Claude mirror: documents sanitizer order and the bare-URL residual"
-assert_grep_fixed "$SKILL_MD" 'Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard.' \
+assert_grep_fixed "$SKILL_MD" 'Before every create, replace, append, truncate, or delete, guard the path with the existing state-path guard and the same scrubbed-Git trackedness rule as the seam-tripwire block' \
 	"Claude mirror: incomplete Guardrail 8 findings persist under the guarded run directory"
 assert_grep_fixed "$SKILL_MD" '`--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor'"'"'s Guardrail 4 check passes.' \
 	"Claude mirror: Guardrail 8 quarantine survives resume until verified"
@@ -1294,9 +1341,9 @@ assert_grep_fixed "$SKILL_MD" 'gh pr view "$pr_number"' \
 	"Claude mirror: terminal sink resolves a PR target from the PR itself"
 assert_grep_fixed "$SKILL_MD" 'if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then' \
 	"Claude mirror: terminal sink validates the PR number before calling gh"
-assert_grep_fixed "$SKILL_MD" 'git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
+assert_grep_fixed "$SKILL_MD" '"${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_head}^{commit}"' \
 	"Claude mirror: range head resolution guards revision options"
-assert_grep_fixed "$SKILL_MD" 'git merge-base --end-of-options "$range_base" "$range_head"' \
+assert_grep_fixed "$SKILL_MD" '"${clean_git[@]}" merge-base --end-of-options "$range_base" "$range_head"' \
 	"Claude mirror: merge-base guards revision options"
 assert_grep_fixed "$SKILL_MD" 'if [[ ! "$round_count" =~ ^[0-9]+$ ]]; then' \
 	"Claude mirror: sink requires an integer ledger round count"
@@ -1326,8 +1373,8 @@ assert_not_grep "$SKILL_MD" 'for report in "\$run_dir"/round-\*' \
 	"Claude mirror: sink never globs round directories (stale rounds would leak deltas)"
 assert_grep_fixed "$SKILL_MD" 'Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token.' \
 	"Claude mirror: terminal sink intro includes the seam-tripwire trigger"
-assert_grep_fixed "$SKILL_MD" 'When stored `redesign_dispatched` is true and that seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1'"'"'s structural halt does; this adds no ledger token and changes neither the ledger'"'"'s counts nor the convergence decision.' \
-	"Claude mirror: seam-tripwire handback uses the one cross-mirror sentence"
+assert_grep_fixed "$SKILL_MD" 'Only when that matching seam'"'"'s own stored `redesign_dispatched` is true and the seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1'"'"'s structural halt does; this adds no ledger token and changes neither the ledger'"'"'s counts nor the convergence decision.' \
+	"Claude mirror: seam-tripwire handback is keyed to the matching seam"
 assert_grep_fixed "$SKILL_MD" '[[ "${design_delta_sidecar_only:-false}" == true ]]' \
 	"Claude mirror: seam-tripwire mode forces the sink away from tracked plans"
 assert_grep_fixed "$SKILL_MD" 'writer_args+=(--sidecar-only)' \
@@ -1338,7 +1385,7 @@ assert_grep_fixed "$SKILL_MD" 'passes `--sidecar-only` to the writer, so the wri
 	"Claude mirror: sidecar-only intro sentence matches the Codex wording"
 assert_grep_fixed "$SKILL_MD" 'Sidecar-only mode bypasses resolution and lets the writer report its own reason.' \
 	"Claude mirror: post-sink prose says sidecar-only bypasses resolution"
-assert_grep_fixed "$SKILL_MD" 'BASE_OID="$(git rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
+assert_grep_fixed "$SKILL_MD" 'BASE_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_base}^{commit}"' \
 	"Claude mirror: two-dot ranges use the guarded, resolved left endpoint"
 assert_grep_fixed "$SKILL_MD" '*..*) range_base="${branch_name%%..*}"; range_head="${branch_name##*..}"; range_kind=two-dot ;;' \
 	"Claude mirror: terminal sink tags two-dot branch ranges"
@@ -1356,8 +1403,10 @@ assert_grep_fixed "$SKILL_MD" 'Proceed to the ledger call with only the durable 
 	"Claude mirror: incomplete Guardrail 8 work has defined ledger accounting"
 assert_not_grep "$SKILL_MD" 'design_delta_quick_round' \
 	"Claude mirror: no quick-mode sink round (Claude has no quick mode)"
-assert_grep_fixed "$SKILL_MD" 'if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
-	"Claude mirror: sink resets every ledger-adjacent working file as one precondition"
+assert_grep_fixed "$SKILL_MD" 'design_delta_write_path_is_untracked() {' \
+	"Claude mirror: sink defines one trackedness helper inside the executable fence"
+assert_grep_fixed "$SKILL_MD" '! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then' \
+	"Claude mirror: sink resets every proven-untracked ledger-adjacent working file as one precondition"
 assert_grep_fixed "$SKILL_MD" '(.path | type == "string") and (.reason | type == "string")' \
 	"Claude mirror: sink consumer validates the stable result envelope"
 assert_grep_fixed "$SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \

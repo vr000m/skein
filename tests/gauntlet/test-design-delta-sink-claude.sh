@@ -110,7 +110,12 @@ run_sink() {
 		# shellcheck source=/dev/null
 		. "$SINK_FN"
 		set +e
-		run_design_delta_sink
+		if [[ "${SINK_HOSTILE_GIT:-false}" == true ]]; then
+			GIT_INDEX_FILE=/nonexistent GIT_DIR=/nonexistent GIT_WORK_TREE="$WORKDIR" \
+				GIT_CEILING_DIRECTORIES="$repo" run_design_delta_sink
+		else
+			run_design_delta_sink
+		fi
 		echo "rc=$?"
 	) 2>"$WORKDIR/sink.err"
 }
@@ -427,8 +432,8 @@ probe_dash_range() {
 	unset -f setup_hook
 	grep -Fq 'rc=0' <<<"$out" &&
 		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
-		grep -Eq '^(merge-base|rev-parse --verify --quiet) .*--all' "$WORKDIR/git.log" &&
-		! grep -E '^(merge-base|rev-parse --verify --quiet) ' "$WORKDIR/git.log" | grep -F -- '--all' | grep -vqF -- '--end-of-options'
+		grep -Eq '^(-C [^ ]+ )?(merge-base|rev-parse --verify --quiet) .*--all' "$WORKDIR/git.log" &&
+		! grep -E '^(-C [^ ]+ )?(merge-base|rev-parse --verify --quiet) ' "$WORKDIR/git.log" | grep -F -- '--all' | grep -vqF -- '--end-of-options'
 }
 dash_mutant="$WORKDIR/dash-mutant.sh"
 sed 's/ --end-of-options / /' "$SINK_FN" >"$dash_mutant"
@@ -492,6 +497,53 @@ if probe_reset "$reset_mutant"; then
 else
 	pass "mutation reset-fail-closed is caught by the executed sink probe"
 fi
+
+# --- 13. tracked working paths are immutable under clean/hostile Git env ----
+probe_tracked_working_path() {
+	local kind="$1" env_mode="$2" repo out path before_path
+	repo="$(new_fixture "tracked-$kind-$env_mode-$RANDOM" "$PLAN_NAME")"
+	setup_hook() {
+		local run_dir="$1" target_key ledger_run_id run_id state_dir rel
+		write_round "$run_dir" 1 tracked-delta
+		target_key="$(basename "${ledger_path%.json}")"
+		ledger_run_id="$(jq -r .run_id "$ledger_path")"
+		run_id="claude-${ledger_run_id:0:12}"
+		state_dir="$(dirname "$ledger_path")"
+		case "$kind" in
+		items) path="$state_dir/design-deltas-$target_key.items.jsonl" ;;
+		deltas) path="$state_dir/design-deltas-$target_key.deltas.json" ;;
+		resolution) path="$state_dir/design-deltas-$target_key.resolution.json" ;;
+		scope) path="$state_dir/design-deltas-$target_key-$run_id.scope.json" ;;
+		esac
+		if [[ "$kind" == scope ]]; then
+			jq -cn --arg run_id "$run_id" --arg target branch:feature/widget \
+				'{run_id:$run_id,target:$target,base_oid:"",head_oid:"",branch:"feature/widget"}' >"$path"
+		else
+			printf 'tracked-%s-%s\n' "$kind" "$env_mode" >"$path"
+		fi
+		rel="${path#"$repo"/}"
+		git -C "$repo" add -f -- "$rel"
+		printf '%s\n%s\n' "$path" "$(git -C "$repo" hash-object "$path")" >"$WORKDIR/tracked-path-state"
+	}
+	if [[ "$env_mode" == hostile ]]; then
+		out="$(SINK_HOSTILE_GIT=true run_sink "$repo" branch:feature/widget 1)"
+	else
+		out="$(run_sink "$repo" branch:feature/widget 1)"
+	fi
+	unset -f setup_hook
+	path="$(sed -n '1p' "$WORKDIR/tracked-path-state")"
+	before_path="$(sed -n '2p' "$WORKDIR/tracked-path-state")"
+	grep -Fq 'rc=0' <<<"$out" &&
+		[[ "$before_path" == "$(git -C "$repo" hash-object "$path")" ]] &&
+		grep -Eq 'tracked or indeterminate design delta|refusing to write tracked design delta path' "$WORKDIR/sink.err"
+}
+
+for tracked_env in clean hostile; do
+	for tracked_kind in items deltas resolution scope; do
+		check "tracked $tracked_kind ($tracked_env): bytes preserved and refusal reported" \
+			probe_tracked_working_path "$tracked_kind" "$tracked_env"
+	done
+done
 
 echo
 echo "$pass_count passed, $fail_count failed"

@@ -538,6 +538,46 @@ else
 	fail "--init partial reviewed scope was not rejected atomically (rc=$bad_scope_rc)"
 fi
 
+review_scope_init_control_probe() {
+	local script="$1" probe_dir="$2" label value ledger rc i
+	local -a labels values
+	mkdir -p "$probe_dir"
+	labels=(lf cr c0-01 c0-1f del)
+	values=($'\n' $'\r' $'\001' $'\037' $'\177')
+	for ((i = 0; i < ${#labels[@]}; i++)); do
+		label="${labels[$i]}"
+		value="${values[$i]}"
+		ledger="$probe_dir/ledger-$label.json"
+		rc=0
+		"$script" --init --ledger "$ledger" --target branch:scope \
+			--review-base "$scope_base" --review-head "$scope_head" \
+			--review-branch "feature/x${value}bad" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 && ! -e "$ledger" ]] || return 1
+	done
+}
+
+SCOPE_INIT_CONTROL_DIR="$(mktemp -d)"
+TMP_DIRS+=("$SCOPE_INIT_CONTROL_DIR")
+if review_scope_init_control_probe "$CODEX_LEDGER_SCRIPT" "$SCOPE_INIT_CONTROL_DIR/live"; then
+	pass "--init rejects LF, CR, 0x01, 0x1f, and DEL across the whole review-branch value"
+else
+	fail "--init review-branch control-byte state space"
+fi
+pass "--init NUL argv cell is unrepresentable because exec argv strings cannot contain NUL"
+
+SCOPE_INIT_MUTANT_LIB="$SCOPE_INIT_CONTROL_DIR/mutant-lib"
+mkdir -p "$SCOPE_INIT_MUTANT_LIB"
+cp "$CODEX_LEDGER_LIB"/* "$SCOPE_INIT_MUTANT_LIB/"
+# shellcheck disable=SC2016  # literal sed program mutates shell source text.
+sed 's/! control_free_arg "$REVIEW_BRANCH"/printf '\''%s'\'' "$REVIEW_BRANCH" | LC_ALL=C grep -q '\''[[:cntrl:]]'\''/' \
+	"$CODEX_LEDGER_SCRIPT" >"$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh"
+if review_scope_init_control_probe "$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh" "$SCOPE_INIT_CONTROL_DIR/mutant"; then
+	fail "mutation restoring line-oriented init validation survived the LF cell"
+else
+	pass "mutation restoring line-oriented init validation is caught"
+fi
+
 review_scope_control_probe() {
 	local script="$1" probe_dir="$2" escaped branch_json ledger rc
 	mkdir -p "$probe_dir"
@@ -801,7 +841,7 @@ run_open_guardrail8_cleanup_probe() {
 	mkdir -p "$stem/round-1"
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
-	printf '{"round":1,"seams":[],"redesign_dispatched":false}\n' >"$stem/seam-tripwire.json"
+	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
 	if [[ "$mode" == force ]]; then
 		printf '{"target":"old"}\n' >"$ledger"
 		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
@@ -822,7 +862,7 @@ run_open_guardrail8_unknown_probe() {
 	mkdir -p "$stem/round-1"
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
-	printf '{"round":1,"seams":[],"redesign_dispatched":false}\n' >"$stem/seam-tripwire.json"
+	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
 	printf 'keep\n' >"$stem/unknown.txt"
 	set +e
 	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1

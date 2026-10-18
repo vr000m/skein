@@ -315,6 +315,91 @@ run_normal_scope_probe() {
 	grep -Fq 'Summary: "normal-scope-delta"' "$plan"
 }
 
+run_tracked_working_path_probe() {
+	local sink_fn="$1" only_kind="${2:-}" env_mode kind repo plan before base_oid reviewed_head path rel sentinel before_path
+	for env_mode in clean hostile; do
+		for kind in items deltas resolution scope scope-temp; do
+			[[ -z "$only_kind" || "$kind" == "$only_kind" ]] || continue
+			repo="$WORKDIR/tracked-$env_mode-$kind-$RANDOM"
+			init_fixture "$repo"
+			plan="$repo/docs/dev_plans/$PLAN_NAME"
+			before="$(hash_file "$plan")"
+			base_oid="$(git -C "$repo" rev-parse main)"
+			reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+			(
+				cd "$repo"
+				# shellcheck source=/dev/null
+				. "$LIB/gauntlet-common.sh"
+				# shellcheck source=/dev/null
+				. "$sink_fn"
+				canonical_target=branch:feature/widget
+				ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+				"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+					--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+				run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+				jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+				mv "$ledger_path.tmp" "$ledger_path"
+				write_round "$run_dir" 1 tracked-path-delta
+				target_key="$(basename "${ledger_path%.json}")"
+				state_dir="$(dirname "$ledger_path")"
+				ledger_run_id="$(jq -r .run_id "$ledger_path")"
+				run_id="codex-${ledger_run_id:0:12}"
+				case "$kind" in
+				items) path="$state_dir/design-deltas-$target_key.items.jsonl" ;;
+				deltas) path="$state_dir/design-deltas-$target_key.deltas.json" ;;
+				resolution) path="$state_dir/design-deltas-$target_key.resolution.json" ;;
+				scope) path="$state_dir/design-deltas-$target_key-$run_id.scope.json" ;;
+				scope-temp) path="$state_dir/.design-delta-scope-$target_key-$run_id.tmp" ;;
+				esac
+				sentinel="sentinel-$env_mode-$kind"
+				printf '%s\n' "$sentinel" >"$path"
+				rel="${path#"$repo"/}"
+				git add -f -- "$rel"
+				before_path="$(hash_file "$path")"
+				PLAN_PATH=""
+				if [[ "$env_mode" == hostile ]]; then
+					GIT_INDEX_FILE=/nonexistent GIT_DIR=/nonexistent GIT_WORK_TREE="$WORKDIR" \
+						GIT_CEILING_DIRECTORIES="$repo" run_design_delta_sink
+				else
+					run_design_delta_sink
+				fi
+				[[ "$before_path" == "$(hash_file "$path")" ]]
+			) >"$repo/tracked.out" 2>"$repo/tracked.err" || return 1
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+			grep -Fq 'tracked or indeterminate design delta' "$repo/tracked.err" ||
+				grep -Fq 'refusing to write tracked design delta path' "$repo/tracked.err" || return 1
+		done
+	done
+}
+
+run_corrupt_index_working_path_probe() {
+	local sink_fn="$1" repo base_oid reviewed_head
+	repo="$WORKDIR/corrupt-index-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		target_key="$(basename "${ledger_path%.json}")"
+		items="${ledger_path%/*}/design-deltas-$target_key.items.jsonl"
+		printf 'corrupt-index-sentinel\n' >"$items"
+		before_items="$(hash_file "$items")"
+		printf 'not an index\n' >.git/index
+		PLAN_PATH=""
+		run_design_delta_sink
+		[[ "$before_items" == "$(hash_file "$items")" ]]
+	) >"$repo/corrupt.out" 2>"$repo/corrupt.err"
+}
+
 # A resume after the reviewed branch moves must reuse the first sink call's
 # immutable base/head scope and the ledger's stable run id.
 repo="$WORKDIR/resume"
@@ -460,6 +545,18 @@ else
 	fail "normal review_scope branch"
 fi
 
+if run_tracked_working_path_probe "$SINK_FN"; then
+	pass "tracked items, deltas, resolution, scope, and scope-temp paths survive clean and hostile Git environments byte-for-byte"
+else
+	fail "tracked sink working-path state space"
+fi
+
+if run_corrupt_index_working_path_probe "$SINK_FN"; then
+	pass "an indeterminate trackedness result from a corrupt index fails closed"
+else
+	fail "corrupt-index trackedness result"
+fi
+
 seam_mutant="$WORKDIR/seam-mutant.sh"
 sed 's/if \[\[ "${design_delta_sidecar_only:-false}" == true \]\]; then/if false; then/' "$SINK_FN" >"$seam_mutant"
 if run_seam_sidecar_probe "$seam_mutant"; then
@@ -514,6 +611,31 @@ if run_review_scope_control_probe "$scope_control_mutant"; then
 	fail "mutation removing sink scope control validation survived its state-space probe"
 else
 	pass "mutation removing sink scope control validation is caught"
+fi
+
+env_scrub_mutant="$WORKDIR/tracked-env-scrub-mutant.sh"
+sed 's/-u GIT_INDEX_FILE //g' "$SINK_FN" >"$env_scrub_mutant"
+if run_tracked_working_path_probe "$env_scrub_mutant" items; then
+	fail "mutation removing the sink Git-environment scrub survived the hostile-index cell"
+else
+	pass "mutation removing the sink Git-environment scrub is caught"
+fi
+
+git_error_mutant="$WORKDIR/tracked-git-error-mutant.sh"
+sed 's/if ! tracked_output=/if false \&\& tracked_output=/' "$SINK_FN" >"$git_error_mutant"
+if run_corrupt_index_working_path_probe "$git_error_mutant"; then
+	fail "mutation treating a Git error as untracked survived the corrupt-index cell"
+else
+	pass "mutation treating a Git error as untracked is caught"
+fi
+
+items_site_mutant="$WORKDIR/tracked-items-site-mutant.sh"
+sed -e 's/"$run_deltas_file" "$delta_items_file" "$resolution_file"/"$run_deltas_file" "$resolution_file"/' \
+	-e 's/design_delta_write_path_is_untracked "$delta_items_file"/true/g' "$SINK_FN" >"$items_site_mutant"
+if run_tracked_working_path_probe "$items_site_mutant" items; then
+	fail "mutation dropping the items-file write-site check survived its tracked cell"
+else
+	pass "mutation dropping one write-site check is caught by that site's cell"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused

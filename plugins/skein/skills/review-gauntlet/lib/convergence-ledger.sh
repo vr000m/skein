@@ -189,6 +189,15 @@ REVIEW_BASE_SEEN=0
 REVIEW_HEAD_SEEN=0
 REVIEW_BRANCH_SEEN=0
 
+# Shell argv cannot contain NUL. Reject every other C0 control byte and DEL
+# over the complete value; unlike a line-oriented grep, this sees embedded LF.
+control_free_arg() {
+	local count
+	count="$(printf '%s' "$1" | LC_ALL=C tr -d '\040-\176\200-\377' | wc -c)"
+	count="${count//[[:space:]]/}"
+	[[ "$count" == 0 ]]
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--init)
@@ -1014,7 +1023,7 @@ init)
 	fi
 	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 ]]; then
 		if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
-			printf '%s' "$REVIEW_BRANCH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+			! control_free_arg "$REVIEW_BASE" || ! control_free_arg "$REVIEW_HEAD" || ! control_free_arg "$REVIEW_BRANCH"; then
 			echo "convergence-ledger: invalid reviewed scope" >&2
 			exit 2
 		fi

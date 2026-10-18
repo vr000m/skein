@@ -73,6 +73,43 @@ JQ="$(command -v jq || true)"
 [[ -n "$JQ" && -x "$JQ" ]] || die_env "jq is required"
 [[ -d "$REPO_ROOT" ]] || die_env "repo root is not a directory: $REPO_ROOT"
 REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || die_env "cannot resolve repo root"
+
+# Return success only when PATH is outside the reviewed checkout or Git proves
+# that the exact repo-relative path is untracked. Git's environment is scrubbed
+# so caller-controlled repository/index overrides cannot change that verdict.
+# A Git setup/query error is not evidence of untrackedness and fails closed.
+write_path_is_untracked() {
+	local path="$1" rel git_bin env_bin git_root tracked_output
+	case "$path" in
+	"$REPO_ROOT"/*) rel="${path#"$REPO_ROOT"/}" ;;
+	*) return 0 ;;
+	esac
+	git_bin="$(command -v git || true)"
+	env_bin="$(command -v env || true)"
+	if [[ -z "$git_bin" || ! -x "$git_bin" || -z "$env_bin" || ! -x "$env_bin" ]]; then
+		echo "warning: cannot prove design-delta write path is untracked: $rel" >&2
+		return 1
+	fi
+	if ! git_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$REPO_ROOT" rev-parse --show-toplevel 2>/dev/null)" ||
+		[[ "$git_root" != "$REPO_ROOT" ]]; then
+		echo "warning: cannot verify reviewed checkout for design-delta write: $rel" >&2
+		return 1
+	fi
+	if ! tracked_output="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$REPO_ROOT" ls-files -- "$rel" 2>/dev/null)"; then
+		echo "warning: cannot classify design-delta write path: $rel" >&2
+		return 1
+	fi
+	if [[ -n "$tracked_output" ]]; then
+		echo "warning: refusing to write tracked design-delta path: $rel" >&2
+		return 1
+	fi
+	return 0
+}
+
 gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || exit 2
 [[ -f "$DELTAS" && -r "$DELTAS" ]] || die_usage "deltas file is not readable"
 
@@ -88,10 +125,18 @@ if [[ "$("$JQ" 'length' "$DELTAS")" -eq 0 ]]; then
 	exit 0
 fi
 
-payload="$(mktemp "${TMPDIR:-/tmp}/design-deltas-payload.XXXXXX")" || die_env "cannot create payload temp file"
+scratch_dir="${TMPDIR:-/tmp}"
+scratch_dir="$(cd "$scratch_dir" 2>/dev/null && pwd -P)" || die_env "cannot resolve scratch directory"
+case "$scratch_dir" in
+"$REPO_ROOT" | "$REPO_ROOT"/*)
+	scratch_dir="$(cd /tmp 2>/dev/null && pwd -P)" || die_env "cannot resolve fallback scratch directory"
+	;;
+esac
+payload="$(mktemp "$scratch_dir/design-deltas-payload.XXXXXX")" || die_env "cannot create payload temp file"
 output_tmp=""
 trap 'rm -f "$payload" "$payload.authority" "${output_tmp:-}"' EXIT
-"$JQ" -r --arg run_id "$RUN_ID" '
+write_path_is_untracked "$payload" || die_env "refusing unsafe payload temp file"
+if ! "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
   def strip_variations:
     explode
@@ -133,7 +178,9 @@ trap 'rm -f "$payload" "$payload.authority" "${output_tmp:-}"' EXIT
       "  - Decision: \(if ($delta|type) == "object" then $delta.decision else null end|token)",
       "  - Rationale: \(if ($delta|type) == "object" then $delta.rationale else null end|token)",
       "  - Cells: \(if ($delta|type) == "object" then $delta.cells else null end|token)")
-' "$DELTAS" >"$payload" || die_env "cannot render delta text"
+' "$DELTAS" >"$payload"; then
+	die_env "cannot render delta text"
+fi
 
 if [[ "$SIDECAR_ONLY" -eq 1 ]]; then
 	status="none"
@@ -188,7 +235,6 @@ fi
 
 marker_count=0
 marker_line=0
-authority_marker_count=0
 authority_marker_line=0
 authority_plan_hash=""
 findings_count=0
@@ -275,9 +321,9 @@ plan_has_non_ascii_marker_candidate() {
 # marker.py is the authority for the plan hash boundary. The inline query is
 # read-only: -I excludes cwd/PYTHONPATH/user site, -S excludes site hooks, and
 # -B prevents import bytecode writes. The only non-stdlib path inserted is the
-# resolved plugin-owned directory containing marker.py. The private scanner is
-# used only to report candidate count; the selected line and hash come from the
-# public last_marker_index/compute_plan_hash APIs.
+# resolved plugin-owned directory containing marker.py. The query uses only the
+# public last_marker_index/compute_plan_hash APIs, and returns only facts used
+# by the writer's decision.
 MARKER_PY="$SCRIPT_DIR/../../conduct/marker.py"
 marker_authority_query() {
 	local plan_path="$1" python3_path timeout_path
@@ -302,10 +348,9 @@ import marker
 
 plan_text = plan_path.read_bytes().decode("utf-8")
 lines = plan_text.splitlines()
-candidates = list(marker._scan_marker_lines(lines, include_placeholder=True))
 selected = marker.last_marker_index(lines, include_placeholder=True)
 plan_hash = marker.compute_plan_hash(plan_path)
-print(f"{len(candidates)}\t{0 if selected is None else selected + 1}\t{plan_hash}")'
+print(f"{0 if selected is None else selected + 1}\t{plan_hash}")'
 
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	if plan_has_disallowed_control_byte "$REPO_ROOT/$plan"; then
@@ -328,7 +373,12 @@ fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	authority_output=""
 	authority_rc=0
-	marker_authority_query "$REPO_ROOT/$plan" >"$payload.authority" 2>/dev/null || authority_rc=$?
+	write_path_is_untracked "$payload.authority" || die_env "refusing unsafe marker authority temp file"
+	[[ ! -e "$payload.authority" ]] || die_env "marker authority temp file already exists"
+	(
+		set -o noclobber
+		marker_authority_query "$REPO_ROOT/$plan" >"$payload.authority" 2>/dev/null
+	) || authority_rc=$?
 	if [[ "$authority_rc" -ne 0 ]]; then
 		case "$authority_rc" in
 		124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
@@ -339,8 +389,8 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		plan_is_safe=0
 	else
 		authority_output="$(cat "$payload.authority")"
-		IFS=$'\t' read -r authority_marker_count authority_marker_line authority_plan_hash authority_extra <<<"$authority_output"
-		if [[ "$authority_output" == *$'\n'* || ! "$authority_marker_count" =~ ^[0-9]+$ || ! "$authority_marker_line" =~ ^[0-9]+$ || ! "$authority_plan_hash" =~ ^[0-9a-f]{40}$ || -n "${authority_extra:-}" ]]; then
+		IFS=$'\t' read -r authority_marker_line authority_plan_hash authority_extra <<<"$authority_output"
+		if [[ "$authority_output" == *$'\n'* || ! "$authority_marker_line" =~ ^[0-9]+$ || ! "$authority_plan_hash" =~ ^[0-9a-f]{40}$ || -n "${authority_extra:-}" ]]; then
 			sidecar_reason="marker.py authority query returned malformed facts before plan edit"
 			plan_is_safe=0
 		elif [[ "$authority_marker_line" -eq 0 ]]; then
@@ -406,7 +456,9 @@ fi
 
 upsert_section() {
 	local input="$1" output="$2" start_line="$3" end_line="$4"
-	LC_ALL=C awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
+	(
+		set -o noclobber
+		LC_ALL=C awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
     function emit_payload(    line) {
       while ((getline line < payload) > 0) print line
       close(payload)
@@ -478,62 +530,90 @@ upsert_section() {
       }
     }
   ' "$input" >"$output"
+	)
 }
 
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	plan_path="$REPO_ROOT/$plan"
 	plan_dir="${plan_path%/*}"
-	output_tmp="$(mktemp "$plan_dir/.design-deltas.XXXXXX")" || die_env "cannot create plan temp file"
-	plan_mode="$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path" 2>/dev/null)" || die_env "cannot read plan mode"
-	[[ "$plan_mode" =~ ^[0-7]{3,4}$ ]] || die_env "cannot read plan mode"
-	upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || die_env "cannot update resolved plan"
-	if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
-		# BEGIN POST-EDIT MARKER AUTHORITY CHECK
-		post_authority_rc=0
-		marker_authority_query "$output_tmp" >"$payload.authority" 2>/dev/null || post_authority_rc=$?
-		if [[ "$post_authority_rc" -eq 0 ]]; then
-			post_authority_output="$(cat "$payload.authority")"
-			IFS=$'\t' read -r post_authority_count post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
-			if [[ "$post_authority_output" != *$'\n'* && "$post_authority_count" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
-				rm -f "$payload.authority"
-				chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
-				mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
-				output_tmp=""
-				"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
-				exit 0
-			fi
-			sidecar_reason="marker.py authority changed across the proposed plan edit"
-		else
-			sidecar_reason="marker.py authority query failed after the proposed plan edit"
-		fi
-		rm -f "$payload.authority"
-		# END POST-EDIT MARKER AUTHORITY CHECK
-	else
-		sidecar_reason="plan rewrite would change bytes through review marker"
+	output_tmp="$plan_dir/.design-deltas-$TARGET_KEY-$RUN_ID.tmp"
+	gauntlet_assert_no_symlink "$output_tmp" write-design-deltas || exit 2
+	if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
+		sidecar_reason="resolved plan temp path is tracked, indeterminate, or already exists"
+		plan_is_safe=0
 	fi
-	rm -f "$output_tmp"
-	output_tmp=""
+	if [[ "$plan_is_safe" -ne 1 ]]; then
+		output_tmp=""
+	fi
+	if [[ "$plan_is_safe" -eq 1 ]]; then
+		plan_mode="$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path" 2>/dev/null)" || die_env "cannot read plan mode"
+		[[ "$plan_mode" =~ ^[0-7]{3,4}$ ]] || die_env "cannot read plan mode"
+		upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || die_env "cannot update resolved plan"
+		if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
+			# BEGIN POST-EDIT MARKER AUTHORITY CHECK
+			post_authority_rc=0
+			write_path_is_untracked "$payload.authority" || die_env "refusing unsafe marker authority temp file"
+			[[ ! -e "$payload.authority" ]] || die_env "marker authority temp file already exists"
+			(
+				set -o noclobber
+				marker_authority_query "$output_tmp" >"$payload.authority" 2>/dev/null
+			) || post_authority_rc=$?
+			if [[ "$post_authority_rc" -eq 0 ]]; then
+				post_authority_output="$(cat "$payload.authority")"
+				IFS=$'\t' read -r post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
+				if [[ "$post_authority_output" != *$'\n'* && "$post_authority_line" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
+					rm -f "$payload.authority"
+					chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
+					mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
+					output_tmp=""
+					"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
+					exit 0
+				fi
+				sidecar_reason="marker.py authority changed across the proposed plan edit"
+			else
+				sidecar_reason="marker.py authority query failed after the proposed plan edit"
+			fi
+			rm -f "$payload.authority"
+			# END POST-EDIT MARKER AUTHORITY CHECK
+		else
+			sidecar_reason="plan rewrite would change bytes through review marker"
+		fi
+		rm -f "$output_tmp"
+		output_tmp=""
+	fi
 fi
 
 state_dir="$REPO_ROOT/.gauntlet"
 sidecar="$state_dir/design-deltas-$TARGET_KEY.md"
-sidecar_rel=".gauntlet/design-deltas-$TARGET_KEY.md"
 gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
 gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
-GIT="$(command -v git || true)"
-if [[ -n "$GIT" ]] && "$GIT" -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	if "$GIT" -C "$REPO_ROOT" ls-files --error-unmatch -- "$sidecar_rel" >/dev/null 2>&1; then
-		die_env "refusing to overwrite tracked sidecar: $sidecar_rel"
-	fi
+if ! write_path_is_untracked "$state_dir" || ! write_path_is_untracked "$sidecar"; then
+	echo "warning: design-delta sidecar is tracked or cannot be classified; skipping" >&2
+	"$JQ" -cn --arg reason "$sidecar_reason" '{sink:"none",path:"",reason:$reason}'
+	exit 0
 fi
 mkdir -p "$state_dir" || die_env "cannot create .gauntlet directory"
 gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
 gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
-output_tmp="$(mktemp "$state_dir/.design-deltas.XXXXXX")" || die_env "cannot create sidecar temp file"
+output_tmp="$state_dir/.design-deltas-$TARGET_KEY.tmp"
+gauntlet_assert_no_symlink "$output_tmp" write-design-deltas || exit 2
+if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
+	echo "warning: design-delta sidecar temp path is tracked, indeterminate, or already exists; skipping" >&2
+	output_tmp=""
+	"$JQ" -cn --arg reason "$sidecar_reason" '{sink:"none",path:"",reason:$reason}'
+	exit 0
+fi
 if [[ -f "$sidecar" ]]; then
 	upsert_section "$sidecar" "$output_tmp" 0 0 || die_env "cannot update sidecar temp file"
 else
 	upsert_section /dev/null "$output_tmp" 0 0 || die_env "cannot write sidecar temp file"
+fi
+if ! write_path_is_untracked "$sidecar"; then
+	echo "warning: design-delta sidecar became tracked or indeterminate; skipping" >&2
+	rm -f "$output_tmp"
+	output_tmp=""
+	"$JQ" -cn --arg reason "$sidecar_reason" '{sink:"none",path:"",reason:$reason}'
+	exit 0
 fi
 mv "$output_tmp" "$sidecar" || die_env "cannot replace sidecar"
 output_tmp=""

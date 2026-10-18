@@ -286,7 +286,40 @@ run_design_delta_sink() {
     echo "warning: design delta sink needs canonical_target, ledger_path and run_dir; skipping" >&2
     return 0
   fi
-  REPO_ROOT="$(git rev-parse --show-toplevel)"
+  GIT_BIN="$(command -v git || true)"
+  ENV_BIN="$(command -v env || true)"
+  repo_hint="$(pwd -P)"
+  if [[ -z "$GIT_BIN" || ! -x "$GIT_BIN" || -z "$ENV_BIN" || ! -x "$ENV_BIN" ]] ||
+    ! REPO_ROOT="$("$ENV_BIN" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      "$GIT_BIN" -C "$repo_hint" rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "warning: cannot identify reviewed checkout for design delta sink; skipping" >&2
+    return 0
+  fi
+  REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || return 0
+  clean_git=("$ENV_BIN" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES "$GIT_BIN" -C "$REPO_ROOT")
+  design_delta_write_path_is_untracked() {
+    local path="$1" rel git_root tracked_output
+    case "$path" in
+      "$REPO_ROOT"/*) rel="${path#"$REPO_ROOT"/}" ;;
+      *) return 0 ;;
+    esac
+    if ! git_root="$("${clean_git[@]}" rev-parse --show-toplevel 2>/dev/null)" ||
+      [[ "$git_root" != "$REPO_ROOT" ]]; then
+      echo "warning: cannot verify reviewed checkout for design delta write: $rel" >&2
+      return 1
+    fi
+    if ! tracked_output="$("${clean_git[@]}" ls-files -- "$rel" 2>/dev/null)"; then
+      echo "warning: cannot classify design delta write path: $rel" >&2
+      return 1
+    fi
+    if [[ -n "$tracked_output" ]]; then
+      echo "warning: refusing to write tracked design delta path: $rel" >&2
+      return 1
+    fi
+    return 0
+  }
   BASE_OID="${round_base:-${resolved_base_oid:-}}"
   HEAD_OID="${round_head:-${resolved_head_oid:-}}"
   branch_name=""
@@ -296,16 +329,16 @@ run_design_delta_sink() {
       case "$branch_name" in
         *...*) range_base="${branch_name%%...*}"; range_head="${branch_name##*...}"; range_kind=three-dot ;;
         *..*) range_base="${branch_name%%..*}"; range_head="${branch_name##*..}"; range_kind=two-dot ;;
-        *) range_base="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"; range_head="$branch_name"; range_kind=bare ;;
+        *) range_base="$("${clean_git[@]}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"; range_head="$branch_name"; range_kind=bare ;;
       esac
-      HEAD_OID="$(git rev-parse --verify --quiet --end-of-options "${range_head}^{commit}" 2>/dev/null || true)"
+      HEAD_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_head}^{commit}" 2>/dev/null || true)"
       if [[ "$range_kind" == two-dot ]]; then
-        BASE_OID="$(git rev-parse --verify --quiet --end-of-options "${range_base}^{commit}" 2>/dev/null || true)"
+        BASE_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${range_base}^{commit}" 2>/dev/null || true)"
       else
-        BASE_OID="$(git merge-base --end-of-options "$range_base" "$range_head" 2>/dev/null || true)"
+        BASE_OID="$("${clean_git[@]}" merge-base --end-of-options "$range_base" "$range_head" 2>/dev/null || true)"
       fi
       [[ "$branch_name" == *..* ]] && branch_name="$range_head"
-      [[ "$branch_name" == HEAD ]] && branch_name="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+      [[ "$branch_name" == HEAD ]] && branch_name="$("${clean_git[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
       ;;
     pr:*) branch_name="${pr_head_ref:-}" ;;
   esac
@@ -320,6 +353,12 @@ run_design_delta_sink() {
   for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
     if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
       echo "warning: design delta state path refused; continuing terminal handoff" >&2
+      return 0
+    fi
+  done
+  for writable in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
+    if ! design_delta_write_path_is_untracked "$writable"; then
+      echo "warning: tracked or indeterminate design delta working path; continuing terminal handoff" >&2
       return 0
     fi
   done
@@ -360,6 +399,10 @@ run_design_delta_sink() {
     echo "warning: design delta scope path refused; continuing terminal handoff" >&2
     return 0
   fi
+  if ! design_delta_write_path_is_untracked "$scope_file"; then
+    echo "warning: tracked or indeterminate design delta scope path; continuing terminal handoff" >&2
+    return 0
+  fi
   if [[ -e "$scope_file" ]]; then
     if ! jq -e --arg run_id "$run_id" --arg target "$canonical_target" --argjson enforce_scope "$ledger_scope" \
       --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" '
@@ -388,13 +431,16 @@ run_design_delta_sink() {
       echo "warning: invalid reviewed scope before persistence; continuing terminal handoff" >&2
       return 0
     fi
-    scope_tmp="$(mktemp "$state_dir/.design-delta-scope.XXXXXX")" || {
-      echo "warning: cannot create design delta scope; continuing terminal handoff" >&2
+    scope_tmp="$state_dir/.design-delta-scope-$target_key-$run_id.tmp"
+    if ! gauntlet_assert_no_symlink "$scope_tmp" design-delta-sink ||
+      ! design_delta_write_path_is_untracked "$scope_tmp" || [[ -e "$scope_tmp" ]]; then
+      echo "warning: unsafe or occupied design delta scope temp path; continuing terminal handoff" >&2
       return 0
-    }
-    if ! jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
+    fi
+    if ! (set -o noclobber; jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
       --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" \
-      '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp" ||
+      '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp") ||
+      ! design_delta_write_path_is_untracked "$scope_file" ||
       ! mv "$scope_tmp" "$scope_file"; then
       rm -f "$scope_tmp"
       echo "warning: cannot persist design delta scope; continuing terminal handoff" >&2
@@ -402,7 +448,10 @@ run_design_delta_sink() {
     fi
   fi
 
-  if ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then
+  if ! design_delta_write_path_is_untracked "$delta_items_file" ||
+    ! design_delta_write_path_is_untracked "$run_deltas_file" ||
+    ! design_delta_write_path_is_untracked "$resolution_file" ||
+    ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
     return 0
   fi
@@ -446,12 +495,15 @@ run_design_delta_sink() {
       echo "warning: non-array design_deltas skipped: $report" >&2
       continue
     fi
-    if ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
+    if ! design_delta_write_path_is_untracked "$delta_items_file" ||
+      ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
       echo "warning: unreadable design_deltas skipped: $report" >&2
     fi
   done
-  if ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
+  if ! design_delta_write_path_is_untracked "$run_deltas_file" ||
+    ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
     echo "warning: design delta collection failed; using an empty array" >&2
+    design_delta_write_path_is_untracked "$run_deltas_file" || return 0
     printf '[]\n' > "$run_deltas_file" || return 0
   fi
   section_run_id="$run_id"
@@ -469,7 +521,8 @@ run_design_delta_sink() {
   [[ -n "$PLAN_PATH" ]] && resolve_args+=(--plan "$PLAN_PATH")
   resolution_reason=""
   if [[ "${design_delta_sidecar_only:-false}" != true ]] &&
-    ! "$SKILL_DIR"/lib/resolve-plan.sh "${resolve_args[@]}" > "$resolution_file"; then
+    { ! design_delta_write_path_is_untracked "$resolution_file" ||
+      ! "$SKILL_DIR"/lib/resolve-plan.sh "${resolve_args[@]}" > "$resolution_file"; }; then
     resolution_reason="plan resolver failed"
     echo "warning: design delta plan resolution failed; using sidecar" >&2
   elif [[ "${design_delta_sidecar_only:-false}" != true ]] &&
@@ -478,7 +531,10 @@ run_design_delta_sink() {
     echo "warning: unusable design delta plan resolution; using sidecar" >&2
   fi
   if [[ -n "$resolution_reason" ]]; then
-    if ! jq -cn --arg reason "$resolution_reason" '{status:"none",plan:"",reason:$reason}' > "$resolution_file"; then
+    if ! design_delta_write_path_is_untracked "$resolution_file"; then
+      return 0
+    elif ! jq -cn --arg reason "$resolution_reason" '{status:"none",plan:"",reason:$reason}' > "$resolution_file"; then
+      design_delta_write_path_is_untracked "$resolution_file" || return 0
       printf '{"status":"none","plan":"","reason":"plan resolution unavailable"}\n' > "$resolution_file" || return 0
     fi
   fi
@@ -592,14 +648,37 @@ The only ordinary quarantine trigger is a design/architecture conflict. Guardrai
 - **Trivial/allowlisted** findings (`docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort`) go through the bundled `apply-auto-fix-code.sh`.
 - **Substantive logic/security findings** are direct fixer edits. The applier is trivial-only and uses the deep-review allowlist identity, so it must not be stretched to non-trivial work.
 
-**Seam tripwire (conductor-side, judgment, no ledger change).** The tripwire's two inputs — the previous completed fixer's touched seams and whether that seam already received a redesign brief — are durable run-directory state, so `--resume` and a fresh conversation make the same judgment as an uninterrupted run. Store one JSON object at `$run_dir/seam-tripwire.json`: integer `round`, `seams` as an array of objects with string `file` and `function_or_contract` fields, and boolean `redesign_dispatched`. Before dispatching this round's fixer, after reconciling, source the state-path guard, guard this path, then read and validate it; `--resume` performs this same guarded read before dispatch. A missing file means there is no previous completed fixer round. Compare each finding with the stored files, functions, and contracts. If a finding lands in the same file and function, or in the same contract, as the previous round's fix, flag `seam still moving`. When stored `redesign_dispatched` is false, do not dispatch another point fix: build the next fixer brief as a contract-level redesign of the whole mechanism, requiring a full Guardrail 8 contract statement and one change set that replaces the point patches. When stored `redesign_dispatched` is true and that seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
+**Seam tripwire (conductor-side, judgment, no ledger change).** The tripwire's two inputs — the previous completed fixer's touched seams and whether each seam already received a redesign brief — are durable run-directory state, so `--resume` and a fresh conversation make the same judgment as an uninterrupted run. Store one JSON object at `$run_dir/seam-tripwire.json`: integer `round`, and `seams` as an array of objects with string `file` and `function_or_contract` fields plus boolean `redesign_dispatched`. There is no round-level redesign flag. Before dispatching this round's fixer, after reconciling, source the state-path guard, guard this path, then read and validate it; `--resume` performs this same guarded read before dispatch. A missing file means there is no previous completed fixer round. Compare each finding with the stored files, functions, and contracts. If a finding lands in the same file and function, or in the same contract, as a stored seam, flag `seam still moving`. If that matching seam's stored `redesign_dispatched` is false, do not dispatch another point fix: build the next fixer brief as a contract-level redesign of the whole mechanism, requiring a full Guardrail 8 contract statement and one change set that replaces the point patches. Only when that matching seam's own stored `redesign_dispatched` is true and the seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
 
-After each accepted fixer round, derive `current_touched_seams_json` from the verified fixer diff as the array described above and set `redesign_dispatched_this_round` to whether that round used the redesign brief. Persist both inputs atomically before advancing to the next gate round:
+After each accepted fixer round, derive `current_touched_seams_json` from the verified fixer diff as the array described above, setting each seam object's `redesign_dispatched` to whether that specific seam was handled under a redesign brief. A seam merely point-fixed during a round that redesigned another seam stays false. Persist that array atomically before advancing to the next gate round:
 
 ```bash
 seam_tripwire_file="$run_dir/seam-tripwire.json"
 . "$SKILL_DIR"/lib/state-path-guard.sh
+seam_tripwire_write_path_is_untracked() {
+  local path="$1" repo_root rel git_bin env_bin git_root tracked_output
+  git_bin="$(command -v git || true)"
+  env_bin="$(command -v env || true)"
+  [[ -n "$git_bin" && -x "$git_bin" && -n "$env_bin" && -x "$env_bin" ]] || return 1
+  repo_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    "$git_bin" -C "$run_dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  repo_root="$(cd "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  case "$path" in
+    "$repo_root"/*) rel="${path#"$repo_root"/}" ;;
+    *) return 1 ;;
+  esac
+  git_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    "$git_bin" -C "$repo_root" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ "$git_root" == "$repo_root" ]] || return 1
+  tracked_output="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+    "$git_bin" -C "$repo_root" ls-files -- "$rel" 2>/dev/null)" || return 1
+  [[ -z "$tracked_output" ]]
+}
 gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire || exit 1
+seam_tripwire_write_path_is_untracked "$seam_tripwire_file" || exit 1
 if [[ -e "$seam_tripwire_file" ]]; then
   jq -e '
     type == "object"
@@ -607,21 +686,39 @@ if [[ -e "$seam_tripwire_file" ]]; then
     and (.seams | type == "array" and all(.[];
       type == "object"
       and (.file | type == "string")
-      and (.function_or_contract | type == "string")))
-    and (.redesign_dispatched | type == "boolean")
+      and (.function_or_contract | type == "string")
+      and (.redesign_dispatched | type == "boolean")))
   ' "$seam_tripwire_file" >/dev/null || exit 1
 fi
+seam_tripwire_action_for_finding() {
+  jq -r --arg file "$1" --arg function_or_contract "$2" '
+    [.seams[] | select(
+      ((.file == $file) and (.function_or_contract == $function_or_contract))
+      or (.function_or_contract == $function_or_contract))] as $matching
+    | if ($matching | length) == 0 then "point-fix"
+      elif any($matching[]; .redesign_dispatched) then "escalate"
+      else "redesign"
+      end
+  ' "$seam_tripwire_file"
+}
 # The guarded read above happens before this round's fixer dispatch. After the
 # accepted fixer round, write the state consumed before the next dispatch.
-seam_tripwire_tmp="$(mktemp "$run_dir/.seam-tripwire.XXXXXX")" || exit 1
+seam_tripwire_tmp="$run_dir/.seam-tripwire.tmp"
 gauntlet_assert_no_symlink "$seam_tripwire_tmp" seam-tripwire || exit 1
-if ! jq -en --argjson round "$round_n" --argjson seams "$current_touched_seams_json" \
-  --argjson redesign_dispatched "$redesign_dispatched_this_round" '
-  {round:$round,seams:$seams,redesign_dispatched:$redesign_dispatched}
-' >"$seam_tripwire_tmp"; then
+seam_tripwire_write_path_is_untracked "$seam_tripwire_tmp" || exit 1
+[[ ! -e "$seam_tripwire_tmp" ]] || exit 1
+if ! (set -o noclobber; jq -en --argjson round "$round_n" --argjson seams "$current_touched_seams_json" '
+  {round:$round,seams:$seams}
+  | select(.seams | type == "array" and all(.[];
+      type == "object"
+      and (.file | type == "string")
+      and (.function_or_contract | type == "string")
+      and (.redesign_dispatched | type == "boolean")))
+' >"$seam_tripwire_tmp"); then
   rm -f "$seam_tripwire_tmp"
   exit 1
 fi
+seam_tripwire_write_path_is_untracked "$seam_tripwire_file" || exit 1
 mv "$seam_tripwire_tmp" "$seam_tripwire_file" || exit 1
 ```
 
@@ -653,7 +750,7 @@ If the fixer's summary claims edits, commits, or a test addition that the live d
 
 For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit.
 
-Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it, and guard every read and write with the existing state-path guard. `--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor's Guardrail 4 check passes. Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries; a later clean round therefore remains `success_with_quarantine` while any entry survives. Proceed to the ledger call with only the durable tally the repository confirms.
+Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it. Before every create, replace, append, truncate, or delete, guard the path with the existing state-path guard and the same scrubbed-Git trackedness rule as the seam-tripwire block: tracked or indeterminate means refuse without changing the file; only proven-untracked is writable. `--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor's Guardrail 4 check passes. Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries; a later clean round therefore remains `success_with_quarantine` while any entry survives. Proceed to the ledger call with only the durable tally the repository confirms.
 
 ### Guardrail 5 - run the full CI recipe after every fixer round
 
