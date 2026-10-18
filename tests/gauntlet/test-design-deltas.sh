@@ -2425,7 +2425,7 @@ make_writer_bad_type() {
 }
 
 run_writer_nonregular_probe() {
-	local writer="$1" only_site="${2:-}" site bad_type repo plan path out
+	local writer="$1" only_site="${2:-}" site bad_type repo plan path out rc
 	for site in sidecar sidecar-temp plan-temp state-dir; do
 		[[ -z "$only_site" || "$site" == "$only_site" ]] || continue
 		for bad_type in directory fifo socket; do
@@ -2459,17 +2459,21 @@ run_writer_nonregular_probe() {
 				fi
 				return 1
 			fi
-			out="$(run_writer_id "$writer" "$repo" run-one 2>"$repo/nonregular.err")" || {
+			rc=0
+			out="$(run_writer_id "$writer" "$repo" run-one 2>"$repo/nonregular.err")" || rc=$?
+			if [[ "$rc" -ne 0 ]]; then
 				[[ "$site" == state-dir ]] || return 1
 				out=""
-			}
+			fi
 			case "$bad_type" in
 			fifo) [[ -p "$path" ]] ;;
 			directory) [[ -d "$path" ]] ;;
 			socket) [[ -S "$path" ]] ;;
 			esac || return 1
 			if [[ "$site" == state-dir ]]; then
-				:
+				# A refusal that exits 0 must still carry the dropped envelope; only the
+				# writer's own fail-closed non-zero exit may omit it.
+				[[ "$rc" -ne 0 ]] || jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" || return 1
 			elif [[ "$site" == plan-temp ]]; then
 				jq -e '.sink == "sidecar"' >/dev/null <<<"$out" || return 1
 			else
@@ -2498,8 +2502,9 @@ run_icase_sidecar_probe() {
 }
 
 run_scratch_nonregular_probe() {
-	local writer="$1" site bad_type repo plan before fake_bin fake_payload fake_authority path rc
-	for site in payload authority; do
+	local writer="$1" site bad_type repo plan before fake_bin fake_payload fake_authority path rc real_mktemp bad_call
+	real_mktemp="$(command -v mktemp)"
+	for site in payload authority authority-post; do
 		for bad_type in directory fifo; do
 			repo="$WORKDIR/scratch-nonregular-$site-$bad_type-${writer##*/}-$RANDOM"
 			init_repo "$repo"
@@ -2512,11 +2517,24 @@ run_scratch_nonregular_probe() {
 			fake_payload="$repo/fake-payload"
 			fake_authority="$repo/fake-authority"
 			mkdir -p "$fake_bin"
+			# The Nth marker-authority mktemp call (1 = before the edit, 2 = after it) returns the
+			# bad target; every other authority call gets a real temp file, so each site is reached.
+			[[ "$site" == authority-post ]] && bad_call=2 || bad_call=1
 			cat >"$fake_bin/mktemp" <<'SH'
 #!/usr/bin/env bash
 case "$1" in
 *design-deltas-payload*) printf '%s\n' "$FAKE_PAYLOAD_PATH" ;;
-*design-deltas-authority*) printf '%s\n' "$FAKE_AUTHORITY_PATH" ;;
+*design-deltas-authority*)
+  count=0
+  [[ -f "$FAKE_AUTHORITY_COUNT" ]] && count="$(cat "$FAKE_AUTHORITY_COUNT")"
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$FAKE_AUTHORITY_COUNT"
+  if [[ "$count" -eq "$FAKE_AUTHORITY_BAD_CALL" ]]; then
+    printf '%s\n' "$FAKE_AUTHORITY_PATH"
+  else
+    exec "$REAL_MKTEMP" "$@"
+  fi
+  ;;
 *) exit 1 ;;
 esac
 SH
@@ -2529,6 +2547,7 @@ SH
 			fi
 			set +e
 			PATH="$fake_bin:$PATH" FAKE_PAYLOAD_PATH="$fake_payload" FAKE_AUTHORITY_PATH="$fake_authority" \
+				FAKE_AUTHORITY_COUNT="$repo/authority-count" FAKE_AUTHORITY_BAD_CALL="$bad_call" REAL_MKTEMP="$real_mktemp" \
 				run_writer_id "$writer" "$repo" run-one >"$repo/scratch.out" 2>"$repo/scratch.err"
 			rc=$?
 			set -e
