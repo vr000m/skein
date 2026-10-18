@@ -146,6 +146,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
 . "$SCRIPT_DIR/state-path-guard.sh"
 
+# The conductor is the source of these run-directory filenames. Keep its
+# writer-owned durable state in one list so cleanup validation and guarding
+# cannot drift onto different hardcoded sets.
+RUN_DIR_OWNED_FILES=("open-guardrail8.jsonl" "seam-tripwire.json")
+
 usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
@@ -555,15 +560,16 @@ validate_ledger_root_fields() {
 	local ledger_path="$1"
 	if ! jq -e '
 		def is_int: type == "number" and (. | floor) == . and . >= 0;
+		def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
 		. as $root
 		| ($root.loop_counter | is_int)
 		and (($root | has("run_id") | not) or
 		     ($root.run_id | type == "string" and test("^[0-9a-f]{20}$")))
 		and (($root | has("review_scope") | not) or
 		     ($root.review_scope | type == "object"
-		      and (.base_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
-		      and (.head_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
-		      and (.branch | type == "string" and (test("[\\r\\n]") | not))))
+		      and (.base_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.head_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.branch | control_free)))
 		and all(["cap", "k"][];
 			. as $f
 			| ($root[$f] == null) or ($root[$f] | is_int))
@@ -685,12 +691,20 @@ round_dir_is_runtime_owned() {
 	return 0
 }
 
-# run_dir_is_rounds_only <dir> — 0 when <dir> contains only writer-owned run
+# run_dir_owned_entries_only <dir> — 0 when <dir> contains only writer-owned run
 # entries: runtime-owned `round-*` directories plus the optional regular,
 # non-symlink `open-guardrail8.jsonl` written by Guardrail 4 and optional
 # regular, non-symlink `seam-tripwire.json` written by the seam tripwire.
-run_dir_is_rounds_only() {
-	local dir="$1" entry restore
+run_dir_owned_file_name() {
+	local candidate="$1" owned
+	for owned in "${RUN_DIR_OWNED_FILES[@]}"; do
+		[[ "$candidate" == "$owned" ]] && return 0
+	done
+	return 1
+}
+
+run_dir_owned_entries_only() {
+	local dir="$1" entry name restore
 	local -a entries=()
 	[[ -d "$dir" ]] || return 1
 	restore="$(shopt -p nullglob dotglob || true)"
@@ -698,12 +712,14 @@ run_dir_is_rounds_only() {
 	entries=("$dir"/*)
 	eval "$restore"
 	for entry in ${entries[@]+"${entries[@]}"}; do
-		case "${entry##*/}" in
-		round-*) round_dir_is_runtime_owned "$entry" || return 1 ;;
-		open-guardrail8.jsonl) [[ -f "$entry" && ! -L "$entry" ]] || return 1 ;;
-		seam-tripwire.json) [[ -f "$entry" && ! -L "$entry" ]] || return 1 ;;
-		*) return 1 ;;
-		esac
+		name="${entry##*/}"
+		if [[ "$name" == round-* ]]; then
+			round_dir_is_runtime_owned "$entry" || return 1
+		elif run_dir_owned_file_name "$name"; then
+			[[ -f "$entry" && ! -L "$entry" ]] || return 1
+		else
+			return 1
+		fi
 	done
 	return 0
 }
@@ -724,7 +740,7 @@ run_dir_is_rounds_only() {
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
-	local run_dir report ledger_name open_guardrail8 seam_tripwire
+	local run_dir report ledger_name owned_name owned_path
 	run_dir="$(ledger_run_dir "$1")" || return 0
 	ledger_in_gauntlet_dir "$1" || return 0
 	ledger_name="${1##*/}"
@@ -736,15 +752,13 @@ clear_stale_run_dir() {
 		if ! ledger_assert_no_symlink "$run_dir"; then
 			exit 1
 		fi
-		open_guardrail8="$run_dir/open-guardrail8.jsonl"
-		if [[ -e "$open_guardrail8" || -L "$open_guardrail8" ]]; then
-			ledger_assert_no_symlink "$open_guardrail8" || exit 1
-		fi
-		seam_tripwire="$run_dir/seam-tripwire.json"
-		if [[ -e "$seam_tripwire" || -L "$seam_tripwire" ]]; then
-			ledger_assert_no_symlink "$seam_tripwire" || exit 1
-		fi
-		if run_dir_is_rounds_only "$run_dir"; then
+		for owned_name in "${RUN_DIR_OWNED_FILES[@]}"; do
+			owned_path="$run_dir/$owned_name"
+			if [[ -e "$owned_path" || -L "$owned_path" ]]; then
+				ledger_assert_no_symlink "$owned_path" || exit 1
+			fi
+		done
+		if run_dir_owned_entries_only "$run_dir"; then
 			rm -rf -- "$run_dir"
 		else
 			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of recognized writer-owned entries only)" >&2
@@ -999,7 +1013,8 @@ init)
 		exit 2
 	fi
 	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 ]]; then
-		if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || "$REVIEW_BRANCH" == *$'\n'* || "$REVIEW_BRANCH" == *$'\r'* ]]; then
+		if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+			printf '%s' "$REVIEW_BRANCH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
 			echo "convergence-ledger: invalid reviewed scope" >&2
 			exit 2
 		fi

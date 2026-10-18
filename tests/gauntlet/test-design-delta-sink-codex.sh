@@ -239,6 +239,82 @@ run_quick_round_probe() {
 		[[ "$(grep -Fc 'Design deltas: docs/dev_plans/' "$repo/quick.out")" -eq 4 ]]
 }
 
+run_review_scope_control_probe() {
+	local sink_fn="$1" source escaped branch_json repo plan before base_oid reviewed_head ledger_path run_dir
+	for source in ledger persisted; do
+		for escaped in '\u0000' '\u0001' '\u001f' '\u007f' '\r' '\n'; do
+			repo="$WORKDIR/scope-control-$source-${escaped//\\/}-$RANDOM"
+			init_fixture "$repo"
+			plan="$repo/docs/dev_plans/$PLAN_NAME"
+			before="$(hash_file "$plan")"
+			base_oid="$(git -C "$repo" rev-parse main)"
+			reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+			branch_json="\"feature/widget${escaped}bad\""
+			(
+				cd "$repo"
+				# shellcheck source=/dev/null
+				. "$LIB/gauntlet-common.sh"
+				# shellcheck source=/dev/null
+				. "$sink_fn"
+				canonical_target=branch:feature/widget
+				ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+				"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+					--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+				run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+				jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+				mv "$ledger_path.tmp" "$ledger_path"
+				if [[ "$source" == ledger ]]; then
+					jq --argjson branch "$branch_json" '.review_scope.branch = $branch' "$ledger_path" >"$ledger_path.tmp"
+					mv "$ledger_path.tmp" "$ledger_path"
+				else
+					target_key="$(basename "${ledger_path%.json}")"
+					ledger_run_id="$(jq -r .run_id "$ledger_path")"
+					run_id="codex-${ledger_run_id:0:12}"
+					scope_file="${ledger_path%/*}/design-deltas-$target_key-$run_id.scope.json"
+					jq -cn --arg run_id "$run_id" --arg target "$canonical_target" --arg base_oid "$base_oid" --arg head_oid "$reviewed_head" \
+						--argjson branch "$branch_json" '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' >"$scope_file"
+				fi
+				write_round "$run_dir" 1 control-delta
+				PLAN_PATH="docs/dev_plans/$PLAN_NAME"
+				run_design_delta_sink
+			) >"$repo/scope.out" 2>"$repo/scope.err"
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+			if [[ "$source" == ledger ]]; then
+				grep -Fq 'invalid reviewed scope in ledger' "$repo/scope.err" || return 1
+			else
+				grep -Fq 'invalid persisted design delta scope' "$repo/scope.err" || return 1
+			fi
+		done
+	done
+}
+
+run_normal_scope_probe() {
+	local sink_fn="$1" repo plan base_oid reviewed_head
+	repo="$WORKDIR/scope-normal-$RANDOM"
+	init_fixture "$repo"
+	plan="$repo/docs/dev_plans/$PLAN_NAME"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget-name
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget-name >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 normal-scope-delta
+		PLAN_PATH="docs/dev_plans/$PLAN_NAME"
+		run_design_delta_sink
+	) >"$repo/scope.out" 2>"$repo/scope.err"
+	grep -Fq 'Summary: "normal-scope-delta"' "$plan"
+}
+
 # A resume after the reviewed branch moves must reuse the first sink call's
 # immutable base/head scope and the ledger's stable run id.
 repo="$WORKDIR/resume"
@@ -372,6 +448,18 @@ else
 	fail "quick-mode startup or section identity contract"
 fi
 
+if run_review_scope_control_probe "$SINK_FN"; then
+	pass "ledger and persisted review_scope branch controls fail closed before jq -r extraction"
+else
+	fail "review_scope control-byte sink matrix"
+fi
+
+if run_normal_scope_probe "$SINK_FN"; then
+	pass "normal slash-and-hyphen review_scope branch reaches the plan sink"
+else
+	fail "normal review_scope branch"
+fi
+
 seam_mutant="$WORKDIR/seam-mutant.sh"
 sed 's/if \[\[ "${design_delta_sidecar_only:-false}" == true \]\]; then/if false; then/' "$SINK_FN" >"$seam_mutant"
 if run_seam_sidecar_probe "$seam_mutant"; then
@@ -418,6 +506,14 @@ if run_quick_round_probe "$quick_init_mutant" "$SINK_FN"; then
 	fail "mutation removing quick-mode plain init survived its regression probe"
 else
 	pass "mutation removing quick-mode plain init is caught by the empty-state probe"
+fi
+
+scope_control_mutant="$WORKDIR/scope-control-mutant.sh"
+sed 's/and (\.branch | control_free)/and (.branch | type == "string")/g' "$SINK_FN" >"$scope_control_mutant"
+if run_review_scope_control_probe "$scope_control_mutant"; then
+	fail "mutation removing sink scope control validation survived its state-space probe"
+else
+	pass "mutation removing sink scope control validation is caught"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused

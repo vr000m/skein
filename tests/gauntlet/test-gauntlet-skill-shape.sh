@@ -1030,9 +1030,9 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'Every subsequent round sets `--quarantine <
 	"Codex mirror: every later round includes durable Guardrail 8 quarantine"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Set `--quarantine` on every round to the design-conflict queue size plus the number of lines still present in `$run_dir/open-guardrail8.jsonl`; `--resume` uses the same guarded file.' \
 	"Codex mirror: convergence call derives quarantine from durable state"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Plain `--init` and `--init --force` discard every recognized writer-owned run entry (`round-*`, `open-guardrail8.jsonl`, and `seam-tripwire.json`) while refusing unknown entries or symlinks.' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Plain `--init` and `--init --force` clear the writer-owned run state inside `$run_dir` (`round-*`, `open-guardrail8.jsonl`, and `seam-tripwire.json`) while refusing unknown entries or symlinks.' \
 	"Codex mirror: fresh init discards all and only recognized run-owned entries"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Target/run-keyed `design-deltas-*.scope.json` files beside the ledger are small immutable sink evidence and are intentionally retained' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Target/run-keyed `design-deltas-*.scope.json` files live beside the ledger, not inside `$run_dir`, and are intentionally retained as immutable sink evidence' \
 	"Codex mirror: scope evidence retention is explicit"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens.' \
 	"Codex mirror: documents the rendered design-delta structure"
@@ -1056,9 +1056,14 @@ fi
 rm -f "$guardrail_quarantine_mutant"
 
 run_guardrail8_quarantine_derivation_probe() {
-	local skill_md="$1" function_file repo run_dir open_file without_state with_state
+	local skill_md="$1" skill_dir function_file repo run_dir open_file without_state with_state
+	skill_dir="${2:-${skill_md%/*}}"
 	function_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-guardrail8-function.XXXXXX")"
-	sed -n '/^  derive_quarantine_count() {$/,/^  }$/p' "$skill_md" | sed 's/^  //' >"$function_file"
+	{
+		# Substitute either harness anchor with the concrete mirror under test.
+		printf '. "%s/lib/state-path-guard.sh"\n' "$skill_dir"
+		sed -n '/^  derive_quarantine_count() {$/,/^  }$/p' "$skill_md" | sed 's/^  //'
+	} >"$function_file"
 	if [[ ! -s "$function_file" ]] || ! grep -Fq 'design_conflict_count + open_count' "$function_file"; then
 		rm -f "$function_file"
 		return 1
@@ -1070,7 +1075,6 @@ run_guardrail8_quarantine_derivation_probe() {
 	open_file="$run_dir/open-guardrail8.jsonl"
 	without_state="$({
 		# shellcheck source=/dev/null
-		. "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
 		# shellcheck source=/dev/null
 		. "$function_file"
 		# shellcheck disable=SC2034  # consumed by the extracted function
@@ -1084,7 +1088,6 @@ run_guardrail8_quarantine_derivation_probe() {
 	printf '%s\n%s\n' '{"key":"a"}' '{"key":"b"}' >"$open_file"
 	with_state="$({
 		# shellcheck source=/dev/null
-		. "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
 		# shellcheck source=/dev/null
 		. "$function_file"
 		# shellcheck disable=SC2034  # consumed by the extracted function
@@ -1100,20 +1103,23 @@ run_guardrail8_quarantine_derivation_probe() {
 	[[ "$without_state" -eq 3 && "$with_state" -eq 5 ]]
 }
 
-if run_guardrail8_quarantine_derivation_probe "$CODEX_SKILL_MD"; then
-	pass "Codex mirror: executable durable Guardrail 8 derivation contributes open lines to quarantine"
-else
-	fail "Codex mirror: executable durable Guardrail 8 quarantine derivation"
-fi
-
-guardrail8_derivation_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-derivation-mutant.XXXXXX")"
-sed 's/design_conflict_count + open_count/design_conflict_count + 0/' "$CODEX_SKILL_MD" >"$guardrail8_derivation_mutant"
-if run_guardrail8_quarantine_derivation_probe "$guardrail8_derivation_mutant"; then
-	fail "Codex mirror: mutation dropping durable Guardrail 8 lines survived the executable derivation probe"
-else
-	pass "Codex mirror: mutation dropping durable Guardrail 8 lines is caught by the executable derivation probe"
-fi
-rm -f "$guardrail8_derivation_mutant"
+for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
+	probe_label="${probe_entry%%|*}"
+	probe_skill="${probe_entry#*|}"
+	if run_guardrail8_quarantine_derivation_probe "$probe_skill"; then
+		pass "$probe_label: executable durable Guardrail 8 derivation contributes open lines to quarantine"
+	else
+		fail "$probe_label: executable durable Guardrail 8 quarantine derivation"
+	fi
+	guardrail8_derivation_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-quarantine-derivation-mutant.XXXXXX")"
+	sed 's/design_conflict_count + open_count/design_conflict_count + 0/' "$probe_skill" >"$guardrail8_derivation_mutant"
+	if run_guardrail8_quarantine_derivation_probe "$guardrail8_derivation_mutant" "${probe_skill%/*}"; then
+		fail "$probe_label: mutation dropping durable Guardrail 8 lines survived the executable derivation probe"
+	else
+		pass "$probe_label: mutation dropping durable Guardrail 8 lines is caught"
+	fi
+	rm -f "$guardrail8_derivation_mutant"
+done
 
 tripwire_line="$(grep -nF 'Before dispatching this round'"'"'s fixer, after reconciling' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
 fixer_dispatch_line="$(grep -nF 'run the trivial-fix applier before dispatching the fixer subagent for the same round' "$CODEX_SKILL_MD" | head -1 | cut -d: -f1)"
@@ -1123,34 +1129,37 @@ else
 	fail "Codex mirror: seam tripwire ordering does not prevent the point-fix dispatch"
 fi
 
-codex_seam_tripwire_contract_present() {
+seam_tripwire_contract_present() {
 	local file="$1" read_line dispatch_line write_line
 	grep -Fq '$run_dir/seam-tripwire.json' "$file" || return 1
 	grep -Fq 'integer `round`, `seams` as an array of objects with string `file` and `function_or_contract` fields, and boolean `redesign_dispatched`' "$file" || return 1
 	grep -Fq '`--resume` performs this same guarded read before dispatch' "$file" || return 1
 	grep -Fq 'gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire || exit 1' "$file" || return 1
 	read_line="$(grep -nF 'read and validate it; `--resume` performs this same guarded read before dispatch' "$file" | head -1 | cut -d: -f1)"
-	dispatch_line="$(grep -nF 'run the trivial-fix applier before dispatching the fixer subagent for the same round' "$file" | head -1 | cut -d: -f1)"
+	dispatch_line="$(grep -nE 'trivial-fix applier.*before.*dispatching the fixer subagent' "$file" | head -1 | cut -d: -f1)"
 	write_line="$(grep -nF 'After each accepted fixer round' "$file" | head -1 | cut -d: -f1)"
 	[[ -n "$read_line" && -n "$dispatch_line" && -n "$write_line" && "$read_line" -lt "$dispatch_line" && "$write_line" -lt "$dispatch_line" ]]
 }
 
-if codex_seam_tripwire_contract_present "$CODEX_SKILL_MD"; then
-	pass "Codex mirror: durable seam-tripwire state is read before dispatch and written after accepted fixer rounds"
-else
-	fail "Codex mirror: durable seam-tripwire state ordering or schema is incomplete"
-fi
+for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
+	probe_label="${probe_entry%%|*}"
+	probe_skill="${probe_entry#*|}"
+	if seam_tripwire_contract_present "$probe_skill"; then
+		pass "$probe_label: durable seam-tripwire state is read before dispatch and written after accepted fixer rounds"
+	else
+		fail "$probe_label: durable seam-tripwire state ordering or schema is incomplete"
+	fi
+	seam_tripwire_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-tripwire-mutant.XXXXXX")"
+	sed 's/seam-tripwire\.json/seam-tripwire-removed.json/g; /After each accepted fixer round/d' "$probe_skill" >"$seam_tripwire_mutant"
+	if seam_tripwire_contract_present "$seam_tripwire_mutant"; then
+		fail "$probe_label: mutation removing durable seam-tripwire state survived contract pins"
+	else
+		pass "$probe_label: mutation removing durable seam-tripwire state is caught"
+	fi
+	rm -f "$seam_tripwire_mutant"
+done
 
-seam_tripwire_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-tripwire-mutant.XXXXXX")"
-sed 's/seam-tripwire\.json/seam-tripwire-removed.json/g; /After each accepted fixer round/d' "$CODEX_SKILL_MD" >"$seam_tripwire_mutant"
-if codex_seam_tripwire_contract_present "$seam_tripwire_mutant"; then
-	fail "Codex mirror: mutation removing durable seam-tripwire state survived contract pins"
-else
-	pass "Codex mirror: mutation removing durable seam-tripwire state is caught"
-fi
-rm -f "$seam_tripwire_mutant"
-
-run_codex_seam_tripwire_schema_probe() {
+run_seam_tripwire_schema_probe() {
 	local skill_md="$1" filter_file valid invalid
 	filter_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-schema.XXXXXX")"
 	awk '
@@ -1171,46 +1180,71 @@ run_codex_seam_tripwire_schema_probe() {
 	return "$rc"
 }
 
-if run_codex_seam_tripwire_schema_probe "$CODEX_SKILL_MD"; then
-	pass "Codex mirror: extracted seam-tripwire schema accepts the contract and rejects a non-boolean redesign flag"
-else
-	fail "Codex mirror: extracted seam-tripwire schema contract"
-fi
+for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
+	probe_label="${probe_entry%%|*}"
+	probe_skill="${probe_entry#*|}"
+	if run_seam_tripwire_schema_probe "$probe_skill"; then
+		pass "$probe_label: extracted seam-tripwire schema accepts the contract and rejects a non-boolean redesign flag"
+	else
+		fail "$probe_label: extracted seam-tripwire schema contract"
+	fi
+	seam_schema_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-schema-mutant.XXXXXX")"
+	sed 's/\.redesign_dispatched | type == "boolean"/.redesign_dispatched | type == "string"/' "$probe_skill" >"$seam_schema_mutant"
+	if run_seam_tripwire_schema_probe "$seam_schema_mutant"; then
+		fail "$probe_label: mutation weakening the seam-tripwire schema survived the executable probe"
+	else
+		pass "$probe_label: mutation weakening the seam-tripwire schema is caught"
+	fi
+	rm -f "$seam_schema_mutant"
+done
 
-run_codex_review_scope_branch_probe() {
-	local skill_md="$1" filter_file valid lf_branch cr_branch oid
+run_review_scope_branch_probe() {
+	local skill_md="$1" filter_file valid escaped invalid oid
 	filter_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-review-scope.XXXXXX")"
-	sed -n '/^      \.review_scope | type == "object"$/,/^    '\'' "\$ledger_path"/p' "$skill_md" | sed '$d' >"$filter_file"
+	awk '
+	  /^    if ! jq -e '\''$/ { capture = 1; next }
+	  capture && /^    '\'' "\$ledger_path"/ { exit }
+	  capture { print }
+	' "$skill_md" >"$filter_file"
 	if [[ ! -s "$filter_file" ]]; then
 		rm -f "$filter_file"
 		return 1
 	fi
 	oid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-	valid="$(jq -cn --arg oid "$oid" '{review_scope:{base_oid:$oid,head_oid:$oid,branch:"feature/x"}}')"
-	lf_branch="$(jq -cn --arg oid "$oid" --arg branch $'feature/x\nbad' '{review_scope:{base_oid:$oid,head_oid:$oid,branch:$branch}}')"
-	cr_branch="$(jq -cn --arg oid "$oid" --arg branch $'feature/x\rbad' '{review_scope:{base_oid:$oid,head_oid:$oid,branch:$branch}}')"
-	jq -e -f "$filter_file" >/dev/null <<<"$valid" &&
-		! jq -e -f "$filter_file" >/dev/null 2>&1 <<<"$lf_branch" &&
-		! jq -e -f "$filter_file" >/dev/null 2>&1 <<<"$cr_branch"
-	rc=$?
+	valid="$(jq -cn --arg oid "$oid" '{review_scope:{base_oid:$oid,head_oid:$oid,branch:"feature/x-name"}}')"
+	jq -e -f "$filter_file" >/dev/null <<<"$valid" || {
+		rm -f "$filter_file"
+		return 1
+	}
+	for escaped in '\u0000' '\u0001' '\u001f' '\u007f' '\r' '\n'; do
+		invalid="$(jq -cn --arg oid "$oid" --argjson branch "\"feature/x${escaped}bad\"" '{review_scope:{base_oid:$oid,head_oid:$oid,branch:$branch}}')"
+		if jq -e -f "$filter_file" >/dev/null 2>&1 <<<"$invalid"; then
+			rm -f "$filter_file"
+			return 1
+		fi
+	done
 	rm -f "$filter_file"
-	return "$rc"
+	return 0
 }
 
-if run_codex_review_scope_branch_probe "$CODEX_SKILL_MD"; then
-	pass "Codex mirror: extracted review_scope check rejects LF and CR branch values"
-else
-	fail "Codex mirror: review_scope branch control check"
-fi
-
-review_scope_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-review-scope-mutant.XXXXXX")"
-sed 's/ and (test("\[\\\\r\\\\n\]") | not)//g' "$CODEX_SKILL_MD" >"$review_scope_mutant"
-if run_codex_review_scope_branch_probe "$review_scope_mutant"; then
-	fail "Codex mirror: mutation removing CR/LF scope rejection survived the executable probe"
-else
-	pass "Codex mirror: mutation removing CR/LF scope rejection is caught"
-fi
-rm -f "$review_scope_mutant"
+for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
+	probe_label="${probe_entry%%|*}"
+	probe_skill="${probe_entry#*|}"
+	if run_review_scope_branch_probe "$probe_skill"; then
+		pass "$probe_label: extracted review_scope check rejects NUL, C0, DEL, CR, and LF branch values"
+	else
+		fail "$probe_label: review_scope branch control check"
+	fi
+	review_scope_mutant="$(mktemp "${TMPDIR:-/tmp}/gauntlet-review-scope-mutant.XXXXXX")"
+	sed -e 's/and (\.branch | control_free)/and (.branch | type == "string")/g' \
+		-e 's/ and (test("\[\\\\r\\\\n\]") | not)//g' "$probe_skill" >"$review_scope_mutant"
+	if run_review_scope_branch_probe "$review_scope_mutant"; then
+		fail "$probe_label: mutation removing scope control rejection survived the executable probe"
+	else
+		pass "$probe_label: mutation removing scope control rejection is caught"
+	fi
+	rm -f "$review_scope_mutant"
+done
 
 assert_grep_fixed "$SKILL_MD" 'Guardrail 4 separately quarantines an unverified Guardrail 8 edit so it cannot converge as plain success.' \
 	"Claude mirror: Guardrail 2 names the Guardrail 8 quarantine trigger"

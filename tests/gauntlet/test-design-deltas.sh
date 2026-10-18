@@ -8,7 +8,7 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 RESOLVER="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/resolve-plan.sh"
 WRITER="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/write-design-deltas.sh"
 STATE_GUARD="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh"
-MARKER_PY="$ROOT_DIR/scripts/marker.py"
+MARKER_PY="$ROOT_DIR/plugins/skein-codex/skills/conduct/marker.py"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/skein-design-deltas.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
 
@@ -787,8 +787,8 @@ run_marker_probe() {
 	local writer="$1" repo plan before out
 	repo="$WORKDIR/marker-probe-${writer##*/}-$RANDOM"
 	init_repo "$repo"
-	write_shape_plan "$repo" 2 one-below
 	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	printf '# Plan\n\n<!-- reviewed: 2026-10-15 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n<!-- reviewed: 2026-10-16 @ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->\n\n## Findings\n\nExisting.\n' >"$plan"
 	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
 	write_standard_deltas "$repo" first
 	before="$(hash_file "$plan")"
@@ -880,9 +880,10 @@ module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(module)
 for path in sorted(Path(sys.argv[2]).glob("case-*.md")):
-    lines = path.read_text(encoding="utf-8").splitlines()
-    markers = list(module._scan_marker_lines(lines, include_placeholder=False))
-    last = markers[-1] if markers else None
+    plan_text = path.read_bytes().decode("utf-8")
+    lines = plan_text.splitlines()
+    markers = list(module._scan_marker_lines(lines, include_placeholder=True))
+    last = module.last_marker_index(lines, include_placeholder=True)
     in_fence = False
     findings = 0
     for index, line in enumerate(lines):
@@ -890,7 +891,14 @@ for path in sorted(Path(sys.argv[2]).glob("case-*.md")):
             in_fence = not in_fence
         elif not in_fence and last is not None and index > last and re.fullmatch(r"## Findings\s*", line):
             findings += 1
-    print(path.name, len(markers), 0 if last is None else last + 1, findings, sep="\t")
+    print(
+        path.name,
+        len(markers),
+        0 if last is None else last + 1,
+        findings,
+        module.compute_plan_hash(path),
+        sep="\t",
+    )
 PY
 }
 
@@ -928,7 +936,7 @@ write_fence_fixture() {
 }
 
 run_marker_differential_probe() {
-	local writer="$1" repo plan_dir fixture_dir resolution_dir result_dir fixture_name fixture_stem expectations opener info closer layout marker_count authority_line findings_count
+	local writer="$1" repo plan_dir fixture_dir resolution_dir result_dir fixture_name fixture_stem expectations after_expectations opener info closer layout marker_count authority_line findings_count authority_hash after_hash
 	local expected_sink out before_plan before_prefix after_prefix delta_line total checked repro_id repro_seen batch_failed pid
 	local -a openers infos closers layouts pids
 	openers=('```' '````' '~~~' '~~~~')
@@ -944,6 +952,7 @@ run_marker_differential_probe() {
 	result_dir="$repo/fence-results"
 	mkdir -p "$fixture_dir" "$resolution_dir" "$result_dir"
 	expectations="$repo/fence-expectations.tsv"
+	after_expectations="$repo/fence-after.tsv"
 	total=0
 	checked=0
 	repro_id=""
@@ -967,7 +976,7 @@ run_marker_differential_probe() {
 	marker_authority_table "$fixture_dir" >"$expectations" || return 1
 	batch_failed=0
 	pids=()
-	while IFS=$'\t' read -r fixture_name _ _ _; do
+	while IFS=$'\t' read -r fixture_name _ _ _ _; do
 		fixture_stem="${fixture_name%.md}"
 		"$writer" --repo-root "$repo" --resolution "$resolution_dir/$fixture_name.json" \
 			--deltas "$repo/deltas.json" --run-id run-one --target-key "ledger-$fixture_stem" \
@@ -984,7 +993,8 @@ run_marker_differential_probe() {
 		wait "$pid" || batch_failed=1
 	done
 	[[ "$batch_failed" -eq 0 ]] || return 1
-	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count; do
+	marker_authority_table "$plan_dir" >"$after_expectations" || return 1
+	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count authority_hash; do
 		plan="$plan_dir/$fixture_name"
 		before_plan="$(hash_file "$fixture_dir/$fixture_name")"
 		expected_sink=sidecar
@@ -1001,8 +1011,9 @@ run_marker_differential_probe() {
 		fi
 		if [[ "$expected_sink" == plan ]]; then
 			after_prefix="$(head -n "$authority_line" "$plan" | shasum -a 256 | awk '{print $1}')"
+			after_hash="$(awk -F '\t' -v name="$fixture_name" '$1 == name { print $5 }' "$after_expectations")"
 			delta_line="$(grep -n '^### Gauntlet design deltas (run run-one)$' "$plan" | cut -d: -f1)"
-			[[ "$before_prefix" == "$after_prefix" && "$delta_line" -gt "$authority_line" ]] || return 1
+			[[ "$before_prefix" == "$after_prefix" && "$authority_hash" == "$after_hash" && "$delta_line" -gt "$authority_line" ]] || return 1
 		else
 			[[ "$before_plan" == "$(hash_file "$plan")" ]] || return 1
 		fi
@@ -1245,7 +1256,7 @@ run_lone_cr_semantics_probe() {
 	done
 	expectations="$repo/lone-cr-expectations.tsv"
 	marker_authority_table "$fixture_dir" >"$expectations" || return 1
-	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count; do
+	while IFS=$'\t' read -r fixture_name marker_count authority_line findings_count _; do
 		position="${fixture_name#case-lonecr-}"
 		position="${position%-markers-*}"
 		plan="$repo/docs/dev_plans/$fixture_name"
@@ -1310,6 +1321,7 @@ run_plan_byte_allowlist_probe() {
 		case "$byte" in
 		0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 11 | 12 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 127) expected=sidecar ;;
 		esac
+		[[ "$byte" -ge 128 ]] && expected=sidecar
 		actual="$(jq -r '.sink' <<<"$out")"
 		[[ "$actual" == "$expected" ]] || {
 			echo "byte allowlist mismatch: byte=$byte expected=$expected actual=$actual" >&2
@@ -1323,7 +1335,7 @@ run_plan_byte_allowlist_probe() {
 
 run_plan_byte_allowlist_test() {
 	if run_plan_byte_allowlist_probe "$WRITER"; then
-		pass "writer byte allowlist covers every 0x00-0xff value and rejects only disallowed controls"
+		pass "writer byte state space rejects disallowed controls and standalone invalid UTF-8 bytes"
 	else
 		fail "writer byte allowlist state space"
 	fi
@@ -1466,24 +1478,229 @@ run_marker_line_cmp_probe() {
 		[[ "$before" == "$(hash_file "$plan")" ]]
 }
 
-run_no_runtime_python_probe() {
-	local writer="$1" repo plan out
-	repo="$WORKDIR/no-runtime-python-${writer##*/}-$RANDOM"
+run_isolated_marker_authority_probe() {
+	local writer="$1" repo plan out planted canary
+	repo="$WORKDIR/isolated-marker-authority-${writer##*/}-$RANDOM"
 	init_repo "$repo"
 	write_shape_plan "$repo" 1 one-below
 	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
 	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
 	write_standard_deltas "$repo" first
-	printf 'from pathlib import Path\nPath("pathlib-imported").write_text("owned")\n' >"$repo/pathlib.py"
-	out="$(cd "$repo" && run_writer_id "$writer" "$repo" run-one)" || return 1
-	jq -e '.sink == "plan"' >/dev/null <<<"$out" && [[ ! -e "$repo/pathlib-imported" ]] && grep -Fq 'Summary: "first"' "$plan"
+	canary="$repo/import-canary"
+	for planted in marker.py sitecustomize.py datetime.py re.py; do
+		printf 'import os\nopen(os.environ["MARKER_CANARY"], "w").write("owned")\n' >"$repo/$planted"
+	done
+	out="$(cd "$repo" && MARKER_CANARY="$canary" PYTHONPATH="$repo" run_writer_id "$writer" "$repo" run-one)" || return 1
+	jq -e '.sink == "plan"' >/dev/null <<<"$out" && [[ ! -e "$canary" ]] && grep -Fq 'Summary: "first"' "$plan"
 }
 
-run_no_runtime_python_test() {
-	if ! grep -Eq 'python[0-9.]*[[:space:]]+-' "$WRITER" && run_no_runtime_python_probe "$WRITER"; then
-		pass "writer has no Python invocation and cannot import a planted pathlib.py"
+run_isolated_marker_authority_test() {
+	if grep -Fq ' -I -B -S -c ' "$WRITER" && run_isolated_marker_authority_probe "$WRITER"; then
+		pass "marker.py authority query is isolated from cwd and PYTHONPATH modules"
 	else
-		fail "writer contains a Python invocation or imported a planted pathlib.py"
+		fail "marker.py authority query isolation"
+	fi
+}
+
+run_marker_boundary_cases_probe() {
+	local writer="$1" repo plan before out label expected
+	for label in placeholder-before placeholder-between placeholder-after fenced-real-placeholder; do
+		repo="$WORKDIR/marker-boundary-$label-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+		case "$label" in
+		placeholder-before)
+			printf '# Plan\n\n<!-- reviewed: YYYY-MM-DD @ <hash> -->\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			expected=plan
+			;;
+		placeholder-after)
+			printf '# Plan\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n\n<!-- reviewed: YYYY-MM-DD @ <hash> -->\n' >"$plan"
+			expected=sidecar
+			;;
+		placeholder-between)
+			printf '# Plan\n\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n<!-- reviewed: YYYY-MM-DD @ <hash> -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			expected=sidecar
+			;;
+		fenced-real-placeholder)
+			printf '# Plan\n\n```\n<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n```\n\n<!-- reviewed: YYYY-MM-DD @ <hash> -->\n\n## Findings\n\nExisting.\n' >"$plan"
+			expected=sidecar
+			;;
+		esac
+		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+		write_standard_deltas "$repo" first
+		before="$(hash_file "$plan")"
+		out="$(run_writer_id "$writer" "$repo" "run-$label")" || return 1
+		[[ "$(jq -r '.sink' <<<"$out")" == "$expected" ]] || return 1
+		if [[ "$expected" == sidecar ]]; then
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		else
+			grep -Fq 'Summary: "first"' "$plan" || return 1
+		fi
+	done
+}
+
+run_marker_boundary_cases_test() {
+	if run_marker_boundary_cases_probe "$WRITER"; then
+		pass "real/placeholder/fenced marker order follows compute_plan_hash boundary semantics"
+	else
+		fail "marker boundary candidate state space"
+	fi
+}
+
+run_invalid_plan_utf8_probe() {
+	local writer="$1" placement bytes repo plan before out
+	for placement in above below; do
+		for bytes in ff truncated; do
+			repo="$WORKDIR/invalid-plan-utf8-$placement-$bytes-${writer##*/}-$RANDOM"
+			init_repo "$repo"
+			plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+			printf '# Plan\n' >"$plan"
+			if [[ "$placement" == above ]]; then
+				[[ "$bytes" == ff ]] && printf '\377\n' >>"$plan" || printf '\342\202\n' >>"$plan"
+			fi
+			printf '<!-- reviewed: 2026-10-16 @ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n## Findings\n\nExisting.\n' >>"$plan"
+			if [[ "$placement" == below ]]; then
+				[[ "$bytes" == ff ]] && printf '\377\n' >>"$plan" || printf '\342\202\n' >>"$plan"
+			fi
+			write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+			write_standard_deltas "$repo" first
+			before="$(hash_file "$plan")"
+			out="$(run_writer_id "$writer" "$repo" "utf8-$placement-$bytes")" || return 1
+			jq -e '.sink == "sidecar" and (.reason | contains("marker.py authority query failed"))' >/dev/null <<<"$out" || return 1
+			[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+		done
+	done
+}
+
+run_invalid_plan_utf8_test() {
+	if run_invalid_plan_utf8_probe "$WRITER"; then
+		pass "invalid UTF-8 above and below the marker fails closed through marker.py"
+	else
+		fail "invalid UTF-8 authority contract"
+	fi
+}
+
+run_marker_py_absent_probe() {
+	local writer="$1" tree lib repo plan before out
+	tree="$WORKDIR/marker-absent-${writer##*/}-$RANDOM/skills"
+	lib="$tree/review-gauntlet/lib"
+	mkdir -p "$lib"
+	cp "$writer" "$lib/write-design-deltas.sh"
+	cp "$STATE_GUARD" "$lib/state-path-guard.sh"
+	chmod +x "$lib/write-design-deltas.sh"
+	repo="$WORKDIR/marker-absent-repo-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+	out="$(run_writer_id "$lib/write-design-deltas.sh" "$repo" absent)" || return 1
+	jq -e '.sink == "sidecar" and (.reason | contains("marker.py is unavailable"))' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$plan")" ]]
+}
+
+run_marker_py_absent_test() {
+	if run_marker_py_absent_probe "$WRITER"; then
+		pass "missing plugin marker.py routes to the sidecar"
+	else
+		fail "missing marker.py fallback"
+	fi
+}
+
+make_pythonless_path() {
+	local path_dir="$1" tool real
+	mkdir -p "$path_dir"
+	for tool in awk basename cat chmod cmp cut dirname find git grep head jq mkdir mktemp mv pwd readlink rm sed sort stat tr wc; do
+		real="$(command -v "$tool" || true)"
+		[[ -n "$real" ]] && ln -s "$real" "$path_dir/$tool"
+	done
+}
+
+run_python_failure_probe() {
+	local writer="$1" mode="$2" repo plan before out shim_dir path_value real_python timeout_tool
+	repo="$WORKDIR/python-failure-$mode-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+	shim_dir="$repo/python-shim"
+	mkdir -p "$shim_dir"
+	path_value="$shim_dir:$PATH"
+	case "$mode" in
+	missing)
+		make_pythonless_path "$shim_dir"
+		path_value="$shim_dir"
+		;;
+	exit-one)
+		printf '#!/bin/bash\nexit 1\n' >"$shim_dir/python3"
+		chmod +x "$shim_dir/python3"
+		;;
+	import-error)
+		printf '#!/bin/bash\necho "ImportError: cannot import name UTC" >&2\nexit 1\n' >"$shim_dir/python3"
+		chmod +x "$shim_dir/python3"
+		;;
+	timeout)
+		timeout_tool="$(command -v timeout || command -v gtimeout || true)"
+		[[ -n "$timeout_tool" ]] || return 0
+		ln -s "$timeout_tool" "$shim_dir/${timeout_tool##*/}"
+		printf '#!/bin/bash\n/bin/sleep 10\n' >"$shim_dir/python3"
+		chmod +x "$shim_dir/python3"
+		;;
+	esac
+	out="$(PATH="$path_value" /bin/bash "$writer" --repo-root "$repo" --resolution "$repo/resolution.json" --deltas "$repo/deltas.json" --run-id "python-$mode" --target-key ledger-codex-widget)" || return 1
+	jq -e '.sink == "sidecar" and (.reason | test("python3 is unavailable|marker.py authority query failed|timed out"))' >/dev/null <<<"$out" &&
+		[[ "$before" == "$(hash_file "$plan")" ]]
+}
+
+run_python_failure_tests() {
+	local mode
+	for mode in missing exit-one import-error timeout; do
+		if run_python_failure_probe "$WRITER" "$mode"; then
+			pass "marker authority $mode failure routes to the sidecar"
+		else
+			fail "marker authority $mode fallback"
+		fi
+	done
+}
+
+run_post_edit_authority_probe() {
+	local writer="$1" repo plan before out shim_dir counter real_python
+	repo="$WORKDIR/post-authority-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	before="$(hash_file "$plan")"
+	shim_dir="$repo/python-shim"
+	mkdir -p "$shim_dir"
+	counter="$repo/python-count"
+	real_python="$(command -v python3)"
+	cat >"$shim_dir/python3" <<'SH'
+#!/bin/bash
+count=0
+[[ -f "$AUTHORITY_COUNTER" ]] && count="$(cat "$AUTHORITY_COUNTER")"
+count=$((count + 1))
+printf '%s\n' "$count" >"$AUTHORITY_COUNTER"
+output="$("$REAL_PYTHON" "$@")" || exit $?
+if [[ "$count" -eq 2 ]]; then
+  printf '%s\n' "$output" | awk -F '\t' 'BEGIN { OFS="\t" } { $3="0000000000000000000000000000000000000000"; print }'
+else
+  printf '%s\n' "$output"
+fi
+SH
+	chmod +x "$shim_dir/python3"
+	out="$(AUTHORITY_COUNTER="$counter" REAL_PYTHON="$real_python" PATH="$shim_dir:$PATH" run_writer_id "$writer" "$repo" post-edit)" || return 1
+	jq -e '.sink == "sidecar" and (.reason | contains("changed across"))' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$plan")" ]]
+}
+
+run_post_edit_authority_test() {
+	if run_post_edit_authority_probe "$WRITER"; then
+		pass "post-edit marker.py disagreement discards the temp plan and uses the sidecar"
+	else
+		fail "post-edit marker.py authority guard"
 	fi
 }
 
@@ -1699,15 +1916,16 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_dir marker_mutant strict_marker_mutant trim_mutant hexcase_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant whitespace_mutant lone_cr_mutant python_mutant tracked_sidecar_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
-	mutant_dir="$WORKDIR/mutants"
-	mkdir -p "$mutant_dir"
+	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant awk_agreement_mutant tracked_sidecar_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
+	mutant_root="$WORKDIR/mutants/skills"
+	mutant_dir="$mutant_root/review-gauntlet/lib"
+	mkdir -p "$mutant_dir" "$mutant_root/conduct"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
+	cp "$MARKER_PY" "$mutant_root/conduct/marker.py"
 
 	marker_mutant="$mutant_dir/marker-writer.sh"
 	sed -e 's/if (marker_count == 1) {/if (marker_count >= 1) {/' \
-		-e 's/marker_line = NR/if (marker_count == 1) marker_line = NR/' \
-		-e 's/if \[\[ "$marker_count" -ne 1 \]\]; then/if [[ "$marker_count" -eq 0 ]]; then/' \
+		-e 's/elif \[\[ "$marker_count" -ne 1 \]\]; then/elif false; then/' \
 		"$WRITER" >"$marker_mutant"
 	chmod +x "$marker_mutant"
 	mutation_expect_failure marker-count run_marker_probe "$marker_mutant"
@@ -1722,11 +1940,6 @@ run_mutation_checks() {
 	sed 's#sub(/\[\[:space:\]\]\*\$/, "", trimmed)#sub(/ *$/, "", trimmed)#' "$WRITER" >"$trim_mutant"
 	chmod +x "$trim_mutant"
 	mutation_expect_failure marker-trim-spaces-only run_marker_format_probe "$trim_mutant"
-
-	hexcase_mutant="$mutant_dir/hexcase-writer.sh"
-	sed 's#@ \[0-9a-f\]+ -->#@ [0-9a-fA-F]+ -->#' "$WRITER" >"$hexcase_mutant"
-	chmod +x "$hexcase_mutant"
-	mutation_expect_failure marker-hex-case run_marker_format_probe "$hexcase_mutant"
 
 	interval_mutant="$mutant_dir/interval-writer.sh"
 	sed '/function rendered_token(line, prefix, token) {/a\
@@ -1779,11 +1992,6 @@ run_mutation_checks() {
 	chmod +x "$unclosed_mutant"
 	mutation_expect_failure unclosed-fence run_unclosed_fence_probe "$unclosed_mutant"
 
-	whitespace_mutant="$mutant_dir/python-whitespace-writer.sh"
-	sed 's/if plan_has_python_only_whitespace /if false \&\& plan_has_python_only_whitespace /' "$WRITER" >"$whitespace_mutant"
-	chmod +x "$whitespace_mutant"
-	mutation_expect_failure python-whitespace run_whitespace_semantics_probe "$whitespace_mutant"
-
 	lone_cr_mutant="$mutant_dir/lone-cr-writer.sh"
 	awk '
 	  /# BEGIN LONE-CR DIFFERENTIAL GUARD/ { skip = 1; next }
@@ -1827,11 +2035,32 @@ mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
 		pass "mutation control-plan-path is caught by run_control_path_probe"
 	fi
 
-	python_mutant="$mutant_dir/runtime-python-writer.sh"
-	sed '/REPO_ROOT=.*pwd -P/a\
-python3 -c '\''import pathlib'\''' "$WRITER" >"$python_mutant"
-	chmod +x "$python_mutant"
-	mutation_expect_failure hostile-cwd-python-import run_no_runtime_python_probe "$python_mutant"
+	isolation_mutant="$mutant_dir/isolation-writer.sh"
+	sed 's/ -I -B -S -c / -B -S -c /g' "$WRITER" >"$isolation_mutant"
+	chmod +x "$isolation_mutant"
+	mutation_expect_failure marker-authority-isolation run_isolated_marker_authority_probe "$isolation_mutant"
+
+	post_authority_mutant="$mutant_dir/post-authority-writer.sh"
+	awk '
+	  /# BEGIN POST-EDIT MARKER AUTHORITY CHECK/ {
+	    print "\t\tchmod \"$plan_mode\" \"$output_tmp\" || die_env \"cannot preserve plan mode\""
+	    print "\t\tmv \"$output_tmp\" \"$plan_path\" || die_env \"cannot replace resolved plan\""
+	    print "\t\toutput_tmp=\"\""
+	    print "\t\t\"$JQ\" -cn --arg path \"$plan\" '\''{sink:\"plan\",path:$path,reason:\"\"}'\''"
+	    print "\t\texit 0"
+	    skip = 1
+	    next
+	  }
+	  /# END POST-EDIT MARKER AUTHORITY CHECK/ { skip = 0; next }
+	  !skip { print }
+	' "$WRITER" >"$post_authority_mutant"
+	chmod +x "$post_authority_mutant"
+	mutation_expect_failure post-edit-marker-authority run_post_edit_authority_probe "$post_authority_mutant"
+
+	awk_agreement_mutant="$mutant_dir/awk-agreement-writer.sh"
+	sed 's/elif \[\[ "$marker_line" -ne "$authority_marker_line" \]\]; then/elif false; then/' "$WRITER" >"$awk_agreement_mutant"
+	chmod +x "$awk_agreement_mutant"
+	mutation_expect_failure awk-marker-agreement run_marker_boundary_cases_probe "$awk_agreement_mutant"
 
 	sanitize_mutant="$mutant_dir/sanitize-writer.sh"
 	sed 's/elif \$cp == 60 then \. + "&lt;"/elif $cp == 60 then . + "<"/' "$WRITER" >"$sanitize_mutant"
@@ -2026,6 +2255,8 @@ run_gnu_stat_test
 run_bash32_static_tests
 run_marker_format_tests
 run_marker_differential_test
+run_marker_boundary_cases_test
+run_invalid_plan_utf8_test
 run_unicode_marker_candidate_test
 run_unclosed_fence_test
 run_whitespace_semantics_test
@@ -2034,7 +2265,10 @@ run_plan_byte_allowlist_test
 run_nul_differential_test
 run_normal_plan_byte_test
 run_control_path_test
-run_no_runtime_python_test
+run_isolated_marker_authority_test
+run_marker_py_absent_test
+run_python_failure_tests
+run_post_edit_authority_test
 run_awk_interval_test
 run_sidecar_only_matrix_test
 run_tracked_sidecar_test

@@ -90,7 +90,7 @@ fi
 
 payload="$(mktemp "${TMPDIR:-/tmp}/design-deltas-payload.XXXXXX")" || die_env "cannot create payload temp file"
 output_tmp=""
-trap 'rm -f "$payload" "${output_tmp:-}"' EXIT
+trap 'rm -f "$payload" "$payload.authority" "${output_tmp:-}"' EXIT
 "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
   def strip_variations:
@@ -188,6 +188,9 @@ fi
 
 marker_count=0
 marker_line=0
+authority_marker_count=0
+authority_marker_line=0
+authority_plan_hash=""
 findings_count=0
 findings_line=0
 findings_end=0
@@ -269,6 +272,41 @@ plan_has_non_ascii_marker_candidate() {
 	' "$path"
 }
 
+# marker.py is the authority for the plan hash boundary. The inline query is
+# read-only: -I excludes cwd/PYTHONPATH/user site, -S excludes site hooks, and
+# -B prevents import bytecode writes. The only non-stdlib path inserted is the
+# resolved plugin-owned directory containing marker.py. The private scanner is
+# used only to report candidate count; the selected line and hash come from the
+# public last_marker_index/compute_plan_hash APIs.
+MARKER_PY="$SCRIPT_DIR/../../conduct/marker.py"
+marker_authority_query() {
+	local plan_path="$1" python3_path timeout_path
+	python3_path="$(command -v python3 || true)"
+	[[ -n "$python3_path" && -x "$python3_path" ]] || return 125
+	[[ -f "$MARKER_PY" ]] || return 126
+	timeout_path="$(command -v timeout || command -v gtimeout || true)"
+	if [[ -n "$timeout_path" ]]; then
+		"$timeout_path" 5 "$python3_path" -I -B -S -c "$MARKER_AUTHORITY_PROGRAM" "$MARKER_PY" "$plan_path"
+	else
+		"$python3_path" -I -B -S -c "$MARKER_AUTHORITY_PROGRAM" "$MARKER_PY" "$plan_path"
+	fi
+}
+
+MARKER_AUTHORITY_PROGRAM='import sys
+from pathlib import Path
+
+marker_path = Path(sys.argv[1]).resolve(strict=True)
+plan_path = Path(sys.argv[2])
+sys.path.insert(0, str(marker_path.parent))
+import marker
+
+plan_text = plan_path.read_bytes().decode("utf-8")
+lines = plan_text.splitlines()
+candidates = list(marker._scan_marker_lines(lines, include_placeholder=True))
+selected = marker.last_marker_index(lines, include_placeholder=True)
+plan_hash = marker.compute_plan_hash(plan_path)
+print(f"{len(candidates)}\t{0 if selected is None else selected + 1}\t{plan_hash}")'
+
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	if plan_has_disallowed_control_byte "$REPO_ROOT/$plan"; then
 		sidecar_reason="resolved plan contains a disallowed control byte"
@@ -286,6 +324,31 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		sidecar_reason="resolved plan contains a non-ASCII review-marker candidate"
 		plan_is_safe=0
 	fi
+fi
+if [[ "$plan_is_safe" -eq 1 ]]; then
+	authority_output=""
+	authority_rc=0
+	marker_authority_query "$REPO_ROOT/$plan" >"$payload.authority" 2>/dev/null || authority_rc=$?
+	if [[ "$authority_rc" -ne 0 ]]; then
+		case "$authority_rc" in
+		124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
+		125) sidecar_reason="python3 is unavailable for marker.py authority query" ;;
+		126) sidecar_reason="plugin marker.py is unavailable for authority query" ;;
+		*) sidecar_reason="marker.py authority query failed before plan edit" ;;
+		esac
+		plan_is_safe=0
+	else
+		authority_output="$(cat "$payload.authority")"
+		IFS=$'\t' read -r authority_marker_count authority_marker_line authority_plan_hash authority_extra <<<"$authority_output"
+		if [[ "$authority_output" == *$'\n'* || ! "$authority_marker_count" =~ ^[0-9]+$ || ! "$authority_marker_line" =~ ^[0-9]+$ || ! "$authority_plan_hash" =~ ^[0-9a-f]{40}$ || -n "${authority_extra:-}" ]]; then
+			sidecar_reason="marker.py authority query returned malformed facts before plan edit"
+			plan_is_safe=0
+		elif [[ "$authority_marker_line" -eq 0 ]]; then
+			sidecar_reason="marker.py authority query found no plan hash boundary"
+			plan_is_safe=0
+		fi
+	fi
+	rm -f "$payload.authority"
 fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	read -r marker_count marker_line findings_count findings_line findings_end unclosed_fence < <(LC_ALL=C awk "$FENCE_AWK_SOURCE"'
@@ -331,6 +394,9 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		plan_is_safe=0
 	elif [[ "$marker_count" -ne 1 ]]; then
 		sidecar_reason="resolved plan has $marker_count review markers"
+		plan_is_safe=0
+	elif [[ "$marker_line" -ne "$authority_marker_line" ]]; then
+		sidecar_reason="writer marker line disagrees with marker.py hash boundary"
 		plan_is_safe=0
 	elif [[ "$findings_count" -ne 1 ]]; then
 		sidecar_reason="resolved plan has $findings_count Findings sections after its review marker"
@@ -422,15 +488,31 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 	[[ "$plan_mode" =~ ^[0-7]{3,4}$ ]] || die_env "cannot read plan mode"
 	upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || die_env "cannot update resolved plan"
 	if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
-		chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
-		mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
-		output_tmp=""
-		"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
-		exit 0
+		# BEGIN POST-EDIT MARKER AUTHORITY CHECK
+		post_authority_rc=0
+		marker_authority_query "$output_tmp" >"$payload.authority" 2>/dev/null || post_authority_rc=$?
+		if [[ "$post_authority_rc" -eq 0 ]]; then
+			post_authority_output="$(cat "$payload.authority")"
+			IFS=$'\t' read -r post_authority_count post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
+			if [[ "$post_authority_output" != *$'\n'* && "$post_authority_count" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
+				rm -f "$payload.authority"
+				chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
+				mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
+				output_tmp=""
+				"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
+				exit 0
+			fi
+			sidecar_reason="marker.py authority changed across the proposed plan edit"
+		else
+			sidecar_reason="marker.py authority query failed after the proposed plan edit"
+		fi
+		rm -f "$payload.authority"
+		# END POST-EDIT MARKER AUTHORITY CHECK
+	else
+		sidecar_reason="plan rewrite would change bytes through review marker"
 	fi
 	rm -f "$output_tmp"
 	output_tmp=""
-	sidecar_reason="plan rewrite would change bytes through review marker"
 fi
 
 state_dir="$REPO_ROOT/.gauntlet"

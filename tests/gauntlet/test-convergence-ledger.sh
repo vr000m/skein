@@ -27,6 +27,7 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh"
 CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
 CODEX_LEDGER_SCRIPT="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh"
+CODEX_LEDGER_LIB="${CODEX_LEDGER_SCRIPT%/*}"
 
 # gc_hash FILE — hash via gauntlet-common.sh's own gc_sha1 helper (not a
 # hand-rolled shasum/sha1sum fallback) so this test never drifts from the
@@ -511,10 +512,10 @@ TMP_LEDGERS+=("$SCOPE_L")
 scope_base="$(printf 'a%.0s' {1..40})"
 scope_head="$(printf 'b%.0s' {1..40})"
 "$LEDGER_SCRIPT" --init --ledger "$SCOPE_L" --target "branch:scope" \
-	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
 if jq -e --arg base "$scope_base" --arg head "$scope_head" \
-	'.review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope"}' "$SCOPE_L" >/dev/null; then
-	pass "--init atomically records the immutable reviewed scope"
+	'.review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope-name"}' "$SCOPE_L" >/dev/null; then
+	pass "--init atomically records a normal slash-and-hyphen reviewed scope"
 else
 	fail "--init did not record the reviewed scope"
 fi
@@ -535,6 +536,39 @@ if [[ "$bad_scope_rc" -eq 2 && ! -e "$BAD_SCOPE_L" ]]; then
 	pass "--init rejects a partial reviewed scope before writing"
 else
 	fail "--init partial reviewed scope was not rejected atomically (rc=$bad_scope_rc)"
+fi
+
+review_scope_control_probe() {
+	local script="$1" probe_dir="$2" escaped branch_json ledger rc
+	mkdir -p "$probe_dir"
+	for escaped in '\u0000' '\u0001' '\u001f' '\u007f' '\r' '\n'; do
+		branch_json="\"feature/x${escaped}bad\""
+		ledger="$probe_dir/ledger-${escaped//\\/}.json"
+		jq -cn --arg base "$scope_base" --arg head "$scope_head" --argjson branch "$branch_json" \
+			'{run_id:"aaaaaaaaaaaaaaaaaaaa",target:"branch:scope",review_scope:{base_oid:$base,head_oid:$head,branch:$branch},cap:10,k:2,loop_counter:0,rounds:[]}' >"$ledger"
+		rc=0
+		"$script" --last-decision --ledger "$ledger" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 ]] || return 1
+	done
+}
+
+SCOPE_CONTROL_DIR="$(mktemp -d)"
+TMP_DIRS+=("$SCOPE_CONTROL_DIR")
+if review_scope_control_probe "$CODEX_LEDGER_SCRIPT" "$SCOPE_CONTROL_DIR/live"; then
+	pass "review_scope.branch rejects NUL, C0, DEL, CR, and LF before consumption"
+else
+	fail "review_scope.branch control-byte state space"
+fi
+
+SCOPE_MUTANT_LIB="$SCOPE_CONTROL_DIR/mutant-lib"
+mkdir -p "$SCOPE_MUTANT_LIB"
+cp "$CODEX_LEDGER_LIB"/* "$SCOPE_MUTANT_LIB/"
+sed 's/and (\.branch | control_free))/and (.branch | type == "string"))/' "$CODEX_LEDGER_SCRIPT" >"$SCOPE_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$SCOPE_MUTANT_LIB/convergence-ledger.sh"
+if review_scope_control_probe "$SCOPE_MUTANT_LIB/convergence-ledger.sh" "$SCOPE_CONTROL_DIR/mutant"; then
+	fail "mutation removing review_scope branch control validation survived the state-space probe"
+else
+	pass "mutation removing review_scope branch control validation is caught"
 fi
 
 # --- 15b. --run-dir and stale round-dir clearing (output-formats Phase 2) ---
@@ -872,7 +906,7 @@ TMP_DIRS+=("$RD_MUTANT_LIB")
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_MUTANT_LIB/gauntlet-common.sh"
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_MUTANT_LIB/state-path-guard.sh"
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_MUTANT_LIB/ledger-promote.jq"
-sed 's/open-guardrail8\.jsonl) /open-guardrail8-removed.jsonl) /' "$CODEX_LEDGER_SCRIPT" >"$RD_MUTANT_LIB/convergence-ledger.sh"
+sed 's/"open-guardrail8.jsonl"/"open-guardrail8-removed.jsonl"/' "$CODEX_LEDGER_SCRIPT" >"$RD_MUTANT_LIB/convergence-ledger.sh"
 chmod +x "$RD_MUTANT_LIB/convergence-ledger.sh"
 if run_open_guardrail8_cleanup_probe "$RD_MUTANT_LIB/convergence-ledger.sh" plain; then
 	fail "mutation removing open-guardrail8.jsonl ownership survived stale-cleanup regression"
@@ -884,7 +918,7 @@ TMP_DIRS+=("$RD_SEAM_MUTANT_LIB")
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_SEAM_MUTANT_LIB/gauntlet-common.sh"
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_SEAM_MUTANT_LIB/state-path-guard.sh"
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_SEAM_MUTANT_LIB/ledger-promote.jq"
-sed 's/seam-tripwire\.json) /seam-tripwire-removed.json) /' "$CODEX_LEDGER_SCRIPT" >"$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
+sed 's/"seam-tripwire.json"/"seam-tripwire-removed.json"/' "$CODEX_LEDGER_SCRIPT" >"$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
 chmod +x "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
 if run_open_guardrail8_cleanup_probe "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh" plain; then
 	fail "mutation removing seam-tripwire.json ownership survived stale-cleanup regression"

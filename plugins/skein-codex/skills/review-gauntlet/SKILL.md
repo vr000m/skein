@@ -100,7 +100,7 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`. For each round, set `round_n` from the ledger's `.rounds | length` plus one, then call `--prepare-round "$round_n" --ledger "$ledger_path"` before creating or writing the round directory. This guarded operation clears only that unfinished round's directory, preserving all completed rounds. A guard refusal exits non-zero: stop before the round and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` discard every recognized writer-owned run entry (`round-*`, `open-guardrail8.jsonl`, and `seam-tripwire.json`) while refusing unknown entries or symlinks. Target/run-keyed `design-deltas-*.scope.json` files beside the ledger are small immutable sink evidence and are intentionally retained:
+**Round directory (`$run_dir`).** Every round's files live under `.gauntlet/<ledger-stem>/`, where the ledger stem is its basename without `.json`. The bundled `convergence-ledger.sh --run-dir --ledger "$ledger_path"` derives, guards and creates this directory, then prints it. Run that command after the ledger startup decision (standalone, auto-chain and resume) and bind the result to `$run_dir`. For each round, set `round_n` from the ledger's `.rounds | length` plus one, then call `--prepare-round "$round_n" --ledger "$ledger_path"` before creating or writing the round directory. This guarded operation clears only that unfinished round's directory, preserving all completed rounds. A guard refusal exits non-zero: stop before the round and treat it as a checkout finding, never retarget the ledger. Plain `--init` and `--init --force` clear the writer-owned run state inside `$run_dir` (`round-*`, `open-guardrail8.jsonl`, and `seam-tripwire.json`) while refusing unknown entries or symlinks. Target/run-keyed `design-deltas-*.scope.json` files live beside the ledger, not inside `$run_dir`, and are intentionally retained as immutable sink evidence:
 
 ```bash
 run_dir="$("$SKILL_DIR"/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
@@ -338,15 +338,18 @@ run_design_delta_sink() {
   ledger_scope=false
   if jq -e 'has("review_scope")' "$ledger_path" >/dev/null 2>&1; then
     if ! jq -e '
+      def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
       .review_scope | type == "object"
-      and (.base_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
-      and (.head_oid | type == "string" and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
-      and (.branch | type == "string" and (test("[\\r\\n]") | not))
+      and (.base_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+      and (.head_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+      and (.branch | control_free)
     ' "$ledger_path" >/dev/null 2>&1; then
       echo "warning: invalid reviewed scope in ledger; continuing terminal handoff" >&2
       return 0
     fi
     ledger_scope=true
+    # Validate with jq before raw extraction: shell command substitution drops
+    # NUL bytes, so extraction must never be the operation that discovers one.
     BASE_OID="$(jq -r '.review_scope.base_oid' "$ledger_path")"
     HEAD_OID="$(jq -r '.review_scope.head_oid' "$ledger_path")"
     branch_name="$(jq -r '.review_scope.branch' "$ledger_path")"
@@ -360,12 +363,13 @@ run_design_delta_sink() {
   if [[ -e "$scope_file" ]]; then
     if ! jq -e --arg run_id "$run_id" --arg target "$canonical_target" --argjson enforce_scope "$ledger_scope" \
       --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" '
+      def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
       type == "object"
       and .run_id == $run_id
       and .target == $target
-      and (.base_oid | type == "string" and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
-      and (.head_oid | type == "string" and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
-      and (.branch | type == "string" and (test("[\\r\\n]") | not))
+      and (.base_oid | control_free and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and (.head_oid | control_free and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and (.branch | control_free)
       and (($enforce_scope | not) or (.base_oid == $base_oid and .head_oid == $head_oid and .branch == $branch))
     ' "$scope_file" >/dev/null 2>&1; then
       echo "warning: invalid persisted design delta scope; continuing terminal handoff" >&2
@@ -375,6 +379,15 @@ run_design_delta_sink() {
     HEAD_OID="$(jq -r '.head_oid' "$scope_file")"
     branch_name="$(jq -r '.branch' "$scope_file")"
   else
+    if ! jq -en --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" '
+      def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
+      ($base_oid | control_free and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and ($head_oid | control_free and (. == "" or test("^[0-9a-f]{40}([0-9a-f]{24})?$")))
+      and ($branch | control_free)
+    ' >/dev/null 2>&1; then
+      echo "warning: invalid reviewed scope before persistence; continuing terminal handoff" >&2
+      return 0
+    fi
     scope_tmp="$(mktemp "$state_dir/.design-delta-scope.XXXXXX")" || {
       echo "warning: cannot create design delta scope; continuing terminal handoff" >&2
       return 0
