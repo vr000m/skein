@@ -1014,7 +1014,7 @@ assert_grep_fixed "$CODEX_SKILL_MD" '(.sink | IN("none", "plan", "sidecar", "dro
 	"Codex mirror: sink consumer accepts the distinct dropped result"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Design deltas: $delta_count dropped — $sink_reason' \
 	"Codex mirror: dropped deltas report their count and reason"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Print `Design deltas: none` only for an empty array.' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'Print `Design deltas: none` only for an empty array whose count was established successfully.' \
 	"Codex mirror: none is reserved for zero deltas"
 assert_grep_fixed "$CODEX_SKILL_MD" 'Every `design_deltas` field value must be a string' \
 	"Codex mirror: fixer schema requires string-valued design deltas"
@@ -1247,7 +1247,7 @@ JSON
 }
 
 run_seam_tripwire_read_probe() {
-	local skill_md="$1" function_file filter_file fixture_root guard_file round_kind round_value state state_file action expected rc
+	local skill_md="$1" function_file filter_file fixture_root guard_file round_value state state_file action expected rc
 	function_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-read-action.XXXXXX")"
 	filter_file="$(mktemp "${TMPDIR:-/tmp}/gauntlet-seam-read-schema.XXXXXX")"
 	fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/gauntlet-seam-read-state.XXXXXX")"
@@ -1267,54 +1267,52 @@ run_seam_tripwire_read_probe() {
 	. "$guard_file"
 	# shellcheck source=/dev/null
 	. "$function_file"
-	for round_kind in first later; do
-		[[ "$round_kind" == first ]] && round_value=0 || round_value=7
-		for state in absent empty valid-match valid-no-match malformed wrong-schema symlink directory; do
-			state_file="$fixture_root/$round_kind-$state.json"
-			case "$state" in
-			absent) ;;
-			empty) : >"$state_file" ;;
-			valid-match)
-				printf '{"round":%s,"seams":[{"file":"a.sh","function_or_contract":"parse","redesign_dispatched":false}]}\n' "$round_value" >"$state_file"
-				;;
-			valid-no-match)
-				printf '{"round":%s,"seams":[{"file":"b.sh","function_or_contract":"other","redesign_dispatched":true}]}\n' "$round_value" >"$state_file"
-				;;
-			malformed) printf '{bad json\n' >"$state_file" ;;
-			wrong-schema) printf '{"round":"%s","seams":[]}\n' "$round_value" >"$state_file" ;;
-			symlink)
-				printf '{"round":%s,"seams":[]}\n' "$round_value" >"$fixture_root/$round_kind-target.json"
-				ln -s "$fixture_root/$round_kind-target.json" "$state_file"
-				;;
-			directory) mkdir "$state_file" ;;
-			esac
-			# shellcheck disable=SC2034  # consumed by the extracted function.
-			seam_tripwire_file="$state_file"
-			action=""
-			rc=0
-			if gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire &&
-				{ [[ ! -e "$seam_tripwire_file" ]] || jq -e -f "$filter_file" "$seam_tripwire_file" >/dev/null 2>&1; }; then
-				action="$(seam_tripwire_action_for_finding a.sh parse)" || rc=$?
-			else
-				rc=1
-			fi
-			case "$state" in
-			absent | valid-no-match) expected=point-fix ;;
-			valid-match) expected=redesign ;;
-			*) expected=fail ;;
-			esac
-			if [[ "$expected" == fail ]]; then
-				[[ "$rc" -ne 0 ]] || {
-					rm -rf "$fixture_root"
-					rm -f "$function_file" "$filter_file"
-					return 1
-				}
-			elif [[ "$rc" -ne 0 || "$action" != "$expected" ]]; then
+	round_value=7
+	for state in absent empty valid-match valid-no-match malformed wrong-schema symlink directory; do
+		state_file="$fixture_root/$state.json"
+		case "$state" in
+		absent) ;;
+		empty) : >"$state_file" ;;
+		valid-match)
+			printf '{"round":%s,"seams":[{"file":"a.sh","function_or_contract":"parse","redesign_dispatched":false}]}\n' "$round_value" >"$state_file"
+			;;
+		valid-no-match)
+			printf '{"round":%s,"seams":[{"file":"b.sh","function_or_contract":"other","redesign_dispatched":true}]}\n' "$round_value" >"$state_file"
+			;;
+		malformed) printf '{bad json\n' >"$state_file" ;;
+		wrong-schema) printf '{"round":"%s","seams":[]}\n' "$round_value" >"$state_file" ;;
+		symlink)
+			printf '{"round":%s,"seams":[]}\n' "$round_value" >"$fixture_root/symlink-target.json"
+			ln -s "$fixture_root/symlink-target.json" "$state_file"
+			;;
+		directory) mkdir "$state_file" ;;
+		esac
+		# shellcheck disable=SC2034  # consumed by the extracted function.
+		seam_tripwire_file="$state_file"
+		action=""
+		rc=0
+		if gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire &&
+			{ [[ ! -e "$seam_tripwire_file" ]] || jq -e -f "$filter_file" "$seam_tripwire_file" >/dev/null 2>&1; }; then
+			action="$(seam_tripwire_action_for_finding a.sh parse)" || rc=$?
+		else
+			rc=1
+		fi
+		case "$state" in
+		absent | valid-no-match) expected=point-fix ;;
+		valid-match) expected=redesign ;;
+		*) expected=fail ;;
+		esac
+		if [[ "$expected" == fail ]]; then
+			[[ "$rc" -ne 0 ]] || {
 				rm -rf "$fixture_root"
 				rm -f "$function_file" "$filter_file"
 				return 1
-			fi
-		done
+			}
+		elif [[ "$rc" -ne 0 || "$action" != "$expected" ]]; then
+			rm -rf "$fixture_root"
+			rm -f "$function_file" "$filter_file"
+			return 1
+		fi
 	done
 	rm -rf "$fixture_root"
 	rm -f "$function_file" "$filter_file"
@@ -1342,7 +1340,7 @@ for probe_entry in "Claude mirror|$SKILL_MD" "Codex mirror|$CODEX_SKILL_MD"; do
 	probe_label="${probe_entry%%|*}"
 	probe_skill="${probe_entry#*|}"
 	if run_seam_tripwire_read_probe "$probe_skill"; then
-		pass "$probe_label: absent/present tripwire read covers eight file states across first and later rounds"
+		pass "$probe_label: absent/present tripwire read covers eight file states"
 	else
 		fail "$probe_label: absent/present tripwire read state space"
 	fi
@@ -1534,7 +1532,7 @@ assert_grep_fixed "$SKILL_MD" '(.sink | IN("none", "plan", "sidecar", "dropped")
 	"Claude mirror: sink consumer accepts the distinct dropped result"
 assert_grep_fixed "$SKILL_MD" 'Design deltas: $delta_count dropped — $sink_reason' \
 	"Claude mirror: dropped deltas report their count and reason"
-assert_grep_fixed "$SKILL_MD" 'Print `Design deltas: none` only for an empty array.' \
+assert_grep_fixed "$SKILL_MD" 'Print `Design deltas: none` only for an empty array whose count was established successfully.' \
 	"Claude mirror: none is reserved for zero deltas"
 assert_grep_fixed "$SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
 	"Claude mirror: sink keeps working files beside the ledger, not in the run dir"

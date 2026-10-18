@@ -2054,7 +2054,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant authority_temp_mutant awk_agreement_mutant tracked_sidecar_mutant dropped_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
+	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant sidecar_temp_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant authority_temp_mutant awk_agreement_mutant tracked_sidecar_mutant dropped_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
 	mutant_root="$WORKDIR/mutants/skills"
 	mutant_dir="$mutant_root/review-gauntlet/lib"
 	mkdir -p "$mutant_dir" "$mutant_root/conduct"
@@ -2086,7 +2086,7 @@ run_mutation_checks() {
 	mutation_expect_failure awk-interval run_awk_interval_probe "$interval_mutant"
 
 	sidecar_mutant="$mutant_dir/sidecar-writer.sh"
-	sed 's#upsert_section "$sidecar" "$output_tmp" 0 0 || die_env "cannot update sidecar temp file"#cp "$payload" "$output_tmp" || die_env "cannot update sidecar temp file"#' \
+	sed 's#upsert_section "$sidecar" "$output_tmp" 0 0 private || drop_nonempty "cannot update sidecar temp file"#cp "$payload" "$output_tmp" || drop_nonempty "cannot update sidecar temp file"#' \
 		"$WRITER" >"$sidecar_mutant"
 	chmod +x "$sidecar_mutant"
 	mutation_expect_failure sidecar-upsert run_sidecar_probe "$sidecar_mutant"
@@ -2145,10 +2145,8 @@ run_mutation_checks() {
 	mutation_expect_failure plan-byte-allowlist run_nul_differential_probe "$byte_allowlist_mutant"
 
 	marker_output_mutant="$mutant_dir/marker-output-writer.sh"
-	sed '/upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end"/a\
-marker_output_tmp="${output_tmp}.marker"\
-LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"$marker_output_tmp"\
-mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
+	sed 's#if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then#if LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"${output_tmp}.marker" \&\& mv "${output_tmp}.marker" "$output_tmp" \&\& cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then#' \
+		"$WRITER" >"$marker_output_mutant"
 	chmod +x "$marker_output_mutant"
 	if run_marker_line_cmp_probe "$marker_output_mutant"; then
 		pass "marker-line cmp guard catches a rewritten marker byte"
@@ -2196,11 +2194,16 @@ mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
 	mutation_expect_failure post-edit-marker-authority run_post_edit_authority_probe "$post_authority_mutant"
 
 	authority_temp_mutant="$mutant_dir/authority-temp-writer.sh"
-	sed -e 's#authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"#authority_tmp="$payload.authority"#' \
-		-e 's#post_authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"#post_authority_tmp="$payload.authority"#' \
+	sed 's/design-deltas-authority\.XXXXXX/design-deltas-authority.fixed/g' \
 		"$WRITER" >"$authority_temp_mutant"
 	chmod +x "$authority_temp_mutant"
 	mutation_expect_failure authority-temp-randomization run_authority_temp_randomization_probe "$authority_temp_mutant"
+
+	sidecar_temp_mutant="$mutant_dir/sidecar-fixed-temp-writer.sh"
+	sed 's#output_tmp="$(create_private_temp "$state_dir/.design-deltas-$TARGET_KEY.tmp.XXXXXX")" || drop_nonempty "cannot create a private design-delta sidecar temp file"#output_tmp="$state_dir/.design-deltas-$TARGET_KEY.tmp"#' \
+		"$WRITER" >"$sidecar_temp_mutant"
+	chmod +x "$sidecar_temp_mutant"
+	mutation_expect_failure sidecar-temp-uniqueness run_sidecar_temp_lifecycle_probe "$sidecar_temp_mutant"
 
 	awk_agreement_mutant="$mutant_dir/awk-agreement-writer.sh"
 	sed 's/elif \[\[ "$marker_line" -ne "$authority_marker_line" \]\]; then/elif false; then/' "$WRITER" >"$awk_agreement_mutant"
@@ -2337,7 +2340,7 @@ mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
 }
 
 run_symlink_test() {
-	local repo outside rc
+	local repo outside out rc
 	repo="$WORKDIR/symlink-state"
 	init_repo "$repo"
 	write_shape_plan "$repo" 0 none
@@ -2347,10 +2350,12 @@ run_symlink_test() {
 	mkdir -p "$outside"
 	ln -s "$outside" "$repo/.gauntlet"
 	set +e
-	run_writer_id "$WRITER" "$repo" run-one >/dev/null 2>&1
+	out="$(run_writer_id "$WRITER" "$repo" run-one 2>/dev/null)"
 	rc=$?
 	set -e
-	if [[ "$rc" -eq 2 && ! -e "$outside/design-deltas-ledger-codex-widget.md" ]]; then
+	if [[ "$rc" -eq 0 && ! -e "$outside/design-deltas-ledger-codex-widget.md" ]] &&
+		jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" &&
+		[[ "$(wc -l <<<"$out" | tr -d ' ')" -eq 1 ]]; then
 		pass "write refuses a symlinked .gauntlet"
 	else
 		fail "write symlink refusal exit $rc or escaped write"
@@ -2358,7 +2363,7 @@ run_symlink_test() {
 }
 
 run_input_symlink_test() {
-	local repo outside_resolution outside_deltas plan before rc
+	local repo outside_resolution outside_deltas plan before out rc
 	repo="$WORKDIR/symlink-inputs"
 	init_repo "$repo"
 	write_shape_plan "$repo" 1 one-below
@@ -2372,10 +2377,11 @@ run_input_symlink_test() {
 	rm "$repo/resolution.json"
 	ln -s "$outside_resolution" "$repo/resolution.json"
 	set +e
-	run_writer_id "$WRITER" "$repo" run-one >/dev/null 2>&1
+	out="$(run_writer_id "$WRITER" "$repo" run-one 2>/dev/null)"
 	rc=$?
 	set -e
-	if [[ "$rc" -eq 2 && "$(hash_file "$plan")" == "$before" ]]; then
+	if [[ "$rc" -eq 0 && "$(hash_file "$plan")" == "$before" ]] &&
+		jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out"; then
 		pass "write refuses a symlinked resolution input before reading it"
 	else
 		fail "symlinked resolution input exit $rc or changed the plan"
@@ -2388,10 +2394,11 @@ run_input_symlink_test() {
 	rm "$repo/deltas.json"
 	ln -s "$outside_deltas" "$repo/deltas.json"
 	set +e
-	run_writer_id "$WRITER" "$repo" run-one >/dev/null 2>&1
+	out="$(run_writer_id "$WRITER" "$repo" run-one 2>/dev/null)"
 	rc=$?
 	set -e
-	if [[ "$rc" -eq 2 && "$(hash_file "$plan")" == "$before" ]]; then
+	if [[ "$rc" -eq 0 && "$(hash_file "$plan")" == "$before" ]] &&
+		jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out"; then
 		pass "write refuses a symlinked deltas input before reading it"
 	else
 		fail "symlinked deltas input exit $rc or changed the plan"
@@ -2426,7 +2433,7 @@ make_writer_bad_type() {
 
 run_writer_nonregular_probe() {
 	local writer="$1" only_site="${2:-}" site bad_type repo plan path out rc
-	for site in sidecar sidecar-temp plan-temp state-dir; do
+	for site in sidecar plan-temp state-dir; do
 		[[ -z "$only_site" || "$site" == "$only_site" ]] || continue
 		for bad_type in directory fifo socket; do
 			[[ "$site" == state-dir && "$bad_type" == directory ]] && continue
@@ -2444,10 +2451,6 @@ run_writer_nonregular_probe() {
 			sidecar)
 				mkdir -p "$repo/.gauntlet"
 				path="$repo/.gauntlet/design-deltas-ledger-codex-widget.md"
-				;;
-			sidecar-temp)
-				mkdir -p "$repo/.gauntlet"
-				path="$repo/.gauntlet/.design-deltas-ledger-codex-widget.tmp"
 				;;
 			plan-temp) path="$repo/docs/dev_plans/.design-deltas-ledger-codex-widget-run-one.tmp" ;;
 			state-dir) path="$repo/.gauntlet" ;;
@@ -2535,7 +2538,7 @@ case "$1" in
     exec "$REAL_MKTEMP" "$@"
   fi
   ;;
-*) exit 1 ;;
+*) exec "$REAL_MKTEMP" "$@" ;;
 esac
 SH
 			chmod +x "$fake_bin/mktemp"
@@ -2551,21 +2554,26 @@ SH
 				run_writer_id "$writer" "$repo" run-one >"$repo/scratch.out" 2>"$repo/scratch.err"
 			rc=$?
 			set -e
-			[[ "$rc" -ne 0 && "$before" == "$(hash_file "$plan")" ]] || return 1
+			[[ "$rc" -eq 0 && "$before" == "$(hash_file "$plan")" ]] || return 1
 			if [[ "$site" == payload ]]; then
 				path="$fake_payload"
 			else
 				path="$fake_authority"
 			fi
 			if [[ "$bad_type" == fifo ]]; then [[ -p "$path" ]]; else [[ -d "$path" ]]; fi || return 1
-			grep -Fq 'refusing non-regular design-delta write path' "$repo/scratch.err" || return 1
+			if [[ "$site" == payload ]]; then
+				jq -e '.sink == "dropped" and (.reason | length > 0)' "$repo/scratch.out" >/dev/null || return 1
+			else
+				jq -e '.sink == "sidecar" and (.reason | contains("authority temp"))' "$repo/scratch.out" >/dev/null || return 1
+			fi
+			grep -Eq 'refusing non-regular design-delta write path|private .* temp file' "$repo/scratch.err" || return 1
 		done
 	done
 }
 
 run_dropped_sink_paths_probe() {
-	local writer="$1" site repo sidecar temp out shim_dir real_git
-	for site in sidecar sidecar-temp became-tracked; do
+	local writer="$1" site repo sidecar out shim_dir real_git real_mktemp
+	for site in sidecar unsafe-sidecar temp-create became-tracked; do
 		repo="$WORKDIR/dropped-$site-${writer##*/}-$RANDOM"
 		init_repo "$repo"
 		write_shape_plan "$repo" 0 none
@@ -2580,11 +2588,49 @@ run_dropped_sink_paths_probe() {
 			out="$(run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
 			jq -e '.sink == "dropped" and .path == "" and .reason == "design-delta sidecar is tracked, non-regular, or cannot be classified"' >/dev/null <<<"$out" || return 1
 			;;
-		sidecar-temp)
-			temp="$repo/.gauntlet/.design-deltas-ledger-codex-widget.tmp"
-			mkfifo "$temp"
-			out="$(run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
-			jq -e '.sink == "dropped" and .path == "" and .reason == "design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied"' >/dev/null <<<"$out" || return 1
+		unsafe-sidecar)
+			shim_dir="$repo/git-shim"
+			mkdir -p "$shim_dir"
+			real_git="$(command -v git)"
+			cat >"$shim_dir/git" <<'SH'
+#!/usr/bin/env bash
+is_sidecar=0
+is_ls_files=0
+for arg in "$@"; do
+  [[ "$arg" == ls-files ]] && is_ls_files=1
+  [[ "$arg" == *design-deltas-ledger-codex-widget.md ]] && is_sidecar=1
+done
+if [[ "$is_ls_files" -eq 1 && "$is_sidecar" -eq 1 ]]; then
+  count=0
+  [[ -f "$SIDECAR_QUERY_COUNT" ]] && count="$(cat "$SIDECAR_QUERY_COUNT")"
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$SIDECAR_QUERY_COUNT"
+  if [[ "$count" -ge 2 ]]; then
+    printf '%s\n' '.gauntlet/design-deltas-ledger-codex-widget.md'
+    exit 0
+  fi
+fi
+exec "$REAL_GIT" "$@"
+SH
+			chmod +x "$shim_dir/git"
+			out="$(REAL_GIT="$real_git" SIDECAR_QUERY_COUNT="$repo/sidecar-query-count" PATH="$shim_dir:$PATH" \
+				run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
+			jq -e '.sink == "dropped" and .path == "" and .reason == "unsafe design-delta sidecar"' >/dev/null <<<"$out" || return 1
+			;;
+		temp-create)
+			shim_dir="$repo/mktemp-shim"
+			mkdir -p "$shim_dir"
+			real_mktemp="$(command -v mktemp)"
+			cat >"$shim_dir/mktemp" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+*.gauntlet/.design-deltas-*.tmp.XXXXXX) exit 1 ;;
+*) exec "$REAL_MKTEMP" "$@" ;;
+esac
+SH
+			chmod +x "$shim_dir/mktemp"
+			out="$(REAL_MKTEMP="$real_mktemp" PATH="$shim_dir:$PATH" run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
+			jq -e '.sink == "dropped" and .path == "" and .reason == "cannot create a private design-delta sidecar temp file"' >/dev/null <<<"$out" || return 1
 			;;
 		became-tracked)
 			shim_dir="$repo/git-shim"
@@ -2659,10 +2705,101 @@ SH
 	[[ "$authority_count" -eq 2 ]] || return 1
 	awk -F '\t' -v old="$old_predictable" '
 	  $1 == "authority" {
-	    if ($2 == old || $2 ~ /fixed-payload\.authority$/ || $2 !~ /design-deltas-authority\./) exit 1
+	    if ($2 == old || $2 ~ /fixed-payload\.authority$/ || $2 ~ /design-deltas-authority\.fixed$/ || $2 !~ /design-deltas-authority\./) exit 1
 	  }
 	' "$repo/mktemp.log" || return 1
 	grep -Fq 'Summary: "first"' "$plan"
+}
+
+run_sidecar_temp_lifecycle_probe() {
+	local writer="$1" mode repo stale stale_before out shim_dir real_mv
+	for mode in stale success forced-failure; do
+		repo="$WORKDIR/sidecar-temp-lifecycle-$mode-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 0 none
+		write_resolution "$repo" ambiguous ""
+		write_standard_deltas "$repo" first
+		mkdir -p "$repo/.gauntlet"
+		stale="$repo/.gauntlet/.design-deltas-ledger-codex-widget.tmp"
+		if [[ "$mode" == stale ]]; then
+			printf 'legacy stale sentinel\n' >"$stale"
+			stale_before="$(hash_file "$stale")"
+		fi
+		if [[ "$mode" == forced-failure ]]; then
+			shim_dir="$repo/mv-shim"
+			mkdir -p "$shim_dir"
+			real_mv="$(command -v mv)"
+			cat >"$shim_dir/mv" <<'SH'
+#!/usr/bin/env bash
+case "${*: -1}" in
+*/.gauntlet/design-deltas-*.md) exit 1 ;;
+*) exec "$REAL_MV" "$@" ;;
+esac
+SH
+			chmod +x "$shim_dir/mv"
+			out="$(REAL_MV="$real_mv" PATH="$shim_dir:$PATH" run_writer_id "$writer" "$repo" temp 2>"$repo/temp.err")" || return 1
+			jq -e '.sink == "dropped" and .reason == "cannot replace sidecar"' >/dev/null <<<"$out" || return 1
+		else
+			out="$(run_writer_id "$writer" "$repo" temp 2>"$repo/temp.err")" || return 1
+			jq -e '.sink == "sidecar"' >/dev/null <<<"$out" || return 1
+		fi
+		if [[ "$mode" == stale ]]; then
+			[[ "$stale_before" == "$(hash_file "$stale")" ]] || return 1
+			grep -Fq 'Summary: "first"' "$repo/.gauntlet/design-deltas-ledger-codex-widget.md" || return 1
+		fi
+		if compgen -G "$repo/.gauntlet/.design-deltas-ledger-codex-widget.tmp.*" >/dev/null; then
+			return 1
+		fi
+	done
+}
+
+run_forced_failure_envelope_probe() {
+	local writer="$1" site repo shim_dir out rc real_tool tool_name outside outside_before
+	for site in mkdir update; do
+		repo="$WORKDIR/forced-failure-$site-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 0 none
+		write_resolution "$repo" ambiguous ""
+		write_standard_deltas "$repo" first
+		outside="$WORKDIR/outside-$site-$RANDOM"
+		printf 'outside sentinel\n' >"$outside"
+		outside_before="$(hash_file "$outside")"
+		shim_dir="$repo/$site-shim"
+		mkdir -p "$shim_dir"
+		case "$site" in
+		mkdir)
+			tool_name="mkdir"
+			real_tool="$(command -v mkdir)"
+			cat >"$shim_dir/mkdir" <<'SH'
+#!/usr/bin/env bash
+case "${*: -1}" in
+*/.gauntlet) exit 1 ;;
+*) exec "$REAL_TOOL" "$@" ;;
+esac
+SH
+			;;
+		update)
+			tool_name="awk"
+			real_tool="$(command -v awk)"
+			cat >"$shim_dir/awk" <<'SH'
+#!/usr/bin/env bash
+case "${*: -1}" in
+/dev/null) exit 1 ;;
+*) exec "$REAL_TOOL" "$@" ;;
+esac
+SH
+			;;
+		esac
+		chmod +x "$shim_dir/$tool_name"
+		set +e
+		out="$(REAL_TOOL="$real_tool" PATH="$shim_dir:$PATH" run_writer_sidecar_only "$writer" "$repo" forced 2>"$repo/forced.err")"
+		rc=$?
+		set -e
+		[[ "$rc" -eq 0 && "$(hash_file "$outside")" == "$outside_before" ]] || return 1
+		jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" || return 1
+		[[ "$(wc -l <<<"$out" | tr -d ' ')" -eq 1 ]] || return 1
+		[[ ! -e "$repo/.gauntlet/design-deltas-ledger-codex-widget.md" ]] || return 1
+	done
 }
 
 run_resolver_tests
@@ -2721,6 +2858,16 @@ if run_authority_temp_randomization_probe "$WRITER"; then
 	pass "authority results use independent mktemp names and ignore the old predictable payload suffix"
 else
 	fail "writer authority temp randomization and planted-name cell"
+fi
+if run_sidecar_temp_lifecycle_probe "$WRITER"; then
+	pass "stale legacy sidecar temps do not block writes and private temps are cleaned after success and forced failure"
+else
+	fail "writer sidecar private-temp lifecycle"
+fi
+if run_forced_failure_envelope_probe "$WRITER"; then
+	pass "forced mkdir and sidecar-update failures return one dropped envelope, exit zero, and preserve outside state"
+else
+	fail "writer forced-failure envelope state space"
 fi
 if run_sidecar_trackedness_state_probe "$WRITER"; then
 	pass "sidecar trackedness matrix covers untracked, tracked, deleted, intent-to-add, force-added, and outside temp paths"

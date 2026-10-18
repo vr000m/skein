@@ -113,11 +113,15 @@ run_seam_sidecar_probe() {
 
 run_dropped_reporting_probe() {
 	local sink_fn="$1" reason_slug reason repo base_oid reviewed_head shim_root
-	for reason_slug in sidecar sidecar-temp became-tracked; do
+	for reason_slug in sidecar state-symlink mkdir temp-create temp-update final-move no-envelope; do
 		case "$reason_slug" in
 		sidecar) reason="design-delta sidecar is tracked, non-regular, or cannot be classified" ;;
-		sidecar-temp) reason="design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied" ;;
-		became-tracked) reason="design-delta sidecar became tracked, non-regular, or indeterminate before replace" ;;
+		state-symlink) reason="refusing symlinked design-delta state directory" ;;
+		mkdir) reason="cannot create .gauntlet directory" ;;
+		temp-create) reason="cannot create a private design-delta sidecar temp file" ;;
+		temp-update) reason="cannot update sidecar temp file" ;;
+		final-move) reason="cannot replace sidecar" ;;
+		no-envelope) reason="writer returned no usable result envelope" ;;
 		esac
 		repo="$WORKDIR/dropped-report-$reason_slug-$RANDOM"
 		init_fixture "$repo"
@@ -126,10 +130,17 @@ run_dropped_reporting_probe() {
 		shim_root="$repo/skill-shim"
 		mkdir -p "$shim_root"
 		cp -R "$LIB" "$shim_root/lib"
-		cat >"$shim_root/lib/write-design-deltas.sh" <<'SH'
+		if [[ "$reason_slug" == no-envelope ]]; then
+			cat >"$shim_root/lib/write-design-deltas.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+		else
+			cat >"$shim_root/lib/write-design-deltas.sh" <<'SH'
 #!/usr/bin/env bash
 jq -cn --arg reason "$DROP_REASON" '{sink:"dropped",path:"",reason:$reason}'
 SH
+		fi
 		chmod +x "$shim_root/lib/write-design-deltas.sh"
 		(
 			cd "$repo"
@@ -217,6 +228,42 @@ run_invalid_round_count_probe() {
 	) >"$repo/round-count.out" 2>"$repo/round-count.err"
 	grep -Fq 'ledger round count is not an integer' "$repo/round-count.err" &&
 		! grep -Fq 'Design deltas: none' "$repo/round-count.out"
+}
+
+run_collection_failure_probe() {
+	local sink_fn="$1" repo base_oid reviewed_head jq_real shim_dir
+	repo="$WORKDIR/collection-failure-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	jq_real="$(command -v jq)"
+	shim_dir="$repo/jq-shim"
+	mkdir -p "$shim_dir"
+	cat >"$shim_dir/jq" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == -s ]] && exit 9
+exec "$REAL_JQ" "$@"
+SH
+	chmod +x "$shim_dir/jq"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 current-delta
+		PLAN_PATH=""
+		REAL_JQ="$jq_real" PATH="$shim_dir:$PATH" run_design_delta_sink
+	) >"$repo/collection.out" 2>"$repo/collection.err"
+	grep -Fq 'Design deltas: unknown — collection failed or the items file is unreadable' "$repo/collection.err" &&
+		! grep -Fq 'Design deltas: none' "$repo/collection.out"
 }
 
 run_quick_round_probe() {
@@ -743,7 +790,7 @@ else
 fi
 
 if run_dropped_reporting_probe "$SINK_FN"; then
-	pass "all three dropped writer results print their count and reason without changing terminal handoff"
+	pass "all non-empty writer failure envelopes and a missing envelope print a dropped count and reason"
 else
 	fail "dropped design-delta terminal reporting state space"
 fi
@@ -758,6 +805,12 @@ if run_invalid_round_count_probe "$SINK_FN"; then
 	pass "malformed ledger round count fails closed without a none claim"
 else
 	fail "malformed ledger round count became an empty delta run"
+fi
+
+if run_collection_failure_probe "$SINK_FN"; then
+	pass "failed jq collection with a non-empty items file reports unknown, never none"
+else
+	fail "collection failure was collapsed to zero deltas"
 fi
 
 if run_quick_round_probe "$QUICK_FN" "$SINK_FN"; then
@@ -830,12 +883,18 @@ else
 	pass "dropped-result cells catch removal of the distinct sink token"
 fi
 
-reset_mutant="$WORKDIR/reset-mutant.sh"
-sed '/cannot initialize design delta collection/{n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
-if run_reset_failure_probe "$reset_mutant"; then
-	fail "mutation reset-fail-closed survived its regression probe"
+collection_reset_mutant="$WORKDIR/collection-reset-mutant.sh"
+awk '
+  { print }
+  /report_unknown_design_deltas "collection failed or the items file is unreadable"/ {
+    getline
+    print "    printf '\''[]\\n'\'' > \"$run_deltas_file\""
+  }
+' "$SINK_FN" >"$collection_reset_mutant"
+if run_collection_failure_probe "$collection_reset_mutant"; then
+	fail "mutation restoring reset-to-empty collection behaviour survived its regression probe"
 else
-	pass "mutation reset-fail-closed is caught by the executed sink probe"
+	pass "mutation restoring reset-to-empty collection behaviour is caught"
 fi
 
 round_count_mutant="$WORKDIR/round-count-mutant.sh"

@@ -526,13 +526,35 @@ probe_reset() {
 }
 check "reset failure: sink aborts before stale working files are consumed" probe_reset
 reset_mutant="$WORKDIR/reset-mutant.sh"
-sed '/cannot initialize design delta collection/{n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
+sed '/cannot initialize design delta collection/{n;n;/return 0/d;}' "$SINK_FN" >"$reset_mutant"
 check "mutation: reset return was removed" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$reset_mutant"
 if probe_reset "$reset_mutant"; then
 	fail "mutation reset-fail-closed survived its regression probe"
 else
 	pass "mutation reset-fail-closed is caught by the executed sink probe"
 fi
+
+# Parameterised twin of the Codex collection-failure cell. This intentionally
+# fails until the conductor mirrors the Codex sink block into the Claude skill.
+probe_collection_failure() {
+	local repo out shim_dir jq_real
+	repo="$(new_fixture "collection-failure-$RANDOM" "$PLAN_NAME")"
+	shim_dir="$repo/jq-shim"
+	jq_real="$(command -v jq)"
+	mkdir -p "$shim_dir"
+	cat >"$shim_dir/jq" <<'SH'
+#!/usr/bin/env bash
+[[ "${1:-}" == -s ]] && exit 9
+exec "$REAL_JQ" "$@"
+SH
+	chmod +x "$shim_dir/jq"
+	setup_hook() { write_round "$1" 1 current-delta; }
+	out="$(REAL_JQ="$jq_real" SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:feature/widget 1 "" "$shim_dir")"
+	unset -f setup_hook
+	grep -Fq 'Design deltas: unknown — collection failed or the items file is unreadable' "$WORKDIR/sink.err" &&
+		! grep -Fq 'Design deltas: none' <<<"$out"
+}
+check "Claude mirror pending: failed jq collection with non-empty items reports unknown, never none" probe_collection_failure
 
 # --- 13. tracked working paths are immutable under clean/hostile Git env ----
 probe_tracked_working_path() {
