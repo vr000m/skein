@@ -1748,7 +1748,7 @@ run_tracked_sidecar_probe() {
 		git-work-tree) out="$(GIT_WORK_TREE="$WORKDIR" run_writer_sidecar_only "$writer" "$repo" run-one 2>"$repo/tracked.err")" ;;
 		git-ceiling) out="$(GIT_CEILING_DIRECTORIES="$repo" run_writer_sidecar_only "$writer" "$repo" run-one 2>"$repo/tracked.err")" ;;
 		esac
-		jq -e '.sink == "none" and .path == ""' >/dev/null <<<"$out" || return 1
+		jq -e '.sink == "dropped" and .path == "" and (.reason | contains("sidecar is tracked"))' >/dev/null <<<"$out" || return 1
 		[[ "$before" == "$(hash_file "$sidecar")" ]] || return 1
 		grep -Fq 'refusing to write tracked design-delta path' "$repo/tracked.err" || return 1
 	done
@@ -1799,9 +1799,9 @@ run_sidecar_trackedness_state_probe() {
 		if [[ "$state" == untracked ]]; then
 			jq -e '.sink == "sidecar"' >/dev/null <<<"$out" && grep -Fq 'Summary: "first"' "$sidecar" || return 1
 		elif [[ "$state" == tracked-deleted ]]; then
-			jq -e '.sink == "none"' >/dev/null <<<"$out" && [[ ! -e "$sidecar" ]] || return 1
+			jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" && [[ ! -e "$sidecar" ]] || return 1
 		else
-			jq -e '.sink == "none"' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$sidecar")" ]] || return 1
+			jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$sidecar")" ]] || return 1
 		fi
 	done
 	repo="$WORKDIR/sidecar-outside-tmp-${writer##*/}-$RANDOM"
@@ -1842,7 +1842,7 @@ run_sidecar_git_error_probe() {
 				--run-id error --target-key ledger-codex-widget 2>"$repo/error.err")"
 			;;
 		esac
-		jq -e '.sink == "none"' >/dev/null <<<"$out" || return 1
+		jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" || return 1
 		[[ "$before" == "$(hash_file "$sidecar")" ]] || return 1
 	done
 }
@@ -1872,7 +1872,7 @@ run_tracked_temp_path_probe() {
 		if [[ "$kind" == plan-temp ]]; then
 			jq -e '.sink == "sidecar"' >/dev/null <<<"$out" || return 1
 		else
-			jq -e '.sink == "none"' >/dev/null <<<"$out" || return 1
+			jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" || return 1
 		fi
 	done
 }
@@ -2054,7 +2054,7 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant awk_agreement_mutant tracked_sidecar_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
+	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant authority_temp_mutant awk_agreement_mutant tracked_sidecar_mutant dropped_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
 	mutant_root="$WORKDIR/mutants/skills"
 	mutant_dir="$mutant_root/review-gauntlet/lib"
 	mkdir -p "$mutant_dir" "$mutant_root/conduct"
@@ -2195,6 +2195,13 @@ mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
 	chmod +x "$post_authority_mutant"
 	mutation_expect_failure post-edit-marker-authority run_post_edit_authority_probe "$post_authority_mutant"
 
+	authority_temp_mutant="$mutant_dir/authority-temp-writer.sh"
+	sed -e 's#authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"#authority_tmp="$payload.authority"#' \
+		-e 's#post_authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"#post_authority_tmp="$payload.authority"#' \
+		"$WRITER" >"$authority_temp_mutant"
+	chmod +x "$authority_temp_mutant"
+	mutation_expect_failure authority-temp-randomization run_authority_temp_randomization_probe "$authority_temp_mutant"
+
 	awk_agreement_mutant="$mutant_dir/awk-agreement-writer.sh"
 	sed 's/elif \[\[ "$marker_line" -ne "$authority_marker_line" \]\]; then/elif false; then/' "$WRITER" >"$awk_agreement_mutant"
 	chmod +x "$awk_agreement_mutant"
@@ -2274,6 +2281,11 @@ mv "$marker_output_tmp" "$output_tmp"' "$WRITER" >"$marker_output_mutant"
 	sed 's/if \[\[ -n "$tracked_output" \]\]; then/if false; then/' "$WRITER" >"$tracked_sidecar_mutant"
 	chmod +x "$tracked_sidecar_mutant"
 	mutation_expect_failure tracked-sidecar run_tracked_sidecar_probe "$tracked_sidecar_mutant"
+
+	dropped_mutant="$mutant_dir/dropped-writer.sh"
+	sed 's/{sink:"dropped",path:"",reason:$reason}/{sink:"none",path:"",reason:$reason}/g' "$WRITER" >"$dropped_mutant"
+	chmod +x "$dropped_mutant"
+	mutation_expect_failure dropped-sink-token run_dropped_sink_paths_probe "$dropped_mutant"
 
 	env_scrub_mutant="$mutant_dir/env-scrub-writer.sh"
 	sed 's/-u GIT_INDEX_FILE //g' "$WRITER" >"$env_scrub_mutant"
@@ -2449,17 +2461,19 @@ run_writer_nonregular_probe() {
 			fi
 			out="$(run_writer_id "$writer" "$repo" run-one 2>"$repo/nonregular.err")" || {
 				[[ "$site" == state-dir ]] || return 1
-				out='{"sink":"none"}'
+				out=""
 			}
 			case "$bad_type" in
 			fifo) [[ -p "$path" ]] ;;
 			directory) [[ -d "$path" ]] ;;
 			socket) [[ -S "$path" ]] ;;
 			esac || return 1
-			if [[ "$site" == plan-temp ]]; then
+			if [[ "$site" == state-dir ]]; then
+				:
+			elif [[ "$site" == plan-temp ]]; then
 				jq -e '.sink == "sidecar"' >/dev/null <<<"$out" || return 1
 			else
-				jq -e '.sink == "none"' >/dev/null <<<"$out" || return 1
+				jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" || return 1
 			fi
 			grep -Fq 'refusing non-' "$repo/nonregular.err" || return 1
 		done
@@ -2480,11 +2494,11 @@ run_icase_sidecar_probe() {
 	before="$(hash_file "$tracked_path")"
 	out="$(GIT_INDEX_FILE=/nonexistent GIT_DIR=/nonexistent GIT_WORK_TREE="$WORKDIR" \
 		run_writer_id "$writer" "$repo" run-one 2>"$repo/icase.err")" || return 1
-	jq -e '.sink == "none"' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$tracked_path")" ]]
+	jq -e '.sink == "dropped" and (.reason | length > 0)' >/dev/null <<<"$out" && [[ "$before" == "$(hash_file "$tracked_path")" ]]
 }
 
 run_scratch_nonregular_probe() {
-	local writer="$1" site bad_type repo plan before fake_bin fake_payload path rc
+	local writer="$1" site bad_type repo plan before fake_bin fake_payload fake_authority path rc
 	for site in payload authority; do
 		for bad_type in directory fifo; do
 			repo="$WORKDIR/scratch-nonregular-$site-$bad_type-${writer##*/}-$RANDOM"
@@ -2496,17 +2510,25 @@ run_scratch_nonregular_probe() {
 			before="$(hash_file "$plan")"
 			fake_bin="$repo/fake-bin"
 			fake_payload="$repo/fake-payload"
+			fake_authority="$repo/fake-authority"
 			mkdir -p "$fake_bin"
-			printf '#!/usr/bin/env bash\nprintf '\''%%s\\n'\'' "$FAKE_MKTEMP_PATH"\n' >"$fake_bin/mktemp"
+			cat >"$fake_bin/mktemp" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+*design-deltas-payload*) printf '%s\n' "$FAKE_PAYLOAD_PATH" ;;
+*design-deltas-authority*) printf '%s\n' "$FAKE_AUTHORITY_PATH" ;;
+*) exit 1 ;;
+esac
+SH
 			chmod +x "$fake_bin/mktemp"
 			if [[ "$site" == payload ]]; then
 				make_writer_bad_type "$fake_payload" "$bad_type"
 			else
 				printf 'payload seed\n' >"$fake_payload"
-				make_writer_bad_type "$fake_payload.authority" "$bad_type"
+				make_writer_bad_type "$fake_authority" "$bad_type"
 			fi
 			set +e
-			PATH="$fake_bin:$PATH" FAKE_MKTEMP_PATH="$fake_payload" \
+			PATH="$fake_bin:$PATH" FAKE_PAYLOAD_PATH="$fake_payload" FAKE_AUTHORITY_PATH="$fake_authority" \
 				run_writer_id "$writer" "$repo" run-one >"$repo/scratch.out" 2>"$repo/scratch.err"
 			rc=$?
 			set -e
@@ -2514,12 +2536,114 @@ run_scratch_nonregular_probe() {
 			if [[ "$site" == payload ]]; then
 				path="$fake_payload"
 			else
-				path="$fake_payload.authority"
+				path="$fake_authority"
 			fi
 			if [[ "$bad_type" == fifo ]]; then [[ -p "$path" ]]; else [[ -d "$path" ]]; fi || return 1
 			grep -Fq 'refusing non-regular design-delta write path' "$repo/scratch.err" || return 1
 		done
 	done
+}
+
+run_dropped_sink_paths_probe() {
+	local writer="$1" site repo sidecar temp out shim_dir real_git
+	for site in sidecar sidecar-temp became-tracked; do
+		repo="$WORKDIR/dropped-$site-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 0 none
+		write_resolution "$repo" ambiguous ""
+		write_standard_deltas "$repo" first
+		mkdir -p "$repo/.gauntlet"
+		sidecar="$repo/.gauntlet/design-deltas-ledger-codex-widget.md"
+		case "$site" in
+		sidecar)
+			printf 'tracked sidecar\n' >"$sidecar"
+			git -C "$repo" add -f -- .gauntlet/design-deltas-ledger-codex-widget.md
+			out="$(run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
+			jq -e '.sink == "dropped" and .path == "" and .reason == "design-delta sidecar is tracked, non-regular, or cannot be classified"' >/dev/null <<<"$out" || return 1
+			;;
+		sidecar-temp)
+			temp="$repo/.gauntlet/.design-deltas-ledger-codex-widget.tmp"
+			mkfifo "$temp"
+			out="$(run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
+			jq -e '.sink == "dropped" and .path == "" and .reason == "design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied"' >/dev/null <<<"$out" || return 1
+			;;
+		became-tracked)
+			shim_dir="$repo/git-shim"
+			mkdir -p "$shim_dir"
+			real_git="$(command -v git)"
+			cat >"$shim_dir/git" <<'SH'
+#!/usr/bin/env bash
+is_sidecar=0
+is_ls_files=0
+for arg in "$@"; do
+  [[ "$arg" == ls-files ]] && is_ls_files=1
+  [[ "$arg" == *design-deltas-ledger-codex-widget.md ]] && is_sidecar=1
+done
+if [[ "$is_ls_files" -eq 1 && "$is_sidecar" -eq 1 ]]; then
+  count=0
+  [[ -f "$SIDECAR_QUERY_COUNT" ]] && count="$(cat "$SIDECAR_QUERY_COUNT")"
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$SIDECAR_QUERY_COUNT"
+  if [[ "$count" -ge 3 ]]; then
+    printf '%s\n' '.gauntlet/design-deltas-ledger-codex-widget.md'
+    exit 0
+  fi
+fi
+exec "$REAL_GIT" "$@"
+SH
+			chmod +x "$shim_dir/git"
+			out="$(REAL_GIT="$real_git" SIDECAR_QUERY_COUNT="$repo/sidecar-query-count" PATH="$shim_dir:$PATH" \
+				run_writer_id "$writer" "$repo" drop 2>"$repo/drop.err")" || return 1
+			jq -e '.sink == "dropped" and .path == "" and .reason == "design-delta sidecar became tracked, non-regular, or indeterminate before replace"' >/dev/null <<<"$out" || return 1
+			[[ ! -e "$sidecar" ]] || return 1
+			;;
+		esac
+	done
+}
+
+run_authority_temp_randomization_probe() {
+	local writer="$1" repo plan fake_bin real_mktemp payload old_predictable out authority_count
+	repo="$WORKDIR/authority-random-${writer##*/}-$RANDOM"
+	init_repo "$repo"
+	write_shape_plan "$repo" 1 one-below
+	plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+	write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+	write_standard_deltas "$repo" first
+	fake_bin="$repo/mktemp-shim"
+	mkdir -p "$fake_bin"
+	real_mktemp="$(command -v mktemp)"
+	payload="$repo/fixed-payload"
+	old_predictable="$payload.authority"
+	mkfifo "$old_predictable"
+	cat >"$fake_bin/mktemp" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+*design-deltas-payload*)
+  : >"$FIXED_PAYLOAD"
+  printf '%s\n' "$FIXED_PAYLOAD"
+  printf 'payload\t%s\n' "$FIXED_PAYLOAD" >>"$MKTEMP_LOG"
+  ;;
+*design-deltas-authority*)
+  result="$($REAL_MKTEMP "$@")" || exit $?
+  printf '%s\n' "$result"
+  printf 'authority\t%s\n' "$result" >>"$MKTEMP_LOG"
+  ;;
+*) exec "$REAL_MKTEMP" "$@" ;;
+esac
+SH
+	chmod +x "$fake_bin/mktemp"
+	out="$(FIXED_PAYLOAD="$payload" MKTEMP_LOG="$repo/mktemp.log" REAL_MKTEMP="$real_mktemp" PATH="$fake_bin:$PATH" \
+		run_writer_id "$writer" "$repo" authority 2>"$repo/authority.err")" || return 1
+	jq -e '.sink == "plan"' >/dev/null <<<"$out" || return 1
+	[[ -p "$old_predictable" ]] || return 1
+	authority_count="$(awk -F '\t' '$1 == "authority" { count++ } END { print count + 0 }' "$repo/mktemp.log")"
+	[[ "$authority_count" -eq 2 ]] || return 1
+	awk -F '\t' -v old="$old_predictable" '
+	  $1 == "authority" {
+	    if ($2 == old || $2 ~ /fixed-payload\.authority$/ || $2 !~ /design-deltas-authority\./) exit 1
+	  }
+	' "$repo/mktemp.log" || return 1
+	grep -Fq 'Summary: "first"' "$plan"
 }
 
 run_resolver_tests
@@ -2565,9 +2689,19 @@ else
 	fail "writer case-insensitive literal trackedness"
 fi
 if run_scratch_nonregular_probe "$WRITER"; then
-	pass "writer payload and marker-authority scratch sites refuse directory/FIFO targets before redirection"
+	pass "writer payload and independently randomized marker-authority scratch sites refuse directory/FIFO targets before redirection"
 else
 	fail "writer scratch write-target state space"
+fi
+if run_dropped_sink_paths_probe "$WRITER"; then
+	pass "all three non-empty sidecar refusal paths return dropped with distinct reasons"
+else
+	fail "writer dropped-sink return-path state space"
+fi
+if run_authority_temp_randomization_probe "$WRITER"; then
+	pass "authority results use independent mktemp names and ignore the old predictable payload suffix"
+else
+	fail "writer authority temp randomization and planted-name cell"
 fi
 if run_sidecar_trackedness_state_probe "$WRITER"; then
 	pass "sidecar trackedness matrix covers untracked, tracked, deleted, intent-to-add, force-added, and outside temp paths"

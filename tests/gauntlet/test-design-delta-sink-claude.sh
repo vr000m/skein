@@ -447,6 +447,42 @@ for dash_target in 'branch:--all..feature/widget' 'branch:main..--all'; do
 	fi
 done
 
+# probe_dropped [sink-fn] -> 0 when a writer "dropped" result prints count + reason, never "none"
+probe_dropped() {
+	local repo out slug reason dropped_root
+	for slug in sidecar sidecar-temp became-tracked; do
+		case "$slug" in
+		sidecar) reason="design-delta sidecar is tracked, non-regular, or cannot be classified" ;;
+		sidecar-temp) reason="design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied" ;;
+		became-tracked) reason="design-delta sidecar became tracked, non-regular, or indeterminate before replace" ;;
+		esac
+		dropped_root="$WORKDIR/dropped-root-$slug-$RANDOM"
+		mkdir -p "$dropped_root/skills/review-gauntlet"
+		cp -R "$LIB" "$dropped_root/skills/review-gauntlet/lib"
+		cat >"$dropped_root/skills/review-gauntlet/lib/write-design-deltas.sh" <<SHIM
+#!/usr/bin/env bash
+jq -cn --arg reason "$reason" '{sink:"dropped",path:"",reason:\$reason}'
+SHIM
+		chmod +x "$dropped_root/skills/review-gauntlet/lib/write-design-deltas.sh"
+		repo="$(new_fixture "dropped-$slug-$RANDOM" "$PLAN_NAME")"
+		setup_hook() { write_round "$1" 1 dropped-delta; }
+		out="$(SINK_FN="${1:-$SINK_FN}" SINK_PLUGIN_ROOT="$dropped_root" run_sink "$repo" branch:feature/widget 1)"
+		unset -f setup_hook
+		grep -Fq 'rc=0' <<<"$out" || return 1
+		grep -Fxq "warning: Design deltas: 1 dropped — $reason" "$WORKDIR/sink.err" || return 1
+		! grep -Fq 'Design deltas: none' <<<"$out" || return 1
+	done
+}
+check "dropped writer results print their count and reason, never 'none'" probe_dropped
+dropped_mutant="$WORKDIR/dropped-mutant.sh"
+sed 's/elif \[\[ "\$sink_name" == "dropped" \]\]; then/elif false; then/' "$SINK_FN" >"$dropped_mutant"
+check "mutation: dropped branch was rewritten" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$dropped_mutant"
+if probe_dropped "$dropped_mutant"; then
+	fail "mutation dropped-reporting survived its regression probe"
+else
+	pass "mutation dropped-reporting is caught by the executed sink probe"
+fi
+
 # probe_pr_suffix [sink-fn] -> 0 when a non-numeric PR suffix never reaches gh
 probe_pr_suffix() {
 	local repo out

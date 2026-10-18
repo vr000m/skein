@@ -517,11 +517,19 @@ run_design_delta_sink() {
     design_delta_write_path_is_untracked "$run_deltas_file" || return 0
     printf '[]\n' > "$run_deltas_file" || return 0
   fi
+  if ! delta_count="$(jq -er 'length' "$run_deltas_file" 2>/dev/null)" || [[ ! "$delta_count" =~ ^[0-9]+$ ]]; then
+    echo "warning: cannot count collected design deltas; continuing terminal handoff" >&2
+    return 0
+  fi
   section_run_id="$run_id"
   if [[ -n "${design_delta_quick_round:-}" ]]; then
     if [[ ! "$quick_report_digest" =~ ^[0-9a-f]{40}$ ]]; then
       echo "warning: cannot derive quick-mode design delta identity; continuing terminal handoff" >&2
-      echo "Design deltas: none"
+      if [[ "$delta_count" -eq 0 ]]; then
+        echo "Design deltas: none"
+      else
+        echo "warning: Design deltas: $delta_count dropped — cannot derive quick-mode design delta identity" >&2
+      fi
       return 0
     fi
     section_run_id="${run_id}-quick-${quick_report_digest:0:12}"
@@ -562,10 +570,20 @@ run_design_delta_sink() {
     echo "warning: design delta write failed; continuing terminal handoff" >&2
     return 0
   fi
-  if ! sink_name="$(jq -er 'select(type == "object" and (.sink | IN("none", "plan", "sidecar")) and (.path | type == "string") and (.reason | type == "string")) | .sink' <<< "$sink_json" 2>/dev/null)"; then
+  if ! sink_name="$(jq -er 'select(type == "object" and (.sink | IN("none", "plan", "sidecar", "dropped")) and (.path | type == "string") and (.reason | type == "string")) | .sink' <<< "$sink_json" 2>/dev/null)"; then
     echo "warning: unusable design delta sink result; continuing terminal handoff" >&2
   elif [[ "$sink_name" == "none" ]]; then
-    echo "Design deltas: none"
+    if [[ "$delta_count" -eq 0 ]]; then
+      echo "Design deltas: none"
+    else
+      echo "warning: design delta writer reported none for $delta_count collected deltas; continuing terminal handoff" >&2
+    fi
+  elif [[ "$sink_name" == "dropped" ]]; then
+    if [[ "$delta_count" -eq 0 ]] || ! sink_reason="$(jq -er 'select(.reason | length > 0) | .reason' <<< "$sink_json" 2>/dev/null)"; then
+      echo "warning: unusable dropped design delta result; continuing terminal handoff" >&2
+    else
+      echo "warning: Design deltas: $delta_count dropped — $sink_reason" >&2
+    fi
   elif sink_path="$(jq -er '.path' <<< "$sink_json" 2>/dev/null)"; then
     echo "Design deltas: $sink_path"
   else
@@ -577,7 +595,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` for an empty array. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array. A non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 
@@ -707,6 +725,10 @@ if [[ -e "$seam_tripwire_file" ]]; then
   ' "$seam_tripwire_file" >/dev/null || exit 1
 fi
 seam_tripwire_action_for_finding() {
+  if [[ ! -e "$seam_tripwire_file" ]]; then
+    echo "point-fix"
+    return 0
+  fi
   jq -r --arg file "$1" --arg function_or_contract "$2" '
     [.seams[] | select(
       (.file == $file) and (.function_or_contract == $function_or_contract))] as $matching

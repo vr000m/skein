@@ -111,6 +111,49 @@ run_seam_sidecar_probe() {
 		grep -Fq 'Design deltas: .gauntlet/design-deltas-' "$repo/seam.out"
 }
 
+run_dropped_reporting_probe() {
+	local sink_fn="$1" reason_slug reason repo base_oid reviewed_head shim_root
+	for reason_slug in sidecar sidecar-temp became-tracked; do
+		case "$reason_slug" in
+		sidecar) reason="design-delta sidecar is tracked, non-regular, or cannot be classified" ;;
+		sidecar-temp) reason="design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied" ;;
+		became-tracked) reason="design-delta sidecar became tracked, non-regular, or indeterminate before replace" ;;
+		esac
+		repo="$WORKDIR/dropped-report-$reason_slug-$RANDOM"
+		init_fixture "$repo"
+		base_oid="$(git -C "$repo" rev-parse main)"
+		reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+		shim_root="$repo/skill-shim"
+		mkdir -p "$shim_root"
+		cp -R "$LIB" "$shim_root/lib"
+		cat >"$shim_root/lib/write-design-deltas.sh" <<'SH'
+#!/usr/bin/env bash
+jq -cn --arg reason "$DROP_REASON" '{sink:"dropped",path:"",reason:$reason}'
+SH
+		chmod +x "$shim_root/lib/write-design-deltas.sh"
+		(
+			cd "$repo"
+			SKILL_DIR="$shim_root"
+			# shellcheck source=/dev/null
+			. "$shim_root/lib/gauntlet-common.sh"
+			# shellcheck source=/dev/null
+			. "$sink_fn"
+			canonical_target=branch:feature/widget
+			ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+			"$shim_root/lib/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+				--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+			run_dir="$("$shim_root/lib/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+			jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+			mv "$ledger_path.tmp" "$ledger_path"
+			write_round "$run_dir" 1 dropped-delta
+			PLAN_PATH=""
+			DROP_REASON="$reason" run_design_delta_sink
+		) >"$repo/dropped.out" 2>"$repo/dropped.err" || return 1
+		grep -Fxq "warning: Design deltas: 1 dropped — $reason" "$repo/dropped.err" || return 1
+		! grep -Fq 'Design deltas: none' "$repo/dropped.out" || return 1
+	done
+}
+
 run_reset_failure_probe() {
 	local sink_fn="$1" repo plan before base_oid reviewed_head
 	repo="$WORKDIR/reset-failure-$RANDOM"
@@ -699,6 +742,12 @@ else
 	fail "seam escalation: sink edited the plan or lost its sidecar delta"
 fi
 
+if run_dropped_reporting_probe "$SINK_FN"; then
+	pass "all three dropped writer results print their count and reason without changing terminal handoff"
+else
+	fail "dropped design-delta terminal reporting state space"
+fi
+
 if run_reset_failure_probe "$SINK_FN"; then
 	pass "reset failure: sink aborts before stale working files are consumed"
 else
@@ -771,6 +820,14 @@ if run_seam_sidecar_probe "$seam_mutant"; then
 	fail "mutation seam-sidecar-only survived its regression probe"
 else
 	pass "mutation seam-sidecar-only is caught by the executed sink probe"
+fi
+
+dropped_reporting_mutant="$WORKDIR/dropped-reporting-mutant.sh"
+sed 's/"sidecar", "dropped"/"sidecar"/' "$SINK_FN" >"$dropped_reporting_mutant"
+if run_dropped_reporting_probe "$dropped_reporting_mutant"; then
+	fail "mutation rejecting the dropped sink token survived its reporting cells"
+else
+	pass "dropped-result cells catch removal of the distinct sink token"
 fi
 
 reset_mutant="$WORKDIR/reset-mutant.sh"
