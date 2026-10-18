@@ -23,6 +23,18 @@ die_env() {
 	exit 2
 }
 
+emit_dropped() {
+	local reason="$1"
+	"$JQ" -cn --arg reason "$reason" '{sink:"dropped",path:"",reason:$reason}'
+}
+
+drop_nonempty() {
+	local reason="$1"
+	echo "warning: $reason; dropping design deltas" >&2
+	emit_dropped "$reason"
+	exit 0
+}
+
 REPO_ROOT=""
 RESOLUTION=""
 DELTAS=""
@@ -141,14 +153,18 @@ cleanup_writer_temps() {
 	remove_writer_temp "${output_tmp:-}"
 }
 
-gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || exit 2
-[[ -f "$DELTAS" && -r "$DELTAS" ]] || die_usage "deltas file is not readable"
+create_private_temp() {
+	local template="$1" temp_path
+	temp_path="$(mktemp "$template")" || return 1
+	if ! write_path_is_untracked "$temp_path"; then
+		remove_writer_temp "$temp_path"
+		return 1
+	fi
+	printf '%s\n' "$temp_path"
+}
 
-if [[ "$SIDECAR_ONLY" -eq 0 ]]; then
-	gauntlet_assert_no_symlink "$RESOLUTION" write-design-deltas || exit 2
-	[[ -f "$RESOLUTION" && -r "$RESOLUTION" ]] || die_usage "resolution file is not readable"
-	"$JQ" -e 'type == "object" and (.status | IN("explicit", "unique", "none", "ambiguous")) and (.plan | type == "string") and (.reason | type == "string")' "$RESOLUTION" >/dev/null 2>&1 || die_usage "resolution JSON has an invalid shape"
-fi
+gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || drop_nonempty "refusing symlinked deltas input"
+[[ -f "$DELTAS" && -r "$DELTAS" ]] || drop_nonempty "deltas file is not readable"
 "$JQ" -e 'type == "array"' "$DELTAS" >/dev/null 2>&1 || die_usage "deltas JSON has an invalid shape"
 
 if [[ "$("$JQ" 'length' "$DELTAS")" -eq 0 ]]; then
@@ -156,19 +172,24 @@ if [[ "$("$JQ" 'length' "$DELTAS")" -eq 0 ]]; then
 	exit 0
 fi
 
+if [[ "$SIDECAR_ONLY" -eq 0 ]]; then
+	gauntlet_assert_no_symlink "$RESOLUTION" write-design-deltas || drop_nonempty "refusing symlinked resolution input"
+	[[ -f "$RESOLUTION" && -r "$RESOLUTION" ]] || drop_nonempty "resolution file is not readable"
+	"$JQ" -e 'type == "object" and (.status | IN("explicit", "unique", "none", "ambiguous")) and (.plan | type == "string") and (.reason | type == "string")' "$RESOLUTION" >/dev/null 2>&1 || drop_nonempty "resolution JSON has an invalid shape"
+fi
+
 scratch_dir="${TMPDIR:-/tmp}"
-scratch_dir="$(cd "$scratch_dir" 2>/dev/null && pwd -P)" || die_env "cannot resolve scratch directory"
+scratch_dir="$(cd "$scratch_dir" 2>/dev/null && pwd -P)" || drop_nonempty "cannot resolve scratch directory"
 case "$scratch_dir" in
 "$REPO_ROOT" | "$REPO_ROOT"/*)
-	scratch_dir="$(cd /tmp 2>/dev/null && pwd -P)" || die_env "cannot resolve fallback scratch directory"
+	scratch_dir="$(cd /tmp 2>/dev/null && pwd -P)" || drop_nonempty "cannot resolve fallback scratch directory"
 	;;
 esac
-payload="$(mktemp "$scratch_dir/design-deltas-payload.XXXXXX")" || die_env "cannot create payload temp file"
+payload="$(create_private_temp "$scratch_dir/design-deltas-payload.XXXXXX")" || drop_nonempty "cannot create a private payload temp file"
 authority_tmp=""
 post_authority_tmp=""
 output_tmp=""
 trap cleanup_writer_temps EXIT
-write_path_is_untracked "$payload" || die_env "refusing unsafe payload temp file"
 if ! "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
   def strip_variations:
@@ -212,7 +233,7 @@ if ! "$JQ" -r --arg run_id "$RUN_ID" '
       "  - Rationale: \(if ($delta|type) == "object" then $delta.rationale else null end|token)",
       "  - Cells: \(if ($delta|type) == "object" then $delta.cells else null end|token)")
 ' "$DELTAS" >"$payload"; then
-	die_env "cannot render delta text"
+	drop_nonempty "cannot render delta text"
 fi
 
 if [[ "$SIDECAR_ONLY" -eq 1 ]]; then
@@ -410,35 +431,33 @@ fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	authority_output=""
 	authority_rc=0
-	authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"
-	write_path_is_untracked "$authority_tmp" || die_env "refusing unsafe marker authority temp file"
-	remove_writer_temp "$authority_tmp"
-	[[ ! -e "$authority_tmp" ]] || die_env "marker authority temp file already exists"
-	(
-		set -o noclobber
-		marker_authority_query "$REPO_ROOT/$plan" >"$authority_tmp" 2>/dev/null
-	) || authority_rc=$?
-	if [[ "$authority_rc" -ne 0 ]]; then
-		case "$authority_rc" in
-		124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
-		125) sidecar_reason="python3 is unavailable for marker.py authority query" ;;
-		126) sidecar_reason="plugin marker.py is unavailable for authority query" ;;
-		*) sidecar_reason="marker.py authority query failed before plan edit" ;;
-		esac
+	if ! authority_tmp="$(create_private_temp "$scratch_dir/design-deltas-authority.XXXXXX")"; then
+		sidecar_reason="cannot create a private marker.py authority temp file before plan edit"
 		plan_is_safe=0
 	else
-		authority_output="$(cat "$authority_tmp")"
-		IFS=$'\t' read -r authority_marker_line authority_plan_hash authority_extra <<<"$authority_output"
-		if [[ "$authority_output" == *$'\n'* || ! "$authority_marker_line" =~ ^[0-9]+$ || ! "$authority_plan_hash" =~ ^[0-9a-f]{40}$ || -n "${authority_extra:-}" ]]; then
-			sidecar_reason="marker.py authority query returned malformed facts before plan edit"
+		marker_authority_query "$REPO_ROOT/$plan" >"$authority_tmp" 2>/dev/null || authority_rc=$?
+		if [[ "$authority_rc" -ne 0 ]]; then
+			case "$authority_rc" in
+			124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
+			125) sidecar_reason="python3 is unavailable for marker.py authority query" ;;
+			126) sidecar_reason="plugin marker.py is unavailable for authority query" ;;
+			*) sidecar_reason="marker.py authority query failed before plan edit" ;;
+			esac
 			plan_is_safe=0
-		elif [[ "$authority_marker_line" -eq 0 ]]; then
-			sidecar_reason="marker.py authority query found no plan hash boundary"
-			plan_is_safe=0
+		else
+			authority_output="$(cat "$authority_tmp")"
+			IFS=$'\t' read -r authority_marker_line authority_plan_hash authority_extra <<<"$authority_output"
+			if [[ "$authority_output" == *$'\n'* || ! "$authority_marker_line" =~ ^[0-9]+$ || ! "$authority_plan_hash" =~ ^[0-9a-f]{40}$ || -n "${authority_extra:-}" ]]; then
+				sidecar_reason="marker.py authority query returned malformed facts before plan edit"
+				plan_is_safe=0
+			elif [[ "$authority_marker_line" -eq 0 ]]; then
+				sidecar_reason="marker.py authority query found no plan hash boundary"
+				plan_is_safe=0
+			fi
 		fi
+		remove_writer_temp "$authority_tmp"
+		authority_tmp=""
 	fi
-	remove_writer_temp "$authority_tmp"
-	authority_tmp=""
 fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	read -r marker_count marker_line findings_count findings_line findings_end unclosed_fence < <(LC_ALL=C awk "$FENCE_AWK_SOURCE"'
@@ -495,9 +514,9 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 fi
 
 upsert_section() {
-	local input="$1" output="$2" start_line="$3" end_line="$4"
+	local input="$1" output="$2" start_line="$3" end_line="$4" output_state="${5:-absent}"
 	(
-		set -o noclobber
+		[[ "$output_state" == private ]] || set -o noclobber
 		LC_ALL=C awk -v payload="$payload" -v run_id="$RUN_ID" -v start_line="$start_line" -v end_line="$end_line" "$FENCE_AWK_SOURCE"'
     function emit_payload(    line) {
       while ((getline line < payload) > 0) print line
@@ -585,43 +604,54 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		output_tmp=""
 	fi
 	if [[ "$plan_is_safe" -eq 1 ]]; then
-		plan_mode="$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path" 2>/dev/null)" || die_env "cannot read plan mode"
-		[[ "$plan_mode" =~ ^[0-7]{3,4}$ ]] || die_env "cannot read plan mode"
-		upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || die_env "cannot update resolved plan"
-		if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
-			# BEGIN POST-EDIT MARKER AUTHORITY CHECK
-			post_authority_rc=0
-			post_authority_tmp="$(mktemp "$scratch_dir/design-deltas-authority.XXXXXX")" || die_env "cannot create marker authority temp file"
-			write_path_is_untracked "$post_authority_tmp" || die_env "refusing unsafe marker authority temp file"
-			remove_writer_temp "$post_authority_tmp"
-			[[ ! -e "$post_authority_tmp" ]] || die_env "marker authority temp file already exists"
-			(
-				set -o noclobber
-				marker_authority_query "$output_tmp" >"$post_authority_tmp" 2>/dev/null
-			) || post_authority_rc=$?
-			if [[ "$post_authority_rc" -eq 0 ]]; then
-				post_authority_output="$(cat "$post_authority_tmp")"
-				IFS=$'\t' read -r post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
-				if [[ "$post_authority_output" != *$'\n'* && "$post_authority_line" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
-					remove_writer_temp "$post_authority_tmp"
-					post_authority_tmp=""
-					write_path_is_untracked "$output_tmp" || die_env "resolved plan temp became unsafe"
-					regular_nonsymlink_plan "$plan" || die_env "resolved plan became unsafe"
-					chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
-					mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
-					output_tmp=""
-					"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
-					exit 0
+		plan_mode="$(stat -c '%a' "$plan_path" 2>/dev/null || stat -f '%Lp' "$plan_path" 2>/dev/null)" || {
+			sidecar_reason="cannot read resolved plan mode"
+			plan_is_safe=0
+		}
+		if [[ "$plan_is_safe" -eq 1 && ! "$plan_mode" =~ ^[0-7]{3,4}$ ]]; then
+			sidecar_reason="cannot read resolved plan mode"
+			plan_is_safe=0
+		fi
+		if [[ "$plan_is_safe" -eq 1 ]]; then
+			upsert_section "$plan_path" "$output_tmp" "$findings_line" "$findings_end" || {
+				sidecar_reason="cannot update resolved plan temp file"
+				plan_is_safe=0
+			}
+		fi
+		if [[ "$plan_is_safe" -eq 1 ]]; then
+			if cmp -s <(head -n "$marker_line" "$plan_path") <(head -n "$marker_line" "$output_tmp"); then
+				# BEGIN POST-EDIT MARKER AUTHORITY CHECK
+				post_authority_rc=0
+				if ! post_authority_tmp="$(create_private_temp "$scratch_dir/design-deltas-authority.XXXXXX")"; then
+					sidecar_reason="cannot create a private marker.py authority temp file after plan edit"
+				else
+					marker_authority_query "$output_tmp" >"$post_authority_tmp" 2>/dev/null || post_authority_rc=$?
 				fi
-				sidecar_reason="marker.py authority changed across the proposed plan edit"
-			else
-				sidecar_reason="marker.py authority query failed after the proposed plan edit"
-			fi
-			remove_writer_temp "$post_authority_tmp"
-			post_authority_tmp=""
+				if [[ -n "$post_authority_tmp" && "$post_authority_rc" -eq 0 ]]; then
+					post_authority_output="$(cat "$post_authority_tmp")"
+					IFS=$'\t' read -r post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
+					if [[ "$post_authority_output" != *$'\n'* && "$post_authority_line" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
+						remove_writer_temp "$post_authority_tmp"
+						post_authority_tmp=""
+						if write_path_is_untracked "$output_tmp" && regular_nonsymlink_plan "$plan" && chmod "$plan_mode" "$output_tmp" && mv "$output_tmp" "$plan_path"; then
+							output_tmp=""
+							"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
+							exit 0
+						fi
+						sidecar_reason="cannot safely replace resolved plan"
+						plan_is_safe=0
+					else
+						sidecar_reason="marker.py authority changed across the proposed plan edit"
+					fi
+				elif [[ -n "$post_authority_tmp" ]]; then
+					sidecar_reason="marker.py authority query failed after the proposed plan edit"
+				fi
+				remove_writer_temp "$post_authority_tmp"
+				post_authority_tmp=""
 			# END POST-EDIT MARKER AUTHORITY CHECK
-		else
-			sidecar_reason="plan rewrite would change bytes through review marker"
+			else
+				sidecar_reason="plan rewrite would change bytes through review marker"
+			fi
 		fi
 		remove_writer_temp "$output_tmp"
 		output_tmp=""
@@ -630,36 +660,30 @@ fi
 
 state_dir="$REPO_ROOT/.gauntlet"
 sidecar="$state_dir/design-deltas-$TARGET_KEY.md"
-gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
-gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
+gauntlet_assert_no_symlink "$state_dir" write-design-deltas || drop_nonempty "refusing symlinked design-delta state directory"
+gauntlet_assert_no_symlink "$sidecar" write-design-deltas || drop_nonempty "refusing symlinked design-delta sidecar"
 if ! write_path_is_untracked "$state_dir" directory || ! write_path_is_untracked "$sidecar"; then
 	echo "warning: design-delta sidecar is tracked or cannot be classified; skipping" >&2
-	"$JQ" -cn --arg reason "design-delta sidecar is tracked, non-regular, or cannot be classified" '{sink:"dropped",path:"",reason:$reason}'
+	emit_dropped "design-delta sidecar is tracked, non-regular, or cannot be classified"
 	exit 0
 fi
-mkdir -p "$state_dir" || die_env "cannot create .gauntlet directory"
-write_path_is_untracked "$state_dir" directory || die_env "unsafe .gauntlet directory"
-write_path_is_untracked "$sidecar" || die_env "unsafe design-delta sidecar"
-output_tmp="$state_dir/.design-deltas-$TARGET_KEY.tmp"
-if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
-	echo "warning: design-delta sidecar temp path is tracked, indeterminate, or already exists; skipping" >&2
-	output_tmp=""
-	"$JQ" -cn --arg reason "design-delta sidecar temp path is tracked, non-regular, indeterminate, or occupied" '{sink:"dropped",path:"",reason:$reason}'
-	exit 0
-fi
+mkdir -p "$state_dir" || drop_nonempty "cannot create .gauntlet directory"
+write_path_is_untracked "$state_dir" directory || drop_nonempty "unsafe .gauntlet directory"
+write_path_is_untracked "$sidecar" || drop_nonempty "unsafe design-delta sidecar"
+output_tmp="$(create_private_temp "$state_dir/.design-deltas-$TARGET_KEY.tmp.XXXXXX")" || drop_nonempty "cannot create a private design-delta sidecar temp file"
 if [[ -f "$sidecar" ]]; then
-	upsert_section "$sidecar" "$output_tmp" 0 0 || die_env "cannot update sidecar temp file"
+	upsert_section "$sidecar" "$output_tmp" 0 0 private || drop_nonempty "cannot update sidecar temp file"
 else
-	upsert_section /dev/null "$output_tmp" 0 0 || die_env "cannot write sidecar temp file"
+	upsert_section /dev/null "$output_tmp" 0 0 private || drop_nonempty "cannot write sidecar temp file"
 fi
 if ! write_path_is_untracked "$sidecar"; then
 	echo "warning: design-delta sidecar became tracked or indeterminate; skipping" >&2
 	remove_writer_temp "$output_tmp"
 	output_tmp=""
-	"$JQ" -cn --arg reason "design-delta sidecar became tracked, non-regular, or indeterminate before replace" '{sink:"dropped",path:"",reason:$reason}'
+	emit_dropped "design-delta sidecar became tracked, non-regular, or indeterminate before replace"
 	exit 0
 fi
-mv "$output_tmp" "$sidecar" || die_env "cannot replace sidecar"
+mv "$output_tmp" "$sidecar" || drop_nonempty "cannot replace sidecar"
 output_tmp=""
 "$JQ" -cn --arg path ".gauntlet/design-deltas-$TARGET_KEY.md" --arg reason "$sidecar_reason" \
 	'{sink:"sidecar",path:$path,reason:$reason}'

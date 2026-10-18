@@ -227,6 +227,9 @@ run_design_delta_sink() {
     fi
     return 0
   }
+  report_unknown_design_deltas() {
+    echo "warning: Design deltas: unknown — $1" >&2
+  }
   BASE_OID=""
   HEAD_OID=""
   branch_name=""
@@ -378,6 +381,7 @@ run_design_delta_sink() {
     ! design_delta_write_path_is_untracked "$resolution_file" ||
     ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
+    report_unknown_design_deltas "cannot initialize the collection files"
     return 0
   fi
   round_count="$(jq -er '.rounds | select(type == "array") | length' "$ledger_path" 2>/dev/null || true)"
@@ -410,12 +414,13 @@ run_design_delta_sink() {
   done
   if ! design_delta_write_path_is_untracked "$run_deltas_file" ||
     ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
-    echo "warning: design delta collection failed; using an empty array" >&2
-    design_delta_write_path_is_untracked "$run_deltas_file" || return 0
-    printf '[]\n' > "$run_deltas_file" || return 0
+    echo "warning: design delta collection failed; continuing terminal handoff" >&2
+    report_unknown_design_deltas "collection failed or the items file is unreadable"
+    return 0
   fi
   if ! delta_count="$(jq -er 'length' "$run_deltas_file" 2>/dev/null)" || [[ ! "$delta_count" =~ ^[0-9]+$ ]]; then
     echo "warning: cannot count collected design deltas; continuing terminal handoff" >&2
+    report_unknown_design_deltas "cannot count the collected deltas"
     return 0
   fi
 
@@ -452,19 +457,34 @@ run_design_delta_sink() {
   sink_json=""
   if ! sink_json="$("${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/write-design-deltas.sh "${writer_args[@]}")"; then
     echo "warning: design delta write failed; continuing terminal handoff" >&2
+    if [[ "$delta_count" -eq 0 ]]; then
+      echo "Design deltas: none"
+    else
+      echo "warning: Design deltas: $delta_count dropped — writer exited without a result envelope" >&2
+    fi
     return 0
   fi
   if ! sink_name="$(jq -er 'select(type == "object" and (.sink | IN("none", "plan", "sidecar", "dropped")) and (.path | type == "string") and (.reason | type == "string")) | .sink' <<< "$sink_json" 2>/dev/null)"; then
     echo "warning: unusable design delta sink result; continuing terminal handoff" >&2
+    if [[ "$delta_count" -eq 0 ]]; then
+      echo "Design deltas: none"
+    else
+      echo "warning: Design deltas: $delta_count dropped — writer returned no usable result envelope" >&2
+    fi
   elif [[ "$sink_name" == "none" ]]; then
     if [[ "$delta_count" -eq 0 ]]; then
       echo "Design deltas: none"
     else
-      echo "warning: design delta writer reported none for $delta_count collected deltas; continuing terminal handoff" >&2
+      echo "warning: Design deltas: $delta_count dropped — writer incorrectly reported none" >&2
     fi
   elif [[ "$sink_name" == "dropped" ]]; then
     if [[ "$delta_count" -eq 0 ]] || ! sink_reason="$(jq -er 'select(.reason | length > 0) | .reason' <<< "$sink_json" 2>/dev/null)"; then
       echo "warning: unusable dropped design delta result; continuing terminal handoff" >&2
+      if [[ "$delta_count" -eq 0 ]]; then
+        echo "Design deltas: none"
+      else
+        echo "warning: Design deltas: $delta_count dropped — writer omitted the drop reason" >&2
+      fi
     else
       echo "warning: Design deltas: $delta_count dropped — $sink_reason" >&2
     fi
@@ -472,6 +492,11 @@ run_design_delta_sink() {
     echo "Design deltas: $sink_path"
   else
     echo "warning: design delta sink omitted its path; continuing terminal handoff" >&2
+    if [[ "$delta_count" -eq 0 ]]; then
+      echo "Design deltas: none"
+    else
+      echo "warning: Design deltas: $delta_count dropped — writer omitted the sink path" >&2
+    fi
   fi
   return 0
 }
@@ -479,7 +504,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Reports are read from the ledger's completed rounds, in round order. Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array. A non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Reports are read from the ledger's completed rounds, in round order. Every guarded fixer report is parsed independently. A malformed report or a present non-array `design_deltas` value produces a warning and is skipped; an absent value means an empty array. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 <!-- BEGIN REPORT STEP -->
 Report the terminal status, the gates passed, the findings fixed per round, and (for `success_with_quarantine`, `regression`, or `non-converge`) the full quarantine queue / regressed-key / non-convergence rationale.
