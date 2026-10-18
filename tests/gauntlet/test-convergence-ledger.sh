@@ -819,7 +819,8 @@ else
 fi
 
 # --init and --init --force clear a stale <stem>/ containing recognized
-# writer-owned entries (round-*, open-guardrail8.jsonl, seam-tripwire.json) and the stale
+# writer-owned entries (round-*, open-guardrail8.jsonl, seam-tripwire.json,
+# .seam-tripwire.tmp) and the stale
 # <stem>.report.html, and nothing else. They only ever act inside a directory
 # named .gauntlet (the shape gc_ledger_path produces).
 RD_G="$RD_BASE/.gauntlet"
@@ -842,6 +843,7 @@ run_open_guardrail8_cleanup_probe() {
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
 	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
+	printf 'stale temp\n' >"$stem/.seam-tripwire.tmp"
 	if [[ "$mode" == force ]]; then
 		printf '{"target":"old"}\n' >"$ledger"
 		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
@@ -852,7 +854,7 @@ run_open_guardrail8_cleanup_probe() {
 }
 
 run_open_guardrail8_unknown_probe() {
-	local script="$1" repo ledger stem rc
+	local script="$1" mode="${2:-plain}" repo ledger stem rc
 	repo="$(mktemp -d)"
 	TMP_DIRS+=("$repo")
 	git init -q "$repo"
@@ -863,13 +865,60 @@ run_open_guardrail8_unknown_probe() {
 	printf '{}\n' >"$stem/round-1/reconciled.json"
 	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
 	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
+	printf 'stale temp\n' >"$stem/.seam-tripwire.tmp"
+	printf 'keep\n' >"$stem/unknown.txt"
+	if [[ "$mode" == force ]]; then
+		printf '{"target":"old"}\n' >"$ledger"
+	fi
+	set +e
+	if [[ "$mode" == force ]]; then
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	fi
+	rc=$?
+	set -e
+	[[ "$rc" -eq 0 && -f "$ledger" && "$(jq -r .target "$ledger")" == fresh &&
+	! -e "$stem/round-1" && ! -e "$stem/open-guardrail8.jsonl" &&
+	! -e "$stem/seam-tripwire.json" && ! -e "$stem/.seam-tripwire.tmp" &&
+	-f "$stem/unknown.txt" ]] &&
+		grep -Fq "$stem/unknown.txt" "$TMP_SINK" &&
+		grep -Fq 'preserving unknown stale run directory entry' "$TMP_SINK"
+}
+
+run_unknown_entry_alone_probe() {
+	local script="$1" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-unknown-alone.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem"
 	printf 'keep\n' >"$stem/unknown.txt"
 	set +e
 	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
 	rc=$?
 	set -e
-	[[ "$rc" -eq 0 && -f "$stem/open-guardrail8.jsonl" && -f "$stem/seam-tripwire.json" && -f "$stem/unknown.txt" ]] &&
-		grep -Fq 'leaving' "$TMP_SINK"
+	[[ "$rc" -eq 0 && -f "$ledger" && "$(cat "$stem/unknown.txt")" == keep ]] &&
+		grep -Fq "$stem/unknown.txt" "$TMP_SINK"
+}
+
+run_owned_wrong_type_probe() {
+	local script="$1" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-owned-wrong-type.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/.seam-tripwire.tmp"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -d "$stem/.seam-tripwire.tmp" ]] &&
+		grep -Fq "$stem/.seam-tripwire.tmp" "$TMP_SINK"
 }
 
 run_open_guardrail8_symlink_probe() {
@@ -926,10 +975,16 @@ if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" force; then
 else
 	fail "Codex --init --force did not clear every writer-owned run file"
 fi
-if run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT"; then
-	pass "Codex stale cleanup preserves open-guardrail8.jsonl when an unknown entry blocks ownership"
+if run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT" plain &&
+	run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT" force; then
+	pass "Codex init modes remove owned state while preserving and naming unknown entries"
 else
-	fail "Codex stale cleanup removed or ignored unknown run-dir content"
+	fail "Codex init mode retained owned state or changed unknown run-dir content"
+fi
+if run_unknown_entry_alone_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex init succeeds with a warning and preserves a lone unknown entry"
+else
+	fail "Codex init removed or failed on a lone unknown run-dir entry"
 fi
 if run_open_guardrail8_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
 	pass "Codex stale cleanup refuses a symlinked open-guardrail8.jsonl"
@@ -940,6 +995,11 @@ if run_seam_tripwire_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
 	pass "Codex stale cleanup refuses a symlinked seam-tripwire.json"
 else
 	fail "Codex stale cleanup did not refuse a symlinked seam-tripwire.json"
+fi
+if run_owned_wrong_type_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a wrong-type owned temp entry and names it"
+else
+	fail "Codex stale cleanup accepted or changed a wrong-type owned temp entry"
 fi
 RD_MUTANT_LIB="$(mktemp -d)"
 TMP_DIRS+=("$RD_MUTANT_LIB")
@@ -964,6 +1024,34 @@ if run_open_guardrail8_cleanup_probe "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
 	fail "mutation removing seam-tripwire.json ownership survived stale-cleanup regression"
 else
 	pass "mutation removing seam-tripwire.json ownership is caught by stale-cleanup regression"
+fi
+RD_TEMP_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_TEMP_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_TEMP_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_TEMP_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_TEMP_MUTANT_LIB/ledger-promote.jq"
+sed 's/ ".seam-tripwire.tmp"//' "$CODEX_LEDGER_SCRIPT" >"$RD_TEMP_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_TEMP_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_TEMP_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing .seam-tripwire.tmp ownership survived stale-cleanup regression"
+else
+	pass "mutation removing .seam-tripwire.tmp ownership is caught by its cleanup cell"
+fi
+RD_REMOVAL_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_REMOVAL_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_REMOVAL_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_REMOVAL_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_REMOVAL_MUTANT_LIB/ledger-promote.jq"
+awk '
+  /# BEGIN OWNED ENTRY REMOVAL/ { skip = 1; next }
+  /# END OWNED ENTRY REMOVAL/ { skip = 0; next }
+  !skip { print }
+' "$CODEX_LEDGER_SCRIPT" >"$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_unknown_probe "$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation skipping owned-file removal survived the mixed stale-state cell"
+else
+	pass "mutation skipping owned-file removal is caught by the mixed stale-state cell"
 fi
 RD_I="$RD_G/ledger-init.json"
 RD_I_STEM="$RD_G/ledger-init"
@@ -1044,8 +1132,10 @@ rd_err="$(cd "$RD_BASE" && "$LEDGER_SCRIPT" --init --ledger "$RD_G/ledger-mixed.
 rc=$?
 set -e
 assert_eq "$rc" "0" "--init with a non-round-shaped <stem>/ still succeeds"
-assert_eq "$(rd_tree_hash "$RD_M_STEM")" "$rd_before" "--init leaves a <stem>/ with non-round-* entries untouched"
-if [[ "$rd_err" == *leaving* ]]; then
+# Unknown entries survive byte-for-byte; the recognized writer-owned run state (round-*) is cleared.
+assert_eq "$(cat "$RD_M_STEM/notes.txt")$(cat "$RD_M_STEM/.hidden")" "not a roundhidden" "--init leaves non-round-* entries in a <stem>/ untouched"
+assert_eq "$(find "$RD_M_STEM" -maxdepth 1 -name 'round-*' | wc -l | tr -d ' ')" "0" "--init clears the writer-owned round-* entries even when unknown entries stay"
+if [[ "$rd_err" == *preserving* ]]; then
 	pass "--init warns when it leaves a non-round-shaped <stem>/ in place"
 else
 	fail "--init gave no warning for a non-round-shaped <stem>/ (stderr: $rd_err)"
@@ -1059,7 +1149,7 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "--init --force succeeds when nested user data blocks stale cleanup"
 assert_eq "$(cat "$RD_NESTED_STEM/round-1/nested/precious.txt")" "user data" "--init --force preserves nested user content in stale round directories"
-if [[ "$rd_nested_err" == *leaving* ]]; then
+if [[ "$rd_nested_err" == *preserving* || "$rd_nested_err" == *leaving* ]]; then
 	pass "--init --force warns when nested user data blocks stale cleanup"
 else
 	fail "--init --force did not warn when nested user data blocked stale cleanup"

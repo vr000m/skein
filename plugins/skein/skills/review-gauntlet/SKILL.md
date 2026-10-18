@@ -78,7 +78,7 @@ For `--resume` alone, never initialize. Run the read-only peek against the same 
 
 If the ledger is missing (exit 4), stop with a clear error instead of silently starting fresh.
 
-**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` clear the writer-owned run state inside `$run_dir` (`round-*`, `open-guardrail8.jsonl`, and `seam-tripwire.json`) while refusing unknown entries or symlinks. Target/run-keyed `design-deltas-*.scope.json` files live beside the ledger, not inside `$run_dir`, and are intentionally retained as immutable sink evidence:
+**Round directory (`$run_dir`).** Every round's gate files live under one per-run directory derived from the ledger path: `.gauntlet/<ledger-stem>/`, where `<ledger-stem>` is the ledger file's basename without `.json`. `convergence-ledger.sh --run-dir` derives, guards and creates it, and prints it on stdout. Call it after `$ledger_path` is known, then set the round number from the ledger and call `--prepare-round "$round_n" --ledger "$ledger_path"` before writing gate artifacts. This guarded operation clears only that unfinished round's directory and preserves completed prior-round directories. A refusal stops the round; never retarget the ledger. Plain `--init` and `--init --force` clear the writer-owned run state inside `$run_dir` (`round-*`, `open-guardrail8.jsonl`, `seam-tripwire.json`, and the conductor's exact `.seam-tripwire.tmp` atomic-write name). Unknown entries are preserved with a warning; symlinks and wrong file types fail non-zero. Target/run-keyed `design-deltas-*.scope.json` files live beside the ledger, not inside `$run_dir`, and are intentionally retained as immutable sink evidence:
 
 ```bash
 run_dir="$("${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/convergence-ledger.sh --run-dir --ledger "$ledger_path")"
@@ -198,8 +198,16 @@ run_design_delta_sink() {
   REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || return 0
   clean_git=("$ENV_BIN" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR
     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES "$GIT_BIN" -C "$REPO_ROOT")
+  . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh
   design_delta_write_path_is_untracked() {
     local path="$1" rel git_root tracked_output
+    gauntlet_assert_no_symlink "$path" design-delta-sink || return 1
+    if [[ -e "$path" || -L "$path" ]]; then
+      [[ -f "$path" && ! -L "$path" ]] || {
+        echo "warning: refusing non-regular design delta write path: $path" >&2
+        return 1
+      }
+    fi
     case "$path" in
       "$REPO_ROOT"/*) rel="${path#"$REPO_ROOT"/}" ;;
       *) return 0 ;;
@@ -209,7 +217,7 @@ run_design_delta_sink() {
       echo "warning: cannot verify reviewed checkout for design delta write: $rel" >&2
       return 1
     fi
-    if ! tracked_output="$("${clean_git[@]}" ls-files -- "$rel" 2>/dev/null)"; then
+    if ! tracked_output="$("${clean_git[@]}" ls-files -- ":(icase,literal)$rel" 2>/dev/null)"; then
       echo "warning: cannot classify design delta write path: $rel" >&2
       return 1
     fi
@@ -258,7 +266,6 @@ run_design_delta_sink() {
   # Working files sit beside the ledger, not in $run_dir: convergence-ledger.sh clears a
   # stale run dir only when every entry is a recognized conductor-owned one (round-*,
   # open-guardrail8.jsonl, seam-tripwire.json), so an unknown sink file would block it.
-  . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh
   state_dir="$(dirname "$ledger_path")"
   run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
   delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
@@ -345,20 +352,24 @@ run_design_delta_sink() {
       echo "warning: invalid reviewed scope before persistence; continuing terminal handoff" >&2
       return 0
     fi
-    scope_tmp="$state_dir/.design-delta-scope-$target_key-$run_id.tmp"
-    if ! gauntlet_assert_no_symlink "$scope_tmp" design-delta-sink ||
-      ! design_delta_write_path_is_untracked "$scope_tmp" || [[ -e "$scope_tmp" ]]; then
-      echo "warning: unsafe or occupied design delta scope temp path; continuing terminal handoff" >&2
-      return 0
-    fi
-    if ! (set -o noclobber; jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
-      --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" \
-      '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp") ||
-      ! design_delta_write_path_is_untracked "$scope_file" ||
-      ! mv "$scope_tmp" "$scope_file"; then
-      rm -f "$scope_tmp"
-      echo "warning: cannot persist design delta scope; continuing terminal handoff" >&2
-      return 0
+    if [[ -n "$BASE_OID" && -n "$HEAD_OID" ]]; then
+      scope_tmp="$state_dir/.design-delta-scope-$target_key-$run_id.tmp"
+      if ! design_delta_write_path_is_untracked "$scope_tmp" || [[ -e "$scope_tmp" ]]; then
+        echo "warning: unsafe or occupied design delta scope temp path; continuing terminal handoff" >&2
+        return 0
+      fi
+      if ! (set -o noclobber; jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
+        --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" \
+        '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp") ||
+        ! design_delta_write_path_is_untracked "$scope_file" ||
+        ! design_delta_write_path_is_untracked "$scope_tmp" ||
+        ! mv "$scope_tmp" "$scope_file"; then
+        design_delta_write_path_is_untracked "$scope_tmp" && rm -f "$scope_tmp"
+        echo "warning: cannot persist design delta scope; continuing terminal handoff" >&2
+        return 0
+      fi
+    else
+      echo "warning: reviewed scope is unavailable; deferring scope persistence" >&2
     fi
   fi
 
@@ -528,7 +539,7 @@ The **only ordinary** quarantine trigger is a design/architecture conflict (Guar
 - **Trivial/allowlisted** findings (the same `docstring_typo`, `unused_import`, `unused_var`, `mechanical_replace`, `import_sort` allowlist deep-review uses) → the bundled `apply-auto-fix-code.sh`.
 - **Substantive logic/security findings** → **direct edits by the fixer subagent** — the applier only knows the trivial allowlist and is hardcoded to a single skill identity, so it cannot apply these.
 
-**Seam tripwire (conductor-side, judgment, no ledger change).** The tripwire's two inputs — the previous completed fixer's touched seams and whether each seam already received a redesign brief — are durable run-directory state, so `--resume` and a fresh conversation make the same judgment as an uninterrupted run. Store one JSON object at `$run_dir/seam-tripwire.json`: integer `round`, and `seams` as an array of objects with string `file` and `function_or_contract` fields plus boolean `redesign_dispatched`. There is no round-level redesign flag. Before dispatching this round's fixer, after reconciling, source the state-path guard, guard this path, then read and validate it; `--resume` performs this same guarded read before dispatch. A missing file means there is no previous completed fixer round. Compare each finding with the stored files, functions, and contracts. If a finding lands in the same file and function, or in the same contract, as a stored seam, flag `seam still moving`. If that matching seam's stored `redesign_dispatched` is false, do not dispatch another point fix: build the next fixer brief as a contract-level redesign of the whole mechanism, requiring a full Guardrail 8 contract statement and one change set that replaces the point patches. Only when that matching seam's own stored `redesign_dispatched` is true and the seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
+**Seam tripwire (conductor-side, judgment, no ledger change).** The tripwire's two inputs — the previous completed fixer's touched seams and whether each seam already received a redesign brief — are durable run-directory state, so `--resume` and a fresh conversation make the same judgment as an uninterrupted run. Store one JSON object at `$run_dir/seam-tripwire.json`: integer `round`, and `seams` as an array of objects with string `file` and `function_or_contract` fields plus boolean `redesign_dispatched`. There is no round-level redesign flag. Two descriptors name the same seam if and only if both `file` and `function_or_contract` are equal. A contract-only finding uses `file: ""` and matches only a stored seam whose file is also empty. Before dispatching this round's fixer, after reconciling, source the state-path guard, guard this path, then read and validate it; `--resume` performs this same guarded read before dispatch. A missing file means there is no previous completed fixer round. Compare each finding with the stored descriptor pair. If both fields match a stored seam, flag `seam still moving`. If that matching seam's stored `redesign_dispatched` is false, do not dispatch another point fix: build the next fixer brief as a contract-level redesign of the whole mechanism, requiring a full Guardrail 8 contract statement and one change set that replaces the point patches. Only when that matching seam's own stored `redesign_dispatched` is true and the seam moves again, set `design_delta_sidecar_only=true`, run the terminal design delta sink so recorded deltas reach only the sidecar, run the terminal report step when `--report` was passed, and then stop and escalate to the operator the way Guardrail 1's structural halt does; this adds no ledger token and changes neither the ledger's counts nor the convergence decision.
 
 After each accepted fixer round, derive `current_touched_seams_json` from the verified fixer diff as the array described above, setting each seam object's `redesign_dispatched` to whether that specific seam was handled under a redesign brief. A seam merely point-fixed during a round that redesigned another seam stays false. Persist that array atomically before advancing to the next gate round:
 
@@ -540,6 +551,10 @@ seam_tripwire_write_path_is_untracked() {
   git_bin="$(command -v git || true)"
   env_bin="$(command -v env || true)"
   [[ -n "$git_bin" && -x "$git_bin" && -n "$env_bin" && -x "$env_bin" ]] || return 1
+  gauntlet_assert_no_symlink "$path" seam-tripwire || return 1
+  if [[ -e "$path" || -L "$path" ]]; then
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+  fi
   repo_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
     "$git_bin" -C "$run_dir" rev-parse --show-toplevel 2>/dev/null)" || return 1
@@ -554,7 +569,7 @@ seam_tripwire_write_path_is_untracked() {
   [[ "$git_root" == "$repo_root" ]] || return 1
   tracked_output="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
-    "$git_bin" -C "$repo_root" ls-files -- "$rel" 2>/dev/null)" || return 1
+    "$git_bin" -C "$repo_root" ls-files -- ":(icase,literal)$rel" 2>/dev/null)" || return 1
   [[ -z "$tracked_output" ]]
 }
 gauntlet_assert_no_symlink "$seam_tripwire_file" seam-tripwire || exit 1
@@ -573,8 +588,7 @@ fi
 seam_tripwire_action_for_finding() {
   jq -r --arg file "$1" --arg function_or_contract "$2" '
     [.seams[] | select(
-      ((.file == $file) and (.function_or_contract == $function_or_contract))
-      or (.function_or_contract == $function_or_contract))] as $matching
+      (.file == $file) and (.function_or_contract == $function_or_contract))] as $matching
     | if ($matching | length) == 0 then "point-fix"
       elif any($matching[]; .redesign_dispatched) then "escalate"
       else "redesign"
@@ -584,7 +598,6 @@ seam_tripwire_action_for_finding() {
 # The guarded read above happens before this round's fixer dispatch. After the
 # accepted fixer round, write the state consumed before the next dispatch.
 seam_tripwire_tmp="$run_dir/.seam-tripwire.tmp"
-gauntlet_assert_no_symlink "$seam_tripwire_tmp" seam-tripwire || exit 1
 seam_tripwire_write_path_is_untracked "$seam_tripwire_tmp" || exit 1
 [[ ! -e "$seam_tripwire_tmp" ]] || exit 1
 if ! (set -o noclobber; jq -en --argjson round "$round_n" --argjson seams "$current_touched_seams_json" '
@@ -595,9 +608,10 @@ if ! (set -o noclobber; jq -en --argjson round "$round_n" --argjson seams "$curr
       and (.function_or_contract | type == "string")
       and (.redesign_dispatched | type == "boolean")))
 ' >"$seam_tripwire_tmp"); then
-  rm -f "$seam_tripwire_tmp"
+  seam_tripwire_write_path_is_untracked "$seam_tripwire_tmp" && rm -f "$seam_tripwire_tmp"
   exit 1
 fi
+seam_tripwire_write_path_is_untracked "$seam_tripwire_tmp" || exit 1
 seam_tripwire_write_path_is_untracked "$seam_tripwire_file" || exit 1
 mv "$seam_tripwire_tmp" "$seam_tripwire_file" || exit 1
 ```
@@ -620,7 +634,7 @@ Do not report a round's outcome from the fixer subagent's return text alone. Aft
 
 For a finding about a contract - reader/writer pair, state matrix, validator/producer, serialization pair, or similar - the conductor, not the fixer's self-declaration, decides whether Guardrail 8 applies. Also check that the fixer's report carries the contract statement, justifies any one-sided fix, and includes a whole-space test plus its mutation-check result. Confirm that the diff shows the test. If a Guardrail 8 fix lacks the contract statement, whole-space test, or mutation result, dispatch one follow-up fixer in the same round whose brief names the missing piece. If that follow-up still lacks it, the edit stays in the tree but is not counted as applied: the finding stays open and out of `claimed` and the `--claimed-keys` file. The conductor does not revert the edit.
 
-Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it. Before every create, replace, append, truncate, or delete, guard the path with the existing state-path guard and the same scrubbed-Git trackedness rule as the seam-tripwire block: tracked or indeterminate means refuse without changing the file; only proven-untracked is writable. `--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor's Guardrail 4 check passes. Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries; a later clean round therefore remains `success_with_quarantine` while any entry survives. Proceed to the ledger call with only the durable tally the repository confirms.
+Persist each such open finding as exactly one JSON object per finding key in `$run_dir/open-guardrail8.jsonl`, one object per line with string fields `key`, `file`, and `summary` plus integer `round`; replace an existing line for the same key instead of duplicating it. Before every create, replace, append, truncate, or delete, use one predicate that applies the state-path guard, accepts only an absent path or an existing regular non-symlink file, and runs the seam-tripwire block's scrubbed-Git `:(icase,literal)` trackedness query: tracked, differently-cased tracked, non-regular, or indeterminate means refuse without changing the file; only a proven-untracked safe type is writable. `--resume` reads this file. Remove an entry only when a later fixer report supplies its contract statement, whole-space test, and mutation result and the conductor's Guardrail 4 check passes. Every subsequent round sets `--quarantine <N>` to the design-conflict queue size plus the line count still present in this file, and the terminal report names those entries; a later clean round therefore remains `success_with_quarantine` while any entry survives. Proceed to the ledger call with only the durable tally the repository confirms.
 
 ### Guardrail 5 — run the full CI recipe after every fixer round
 

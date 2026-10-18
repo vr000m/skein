@@ -36,11 +36,13 @@
 # A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
 # prior run's stale round dir and would collide with the new run's `round-1/`.
 # Both `--init` and `--init --force` therefore remove it, including the
-# writer-owned `open-guardrail8.jsonl` and `seam-tripwire.json` files, and remove the stale sibling
+# writer-owned `open-guardrail8.jsonl`, `seam-tripwire.json`, and
+# `.seam-tripwire.tmp` files, and remove the stale sibling
 # `<ledger-stem>.report.html`, after the ledger-path guards pass and right
 # before they write the fresh ledger — but only when the ledger's parent dir is
-# named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
-# entries and optional `open-guardrail8.jsonl` / `seam-tripwire.json`, and only when the report is a
+# named `.gauntlet`. Recognized owned entries are removed individually; unknown
+# files and directories are preserved with a warning. A symlink or wrong-type
+# owned entry refuses initialization. The report is removed only when it is a
 # regular non-symlink file. `--init`
 # refused (exit 6, or a guard refusal) touches nothing.
 # Target/run-keyed `design-deltas-*.scope.json` files sit beside the ledger,
@@ -146,10 +148,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
 . "$SCRIPT_DIR/state-path-guard.sh"
 
-# The conductor is the source of these run-directory filenames. Keep its
-# writer-owned durable state in one list so cleanup validation and guarding
-# cannot drift onto different hardcoded sets.
-RUN_DIR_OWNED_FILES=("open-guardrail8.jsonl" "seam-tripwire.json")
+# The conductor is the source of these run-directory filenames, including its
+# exact atomic-write temp name. Keep every writer-owned file in one list so
+# cleanup validation and guarding cannot drift onto different hardcoded sets.
+RUN_DIR_OWNED_FILES=("open-guardrail8.jsonl" "seam-tripwire.json" ".seam-tripwire.tmp")
 
 usage() {
 	cat >&2 <<'EOF'
@@ -700,10 +702,6 @@ round_dir_is_runtime_owned() {
 	return 0
 }
 
-# run_dir_owned_entries_only <dir> — 0 when <dir> contains only writer-owned run
-# entries: runtime-owned `round-*` directories plus the optional regular,
-# non-symlink `open-guardrail8.jsonl` written by Guardrail 4 and optional
-# regular, non-symlink `seam-tripwire.json` written by the seam tripwire.
 run_dir_owned_file_name() {
 	local candidate="$1" owned
 	for owned in "${RUN_DIR_OWNED_FILES[@]}"; do
@@ -712,9 +710,9 @@ run_dir_owned_file_name() {
 	return 1
 }
 
-run_dir_owned_entries_only() {
+clear_run_dir_owned_entries() {
 	local dir="$1" entry name restore
-	local -a entries=()
+	local -a entries=() removable=() unknown=()
 	[[ -d "$dir" ]] || return 1
 	restore="$(shopt -p nullglob dotglob || true)"
 	shopt -s nullglob dotglob
@@ -722,14 +720,48 @@ run_dir_owned_entries_only() {
 	eval "$restore"
 	for entry in ${entries[@]+"${entries[@]}"}; do
 		name="${entry##*/}"
-		if [[ "$name" == round-* ]]; then
-			round_dir_is_runtime_owned "$entry" || return 1
-		elif run_dir_owned_file_name "$name"; then
-			[[ -f "$entry" && ! -L "$entry" ]] || return 1
-		else
+		if ! gauntlet_assert_no_symlink "$entry" convergence-ledger; then
+			echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
 			return 1
 		fi
+		if [[ "$name" == round-* ]]; then
+			if [[ ! -d "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			elif round_dir_is_runtime_owned "$entry"; then
+				removable+=("$entry")
+			else
+				unknown+=("$entry")
+			fi
+		elif run_dir_owned_file_name "$name"; then
+			if [[ ! -f "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			fi
+			removable+=("$entry")
+		else
+			if [[ ! -f "$entry" && ! -d "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			fi
+			unknown+=("$entry")
+		fi
 	done
+	# BEGIN OWNED ENTRY REMOVAL
+	for entry in ${removable[@]+"${removable[@]}"}; do
+		if [[ -d "$entry" ]]; then
+			rm -rf -- "$entry" || return 1
+		else
+			rm -f -- "$entry" || return 1
+		fi
+	done
+	# END OWNED ENTRY REMOVAL
+	for entry in ${unknown[@]+"${unknown[@]}"}; do
+		echo "convergence-ledger: warning: preserving unknown stale run directory entry: $entry" >&2
+	done
+	if [[ "${#unknown[@]}" -eq 0 ]]; then
+		rmdir -- "$dir" || return 1
+	fi
 	return 0
 }
 
@@ -742,10 +774,9 @@ run_dir_owned_entries_only() {
 # Deletes nothing unless the ledger's parent directory is named `.gauntlet`
 # and its basename starts with `ledger-` (the namespace gc_ledger_path owns;
 # otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
-# dir is removed only when it contains recognized writer-owned entries; any
-# other shape is left in place with a warning. A symlinked round dir or
-# `open-guardrail8.jsonl` or `seam-tripwire.json` is refused under
-# the state-path guard (exit 1, nothing removed). The report is removed only
+# recognized writer-owned entries are removed individually. Unknown regular
+# files and directories are kept with a warning. A symlink or wrong-type owned
+# entry is refused (exit 1, nothing removed). The report is removed only
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
@@ -767,10 +798,8 @@ clear_stale_run_dir() {
 				ledger_assert_no_symlink "$owned_path" || exit 1
 			fi
 		done
-		if run_dir_owned_entries_only "$run_dir"; then
-			rm -rf -- "$run_dir"
-		else
-			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of recognized writer-owned entries only)" >&2
+		if ! clear_run_dir_owned_entries "$run_dir"; then
+			return 1
 		fi
 	fi
 	report="$run_dir.report.html"

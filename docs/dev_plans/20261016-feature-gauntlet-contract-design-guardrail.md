@@ -101,7 +101,7 @@ Decisions (grilled 2026-10-16):
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
-- [x] Review-fix coverage passes: Codex sink 34/34, Claude sink 58/58, writer/resolver 266/266, convergence ledger 226/226, skill shape 374/374, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
+- [x] Review-fix coverage passes: Codex sink 41/41, Claude sink 58/58, writer/resolver 271/271, convergence ledger 231/231, skill shape 378/378, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
 - [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
 
 ## Acceptance Criteria
@@ -120,7 +120,7 @@ Decisions (grilled 2026-10-16):
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
 - [ ] Phase 3: Verify the Claude mirror (done: code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review; open: final `just ci` after the gauntlet fixes)
-- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 fixes in 5632142; round 8 fixes in 7cd71dd (writer/marker.py seam closed by delegating the marker choice to marker.py via python3 -I); round 9 found 8 more (tracked-path safety under hostile GIT_* env, resolver option-like refs, LF in the reviewed branch, per-seam tripwire state, docs) and its fixes are in progress, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
+- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 fixes in 5632142; round 8 fixes in 7cd71dd (writer/marker.py seam closed by delegating the marker choice to marker.py via python3 -I); round 9 fixes in e899fd1; round 10 (the cap) found 12 more (stale run-state inheritance, seam matcher ignoring the file, non-regular and case-folded write targets, docs); at the operator's direction its fixes are applied and one verification round 11 runs beyond the cap, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
 

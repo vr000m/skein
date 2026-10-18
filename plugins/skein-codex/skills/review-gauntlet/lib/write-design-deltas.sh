@@ -74,12 +74,29 @@ JQ="$(command -v jq || true)"
 [[ -d "$REPO_ROOT" ]] || die_env "repo root is not a directory: $REPO_ROOT"
 REPO_ROOT="$(cd "$REPO_ROOT" 2>/dev/null && pwd -P)" || die_env "cannot resolve repo root"
 
-# Return success only when PATH is outside the reviewed checkout or Git proves
-# that the exact repo-relative path is untracked. Git's environment is scrubbed
-# so caller-controlled repository/index overrides cannot change that verdict.
-# A Git setup/query error is not evidence of untrackedness and fails closed.
+# Return success only when PATH has the expected type (file by default,
+# directory for the state container), is not a symlink, and is outside the
+# reviewed checkout or Git proves that no case-insensitively equal literal path
+# is tracked. The icase false-positive on a case-sensitive filesystem is an
+# intentional fail-closed result. Git's environment is scrubbed so caller-
+# controlled repository/index overrides cannot change the verdict. A Git
+# setup/query error is not evidence of untrackedness and fails closed.
 write_path_is_untracked() {
-	local path="$1" rel git_bin env_bin git_root tracked_output
+	local path="$1" expected_type="${2:-file}" rel git_bin env_bin git_root tracked_output
+	gauntlet_assert_no_symlink "$path" write-design-deltas || return 1
+	if [[ -e "$path" || -L "$path" ]]; then
+		case "$expected_type" in
+		file) [[ -f "$path" && ! -L "$path" ]] || {
+			echo "warning: refusing non-regular design-delta write path: $path" >&2
+			return 1
+		} ;;
+		directory) [[ -d "$path" && ! -L "$path" ]] || {
+			echo "warning: refusing non-directory design-delta state path: $path" >&2
+			return 1
+		} ;;
+		*) return 1 ;;
+		esac
+	fi
 	case "$path" in
 	"$REPO_ROOT"/*) rel="${path#"$REPO_ROOT"/}" ;;
 	*) return 0 ;;
@@ -99,7 +116,7 @@ write_path_is_untracked() {
 	fi
 	if ! tracked_output="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
 		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
-		"$git_bin" -C "$REPO_ROOT" ls-files -- "$rel" 2>/dev/null)"; then
+		"$git_bin" -C "$REPO_ROOT" ls-files -- ":(icase,literal)$rel" 2>/dev/null)"; then
 		echo "warning: cannot classify design-delta write path: $rel" >&2
 		return 1
 	fi
@@ -108,6 +125,19 @@ write_path_is_untracked() {
 		return 1
 	fi
 	return 0
+}
+
+remove_writer_temp() {
+	local path="$1"
+	[[ -n "$path" && -f "$path" && ! -L "$path" ]] || return 0
+	write_path_is_untracked "$path" || return 0
+	rm -f -- "$path"
+}
+
+cleanup_writer_temps() {
+	remove_writer_temp "${payload:-}"
+	remove_writer_temp "${payload:-}.authority"
+	remove_writer_temp "${output_tmp:-}"
 }
 
 gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || exit 2
@@ -134,7 +164,7 @@ case "$scratch_dir" in
 esac
 payload="$(mktemp "$scratch_dir/design-deltas-payload.XXXXXX")" || die_env "cannot create payload temp file"
 output_tmp=""
-trap 'rm -f "$payload" "$payload.authority" "${output_tmp:-}"' EXIT
+trap cleanup_writer_temps EXIT
 write_path_is_untracked "$payload" || die_env "refusing unsafe payload temp file"
 if ! "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
@@ -260,6 +290,10 @@ FENCE_AWK_SOURCE='
 	}
 '
 
+# These byte-level checks are intentional fast pre-filters before python3 and
+# defence in depth only; marker.py remains authoritative. The lone-CR matrix,
+# Python-whitespace semantics probe, and non-ASCII-marker mutation tests pin
+# the three rejection classes.
 plan_has_python_only_whitespace() {
 	local path="$1" needle
 	local -a needles
@@ -398,7 +432,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 			plan_is_safe=0
 		fi
 	fi
-	rm -f "$payload.authority"
+	remove_writer_temp "$payload.authority"
 fi
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	read -r marker_count marker_line findings_count findings_line findings_end unclosed_fence < <(LC_ALL=C awk "$FENCE_AWK_SOURCE"'
@@ -537,7 +571,6 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 	plan_path="$REPO_ROOT/$plan"
 	plan_dir="${plan_path%/*}"
 	output_tmp="$plan_dir/.design-deltas-$TARGET_KEY-$RUN_ID.tmp"
-	gauntlet_assert_no_symlink "$output_tmp" write-design-deltas || exit 2
 	if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
 		sidecar_reason="resolved plan temp path is tracked, indeterminate, or already exists"
 		plan_is_safe=0
@@ -562,7 +595,9 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 				post_authority_output="$(cat "$payload.authority")"
 				IFS=$'\t' read -r post_authority_line post_plan_hash post_authority_extra <<<"$post_authority_output"
 				if [[ "$post_authority_output" != *$'\n'* && "$post_authority_line" =~ ^[0-9]+$ && "$post_authority_line" == "$authority_marker_line" && "$post_plan_hash" == "$authority_plan_hash" && -z "${post_authority_extra:-}" ]]; then
-					rm -f "$payload.authority"
+					remove_writer_temp "$payload.authority"
+					write_path_is_untracked "$output_tmp" || die_env "resolved plan temp became unsafe"
+					regular_nonsymlink_plan "$plan" || die_env "resolved plan became unsafe"
 					chmod "$plan_mode" "$output_tmp" || die_env "cannot preserve plan mode"
 					mv "$output_tmp" "$plan_path" || die_env "cannot replace resolved plan"
 					output_tmp=""
@@ -573,12 +608,12 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 			else
 				sidecar_reason="marker.py authority query failed after the proposed plan edit"
 			fi
-			rm -f "$payload.authority"
+			remove_writer_temp "$payload.authority"
 			# END POST-EDIT MARKER AUTHORITY CHECK
 		else
 			sidecar_reason="plan rewrite would change bytes through review marker"
 		fi
-		rm -f "$output_tmp"
+		remove_writer_temp "$output_tmp"
 		output_tmp=""
 	fi
 fi
@@ -587,16 +622,15 @@ state_dir="$REPO_ROOT/.gauntlet"
 sidecar="$state_dir/design-deltas-$TARGET_KEY.md"
 gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
 gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
-if ! write_path_is_untracked "$state_dir" || ! write_path_is_untracked "$sidecar"; then
+if ! write_path_is_untracked "$state_dir" directory || ! write_path_is_untracked "$sidecar"; then
 	echo "warning: design-delta sidecar is tracked or cannot be classified; skipping" >&2
 	"$JQ" -cn --arg reason "$sidecar_reason" '{sink:"none",path:"",reason:$reason}'
 	exit 0
 fi
 mkdir -p "$state_dir" || die_env "cannot create .gauntlet directory"
-gauntlet_assert_no_symlink "$state_dir" write-design-deltas || exit 2
-gauntlet_assert_no_symlink "$sidecar" write-design-deltas || exit 2
+write_path_is_untracked "$state_dir" directory || die_env "unsafe .gauntlet directory"
+write_path_is_untracked "$sidecar" || die_env "unsafe design-delta sidecar"
 output_tmp="$state_dir/.design-deltas-$TARGET_KEY.tmp"
-gauntlet_assert_no_symlink "$output_tmp" write-design-deltas || exit 2
 if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
 	echo "warning: design-delta sidecar temp path is tracked, indeterminate, or already exists; skipping" >&2
 	output_tmp=""
@@ -610,7 +644,7 @@ else
 fi
 if ! write_path_is_untracked "$sidecar"; then
 	echo "warning: design-delta sidecar became tracked or indeterminate; skipping" >&2
-	rm -f "$output_tmp"
+	remove_writer_temp "$output_tmp"
 	output_tmp=""
 	"$JQ" -cn --arg reason "$sidecar_reason" '{sink:"none",path:"",reason:$reason}'
 	exit 0

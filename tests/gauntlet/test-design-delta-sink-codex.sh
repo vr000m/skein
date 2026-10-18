@@ -239,6 +239,190 @@ run_quick_round_probe() {
 		[[ "$(grep -Fc 'Design deltas: docs/dev_plans/' "$repo/quick.out")" -eq 4 ]]
 }
 
+run_quick_no_report_probe() {
+	local quick_fn="$1" sink_fn="$2" repo base_oid reviewed_head
+	repo="$WORKDIR/quick-no-report-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$quick_fn"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$reviewed_head"
+		review_branch=feature/widget
+		prepare_quick_design_delta_state
+		PLAN_PATH=""
+		design_delta_quick_round="$round_n"
+		run_design_delta_sink
+	) >"$repo/quick-none.out" 2>"$repo/quick-none.err"
+	grep -Fxq 'Design deltas: none' "$repo/quick-none.out"
+}
+
+run_transient_legacy_scope_probe() {
+	local sink_fn="$1" repo ledger_path scope_file
+	repo="$WORKDIR/transient-legacy-scope-$RANDOM"
+	init_fixture "$repo"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$sink_fn"
+		canonical_target=branch:missing-ref
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 transient-scope
+		target_key="$(basename "${ledger_path%.json}")"
+		ledger_run_id="$(jq -r .run_id "$ledger_path")"
+		scope_file="${ledger_path%/*}/design-deltas-$target_key-codex-${ledger_run_id:0:12}.scope.json"
+		PLAN_PATH=""
+		unset round_base round_head resolved_base_oid resolved_head_oid pr_head_ref
+		run_design_delta_sink
+		[[ ! -e "$scope_file" ]]
+		canonical_target=branch:feature/widget
+		run_design_delta_sink
+		jq -e '.base_oid | test("^[0-9a-f]{40}$")' "$scope_file" >/dev/null
+		jq -e '.head_oid | test("^[0-9a-f]{40}$")' "$scope_file" >/dev/null
+	) >"$repo/transient.out" 2>"$repo/transient.err"
+}
+
+make_bad_write_type() {
+	local path="$1" kind="$2"
+	case "$kind" in
+	directory) mkdir -p "$path" ;;
+	fifo) mkfifo "$path" ;;
+	socket)
+		(
+			cd "$(dirname "$path")" || exit 1
+			python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "$(basename "$path")" 2>/dev/null
+		)
+		;;
+	*) return 1 ;;
+	esac
+}
+
+run_nonregular_working_path_probe() {
+	local sink_fn="$1" only_kind="${2:-}" only_bad_type="${3:-}" kind bad_type repo plan before base_oid reviewed_head path cell_rc
+	for kind in items deltas resolution scope scope-temp; do
+		[[ -z "$only_kind" || "$kind" == "$only_kind" ]] || continue
+		for bad_type in directory fifo socket; do
+			[[ -z "$only_bad_type" || "$bad_type" == "$only_bad_type" ]] || continue
+			repo="$WORKDIR/nonregular-$kind-$bad_type-$RANDOM"
+			init_fixture "$repo"
+			plan="$repo/docs/dev_plans/$PLAN_NAME"
+			before="$(hash_file "$plan")"
+			base_oid="$(git -C "$repo" rev-parse main)"
+			reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+			(
+				cd "$repo"
+				# shellcheck source=/dev/null
+				. "$LIB/gauntlet-common.sh"
+				# shellcheck source=/dev/null
+				. "$sink_fn"
+				canonical_target=branch:feature/widget
+				ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+				"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+					--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+				run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+				jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+				mv "$ledger_path.tmp" "$ledger_path"
+				write_round "$run_dir" 1 nonregular
+				target_key="$(basename "${ledger_path%.json}")"
+				state_dir="$(dirname "$ledger_path")"
+				ledger_run_id="$(jq -r .run_id "$ledger_path")"
+				run_id="codex-${ledger_run_id:0:12}"
+				case "$kind" in
+				items) path="$state_dir/design-deltas-$target_key.items.jsonl" ;;
+				deltas) path="$state_dir/design-deltas-$target_key.deltas.json" ;;
+				resolution) path="$state_dir/design-deltas-$target_key.resolution.json" ;;
+				scope) path="$state_dir/design-deltas-$target_key-$run_id.scope.json" ;;
+				scope-temp) path="$state_dir/.design-delta-scope-$target_key-$run_id.tmp" ;;
+				esac
+				if ! make_bad_write_type "$path" "$bad_type"; then
+					[[ "$bad_type" == socket ]] && exit 77
+					exit 1
+				fi
+				PLAN_PATH=""
+				run_design_delta_sink
+				case "$bad_type" in
+				fifo) [[ -p "$path" ]] ;;
+				directory) [[ -d "$path" ]] ;;
+				socket) [[ -S "$path" ]] ;;
+				esac
+			) >"$repo/nonregular.out" 2>"$repo/nonregular.err" && cell_rc=0 || cell_rc=$?
+			if [[ "$cell_rc" -eq 77 ]]; then
+				pass "sink socket row skipped for $kind (socket unavailable at fixture path)"
+				continue
+			elif [[ "$cell_rc" -ne 0 ]]; then
+				echo "nonregular cell failed: $kind/$bad_type" >&2
+				return 1
+			fi
+			[[ "$before" == "$(hash_file "$plan")" ]] || {
+				echo "nonregular plan changed: $kind/$bad_type" >&2
+				return 1
+			}
+			grep -Fq 'refusing non-regular design delta write path' "$repo/nonregular.err" || return 1
+		done
+	done
+}
+
+run_icase_tracked_probe() {
+	local sink_fn="$1" kind repo plan before base_oid reviewed_head lower upper rel_upper before_upper
+	for kind in items deltas scope; do
+		repo="$WORKDIR/icase-$kind-$RANDOM"
+		init_fixture "$repo"
+		plan="$repo/docs/dev_plans/$PLAN_NAME"
+		before="$(hash_file "$plan")"
+		base_oid="$(git -C "$repo" rev-parse main)"
+		reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+		(
+			cd "$repo"
+			# shellcheck source=/dev/null
+			. "$LIB/gauntlet-common.sh"
+			# shellcheck source=/dev/null
+			. "$sink_fn"
+			canonical_target=branch:feature/widget
+			ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+			"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+				--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+			run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+			jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+			mv "$ledger_path.tmp" "$ledger_path"
+			write_round "$run_dir" 1 icase
+			target_key="$(basename "${ledger_path%.json}")"
+			state_dir="$(dirname "$ledger_path")"
+			ledger_run_id="$(jq -r .run_id "$ledger_path")"
+			run_id="codex-${ledger_run_id:0:12}"
+			case "$kind" in
+			items) lower="$state_dir/design-deltas-$target_key.items.jsonl" ;;
+			deltas) lower="$state_dir/design-deltas-$target_key.deltas.json" ;;
+			scope) lower="$state_dir/design-deltas-$target_key-$run_id.scope.json" ;;
+			esac
+			upper="${lower/\.gauntlet\//.Gauntlet/}"
+			mkdir -p "${upper%/*}"
+			printf 'case sentinel\n' >"$upper"
+			rel_upper="${upper#"$repo"/}"
+			git add -f -- "$rel_upper"
+			before_upper="$(hash_file "$upper")"
+			PLAN_PATH=""
+			GIT_INDEX_FILE=/nonexistent GIT_DIR=/nonexistent GIT_WORK_TREE="$WORKDIR" run_design_delta_sink
+			[[ "$before_upper" == "$(hash_file "$upper")" ]]
+		) >"$repo/icase.out" 2>"$repo/icase.err" || return 1
+		[[ "$before" == "$(hash_file "$plan")" ]] || return 1
+	done
+}
+
 run_review_scope_control_probe() {
 	local sink_fn="$1" source escaped branch_json repo plan before base_oid reviewed_head ledger_path run_dir
 	for source in ledger persisted; do
@@ -533,6 +717,18 @@ else
 	fail "quick-mode startup or section identity contract"
 fi
 
+if run_quick_no_report_probe "$QUICK_FN" "$SINK_FN"; then
+	pass "quick mode without a fixer report prints Design deltas: none"
+else
+	fail "quick-mode no-report terminal output"
+fi
+
+if run_transient_legacy_scope_probe "$SINK_FN"; then
+	pass "legacy scope persistence retries after transient OID resolution failure"
+else
+	fail "legacy scope persisted empty OIDs or did not retry"
+fi
+
 if run_review_scope_control_probe "$SINK_FN"; then
 	pass "ledger and persisted review_scope branch controls fail closed before jq -r extraction"
 else
@@ -549,6 +745,18 @@ if run_tracked_working_path_probe "$SINK_FN"; then
 	pass "tracked items, deltas, resolution, scope, and scope-temp paths survive clean and hostile Git environments byte-for-byte"
 else
 	fail "tracked sink working-path state space"
+fi
+
+if run_nonregular_working_path_probe "$SINK_FN"; then
+	pass "all available sink write-site directory, FIFO, and socket rows refuse targets before any write"
+else
+	fail "sink non-regular write-target state space"
+fi
+
+if run_icase_tracked_probe "$SINK_FN"; then
+	pass "differently-cased tracked items, deltas, and scope paths are refused under hostile Git environments"
+else
+	fail "case-insensitive literal trackedness state space"
 fi
 
 if run_corrupt_index_working_path_probe "$SINK_FN"; then
@@ -605,6 +813,14 @@ else
 	pass "mutation removing quick-mode plain init is caught by the empty-state probe"
 fi
 
+scope_empty_mutant="$WORKDIR/scope-empty-mutant.sh"
+sed 's/if \[\[ -n "$BASE_OID" && -n "$HEAD_OID" \]\]; then/if true; then/' "$SINK_FN" >"$scope_empty_mutant"
+if run_transient_legacy_scope_probe "$scope_empty_mutant"; then
+	fail "mutation persisting empty legacy scope survived the retry probe"
+else
+	pass "mutation persisting empty legacy scope is caught"
+fi
+
 scope_control_mutant="$WORKDIR/scope-control-mutant.sh"
 sed 's/and (\.branch | control_free)/and (.branch | type == "string")/g' "$SINK_FN" >"$scope_control_mutant"
 if run_review_scope_control_probe "$scope_control_mutant"; then
@@ -636,6 +852,22 @@ if run_tracked_working_path_probe "$items_site_mutant" items; then
 	fail "mutation dropping the items-file write-site check survived its tracked cell"
 else
 	pass "mutation dropping one write-site check is caught by that site's cell"
+fi
+
+items_type_mutant="$WORKDIR/type-items-site-mutant.sh"
+sed 's/\[\[ -f "$path" && ! -L "$path" \]\]/[[ -e "$path" ]]/' "$SINK_FN" >"$items_type_mutant"
+if run_nonregular_working_path_probe "$items_type_mutant" items directory; then
+	fail "mutation dropping the items-file type check survived its bad-type cells"
+else
+	pass "mutation dropping one write-site type check is caught by that site"
+fi
+
+icase_mutant="$WORKDIR/icase-mutant.sh"
+sed 's/ls-files -- ":(icase,literal)$rel"/ls-files -- "$rel"/' "$SINK_FN" >"$icase_mutant"
+if run_icase_tracked_probe "$icase_mutant"; then
+	fail "mutation dropping icase survived differently-cased tracked paths"
+else
+	pass "mutation dropping icase is caught by differently-cased tracked paths"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused
