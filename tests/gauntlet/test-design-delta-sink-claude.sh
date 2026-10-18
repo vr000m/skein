@@ -564,8 +564,8 @@ SH
 }
 
 probe_report_failure_matrix() {
-	local sink_fn="$1" state repo out report
-	for state in unsafe malformed non-array; do
+	local sink_fn="$1" states="${2:-unsafe malformed non-array directory fifo socket}" state repo out report
+	for state in $states; do
 		repo="$(new_fixture "report-failure-$state-$RANDOM" "$PLAN_NAME")"
 		setup_hook() {
 			report="$1/round-1/fixer-report.json"
@@ -577,22 +577,46 @@ probe_report_failure_matrix() {
 				;;
 			malformed) printf '{bad json\n' >"$report" ;;
 			non-array) printf '{"design_deltas":{}}\n' >"$report" ;;
+			directory) mkdir "$report" ;;
+			fifo) mkfifo "$report" ;;
+			socket)
+				(cd "${report%/*}" && python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "${report##*/}") || {
+					: >"$repo/socket-unavailable"
+					return 0
+				}
+				;;
 			esac
 		}
-		out="$(SINK_FN="$sink_fn" run_sink "$repo" branch:feature/widget 1)"
+		out="$(SINK_FN="$sink_fn" run_sink "$repo" branch:feature/widget 1)" || return 1
 		unset -f setup_hook
+		[[ "$state" == socket && -f "$repo/socket-unavailable" ]] && continue
 		grep -Fq 'Design deltas: unknown — one or more selected fixer reports could not be collected' "$WORKDIR/sink.err" || return 1
 		! grep -Fq 'Design deltas: none' <<<"$out" || return 1
 	done
 }
 
-check "Claude full-mode report-failure table maps unsafe, malformed, and non-array inputs to unknown" probe_report_failure_matrix "$SINK_FN"
+check "Claude full-mode report-failure table maps unsafe, malformed, non-array, and non-regular inputs to unknown" probe_report_failure_matrix "$SINK_FN"
 collection_total_mutant="$WORKDIR/collection-total-mutant.sh"
 sed '/if \[\[ "\$collection_complete" != true \]\]; then/,/^[[:space:]]*fi$/d' "$SINK_FN" >"$collection_total_mutant"
 if probe_report_failure_matrix "$collection_total_mutant"; then
 	fail "mutation removing total collection completeness survived the Claude report-failure table"
 else
 	pass "Claude report-failure table catches removal of total collection completeness"
+fi
+nonregular_report_mutant="$WORKDIR/nonregular-report-mutant.sh"
+awk '
+	/if \[\[ ! -f "\$report" \]\]; then/ {
+		print "    [[ -f \"$report\" ]] || continue"
+		skipping = 1
+		next
+	}
+	skipping && /^[[:space:]]*fi$/ { skipping = 0; next }
+	!skipping { print }
+' "$SINK_FN" >"$nonregular_report_mutant"
+if probe_report_failure_matrix "$nonregular_report_mutant" directory; then
+	fail "mutation accepting existing non-regular fixer reports survived the Claude state table"
+else
+	pass "Claude report-failure table catches removal of the regular-file predicate"
 fi
 check "Claude mirror pending: failed jq collection with non-empty items reports unknown, never none" probe_collection_failure
 

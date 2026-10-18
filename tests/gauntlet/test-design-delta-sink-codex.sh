@@ -356,9 +356,9 @@ run_quick_no_report_probe() {
 	grep -Fxq 'Design deltas: none' "$repo/quick-none.out"
 }
 
-run_quick_stale_scope_probe() {
-	local quick_fn="$1" repo base_oid reviewed_head advanced_head
-	repo="$WORKDIR/quick-stale-scope-$RANDOM"
+run_quick_scope_generation_probe() {
+	local quick_fn="$1" repo base_oid reviewed_head advanced_head first_ledger second_ledger
+	repo="$WORKDIR/quick-scope-generation-$RANDOM"
 	init_fixture "$repo"
 	base_oid="$(git -C "$repo" rev-parse main)"
 	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
@@ -372,27 +372,61 @@ run_quick_stale_scope_probe() {
 		resolved_base_oid="$base_oid"
 		resolved_head_oid="$reviewed_head"
 		review_branch=feature/widget
-		prepare_quick_design_delta_state
+		prepare_quick_design_delta_state || exit 1
+		first_ledger="$ledger_path"
+		jq -e --arg head "$reviewed_head" '.review_scope.head_oid == $head' "$first_ledger" >/dev/null || exit 1
 		printf 'advance\n' >advance.txt
 		git add advance.txt
 		git commit -qm advance
 		advanced_head="$(git rev-parse HEAD)"
 		resolved_head_oid="$advanced_head"
-		if prepare_quick_design_delta_state; then
-			exit 1
-		fi
-	) >"$repo/stale.out" 2>"$repo/stale.err"
-	grep -Fq 'quick-mode ledger review scope is stale' "$repo/stale.err"
+		prepare_quick_design_delta_state || exit 1
+		second_ledger="$ledger_path"
+		[[ "$second_ledger" != "$first_ledger" && -f "$first_ledger" ]] || exit 1
+		jq -e --arg head "$advanced_head" '.review_scope.head_oid == $head' "$second_ledger" >/dev/null || exit 1
+		prepare_quick_design_delta_state || exit 1
+		[[ "$ledger_path" == "$second_ledger" ]] || exit 1
+	) >"$repo/generation.out" 2>"$repo/generation.err"
+}
+
+run_quick_legacy_bind_probe() {
+	local quick_fn="$1" repo base_oid reviewed_head legacy_path
+	repo="$WORKDIR/quick-legacy-bind-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# shellcheck source=/dev/null
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck source=/dev/null
+		. "$quick_fn"
+		canonical_target=branch:feature/widget
+		legacy_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$legacy_path" --target "$canonical_target" >/dev/null
+		jq -e 'has("review_scope") | not' "$legacy_path" >/dev/null
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$reviewed_head"
+		review_branch=feature/widget
+		prepare_quick_design_delta_state || exit 1
+		[[ "$ledger_path" == "$legacy_path" ]] || exit 1
+		jq -e --arg base "$base_oid" --arg head "$reviewed_head" '
+			.review_scope == {base_oid:$base,head_oid:$head,branch:"feature/widget"}
+		' "$legacy_path" >/dev/null || exit 1
+		prepare_quick_design_delta_state || exit 1
+		[[ "$ledger_path" == "$legacy_path" ]] || exit 1
+	) >"$repo/legacy.out" 2>"$repo/legacy.err"
 }
 
 run_report_failure_matrix_probe() {
-	local quick_fn="$1" sink_fn="$2" mode state repo base_oid reviewed_head report
+	local quick_fn="$1" sink_fn="$2" states="${3:-unsafe malformed non-array directory fifo socket}" mode state repo base_oid reviewed_head report matrix_rc
 	for mode in full quick; do
-		for state in unsafe malformed non-array; do
+		for state in $states; do
 			repo="$WORKDIR/report-failure-$mode-$state-$RANDOM"
 			init_fixture "$repo"
 			base_oid="$(git -C "$repo" rev-parse main)"
 			reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+			matrix_rc=0
 			(
 				cd "$repo"
 				# shellcheck source=/dev/null
@@ -415,6 +449,11 @@ run_report_failure_matrix_probe() {
 					;;
 				malformed) printf '{bad json\n' >"$report" ;;
 				non-array) printf '{"design_deltas":{}}\n' >"$report" ;;
+				directory) mkdir "$report" ;;
+				fifo) mkfifo "$report" ;;
+				socket)
+					(cd "${report%/*}" && python3 -c 'import socket,sys; s=socket.socket(socket.AF_UNIX); s.bind(sys.argv[1]); s.close()' "${report##*/}") || exit 77
+					;;
 				esac
 				PLAN_PATH=""
 				if [[ "$mode" == quick ]]; then
@@ -425,7 +464,12 @@ run_report_failure_matrix_probe() {
 					unset design_delta_quick_round
 				fi
 				run_design_delta_sink
-			) >"$repo/matrix.out" 2>"$repo/matrix.err"
+			) >"$repo/matrix.out" 2>"$repo/matrix.err" || matrix_rc=$?
+			if [[ "${matrix_rc:-0}" -eq 77 && "$state" == socket ]]; then
+				continue
+			fi
+			[[ "${matrix_rc:-0}" -eq 0 ]] || return 1
+			matrix_rc=0
 			grep -Fq 'Design deltas: unknown — one or more selected fixer reports could not be collected' "$repo/matrix.err" || return 1
 			! grep -Fq 'Design deltas: none' "$repo/matrix.out" || return 1
 		done
@@ -901,14 +945,20 @@ else
 	fail "quick-mode no-report terminal output"
 fi
 
-if run_quick_stale_scope_probe "$QUICK_FN"; then
-	pass "quick mode rejects ledger reuse after the reviewed branch advances"
+if run_quick_scope_generation_probe "$QUICK_FN"; then
+	pass "quick mode reuses an exact-scope generation and selects a new generation after branch advancement"
 else
-	fail "quick-mode stale review_scope rejection"
+	fail "quick-mode scope-keyed ledger generation"
+fi
+
+if run_quick_legacy_bind_probe "$QUICK_FN"; then
+	pass "quick mode atomically binds a legacy pre-scope ledger once"
+else
+	fail "quick-mode legacy review_scope binding"
 fi
 
 if run_report_failure_matrix_probe "$QUICK_FN" "$SINK_FN"; then
-	pass "full and quick report-failure table maps unsafe, malformed, and non-array inputs to unknown, never zero"
+	pass "full and quick report-failure table maps unsafe, malformed, non-array, and non-regular inputs to unknown, never zero"
 else
 	fail "total fixer-report collection-result state space"
 fi
@@ -1018,11 +1068,19 @@ else
 fi
 
 quick_scope_mutant="$WORKDIR/quick-scope-mutant.sh"
-sed '/if ! jq -e --arg base "$resolved_base_oid"/,/^[[:space:]]*fi$/d' "$QUICK_FN" >"$quick_scope_mutant"
-if run_quick_stale_scope_probe "$quick_scope_mutant"; then
-	fail "mutation removing quick-mode scope equality survived branch advancement"
+sed '/quick_scope_json=/{n;s/head_oid:\$head/head_oid:""/;}' "$QUICK_FN" >"$quick_scope_mutant"
+if run_quick_scope_generation_probe "$quick_scope_mutant"; then
+	fail "mutation removing head identity from the quick generation key survived branch advancement"
 else
-	pass "branch-advancement probe catches removal of quick-mode scope equality"
+	pass "branch-advancement probe catches an incomplete quick generation key"
+fi
+
+quick_legacy_mutant="$WORKDIR/quick-legacy-mutant.sh"
+sed 's/--bind-review-scope/--last-decision/' "$QUICK_FN" >"$quick_legacy_mutant"
+if run_quick_legacy_bind_probe "$quick_legacy_mutant"; then
+	fail "mutation removing legacy scope binding survived the migration probe"
+else
+	pass "legacy migration probe catches removal of one-time scope binding"
 fi
 
 collection_total_mutant="$WORKDIR/collection-total-mutant.sh"
@@ -1031,6 +1089,22 @@ if run_report_failure_matrix_probe "$QUICK_FN" "$collection_total_mutant"; then
 	fail "mutation removing total collection completeness survived the report-failure table"
 else
 	pass "report-failure table catches removal of total collection completeness"
+fi
+
+nonregular_report_mutant="$WORKDIR/nonregular-report-mutant.sh"
+awk '
+	/if \[\[ ! -f "\$report" \]\]; then/ {
+		print "    [[ -f \"$report\" ]] || continue"
+		skipping = 1
+		next
+	}
+	skipping && /^[[:space:]]*fi$/ { skipping = 0; next }
+	!skipping { print }
+' "$SINK_FN" >"$nonregular_report_mutant"
+if run_report_failure_matrix_probe "$QUICK_FN" "$nonregular_report_mutant" directory; then
+	fail "mutation accepting existing non-regular fixer reports survived the state table"
+else
+	pass "report-failure table catches removal of the regular-file predicate"
 fi
 
 scope_empty_mutant="$WORKDIR/scope-empty-mutant.sh"

@@ -526,6 +526,72 @@ else
 	fail "appending a round changed the reviewed scope"
 fi
 
+BIND_SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BIND_SCOPE_L")
+"$LEDGER_SCRIPT" --init --ledger "$BIND_SCOPE_L" --target "branch:bind-scope"
+"$LEDGER_SCRIPT" --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--count 1 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+bind_run_id="$(jq -r '.run_id' "$BIND_SCOPE_L")"
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
+if jq -e --arg run_id "$bind_run_id" --arg base "$scope_base" --arg head "$scope_head" '
+	.run_id == $run_id
+	and (.rounds | length == 1)
+	and .review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope-name"}
+' "$BIND_SCOPE_L" >/dev/null; then
+	pass "--bind-review-scope atomically adds scope without replacing legacy run state"
+else
+	fail "--bind-review-scope changed legacy state beyond the scope binding"
+fi
+bind_hash="$(gc_hash "$BIND_SCOPE_L")"
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
+assert_eq "$(gc_hash "$BIND_SCOPE_L")" "$bind_hash" "--bind-review-scope is byte-idempotent for the same scope"
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$(printf 'c%.0s' {1..40})" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_mismatch_rc=$?
+set -e
+if [[ "$bind_mismatch_rc" -eq 3 && "$(gc_hash "$BIND_SCOPE_L")" == "$bind_hash" ]]; then
+	pass "--bind-review-scope refuses a different scope without changing the ledger"
+else
+	fail "--bind-review-scope mismatch was not fail-closed (rc=$bind_mismatch_rc)"
+fi
+
+BIND_ABSENT_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BIND_ABSENT_L")
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_ABSENT_L" --target "branch:bind-absent" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_absent_rc=$?
+set -e
+if [[ "$bind_absent_rc" -eq 4 && ! -e "$BIND_ABSENT_L" ]]; then
+	pass "--bind-review-scope refuses an absent ledger without creating state"
+else
+	fail "--bind-review-scope absent-ledger cell was not read-before-write (rc=$bind_absent_rc)"
+fi
+
+BIND_GUARD_DIR="$(mktemp -d)"
+TMP_DIRS+=("$BIND_GUARD_DIR")
+bind_victim="$BIND_GUARD_DIR/victim.json"
+bind_link="$BIND_GUARD_DIR/link.json"
+"$LEDGER_SCRIPT" --init --ledger "$bind_victim" --target "branch:bind-guard"
+bind_victim_hash="$(gc_hash "$bind_victim")"
+ln -s "$bind_victim" "$bind_link"
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$bind_link" --target "branch:bind-guard" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_symlink_rc=$?
+set -e
+if [[ "$bind_symlink_rc" -ne 0 && "$(gc_hash "$bind_victim")" == "$bind_victim_hash" ]]; then
+	pass "--bind-review-scope refuses a symlink without changing its target"
+else
+	fail "--bind-review-scope symlink cell changed the target (rc=$bind_symlink_rc)"
+fi
+
 BAD_SCOPE_L="$(mktemp -u)"
 TMP_LEDGERS+=("$BAD_SCOPE_L")
 set +e

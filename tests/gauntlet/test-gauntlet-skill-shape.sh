@@ -934,8 +934,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'non-array design_deltas skipped' \
 	"Codex mirror: non-array design deltas warn and skip independently"
 assert_grep_fixed "$CODEX_SKILL_MD" 'if [[ "$collection_complete" != true ]]; then' \
 	"Codex mirror: incomplete selected-report collection cannot become a known empty array"
-assert_grep_fixed "$CODEX_SKILL_MD" 'quick-mode ledger review scope is stale; stopping before gates' \
-	"Codex mirror: quick startup rejects target reuse when immutable scope changed"
+assert_grep_fixed "$CODEX_SKILL_MD" 'quick_scoped_target="${canonical_target}:quick-scope:${quick_scope_digest}"' \
+	"Codex mirror: quick startup keys generations by immutable reviewed scope"
+assert_grep_fixed "$CODEX_SKILL_MD" '--bind-review-scope --ledger "$legacy_ledger_path"' \
+	"Codex mirror: quick startup binds a pre-scope legacy ledger once"
+assert_grep_fixed "$CODEX_SKILL_MD" 'quick-mode ledger generation has an invalid review scope; stopping before gates' \
+	"Codex mirror: quick startup validates the selected generation scope"
+assert_grep_fixed "$CODEX_SKILL_MD" 'non-regular fixer report skipped' \
+	"Codex mirror: an existing wrong-type fixer report makes collection incomplete"
+assert_grep_fixed "$SKILL_MD" 'non-regular fixer report skipped' \
+	"Claude mirror: an existing wrong-type fixer report makes collection incomplete"
 assert_grep_fixed "$CODEX_SKILL_MD" 'using sidecar' \
 	"Codex mirror: plan resolution failures degrade to the sidecar"
 assert_grep_fixed "$CODEX_SKILL_MD" 'run_design_delta_sink || true' \
@@ -1034,9 +1042,9 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'set `design_delta_quick_round="$round_n"` a
 	"Codex mirror: quick-mode fixer deltas reach the terminal sink"
 assert_grep_fixed "$CODEX_SKILL_MD" 'prepare_quick_design_delta_state() {' \
 	"Codex mirror: quick mode has executable ledger startup wiring"
-assert_grep_fixed "$CODEX_SKILL_MD" 'uses plain `--init` only on exit 4, reuses the ledger on exit 0 or 5, never uses `--init --force`' \
+assert_grep_fixed "$CODEX_SKILL_MD" 'reuses only an exact-scope generation, and uses plain `--init` only when that generation is absent' \
 	"Codex mirror: quick startup documents the auto-chain reuse contract"
-assert_grep_fixed "$CODEX_SKILL_MD" '"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target"' \
+assert_grep_fixed "$CODEX_SKILL_MD" '"$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$selected_target"' \
 	"Codex mirror: quick startup initializes an empty ledger without force"
 assert_grep_fixed "$CODEX_SKILL_MD" 'A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it.' \
 	"Codex mirror: quick reports are outside the full-mode ledger enumeration"

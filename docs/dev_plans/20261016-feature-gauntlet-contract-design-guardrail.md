@@ -21,6 +21,7 @@ Decisions (grilled 2026-10-16):
 - Deltas are written even without `--plan`. The plan is the one diff-touched plan, narrowed by branch slug. Otherwise the deltas go to `.gauntlet/design-deltas-<target>.md`. The sink never guesses.
 - The merge-bar (stop on "no blocking findings") is deferred.
 - Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures are tracked in #56 and stay out of this PR.
+- Independent-review grill (2026-10-18): quick-mode ledger identity is scope-keyed. The same base/head/branch reuses one generation; a moved head selects a new generation; a legacy pre-scope ledger is atomically bound once. Full/resume ledger identity remains target-keyed and immutable.
 
 ## Requirements
 
@@ -78,6 +79,7 @@ Decisions (grilled 2026-10-16):
 ### Architecture Decisions
 - Prompt-level contract guardrails remain the enforcement mechanism, like Guardrails 3, 6 and 7.
 - Correction (2026-10-16): the terminal sink needs a ledger-owned opaque `run_id`; hashing the mutable ledger made the same run acquire a new section identity after every appended round. Fresh-ledger initialization atomically persists the immutable reviewed base/head/branch scope so even a first-ever sink call after interruption cannot follow a moved target. Legacy ledgers derive an append-stable fallback from their target, limits and first round.
+- Correction (2026-10-18): Codex quick mode must not reuse a target-keyed ledger after its own fixes move `HEAD`. It derives a generation from the canonical target plus the complete immutable review scope, while `convergence-ledger.sh --bind-review-scope` provides a one-time atomic migration for pre-scope ledgers without discarding their run state.
 - The merge-bar is deferred. It needs a new terminal token and a blocking-vs-minor classification in `convergence-ledger.sh` on both mirrors. Revisit only if a run with Guardrail 8 and deltas still ends in cap or non-converge on minor-only findings.
 
 ### Dependencies
@@ -87,9 +89,10 @@ Decisions (grilled 2026-10-16):
 
 | Seam | Writer (task) | Caller (task) | Contract |
 |------|---------------|---------------|----------|
-| `design_deltas` in `fixer-report.json` | Fixer (Phase 1 brief) | Terminal sink (Phase 2) | Array of objects, never in `claimed`. A non-array is skipped with a warning. |
+| `design_deltas` in `fixer-report.json` | Fixer (Phase 1 brief) | Terminal sink (Phase 2) | Array of objects, never in `claimed`. A missing report is known-empty; an existing non-regular, malformed, unreadable, or non-array report makes collection unknown. |
 | Plan resolution result | `resolve-plan.sh` | `write-design-deltas.sh` | Status is explicit, unique, none or ambiguous. Anything but explicit or unique goes to the sidecar. |
 | Ledger run identity and reviewed scope | `convergence-ledger.sh --init` | Resumed terminal sink | `run_id` is stable across appends and fresh on forced init; persisted base/head/branch are reused for that run. |
+| Codex quick generation | `prepare_quick_design_delta_state` | `convergence-ledger.sh` | Exact scope reuses one ledger; moved scope selects another; legacy no-scope state is bound once before gates. |
 
 ## Testing Notes
 
@@ -98,11 +101,12 @@ Decisions (grilled 2026-10-16):
 - [x] Table-driven marker, sidecar, head and sanitization probes, each with a mutation check.
 - [x] Executed test of the Claude-side base/head derivation: `tests/gauntlet/test-design-delta-sink-claude.sh` runs the SKILL.md sink fence in scratch repos (implicit branch, `a..b`, `a...b`, `pr:<N>` through a fake `gh`, `gh` failure, unset context, symlinked working file) with mutation checks.
 - [x] Executed Codex resume test proves appended rounds retain one section identity, persisted scope keeps the original reviewed head after the branch moves, and symlinked fixer reports are refused. Writer tests also refuse symlinked resolution and delta inputs.
+- [x] Executed full/quick state tables distinguish missing fixer reports from existing directory/FIFO reports, and mutation checks restore the old silent-skip predicate. Quick generation tests cover same-scope reuse, moved-head selection, and one-time legacy binding.
 
 ### Test Results
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
-- [x] Review-fix coverage passes: Codex sink 43/43, Claude sink 61/61, writer/resolver 275/275, convergence ledger 231/231, skill shape 388/388, lib parity 179/179, timeout 168/168, plus prompt parity, sync, script lint and plugin tests.
-- [ ] Final `just ci` after the grill follow-up fixes. Known baseline: only the 2 tests in #56 fail.
+- [x] Independent-review fix coverage passes: Codex sink 56/56, Claude sink 65/65, writer/resolver 285/285, convergence ledger 236/236, skill shape 395/395 and lib parity 179/179, including scope-generation, legacy-binding and non-regular report mutations.
+- [x] Final `just ci` after the independent fixes reaches only the two accepted `test_native_gates.py` cycle failures in #56 (54 passed, 2 failed). Independent `parity-tests`, `lens-tests`, `reconciliation-tests`, `plugin-tests` and `pytest-tests` pass.
 
 ## Acceptance Criteria
 
@@ -119,7 +123,7 @@ Decisions (grilled 2026-10-16):
 
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
-- [ ] Phase 3: Verify the Claude mirror (done: code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review; open: final `just ci` after the gauntlet fixes)
+- [x] Phase 3: Verify the Claude mirror (code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review, and independent Codex contract fixes verified across both mirrors)
 - [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 fixes in 5632142; round 8 fixes in 7cd71dd (writer/marker.py seam closed by delegating the marker choice to marker.py via python3 -I); round 9 fixes in e899fd1; round 10 (the cap) found 12 more and its fixes landed in eb7bd15; at the operator's direction a verification round 11 ran beyond the cap and found 7 rows (5 distinct: absent tripwire file, dropped-delta reporting, predictable authority temp names, stale Claude cleanup text, docs); its fixes landed in 0026033 and get no further gauntlet round, so the independent Codex-native gauntlet is the remaining check, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
@@ -127,6 +131,7 @@ Decisions (grilled 2026-10-16):
 ## Issues & Solutions
 
 - Quick mode exists only in the Codex mirror (the Claude mirror's `Review Gates` is `none | full`), so only the Codex sink has `design_delta_quick_round`; quick sections use their own run id (`codex-<ledger-id>-quick-<12-hex digest of the persisted quick fixer report>`) so different quick runs never replace each other and an identical rerun is idempotent. This is a sanctioned mirror asymmetry.
+- Independent-review correction (2026-10-18): quick ledgers are generation-keyed by the full immutable review scope. Re-running at the same scope remains idempotent; a moved head selects a fresh generation instead of failing stale or mutating an earlier generation.
 - Codex `resume` runs read-only, so a fix round sent through it changes nothing. Start a fresh write-mode task instead.
 - Review correction (2026-10-16): mutable-ledger hashing duplicated design-delta sections, resume lost reviewed scope, and three input reads bypassed the state-path guard. The sink now uses ledger-owned identity plus persisted scope and guards every state-derived read.
 

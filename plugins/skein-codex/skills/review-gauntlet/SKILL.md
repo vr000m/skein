@@ -24,26 +24,63 @@ Three modes are opt-in; nothing here fires without an explicit trigger. `--resum
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
-**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. Before preparing the quick round, derive `canonical_target` and the immutable reviewed scope exactly as in Target and Resume Ledger, then call `prepare_quick_design_delta_state`: it derives `ledger_path`, peeks with `--last-decision`, uses plain `--init` only on exit 4, reuses the ledger on exit 0 or 5, never uses `--init --force`, derives `run_dir`, and prepares but never appends the next round. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. A second quick invocation reuses the same ledger and prepares the same still-unappended round slot. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. Before preparing the quick round, derive `canonical_target` and the immutable reviewed scope exactly as in Target and Resume Ledger, then call `prepare_quick_design_delta_state`: it derives a scope-keyed quick generation from the canonical target plus reviewed base/head/branch, reuses only an exact-scope generation, and uses plain `--init` only when that generation is absent. A pre-scope legacy target ledger is atomically bound to the current scope once; after the reviewed head moves, quick mode creates or selects a different generation instead of mutating the old scope. It never uses `--init --force`, derives `run_dir`, and prepares but never appends the next round. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. A second invocation at the same scope reuses the same ledger and prepares the same still-unappended round slot. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
 
 ```bash
 prepare_quick_design_delta_state() {
+  local quick_scope_json quick_scope_digest quick_scoped_target quick_scoped_path
+  local legacy_ledger_path selected_target legacy_rc
   if ! declare -F gc_ledger_path >/dev/null; then
     . "$SKILL_DIR"/lib/gauntlet-common.sh
   fi
-  ledger_path="$(gc_ledger_path "$canonical_target" codex)" || return 1
+  quick_scope_json="$(jq -cn --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" \
+    '{base_oid:$base,head_oid:$head,branch:$branch}')" || return 1
+  quick_scope_digest="$(printf '%s' "$quick_scope_json" | gc_sha1)" || return 1
+  [[ "$quick_scope_digest" =~ ^[0-9a-f]{40}$ ]] || return 1
+  quick_scoped_target="${canonical_target}:quick-scope:${quick_scope_digest}"
+  quick_scoped_path="$(gc_ledger_path "$quick_scoped_target" codex)" || return 1
+  legacy_ledger_path="$(gc_ledger_path "$canonical_target" codex)" || return 1
+  ledger_path="$quick_scoped_path"
+  selected_target="$quick_scoped_target"
   quick_ledger_rc=0
-  "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target" >/dev/null || quick_ledger_rc=$?
+  "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$selected_target" >/dev/null || quick_ledger_rc=$?
+  if [[ "$quick_ledger_rc" -eq 4 ]]; then
+    legacy_rc=0
+    "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$legacy_ledger_path" --target "$canonical_target" >/dev/null || legacy_rc=$?
+    case "$legacy_rc" in
+      0|5)
+        if jq -e 'has("review_scope")' "$legacy_ledger_path" >/dev/null 2>&1; then
+          if jq -e --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" \
+            '.review_scope == {base_oid:$base,head_oid:$head,branch:$branch}' "$legacy_ledger_path" >/dev/null 2>&1; then
+            ledger_path="$legacy_ledger_path"
+            selected_target="$canonical_target"
+            quick_ledger_rc="$legacy_rc"
+          fi
+        else
+          "$SKILL_DIR"/lib/convergence-ledger.sh --bind-review-scope --ledger "$legacy_ledger_path" --target "$canonical_target" \
+            --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
+          ledger_path="$legacy_ledger_path"
+          selected_target="$canonical_target"
+          quick_ledger_rc="$legacy_rc"
+        fi
+        ;;
+      4) ;;
+      *)
+        echo "warning: legacy quick-mode ledger startup failed; stopping before gates" >&2
+        return 1
+        ;;
+    esac
+  fi
   case "$quick_ledger_rc" in
     4)
-      "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target" \
+      "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$selected_target" \
         --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
       ;;
     0|5)
       if ! jq -e --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" '
         .review_scope == {base_oid:$base,head_oid:$head,branch:$branch}
       ' "$ledger_path" >/dev/null 2>&1; then
-        echo "warning: quick-mode ledger review scope is stale; stopping before gates" >&2
+        echo "warning: quick-mode ledger generation has an invalid review scope; stopping before gates" >&2
         return 1
       fi
       ;;
@@ -503,7 +540,14 @@ run_design_delta_sink() {
       collection_complete=false
       continue
     fi
-    [[ -f "$report" ]] || continue
+    if [[ ! -e "$report" && ! -L "$report" ]]; then
+      continue
+    fi
+    if [[ ! -f "$report" ]]; then
+      echo "warning: non-regular fixer report skipped: $report" >&2
+      collection_complete=false
+      continue
+    fi
     if [[ -n "${design_delta_quick_round:-}" ]]; then
       quick_report_digest="$(gc_sha1 < "$report")" || {
         echo "warning: cannot hash quick-mode fixer report; continuing terminal handoff" >&2
@@ -639,7 +683,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Every guarded fixer report is parsed independently. An absent `design_deltas` value is a known empty contribution. An unsafe, malformed, non-array, or unreadable selected report makes the whole collection unknown: warn `Design deltas: unknown — <reason>`, stop the sink, and never manufacture `[]` from the remaining reports. This total collection-result contract is identical in full and quick mode; only a complete collection can be counted as known zero or passed to the writer as known nonzero. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so known non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. Here, "established" requires a complete collection. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A known non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Every guarded fixer report is parsed independently. A missing report, or an absent `design_deltas` value in a regular report, is a known empty contribution. An unsafe, existing non-regular, malformed, non-array, or unreadable selected report makes the whole collection unknown: warn `Design deltas: unknown — <reason>`, stop the sink, and never manufacture `[]` from the remaining reports. This total collection-result contract is identical in full and quick mode; only a complete collection can be counted as known zero or passed to the writer as known nonzero. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so known non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Quick mode reads only its prepared fixer-report round and gives the exact persisted report bytes a content-addressed section identity. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. Here, "established" requires a complete collection. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A known non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 ### Terminal report step (`--report` only)
 

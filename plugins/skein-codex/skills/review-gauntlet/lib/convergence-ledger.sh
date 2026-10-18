@@ -5,6 +5,8 @@
 # Usage:
 #   convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
 #       [--review-base <oid> --review-head <oid> --review-branch <name>]
+#   convergence-ledger.sh --bind-review-scope --ledger <path> --target <target> \
+#       --review-base <oid> --review-head <oid> --review-branch <name>
 #   convergence-ledger.sh --run-dir --ledger <path>
 #   convergence-ledger.sh --prepare-round <N> --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
@@ -157,6 +159,8 @@ usage() {
 	cat >&2 <<'EOF'
 usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
               [--review-base <oid> --review-head <oid> --review-branch <name>]
+       convergence-ledger.sh --bind-review-scope --ledger <path> --target <target> \
+              --review-base <oid> --review-head <oid> --review-branch <name>
        convergence-ledger.sh --run-dir --ledger <path>
        convergence-ledger.sh --prepare-round <N> --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
@@ -217,6 +221,14 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		fi
 		MODE="last-decision"
+		;;
+	--bind-review-scope)
+		if [[ "$MODE" != "append" && "$MODE" != "bind-review-scope" ]]; then
+			echo "convergence-ledger: --bind-review-scope cannot be combined with another mode" >&2
+			usage
+			exit 2
+		fi
+		MODE="bind-review-scope"
 		;;
 	--run-dir)
 		if [[ "$MODE" != "append" && "$MODE" != "run-dir" ]]; then
@@ -1027,12 +1039,57 @@ decision_from_ledger() {
 	echo "continue"
 }
 
+validate_review_scope_cli() {
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 3 ]]; then
+		echo "convergence-ledger: --review-base, --review-head and --review-branch must be supplied together" >&2
+		exit 2
+	fi
+	if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+		! control_free_arg "$REVIEW_BASE" || ! control_free_arg "$REVIEW_HEAD" || ! control_free_arg "$REVIEW_BRANCH"; then
+		echo "convergence-ledger: invalid reviewed scope" >&2
+		exit 2
+	fi
+}
+
+bind_review_scope() {
+	local tmp
+	assert_fresh_ledger_path "$LEDGER_PATH"
+	if [[ ! -f "$LEDGER_PATH" || ! -r "$LEDGER_PATH" || -L "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: ledger not found or not a readable regular file at $LEDGER_PATH" >&2
+		exit 4
+	fi
+	validate_ledger_shape "$LEDGER_PATH"
+	validate_ledger_root_fields "$LEDGER_PATH"
+	check_target_match "$LEDGER_PATH" "$TARGET"
+	if jq -e 'has("review_scope")' "$LEDGER_PATH" >/dev/null; then
+		if jq -e --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" --arg branch "$REVIEW_BRANCH" \
+			'.review_scope == {base_oid:$base,head_oid:$head,branch:$branch}' "$LEDGER_PATH" >/dev/null; then
+			return 0
+		fi
+		echo "convergence-ledger: reviewed scope mismatch for $LEDGER_PATH" >&2
+		exit 3
+	fi
+	tmp="$(mktemp "$(dirname "$LEDGER_PATH")/.ledger.XXXXXX")"
+	if ! jq --arg target "$TARGET" --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" --arg branch "$REVIEW_BRANCH" '
+		.target = (if has("target") and .target != null then .target else $target end)
+		| .review_scope = {base_oid:$base,head_oid:$head,branch:$branch}
+	' "$LEDGER_PATH" >"$tmp"; then
+		rm -f -- "$tmp"
+		echo "convergence-ledger: cannot bind reviewed scope" >&2
+		exit 2
+	fi
+	validate_ledger_shape "$tmp"
+	validate_ledger_root_fields "$tmp"
+	assert_fresh_ledger_path "$LEDGER_PATH"
+	mv -- "$tmp" "$LEDGER_PATH"
+}
+
 REVIEW_SCOPE_ARG_COUNT=$((REVIEW_BASE_SEEN + REVIEW_HEAD_SEEN + REVIEW_BRANCH_SEEN))
 validate_common_args
 gc_have_jq
 
-if [[ "$MODE" != "init" && "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
-	echo "convergence-ledger: reviewed-scope flags are only valid with --init" >&2
+if [[ "$MODE" != "init" && "$MODE" != "bind-review-scope" && "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
+	echo "convergence-ledger: reviewed-scope flags are only valid with --init or --bind-review-scope" >&2
 	exit 2
 fi
 
@@ -1046,16 +1103,10 @@ init)
 		echo "convergence-ledger: --init cannot be combined with round-input flags" >&2
 		exit 2
 	fi
-	if [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 0 && "$REVIEW_SCOPE_ARG_COUNT" -ne 3 ]]; then
-		echo "convergence-ledger: --review-base, --review-head and --review-branch must be supplied together" >&2
-		exit 2
-	fi
 	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 ]]; then
-		if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
-			! control_free_arg "$REVIEW_BASE" || ! control_free_arg "$REVIEW_HEAD" || ! control_free_arg "$REVIEW_BRANCH"; then
-			echo "convergence-ledger: invalid reviewed scope" >&2
-			exit 2
-		fi
+		validate_review_scope_cli
+	elif [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
+		validate_review_scope_cli
 	fi
 	if [[ -e "$LEDGER_PATH" && "$FORCE" -eq 0 ]]; then
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
@@ -1065,6 +1116,14 @@ init)
 	assert_fresh_ledger_path "$LEDGER_PATH"
 	clear_stale_run_dir "$LEDGER_PATH"
 	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K" "$REVIEW_BASE" "$REVIEW_HEAD" "$REVIEW_BRANCH"
+	;;
+bind-review-scope)
+	if [[ -z "$TARGET" || "$FORCE" -eq 1 || "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --bind-review-scope requires --target and cannot use --force or round-input flags" >&2
+		exit 2
+	fi
+	validate_review_scope_cli
+	bind_review_scope
 	;;
 run-dir)
 	if [[ "$FORCE" -eq 1 ]]; then

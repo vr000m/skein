@@ -398,7 +398,14 @@ run_design_delta_sink() {
       collection_complete=false
       continue
     fi
-    [[ -f "$report" ]] || continue
+    if [[ ! -e "$report" && ! -L "$report" ]]; then
+      continue
+    fi
+    if [[ ! -f "$report" ]]; then
+      echo "warning: non-regular fixer report skipped: $report" >&2
+      collection_complete=false
+      continue
+    fi
     if ! jq -e 'type == "object"' "$report" >/dev/null 2>&1; then
       echo "warning: malformed fixer report skipped: $report" >&2
       collection_complete=false
@@ -514,7 +521,7 @@ run_design_delta_sink() {
 run_design_delta_sink || true
 ```
 
-Reports are read from the ledger's completed rounds, in round order. Every guarded fixer report is parsed independently. An absent `design_deltas` value is a known empty contribution. An unsafe, malformed, non-array, or unreadable selected report makes the whole collection unknown: warn `Design deltas: unknown — <reason>`, stop the sink, and never manufacture `[]` from the remaining reports. Only a complete collection can be counted as known zero or passed to the writer as known nonzero. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so known non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. Here, "established" requires a complete collection. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A known non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
+Reports are read from the ledger's completed rounds, in round order. Every guarded fixer report is parsed independently. A missing report, or an absent `design_deltas` value in a regular report, is a known empty contribution. An unsafe, existing non-regular, malformed, non-array, or unreadable selected report makes the whole collection unknown: warn `Design deltas: unknown — <reason>`, stop the sink, and never manufacture `[]` from the remaining reports. Only a complete collection can be counted as known zero or passed to the writer as known nonzero. Resolver failure or unusable output is replaced with a `status: none` resolution and still passed to `write-design-deltas.sh`, so known non-empty deltas reach the guarded sidecar. Sidecar-only mode bypasses resolution and lets the writer report its own reason. Sink failure never changes the terminal token or exit status. Print `Design deltas: none` only for an empty array whose count was established successfully. Here, "established" requires a complete collection. If collection fails or the count cannot be established, warn `Design deltas: unknown — <reason>` and never print `none`. A known non-empty array that cannot be written returns `sink: "dropped"` with a non-empty reason, and the sink warns `Design deltas: N dropped — <reason>`. Otherwise print the returned plan or sidecar path in the final report. Leave a plan edit uncommitted.
 
 <!-- BEGIN REPORT STEP -->
 Report the terminal status, the gates passed, the findings fixed per round, and (for `success_with_quarantine`, `regression`, or `non-converge`) the full quarantine queue / regressed-key / non-convergence rationale.
