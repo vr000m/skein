@@ -2151,8 +2151,31 @@ run_awk_interval_test() {
 	fi
 }
 
+mutation_changed() {
+	local source="$1" mutant="$2"
+	! cmp -s "$source" "$mutant"
+}
+
+mutation_assert_replaced_once() {
+	local name="$1" source="$2" mutant="$3" before="$4" after="$5"
+	local source_before source_after mutant_before mutant_after
+	source_before="$(grep -F -c -- "$before" "$source" || true)"
+	source_after="$(grep -F -c -- "$after" "$source" || true)"
+	mutant_before="$(grep -F -c -- "$before" "$mutant" || true)"
+	mutant_after="$(grep -F -c -- "$after" "$mutant" || true)"
+	if [[ "$source_before" -ne 1 || "$mutant_before" -ne 0 || "$mutant_after" -ne $((source_after + 1)) ]] ||
+		! mutation_changed "$source" "$mutant"; then
+		fail "mutation $name did not replace exactly one intended enforcement site"
+		return 1
+	fi
+}
+
 mutation_expect_failure() {
-	local name="$1" probe="$2" mutant="$3" rc
+	local name="$1" probe="$2" mutant="$3" source="${4:-$WRITER}" rc
+	if ! mutation_changed "$source" "$mutant"; then
+		fail "mutation $name constructor produced a byte-identical mutant"
+		return
+	fi
 	set +e
 	"$probe" "$mutant" >/dev/null 2>&1
 	rc=$?
@@ -2165,12 +2188,19 @@ mutation_expect_failure() {
 }
 
 run_mutation_checks() {
-	local mutant_root mutant_dir marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant sidecar_temp_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant authority_temp_mutant awk_agreement_mutant tracked_sidecar_mutant dropped_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
+	local mutant_root mutant_dir noop_mutant marker_mutant strict_marker_mutant trim_mutant interval_mutant sidecar_mutant sidecar_plan_mutant sidecar_temp_mutant fenced_mutant commonmark_mutant sanitize_mutant controls_mutant variation_mutant active_mutant field_mutant shape_mutant provenance_mutant resolver_mutant zero_diff_mutant stat_mutant separator_mutant newline_mutant precut_mutant length_mutant entity_mutant entity_order_mutant sidecar_only_mutant unclosed_mutant lone_cr_mutant isolation_mutant post_authority_mutant authority_temp_mutant awk_agreement_mutant tracked_sidecar_mutant dropped_mutant env_scrub_mutant git_error_mutant unicode_marker_mutant rendered_boundary_mutant quote_path_mutant byte_allowlist_mutant marker_output_mutant marker_cmp_mutant control_path_writer_mutant control_path_resolver_mutant
 	mutant_root="$WORKDIR/mutants/skills"
 	mutant_dir="$mutant_root/review-gauntlet/lib"
 	mkdir -p "$mutant_dir" "$mutant_root/conduct"
 	cp "$STATE_GUARD" "$mutant_dir/state-path-guard.sh"
 	cp "$MARKER_PY" "$mutant_root/conduct/marker.py"
+	noop_mutant="$mutant_dir/noop-writer.sh"
+	cp "$WRITER" "$noop_mutant"
+	if mutation_changed "$WRITER" "$noop_mutant"; then
+		fail "mutation constructor accepts a byte-identical mutant"
+	else
+		pass "mutation constructor rejects a byte-identical mutant"
+	fi
 
 	marker_mutant="$mutant_dir/marker-writer.sh"
 	sed -e 's/if (marker_count == 1) {/if (marker_count >= 1) {/' \
@@ -2197,10 +2227,14 @@ run_mutation_checks() {
 	mutation_expect_failure awk-interval run_awk_interval_probe "$interval_mutant"
 
 	sidecar_mutant="$mutant_dir/sidecar-writer.sh"
-	sed 's#upsert_section "$sidecar" "$output_tmp" 0 0 private || drop_nonempty "cannot update sidecar temp file"#cp "$payload" "$output_tmp" || drop_nonempty "cannot update sidecar temp file"#' \
+	sed 's#! upsert_section "$sidecar" "$output_tmp" 0 0 private#! cp "$payload" "$output_tmp"#' \
 		"$WRITER" >"$sidecar_mutant"
-	chmod +x "$sidecar_mutant"
-	mutation_expect_failure sidecar-upsert run_sidecar_probe "$sidecar_mutant"
+	if mutation_assert_replaced_once sidecar-upsert "$WRITER" "$sidecar_mutant" \
+		'! upsert_section "$sidecar" "$output_tmp" 0 0 private' \
+		'! cp "$payload" "$output_tmp"'; then
+		chmod +x "$sidecar_mutant"
+		mutation_expect_failure sidecar-upsert run_sidecar_probe "$sidecar_mutant"
+	fi
 
 	sidecar_plan_mutant="$mutant_dir/sidecar-plan-writer.sh"
 	sed 's#state_dir="$REPO_ROOT/.gauntlet"#printf '\''mutated\\n'\'' >> "$REPO_ROOT/$plan"\nstate_dir="$REPO_ROOT/.gauntlet"#' \
@@ -2259,7 +2293,9 @@ run_mutation_checks() {
 	sed 's#if cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then#if LC_ALL=C sed '\''s/^<!-- reviewed:/<!-- changed:/'\'' "$output_tmp" >"${output_tmp}.marker" \&\& mv "${output_tmp}.marker" "$output_tmp" \&\& cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then#' \
 		"$WRITER" >"$marker_output_mutant"
 	chmod +x "$marker_output_mutant"
-	if run_marker_line_cmp_probe "$marker_output_mutant"; then
+	if ! mutation_changed "$WRITER" "$marker_output_mutant"; then
+		fail "mutation marker-output constructor produced a byte-identical mutant"
+	elif run_marker_line_cmp_probe "$marker_output_mutant"; then
 		pass "marker-line cmp guard catches a rewritten marker byte"
 	else
 		fail "marker-line cmp guard did not catch a rewritten marker byte"
@@ -2267,7 +2303,7 @@ run_mutation_checks() {
 	marker_cmp_mutant="$mutant_dir/marker-cmp-writer.sh"
 	sed 's/head -n "$marker_line"/head -n "$((marker_line - 1))"/g' "$marker_output_mutant" >"$marker_cmp_mutant"
 	chmod +x "$marker_cmp_mutant"
-	mutation_expect_failure marker-line-cmp run_marker_line_cmp_probe "$marker_cmp_mutant"
+	mutation_expect_failure marker-line-cmp run_marker_line_cmp_probe "$marker_cmp_mutant" "$marker_output_mutant"
 
 	control_path_writer_mutant="$mutant_dir/control-path-writer.sh"
 	sed '/plan_path_has_control=.*test/c\
@@ -2276,7 +2312,9 @@ run_mutation_checks() {
 	control_path_resolver_mutant="$mutant_dir/control-path-resolver.sh"
 	sed '/has_control_byte "$input" \&\& return 1/d' "$RESOLVER" >"$control_path_resolver_mutant"
 	chmod +x "$control_path_resolver_mutant"
-	if run_control_path_probe "$control_path_writer_mutant" "$control_path_resolver_mutant" >/dev/null 2>&1; then
+	if ! mutation_changed "$WRITER" "$control_path_writer_mutant" || ! mutation_changed "$RESOLVER" "$control_path_resolver_mutant"; then
+		fail "mutation control-plan-path constructor produced a byte-identical mutant"
+	elif run_control_path_probe "$control_path_writer_mutant" "$control_path_resolver_mutant" >/dev/null 2>&1; then
 		fail "mutation control-plan-path survived run_control_path_probe"
 	else
 		pass "mutation control-plan-path is caught by run_control_path_probe"
@@ -2429,18 +2467,18 @@ run_mutation_checks() {
 	resolver_mutant="$mutant_dir/head-resolver.sh"
 	sed 's/"$base_oid"\.\."$head_oid"/"$base_oid"..HEAD/' "$RESOLVER" >"$resolver_mutant"
 	chmod +x "$resolver_mutant"
-	mutation_expect_failure reviewed-head run_head_probe "$resolver_mutant"
+	mutation_expect_failure reviewed-head run_head_probe "$resolver_mutant" "$RESOLVER"
 
 	quote_path_mutant="$mutant_dir/quoted-path-resolver.sh"
 	sed -e 's/ -c core\.quotepath=false//' -e 's/ --name-only -z / --name-only /' -e "s/read -r -d '' candidate/read -r candidate/" "$RESOLVER" >"$quote_path_mutant"
 	chmod +x "$quote_path_mutant"
-	mutation_expect_failure git-quoted-plan-path run_quoted_path_probe "$quote_path_mutant"
+	mutation_expect_failure git-quoted-plan-path run_quoted_path_probe "$quote_path_mutant" "$RESOLVER"
 
 	zero_diff_mutant="$mutant_dir/zero-diff-resolver.sh"
 	sed 's#emit none "" "no changed plan"#emit unique "docs/dev_plans/20260101-feature-old-ledger-history.md" "branch slug matched one plan"#' \
 		"$RESOLVER" >"$zero_diff_mutant"
 	chmod +x "$zero_diff_mutant"
-	mutation_expect_failure zero-diff-plan run_zero_diff_probe "$zero_diff_mutant"
+	mutation_expect_failure zero-diff-plan run_zero_diff_probe "$zero_diff_mutant" "$RESOLVER"
 
 	stat_mutant="$mutant_dir/stat-writer.sh"
 	sed '/plan_mode=.*stat -c/c\
@@ -3058,7 +3096,9 @@ fi
 hardlink_mutant="$WORKDIR/writer-hardlink-mutant.sh"
 sed 's/\[\[ "$link_count" == 1 \]\]/true/g' "$WRITER" >"$hardlink_mutant"
 chmod +x "$hardlink_mutant"
-if run_writer_hardlink_probe "$hardlink_mutant"; then
+if ! mutation_changed "$WRITER" "$hardlink_mutant"; then
+	fail "mutation writer-hardlink constructor produced a byte-identical mutant"
+elif run_writer_hardlink_probe "$hardlink_mutant"; then
 	fail "mutation removing writer single-link checks survived the hardlink matrix"
 else
 	pass "writer hardlink matrix catches removal of the single-link invariant"
