@@ -26,6 +26,8 @@ set -euo pipefail
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 LEDGER_SCRIPT="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/convergence-ledger.sh"
 CLAUDE_COMMON="$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/gauntlet-common.sh"
+CODEX_LEDGER_SCRIPT="$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/convergence-ledger.sh"
+CODEX_LEDGER_LIB="${CODEX_LEDGER_SCRIPT%/*}"
 
 # gc_hash FILE — hash via gauntlet-common.sh's own gc_sha1 helper (not a
 # hand-rolled shasum/sha1sum fallback) so this test never drifts from the
@@ -469,9 +471,15 @@ else
 	fail "--init on an absent path creates a fresh ledger file (file not created)"
 fi
 init_target="$(jq -r '.target' "$INIT_L")"
+init_run_id="$(jq -r '.run_id' "$INIT_L")"
 init_counter="$(jq -r '.loop_counter' "$INIT_L")"
 init_rounds="$(jq -r '.rounds | length' "$INIT_L")"
 assert_eq "$init_target" "branch:init-fresh" "--init records the given --target"
+if [[ "$init_run_id" =~ ^[0-9a-f]{20}$ ]]; then
+	pass "--init records a stable opaque run id"
+else
+	fail "--init run id has the wrong shape: $init_run_id"
+fi
 assert_eq "$init_counter" "0" "--init creates loop_counter == 0"
 assert_eq "$init_rounds" "0" "--init creates an empty rounds array"
 
@@ -484,13 +492,190 @@ assert_eq "$reinit_exit" "6" "--init on an existing path without --force refuses
 # Populate the existing ledger with a round + distinct target, then --force
 # reinitialize and confirm the old state is gone.
 "$LEDGER_SCRIPT" --ledger "$INIT_L" --count 5 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+assert_eq "$(jq -r '.run_id' "$INIT_L")" "$init_run_id" "appending a round preserves the run id"
 "$LEDGER_SCRIPT" --init --force --ledger "$INIT_L" --target "branch:init-forced"
 forced_target="$(jq -r '.target' "$INIT_L")"
+forced_run_id="$(jq -r '.run_id' "$INIT_L")"
 forced_counter="$(jq -r '.loop_counter' "$INIT_L")"
 forced_rounds="$(jq -r '.rounds | length' "$INIT_L")"
 assert_eq "$forced_target" "branch:init-forced" "--init --force truncates and reinitializes with the new target"
+if [[ "$forced_run_id" =~ ^[0-9a-f]{20}$ && "$forced_run_id" != "$init_run_id" ]]; then
+	pass "--init --force assigns a fresh run id"
+else
+	fail "--init --force did not replace the run id ($init_run_id -> $forced_run_id)"
+fi
 assert_eq "$forced_counter" "0" "--init --force resets loop_counter back to 0"
 assert_eq "$forced_rounds" "0" "--init --force discards prior round history (old rounds gone)"
+
+SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$SCOPE_L")
+scope_base="$(printf 'a%.0s' {1..40})"
+scope_head="$(printf 'b%.0s' {1..40})"
+"$LEDGER_SCRIPT" --init --ledger "$SCOPE_L" --target "branch:scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
+if jq -e --arg base "$scope_base" --arg head "$scope_head" \
+	'.review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope-name"}' "$SCOPE_L" >/dev/null; then
+	pass "--init atomically records a normal slash-and-hyphen reviewed scope"
+else
+	fail "--init did not record the reviewed scope"
+fi
+"$LEDGER_SCRIPT" --ledger "$SCOPE_L" --count 1 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+if jq -e --arg head "$scope_head" '.review_scope.head_oid == $head' "$SCOPE_L" >/dev/null; then
+	pass "appending a round preserves the reviewed scope"
+else
+	fail "appending a round changed the reviewed scope"
+fi
+
+BIND_SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BIND_SCOPE_L")
+"$LEDGER_SCRIPT" --init --ledger "$BIND_SCOPE_L" --target "branch:bind-scope"
+"$LEDGER_SCRIPT" --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--count 1 --structural 0 --local 1 --pass-type confirm --quarantine 0 >/dev/null
+bind_run_id="$(jq -r '.run_id' "$BIND_SCOPE_L")"
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
+if jq -e --arg run_id "$bind_run_id" --arg base "$scope_base" --arg head "$scope_head" '
+	.run_id == $run_id
+	and (.rounds | length == 1)
+	and .review_scope == {base_oid:$base,head_oid:$head,branch:"feature/scope-name"}
+' "$BIND_SCOPE_L" >/dev/null; then
+	pass "--bind-review-scope atomically adds scope without replacing legacy run state"
+else
+	fail "--bind-review-scope changed legacy state beyond the scope binding"
+fi
+bind_hash="$(gc_hash "$BIND_SCOPE_L")"
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name
+assert_eq "$(gc_hash "$BIND_SCOPE_L")" "$bind_hash" "--bind-review-scope is byte-idempotent for the same scope"
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_SCOPE_L" --target "branch:bind-scope" \
+	--review-base "$scope_base" --review-head "$(printf 'c%.0s' {1..40})" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_mismatch_rc=$?
+set -e
+if [[ "$bind_mismatch_rc" -eq 3 && "$(gc_hash "$BIND_SCOPE_L")" == "$bind_hash" ]]; then
+	pass "--bind-review-scope refuses a different scope without changing the ledger"
+else
+	fail "--bind-review-scope mismatch was not fail-closed (rc=$bind_mismatch_rc)"
+fi
+
+BIND_ABSENT_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BIND_ABSENT_L")
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$BIND_ABSENT_L" --target "branch:bind-absent" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_absent_rc=$?
+set -e
+if [[ "$bind_absent_rc" -eq 4 && ! -e "$BIND_ABSENT_L" ]]; then
+	pass "--bind-review-scope refuses an absent ledger without creating state"
+else
+	fail "--bind-review-scope absent-ledger cell was not read-before-write (rc=$bind_absent_rc)"
+fi
+
+BIND_GUARD_DIR="$(mktemp -d)"
+TMP_DIRS+=("$BIND_GUARD_DIR")
+bind_victim="$BIND_GUARD_DIR/victim.json"
+bind_link="$BIND_GUARD_DIR/link.json"
+"$LEDGER_SCRIPT" --init --ledger "$bind_victim" --target "branch:bind-guard"
+bind_victim_hash="$(gc_hash "$bind_victim")"
+ln -s "$bind_victim" "$bind_link"
+set +e
+"$LEDGER_SCRIPT" --bind-review-scope --ledger "$bind_link" --target "branch:bind-guard" \
+	--review-base "$scope_base" --review-head "$scope_head" --review-branch feature/scope-name \
+	>"$TMP_SINK" 2>&1
+bind_symlink_rc=$?
+set -e
+if [[ "$bind_symlink_rc" -ne 0 && "$(gc_hash "$bind_victim")" == "$bind_victim_hash" ]]; then
+	pass "--bind-review-scope refuses a symlink without changing its target"
+else
+	fail "--bind-review-scope symlink cell changed the target (rc=$bind_symlink_rc)"
+fi
+
+BAD_SCOPE_L="$(mktemp -u)"
+TMP_LEDGERS+=("$BAD_SCOPE_L")
+set +e
+"$LEDGER_SCRIPT" --init --ledger "$BAD_SCOPE_L" --target "branch:bad-scope" --review-base "$scope_base" >/dev/null 2>&1
+bad_scope_rc=$?
+set -e
+if [[ "$bad_scope_rc" -eq 2 && ! -e "$BAD_SCOPE_L" ]]; then
+	pass "--init rejects a partial reviewed scope before writing"
+else
+	fail "--init partial reviewed scope was not rejected atomically (rc=$bad_scope_rc)"
+fi
+
+review_scope_init_control_probe() {
+	local script="$1" probe_dir="$2" label value ledger rc i
+	local -a labels values
+	mkdir -p "$probe_dir"
+	labels=(lf cr c0-01 c0-1f del)
+	values=($'\n' $'\r' $'\001' $'\037' $'\177')
+	for ((i = 0; i < ${#labels[@]}; i++)); do
+		label="${labels[$i]}"
+		value="${values[$i]}"
+		ledger="$probe_dir/ledger-$label.json"
+		rc=0
+		"$script" --init --ledger "$ledger" --target branch:scope \
+			--review-base "$scope_base" --review-head "$scope_head" \
+			--review-branch "feature/x${value}bad" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 && ! -e "$ledger" ]] || return 1
+	done
+}
+
+SCOPE_INIT_CONTROL_DIR="$(mktemp -d)"
+TMP_DIRS+=("$SCOPE_INIT_CONTROL_DIR")
+if review_scope_init_control_probe "$CODEX_LEDGER_SCRIPT" "$SCOPE_INIT_CONTROL_DIR/live"; then
+	pass "--init rejects LF, CR, 0x01, 0x1f, and DEL across the whole review-branch value"
+else
+	fail "--init review-branch control-byte state space"
+fi
+pass "--init NUL argv cell is unrepresentable because exec argv strings cannot contain NUL"
+
+SCOPE_INIT_MUTANT_LIB="$SCOPE_INIT_CONTROL_DIR/mutant-lib"
+mkdir -p "$SCOPE_INIT_MUTANT_LIB"
+cp "$CODEX_LEDGER_LIB"/* "$SCOPE_INIT_MUTANT_LIB/"
+# shellcheck disable=SC2016  # literal sed program mutates shell source text.
+sed 's/! control_free_arg "$REVIEW_BRANCH"/printf '\''%s'\'' "$REVIEW_BRANCH" | LC_ALL=C grep -q '\''[[:cntrl:]]'\''/' \
+	"$CODEX_LEDGER_SCRIPT" >"$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh"
+if review_scope_init_control_probe "$SCOPE_INIT_MUTANT_LIB/convergence-ledger.sh" "$SCOPE_INIT_CONTROL_DIR/mutant"; then
+	fail "mutation restoring line-oriented init validation survived the LF cell"
+else
+	pass "mutation restoring line-oriented init validation is caught"
+fi
+
+review_scope_control_probe() {
+	local script="$1" probe_dir="$2" escaped branch_json ledger rc
+	mkdir -p "$probe_dir"
+	for escaped in '\u0000' '\u0001' '\u001f' '\u007f' '\r' '\n'; do
+		branch_json="\"feature/x${escaped}bad\""
+		ledger="$probe_dir/ledger-${escaped//\\/}.json"
+		jq -cn --arg base "$scope_base" --arg head "$scope_head" --argjson branch "$branch_json" \
+			'{run_id:"aaaaaaaaaaaaaaaaaaaa",target:"branch:scope",review_scope:{base_oid:$base,head_oid:$head,branch:$branch},cap:10,k:2,loop_counter:0,rounds:[]}' >"$ledger"
+		rc=0
+		"$script" --last-decision --ledger "$ledger" >/dev/null 2>&1 || rc=$?
+		[[ "$rc" -eq 2 ]] || return 1
+	done
+}
+
+SCOPE_CONTROL_DIR="$(mktemp -d)"
+TMP_DIRS+=("$SCOPE_CONTROL_DIR")
+if review_scope_control_probe "$CODEX_LEDGER_SCRIPT" "$SCOPE_CONTROL_DIR/live"; then
+	pass "review_scope.branch rejects NUL, C0, DEL, CR, and LF before consumption"
+else
+	fail "review_scope.branch control-byte state space"
+fi
+
+SCOPE_MUTANT_LIB="$SCOPE_CONTROL_DIR/mutant-lib"
+mkdir -p "$SCOPE_MUTANT_LIB"
+cp "$CODEX_LEDGER_LIB"/* "$SCOPE_MUTANT_LIB/"
+sed 's/and (\.branch | control_free))/and (.branch | type == "string"))/' "$CODEX_LEDGER_SCRIPT" >"$SCOPE_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$SCOPE_MUTANT_LIB/convergence-ledger.sh"
+if review_scope_control_probe "$SCOPE_MUTANT_LIB/convergence-ledger.sh" "$SCOPE_CONTROL_DIR/mutant"; then
+	fail "mutation removing review_scope branch control validation survived the state-space probe"
+else
+	pass "mutation removing review_scope branch control validation is caught"
+fi
 
 # --- 15b. --run-dir and stale round-dir clearing (output-formats Phase 2) ---
 
@@ -699,9 +884,11 @@ else
 	fail "--run-dir proceeded despite a symlinked report path"
 fi
 
-# --init and --init --force clear a stale <stem>/ (round-* entries only) and
-# the stale <stem>.report.html, and nothing else. They only ever act inside a
-# directory named .gauntlet (the shape gc_ledger_path produces).
+# --init and --init --force clear a stale <stem>/ containing recognized
+# writer-owned entries (round-*, open-guardrail8.jsonl, seam-tripwire.json,
+# .seam-tripwire.tmp) and the stale
+# <stem>.report.html, and nothing else. They only ever act inside a directory
+# named .gauntlet (the shape gc_ledger_path produces).
 RD_G="$RD_BASE/.gauntlet"
 mkdir -p "$RD_G"
 seed_stale() {
@@ -709,6 +896,281 @@ seed_stale() {
 	printf '{}\n' >"$1/round-1/reconciled.json"
 	printf '{}\n' >"$1/round-2/reconciled.json"
 }
+
+run_open_guardrail8_cleanup_probe() {
+	local script="$1" mode="$2" repo ledger stem
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-$mode.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
+	printf 'stale temp\n' >"$stem/.seam-tripwire.tmp"
+	if [[ "$mode" == force ]]; then
+		printf '{"target":"old"}\n' >"$ledger"
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >/dev/null 2>&1 || return 1
+	fi
+	[[ -f "$ledger" && ! -e "$stem" ]]
+}
+
+run_open_guardrail8_unknown_probe() {
+	local script="$1" mode="${2:-plain}" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-unknown.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	printf '{"key":"a"}\n' >"$stem/open-guardrail8.jsonl"
+	printf '{"round":1,"seams":[]}\n' >"$stem/seam-tripwire.json"
+	printf 'stale temp\n' >"$stem/.seam-tripwire.tmp"
+	printf 'keep\n' >"$stem/unknown.txt"
+	if [[ "$mode" == force ]]; then
+		printf '{"target":"old"}\n' >"$ledger"
+	fi
+	set +e
+	if [[ "$mode" == force ]]; then
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	fi
+	rc=$?
+	set -e
+	[[ "$rc" -eq 0 && -f "$ledger" && "$(jq -r .target "$ledger")" == fresh &&
+	! -e "$stem/round-1" && ! -e "$stem/open-guardrail8.jsonl" &&
+	! -e "$stem/seam-tripwire.json" && ! -e "$stem/.seam-tripwire.tmp" &&
+	-f "$stem/unknown.txt" ]] &&
+		grep -Fq "$stem/unknown.txt" "$TMP_SINK" &&
+		grep -Fq 'preserving unknown stale run directory entry' "$TMP_SINK"
+}
+
+run_unknown_entry_alone_probe() {
+	local script="$1" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-unknown-alone.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem"
+	printf 'keep\n' >"$stem/unknown.txt"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 0 && -f "$ledger" && "$(cat "$stem/unknown.txt")" == keep ]] &&
+		grep -Fq "$stem/unknown.txt" "$TMP_SINK"
+}
+
+run_owned_wrong_type_probe() {
+	local script="$1" repo ledger stem rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-owned-wrong-type.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/.seam-tripwire.tmp"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -d "$stem/.seam-tripwire.tmp" ]] &&
+		grep -Fq "$stem/.seam-tripwire.tmp" "$TMP_SINK"
+}
+
+run_tracked_owned_cleanup_probe() {
+	local script="$1" mode="$2" name="$3" repo ledger stem owned before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-tracked-$mode-${name//./-}.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem"
+	owned="$stem/$name"
+	printf 'force-tracked-owned-bytes\n' >"$owned"
+	git -C "$repo" add -f -- "${owned#"$repo"/}"
+	before="$(shasum -a 256 <"$owned")"
+	[[ "$mode" == force ]] && printf '{"target":"old"}\n' >"$ledger"
+	set +e
+	if [[ "$mode" == force ]]; then
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	fi
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && -f "$owned" && "$before" == "$(shasum -a 256 <"$owned")" ]] &&
+		grep -Fq 'refusing to remove tracked or indeterminate stale run file' "$TMP_SINK"
+}
+
+run_open_guardrail8_symlink_probe() {
+	local script="$1" repo ledger stem outside before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-open-symlink.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	outside="$repo/outside.jsonl"
+	printf 'precious\n' >"$outside"
+	before="$(shasum -a 256 <"$outside")"
+	ln -s "$outside" "$stem/open-guardrail8.jsonl"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -L "$stem/open-guardrail8.jsonl" && "$before" == "$(shasum -a 256 <"$outside")" ]] &&
+		grep -Fq 'refusing to operate on symlink' "$TMP_SINK"
+}
+
+run_seam_tripwire_symlink_probe() {
+	local script="$1" repo ledger stem outside before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-seam-symlink.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem/round-1"
+	printf '{}\n' >"$stem/round-1/reconciled.json"
+	outside="$repo/outside.json"
+	printf 'precious\n' >"$outside"
+	before="$(shasum -a 256 <"$outside")"
+	ln -s "$outside" "$stem/seam-tripwire.json"
+	set +e
+	(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && ! -e "$ledger" && -L "$stem/seam-tripwire.json" && "$before" == "$(shasum -a 256 <"$outside")" ]] &&
+		grep -Fq 'refusing to operate on symlink' "$TMP_SINK"
+}
+
+if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" plain; then
+	pass "Codex --init clears round-*, open-guardrail8.jsonl, and seam-tripwire.json"
+else
+	fail "Codex --init did not clear every writer-owned run file"
+fi
+if run_open_guardrail8_cleanup_probe "$CODEX_LEDGER_SCRIPT" force; then
+	pass "Codex --init --force clears round-*, open-guardrail8.jsonl, and seam-tripwire.json"
+else
+	fail "Codex --init --force did not clear every writer-owned run file"
+fi
+if run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT" plain &&
+	run_open_guardrail8_unknown_probe "$CODEX_LEDGER_SCRIPT" force; then
+	pass "Codex init modes remove owned state while preserving and naming unknown entries"
+else
+	fail "Codex init mode retained owned state or changed unknown run-dir content"
+fi
+if run_unknown_entry_alone_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex init succeeds with a warning and preserves a lone unknown entry"
+else
+	fail "Codex init removed or failed on a lone unknown run-dir entry"
+fi
+if run_open_guardrail8_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a symlinked open-guardrail8.jsonl"
+else
+	fail "Codex stale cleanup did not refuse a symlinked open-guardrail8.jsonl"
+fi
+if run_seam_tripwire_symlink_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a symlinked seam-tripwire.json"
+else
+	fail "Codex stale cleanup did not refuse a symlinked seam-tripwire.json"
+fi
+if run_owned_wrong_type_probe "$CODEX_LEDGER_SCRIPT"; then
+	pass "Codex stale cleanup refuses a wrong-type owned temp entry and names it"
+else
+	fail "Codex stale cleanup accepted or changed a wrong-type owned temp entry"
+fi
+tracked_cleanup_ok=true
+for tracked_mode in plain force; do
+	for tracked_name in open-guardrail8.jsonl seam-tripwire.json .seam-tripwire.tmp; do
+		run_tracked_owned_cleanup_probe "$CODEX_LEDGER_SCRIPT" "$tracked_mode" "$tracked_name" || tracked_cleanup_ok=false
+	done
+done
+if [[ "$tracked_cleanup_ok" == true ]]; then
+	pass "Codex init modes preserve every force-tracked writer-owned basename"
+else
+	fail "Codex init removed or changed a force-tracked writer-owned basename"
+fi
+RD_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_MUTANT_LIB/ledger-promote.jq"
+sed 's/"open-guardrail8.jsonl"/"open-guardrail8-removed.jsonl"/' "$CODEX_LEDGER_SCRIPT" >"$RD_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing open-guardrail8.jsonl ownership survived stale-cleanup regression"
+else
+	pass "mutation removing open-guardrail8.jsonl ownership is caught by stale-cleanup regression"
+fi
+RD_TRACKED_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_TRACKED_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_TRACKED_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_TRACKED_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_TRACKED_MUTANT_LIB/ledger-promote.jq"
+# The literal shell source is the mutation target.
+# shellcheck disable=SC2016
+sed 's/if \[\[ ! -d "$entry" \]\] && ! runtime_path_is_untracked "$entry"; then/if false; then/' \
+	"$CODEX_LEDGER_SCRIPT" >"$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh"
+if run_tracked_owned_cleanup_probe "$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh" force open-guardrail8.jsonl; then
+	fail "mutation removing tracked cleanup refusal survived the force-tracked cell"
+else
+	pass "force-tracked cleanup cell catches removal of the trackedness refusal"
+fi
+RD_SEAM_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_SEAM_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_SEAM_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_SEAM_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_SEAM_MUTANT_LIB/ledger-promote.jq"
+sed 's/"seam-tripwire.json"/"seam-tripwire-removed.json"/' "$CODEX_LEDGER_SCRIPT" >"$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_SEAM_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing seam-tripwire.json ownership survived stale-cleanup regression"
+else
+	pass "mutation removing seam-tripwire.json ownership is caught by stale-cleanup regression"
+fi
+RD_TEMP_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_TEMP_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_TEMP_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_TEMP_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_TEMP_MUTANT_LIB/ledger-promote.jq"
+sed 's/ ".seam-tripwire.tmp"//' "$CODEX_LEDGER_SCRIPT" >"$RD_TEMP_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_TEMP_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_cleanup_probe "$RD_TEMP_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation removing .seam-tripwire.tmp ownership survived stale-cleanup regression"
+else
+	pass "mutation removing .seam-tripwire.tmp ownership is caught by its cleanup cell"
+fi
+RD_REMOVAL_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_REMOVAL_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_REMOVAL_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_REMOVAL_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_REMOVAL_MUTANT_LIB/ledger-promote.jq"
+awk '
+  /# BEGIN OWNED ENTRY REMOVAL/ { skip = 1; next }
+  /# END OWNED ENTRY REMOVAL/ { skip = 0; next }
+  !skip { print }
+' "$CODEX_LEDGER_SCRIPT" >"$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh"
+if run_open_guardrail8_unknown_probe "$RD_REMOVAL_MUTANT_LIB/convergence-ledger.sh" plain; then
+	fail "mutation skipping owned-file removal survived the mixed stale-state cell"
+else
+	pass "mutation skipping owned-file removal is caught by the mixed stale-state cell"
+fi
 RD_I="$RD_G/ledger-init.json"
 RD_I_STEM="$RD_G/ledger-init"
 seed_stale "$RD_I_STEM"
@@ -788,8 +1250,10 @@ rd_err="$(cd "$RD_BASE" && "$LEDGER_SCRIPT" --init --ledger "$RD_G/ledger-mixed.
 rc=$?
 set -e
 assert_eq "$rc" "0" "--init with a non-round-shaped <stem>/ still succeeds"
-assert_eq "$(rd_tree_hash "$RD_M_STEM")" "$rd_before" "--init leaves a <stem>/ with non-round-* entries untouched"
-if [[ "$rd_err" == *leaving* ]]; then
+# Unknown entries survive byte-for-byte; the recognized writer-owned run state (round-*) is cleared.
+assert_eq "$(cat "$RD_M_STEM/notes.txt")$(cat "$RD_M_STEM/.hidden")" "not a roundhidden" "--init leaves non-round-* entries in a <stem>/ untouched"
+assert_eq "$(find "$RD_M_STEM" -maxdepth 1 -name 'round-*' | wc -l | tr -d ' ')" "0" "--init clears the writer-owned round-* entries even when unknown entries stay"
+if [[ "$rd_err" == *preserving* ]]; then
 	pass "--init warns when it leaves a non-round-shaped <stem>/ in place"
 else
 	fail "--init gave no warning for a non-round-shaped <stem>/ (stderr: $rd_err)"
@@ -803,7 +1267,7 @@ rc=$?
 set -e
 assert_eq "$rc" "0" "--init --force succeeds when nested user data blocks stale cleanup"
 assert_eq "$(cat "$RD_NESTED_STEM/round-1/nested/precious.txt")" "user data" "--init --force preserves nested user content in stale round directories"
-if [[ "$rd_nested_err" == *leaving* ]]; then
+if [[ "$rd_nested_err" == *preserving* || "$rd_nested_err" == *leaving* ]]; then
 	pass "--init --force warns when nested user data blocks stale cleanup"
 else
 	fail "--init --force did not warn when nested user data blocked stale cleanup"
@@ -973,16 +1437,16 @@ else
 	fail "convergence-ledger.sh is byte-identical across the Claude and Codex mirrors"
 fi
 
-# --- 18. Phase 3 golden/byte-parity: flag-absent behaviour is UNCHANGED ---
+# --- 18. Phase 3 golden/byte-parity: flag-absent key behaviour is unchanged -
 # Plan: docs/dev_plans/20260823-feature-review-skills-resilience.md, Phase 3,
 # Goal: "Existing ledger decisions are byte-for-byte unchanged when the key
 # flags [--present-keys/--claimed-keys] are absent." This locks the exact
 # on-disk ledger shape produced by an append call that never mentions the new
 # flags: no present_keys/claimed_keys/fixed_keys pollution, decision tokens
 # unchanged from the pre-Phase-3 golden values asserted in sections 1-17
-# above. The golden JSON below is constructed inline (via jq, not a checked-in
-# fixture) from the documented pre-Phase-3 schema, so this test does not
-# depend on a byte-identical fixture surviving unrelated formatting drift.
+# above. The run_id added later is injected from the fresh ledger because its
+# opaque value is intentionally different per initialization. The rest of the
+# golden JSON is constructed inline (via jq, not a checked-in fixture).
 
 golden_flag_absent_round() {
 	local label="$1" count="$2" structural="$3" local_="$4" pass_type="$5" quarantine="$6" expected_json="$7"
@@ -993,8 +1457,9 @@ golden_flag_absent_round() {
 		--quarantine "$quarantine" >/dev/null
 	local actual
 	actual="$(jq -S . "$ledger")"
-	local expected
-	expected="$(jq -S . <<<"$expected_json")"
+	local expected run_id
+	run_id="$(jq -r '.run_id' "$ledger")"
+	expected="$(jq -S --arg run_id "$run_id" '. + {run_id:$run_id}' <<<"$expected_json")"
 	assert_eq "$actual" "$expected" "$label: flag-absent append produces byte-for-byte-identical ledger shape (no present_keys/claimed_keys/fixed_keys pollution)"
 }
 
@@ -1799,6 +2264,47 @@ rlok_rc=0
 rlok_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_ok" 2>/dev/null)" || rlok_rc=$?
 assert_eq "$rlok_out" "no-rounds" "R12-root-e/control: a round-less ledger with cap:null/k:null still prints no-rounds"
 assert_eq "$rlok_rc" "0" "R12-root-e2/control: ...and still exits 0"
+
+# (f) A present run_id is schema, not advisory metadata. An invalid value
+# must fail before a sink can turn it into an unstable or unsafe section id.
+L_rl_run_id="$(
+	handmade_ledger <<'EOF'
+{
+  "run_id": "not-a-run-id",
+  "loop_counter": 0,
+  "cap": 10,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlrun_rc=0
+rlrun_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_run_id" 2>/dev/null)" || rlrun_rc=$?
+if [[ "$rlrun_rc" -eq 2 && -z "$rlrun_out" ]]; then
+	pass "R12-root-f: a malformed run_id exits 2 before the no-rounds short-circuit"
+else
+	fail "R12-root-f: expected exit 2 with empty stdout (rc=$rlrun_rc, out='$rlrun_out')"
+fi
+
+L_rl_scope="$(
+	handmade_ledger <<'EOF'
+{
+  "run_id": "aaaaaaaaaaaaaaaaaaaa",
+  "review_scope": {"base_oid":"bad","head_oid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","branch":"feature/x"},
+  "loop_counter": 0,
+  "cap": 10,
+  "k": 2,
+  "rounds": []
+}
+EOF
+)"
+rlscope_rc=0
+rlscope_out="$("$LEDGER_SCRIPT" --last-decision --ledger "$L_rl_scope" 2>/dev/null)" || rlscope_rc=$?
+if [[ "$rlscope_rc" -eq 2 && -z "$rlscope_out" ]]; then
+	pass "R12-root-g: a malformed persisted reviewed scope exits 2"
+else
+	fail "R12-root-g: expected exit 2 with empty stdout (rc=$rlscope_rc, out='$rlscope_out')"
+fi
 
 # --- R12/F9: the round-append filter is a jq FILE, run directly -----------
 # The pending_claims/fixed_keys promotion state machine used to be an inline

@@ -3,7 +3,10 @@
 # for the review-gauntlet conductor loop.
 #
 # Usage:
-#   convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+#   convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
+#       [--review-base <oid> --review-head <oid> --review-branch <name>]
+#   convergence-ledger.sh --bind-review-scope --ledger <path> --target <target> \
+#       --review-base <oid> --review-head <oid> --review-branch <name>
 #   convergence-ledger.sh --run-dir --ledger <path>
 #   convergence-ledger.sh --prepare-round <N> --ledger <path>
 #   convergence-ledger.sh --last-decision --ledger <path> [--target <target>] \
@@ -34,12 +37,18 @@
 #
 # A fresh ledger has zero rounds, so any pre-existing `<ledger-stem>/` is a
 # prior run's stale round dir and would collide with the new run's `round-1/`.
-# Both `--init` and `--init --force` therefore remove it, and the stale sibling
+# Both `--init` and `--init --force` therefore remove it, including the
+# writer-owned `open-guardrail8.jsonl`, `seam-tripwire.json`, and
+# `.seam-tripwire.tmp` files, and remove the stale sibling
 # `<ledger-stem>.report.html`, after the ledger-path guards pass and right
 # before they write the fresh ledger — but only when the ledger's parent dir is
-# named `.gauntlet`, only when `<ledger-stem>/` holds nothing but `round-*`
-# entries, and only when the report is a regular non-symlink file. `--init`
+# named `.gauntlet`. Recognized owned entries are removed individually; unknown
+# files and directories are preserved with a warning. A symlink or wrong-type
+# owned entry refuses initialization. The report is removed only when it is a
+# regular non-symlink file. `--init`
 # refused (exit 6, or a guard refusal) touches nothing.
+# Target/run-keyed `design-deltas-*.scope.json` files sit beside the ledger,
+# are small immutable sink evidence, and are intentionally retained.
 #
 # The append mode records exactly one round into the persistent JSON ledger at
 # <path>, increments loop_counter by 1, then prints exactly one decision token:
@@ -141,9 +150,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh disable=SC1091
 . "$SCRIPT_DIR/state-path-guard.sh"
 
+# The conductor is the source of these run-directory filenames, including its
+# exact atomic-write temp name. Keep every writer-owned file in one list so
+# cleanup validation and guarding cannot drift onto different hardcoded sets.
+RUN_DIR_OWNED_FILES=("open-guardrail8.jsonl" "seam-tripwire.json" ".seam-tripwire.tmp")
+
 usage() {
 	cat >&2 <<'EOF'
-usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force]
+usage: convergence-ledger.sh --init --ledger <path> --target <target> [--force] \
+              [--review-base <oid> --review-head <oid> --review-branch <name>]
+       convergence-ledger.sh --bind-review-scope --ledger <path> --target <target> \
+              --review-base <oid> --review-head <oid> --review-branch <name>
        convergence-ledger.sh --run-dir --ledger <path>
        convergence-ledger.sh --prepare-round <N> --ledger <path>
        convergence-ledger.sh --last-decision --ledger <path> [--target <target>] [--cap 10] [--k 2]
@@ -170,6 +187,22 @@ ROUND_ARG_SEEN=0
 PRESENT_KEYS_FILE=""
 CLAIMED_KEYS_FILE=""
 PREPARE_ROUND=""
+REVIEW_BASE=""
+REVIEW_HEAD=""
+REVIEW_BRANCH=""
+REVIEW_SCOPE_ARG_COUNT=0
+REVIEW_BASE_SEEN=0
+REVIEW_HEAD_SEEN=0
+REVIEW_BRANCH_SEEN=0
+
+# Shell argv cannot contain NUL. Reject every other C0 control byte and DEL
+# over the complete value; unlike a line-oriented grep, this sees embedded LF.
+control_free_arg() {
+	local count
+	count="$(printf '%s' "$1" | LC_ALL=C tr -d '\040-\176\200-\377' | wc -c)"
+	count="${count//[[:space:]]/}"
+	[[ "$count" == 0 ]]
+}
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -188,6 +221,14 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		fi
 		MODE="last-decision"
+		;;
+	--bind-review-scope)
+		if [[ "$MODE" != "append" && "$MODE" != "bind-review-scope" ]]; then
+			echo "convergence-ledger: --bind-review-scope cannot be combined with another mode" >&2
+			usage
+			exit 2
+		fi
+		MODE="bind-review-scope"
 		;;
 	--run-dir)
 		if [[ "$MODE" != "append" && "$MODE" != "run-dir" ]]; then
@@ -228,6 +269,28 @@ while [[ $# -gt 0 ]]; do
 			exit 2
 		}
 		TARGET="$1"
+		;;
+	--review-base | --review-head | --review-branch)
+		flag="$1"
+		shift
+		[[ $# -gt 0 ]] || {
+			usage
+			exit 2
+		}
+		case "$flag" in
+		--review-base)
+			REVIEW_BASE="$1"
+			REVIEW_BASE_SEEN=1
+			;;
+		--review-head)
+			REVIEW_HEAD="$1"
+			REVIEW_HEAD_SEEN=1
+			;;
+		--review-branch)
+			REVIEW_BRANCH="$1"
+			REVIEW_BRANCH_SEEN=1
+			;;
+		esac
 		;;
 	--count)
 		shift
@@ -520,8 +583,16 @@ validate_ledger_root_fields() {
 	local ledger_path="$1"
 	if ! jq -e '
 		def is_int: type == "number" and (. | floor) == . and . >= 0;
+		def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
 		. as $root
 		| ($root.loop_counter | is_int)
+		and (($root | has("run_id") | not) or
+		     ($root.run_id | type == "string" and test("^[0-9a-f]{20}$")))
+		and (($root | has("review_scope") | not) or
+		     ($root.review_scope | type == "object"
+		      and (.base_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.head_oid | control_free and test("^[0-9a-f]{40}([0-9a-f]{24})?$"))
+		      and (.branch | control_free)))
 		and all(["cap", "k"][];
 			. as $f
 			| ($root[$f] == null) or ($root[$f] | is_int))
@@ -643,21 +714,88 @@ round_dir_is_runtime_owned() {
 	return 0
 }
 
-# run_dir_is_rounds_only <dir> — 0 when <dir> is a directory whose every entry
-# (dotfiles included) is named `round-*`, i.e. it has the shape --run-dir and
-# the orchestrator's per-round `mkdir -p` create, and nothing else.
-run_dir_is_rounds_only() {
-	local dir="$1" entry restore
-	local -a entries=()
+run_dir_owned_file_name() {
+	local candidate="$1" owned
+	for owned in "${RUN_DIR_OWNED_FILES[@]}"; do
+		[[ "$candidate" == "$owned" ]] && return 0
+	done
+	return 1
+}
+
+runtime_path_is_untracked() {
+	local path="$1" repo_root rel git_bin env_bin tracked_output
+	git_bin="$(command -v git || true)"
+	env_bin="$(command -v env || true)"
+	[[ -n "$git_bin" && -x "$git_bin" && -n "$env_bin" && -x "$env_bin" ]] || return 1
+	repo_root="$($env_bin -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$(dirname "$path")" rev-parse --show-toplevel 2>/dev/null)" || return 1
+	case "$path" in
+	"$repo_root"/*) rel="${path#"$repo_root"/}" ;;
+	*) return 1 ;;
+	esac
+	tracked_output="$($env_bin -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$repo_root" ls-files -- ":(icase,literal)$rel" 2>/dev/null)" || return 1
+	[[ -z "$tracked_output" ]]
+}
+
+clear_run_dir_owned_entries() {
+	local dir="$1" entry name restore
+	local -a entries=() removable=() unknown=()
 	[[ -d "$dir" ]] || return 1
 	restore="$(shopt -p nullglob dotglob || true)"
 	shopt -s nullglob dotglob
 	entries=("$dir"/*)
 	eval "$restore"
 	for entry in ${entries[@]+"${entries[@]}"}; do
-		[[ "${entry##*/}" == round-* ]] || return 1
-		round_dir_is_runtime_owned "$entry" || return 1
+		name="${entry##*/}"
+		if ! gauntlet_assert_no_symlink "$entry" convergence-ledger; then
+			echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+			return 1
+		fi
+		if [[ "$name" == round-* ]]; then
+			if [[ ! -d "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			elif round_dir_is_runtime_owned "$entry"; then
+				removable+=("$entry")
+			else
+				unknown+=("$entry")
+			fi
+		elif run_dir_owned_file_name "$name"; then
+			if [[ ! -f "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			fi
+			removable+=("$entry")
+		else
+			if [[ ! -f "$entry" && ! -d "$entry" ]]; then
+				echo "convergence-ledger: refusing stale run directory entry: $entry" >&2
+				return 1
+			fi
+			unknown+=("$entry")
+		fi
 	done
+	# BEGIN OWNED ENTRY REMOVAL
+	for entry in ${removable[@]+"${removable[@]}"}; do
+		if [[ ! -d "$entry" ]] && ! runtime_path_is_untracked "$entry"; then
+			echo "convergence-ledger: refusing to remove tracked or indeterminate stale run file: $entry" >&2
+			return 1
+		fi
+		if [[ -d "$entry" ]]; then
+			rm -rf -- "$entry" || return 1
+		else
+			rm -f -- "$entry" || return 1
+		fi
+	done
+	# END OWNED ENTRY REMOVAL
+	for entry in ${unknown[@]+"${unknown[@]}"}; do
+		echo "convergence-ledger: warning: preserving unknown stale run directory entry: $entry" >&2
+	done
+	if [[ "${#unknown[@]}" -eq 0 ]]; then
+		rmdir -- "$dir" || return 1
+	fi
 	return 0
 }
 
@@ -670,13 +808,13 @@ run_dir_is_rounds_only() {
 # Deletes nothing unless the ledger's parent directory is named `.gauntlet`
 # and its basename starts with `ledger-` (the namespace gc_ledger_path owns;
 # otherwise `--ledger .gauntlet/cache.json` could delete `cache/`). The round
-# dir is removed only when it contains nothing but `round-*` entries; any other
-# shape is left in place with a warning. A symlinked round dir is refused under
-# the state-path guard (exit 1, nothing removed). The report is removed only
+# recognized writer-owned entries are removed individually. Unknown regular
+# files and directories are kept with a warning. A symlink or wrong-type owned
+# entry is refused (exit 1, nothing removed). The report is removed only
 # when the guard accepts it and it is a regular file; otherwise it is left in
 # place with a warning.
 clear_stale_run_dir() {
-	local run_dir report ledger_name
+	local run_dir report ledger_name owned_name owned_path
 	run_dir="$(ledger_run_dir "$1")" || return 0
 	ledger_in_gauntlet_dir "$1" || return 0
 	ledger_name="${1##*/}"
@@ -688,10 +826,14 @@ clear_stale_run_dir() {
 		if ! ledger_assert_no_symlink "$run_dir"; then
 			exit 1
 		fi
-		if run_dir_is_rounds_only "$run_dir"; then
-			rm -rf -- "$run_dir"
-		else
-			echo "convergence-ledger: warning: leaving $run_dir in place (not a directory of round-* entries only)" >&2
+		for owned_name in "${RUN_DIR_OWNED_FILES[@]}"; do
+			owned_path="$run_dir/$owned_name"
+			if [[ -e "$owned_path" || -L "$owned_path" ]]; then
+				ledger_assert_no_symlink "$owned_path" || exit 1
+			fi
+		done
+		if ! clear_run_dir_owned_entries "$run_dir"; then
+			return 1
 		fi
 	fi
 	report="$run_dir.report.html"
@@ -721,7 +863,10 @@ write_fresh_ledger() {
 	local target="$2"
 	local cap="$3"
 	local k="$4"
-	local tmp
+	local review_base="$5"
+	local review_head="$6"
+	local review_branch="$7"
+	local tmp run_id
 	# Guard BEFORE mkdir -p: mkdir follows a symlinked component, so the
 	# check has to happen while there is still nothing to create.
 	assert_fresh_ledger_path "$ledger_path"
@@ -732,17 +877,29 @@ write_fresh_ledger() {
 	# (tmpfs on Linux CI), making the `mv` a copy-then-unlink with no such
 	# guarantee. Same template shape `persist_atomic_write` already uses.
 	tmp="$(mktemp "$(dirname "$ledger_path")/.ledger.XXXXXX")"
+	# Reuse the already-random temp basename as per-init entropy. The stored
+	# digest stays stable as rounds are appended; --init --force gets a new one.
+	run_id="$(printf '%s' "$tmp" | gc_sha1 | cut -c1-20)"
+	if [[ ! "$run_id" =~ ^[0-9a-f]{20}$ ]]; then
+		rm -f "$tmp"
+		echo "convergence-ledger: cannot derive run id" >&2
+		exit 2
+	fi
 	# fixed_keys/pending_claimed are deliberately NOT written here: a ledger
 	# that never sees --present-keys/--claimed-keys must stay byte-for-byte
 	# identical to the pre-Phase-3 shape (no key-tracking pollution). Both
 	# fields are added lazily, only once a round actually supplies one of
 	# those flags — see the append-mode handler below.
-	if [[ -n "$target" ]]; then
-		jq -n --arg target "$target" --argjson cap "$cap" --argjson k "$k" \
-			'{target: $target, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 && -n "$target" ]]; then
+		jq -n --arg target "$target" --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			--arg base_oid "$review_base" --arg head_oid "$review_head" --arg branch "$review_branch" \
+			'{target: $target, run_id: $run_id, review_scope: {base_oid: $base_oid, head_oid: $head_oid, branch: $branch}, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+	elif [[ -n "$target" ]]; then
+		jq -n --arg target "$target" --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			'{target: $target, run_id: $run_id, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
 	else
-		jq -n --argjson cap "$cap" --argjson k "$k" \
-			'{cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
+		jq -n --arg run_id "$run_id" --argjson cap "$cap" --argjson k "$k" \
+			'{run_id: $run_id, cap: $cap, k: $k, loop_counter: 0, rounds: []}' >"$tmp"
 	fi
 	mv "$tmp" "$ledger_path"
 }
@@ -758,7 +915,7 @@ ensure_ledger_for_append() {
 		validate_ledger_root_fields "$LEDGER_PATH"
 		check_target_match "$LEDGER_PATH" "$TARGET"
 	else
-		write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+		write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K" "$REVIEW_BASE" "$REVIEW_HEAD" "$REVIEW_BRANCH"
 	fi
 }
 
@@ -904,8 +1061,59 @@ decision_from_ledger() {
 	echo "continue"
 }
 
+validate_review_scope_cli() {
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 3 ]]; then
+		echo "convergence-ledger: --review-base, --review-head and --review-branch must be supplied together" >&2
+		exit 2
+	fi
+	if [[ ! "$REVIEW_BASE" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ || ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+		! control_free_arg "$REVIEW_BASE" || ! control_free_arg "$REVIEW_HEAD" || ! control_free_arg "$REVIEW_BRANCH"; then
+		echo "convergence-ledger: invalid reviewed scope" >&2
+		exit 2
+	fi
+}
+
+bind_review_scope() {
+	local tmp
+	assert_fresh_ledger_path "$LEDGER_PATH"
+	if [[ ! -f "$LEDGER_PATH" || ! -r "$LEDGER_PATH" || -L "$LEDGER_PATH" ]]; then
+		echo "convergence-ledger: ledger not found or not a readable regular file at $LEDGER_PATH" >&2
+		exit 4
+	fi
+	validate_ledger_shape "$LEDGER_PATH"
+	validate_ledger_root_fields "$LEDGER_PATH"
+	check_target_match "$LEDGER_PATH" "$TARGET"
+	if jq -e 'has("review_scope")' "$LEDGER_PATH" >/dev/null; then
+		if jq -e --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" --arg branch "$REVIEW_BRANCH" \
+			'.review_scope == {base_oid:$base,head_oid:$head,branch:$branch}' "$LEDGER_PATH" >/dev/null; then
+			return 0
+		fi
+		echo "convergence-ledger: reviewed scope mismatch for $LEDGER_PATH" >&2
+		exit 3
+	fi
+	tmp="$(mktemp "$(dirname "$LEDGER_PATH")/.ledger.XXXXXX")"
+	if ! jq --arg target "$TARGET" --arg base "$REVIEW_BASE" --arg head "$REVIEW_HEAD" --arg branch "$REVIEW_BRANCH" '
+		.target = (if has("target") and .target != null then .target else $target end)
+		| .review_scope = {base_oid:$base,head_oid:$head,branch:$branch}
+	' "$LEDGER_PATH" >"$tmp"; then
+		rm -f -- "$tmp"
+		echo "convergence-ledger: cannot bind reviewed scope" >&2
+		exit 2
+	fi
+	validate_ledger_shape "$tmp"
+	validate_ledger_root_fields "$tmp"
+	assert_fresh_ledger_path "$LEDGER_PATH"
+	mv -- "$tmp" "$LEDGER_PATH"
+}
+
+REVIEW_SCOPE_ARG_COUNT=$((REVIEW_BASE_SEEN + REVIEW_HEAD_SEEN + REVIEW_BRANCH_SEEN))
 validate_common_args
 gc_have_jq
+
+if [[ "$MODE" != "init" && "$MODE" != "bind-review-scope" && "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
+	echo "convergence-ledger: reviewed-scope flags are only valid with --init or --bind-review-scope" >&2
+	exit 2
+fi
 
 case "$MODE" in
 init)
@@ -917,6 +1125,11 @@ init)
 		echo "convergence-ledger: --init cannot be combined with round-input flags" >&2
 		exit 2
 	fi
+	if [[ "$REVIEW_SCOPE_ARG_COUNT" -eq 3 ]]; then
+		validate_review_scope_cli
+	elif [[ "$REVIEW_SCOPE_ARG_COUNT" -ne 0 ]]; then
+		validate_review_scope_cli
+	fi
 	if [[ -e "$LEDGER_PATH" && "$FORCE" -eq 0 ]]; then
 		echo "convergence-ledger: ledger already exists at $LEDGER_PATH; pass --force to discard it" >&2
 		exit 6
@@ -924,7 +1137,15 @@ init)
 	# Guards first, then clear, then write: a refused init deletes nothing.
 	assert_fresh_ledger_path "$LEDGER_PATH"
 	clear_stale_run_dir "$LEDGER_PATH"
-	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K"
+	write_fresh_ledger "$LEDGER_PATH" "$TARGET" "$CAP" "$K" "$REVIEW_BASE" "$REVIEW_HEAD" "$REVIEW_BRANCH"
+	;;
+bind-review-scope)
+	if [[ -z "$TARGET" || "$FORCE" -eq 1 || "$ROUND_ARG_SEEN" -eq 1 ]]; then
+		echo "convergence-ledger: --bind-review-scope requires --target and cannot use --force or round-input flags" >&2
+		exit 2
+	fi
+	validate_review_scope_cli
+	bind_review_scope
 	;;
 run-dir)
 	if [[ "$FORCE" -eq 1 ]]; then

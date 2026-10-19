@@ -65,8 +65,9 @@ has "$GAUNTLET" 'success_with_quarantine`, `regression`, `cap`, or `non-converge
 
 echo '== review-gauntlet: run_dir lifecycle =='
 # shellcheck disable=SC2016
-assert_eq "$(count_re "$GAUNTLET" '^run_dir="\$\(.*convergence-ledger\.sh --run-dir --ledger "\$ledger_path"\)"$')" 1 'run_dir comes from one --run-dir call'
-assert_eq "$(count_re "$GAUNTLET" '^[[:space:]]*run_dir=')" 1 'run_dir is assigned once'
+assert_eq "$(count_re "$GAUNTLET" '^[[:space:]]*run_dir=')" 2 'run_dir is assigned at full-loop entry and quick startup only'
+# shellcheck disable=SC2016
+assert_eq "$(count_re "$GAUNTLET" '^[[:space:]]*run_dir="\$\("\$SKILL_DIR"/lib/convergence-ledger\.sh --run-dir --ledger "\$ledger_path"\)"')" 2 'every run_dir assignment uses guarded --run-dir --ledger derivation'
 # shellcheck disable=SC2016
 has "$GAUNTLET" 'gate_out_dir="$run_dir/round-$round_n"' 'round gate output derives from run_dir'
 # shellcheck disable=SC2016

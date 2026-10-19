@@ -108,6 +108,8 @@ assert_eq "$(printf '%s\n' "$inside" | grep -cF '<!-- BEGIN PROSE RULE BLOCK B -
 assert_eq "$(printf '%s\n' "$inside" | grep -cF '<!-- END PROSE RULE BLOCK B -->' || true)" "1" "Block B end anchor sits inside the REPORT STEP anchors"
 has "$GAUNTLET" 'Report the terminal status, the gates passed' "terminal-status report text is the wrapped step"
 assert_eq "$(printf '%s\n' "$inside" | grep -cF '### Terminal report step' || true)" "1" "the --report terminal step is inside the anchors"
+assert_eq "$(printf '%s\n' "$inside" | grep -cF '### Terminal design delta sink' || true)" "0" "the design delta sink (runs without --report) sits outside the REPORT STEP anchors"
+assert_eq "$(count_fixed "$GAUNTLET" '### Terminal design delta sink')" "1" "exactly one design delta sink section"
 
 echo "== review-gauntlet: gate 2 never receives --report =="
 has "$GAUNTLET" 'This slot **never receives `--report`**' "gate 2 states it never receives --report"

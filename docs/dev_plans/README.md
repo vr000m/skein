@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-10-16 | feature | gauntlet-contract-design-guardrail | review-skills | — | feature/gauntlet-contract-design-guardrail | [plan](20261016-feature-gauntlet-contract-design-guardrail.md) |
 | 2026-10-08 | feature | review-output-formats | review-skills | — | feature/karpathy-output-formats | [plan](20261008-feature-review-output-formats.md) |
 | 2026-10-04 | bug | codex-gauntlet-release-runtime | meta | [#54](https://github.com/vr000m/skein/pull/54) | fix/codex-runtime-release-0.9.2 | [plan](20261004-bug-codex-gauntlet-release-runtime.md) |
 | 2026-03-17 | feature | deep-review | review-skills | [#8](https://github.com/vr000m/skills.md/pull/8) | feature/deep-review | [plan](20260317-feature-deep-review.md) |
