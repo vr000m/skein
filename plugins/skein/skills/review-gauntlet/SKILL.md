@@ -32,6 +32,8 @@ Both standalone and auto-chain invocation reach the convergence loop and its 10-
 
 ### Target and Resume Ledger
 
+**Reviewed-base contract.** The base OID passed to `resolve-plan.sh`, the terminal sink, and `review_scope.base_oid` is the merge base of the reviewed range for PR, bare-branch, and three-dot targets. A two-dot target keeps its literal left endpoint by definition. `resolve-plan.sh` always diffs that resolved base directly against the immutable head as `base..head`; it never recomputes a merge base.
+
 Before entering a standalone/full loop, derive one canonical target string and reuse it for every ledger command in the run:
 
 - `pr:<N>` for an invocation using `--pr <N>`
@@ -42,15 +44,75 @@ Before entering a standalone/full loop, derive one canonical target string and r
 
 The ledger also persists the `--cap`/`--k` values in force when it was created (or first appended to), so a `--last-decision` peek is always resolved against the same cap/k the run itself used — never against whatever `--cap`/`--k` defaults the peek call happens to pass (or omits). Never pass `--cap`/`--k` on a `--last-decision` call expecting to override a ledger's stored values; they are ignored once the ledger has recorded its own.
 
+Resolve the immutable scope once before any ledger startup, quick-mode preparation, gate, or report. For a PR, `baseRefOid` is only the base branch tip. Both PR OIDs must exist as local commit objects, and `git merge-base --end-of-options <baseRefOid> <headRefOid>` must succeed. Otherwise leave `resolved_base_oid` empty and stop before ledger initialization or gates. The terminal sink uses that empty base to select the sidecar. A base branch advancing after the PR fork does not change the merge base, so an exact-scope resume remains stable. A moved head or changed merge base mismatches the stored scope: auto-chain and quick mode select their existing scope-keyed generation rules, while explicit resume refuses the mismatch. Never rewrite a ledger's stored scope.
+
 `gc_ledger_path` is a shell function from this skill's authored helpers, so source it before using it in shell snippets:
 
 ```bash
 . "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/gauntlet-common.sh
 canonical_target="<pr:N-or-branch:name>"
 ledger_path="$(gc_ledger_path "$canonical_target" claude)"
-resolved_base_oid="<immutable reviewed base oid>"
-resolved_head_oid="<immutable reviewed head oid>"
-review_branch="<reviewed branch or PR head ref>"
+
+resolve_review_scope() {
+  local git_bin env_bin repo_hint repo_root pr_number pr_json pr_base_oid
+  local range_base range_head range_kind
+  local -a scope_git
+  git_bin="$(command -v git || true)"
+  env_bin="$(command -v env || true)"
+  repo_hint="$(pwd -P)"
+  resolved_base_oid=""
+  resolved_head_oid=""
+  review_branch=""
+  pr_head_ref=""
+  pr_base_ref_oid=""
+  if [[ -z "$git_bin" || ! -x "$git_bin" || -z "$env_bin" || ! -x "$env_bin" ]] ||
+    ! repo_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      "$git_bin" -C "$repo_hint" rev-parse --show-toplevel 2>/dev/null)"; then
+    return 1
+  fi
+  scope_git=("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES "$git_bin" -C "$repo_root")
+  case "$canonical_target" in
+    pr:*)
+      pr_number="${canonical_target#pr:}"
+      [[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+      pr_json="$(gh pr view "$pr_number" --json baseRefOid,headRefOid,headRefName 2>/dev/null || true)"
+      pr_base_ref_oid="$(jq -r '.baseRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      resolved_head_oid="$(jq -r '.headRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      review_branch="$(jq -r '.headRefName // empty' <<< "$pr_json" 2>/dev/null || true)"
+      pr_head_ref="$review_branch"
+      pr_base_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_base_ref_oid}^{commit}" 2>/dev/null || true)"
+      resolved_head_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${resolved_head_oid}^{commit}" 2>/dev/null || true)"
+      if [[ -n "$pr_base_oid" && -n "$resolved_head_oid" ]]; then
+        resolved_base_oid="$("${scope_git[@]}" merge-base --end-of-options "$pr_base_oid" "$resolved_head_oid" 2>/dev/null || true)"
+      fi
+      ;;
+    branch:*)
+      review_branch="${canonical_target#branch:}"
+      case "$review_branch" in
+        *...*) range_base="${review_branch%%...*}"; range_head="${review_branch##*...}"; range_kind=three-dot ;;
+        *..*) range_base="${review_branch%%..*}"; range_head="${review_branch##*..}"; range_kind=two-dot ;;
+        *) range_base="$("${scope_git[@]}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"; range_head="$review_branch"; range_kind=bare ;;
+      esac
+      resolved_head_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${range_head}^{commit}" 2>/dev/null || true)"
+      if [[ "$range_kind" == two-dot ]]; then
+        resolved_base_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${range_base}^{commit}" 2>/dev/null || true)"
+      elif [[ -n "$resolved_head_oid" ]]; then
+        resolved_base_oid="$("${scope_git[@]}" merge-base --end-of-options "$range_base" "$resolved_head_oid" 2>/dev/null || true)"
+      fi
+      [[ "$review_branch" == *..* ]] && review_branch="$range_head"
+      [[ "$review_branch" == HEAD ]] && review_branch="$("${scope_git[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_review_scope || { echo "review-gauntlet: cannot resolve reviewed scope" >&2; return 1; }
+if [[ -z "$resolved_base_oid" || -z "$resolved_head_oid" || -z "$review_branch" ]]; then
+  echo "review-gauntlet: immutable reviewed scope is unavailable" >&2
+  return 1
+fi
 review_scope_args=(--review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch")
 ```
 
@@ -281,16 +343,25 @@ run_design_delta_sink() {
   branch_name=""
   case "$canonical_target" in
     pr:*)
-      # The conductor may call gh. A failed lookup leaves all three empty and the sink falls back to the sidecar.
+      # Legacy ledgers may lack review_scope. Re-resolve the PR from its base
+      # branch tip and head, but persist and diff only their merge base.
       pr_number="${canonical_target#pr:}"
       if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
         echo "warning: design delta sink refused non-numeric PR target; continuing terminal handoff" >&2
         return 0
       fi
+      BASE_OID=""
+      HEAD_OID=""
+      branch_name=""
       pr_json="$(gh pr view "$pr_number" --json baseRefOid,headRefOid,headRefName 2>/dev/null || true)"
-      BASE_OID="$(jq -r '.baseRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
-      HEAD_OID="$(jq -r '.headRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      pr_base_ref_oid="$(jq -r '.baseRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      pr_head_oid="$(jq -r '.headRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
       branch_name="$(jq -r '.headRefName // empty' <<< "$pr_json" 2>/dev/null || true)"
+      pr_base_oid="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_base_ref_oid}^{commit}" 2>/dev/null || true)"
+      HEAD_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_head_oid}^{commit}" 2>/dev/null || true)"
+      if [[ -n "$pr_base_oid" && -n "$HEAD_OID" ]]; then
+        BASE_OID="$("${clean_git[@]}" merge-base --end-of-options "$pr_base_oid" "$HEAD_OID" 2>/dev/null || true)"
+      fi
       ;;
     branch:*)
       branch_name="${canonical_target#branch:}"
@@ -600,7 +671,7 @@ Runs only when `--report` was passed. Without the flag this step does not exist:
 
 Every terminal-token exit routes through this one step, after the terminal summary above: `success`, `success_with_quarantine`, `regression`, `cap`, `non-converge`, and the resume/auto-chain exit-5 paths that report an already-terminal ledger. **Error exits skip it** (a script error, an ambiguous ledger, a missing ledger on `--resume`, a guard refusal): no report is attempted and the exit is reported exactly as before.
 
-1. Resolve the diff scope to two commit ids. For `--pr <N>`: `gh pr view <N> --json baseRefOid,headRefOid` (the hook never calls `gh`). For a branch or commit range: `git merge-base <base> HEAD` and `git rev-parse HEAD`, or `git rev-parse` of each end of an explicit range. If resolution fails, pass neither flag; the report then says the diff scope is unavailable. There is no uncommitted-changes mode.
+1. Resolve the diff scope to two commit ids. For `--pr <N>`: `gh pr view <N> --json baseRefOid,headRefOid` (the hook never calls `gh`); `baseRefOid` is only the base branch tip, so pass `git merge-base --end-of-options <baseRefOid> <headRefOid>` as the base, never the tip. For a branch or commit range: `git merge-base <base> HEAD` and `git rev-parse HEAD`, or `git rev-parse` of each end of an explicit range. If resolution fails, or either PR object is absent locally or merge-base fails, pass neither flag; the report then says the diff scope is unavailable. There is no uncommitted-changes mode.
 2. Enumerate the rounds from the ledger, never by globbing: pass `--round N=<run_dir>/round-N/reconciled.json` for each N from 1 to the length of the ledger's `.rounds` (`jq -r '.rounds | length' "$ledger_path"`). A round whose file is missing (a ledger carried over from an older plugin version, or a round that errored before reconcile) is marked "envelope missing" in the report; it is not an error.
 3. Call the bundled hook once. `--out` is the report path beside the ledger, `<ledger-stem>.report.html`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block that defines `$repo_root`, so the fence below defines it itself. If `$ledger_path` or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger) (`gc_ledger_path`, then the single `--run-dir` call):
 

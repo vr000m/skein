@@ -101,6 +101,8 @@ prepare_quick_design_delta_state() {
 
 ### Target and Resume Ledger
 
+**Reviewed-base contract.** The base OID passed to `resolve-plan.sh`, the terminal sink, and `review_scope.base_oid` is the merge base of the reviewed range for PR, bare-branch, and three-dot targets. A two-dot target keeps its literal left endpoint by definition. `resolve-plan.sh` always diffs that resolved base directly against the immutable head as `base..head`; it never recomputes a merge base.
+
 Before entering a standalone/full loop, derive one canonical target string and reuse it for every ledger command in the run:
 
 - `pr:<N>` for an invocation using `--pr <N>`
@@ -111,15 +113,75 @@ Before entering a standalone/full loop, derive one canonical target string and r
 
 The ledger also persists the `--cap`/`--k` values in force when it was created (or first appended to), so a `--last-decision` peek is always resolved against the same cap/k the run itself used — never against whatever `--cap`/`--k` defaults the peek call happens to pass (or omits). Never pass `--cap`/`--k` on a `--last-decision` call expecting to override a ledger's stored values; they are ignored once the ledger has recorded its own.
 
+Resolve the immutable scope once before any ledger startup, quick-mode preparation, gate, or report. For a PR, `baseRefOid` is only the base branch tip. Both PR OIDs must exist as local commit objects, and `git merge-base --end-of-options <baseRefOid> <headRefOid>` must succeed. Otherwise leave `resolved_base_oid` empty and stop before ledger initialization or gates. The terminal sink uses that empty base to select the sidecar. A base branch advancing after the PR fork does not change the merge base, so an exact-scope resume remains stable. A moved head or changed merge base mismatches the stored scope: auto-chain and quick mode select their existing scope-keyed generation rules, while explicit resume refuses the mismatch. Never rewrite a ledger's stored scope.
+
 `gc_ledger_path` is a shell function from this skill's authored helpers, so source it before using it in shell snippets:
 
 ```bash
 . "$SKILL_DIR"/lib/gauntlet-common.sh
 canonical_target="<pr:N-or-branch:name>"
 ledger_path="$(gc_ledger_path "$canonical_target" codex)"
-resolved_base_oid="<immutable reviewed base oid>"
-resolved_head_oid="<immutable reviewed head oid>"
-review_branch="<reviewed branch or PR head ref>"
+
+resolve_review_scope() {
+  local git_bin env_bin repo_hint repo_root pr_number pr_json pr_base_oid
+  local range_base range_head range_kind
+  local -a scope_git
+  git_bin="$(command -v git || true)"
+  env_bin="$(command -v env || true)"
+  repo_hint="$(pwd -P)"
+  resolved_base_oid=""
+  resolved_head_oid=""
+  review_branch=""
+  pr_head_ref=""
+  pr_base_ref_oid=""
+  if [[ -z "$git_bin" || ! -x "$git_bin" || -z "$env_bin" || ! -x "$env_bin" ]] ||
+    ! repo_root="$("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+      -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      "$git_bin" -C "$repo_hint" rev-parse --show-toplevel 2>/dev/null)"; then
+    return 1
+  fi
+  scope_git=("$env_bin" -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR
+    -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES "$git_bin" -C "$repo_root")
+  case "$canonical_target" in
+    pr:*)
+      pr_number="${canonical_target#pr:}"
+      [[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+      pr_json="$(gh pr view "$pr_number" --json baseRefOid,headRefOid,headRefName 2>/dev/null || true)"
+      pr_base_ref_oid="$(jq -r '.baseRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      resolved_head_oid="$(jq -r '.headRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+      review_branch="$(jq -r '.headRefName // empty' <<< "$pr_json" 2>/dev/null || true)"
+      pr_head_ref="$review_branch"
+      pr_base_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_base_ref_oid}^{commit}" 2>/dev/null || true)"
+      resolved_head_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${resolved_head_oid}^{commit}" 2>/dev/null || true)"
+      if [[ -n "$pr_base_oid" && -n "$resolved_head_oid" ]]; then
+        resolved_base_oid="$("${scope_git[@]}" merge-base --end-of-options "$pr_base_oid" "$resolved_head_oid" 2>/dev/null || true)"
+      fi
+      ;;
+    branch:*)
+      review_branch="${canonical_target#branch:}"
+      case "$review_branch" in
+        *...*) range_base="${review_branch%%...*}"; range_head="${review_branch##*...}"; range_kind=three-dot ;;
+        *..*) range_base="${review_branch%%..*}"; range_head="${review_branch##*..}"; range_kind=two-dot ;;
+        *) range_base="$("${scope_git[@]}" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || echo main)"; range_head="$review_branch"; range_kind=bare ;;
+      esac
+      resolved_head_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${range_head}^{commit}" 2>/dev/null || true)"
+      if [[ "$range_kind" == two-dot ]]; then
+        resolved_base_oid="$("${scope_git[@]}" rev-parse --verify --quiet --end-of-options "${range_base}^{commit}" 2>/dev/null || true)"
+      elif [[ -n "$resolved_head_oid" ]]; then
+        resolved_base_oid="$("${scope_git[@]}" merge-base --end-of-options "$range_base" "$resolved_head_oid" 2>/dev/null || true)"
+      fi
+      [[ "$review_branch" == *..* ]] && review_branch="$range_head"
+      [[ "$review_branch" == HEAD ]] && review_branch="$("${scope_git[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+resolve_review_scope || { echo "review-gauntlet: cannot resolve reviewed scope" >&2; return 1; }
+if [[ -z "$resolved_base_oid" || -z "$resolved_head_oid" || -z "$review_branch" ]]; then
+  echo "review-gauntlet: immutable reviewed scope is unavailable" >&2
+  return 1
+fi
 review_scope_args=(--review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch")
 ```
 
@@ -444,7 +506,25 @@ run_design_delta_sink() {
       [[ "$branch_name" == *..* ]] && branch_name="$range_head"
       [[ "$branch_name" == HEAD ]] && branch_name="$("${clean_git[@]}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
       ;;
-    pr:*) branch_name="${pr_head_ref:-}" ;;
+    pr:*)
+      # Legacy ledgers may lack review_scope. Re-resolve the PR from its base
+      # branch tip and head, but persist and diff only their merge base.
+      pr_number="${canonical_target#pr:}"
+      BASE_OID=""
+      HEAD_OID=""
+      branch_name=""
+      if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+        pr_json="$(gh pr view "$pr_number" --json baseRefOid,headRefOid,headRefName 2>/dev/null || true)"
+        pr_base_ref_oid="$(jq -r '.baseRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+        pr_head_oid="$(jq -r '.headRefOid // empty' <<< "$pr_json" 2>/dev/null || true)"
+        branch_name="$(jq -r '.headRefName // empty' <<< "$pr_json" 2>/dev/null || true)"
+        pr_base_oid="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_base_ref_oid}^{commit}" 2>/dev/null || true)"
+        HEAD_OID="$("${clean_git[@]}" rev-parse --verify --quiet --end-of-options "${pr_head_oid}^{commit}" 2>/dev/null || true)"
+        if [[ -n "$pr_base_oid" && -n "$HEAD_OID" ]]; then
+          BASE_OID="$("${clean_git[@]}" merge-base --end-of-options "$pr_base_oid" "$HEAD_OID" 2>/dev/null || true)"
+        fi
+      fi
+      ;;
   esac
 
   state_dir="$(dirname "$ledger_path")"
@@ -757,7 +837,9 @@ render a report. Without `--report`, do nothing and preserve the existing text o
 Enumerate rounds from the ledger's `.rounds` array, in ascending order, and pass each existing
 `$run_dir/round-N/reconciled.json` as `--round N=<path>`. Missing per-round files are omitted so the
 renderer can mark partial rounds from the ledger. The report uses the counts-only fallback when no
-round envelope exists. Pass the ledger and resolved immutable diff OIDs when available:
+round envelope exists. Pass the ledger's resolved immutable diff OIDs when available. For a fresh
+PR resolution, `BASE_OID` is `git merge-base --end-of-options <baseRefOid> <headRefOid>`, never the
+`baseRefOid` tip. Omit both scope flags if either PR object is absent locally or merge-base fails:
 
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -778,8 +860,8 @@ fi
   "${report_args[@]}" "${scope_args[@]}"
 ```
 
-Resolve the OIDs from the review target, including when a terminal ledger is reached directly by
-resume; omit both flags when either OID is unavailable. The hook always exits 0. Relay its
+Resolve the OIDs from the review target under the reviewed-base contract, including when a terminal
+ledger is reached directly by resume; omit both flags when either OID is unavailable. The hook always exits 0. Relay its
 `report written: <path>` line and any warning; a guard refusal, missing Python, git failure, or
 renderer failure cannot change the terminal token, ledger, normal output, or exit status. If the
 bundled hook is absent, warn and skip the report.
