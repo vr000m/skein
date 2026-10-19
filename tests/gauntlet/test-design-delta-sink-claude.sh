@@ -46,6 +46,12 @@ if [[ ! -s "$SINK_FN" ]] || ! grep -q '^}$' "$SINK_FN"; then
 	echo "FAIL: could not extract run_design_delta_sink from $SKILL_MD"
 	exit 1
 fi
+AUTO_FN="$WORKDIR/auto-fn.sh"
+sed -n '/^prepare_auto_chain_full_state() {$/,/^}$/p' "$SKILL_MD" >"$AUTO_FN"
+if [[ ! -s "$AUTO_FN" ]] || ! grep -q '^}$' "$AUTO_FN"; then
+	echo "FAIL: could not extract prepare_auto_chain_full_state from $SKILL_MD"
+	exit 1
+fi
 
 PLAN_NAME=20261016-feature-widget.md
 RANGE_PLAN=20261016-unrelated-name.md
@@ -245,7 +251,7 @@ out="$(run_sink "$repo" branch:feature/widget 1)"
 unset -f setup_hook
 check "symlinked working file: nothing written through the link" bash -c '[[ ! -s "$1" ]]' _ "$outside"
 check "symlinked working file: sink still exits 0" grep -Fq 'rc=0' <<<"$out"
-check "symlinked working file: the refusal is reported" grep -Fq 'refusing to operate on symlink' "$WORKDIR/sink.err"
+check "legacy predictable symlink is ignored by private scratch collection" plan_has "$repo" 'Summary: "symlink-delta"'
 
 # --- 8. seam-tripwire escalation is sidecar-only -----------------------------
 # The escalation is resumable, and apply-auto-fix-code.sh refuses a dirty
@@ -510,9 +516,8 @@ fi
 # --- 12. a failed working-file reset never consumes stale state ---------------
 # probe_reset [sink-fn] -> 0 when an unwritable stale items file aborts the sink
 probe_reset() {
-	local repo before out
+	local repo out
 	repo="$(new_fixture "reset-$RANDOM" "$PLAN_NAME")"
-	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
 	setup_hook() {
 		local target_key items
 		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
@@ -524,27 +529,10 @@ probe_reset() {
 	out="$(SINK_FN="${1:-$SINK_FN}" run_sink "$repo" branch:feature/widget 1)"
 	unset -f setup_hook
 	grep -Fq 'rc=0' <<<"$out" &&
-		grep -Fq 'cannot initialize design delta collection' "$WORKDIR/sink.err" &&
-		[[ "$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")" == "$before" ]] &&
+		plan_has "$repo" 'Summary: "current-delta"' &&
 		! grep -rqF 'stale-delta' "$repo/.gauntlet" --include='design-deltas-*.md'
 }
-check "reset failure: sink aborts before stale working files are consumed" probe_reset
-reset_mutant="$WORKDIR/reset-mutant.sh"
-awk '
-	/^[[:space:]]*if ! design_delta_write_path_is_untracked "\$delta_items_file" \|\|/ {
-		print "  if false; then"
-		skip = 1
-		next
-	}
-	skip && /echo "warning: cannot initialize design delta collection/ { skip = 0 }
-	!skip { print }
-' "$SINK_FN" >"$reset_mutant"
-check "mutation: reset return was removed" bash -c '! cmp -s "$1" "$2"' _ "$SINK_FN" "$reset_mutant"
-if probe_reset "$reset_mutant"; then
-	fail "mutation reset-fail-closed survived its regression probe"
-else
-	pass "mutation reset-fail-closed is caught by the executed sink probe"
-fi
+check "legacy predictable scratch files are ignored while private collection succeeds" probe_reset
 
 # Parameterised twin of the Codex collection-failure cell. This intentionally
 # fails until the conductor mirrors the Codex sink block into the Claude skill.
@@ -664,12 +652,92 @@ probe_tracked_working_path() {
 		grep -Eq 'tracked or indeterminate design delta|refusing to write tracked design delta path' "$WORKDIR/sink.err"
 }
 
-for tracked_env in clean hostile; do
-	for tracked_kind in items deltas resolution scope; do
-		check "tracked $tracked_kind ($tracked_env): bytes preserved and refusal reported" \
-			probe_tracked_working_path "$tracked_kind" "$tracked_env"
-	done
+probe_private_temp_hardlink() {
+	local sink_fn="$1" pattern="$2" repo source before shim out
+	local SINK_FN="$sink_fn"
+	repo="$(new_fixture "hardlink-${pattern//[^a-z]/-}-$RANDOM" "$PLAN_NAME")"
+	source="$repo/hardlink-source"
+	printf 'external-or-tracked-bytes\n' >"$source"
+	git -C "$repo" add hardlink-source
+	before="$(git -C "$repo" hash-object "$source")"
+	shim="$repo/shim"
+	mkdir -p "$shim"
+	cat >"$shim/mktemp" <<'SH'
+#!/usr/bin/env bash
+path="$($REAL_MKTEMP "$@")" || exit 1
+if [[ "$1" == *"$ATTACK_PATTERN"* ]]; then
+  rm -f -- "$path"
+  ln "$HARDLINK_SOURCE" "$path"
+fi
+printf '%s\n' "$path"
+SH
+	chmod +x "$shim/mktemp"
+	setup_hook() { write_round "$1" 1 hardlink-delta; }
+	export REAL_MKTEMP ATTACK_PATTERN HARDLINK_SOURCE
+	REAL_MKTEMP="$(command -v mktemp)"
+	ATTACK_PATTERN="$pattern"
+	HARDLINK_SOURCE="$source"
+	out="$(run_sink "$repo" branch:feature/widget 1 "docs/dev_plans/$PLAN_NAME" "$shim")"
+	unset -f setup_hook
+	unset REAL_MKTEMP ATTACK_PATTERN HARDLINK_SOURCE
+	grep -Fq 'rc=0' <<<"$out" && [[ "$before" == "$(git -C "$repo" hash-object "$source")" ]]
+}
+
+probe_auto_scope_generation() {
+	local terminal="$1" repo base_oid old_head new_head canonical_path before selected
+	repo="$(new_fixture "auto-scope-$terminal-$RANDOM" "$PLAN_NAME")"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	old_head="$(git -C "$repo" rev-parse feature/widget)"
+	printf 'advance\n' >"$repo/advance"
+	git -C "$repo" add advance
+	git -C "$repo" commit -qm advance
+	new_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+		# Extracted fixture functions are runtime paths.
+		# shellcheck disable=SC1091
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck disable=SC1090
+		. "$AUTO_FN"
+		canonical_target=branch:feature/widget
+		canonical_path="$(gc_ledger_path "$canonical_target" claude)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$canonical_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$old_head" --review-branch feature/widget >/dev/null
+		if [[ "$terminal" == terminal ]]; then
+			"$LIB/convergence-ledger.sh" --ledger "$canonical_path" --target "$canonical_target" --count 0 \
+				--structural 0 --local 0 --pass-type full --quarantine 0 --unresolved 0 >/dev/null
+		fi
+		before="$(git hash-object "$canonical_path")"
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$new_head"
+		review_branch=feature/widget
+		prepare_auto_chain_full_state
+		[[ "$ledger_path" != "$canonical_path" && "$before" == "$(git hash-object "$canonical_path")" ]] || exit 1
+		jq -e --arg head "$new_head" '.review_scope.head_oid == $head' "$ledger_path" >/dev/null || exit 1
+		selected="$ledger_path"
+		prepare_auto_chain_full_state
+		[[ "$ledger_path" == "$selected" ]] || exit 1
+	)
+}
+
+for hardlink_pattern in .design-delta-items. .design-delta-array. .design-delta-resolution. .design-delta-scope.; do
+	check "private sink temp $hardlink_pattern refuses a hardlink alias without changing its tracked source" \
+		probe_private_temp_hardlink "$SINK_FN" "$hardlink_pattern"
 done
+
+for auto_state in nonterminal terminal; do
+	check "Claude auto-chain selects and reuses a new generation after a $auto_state ledger's scope moves" \
+		probe_auto_scope_generation "$auto_state"
+done
+
+hardlink_mutant="$WORKDIR/hardlink-mutant.sh"
+sed 's/\[\[ "$links" == 1 \]\]/true/' "$SINK_FN" >"$hardlink_mutant"
+if probe_private_temp_hardlink "$hardlink_mutant" .design-delta-items.; then
+	fail "mutation removing the single-link invariant survived the Claude items-temp hardlink cell"
+else
+	pass "Claude items-temp hardlink cell catches removal of the single-link invariant"
+fi
 
 echo
 echo "$pass_count passed, $fail_count failed"

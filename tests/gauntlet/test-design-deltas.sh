@@ -2091,6 +2091,10 @@ if [[ "${1:-}" == "-c" && "${2:-}" == "%a" ]]; then
 	printf '644\n'
 	exit 0
 fi
+if [[ "${1:-}" == "-c" && "${2:-}" == "%h" ]]; then
+	printf '1\n'
+	exit 0
+fi
 if [[ "${1:-}" == "-f" && "${2:-}" == "%Lp" ]]; then
 	printf '  File: fake-filesystem\n'
 	printf 'Block size: 4096\n'
@@ -2540,7 +2544,7 @@ make_writer_bad_type() {
 
 run_writer_nonregular_probe() {
 	local writer="$1" only_site="${2:-}" site bad_type repo plan path out rc
-	for site in sidecar plan-temp state-dir; do
+	for site in sidecar state-dir; do
 		[[ -z "$only_site" || "$site" == "$only_site" ]] || continue
 		for bad_type in directory fifo socket; do
 			[[ "$site" == state-dir && "$bad_type" == directory ]] && continue
@@ -2675,6 +2679,64 @@ SH
 			fi
 			grep -Eq 'refusing non-regular design-delta write path|private .* temp file' "$repo/scratch.err" || return 1
 		done
+	done
+}
+
+run_writer_hardlink_probe() {
+	local writer="$1" pattern repo plan source before_source fake_bin real_mktemp out
+	real_mktemp="$(command -v mktemp)"
+	for pattern in design-deltas-payload design-deltas-authority design-deltas-plan .design-deltas-ledger-codex-widget-run-one.tmp .design-deltas-ledger-codex-widget.tmp; do
+		repo="$WORKDIR/writer-hardlink-${pattern//[^a-z]/-}-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 1 one-below
+		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+		write_standard_deltas "$repo" first
+		source="$repo/hardlink-source"
+		printf 'external-or-tracked-bytes\n' >"$source"
+		git -C "$repo" add hardlink-source
+		before_source="$(hash_file "$source")"
+		fake_bin="$repo/fake-bin"
+		mkdir -p "$fake_bin"
+		cat >"$fake_bin/mktemp" <<'SH'
+#!/usr/bin/env bash
+path="$($REAL_MKTEMP "$@")" || exit 1
+if [[ "$1" == *"$ATTACK_PATTERN"* ]]; then
+  rm -f -- "$path"
+  ln "$HARDLINK_SOURCE" "$path"
+fi
+printf '%s\n' "$path"
+SH
+		chmod +x "$fake_bin/mktemp"
+		out="$(REAL_MKTEMP="$real_mktemp" ATTACK_PATTERN="$pattern" HARDLINK_SOURCE="$source" \
+			PATH="$fake_bin:$PATH" run_writer_id "$writer" "$repo" run-one 2>"$repo/hardlink.err")" || return 1
+		[[ "$before_source" == "$(hash_file "$source")" ]] || return 1
+		jq -e '.sink | IN("plan", "sidecar", "dropped")' >/dev/null <<<"$out" || return 1
+	done
+
+	# Final tracked plan and untracked sidecar names may themselves be hardlinks.
+	# Atomic rename must replace only the directory entry and preserve the alias.
+	for pattern in final-plan final-sidecar; do
+		repo="$WORKDIR/writer-hardlink-$pattern-${writer##*/}-$RANDOM"
+		init_repo "$repo"
+		write_shape_plan "$repo" 1 one-below
+		plan="$repo/docs/dev_plans/20261016-feature-widget.md"
+		write_resolution "$repo" unique docs/dev_plans/20261016-feature-widget.md
+		write_standard_deltas "$repo" first
+		source="$repo/final-alias-source"
+		if [[ "$pattern" == final-plan ]]; then
+			cp "$plan" "$source"
+			rm -f "$plan"
+			ln "$source" "$plan"
+		else
+			mkdir -p "$repo/.gauntlet"
+			printf 'existing sidecar\n' >"$source"
+			ln "$source" "$repo/.gauntlet/design-deltas-ledger-codex-widget.md"
+		fi
+		before_source="$(hash_file "$source")"
+		out="$(run_writer_id "$writer" "$repo" run-one 2>"$repo/final-hardlink.err")" || return 1
+		[[ "$before_source" == "$(hash_file "$source")" ]] || return 1
+		jq -e '.sink | IN("plan", "sidecar")' >/dev/null <<<"$out" || return 1
 	done
 }
 
@@ -2988,10 +3050,18 @@ if run_sidecar_git_error_probe "$WRITER"; then
 else
 	fail "sidecar Git-error matrix"
 fi
-if run_tracked_temp_path_probe "$WRITER"; then
-	pass "tracked plan and sidecar temp files are preserved byte-for-byte"
+if run_writer_hardlink_probe "$WRITER"; then
+	pass "writer hardlink matrix protects payload, authority, snapshot, plan-temp, sidecar-temp, plan, and sidecar paths"
 else
-	fail "tracked writer temp-path cells"
+	fail "writer hardlink write-site state space"
+fi
+hardlink_mutant="$WORKDIR/writer-hardlink-mutant.sh"
+sed 's/\[\[ "$link_count" == 1 \]\]/true/g' "$WRITER" >"$hardlink_mutant"
+chmod +x "$hardlink_mutant"
+if run_writer_hardlink_probe "$hardlink_mutant"; then
+	fail "mutation removing writer single-link checks survived the hardlink matrix"
+else
+	pass "writer hardlink matrix catches removal of the single-link invariant"
 fi
 run_symlink_test
 run_input_symlink_test

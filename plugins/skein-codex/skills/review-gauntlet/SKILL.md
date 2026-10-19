@@ -24,7 +24,7 @@ Three modes are opt-in; nothing here fires without an explicit trigger. `--resum
 2. **dev-plan marker**: a plan header carries `**Review Gates:** none | quick | full` above the `/review-plan` marker. `none` or absence means no-op. `quick` means gate 1 only. `full` means all logical gate slots, with Codex unsupported/gated slots surfaced explicitly.
 3. **conduct/fan-out auto-chain**: mechanical callers of mode 2; they add no new trigger surface.
 
-**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. Before preparing the quick round, derive `canonical_target` and the immutable reviewed scope exactly as in Target and Resume Ledger, then call `prepare_quick_design_delta_state`: it derives a scope-keyed quick generation from the canonical target plus reviewed base/head/branch, reuses only an exact-scope generation, and uses plain `--init` only when that generation is absent. A pre-scope legacy target ledger is atomically bound to the current scope once; after the reviewed head moves, quick mode creates or selects a different generation instead of mutating the old scope. It never uses `--init --force`, derives `run_dir`, and prepares but never appends the next round. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. A second invocation at the same scope reuses the same ledger and prepares the same still-unappended round slot. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
+**`quick` runs Codex gate 1 only, once, with no convergence loop.** It runs the native `review/start` adapter in structured mode, applies trivial/allowlisted fixes by route through this skill's bundled applier, applies substantive fixes through the fixer, and returns. Before preparing the quick round, derive `canonical_target` and the immutable reviewed scope exactly as in Target and Resume Ledger, then call `prepare_quick_design_delta_state`: it derives a scope-keyed quick generation from the canonical target plus reviewed base/head/branch, reuses only an exact-scope generation, and uses plain `--init` only when that generation is absent. A pre-scope legacy target ledger is atomically bound only when `.quick_owner == "codex-quick-v1"` proves quick ownership. An indistinguishable legacy full/quick ledger fails closed. After the reviewed head moves, quick mode creates or selects a different generation instead of mutating the old scope. It never uses `--init --force`, derives `run_dir`, and prepares but never appends the next round. After persisting the quick fixer's report, set `design_delta_quick_round="$round_n"` and run the terminal design delta sink before returning; the sink reads that prepared, not-yet-appended round directly. A second invocation at the same scope reuses the same ledger and prepares the same still-unappended round slot. **`full` and standalone invocation are the only paths that can enter the up-to-10-loop cycle.**
 
 ```bash
 prepare_quick_design_delta_state() {
@@ -49,19 +49,22 @@ prepare_quick_design_delta_state() {
     "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$legacy_ledger_path" --target "$canonical_target" >/dev/null || legacy_rc=$?
     case "$legacy_rc" in
       0|5)
-        if jq -e 'has("review_scope")' "$legacy_ledger_path" >/dev/null 2>&1; then
+        if jq -e '.quick_owner == "codex-quick-v1" and has("review_scope")' "$legacy_ledger_path" >/dev/null 2>&1; then
           if jq -e --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" \
             '.review_scope == {base_oid:$base,head_oid:$head,branch:$branch}' "$legacy_ledger_path" >/dev/null 2>&1; then
             ledger_path="$legacy_ledger_path"
             selected_target="$canonical_target"
             quick_ledger_rc="$legacy_rc"
           fi
-        else
+        elif jq -e '.quick_owner == "codex-quick-v1" and (has("review_scope") | not)' "$legacy_ledger_path" >/dev/null 2>&1; then
           "$SKILL_DIR"/lib/convergence-ledger.sh --bind-review-scope --ledger "$legacy_ledger_path" --target "$canonical_target" \
             --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
           ledger_path="$legacy_ledger_path"
           selected_target="$canonical_target"
           quick_ledger_rc="$legacy_rc"
+        else
+          echo "warning: legacy target ledger is not provably quick-owned; refusing migration" >&2
+          return 1
         fi
         ;;
       4) ;;
@@ -162,7 +165,38 @@ round_n="$(( $(jq -r '.rounds | length' "$ledger_path") + 1 ))"
 - **Exit 0** (non-terminal — `continue`/`restart`/`confirm`/`no-rounds`): a prior auto-chained run for this target was interrupted mid-loop. Treat this exactly as an implicit `--resume` per the [Resume Decision Table](#resume-decision-table) below — never re-initialize, since the ledger already exists and is mid-run.
 - **Exit 5** (terminal — `success`/`success_with_quarantine`/`regression`/`cap`/`non-converge`): a prior auto-chained run for this target already finished. Report the terminal status back to the caller (`conduct`/`fan-out`) exactly as a standalone `--resume` would, and do not run another gate round.
 
-This makes auto-chain invocations self-resuming by construction: they never pass `--resume`/`--fresh` explicitly, and the standalone path's exit-6 refusal never fires for them.
+Before honoring either result, compare the ledger's stored `review_scope` with the currently resolved base, head, and branch. An exact match may resume or return its terminal result. A mismatch, including a legacy ledger without scope, selects `canonical_target:auto-scope:<scope-sha1>` and peeks or initializes that generation instead. Auto-chain never rewrites, resumes, or returns terminal state from a different scope. Standalone full and explicit `--resume` keep the immutable target-keyed behavior above.
+
+```bash
+prepare_auto_chain_full_state() {
+  local canonical_path scope_json scope_digest scoped_target scoped_path
+  canonical_path="$(gc_ledger_path "$canonical_target" codex)" || return 1
+  scope_json="$(jq -cn --arg base "$resolved_base_oid" --arg head "$resolved_head_oid" --arg branch "$review_branch" \
+    '{base_oid:$base,head_oid:$head,branch:$branch}')" || return 1
+  scope_digest="$(printf '%s' "$scope_json" | gc_sha1)" || return 1
+  [[ "$scope_digest" =~ ^[0-9a-f]{40}$ ]] || return 1
+  ledger_path="$canonical_path"
+  auto_chain_ledger_rc=0
+  "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target" >/dev/null || auto_chain_ledger_rc=$?
+  if [[ "$auto_chain_ledger_rc" -ne 4 ]] && ! jq -e --argjson scope "$scope_json" '.review_scope == $scope' "$ledger_path" >/dev/null 2>&1; then
+    scoped_target="${canonical_target}:auto-scope:${scope_digest}"
+    scoped_path="$(gc_ledger_path "$scoped_target" codex)" || return 1
+    canonical_target="$scoped_target"
+    ledger_path="$scoped_path"
+    auto_chain_ledger_rc=0
+    "$SKILL_DIR"/lib/convergence-ledger.sh --last-decision --ledger "$ledger_path" --target "$canonical_target" >/dev/null || auto_chain_ledger_rc=$?
+  fi
+  if [[ "$auto_chain_ledger_rc" -eq 4 ]]; then
+    "$SKILL_DIR"/lib/convergence-ledger.sh --init --ledger "$ledger_path" --target "$canonical_target" \
+      --review-base "$resolved_base_oid" --review-head "$resolved_head_oid" --review-branch "$review_branch" >/dev/null || return 1
+    auto_chain_ledger_rc=0
+  elif [[ "$auto_chain_ledger_rc" -ne 0 && "$auto_chain_ledger_rc" -ne 5 ]]; then
+    return 1
+  fi
+}
+```
+
+This makes auto-chain invocations scope-aware and self-resuming by construction: they never pass `--resume`/`--fresh` explicitly, and the standalone path's exit-6 refusal never fires for them.
 
 ## Delegation Pattern (Option A - split delegation)
 
@@ -318,7 +352,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected reports: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-<report-sha1-prefix>` from the exact persisted fixer-report bytes. Thus distinct quick reports accumulate, an identical-report rerun replaces only itself, and a later full-mode section coexists with them. A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it. Collect each selected fixer report's `design_deltas` into one sink file. Every sink-evidence filename uses the full SHA-1 of the ledger stem, never the unbounded stem itself. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Require the ledger to be a readable regular file and the run state to be an existing readable, searchable directory before the first structured read. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
+Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected reports: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-<report-sha1-prefix>` from the exact persisted fixer-report bytes. Thus distinct quick reports accumulate, an identical-report rerun replaces only itself, and a later full-mode section coexists with them. A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it. Collect each selected fixer report's `design_deltas` into one sink file. Every sink-evidence filename uses the full SHA-1 of the ledger stem, never the unbounded stem itself. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Every scratch write uses an unpredictable, exclusively created private temporary file that must remain untracked, regular, non-symlink, and link-count one before every write and atomic publication; durable scope and writer targets are replaced only by atomic rename after the same recheck. Require the ledger to be a readable regular file and the run state to be an existing readable, searchable directory before the first structured read. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
 
 Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens. Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.
 
@@ -372,6 +406,21 @@ run_design_delta_sink() {
     fi
     return 0
   }
+  design_delta_single_link_file() {
+    local path="$1" links
+    [[ -f "$path" && ! -L "$path" ]] || return 1
+    links="$(stat -c '%h' "$path" 2>/dev/null || stat -f '%l' "$path" 2>/dev/null)" || return 1
+    [[ "$links" == 1 ]]
+  }
+  design_delta_private_temp() {
+    local template="$1" path
+    path="$(mktemp "$template")" || return 1
+    if ! design_delta_write_path_is_untracked "$path" || ! design_delta_single_link_file "$path"; then
+      design_delta_write_path_is_untracked "$path" && rm -f -- "$path"
+      return 1
+    fi
+    printf '%s\n' "$path"
+  }
   report_unknown_design_deltas() {
     echo "warning: Design deltas: unknown — $1" >&2
   }
@@ -418,22 +467,13 @@ run_design_delta_sink() {
     echo "warning: cannot derive a bounded design delta state key; continuing terminal handoff" >&2
     return 0
   fi
-  run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
-  delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
-  resolution_file="$state_dir/design-deltas-$target_key.resolution.json"
-
-  for guarded in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
-    if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
-      echo "warning: design delta state path refused; continuing terminal handoff" >&2
-      return 0
-    fi
-  done
-  for writable in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
-    if ! design_delta_write_path_is_untracked "$writable"; then
-      echo "warning: tracked or indeterminate design delta working path; continuing terminal handoff" >&2
-      return 0
-    fi
-  done
+  if ! delta_items_file="$(design_delta_private_temp "$state_dir/.design-delta-items.XXXXXX")" ||
+    ! run_deltas_file="$(design_delta_private_temp "$state_dir/.design-delta-array.XXXXXX")" ||
+    ! resolution_file="$(design_delta_private_temp "$state_dir/.design-delta-resolution.XXXXXX")"; then
+    echo "warning: cannot create private design delta collection files; continuing terminal handoff" >&2
+    report_unknown_design_deltas "cannot initialize the collection files"
+    return 0
+  fi
 
   ledger_run_id="$(jq -r '.run_id // empty' "$ledger_path" 2>/dev/null || true)"
   if [[ ! "$ledger_run_id" =~ ^[0-9a-f]{20}$ ]] && declare -F gc_sha1 >/dev/null; then
@@ -476,7 +516,8 @@ run_design_delta_sink() {
     return 0
   fi
   if [[ -e "$scope_file" ]]; then
-    if ! jq -e --arg run_id "$run_id" --arg target "$canonical_target" --argjson enforce_scope "$ledger_scope" \
+    if ! design_delta_single_link_file "$scope_file" ||
+      ! jq -e --arg run_id "$run_id" --arg target "$canonical_target" --argjson enforce_scope "$ledger_scope" \
       --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" '
       def control_free: type == "string" and (explode | all(. >= 32 and . != 127));
       type == "object"
@@ -504,16 +545,17 @@ run_design_delta_sink() {
       return 0
     fi
     if [[ -n "$BASE_OID" && -n "$HEAD_OID" ]]; then
-      scope_tmp="$state_dir/.design-delta-scope-$target_key-$run_id.tmp"
-      if ! design_delta_write_path_is_untracked "$scope_tmp" || [[ -e "$scope_tmp" ]]; then
-        echo "warning: unsafe or occupied design delta scope temp path; continuing terminal handoff" >&2
+      if ! scope_tmp="$(design_delta_private_temp "$state_dir/.design-delta-scope.XXXXXX")"; then
+        echo "warning: cannot create private design delta scope temp path; continuing terminal handoff" >&2
         return 0
       fi
-      if ! (set -o noclobber; jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
+      if ! design_delta_single_link_file "$scope_tmp" ||
+        ! jq -cn --arg run_id "$run_id" --arg target "$canonical_target" \
         --arg base_oid "$BASE_OID" --arg head_oid "$HEAD_OID" --arg branch "$branch_name" \
-        '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp") ||
+        '{run_id:$run_id,target:$target,base_oid:$base_oid,head_oid:$head_oid,branch:$branch}' > "$scope_tmp" ||
         ! design_delta_write_path_is_untracked "$scope_file" ||
         ! design_delta_write_path_is_untracked "$scope_tmp" ||
+        ! design_delta_single_link_file "$scope_tmp" ||
         ! mv "$scope_tmp" "$scope_file"; then
         design_delta_write_path_is_untracked "$scope_tmp" && rm -f "$scope_tmp"
         echo "warning: cannot persist design delta scope; continuing terminal handoff" >&2
@@ -527,6 +569,9 @@ run_design_delta_sink() {
   if ! design_delta_write_path_is_untracked "$delta_items_file" ||
     ! design_delta_write_path_is_untracked "$run_deltas_file" ||
     ! design_delta_write_path_is_untracked "$resolution_file" ||
+    ! design_delta_single_link_file "$delta_items_file" ||
+    ! design_delta_single_link_file "$run_deltas_file" ||
+    ! design_delta_single_link_file "$resolution_file" ||
     ! : > "$delta_items_file" || ! : > "$run_deltas_file" || ! : > "$resolution_file"; then
     echo "warning: cannot initialize design delta collection; continuing terminal handoff" >&2
     report_unknown_design_deltas "cannot initialize the collection files"
@@ -586,7 +631,7 @@ run_design_delta_sink() {
       collection_complete=false
       continue
     fi
-    if ! design_delta_write_path_is_untracked "$delta_items_file" ||
+    if ! design_delta_write_path_is_untracked "$delta_items_file" || ! design_delta_single_link_file "$delta_items_file" ||
       ! jq -c '.design_deltas[]' "$report" >> "$delta_items_file"; then
       echo "warning: unreadable design_deltas skipped: $report" >&2
       collection_complete=false
@@ -596,7 +641,7 @@ run_design_delta_sink() {
     report_unknown_design_deltas "one or more selected fixer reports could not be collected"
     return 0
   fi
-  if ! design_delta_write_path_is_untracked "$run_deltas_file" ||
+  if ! design_delta_write_path_is_untracked "$run_deltas_file" || ! design_delta_single_link_file "$run_deltas_file" ||
     ! jq -s '.' "$delta_items_file" > "$run_deltas_file" 2>/dev/null; then
     echo "warning: design delta collection failed; continuing terminal handoff" >&2
     report_unknown_design_deltas "collection failed or the items file is unreadable"
@@ -627,7 +672,7 @@ run_design_delta_sink() {
   [[ -n "$PLAN_PATH" ]] && resolve_args+=(--plan "$PLAN_PATH")
   resolution_reason=""
   if [[ "${design_delta_sidecar_only:-false}" != true ]] &&
-    { ! design_delta_write_path_is_untracked "$resolution_file" ||
+    { ! design_delta_write_path_is_untracked "$resolution_file" || ! design_delta_single_link_file "$resolution_file" ||
       ! "$SKILL_DIR"/lib/resolve-plan.sh "${resolve_args[@]}" > "$resolution_file"; }; then
     resolution_reason="plan resolver failed"
     echo "warning: design delta plan resolution failed; using sidecar" >&2
@@ -637,10 +682,10 @@ run_design_delta_sink() {
     echo "warning: unusable design delta plan resolution; using sidecar" >&2
   fi
   if [[ -n "$resolution_reason" ]]; then
-    if ! design_delta_write_path_is_untracked "$resolution_file"; then
+    if ! design_delta_write_path_is_untracked "$resolution_file" || ! design_delta_single_link_file "$resolution_file"; then
       return 0
     elif ! jq -cn --arg reason "$resolution_reason" '{status:"none",plan:"",reason:$reason}' > "$resolution_file"; then
-      design_delta_write_path_is_untracked "$resolution_file" || return 0
+      design_delta_write_path_is_untracked "$resolution_file" && design_delta_single_link_file "$resolution_file" || return 0
       printf '{"status":"none","plan":"","reason":"plan resolution unavailable"}\n' > "$resolution_file" || return 0
     fi
   fi

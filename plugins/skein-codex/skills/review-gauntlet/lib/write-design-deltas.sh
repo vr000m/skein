@@ -155,13 +155,22 @@ cleanup_writer_temps() {
 }
 
 create_private_temp() {
-	local template="$1" temp_path
+	local template="$1" temp_path link_count
 	temp_path="$(mktemp "$template")" || return 1
-	if ! write_path_is_untracked "$temp_path"; then
+	link_count="$(stat -c '%h' "$temp_path" 2>/dev/null || stat -f '%l' "$temp_path" 2>/dev/null)" || link_count=""
+	if ! write_path_is_untracked "$temp_path" || [[ "$link_count" != 1 ]]; then
 		remove_writer_temp "$temp_path"
 		return 1
 	fi
 	printf '%s\n' "$temp_path"
+}
+
+private_temp_is_owned() {
+	local path="$1" link_count
+	write_path_is_untracked "$path" || return 1
+	[[ -f "$path" && ! -L "$path" ]] || return 1
+	link_count="$(stat -c '%h' "$path" 2>/dev/null || stat -f '%l' "$path" 2>/dev/null)" || return 1
+	[[ "$link_count" == 1 ]]
 }
 
 gauntlet_assert_no_symlink "$DELTAS" write-design-deltas || drop_nonempty "refusing symlinked deltas input"
@@ -192,7 +201,7 @@ post_authority_tmp=""
 plan_snapshot=""
 output_tmp=""
 trap cleanup_writer_temps EXIT
-if ! "$JQ" -r --arg run_id "$RUN_ID" '
+if ! private_temp_is_owned "$payload" || ! "$JQ" -r --arg run_id "$RUN_ID" '
   # Literal bare URLs remain linkable under GFM; neutralizing them would mangle readable text.
   def strip_variations:
     explode
@@ -294,7 +303,7 @@ fi
 # replacement, so a concurrent edit anywhere in the file routes to sidecar
 # instead of being overwritten.
 if [[ "$plan_is_safe" -eq 1 ]]; then
-	if ! plan_snapshot="$(create_private_temp "$scratch_dir/design-deltas-plan.XXXXXX")" ||
+	if ! plan_snapshot="$(create_private_temp "$scratch_dir/design-deltas-plan.XXXXXX")" || ! private_temp_is_owned "$plan_snapshot" ||
 		! cp "$REPO_ROOT/$plan" "$plan_snapshot"; then
 		sidecar_reason="cannot snapshot resolved plan"
 		plan_is_safe=0
@@ -449,7 +458,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 		sidecar_reason="cannot create a private marker.py authority temp file before plan edit"
 		plan_is_safe=0
 	else
-		marker_authority_query "$plan_snapshot" >"$authority_tmp" 2>/dev/null || authority_rc=$?
+		private_temp_is_owned "$authority_tmp" && marker_authority_query "$plan_snapshot" >"$authority_tmp" 2>/dev/null || authority_rc=$?
 		if [[ "$authority_rc" -ne 0 ]]; then
 			case "$authority_rc" in
 			124) sidecar_reason="marker.py authority query timed out before plan edit" ;;
@@ -609,9 +618,8 @@ upsert_section() {
 if [[ "$plan_is_safe" -eq 1 ]]; then
 	plan_path="$REPO_ROOT/$plan"
 	plan_dir="${plan_path%/*}"
-	output_tmp="$plan_dir/.design-deltas-$TARGET_KEY-$RUN_ID.tmp"
-	if ! write_path_is_untracked "$output_tmp" || [[ -e "$output_tmp" ]]; then
-		sidecar_reason="resolved plan temp path is tracked, indeterminate, or already exists"
+	if ! output_tmp="$(create_private_temp "$plan_dir/.design-deltas-$TARGET_KEY-$RUN_ID.tmp.XXXXXX")"; then
+		sidecar_reason="cannot create a private resolved plan temp file"
 		plan_is_safe=0
 	fi
 	if [[ "$plan_is_safe" -ne 1 ]]; then
@@ -627,10 +635,10 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 			plan_is_safe=0
 		fi
 		if [[ "$plan_is_safe" -eq 1 ]]; then
-			upsert_section "$plan_snapshot" "$output_tmp" "$findings_line" "$findings_end" || {
+			if ! private_temp_is_owned "$output_tmp" || ! upsert_section "$plan_snapshot" "$output_tmp" "$findings_line" "$findings_end" private; then
 				sidecar_reason="cannot update resolved plan temp file"
 				plan_is_safe=0
-			}
+			fi
 		fi
 		if [[ "$plan_is_safe" -eq 1 ]]; then
 			if cmp -s <(head -n "$marker_line" "$plan_snapshot") <(head -n "$marker_line" "$output_tmp"); then
@@ -639,7 +647,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 				if ! post_authority_tmp="$(create_private_temp "$scratch_dir/design-deltas-authority.XXXXXX")"; then
 					sidecar_reason="cannot create a private marker.py authority temp file after plan edit"
 				else
-					marker_authority_query "$output_tmp" >"$post_authority_tmp" 2>/dev/null || post_authority_rc=$?
+					private_temp_is_owned "$post_authority_tmp" && marker_authority_query "$output_tmp" >"$post_authority_tmp" 2>/dev/null || post_authority_rc=$?
 				fi
 				if [[ -n "$post_authority_tmp" && "$post_authority_rc" -eq 0 ]]; then
 					post_authority_output="$(cat "$post_authority_tmp")"
@@ -650,7 +658,7 @@ if [[ "$plan_is_safe" -eq 1 ]]; then
 						if ! cmp -s "$plan_snapshot" "$plan_path"; then
 							sidecar_reason="resolved plan changed after snapshot"
 							plan_is_safe=0
-						elif write_path_is_untracked "$output_tmp" && regular_nonsymlink_plan "$plan" && chmod "$plan_mode" "$output_tmp" && mv "$output_tmp" "$plan_path"; then
+						elif private_temp_is_owned "$output_tmp" && regular_nonsymlink_plan "$plan" && chmod "$plan_mode" "$output_tmp" && mv "$output_tmp" "$plan_path"; then
 							output_tmp=""
 							"$JQ" -cn --arg path "$plan" '{sink:"plan",path:$path,reason:""}'
 							exit 0
@@ -690,9 +698,13 @@ write_path_is_untracked "$state_dir" directory || drop_nonempty "unsafe .gauntle
 write_path_is_untracked "$sidecar" || drop_nonempty "unsafe design-delta sidecar"
 output_tmp="$(create_private_temp "$state_dir/.design-deltas-$TARGET_KEY.tmp.XXXXXX")" || drop_nonempty "cannot create a private design-delta sidecar temp file"
 if [[ -f "$sidecar" ]]; then
-	upsert_section "$sidecar" "$output_tmp" 0 0 private || drop_nonempty "cannot update sidecar temp file"
+	if ! private_temp_is_owned "$output_tmp" || ! upsert_section "$sidecar" "$output_tmp" 0 0 private; then
+		drop_nonempty "cannot update sidecar temp file"
+	fi
 else
-	upsert_section /dev/null "$output_tmp" 0 0 private || drop_nonempty "cannot write sidecar temp file"
+	if ! private_temp_is_owned "$output_tmp" || ! upsert_section /dev/null "$output_tmp" 0 0 private; then
+		drop_nonempty "cannot write sidecar temp file"
+	fi
 fi
 if ! write_path_is_untracked "$sidecar"; then
 	echo "warning: design-delta sidecar became tracked or indeterminate; skipping" >&2
@@ -701,7 +713,9 @@ if ! write_path_is_untracked "$sidecar"; then
 	emit_dropped "design-delta sidecar became tracked, non-regular, or indeterminate before replace"
 	exit 0
 fi
-mv "$output_tmp" "$sidecar" || drop_nonempty "cannot replace sidecar"
+if ! private_temp_is_owned "$output_tmp" || ! mv "$output_tmp" "$sidecar"; then
+	drop_nonempty "cannot replace sidecar"
+fi
 output_tmp=""
 "$JQ" -cn --arg path ".gauntlet/design-deltas-$TARGET_KEY.md" --arg reason "$sidecar_reason" \
 	'{sink:"sidecar",path:$path,reason:$reason}'

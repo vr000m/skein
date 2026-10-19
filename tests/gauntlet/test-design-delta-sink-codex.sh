@@ -47,6 +47,12 @@ if [[ ! -s "$QUICK_FN" ]] || ! grep -q '^}$' "$QUICK_FN"; then
 	echo "FAIL: could not extract prepare_quick_design_delta_state from $SKILL_MD"
 	exit 1
 fi
+AUTO_FN="$WORKDIR/auto-fn.sh"
+sed -n '/^prepare_auto_chain_full_state() {$/,/^}$/p' "$SKILL_MD" >"$AUTO_FN"
+if [[ ! -s "$AUTO_FN" ]] || ! grep -q '^}$' "$AUTO_FN"; then
+	echo "FAIL: could not extract prepare_auto_chain_full_state from $SKILL_MD"
+	exit 1
+fi
 
 PLAN_NAME=20261016-feature-widget.md
 
@@ -199,9 +205,9 @@ run_reset_failure_probe() {
 		PLAN_PATH=""
 		run_design_delta_sink
 	) >"$repo/reset.out" 2>"$repo/reset.err"
-	[[ "$before" == "$(hash_file "$plan")" ]] &&
-		grep -Fq 'cannot initialize design delta collection' "$repo/reset.err" &&
-		! grep -Eq 'stale-delta|stale-array|current-delta' "$plan"
+	[[ "$before" != "$(hash_file "$plan")" ]] &&
+		grep -Fq 'Summary: "current-delta"' "$plan" &&
+		! grep -Eq 'stale-delta|stale-array' "$plan"
 }
 
 run_invalid_round_count_probe() {
@@ -404,6 +410,8 @@ run_quick_legacy_bind_probe() {
 		canonical_target=branch:feature/widget
 		legacy_path="$(gc_ledger_path "$canonical_target" codex)"
 		"$LIB/convergence-ledger.sh" --init --ledger "$legacy_path" --target "$canonical_target" >/dev/null
+		jq '.quick_owner = "codex-quick-v1"' "$legacy_path" >"$legacy_path.tmp"
+		mv "$legacy_path.tmp" "$legacy_path"
 		jq -e 'has("review_scope") | not' "$legacy_path" >/dev/null
 		resolved_base_oid="$base_oid"
 		resolved_head_oid="$reviewed_head"
@@ -416,6 +424,118 @@ run_quick_legacy_bind_probe() {
 		prepare_quick_design_delta_state || exit 1
 		[[ "$ledger_path" == "$legacy_path" ]] || exit 1
 	) >"$repo/legacy.out" 2>"$repo/legacy.err"
+}
+
+run_full_ledger_collision_probe() {
+	local quick_fn="$1" terminal="$2" repo base_oid reviewed_head legacy_path before
+	repo="$WORKDIR/quick-full-collision-$terminal-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# Extracted fixture functions are runtime paths.
+		# shellcheck disable=SC1091
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck disable=SC1090
+		. "$quick_fn"
+		canonical_target=branch:feature/widget
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$reviewed_head"
+		review_branch=feature/widget
+		legacy_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$legacy_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		if [[ "$terminal" == terminal ]]; then
+			"$LIB/convergence-ledger.sh" --ledger "$legacy_path" --target "$canonical_target" --count 0 \
+				--structural 0 --local 0 --pass-type full --quarantine 0 --unresolved 0 >/dev/null
+		fi
+		before="$(hash_file "$legacy_path")"
+		if prepare_quick_design_delta_state; then exit 1; fi
+		[[ "$before" == "$(hash_file "$legacy_path")" ]]
+	)
+}
+
+run_auto_scope_probe() {
+	local auto_fn="$1" terminal="$2" repo base_oid old_head new_head canonical_path before
+	repo="$WORKDIR/auto-scope-$terminal-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	old_head="$(git -C "$repo" rev-parse feature/widget)"
+	printf 'advance\n' >"$repo/advance"
+	git -C "$repo" add advance
+	git -C "$repo" commit -qm advance
+	new_head="$(git -C "$repo" rev-parse feature/widget)"
+	(
+		cd "$repo"
+		# Extracted fixture functions are runtime paths.
+		# shellcheck disable=SC1091
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck disable=SC1090
+		. "$auto_fn"
+		canonical_target=branch:feature/widget
+		canonical_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$canonical_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$old_head" --review-branch feature/widget >/dev/null
+		if [[ "$terminal" == terminal ]]; then
+			"$LIB/convergence-ledger.sh" --ledger "$canonical_path" --target "$canonical_target" --count 0 \
+				--structural 0 --local 0 --pass-type full --quarantine 0 --unresolved 0 >/dev/null
+		fi
+		before="$(hash_file "$canonical_path")"
+		resolved_base_oid="$base_oid"
+		resolved_head_oid="$new_head"
+		review_branch=feature/widget
+		prepare_auto_chain_full_state
+		[[ "$ledger_path" != "$canonical_path" && "$before" == "$(hash_file "$canonical_path")" ]] || exit 1
+		jq -e --arg head "$new_head" '.review_scope.head_oid == $head' "$ledger_path" >/dev/null || exit 1
+		selected="$ledger_path"
+		prepare_auto_chain_full_state
+		[[ "$ledger_path" == "$selected" ]] || exit 1
+	)
+}
+
+run_private_temp_hardlink_probe() {
+	local sink_fn="$1" pattern="$2" repo base_oid reviewed_head source before shim
+	repo="$WORKDIR/hardlink-${pattern//[^a-z]/-}-$RANDOM"
+	init_fixture "$repo"
+	base_oid="$(git -C "$repo" rev-parse main)"
+	reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
+	source="$repo/hardlink-source"
+	printf 'external-or-tracked-bytes\n' >"$source"
+	git -C "$repo" add hardlink-source
+	before="$(hash_file "$source")"
+	shim="$repo/shim"
+	mkdir -p "$shim"
+	cat >"$shim/mktemp" <<'SH'
+#!/usr/bin/env bash
+path="$($REAL_MKTEMP "$@")" || exit 1
+if [[ "$1" == *"$ATTACK_PATTERN"* ]]; then
+  rm -f -- "$path"
+  ln "$HARDLINK_SOURCE" "$path"
+fi
+printf '%s\n' "$path"
+SH
+	chmod +x "$shim/mktemp"
+	(
+		cd "$repo"
+		# Extracted fixture functions are runtime paths.
+		# shellcheck disable=SC1091
+		. "$LIB/gauntlet-common.sh"
+		# shellcheck disable=SC1090
+		. "$sink_fn"
+		canonical_target=branch:feature/widget
+		ledger_path="$(gc_ledger_path "$canonical_target" codex)"
+		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
+			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
+		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
+		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
+		mv "$ledger_path.tmp" "$ledger_path"
+		write_round "$run_dir" 1 hardlink-delta
+		PLAN_PATH="docs/dev_plans/$PLAN_NAME"
+		REAL_MKTEMP="$(command -v mktemp)" ATTACK_PATTERN="$pattern" HARDLINK_SOURCE="$source" \
+		PATH="$shim:$PATH" run_design_delta_sink
+	) >"$repo/hardlink.out" 2>"$repo/hardlink.err"
+	[[ "$before" == "$(hash_file "$source")" ]] && ! grep -Fq hardlink-delta "$source"
 }
 
 run_report_failure_matrix_probe() {
@@ -916,9 +1036,9 @@ else
 fi
 
 if run_reset_failure_probe "$SINK_FN"; then
-	pass "reset failure: sink aborts before stale working files are consumed"
+	pass "legacy predictable scratch files are ignored while private collection succeeds"
 else
-	fail "reset failure: sink consumed stale state or omitted its warning"
+	fail "legacy predictable scratch files contaminated private collection"
 fi
 
 if run_invalid_round_count_probe "$SINK_FN"; then
@@ -956,6 +1076,18 @@ if run_quick_legacy_bind_probe "$QUICK_FN"; then
 else
 	fail "quick-mode legacy review_scope binding"
 fi
+for collision_state in nonterminal terminal; do
+	if run_full_ledger_collision_probe "$QUICK_FN" "$collision_state"; then
+		pass "quick mode refuses a $collision_state full target ledger without quick ownership provenance"
+	else
+		fail "quick/full $collision_state target-ledger separation"
+	fi
+	if run_auto_scope_probe "$AUTO_FN" "$collision_state"; then
+		pass "auto-chain selects and reuses a new generation after a $collision_state ledger's scope moves"
+	else
+		fail "auto-chain $collision_state scope generation"
+	fi
+done
 
 if run_report_failure_matrix_probe "$QUICK_FN" "$SINK_FN"; then
 	pass "full and quick report-failure table maps unsafe, malformed, non-array, and non-regular inputs to unknown, never zero"
@@ -981,23 +1113,13 @@ else
 	fail "normal review_scope branch"
 fi
 
-if run_tracked_working_path_probe "$SINK_FN"; then
-	pass "tracked items, deltas, resolution, scope, and scope-temp paths survive clean and hostile Git environments byte-for-byte"
-else
-	fail "tracked sink working-path state space"
-fi
-
-if run_nonregular_working_path_probe "$SINK_FN"; then
-	pass "all available sink write-site directory, FIFO, and socket rows refuse targets before any write"
-else
-	fail "sink non-regular write-target state space"
-fi
-
-if run_icase_tracked_probe "$SINK_FN"; then
-	pass "differently-cased tracked items, deltas, and scope paths are refused under hostile Git environments"
-else
-	fail "case-insensitive literal trackedness state space"
-fi
+for hardlink_pattern in .design-delta-items. .design-delta-array. .design-delta-resolution. .design-delta-scope.; do
+	if run_private_temp_hardlink_probe "$SINK_FN" "$hardlink_pattern"; then
+		pass "private sink temp $hardlink_pattern refuses a hardlink alias without changing its tracked source"
+	else
+		fail "private sink temp hardlink contract: $hardlink_pattern"
+	fi
+done
 
 if run_corrupt_index_working_path_probe "$SINK_FN"; then
 	pass "an indeterminate trackedness result from a corrupt index fails closed"
@@ -1083,6 +1205,23 @@ else
 	pass "legacy migration probe catches removal of one-time scope binding"
 fi
 
+quick_provenance_mutant="$WORKDIR/quick-provenance-mutant.sh"
+sed 's/\.quick_owner == "codex-quick-v1" and has("review_scope")/has("review_scope")/' "$QUICK_FN" >"$quick_provenance_mutant"
+if run_full_ledger_collision_probe "$quick_provenance_mutant" nonterminal; then
+	fail "mutation removing quick ownership provenance survived the full-ledger collision probe"
+else
+	pass "full-ledger collision probe catches removal of quick ownership provenance"
+fi
+
+auto_scope_mutant="$WORKDIR/auto-scope-mutant.sh"
+sed 's@  if \[\[ "$auto_chain_ledger_rc" -ne 4 \]\] && ! jq -e --argjson scope "$scope_json" .*@  if false; then@' \
+	"$AUTO_FN" >"$auto_scope_mutant"
+if run_auto_scope_probe "$auto_scope_mutant" nonterminal; then
+	fail "mutation removing auto-chain scope comparison survived the moved-scope probe"
+else
+	pass "moved-scope probe catches removal of auto-chain scope comparison"
+fi
+
 collection_total_mutant="$WORKDIR/collection-total-mutant.sh"
 sed '/if \[\[ "\$collection_complete" != true \]\]; then/,/^[[:space:]]*fi$/d' "$SINK_FN" >"$collection_total_mutant"
 if run_report_failure_matrix_probe "$QUICK_FN" "$collection_total_mutant"; then
@@ -1123,45 +1262,12 @@ else
 	pass "mutation removing sink scope control validation is caught"
 fi
 
-env_scrub_mutant="$WORKDIR/tracked-env-scrub-mutant.sh"
-sed 's/-u GIT_INDEX_FILE //g' "$SINK_FN" >"$env_scrub_mutant"
-if run_tracked_working_path_probe "$env_scrub_mutant" items; then
-	fail "mutation removing the sink Git-environment scrub survived the hostile-index cell"
+hardlink_mutant="$WORKDIR/hardlink-mutant.sh"
+sed 's/\[\[ "$links" == 1 \]\]/true/' "$SINK_FN" >"$hardlink_mutant"
+if run_private_temp_hardlink_probe "$hardlink_mutant" .design-delta-items.; then
+	fail "mutation removing the single-link invariant survived the items-temp hardlink cell"
 else
-	pass "mutation removing the sink Git-environment scrub is caught"
-fi
-
-git_error_mutant="$WORKDIR/tracked-git-error-mutant.sh"
-sed 's/if ! tracked_output=/if false \&\& tracked_output=/' "$SINK_FN" >"$git_error_mutant"
-if run_corrupt_index_working_path_probe "$git_error_mutant"; then
-	fail "mutation treating a Git error as untracked survived the corrupt-index cell"
-else
-	pass "mutation treating a Git error as untracked is caught"
-fi
-
-items_site_mutant="$WORKDIR/tracked-items-site-mutant.sh"
-sed -e 's/"$run_deltas_file" "$delta_items_file" "$resolution_file"/"$run_deltas_file" "$resolution_file"/' \
-	-e 's/design_delta_write_path_is_untracked "$delta_items_file"/true/g' "$SINK_FN" >"$items_site_mutant"
-if run_tracked_working_path_probe "$items_site_mutant" items; then
-	fail "mutation dropping the items-file write-site check survived its tracked cell"
-else
-	pass "mutation dropping one write-site check is caught by that site's cell"
-fi
-
-items_type_mutant="$WORKDIR/type-items-site-mutant.sh"
-sed 's/\[\[ -f "$path" && ! -L "$path" \]\]/[[ -e "$path" ]]/' "$SINK_FN" >"$items_type_mutant"
-if run_nonregular_working_path_probe "$items_type_mutant" items directory; then
-	fail "mutation dropping the items-file type check survived its bad-type cells"
-else
-	pass "mutation dropping one write-site type check is caught by that site"
-fi
-
-icase_mutant="$WORKDIR/icase-mutant.sh"
-sed 's/ls-files -- ":(icase,literal)$rel"/ls-files -- "$rel"/' "$SINK_FN" >"$icase_mutant"
-if run_icase_tracked_probe "$icase_mutant"; then
-	fail "mutation dropping icase survived differently-cased tracked paths"
-else
-	pass "mutation dropping icase is caught by differently-cased tracked paths"
+	pass "items-temp hardlink cell catches removal of the single-link invariant"
 fi
 
 # A fixer report is an input read, so a symlink at that path must be refused

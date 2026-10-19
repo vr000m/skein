@@ -79,7 +79,7 @@ Decisions (grilled 2026-10-16):
 ### Architecture Decisions
 - Prompt-level contract guardrails remain the enforcement mechanism, like Guardrails 3, 6 and 7.
 - Correction (2026-10-16): the terminal sink needs a ledger-owned opaque `run_id`; hashing the mutable ledger made the same run acquire a new section identity after every appended round. Fresh-ledger initialization atomically persists the immutable reviewed base/head/branch scope so even a first-ever sink call after interruption cannot follow a moved target. Legacy ledgers derive an append-stable fallback from their target, limits and first round.
-- Correction (2026-10-18): Codex quick mode must not reuse a target-keyed ledger after its own fixes move `HEAD`. It derives a generation from the canonical target plus the complete immutable review scope, while `convergence-ledger.sh --bind-review-scope` provides a one-time atomic migration for pre-scope ledgers without discarding their run state.
+- Correction (2026-10-18): Codex quick mode must not reuse a target-keyed ledger after its own fixes move `HEAD`. It derives a generation from the canonical target plus the complete immutable review scope. `convergence-ledger.sh --bind-review-scope` may migrate a pre-scope ledger only when explicit provenance proves quick ownership; an indistinguishable legacy full/quick ledger fails closed.
 - The merge-bar is deferred. It needs a new terminal token and a blocking-vs-minor classification in `convergence-ledger.sh` on both mirrors. Revisit only if a run with Guardrail 8 and deltas still ends in cap or non-converge on minor-only findings.
 
 ### Dependencies
@@ -92,7 +92,8 @@ Decisions (grilled 2026-10-16):
 | `design_deltas` in `fixer-report.json` | Fixer (Phase 1 brief) | Terminal sink (Phase 2) | Array of objects, never in `claimed`. A missing report is known-empty; an existing non-regular, malformed, unreadable, or non-array report makes collection unknown. |
 | Plan resolution result | `resolve-plan.sh` | `write-design-deltas.sh` | Status is explicit, unique, none or ambiguous. Anything but explicit or unique goes to the sidecar. |
 | Ledger run identity and reviewed scope | `convergence-ledger.sh --init` | Resumed terminal sink | `run_id` is stable across appends and fresh on forced init; persisted base/head/branch are reused for that run. |
-| Codex quick generation | `prepare_quick_design_delta_state` | `convergence-ledger.sh` | Exact scope reuses one ledger; moved scope selects another; legacy no-scope state is bound once before gates. |
+| Codex quick generation | `prepare_quick_design_delta_state` | `convergence-ledger.sh` | Exact scope reuses one ledger; moved scope selects another; only provably quick-owned legacy state may bind once. |
+| Full auto-chain generation | `prepare_auto_chain_full_state` | `convergence-ledger.sh` | Exact scope may reuse interrupted or terminal state; moved scope selects a new generation without changing standalone target identity. |
 
 ## Testing Notes
 
@@ -101,12 +102,13 @@ Decisions (grilled 2026-10-16):
 - [x] Table-driven marker, sidecar, head and sanitization probes, each with a mutation check.
 - [x] Executed test of the Claude-side base/head derivation: `tests/gauntlet/test-design-delta-sink-claude.sh` runs the SKILL.md sink fence in scratch repos (implicit branch, `a..b`, `a...b`, `pr:<N>` through a fake `gh`, `gh` failure, unset context, symlinked working file) with mutation checks.
 - [x] Executed Codex resume test proves appended rounds retain one section identity, persisted scope keeps the original reviewed head after the branch moves, and symlinked fixer reports are refused. Writer tests also refuse symlinked resolution and delta inputs.
-- [x] Executed full/quick state tables distinguish missing fixer reports from existing directory/FIFO reports, and mutation checks restore the old silent-skip predicate. Quick generation tests cover same-scope reuse, moved-head selection, and one-time legacy binding.
+- [x] Executed full/quick state tables distinguish missing fixer reports from existing directory/FIFO reports. Quick tests cover same-scope reuse, moved-head selection, proven legacy ownership, and terminal/nonterminal full-ledger collision refusal. Full auto-chain tests cover moved scope from interrupted and terminal ledgers in both harnesses.
 
 ### Test Results
+- [x] The results below were the intermediate pre-round-12 snapshot. They are retained as historical evidence, not the final verification for the hardlink, ledger-provenance, auto-chain-scope, and tracked-cleanup redesign.
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
 - [x] Independent-review fix coverage passes: Codex sink 56/56, Claude sink 65/65, writer/resolver 285/285, convergence ledger 236/236, skill shape 395/395 and lib parity 179/179, including scope-generation, legacy-binding and non-regular report mutations.
-- [x] Final `just ci` after the independent fixes reaches only the two accepted `test_native_gates.py` cycle failures in #56 (54 passed, 2 failed). Independent `parity-tests`, `lens-tests`, `reconciliation-tests`, `plugin-tests` and `pytest-tests` pass.
+- [x] Round-12 final focused verification (2026-10-18): writer/resolver 285/285, Codex sink 54/54, Claude sink 62/62, skill shape 402/402, convergence-ledger pass, parity pass, lens 178/178, reconciliation pass, plugin pass, and the four pytest groups 216/216, 69/69, 251/251 and 68/68. The cached offline pytest runner also passed native gates 56/56. The required final `just ci` result is recorded below only after that run completes.
 
 ## Acceptance Criteria
 
@@ -131,8 +133,13 @@ Decisions (grilled 2026-10-16):
 ## Issues & Solutions
 
 - Quick mode exists only in the Codex mirror (the Claude mirror's `Review Gates` is `none | full`), so only the Codex sink has `design_delta_quick_round`; quick sections use their own run id (`codex-<ledger-id>-quick-<12-hex digest of the persisted quick fixer report>`) so different quick runs never replace each other and an identical rerun is idempotent. This is a sanctioned mirror asymmetry.
-- Independent-review correction (2026-10-18): quick ledgers are generation-keyed by the full immutable review scope. Re-running at the same scope remains idempotent; a moved head selects a fresh generation instead of failing stale or mutating an earlier generation.
+- Independent-review correction (2026-10-18): quick ledgers are generation-keyed by the full immutable review scope. Re-running at the same scope remains idempotent; a moved head selects a fresh generation. A target-keyed legacy ledger migrates only with explicit quick provenance; otherwise quick mode refuses it.
 - Codex `resume` runs read-only, so a fix round sent through it changes nothing. Start a fresh write-mode task instead.
 - Review correction (2026-10-16): mutable-ledger hashing duplicated design-delta sections, resume lost reviewed scope, and three input reads bypassed the state-path guard. The sink now uses ledger-owned identity plus persisted scope and guards every state-derived read.
+- Round-12 correction (2026-10-18): sink and writer scratch outputs now use exclusive random, single-link inodes and atomic final publication. Quick migration requires explicit quick ownership, auto-chain selects a new full generation when immutable scope moves, and init cleanup refuses force-tracked owned files. This supersedes the earlier predictable scratch-path, scope-only legacy adoption, and target-only auto-chain decisions.
 
 ## Final Results
+
+- Round 12 replaced every sink/writer scratch write with an exclusive random single-link temporary-file contract plus atomic publication, separated quick/full legacy ownership, made auto-chain scope-aware, and made fresh cleanup preserve tracked writer-owned names.
+- The complete hardlink state space is executed for both terminal-sink mirrors and the shared writer, including tracked and external aliases; deliberate mutations remove each single-link, scope-comparison, provenance, and tracked-cleanup enforcement and are caught by the focused suites.
+- Final local verification used the repository's cached offline pytest environment: `parity-tests`, `lens-tests`, `reconciliation-tests`, `plugin-tests`, `pytest-tests`, native gates (56/56), and all focused round-12 suites passed. The background `just ci` attempt exposed only new ShellCheck/shfmt findings in the changed files; those were corrected and `just lint-scripts` then passed. A post-commit conductor run owns the uninterrupted aggregate CI confirmation.

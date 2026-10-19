@@ -987,6 +987,32 @@ run_owned_wrong_type_probe() {
 		grep -Fq "$stem/.seam-tripwire.tmp" "$TMP_SINK"
 }
 
+run_tracked_owned_cleanup_probe() {
+	local script="$1" mode="$2" name="$3" repo ledger stem owned before rc
+	repo="$(mktemp -d)"
+	TMP_DIRS+=("$repo")
+	git init -q "$repo"
+	repo="$(cd "$repo" && pwd -P)"
+	ledger="$repo/.gauntlet/ledger-tracked-$mode-${name//./-}.json"
+	stem="${ledger%.json}"
+	mkdir -p "$stem"
+	owned="$stem/$name"
+	printf 'force-tracked-owned-bytes\n' >"$owned"
+	git -C "$repo" add -f -- "${owned#"$repo"/}"
+	before="$(shasum -a 256 <"$owned")"
+	[[ "$mode" == force ]] && printf '{"target":"old"}\n' >"$ledger"
+	set +e
+	if [[ "$mode" == force ]]; then
+		(cd "$repo" && "$script" --init --force --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	else
+		(cd "$repo" && "$script" --init --ledger "$ledger" --target fresh) >"$TMP_SINK" 2>&1
+	fi
+	rc=$?
+	set -e
+	[[ "$rc" -eq 1 && -f "$owned" && "$before" == "$(shasum -a 256 <"$owned")" ]] &&
+		grep -Fq 'refusing to remove tracked or indeterminate stale run file' "$TMP_SINK"
+}
+
 run_open_guardrail8_symlink_probe() {
 	local script="$1" repo ledger stem outside before rc
 	repo="$(mktemp -d)"
@@ -1067,6 +1093,17 @@ if run_owned_wrong_type_probe "$CODEX_LEDGER_SCRIPT"; then
 else
 	fail "Codex stale cleanup accepted or changed a wrong-type owned temp entry"
 fi
+tracked_cleanup_ok=true
+for tracked_mode in plain force; do
+	for tracked_name in open-guardrail8.jsonl seam-tripwire.json .seam-tripwire.tmp; do
+		run_tracked_owned_cleanup_probe "$CODEX_LEDGER_SCRIPT" "$tracked_mode" "$tracked_name" || tracked_cleanup_ok=false
+	done
+done
+if [[ "$tracked_cleanup_ok" == true ]]; then
+	pass "Codex init modes preserve every force-tracked writer-owned basename"
+else
+	fail "Codex init removed or changed a force-tracked writer-owned basename"
+fi
 RD_MUTANT_LIB="$(mktemp -d)"
 TMP_DIRS+=("$RD_MUTANT_LIB")
 cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_MUTANT_LIB/gauntlet-common.sh"
@@ -1078,6 +1115,21 @@ if run_open_guardrail8_cleanup_probe "$RD_MUTANT_LIB/convergence-ledger.sh" plai
 	fail "mutation removing open-guardrail8.jsonl ownership survived stale-cleanup regression"
 else
 	pass "mutation removing open-guardrail8.jsonl ownership is caught by stale-cleanup regression"
+fi
+RD_TRACKED_MUTANT_LIB="$(mktemp -d)"
+TMP_DIRS+=("$RD_TRACKED_MUTANT_LIB")
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/gauntlet-common.sh" "$RD_TRACKED_MUTANT_LIB/gauntlet-common.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/state-path-guard.sh" "$RD_TRACKED_MUTANT_LIB/state-path-guard.sh"
+cp "$ROOT_DIR/plugins/skein-codex/skills/review-gauntlet/lib/ledger-promote.jq" "$RD_TRACKED_MUTANT_LIB/ledger-promote.jq"
+# The literal shell source is the mutation target.
+# shellcheck disable=SC2016
+sed 's/if \[\[ ! -d "$entry" \]\] && ! runtime_path_is_untracked "$entry"; then/if false; then/' \
+	"$CODEX_LEDGER_SCRIPT" >"$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh"
+chmod +x "$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh"
+if run_tracked_owned_cleanup_probe "$RD_TRACKED_MUTANT_LIB/convergence-ledger.sh" force open-guardrail8.jsonl; then
+	fail "mutation removing tracked cleanup refusal survived the force-tracked cell"
+else
+	pass "force-tracked cleanup cell catches removal of the trackedness refusal"
 fi
 RD_SEAM_MUTANT_LIB="$(mktemp -d)"
 TMP_DIRS+=("$RD_SEAM_MUTANT_LIB")

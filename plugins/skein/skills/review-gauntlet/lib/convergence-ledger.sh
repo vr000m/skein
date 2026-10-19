@@ -722,6 +722,24 @@ run_dir_owned_file_name() {
 	return 1
 }
 
+runtime_path_is_untracked() {
+	local path="$1" repo_root rel git_bin env_bin tracked_output
+	git_bin="$(command -v git || true)"
+	env_bin="$(command -v env || true)"
+	[[ -n "$git_bin" && -x "$git_bin" && -n "$env_bin" && -x "$env_bin" ]] || return 1
+	repo_root="$($env_bin -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$(dirname "$path")" rev-parse --show-toplevel 2>/dev/null)" || return 1
+	case "$path" in
+	"$repo_root"/*) rel="${path#"$repo_root"/}" ;;
+	*) return 1 ;;
+	esac
+	tracked_output="$($env_bin -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+		-u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES \
+		"$git_bin" -C "$repo_root" ls-files -- ":(icase,literal)$rel" 2>/dev/null)" || return 1
+	[[ -z "$tracked_output" ]]
+}
+
 clear_run_dir_owned_entries() {
 	local dir="$1" entry name restore
 	local -a entries=() removable=() unknown=()
@@ -761,6 +779,10 @@ clear_run_dir_owned_entries() {
 	done
 	# BEGIN OWNED ENTRY REMOVAL
 	for entry in ${removable[@]+"${removable[@]}"}; do
+		if [[ ! -d "$entry" ]] && ! runtime_path_is_untracked "$entry"; then
+			echo "convergence-ledger: refusing to remove tracked or indeterminate stale run file: $entry" >&2
+			return 1
+		fi
 		if [[ -d "$entry" ]]; then
 			rm -rf -- "$entry" || return 1
 		else

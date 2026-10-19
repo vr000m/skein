@@ -966,18 +966,18 @@ assert_not_grep "$CODEX_SKILL_MD" 'for report in "\$run_dir"/round-\*' \
 	"Codex mirror: sink never globs round directories (stale rounds would leak deltas)"
 assert_grep_fixed "$CODEX_SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
 	"Codex mirror: sink keeps working files beside the ledger"
-assert_grep_fixed "$CODEX_SKILL_MD" 'run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"' \
-	"Codex mirror: sink names its ledger-adjacent delta array"
-assert_grep_fixed "$CODEX_SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"' \
-	"Codex mirror: sink names its ledger-adjacent delta items"
-assert_grep_fixed "$CODEX_SKILL_MD" 'resolution_file="$state_dir/design-deltas-$target_key.resolution.json"' \
-	"Codex mirror: sink names its ledger-adjacent resolution"
+assert_grep_fixed "$CODEX_SKILL_MD" 'run_deltas_file="$(design_delta_private_temp "$state_dir/.design-delta-array.XXXXXX")"' \
+	"Codex mirror: sink creates a private delta-array inode"
+assert_grep_fixed "$CODEX_SKILL_MD" 'delta_items_file="$(design_delta_private_temp "$state_dir/.design-delta-items.XXXXXX")"' \
+	"Codex mirror: sink creates a private delta-items inode"
+assert_grep_fixed "$CODEX_SKILL_MD" 'resolution_file="$(design_delta_private_temp "$state_dir/.design-delta-resolution.XXXXXX")"' \
+	"Codex mirror: sink creates a private resolution inode"
 assert_grep_fixed "$CODEX_SKILL_MD" '. "$SKILL_DIR"/lib/state-path-guard.sh' \
 	"Codex mirror: sink loads the single state-path policy"
 assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$state_dir" "$ledger_path" "$run_dir"; do' \
 	"Codex mirror: sink guards its ledger and run directory before input validation"
-assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do' \
-	"Codex mirror: sink guards its bounded working files before reads or writes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'design_delta_single_link_file "$resolution_file"' \
+	"Codex mirror: sink enforces single-link ownership at working-file write sites"
 assert_grep_fixed "$CODEX_SKILL_MD" 'target_key="$(printf '\''%s'\'' "$(basename "${ledger_path%.json}")" | gc_sha1)"' \
 	"Codex mirror: sink evidence names use a bounded digest of the ledger stem"
 assert_grep_fixed "$CODEX_SKILL_MD" '[[ ! -f "$ledger_path" || ! -r "$ledger_path" ]]' \
@@ -1558,8 +1558,8 @@ assert_grep_fixed "$SKILL_MD" 'Print `Design deltas: none` only for an empty arr
 	"Claude mirror: none is reserved for zero deltas"
 assert_grep_fixed "$SKILL_MD" 'state_dir="$(dirname "$ledger_path")"' \
 	"Claude mirror: sink keeps working files beside the ledger, not in the run dir"
-assert_grep_fixed "$SKILL_MD" 'delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"' \
-	"Claude mirror: sink names its ledger-adjacent delta items"
+assert_grep_fixed "$SKILL_MD" 'delta_items_file="$(design_delta_private_temp "$state_dir/.design-delta-items.XXXXXX")"' \
+	"Claude mirror: sink creates a private delta-items inode"
 assert_grep_fixed "$SKILL_MD" '. "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/lib/state-path-guard.sh' \
 	"Claude mirror: sink loads the single state-path policy"
 assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$guarded" design-delta-sink' \
