@@ -236,7 +236,9 @@ repo="$(new_fixture symlink "$PLAN_NAME")"
 outside="$WORKDIR/outside-target"
 : >"$outside"
 setup_hook() {
-	ln -s "$outside" "${1%/*}/design-deltas-${1##*/}.items.jsonl"
+	local target_key
+	target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
+	ln -s "$outside" "${1%/*}/design-deltas-$target_key.items.jsonl"
 	write_round "$1" 1 symlink-delta
 }
 out="$(run_sink "$repo" branch:feature/widget 1)"
@@ -512,7 +514,9 @@ probe_reset() {
 	repo="$(new_fixture "reset-$RANDOM" "$PLAN_NAME")"
 	before="$(git -C "$repo" hash-object "$repo/docs/dev_plans/$PLAN_NAME")"
 	setup_hook() {
-		local items="${1%/*}/design-deltas-${1##*/}.items.jsonl"
+		local target_key items
+		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
+		items="${1%/*}/design-deltas-$target_key.items.jsonl"
 		write_round "$1" 1 current-delta
 		jq -cn '{file:"stale",summary:"stale-delta",decision:"d",rationale:"r",cells:"c"}' >"$items"
 		chmod 400 "$items"
@@ -627,7 +631,7 @@ probe_tracked_working_path() {
 	setup_hook() {
 		local run_dir="$1" target_key ledger_run_id run_id state_dir rel
 		write_round "$run_dir" 1 tracked-delta
-		target_key="$(basename "${ledger_path%.json}")"
+		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 		ledger_run_id="$(jq -r .run_id "$ledger_path")"
 		run_id="claude-${ledger_run_id:0:12}"
 		state_dir="$(dirname "$ledger_path")"

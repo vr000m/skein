@@ -318,7 +318,7 @@ Report terminal status, native gates that ran, permanent capability gaps that st
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected reports: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-<report-sha1-prefix>` from the exact persisted fixer-report bytes. Thus distinct quick reports accumulate, an identical-report rerun replaces only itself, and a later full-mode section coexists with them. A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it. Collect each selected fixer report's `design_deltas` into one sink file. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
+Run this step after every terminal ledger decision, after the prepared quick-mode round, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. If `$canonical_target`, `$ledger_path`, or `$run_dir` is unset in this call, re-derive it first exactly as in [Target and Resume Ledger](#target-and-resume-ledger). The `gc_sha1` helper comes from `gauntlet-common.sh`, which the caller already sourced for `gc_ledger_path`. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan, so a resume cannot silently follow a moved branch or PR. Section identity is a function of ledger run id, mode, and collected reports: full mode keeps `codex-<ledger-run-id>`, while quick mode uses `codex-<ledger-run-id>-quick-<report-sha1-prefix>` from the exact persisted fixer-report bytes. Thus distinct quick reports accumulate, an identical-report rerun replaces only itself, and a later full-mode section coexists with them. A prepared quick report is never appended to the ledger, so full mode never enumerates or re-logs it. Collect each selected fixer report's `design_deltas` into one sink file. Every sink-evidence filename uses the full SHA-1 of the ledger stem, never the unbounded stem itself. Keep the target resolver's immutable base and head OIDs available as `resolved_base_oid` and `resolved_head_oid`; keep the PR head ref as `pr_head_ref`. The latest accepted round may supply the same head as `round_head`. An explicit branch target comes from `canonical_target`; split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. Guard the ledger, run directory, persisted scope, working files, and every fixer report before access. Require the ledger to be a readable regular file and the run state to be an existing readable, searchable directory before the first structured read. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `PLAN_PATH` is the parsed value of `--plan`, or an empty string when that flag is absent. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited. `design_delta_quick_round` names the single prepared quick-mode round whose fixer report the sink must consume before that mode returns, even before the ledger appends that round.
 
 Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens. Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.
 
@@ -398,13 +398,31 @@ run_design_delta_sink() {
     pr:*) branch_name="${pr_head_ref:-}" ;;
   esac
 
-  target_key="$(basename "${ledger_path%.json}")"
   state_dir="$(dirname "$ledger_path")"
+  for guarded in "$state_dir" "$ledger_path" "$run_dir"; do
+    if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
+      echo "warning: design delta state path refused; continuing terminal handoff" >&2
+      return 0
+    fi
+  done
+  if [[ ! -f "$ledger_path" || ! -r "$ledger_path" ]]; then
+    echo "warning: design delta ledger is not a readable regular file; continuing terminal handoff" >&2
+    return 0
+  fi
+  if [[ ! -d "$run_dir" || ! -r "$run_dir" || ! -x "$run_dir" ]]; then
+    echo "warning: design delta run state is not a readable searchable directory; continuing terminal handoff" >&2
+    return 0
+  fi
+  if ! target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)" ||
+    [[ ! "$target_key" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "warning: cannot derive a bounded design delta state key; continuing terminal handoff" >&2
+    return 0
+  fi
   run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
   delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
   resolution_file="$state_dir/design-deltas-$target_key.resolution.json"
 
-  for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
+  for guarded in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
     if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
       echo "warning: design delta state path refused; continuing terminal handoff" >&2
       return 0

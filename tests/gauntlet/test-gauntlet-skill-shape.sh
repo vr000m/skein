@@ -974,8 +974,16 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'resolution_file="$state_dir/design-deltas-$
 	"Codex mirror: sink names its ledger-adjacent resolution"
 assert_grep_fixed "$CODEX_SKILL_MD" '. "$SKILL_DIR"/lib/state-path-guard.sh' \
 	"Codex mirror: sink loads the single state-path policy"
-assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do' \
-	"Codex mirror: sink guards its ledger, run directory, and working files before reads or writes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$state_dir" "$ledger_path" "$run_dir"; do' \
+	"Codex mirror: sink guards its ledger and run directory before input validation"
+assert_grep_fixed "$CODEX_SKILL_MD" 'for guarded in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do' \
+	"Codex mirror: sink guards its bounded working files before reads or writes"
+assert_grep_fixed "$CODEX_SKILL_MD" 'target_key="$(printf '\''%s'\'' "$(basename "${ledger_path%.json}")" | gc_sha1)"' \
+	"Codex mirror: sink evidence names use a bounded digest of the ledger stem"
+assert_grep_fixed "$CODEX_SKILL_MD" '[[ ! -f "$ledger_path" || ! -r "$ledger_path" ]]' \
+	"Codex mirror: sink requires a readable regular ledger before jq reads"
+assert_grep_fixed "$CODEX_SKILL_MD" '[[ ! -d "$run_dir" || ! -r "$run_dir" || ! -x "$run_dir" ]]' \
+	"Codex mirror: sink requires readable searchable directory run state"
 assert_grep_fixed "$CODEX_SKILL_MD" 'design delta state path refused; continuing terminal handoff' \
 	"Codex mirror: state-path warning uses the canonical sink wording"
 assert_grep_fixed "$CODEX_SKILL_MD" 'design delta scope path refused; continuing terminal handoff' \
@@ -1556,6 +1564,12 @@ assert_grep_fixed "$SKILL_MD" '. "${CLAUDE_PLUGIN_ROOT}"/skills/review-gauntlet/
 	"Claude mirror: sink loads the single state-path policy"
 assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$guarded" design-delta-sink' \
 	"Claude mirror: sink guards its ledger, run directory, and working files"
+assert_grep_fixed "$SKILL_MD" 'target_key="$(printf '\''%s'\'' "$(basename "${ledger_path%.json}")" | gc_sha1)"' \
+	"Claude mirror: sink evidence names use a bounded digest of the ledger stem"
+assert_grep_fixed "$SKILL_MD" '[[ ! -f "$ledger_path" || ! -r "$ledger_path" ]]' \
+	"Claude mirror: sink requires a readable regular ledger before jq reads"
+assert_grep_fixed "$SKILL_MD" '[[ ! -d "$run_dir" || ! -r "$run_dir" || ! -x "$run_dir" ]]' \
+	"Claude mirror: sink requires readable searchable directory run state"
 assert_grep_fixed "$SKILL_MD" 'gauntlet_assert_no_symlink "$report" design-delta-sink' \
 	"Claude mirror: sink guards each fixer report before reading it"
 assert_grep_fixed "$SKILL_MD" 'ledger_run_id="$(jq -r '\''.run_id // empty'\'' "$ledger_path"' \

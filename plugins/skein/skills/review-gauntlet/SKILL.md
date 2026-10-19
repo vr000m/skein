@@ -172,7 +172,7 @@ After the fixer batch returns (see [Guardrails](#guardrails) below for what it f
 
 ### Terminal design delta sink
 
-Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block. So run the block below in one Bash call that first sets four inputs. Source `lib/gauntlet-common.sh`. Set `canonical_target`. Re-derive `ledger_path` with `gc_ledger_path` and `run_dir` with the single `--run-dir` call, exactly as in [Target and Resume Ledger](#target-and-resume-ledger). Set `PLAN_PATH` to the parsed `--plan` value, or to an empty string when that flag is absent. If any input is missing, the sink warns and skips. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan instead of following a moved target. Its three working files and scope file sit beside the ledger in `.gauntlet/`, not in `$run_dir`, because they are sink evidence, not writer-owned run state: `convergence-ledger.sh --init` clears only `round-*`, `open-guardrail8.jsonl`, `seam-tripwire.json` and `.seam-tripwire.tmp` from `$run_dir`. Guard the ledger, run directory, scope, working files, and every fixer report before access. Collect the `design_deltas` of each completed round's fixer report into one run-level file. Enumerate the rounds from the ledger, never by globbing, so a stale `round-N/` directory cannot leak deltas. Legacy Claude ledgers without stored scope may resolve it from `canonical_target` once. A `pr:<N>` target uses `gh pr view` only when `<N>` is all digits; a `branch:` target uses `git rev-parse` and `git merge-base` on its own ref or range, with `--end-of-options` before every revision. Split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. An explicit two-dot range `a..b` uses its left endpoint `a` as the review base, because Git's `a..b` set is relative to `a` itself; a three-dot range `a...b` and a bare ref use `git merge-base`. All three working files must truncate before collection, or the sink warns and stops, so a stale file is never consumed. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited; set it in the same Bash call as the four inputs. The round count must come from an array-valued `.rounds`; a malformed or non-array value fails closed with a warning and never claims `Design deltas: none`.
+Run this step after every terminal ledger decision, and after a seam-tripwire escalation, which has no ledger token. It does not depend on `--report` or `--plan`. Shell state does not span Bash tool calls, and the exit-5 resume path never ran the gate block. So run the block below in one Bash call that first sets four inputs. Source `lib/gauntlet-common.sh`. Set `canonical_target`. Re-derive `ledger_path` with `gc_ledger_path` and `run_dir` with the single `--run-dir` call, exactly as in [Target and Resume Ledger](#target-and-resume-ledger). Set `PLAN_PATH` to the parsed `--plan` value, or to an empty string when that flag is absent. If any input is missing, the sink warns and skips. A fresh ledger carries an opaque `run_id` and immutable reviewed base/head/branch scope; both remain unchanged as rounds are appended. Legacy ledgers derive an append-stable identity and persist the available scope beside the ledger on their first sink call. The sink reloads ledger-owned scope before resolving a plan instead of following a moved target. Its three working files and scope file sit beside the ledger in `.gauntlet/`, not in `$run_dir`, because they are sink evidence, not writer-owned run state: `convergence-ledger.sh --init` clears only `round-*`, `open-guardrail8.jsonl`, `seam-tripwire.json` and `.seam-tripwire.tmp` from `$run_dir`. Every sink-evidence filename uses the full SHA-1 of the ledger stem, never the unbounded stem itself. Guard the ledger, run directory, scope, working files, and every fixer report before access. Require the ledger to be a readable regular file and the run state to be an existing readable, searchable directory before the first structured read. Collect the `design_deltas` of each completed round's fixer report into one run-level file. Enumerate the rounds from the ledger, never by globbing, so a stale `round-N/` directory cannot leak deltas. Legacy Claude ledgers without stored scope may resolve it from `canonical_target` once. A `pr:<N>` target uses `gh pr view` only when `<N>` is all digits; a `branch:` target uses `git rev-parse` and `git merge-base` on its own ref or range, with `--end-of-options` before every revision. Split a range target into its base and head before plan resolution, and map a literal `HEAD` to the current branch name. An explicit two-dot range `a..b` uses its left endpoint `a` as the review base, because Git's `a..b` set is relative to `a` itself; a three-dot range `a...b` and a bare ref use `git merge-base`. All three working files must truncate before collection, or the sink warns and stops, so a stale file is never consumed. Then resolve the plan and write the deltas. The resolver never guesses. An unsafe, missing, or ambiguous result goes to a sidecar. `design_delta_sidecar_only=true` is reserved for the resumable seam-tripwire escalation and passes `--sidecar-only` to the writer, so the writer neither requires nor reads a resolution file and no tracked plan is edited; set it in the same Bash call as the four inputs. The round count must come from an array-valued `.rounds`; a malformed or non-array value fails closed with a warning and never claims `Design deltas: none`.
 
 
 Each rendered delta is `- Delta:` plus File, Summary, Decision, Rationale, and Cells sub-bullets whose values are JSON-quoted tokens. Values are pre-cut to a fixed budget, folded and stripped by Unicode category, cut to 500 source characters, then entity-escaped; bare URLs stay linkable.
@@ -265,15 +265,33 @@ run_design_delta_sink() {
       ;;
   esac
 
-  target_key="$(basename "${ledger_path%.json}")"
   # Working files sit beside the ledger, not in $run_dir: they are sink evidence, not
   # writer-owned run state (--init clears round-*, open-guardrail8.jsonl,
   # seam-tripwire.json and .seam-tripwire.tmp from $run_dir only).
   state_dir="$(dirname "$ledger_path")"
+  for guarded in "$state_dir" "$ledger_path" "$run_dir"; do
+    if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
+      echo "warning: design delta state path refused; continuing terminal handoff" >&2
+      return 0
+    fi
+  done
+  if [[ ! -f "$ledger_path" || ! -r "$ledger_path" ]]; then
+    echo "warning: design delta ledger is not a readable regular file; continuing terminal handoff" >&2
+    return 0
+  fi
+  if [[ ! -d "$run_dir" || ! -r "$run_dir" || ! -x "$run_dir" ]]; then
+    echo "warning: design delta run state is not a readable searchable directory; continuing terminal handoff" >&2
+    return 0
+  fi
+  if ! target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)" ||
+    [[ ! "$target_key" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "warning: cannot derive a bounded design delta state key; continuing terminal handoff" >&2
+    return 0
+  fi
   run_deltas_file="$state_dir/design-deltas-$target_key.deltas.json"
   delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
   resolution_file="$state_dir/design-deltas-$target_key.resolution.json"
-  for guarded in "$state_dir" "$ledger_path" "$run_dir" "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
+  for guarded in "$run_deltas_file" "$delta_items_file" "$resolution_file"; do
     if ! gauntlet_assert_no_symlink "$guarded" design-delta-sink; then
       echo "warning: design delta state path refused; continuing terminal handoff" >&2
       return 0

@@ -187,7 +187,7 @@ run_reset_failure_probe() {
 		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 		mv "$ledger_path.tmp" "$ledger_path"
 		write_round "$run_dir" 1 current-delta
-		target_key="$(basename "${ledger_path%.json}")"
+		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 		state_dir="$(dirname "$ledger_path")"
 		delta_items_file="$state_dir/design-deltas-$target_key.items.jsonl"
 		jq -cn '{file:"stale",summary:"stale-delta",decision:"d",rationale:"r",cells:"c"}' >"$delta_items_file"
@@ -493,7 +493,7 @@ run_transient_legacy_scope_probe() {
 		jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 		mv "$ledger_path.tmp" "$ledger_path"
 		write_round "$run_dir" 1 transient-scope
-		target_key="$(basename "${ledger_path%.json}")"
+		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 		ledger_run_id="$(jq -r .run_id "$ledger_path")"
 		scope_file="${ledger_path%/*}/design-deltas-$target_key-codex-${ledger_run_id:0:12}.scope.json"
 		PLAN_PATH=""
@@ -548,7 +548,7 @@ run_nonregular_working_path_probe() {
 				jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 				mv "$ledger_path.tmp" "$ledger_path"
 				write_round "$run_dir" 1 nonregular
-				target_key="$(basename "${ledger_path%.json}")"
+				target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 				state_dir="$(dirname "$ledger_path")"
 				ledger_run_id="$(jq -r .run_id "$ledger_path")"
 				run_id="codex-${ledger_run_id:0:12}"
@@ -610,7 +610,7 @@ run_icase_tracked_probe() {
 			jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 			mv "$ledger_path.tmp" "$ledger_path"
 			write_round "$run_dir" 1 icase
-			target_key="$(basename "${ledger_path%.json}")"
+			target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 			state_dir="$(dirname "$ledger_path")"
 			ledger_run_id="$(jq -r .run_id "$ledger_path")"
 			run_id="codex-${ledger_run_id:0:12}"
@@ -661,7 +661,7 @@ run_review_scope_control_probe() {
 					jq --argjson branch "$branch_json" '.review_scope.branch = $branch' "$ledger_path" >"$ledger_path.tmp"
 					mv "$ledger_path.tmp" "$ledger_path"
 				else
-					target_key="$(basename "${ledger_path%.json}")"
+					target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 					ledger_run_id="$(jq -r .run_id "$ledger_path")"
 					run_id="codex-${ledger_run_id:0:12}"
 					scope_file="${ledger_path%/*}/design-deltas-$target_key-$run_id.scope.json"
@@ -734,7 +734,7 @@ run_tracked_working_path_probe() {
 				jq '.rounds = [{}]' "$ledger_path" >"$ledger_path.tmp"
 				mv "$ledger_path.tmp" "$ledger_path"
 				write_round "$run_dir" 1 tracked-path-delta
-				target_key="$(basename "${ledger_path%.json}")"
+				target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 				state_dir="$(dirname "$ledger_path")"
 				ledger_run_id="$(jq -r .run_id "$ledger_path")"
 				run_id="codex-${ledger_run_id:0:12}"
@@ -783,7 +783,7 @@ run_corrupt_index_working_path_probe() {
 		"$LIB/convergence-ledger.sh" --init --ledger "$ledger_path" --target "$canonical_target" \
 			--review-base "$base_oid" --review-head "$reviewed_head" --review-branch feature/widget >/dev/null
 		run_dir="$("$LIB/convergence-ledger.sh" --run-dir --ledger "$ledger_path")"
-		target_key="$(basename "${ledger_path%.json}")"
+		target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 		items="${ledger_path%/*}/design-deltas-$target_key.items.jsonl"
 		printf 'corrupt-index-sentinel\n' >"$items"
 		before_items="$(hash_file "$items")"
@@ -827,7 +827,7 @@ reviewed_head="$(git -C "$repo" rev-parse feature/widget)"
 	write_round "$run_dir" 2 second-delta
 	run_design_delta_sink
 
-	target_key="$(basename "${ledger_path%.json}")"
+	target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 	scope_file="${ledger_path%/*}/design-deltas-$target_key-codex-${ledger_run_id:0:12}.scope.json"
 	printf '%s\n' "$ledger_path" "$scope_file" >"$WORKDIR/resume-paths"
 ) >"$WORKDIR/resume.out" 2>"$WORKDIR/resume.err"
@@ -894,7 +894,7 @@ merge_base="$(git -C "$repo" merge-base left feature/widget)"
 	PLAN_PATH=""
 	unset round_base round_head resolved_base_oid resolved_head_oid pr_head_ref
 	run_design_delta_sink
-	target_key="$(basename "${ledger_path%.json}")"
+	target_key="$(printf '%s' "$(basename "${ledger_path%.json}")" | gc_sha1)"
 	ledger_run_id="$(jq -r .run_id "$ledger_path")"
 	printf '%s\n' "${ledger_path%/*}/design-deltas-$target_key-codex-${ledger_run_id:0:12}.scope.json" >"$WORKDIR/two-dot-scope-path"
 ) >"$WORKDIR/two-dot.out" 2>"$WORKDIR/two-dot.err"
