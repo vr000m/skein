@@ -68,6 +68,7 @@ Decisions (grilled 2026-10-16):
 ### Files to Modify
 - `plugins/skein/skills/review-gauntlet/SKILL.md`, `plugins/skein-codex/skills/review-gauntlet/SKILL.md` - Guardrail 8, tripwire, fixer schema, terminal sink.
 - `tests/gauntlet/test-gauntlet-skill-shape.sh`, `tests/gauntlet/test-design-delta-sink-{codex,claude}.sh`, `tests/gauntlet/test-convergence-ledger.sh`, `tests/parity/test-applier-bundle-parity.sh`, `justfile` - pins, executed sink coverage, stable-run coverage, parity registration, recipe wiring.
+- `plugins/{skein,skein-codex}/skills/review-gauntlet/lib/convergence-ledger.sh` - run identity, reviewed scope, `--bind-review-scope`, owned run-dir state.
 - `AGENTS.md`, `CHANGELOG.md`, `README.md`, `docs/dev_plans/README.md` - lib list, test list, release notes, review-gauntlet row, plan index row.
 
 ### New Files to Create
@@ -75,11 +76,15 @@ Decisions (grilled 2026-10-16):
 - `plugins/{skein,skein-codex}/skills/review-gauntlet/lib/write-design-deltas.sh` - plan or sidecar writer.
 - `tests/gauntlet/test-design-deltas.sh` - whole-space and mutation tests.
 - `tests/gauntlet/test-design-delta-sink-{codex,claude}.sh` - executes each harness's terminal sink fence in scratch repositories.
+- `tests/gauntlet/test-design-delta-sink-state-contract.sh` - sink state contract (run identity, scope, generation) across both mirrors.
+- `tests/gauntlet/test-pr-base-merge-base.sh` - PR review base is the merge base, checked against an advanced base branch.
 
 ### Architecture Decisions
 - Prompt-level contract guardrails remain the enforcement mechanism, like Guardrails 3, 6 and 7.
 - Correction (2026-10-16): the terminal sink needs a ledger-owned opaque `run_id`; hashing the mutable ledger made the same run acquire a new section identity after every appended round. Fresh-ledger initialization atomically persists the immutable reviewed base/head/branch scope so even a first-ever sink call after interruption cannot follow a moved target. Legacy ledgers derive an append-stable fallback from their target, limits and first round.
 - Correction (2026-10-18): Codex quick mode must not reuse a target-keyed ledger after its own fixes move `HEAD`. It derives a generation from the canonical target plus the complete immutable review scope. `convergence-ledger.sh --bind-review-scope` may migrate a pre-scope ledger only when explicit provenance proves quick ownership; an indistinguishable legacy full/quick ledger fails closed.
+- Correction (2026-10-19): non-empty deltas are never lost silently. `write-design-deltas.sh` returns `sink:"dropped"` plus a reason through one `emit_dropped` helper (exit 0) on every failure path; `none` is reserved for zero deltas. Private temps come from `create_private_temp` (mktemp, trap-cleaned), and plan writes go through `plan_snapshot`, which parses a private snapshot and byte-compares the live plan before `mv`. The sink prints `Design deltas: unknown — <reason>` when the delta count cannot be established.
+- Correction (2026-10-19): the reviewed base is the merge base, not the base-branch tip. For PR, bare-branch and three-dot targets the base OID passed to `resolve-plan.sh`, the sink and `review_scope.base_oid` is `git merge-base`; two-dot targets keep their literal left endpoint. For a PR, `baseRefOid` is only the base-branch tip, so the sink merge-bases it with `headRefOid` and leaves the base empty (sidecar) when an object is absent locally or merge-base fails. `resolve-plan.sh` diffs `base..head`.
 - The merge-bar is deferred. It needs a new terminal token and a blocking-vs-minor classification in `convergence-ledger.sh` on both mirrors. Revisit only if a run with Guardrail 8 and deltas still ends in cap or non-converge on minor-only findings.
 
 ### Dependencies
@@ -109,6 +114,7 @@ Decisions (grilled 2026-10-16):
 - [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
 - [x] Independent-review fix coverage passes: Codex sink 56/56, Claude sink 65/65, writer/resolver 285/285, convergence ledger 236/236, skill shape 395/395 and lib parity 179/179, including scope-generation, legacy-binding and non-regular report mutations.
 - [x] Round-12 final focused verification (2026-10-18): writer/resolver 285/285, Codex sink 54/54, Claude sink 62/62, skill shape 402/402, convergence-ledger pass, parity pass, lens 178/178, reconciliation pass, plugin pass, and the four pytest groups 216/216, 69/69, 251/251 and 68/68. The cached offline pytest runner also passed native gates 56/56. The required final `just ci` result is recorded below only after that run completes.
+- [x] Post-round-11 verification (2026-10-19): writer/resolver 284/284, Codex sink 54/54, Claude sink 62/62, state-contract 10/10, pr-base-merge-base 8/8, convergence-ledger 238/238, skill shape 405/405, lib parity 179/179, lint-scripts and `git diff --check` clean. `just ci` still stops only at the 2 known `test_native_gates.py` cyclic-snapshot cases (#56, open); the remaining recipes pass.
 
 ## Acceptance Criteria
 
@@ -126,7 +132,7 @@ Decisions (grilled 2026-10-16):
 - [x] Phase 1: Guardrail 8 and seam tripwire (54b9ef1)
 - [x] Phase 2: Design-delta log and terminal sink (1403044)
 - [x] Phase 3: Verify the Claude mirror (code-review fixes 6db9ffc, grill follow-up 29833ac, fresh-thread Codex review, and independent Codex contract fixes verified across both mirrors)
-- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 fixes in 5632142; round 8 fixes in 7cd71dd (writer/marker.py seam closed by delegating the marker choice to marker.py via python3 -I); round 9 fixes in e899fd1; round 10 (the cap) found 12 more and its fixes landed in eb7bd15; at the operator's direction a verification round 11 ran beyond the cap and found 7 rows (5 distinct: absent tripwire file, dropped-delta reporting, predictable authority temp names, stale Claude cleanup text, docs); its fixes landed in 0026033 and get no further gauntlet round, so the independent Codex-native gauntlet is the remaining check, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
+- [ ] Phase 4: Gauntlet and PR (gauntlet rounds 1-4 fixed in aaebcff, 11e4a9e, 4ac7844 and 636322c; round 5 fixes in 9eff970 and e65e854; round 6 fixes in d39e244; round 7 fixes in 5632142; round 8 fixes in 7cd71dd (writer/marker.py seam closed by delegating the marker choice to marker.py via python3 -I); round 9 fixes in e899fd1; round 10 (the cap) found 12 more and its fixes landed in eb7bd15; at the operator's direction a verification round 11 ran beyond the cap and found 7 rows (5 distinct: absent tripwire file, dropped-delta reporting, predictable authority temp names, stale Claude cleanup text, docs); its fixes landed in 0026033 and get no further gauntlet round (post-round-11 code-review and Codex-review fixes: b316a2c, ab3359f, c33935c, a12cdaf, 30266ae, 5b1e3f5, ea3d2a2, and the PR merge-base regression fix 0fdb8d2 with test e62154a), so the independent Codex-native gauntlet is the remaining check, then re-run until convergence; review-gauntlet ledger under .gauntlet/)
 
 ## Findings
 
