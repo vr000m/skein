@@ -924,8 +924,14 @@ assert_grep_fixed "$CODEX_SKILL_MD" '"${clean_git[@]}" merge-base --end-of-optio
 	"Codex mirror: merge-base guards revision options"
 assert_grep_fixed "$CODEX_SKILL_MD" '[[ "$branch_name" == HEAD ]] && branch_name="$("${clean_git[@]}" symbolic-ref --quiet --short HEAD' \
 	"Codex mirror: literal HEAD maps to the current branch for slug narrowing"
-assert_grep_fixed "$CODEX_SKILL_MD" 'branch_name="${pr_head_ref:-}"' \
-	"Codex mirror: terminal sink carries the PR head ref"
+assert_grep_fixed "$CODEX_SKILL_MD" 'pr_json="$(gh pr view "$pr_number" --json baseRefOid,headRefOid,headRefName' \
+	"Codex mirror: terminal sink resolves the PR endpoints"
+assert_grep_fixed "$CODEX_SKILL_MD" 'BASE_OID="$("${clean_git[@]}" merge-base --end-of-options "$pr_base_oid" "$HEAD_OID"' \
+	"Codex mirror: terminal sink converts the PR base tip to a merge base"
+assert_grep_fixed "$CODEX_SKILL_MD" '**Reviewed-base contract.**' \
+	"Codex mirror: contract states the single base-OID invariant before implementation"
+assert_grep_fixed "$CODEX_SKILL_MD" 'resolved_base_oid="$("${scope_git[@]}" merge-base --end-of-options "$pr_base_oid" "$resolved_head_oid"' \
+	"Codex mirror: initial PR scope persists the merge base"
 assert_grep_fixed "$CODEX_SKILL_MD" '--head "$resolver_head"' \
 	"Codex mirror: plan resolution diffs the reviewed head"
 assert_grep_fixed "$CODEX_SKILL_MD" 'malformed fixer report skipped' \

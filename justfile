@@ -70,6 +70,7 @@ gauntlet-tests:
     bash tests/gauntlet/test-design-delta-sink-codex.sh
     bash tests/gauntlet/test-design-delta-sink-claude.sh
     bash tests/gauntlet/test-design-delta-sink-state-contract.sh
+    bash tests/gauntlet/test-pr-base-merge-base.sh
     bash tests/gauntlet/test-convergence-ledger.sh
     bash tests/gauntlet/test-run-gate.sh
     bash tests/gauntlet/test-reuse-wiring.sh
