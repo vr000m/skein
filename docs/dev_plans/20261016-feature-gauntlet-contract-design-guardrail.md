@@ -20,7 +20,7 @@ Decisions (grilled 2026-10-16):
 - The fixer resolves in-contract ripple effects itself and logs each as a design delta. It escalates via Guardrail 1 only when a delta contradicts or expands the plan's stated intent.
 - Deltas are written even without `--plan`. The plan is the one diff-touched plan, narrowed by branch slug. Otherwise the deltas go to `.gauntlet/design-deltas-<target>.md`. The sink never guesses.
 - The merge-bar (stop on "no blocking findings") is deferred.
-- Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures are tracked in #56 and stay out of this PR.
+- Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures were tracked in #56, stayed out of this PR, and were fixed afterwards in PR #58.
 - Independent-review grill (2026-10-18): quick-mode ledger identity is scope-keyed. The same base/head/branch reuses one generation; a moved head selects a new generation; a legacy pre-scope ledger is atomically bound once. Full/resume ledger identity remains target-keyed and immutable.
 
 ## Requirements
