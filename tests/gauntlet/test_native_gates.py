@@ -530,7 +530,9 @@ def test_snapshot_replays_staged_patch_with_source_local_prefix_settings(
 
 
 @pytest.mark.parametrize("uncommitted", [False, True])
-@pytest.mark.parametrize("kind", ["absolute", "relative", "chain", "cycle"])
+@pytest.mark.parametrize(
+    "kind", ["absolute", "relative", "chain", "self-loop", "cycle"]
+)
 def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
     repo, fake_codex, tmp_path, monkeypatch, uncommitted, kind
 ):
@@ -538,6 +540,8 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
     external.write_text("external = True\n")
     (repo / "a.py").unlink()
     target = str(external) if kind == "absolute" else "../external.py"
+    if kind == "self-loop":
+        target = "a.py"
     if kind in ("chain", "cycle"):
         (repo / "bridge.py").symlink_to("a.py" if kind == "cycle" else "../external.py")
         target = "bridge.py"
@@ -566,6 +570,32 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
         gates.run_gate(request(repo, fake_codex, uncommitted=uncommitted))
     assert not marker.exists()
     assert gates.capture(repo)["fingerprint"] == state["fingerprint"]
+
+
+@pytest.mark.parametrize("uncommitted", [False, True])
+def test_dangling_internal_snapshot_links_remain_supported(repo, tmp_path, uncommitted):
+    (repo / "link.py").symlink_to("missing.py")
+    if not uncommitted:
+        command("git", "add", "link.py", cwd=repo)
+        command(
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "dangling internal link",
+            cwd=repo,
+        )
+    state = gates.capture(repo)
+    destination = tmp_path / "review"
+    frozen = gates.snapshot(repo, destination, state, uncommitted)
+    assert frozen["files"] == state["files"]
+    assert os.readlink(destination / "link.py") == "missing.py"
+    assert not (destination / "missing.py").exists()
 
 
 @pytest.mark.parametrize("uncommitted", [False, True])
