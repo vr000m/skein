@@ -7,7 +7,12 @@ on:
 
 jobs:
   ci:
+    name: ci (python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
     env:
       PYTEST_ADDOPTS: -p no:cacheprovider
     steps:
@@ -16,7 +21,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - uses: extractions/setup-just@v3
       - name: Install lint toolchain
         run: |

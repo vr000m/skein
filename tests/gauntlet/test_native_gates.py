@@ -531,7 +531,17 @@ def test_snapshot_replays_staged_patch_with_source_local_prefix_settings(
 
 @pytest.mark.parametrize("uncommitted", [False, True])
 @pytest.mark.parametrize(
-    "kind", ["absolute", "relative", "chain", "self-loop", "cycle"]
+    "kind",
+    [
+        "absolute",
+        "relative",
+        "dangling-absolute",
+        "dangling-relative",
+        "through-file-escape",
+        "chain",
+        "self-loop",
+        "cycle",
+    ],
 )
 def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
     repo, fake_codex, tmp_path, monkeypatch, uncommitted, kind
@@ -540,6 +550,13 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
     external.write_text("external = True\n")
     (repo / "a.py").unlink()
     target = str(external) if kind == "absolute" else "../external.py"
+    if kind == "dangling-absolute":
+        target = str(tmp_path / "absent.py")
+    if kind == "dangling-relative":
+        target = "../absent.py"
+    if kind == "through-file-escape":
+        (repo / "blocker").write_text("regular file\n")
+        target = "blocker/../../absent.py"
     if kind == "self-loop":
         target = "a.py"
     if kind in ("chain", "cycle"):
@@ -550,6 +567,8 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
         command("git", "add", "a.py", cwd=repo)
         if kind in ("chain", "cycle"):
             command("git", "add", "bridge.py", cwd=repo)
+        if kind == "through-file-escape":
+            command("git", "add", "blocker", cwd=repo)
         command(
             "git",
             "-c",
@@ -573,10 +592,19 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
 
 
 @pytest.mark.parametrize("uncommitted", [False, True])
-def test_dangling_internal_snapshot_links_remain_supported(repo, tmp_path, uncommitted):
-    (repo / "link.py").symlink_to("missing.py")
+@pytest.mark.parametrize("kind", ["missing", "through-file"])
+def test_dangling_internal_snapshot_links_remain_supported(
+    repo, tmp_path, uncommitted, kind
+):
+    target = "missing.py"
+    if kind == "through-file":
+        (repo / "blocker").write_text("regular file\n")
+        target = "blocker/missing.py"
+    (repo / "link.py").symlink_to(target)
     if not uncommitted:
         command("git", "add", "link.py", cwd=repo)
+        if kind == "through-file":
+            command("git", "add", "blocker", cwd=repo)
         command(
             "git",
             "-c",
@@ -594,8 +622,56 @@ def test_dangling_internal_snapshot_links_remain_supported(repo, tmp_path, uncom
     destination = tmp_path / "review"
     frozen = gates.snapshot(repo, destination, state, uncommitted)
     assert frozen["files"] == state["files"]
-    assert os.readlink(destination / "link.py") == "missing.py"
-    assert not (destination / "missing.py").exists()
+    assert os.readlink(destination / "link.py") == target
+    assert not (destination / target).exists()
+
+
+@pytest.mark.parametrize("uncommitted", [False, True])
+@pytest.mark.parametrize("kind", ["self-loop", "cycle"])
+def test_cyclic_snapshot_links_use_strict_resolution_on_all_python_versions(
+    repo, fake_codex, tmp_path, monkeypatch, uncommitted, kind
+):
+    (repo / "a.py").unlink()
+    if kind == "cycle":
+        (repo / "bridge.py").symlink_to("a.py")
+    (repo / "a.py").symlink_to("a.py" if kind == "self-loop" else "bridge.py")
+    if not uncommitted:
+        command("git", "add", "a.py", cwd=repo)
+        if kind == "cycle":
+            command("git", "add", "bridge.py", cwd=repo)
+        command(
+            "git",
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-qm",
+            "cyclic symlink fixture",
+            cwd=repo,
+        )
+
+    real_resolve = Path.resolve
+    strict_loop_errors = []
+
+    def emulate_python_313_nonstrict_loops(path, strict=False):
+        try:
+            return real_resolve(path, strict=strict)
+        except (OSError, RuntimeError):
+            if strict:
+                strict_loop_errors.append(path)
+                raise
+            return path.absolute()
+
+    monkeypatch.setattr(Path, "resolve", emulate_python_313_nonstrict_loops)
+    marker = tmp_path / "native-launched"
+    monkeypatch.setenv("NATIVE_GATE_TEST_LAUNCH", str(marker))
+    with pytest.raises(gates.GateError, match="symlink"):
+        gates.run_gate(request(repo, fake_codex, uncommitted=uncommitted))
+    assert strict_loop_errors
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize("uncommitted", [False, True])

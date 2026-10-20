@@ -5,7 +5,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 ## [Unreleased]
 
 ### Fixed
-- Codex `review-gauntlet` native gate snapshots again reject cyclic symlinks on Python 3.13+, where non-strict `Path.resolve()` no longer raises on a symlink loop; the check now resolves strictly and falls back only for a dangling link, which the escape check still covers (#56). `just ci` no longer stops at `test_native_gates.py`.
+- Codex `review-gauntlet` native gate snapshots again reject cyclic symlinks on Python 3.13+, where non-strict `Path.resolve()` no longer raises on a symlink loop; the check now resolves strictly and falls back only for a dangling link, which the escape check still covers (#56).
 
 ## [0.10.1] - 2026-10-19
 
