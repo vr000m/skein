@@ -7,7 +7,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 ## [0.10.2] - 2026-10-21
 
 ### Fixed
-- Codex `review-gauntlet` native gate snapshots again reject cyclic symlinks on Python 3.13+, where non-strict `Path.resolve()` no longer raises on a symlink loop; the check now resolves strictly and falls back only for a missing path (a dangling link, or one through a regular file), which the escape check still covers; any other resolution error now rejects the link (#56). CI also runs the gauntlet and conduct/plan-view pytest suites on Python 3.13 and pins the runner to `ubuntu-24.04`, since `ubuntu-latest` now resolves to 26.04, which the release executable policy rejects.
+- Codex `review-gauntlet` native gate snapshots again reject cyclic symlinks on Python 3.13+, where non-strict `Path.resolve()` no longer raises on a symlink loop; the check now resolves strictly and falls back only for a missing path (a dangling link, or one through a regular file), which the escape check still covers; any other resolution error now rejects the link (#56). CI also runs the gauntlet and conduct/plan-view pytest suites on Python 3.13, and pins the runner to `ubuntu-24.04` until Ubuntu 26.04 is supported (#59).
 
 ## [0.10.1] - 2026-10-19
 
