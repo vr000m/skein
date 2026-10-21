@@ -7,12 +7,7 @@ on:
 
 jobs:
   ci:
-    name: ci (python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
     env:
       PYTEST_ADDOPTS: -p no:cacheprovider
     steps:
@@ -21,7 +16,7 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
       - uses: extractions/setup-just@v3
       - name: Install lint toolchain
         run: |
@@ -33,3 +28,19 @@ jobs:
           sudo chmod +x /usr/local/bin/shfmt
       - name: just ci
         run: just ci
+
+  pytest-py313:
+    name: pytest (python 3.13)
+    runs-on: ubuntu-latest
+    env:
+      PYTEST_ADDOPTS: -p no:cacheprovider
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: extractions/setup-just@v3
+      - name: pytest recipes on Python 3.13
+        run: just gauntlet-tests pytest-tests

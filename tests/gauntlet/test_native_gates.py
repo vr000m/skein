@@ -585,7 +585,14 @@ def test_escaping_or_cyclic_snapshot_links_fail_before_native_launch(
     marker = tmp_path / "native-launched"
     monkeypatch.setenv("NATIVE_GATE_TEST_LAUNCH", str(marker))
     state = gates.capture(repo)
-    with pytest.raises(gates.GateError, match="symlink"):
+    # Pin which check rejected the link: loops by the strict resolve, everything
+    # else (including dangling links) by the escape check.
+    expected = (
+        "cyclic or unresolvable"
+        if kind in ("self-loop", "cycle")
+        else "escaping the review snapshot"
+    )
+    with pytest.raises(gates.GateError, match=expected):
         gates.run_gate(request(repo, fake_codex, uncommitted=uncommitted))
     assert not marker.exists()
     assert gates.capture(repo)["fingerprint"] == state["fingerprint"]
