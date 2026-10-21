@@ -7,7 +7,7 @@ on:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       PYTEST_ADDOPTS: -p no:cacheprovider
     steps:
@@ -28,3 +28,22 @@ jobs:
           sudo chmod +x /usr/local/bin/shfmt
       - name: just ci
         run: just ci
+
+  pytest-py313:
+    name: pytest (python 3.13)
+    runs-on: ubuntu-24.04
+    env:
+      PYTEST_ADDOPTS: -p no:cacheprovider
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - uses: extractions/setup-just@v3
+      - name: pytest suites on Python 3.13
+        run: |
+          uv run --with pytest python -m pytest tests/gauntlet/test_codex_agent_api.py -q
+          uv run --with pytest python -m pytest tests/gauntlet/test_native_gates.py -q
+          just pytest-tests

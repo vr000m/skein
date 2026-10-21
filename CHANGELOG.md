@@ -4,6 +4,11 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-21
+
+### Fixed
+- Codex `review-gauntlet` native gate snapshots again reject cyclic symlinks on Python 3.13+, where non-strict `Path.resolve()` no longer raises on a symlink loop; the check now resolves strictly and falls back only for a missing path (a dangling link, or one through a regular file), which the escape check still covers; any other resolution error now rejects the link (#56). CI also runs the gauntlet and conduct/plan-view pytest suites on Python 3.13, and pins the runner to `ubuntu-24.04` until Ubuntu 26.04 is supported (#59).
+
 ## [0.10.1] - 2026-10-19
 
 ### Added
@@ -298,7 +303,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/vr000m/skein/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vr000m/skein/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/vr000m/skein/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/vr000m/skein/compare/v0.9.1...v0.9.2

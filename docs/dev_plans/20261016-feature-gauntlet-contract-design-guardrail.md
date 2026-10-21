@@ -20,7 +20,7 @@ Decisions (grilled 2026-10-16):
 - The fixer resolves in-contract ripple effects itself and logs each as a design delta. It escalates via Guardrail 1 only when a delta contradicts or expands the plan's stated intent.
 - Deltas are written even without `--plan`. The plan is the one diff-touched plan, narrowed by branch slug. Otherwise the deltas go to `.gauntlet/design-deltas-<target>.md`. The sink never guesses.
 - The merge-bar (stop on "no blocking findings") is deferred.
-- Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures are tracked in #56 and stay out of this PR.
+- Follow-up grill (2026-10-16): the writer's marker match is conduct's strict form (date + 40-hex, no awk intervals), so a placeholder-only plan gets the sidecar. A Guardrail 8 fix that lacks its test stays in the tree, is not counted as applied, and the conductor (not the fixer) decides scope. The delta sink sits outside the report-step anchors. The two `test_native_gates.py` failures were tracked in #56, stayed out of this PR, and were fixed afterwards in PR #58.
 - Independent-review grill (2026-10-18): quick-mode ledger identity is scope-keyed. The same base/head/branch reuses one generation; a moved head selects a new generation; a legacy pre-scope ledger is atomically bound once. Full/resume ledger identity remains target-keyed and immutable.
 
 ## Requirements
@@ -111,17 +111,17 @@ Decisions (grilled 2026-10-16):
 
 ### Test Results
 - [x] The results below were the intermediate pre-round-12 snapshot. They are retained as historical evidence, not the final verification for the hardlink, ledger-provenance, auto-chain-scope, and tracked-cleanup redesign.
-- [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open).
+- [x] `just ci` passes except 2 `test_native_gates.py` cyclic-snapshot cases. They fail the same way on clean main and are out of scope and tracked in #56 (open at the time). Fixed afterwards in PR #58 (Python 3.13 no longer raises on symlink loops in non-strict `Path.resolve()`); `just ci` is now green.
 - [x] Independent-review fix coverage passes: Codex sink 56/56, Claude sink 65/65, writer/resolver 285/285, convergence ledger 236/236, skill shape 395/395 and lib parity 179/179, including scope-generation, legacy-binding and non-regular report mutations.
 - [x] Round-12 final focused verification (2026-10-18): writer/resolver 285/285, Codex sink 54/54, Claude sink 62/62, skill shape 402/402, convergence-ledger pass, parity pass, lens 178/178, reconciliation pass, plugin pass, and the four pytest groups 216/216, 69/69, 251/251 and 68/68. The cached offline pytest runner also passed native gates 56/56. The required final `just ci` result is recorded below only after that run completes.
-- [x] Post-round-11 verification (2026-10-19): writer/resolver 284/284, Codex sink 54/54, Claude sink 62/62, state-contract 10/10, pr-base-merge-base 8/8, convergence-ledger 238/238, skill shape 405/405, lib parity 179/179, lint-scripts and `git diff --check` clean. `just ci` still stops only at the 2 known `test_native_gates.py` cyclic-snapshot cases (#56, open); the remaining recipes pass.
+- [x] Post-round-11 verification (2026-10-19): writer/resolver 284/284, Codex sink 54/54, Claude sink 62/62, state-contract 10/10, pr-base-merge-base 8/8, convergence-ledger 238/238, skill shape 405/405, lib parity 179/179, lint-scripts and `git diff --check` clean. `just ci` still stops only at the 2 known `test_native_gates.py` cyclic-snapshot cases (#56, open at that time; fixed afterwards in PR #58); the remaining recipes pass.
 
 ## Acceptance Criteria
 
 - Guardrail 8, the tripwire and the sink are present and pinned on both mirrors.
 - A plan with two review markers receives deltas in the sidecar and its bytes are unchanged.
 - Claude-side base/head derivation is exercised by an executed test.
-- `just ci` is green apart from the 2 known pre-existing failures.
+- `just ci` is green; the 2 pre-existing `test_native_gates.py` failures (#56) were fixed in PR #58.
 - Reviews converged and docs updated.
 
 <!-- reviewed: YYYY-MM-DD @ <hash> -->

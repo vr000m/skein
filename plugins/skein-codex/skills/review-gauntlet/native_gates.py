@@ -217,7 +217,10 @@ def snapshot(root, destination, state, uncommitted):
         if kind != "link":
             continue
         try:
-            target = (destination / name).resolve()
+            try:
+                target = (destination / name).resolve(strict=True)
+            except (FileNotFoundError, NotADirectoryError):
+                target = (destination / name).resolve()
         except (OSError, RuntimeError) as exc:
             raise GateError("Cannot freeze a cyclic or unresolvable symlink") from exc
         if not target.is_relative_to(destination):
