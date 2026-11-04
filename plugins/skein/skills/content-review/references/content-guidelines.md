@@ -18,7 +18,7 @@ Blog posts target engineers and product managers, explaining complex topics simp
   - Unnecessary superlatives ("amazing", "incredible", "revolutionary")
   - Excessive adverbs ("really", "very", "extremely")
   - Superfluous words and filler phrases
-  - **Comma splices**: Never join two independent clauses with just a comma. Use a full stop, semicolon, or em dash. Wrong: "The model is fast, it runs locally." Right: "The model is fast. It runs locally." or "The model is fast — it runs locally."
+  - **Comma splices**: Never join two independent clauses with just a comma. Use a full stop, semicolon, or conjunction. Wrong: "The model is fast, it runs locally." Right: "The model is fast. It runs locally." or "The model is fast; it runs locally."
 - **Proofread for missing words and typos**: Check for dropped articles (a/an/the), missing subjects ("and have a few days off" → "and I have a few days off"), missing relative pronouns ("a format contains" → "a format that contains"), and incorrect verb forms after auxiliaries ("started traverse" → "started traversing"). Also check for sentence fragments: subordinate clauses ("Which means...", "Because the...") that start a new sentence but lack an independent clause. Either join them to the previous sentence or rephrase with a proper subject ("This means..."). Parenthetical asides within a sentence start with a lowercase letter: "it takes ~300 ms (in pipecat, the timestamps from...)". Also run a spellcheck pass — common quick-draft errors include transposed letters ("avoding" → "avoiding"), dropped characters ("woktrees" → "worktrees"), and stray spaces in compound terms ("X- SIP" → "X-SIP")
 - **No repetition**: Avoid repeating statements or concepts unless explicitly for emphasis or to improve readability in complex arguments. Within a single post, do not present the same information twice in different forms (e.g., a bullet summary and then a detailed section covering the same items) — pick one treatment and commit to it
 - **Expand acronyms on first use**: Write "VAD (Voice Activity Detection)" on the first occurrence. Well-known acronyms in the target audience's domain (e.g., STT, LLM, API) may be left unexpanded
@@ -42,12 +42,9 @@ Use these rules to avoid generic template output. Treat them as quality constrai
 - **Failure and adjustment**: Include at least one thing that failed (or nearly failed), why it failed, and what changed.
 - **Original stance**: Include at least one non-obvious opinion grounded in the implementation details or outcome.
 - **No abstraction-only paragraphs**: Every paragraph should contain evidence, a decision, or a result.
-- **Avoid template phrases**: Avoid stock phrasing and AI-signalling vocabulary unless it is genuinely the best word. Avoid examples like "delve", "ever-evolving", "it is worth noting", "seamless", "leverage", "in conclusion", "this underscores", "this highlights", and "this landscape".
-- **Avoid formulaic contrast patterns**: Don't overuse repetitive structures such as "not just X, but Y" or "not only X, but Y".
-- **Avoid forced variation**: Do not rotate synonyms for the same concept just to sound varied. Prefer consistency over "elegant variation".
-- **Control formatting tics**: Do not overuse em dashes, boldface, or repeated "rule of three" rhythms.
-- **No assistant meta residue**: Remove phrases like "I hope this helps", "as of my last update", "would you like me to...", and any placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding).
-- **Final de-LLM pass**: Before finalising, run a focused pass to remove generic transitions, hedge-heavy filler, and templated recap lines.
+- **Avoid AI-writing signs**: Read `ai-writing-signs.md` in this directory. Treat its patterns as signals, not bans: one hit is weak evidence, and density across distinct sign types in one paragraph is the finding. Fix by restoring the specific fact or deleting the sentence; never swap one filler word for another. If the fact is unknown, flag it as needs author input rather than inventing it. This is style feedback, not a verdict that the text is AI-written.
+- **No assistant residue**: Remove chat leftovers entirely ("I hope this helps", "as of my last update", "would you like me to...") and any placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding); see `ai-writing-signs.md`.
+- **Final pass**: Before finalising, check each paragraph against `ai-writing-signs.md` and repair by restoring the fact or deleting, not by rephrasing.
 
 ### Structure Requirements
 
@@ -173,8 +170,8 @@ Always ask for clarification on:
 - [ ] Each major section includes at least one concrete anchor (command/path/metric/error/decision)
 - [ ] At least one explicit trade-off is stated (`chose X instead of Y`, with downside)
 - [ ] At least one failed attempt (or rough edge) and adjustment is documented
-- [ ] No templated AI-signalling phrases or assistant meta residue
-- [ ] Final de-LLM pass completed (generic transitions and filler removed)
+- [ ] No assistant residue; AI-writing signs checked against `ai-writing-signs.md`
+- [ ] Final pass completed (generic passages repaired by restoring the fact or deleting)
 
 ### TIL-Specific Checklist
 
@@ -195,7 +192,7 @@ TILs are shorter and skip some blog requirements. Use this subset instead of the
 - [ ] Opening line uses a concrete event/result, not "In this post..." style framing
 - [ ] Includes at least one concrete anchor (command/path/metric/error/decision)
 - [ ] Includes one trade-off or one failed attempt plus adjustment
-- [ ] No templated AI-signalling phrases or assistant meta residue
+- [ ] No assistant residue; AI-writing signs checked against `ai-writing-signs.md`
 - [ ] Does not end abruptly on a bare code block, bullet list, or link
 - [ ] Ends with a forward-looking close (even a single sentence)
 - [ ] Post-publication updates use `**Updated (YYYY-MM)**:` format

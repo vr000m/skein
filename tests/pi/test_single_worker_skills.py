@@ -97,10 +97,13 @@ def test_pi_references_are_complete_canonical_copies():
     canonical = ROOT / "plugins/skein-codex/skills/content-review/references"
     draft = ROOT / "plugins/skein-pi/skills/content-draft/references"
     review = ROOT / "plugins/skein-pi/skills/content-review/references"
-    assert (draft / "content-guidelines.md").read_bytes() == (
-        canonical / "content-guidelines.md"
-    ).read_bytes()
-    for name in ("content-guidelines.md", "writing-style-rules.md"):
+    for name in ("content-guidelines.md", "ai-writing-signs.md"):
+        assert (draft / name).read_bytes() == (canonical / name).read_bytes()
+    for name in (
+        "content-guidelines.md",
+        "writing-style-rules.md",
+        "ai-writing-signs.md",
+    ):
         assert (review / name).read_bytes() == (canonical / name).read_bytes()
 
 

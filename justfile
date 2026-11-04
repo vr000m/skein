@@ -40,6 +40,7 @@ parity-tests:
     bash tests/parity/test-prose-rule-codex.sh
     bash tests/parity/test-show-me-triggers-claude.sh
     bash tests/parity/test-show-me-triggers-codex.sh
+    bash tests/parity/test-ai-writing-signs-contract.sh
     bash tests/parity/test-marker-parity.sh
     bash tests/parity/test-spawn-tiers.sh
     bash tests/parity/test-managed-skills-parity.sh
