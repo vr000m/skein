@@ -171,7 +171,7 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 
 - [x] `just ci` passes (exit 0)
 - [x] `uv run --with pytest python -m pytest tests/pi -q` passes, 167 (not covered by `just ci`)
-- [~] Fixture result: LLM-styled fixture yielded Critical (residue) plus Important cluster with `needs author input` fixes; plain fixture yielded one Suggestion (sentence-initial "Additionally")
+- [~] Fixture result: LLM-styled fixture yielded Critical (residue) plus Important cluster with `needs author input` fixes. The plain fixture initially yielded a false-positive Suggestion for sentence-initial "Additionally"; the 2026-11-04 review correction now exempts transition words in isolation, with the focused contract test pinning that rule. An end-to-end fixture rerun remains outstanding.
 
 ### Edge Cases Tested
 
@@ -210,6 +210,7 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 - Discovered during Phase 3: Pi workers have no tools and receive rules as inline prompt text from `plugins/skein-pi/extension.ts`, which loaded only `content-guidelines.md` / `writing-style-rules.md`. The "read `ai-writing-signs.md`" pointer would have been dead there. Fixed by appending the reference to both the draft and review prompts (not in the original plan; covered by the contract test).
 - Phase 4: `content-draft` heading renamed "Phase 4: De-LLM Authenticity Pass" to "Phase 4: Authenticity Pass" in both mirrors; Codex checked `tests/` and `scripts/` for a pin on the old heading and found none.
 - Phase 5: `update-docs` pointer lands as item 9 (Codex) and item 10 (Claude, after its existing "Verify each edit"); `release` pointer is one sentence appended to the Step 4 "`## What's New` inclusion" bullet, both mirrors. Pi `update-docs` is an audit-only worker and got no pointer; Pi `release` got a plain-writing clause without a path.
+- Review correction (2026-11-04): delegated `content-draft` and `content-review` now load references through the harness anchor in the main context and inline the exact rule text into worker prompts. The other new `update-docs` and `release` cross-skill pointers are harness-anchored too. Sentence-initial transition words are supporting evidence only and cannot produce a standalone finding.
 - Not yet run: `/code-review xhigh --fix` (user-run), `review-gauntlet`, `/update-docs`, `/review-plan` (marker is still the template placeholder).
 
 ## Issues & Solutions

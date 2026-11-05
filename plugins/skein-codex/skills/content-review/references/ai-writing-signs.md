@@ -18,7 +18,7 @@ Source: Wikipedia's "Signs of AI writing" field guide (WikiProject AI Cleanup), 
 |----------|------|
 | Critical | Assistant residue (see below), in any quantity |
 | Important | 3 or more distinct sign types in one paragraph, or one structural formula repeated 3 or more times in the piece |
-| Suggestion | A single hit, or hedging disclaimers on their own |
+| Suggestion | A single independently reportable hit, or hedging disclaimers on their own; transition words alone are exempt |
 
 Hedging disclaimers and vocabulary-only hits never count towards the 3-type Important threshold (see the notes on each).
 
@@ -56,7 +56,7 @@ The text gestures at importance instead of stating a fact.
 | Rule of three | Triple adjectives or triple short phrases that make an analysis look complete | Keep the items that carry evidence; drop the padding |
 | Elegant variation | Rotating synonyms for one thing ("the tool", "the utility", "the solution") | Repeat the plain noun |
 | Section-summary closer | "In summary", "In conclusion", "Overall", a last paragraph that restates the piece | End on the last substantive point or the next step |
-| Sentence-initial "Additionally" / "Moreover" | Used as a connective with no logical work to do | Delete, or state the relationship ("Because...", "That also...") |
+| Sentence-initial "Additionally" / "Moreover" | Used as a connective with no logical work to do | Supporting evidence only: never report it in isolation; when another sign establishes a finding, delete it or state the relationship ("Because...", "That also...") |
 
 Notes:
 

@@ -160,7 +160,7 @@ Evaluate the content against each applicable rule category. Collect findings wit
 
 - **Critical**: Violates a hard rule. Must fix before publishing. Examples: missing TL;DR on blog post, comma splices, American spellings in body text, missing required frontmatter fields, code-prose identifier mismatch, assistant residue (chat leftovers, placeholders, knowledge-cutoff statements), missing concrete anchors/trade-offs/failure notes.
 - **Important**: Weakens quality. Should fix. Examples: passive voice in key sections, missing code language identifiers, no forward-looking close, bullet lists in body, stale code comments, inconsistent command syntax, excessive hedge-heavy filler, 3 or more distinct AI-writing sign types in one paragraph, or one structural formula repeated 3 or more times.
-- **Suggestion**: Polish items. Nice to have. Examples: could be more concise, alternative word choice, structural reordering, line that deserves its own paragraph, a single AI-writing sign hit, hedging disclaimers, vocabulary-only hits.
+- **Suggestion**: Polish items. Nice to have. Examples: could be more concise, alternative word choice, structural reordering, line that deserves its own paragraph, a single independently reportable AI-writing sign hit, hedging disclaimers, vocabulary-only hits. Transition words alone are exempt and must not be reported.
 
 **AI-writing sign findings**: quote the passage, name the sign type, and give either a concrete rewrite that restores a fact present in the draft, or `needs author input: <what is missing>`. Never invent a fact, never fix by swapping one filler word for another, and never state or imply that the text is AI-written.
 

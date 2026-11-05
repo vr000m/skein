@@ -136,5 +136,56 @@ else
 	fail "Pi extension does not load ai-writing-signs.md in both prompts"
 fi
 
+# 9. Transition words are supporting evidence, never standalone findings.
+if grep -q 'Supporting evidence only: never report it in isolation' "$CANON/ai-writing-signs.md" &&
+	grep -q 'transition words alone are exempt' "$CANON/ai-writing-signs.md"; then
+	pass "transition words are exempt from standalone findings"
+else
+	fail "transition-word standalone-finding exemption missing"
+fi
+for m in skein skein-codex skein-pi; do
+	f="$P/$m/skills/content-review/SKILL.md"
+	rel="${f#"$REPO_ROOT"/}"
+	if grep -qi 'transition words alone are exempt and must not be reported' "$f"; then
+		pass "transition-word exemption present: $rel"
+	else
+		fail "transition-word exemption missing: $rel"
+	fi
+done
+
+# 10. Delegated workers receive inline rule text loaded through harness anchors.
+codex_draft="$P/skein-codex/skills/content-draft/SKILL.md"
+codex_review="$P/skein-codex/skills/content-review/SKILL.md"
+claude_draft="$P/skein/skills/content-draft/SKILL.md"
+claude_review="$P/skein/skills/content-review/SKILL.md"
+for spec in \
+	"$codex_draft|\"\$SKILL_DIR\"/../content-review/references/ai-writing-signs.md|{{AI_WRITING_SIGNS_REFERENCE}}" \
+	"$codex_review|\"\$SKILL_DIR\"/references/ai-writing-signs.md|{{AI_WRITING_SIGNS_REFERENCE}}" \
+	"$claude_draft|\${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md|{{AI_WRITING_SIGNS_REFERENCE}}" \
+	"$claude_review|\${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md|{{AI_WRITING_SIGNS_REFERENCE}}"; do
+	IFS='|' read -r f anchor placeholder <<<"$spec"
+	rel="${f#"$REPO_ROOT"/}"
+	if grep -Fq -- "$anchor" "$f" && grep -Fq -- "$placeholder" "$f"; then
+		pass "anchored inline worker reference: $rel"
+	else
+		fail "worker reference is not anchored and inlined: $rel"
+	fi
+done
+
+# 11. Non-delegated cross-skill pointers also use the harness anchor.
+for spec in \
+	"$P/skein-codex/skills/update-docs/SKILL.md|\"\$SKILL_DIR\"/../content-review/references/ai-writing-signs.md" \
+	"$P/skein-codex/skills/release/SKILL.md|\"\$SKILL_DIR\"/../content-review/references/ai-writing-signs.md" \
+	"$P/skein/skills/update-docs/SKILL.md|\${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md" \
+	"$P/skein/skills/release/SKILL.md|\${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md"; do
+	IFS='|' read -r f anchor <<<"$spec"
+	rel="${f#"$REPO_ROOT"/}"
+	if grep -Fq -- "$anchor" "$f"; then
+		pass "anchored cross-skill reference: $rel"
+	else
+		fail "bare cross-skill reference remains: $rel"
+	fi
+done
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
