@@ -2,7 +2,7 @@
 
 Reference for `content-review` and `content-draft`. It lists patterns that make prose read as machine-generated, and how to fix them.
 
-Source: Wikipedia's "Signs of AI writing" field guide (WikiProject AI Cleanup), adapted for TILs, blog posts, and technical docs. Wikipedia-only signs (citations, edit summaries, wikitext) are omitted. Last reviewed: 2026-11-04.
+Source: Wikipedia's "Signs of AI writing" field guide (WikiProject AI Cleanup, https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing; Wikipedia text is available under CC BY-SA 4.0), adapted for TILs, blog posts, and technical docs. Wikipedia-only signs (citations, edit summaries, wikitext) are omitted. Last reviewed: 2026-11-05.
 
 ## How to use this
 
@@ -11,14 +11,15 @@ Source: Wikipedia's "Signs of AI writing" field guide (WikiProject AI Cleanup), 
 - **Fix by restoring the fact or deleting.** LLM prose regresses to the generic: a specific fact gets replaced by positive filler. Swapping one filler word for another only moves the tell. Either put the specific fact back, or cut the sentence.
 - **If the fact is unknown, say so.** The reviewer must not invent it. Report the finding as `needs author input` and name what is missing (the number, the source, the command, the date).
 - **Check the literal reading first.** "Underscore" can mean drawing a line; "landscape" can be a page orientation; "boasts" can be literal. Flag only the abstract, filler use.
+- **Required structure is exempt.** A closing paragraph or section that the content type mandates (for example the forward-looking close in blog posts and TILs) is not a sign. Flag a closer only when it restates the piece without adding a next step, implication, or concrete follow-up.
 
 ## Severity
 
 | Severity | When |
 |----------|------|
-| Critical | Assistant residue (see below), in any quantity |
+| Critical | Assistant residue left in the published text (see below, including the exemptions), or an unresolved `[needs author input: ...]` marker |
 | Important | 3 or more distinct sign types in one paragraph, or one structural formula repeated 3 or more times in the piece |
-| Suggestion | A single independently reportable hit, or hedging disclaimers on their own; transition words alone are exempt |
+| Suggestion | Fewer than 3 distinct sign types in a paragraph (report one grouped finding naming each type), one structural formula repeated fewer than 3 times, a single independently reportable hit, or hedging disclaimers on their own; transition words alone are exempt |
 
 Hedging disclaimers and vocabulary-only hits never count towards the 3-type Important threshold (see the notes on each).
 
@@ -31,6 +32,8 @@ Text left over from a chat session. Remove it entirely.
 - Refusals or apologies: "I'm sorry, but I can't...", "As an AI language model".
 - Placeholders: `[Your Name]`, `[X]`, `{placeholder}`, `INSERT_..._HERE`, `Subject:` scaffolding, `2025-XX-XX`.
 - Leaked scaffolding: "In this section, we will discuss...", "Here is a draft you can check before publishing".
+
+Do not flag quoted examples (block quotes, inline code, fenced blocks), prose that discusses these phrases (for example a post about prompting or LLM tooling), a legitimate `---` horizontal rule or front-matter delimiter, or `[ ]` / `[x]` task-list items. Flag only residue the author did not mean to publish. A leftover `[needs author input: ...]` marker (added deliberately by content-draft) is Critical because it must be resolved before publishing, but report it as an unresolved marker, not as an AI-writing sign.
 - Leaked markup artefacts, such as `contentReference[...]` or a stray `---` divider that is not front matter.
 
 ## Content tells
@@ -96,9 +99,9 @@ Words LLM output over-uses, by approximate period. The buckets are guides, not c
 | 2023 to mid-2024 | delve, tapestry, testament, intricate / intricacies, landscape (abstract), vibrant, meticulously, interplay |
 | Mid-2024 to mid-2025 | align with, enhance, fostering, showcase / showcasing, garner, bolstered, enduring, robust |
 | Mid-2025 to mid-2026 | emphasizing, highlighting, crucial, pivotal, valuable insights, boasts |
-| Mid-2026 onward | multifaceted, universally, prioritize, challenge (as a noun in outlook sentences), leverage |
+| Mid-2026 onward | multifaceted, universally, prioritise, challenge (as a noun in outlook sentences), leverage |
 
-Weighting: the 2023 and 2024 words are strong signals because human technical writers rarely use them. "Leverage", "challenge", and "prioritise" are ordinary engineering words. Flag them only when they sit inside one of the content or language patterns above ("leverage the power of...", "Despite these challenges..."), never on their own.
+Weighting: the 2023 to mid-2024 bucket is a strong signal because human technical writers rarely use those words. The later buckets are weak signals because they contain ordinary engineering words such as "robust", "enhance", "align with", "enduring", "leverage", "challenge", and "prioritise". Flag those only when they sit inside one of the content or language patterns above ("leverage the power of...", "Despite these challenges..."), never on their own.
 
 Overuse of one word does not imply its synonyms are overused. Do not build a ban list from this table.
 

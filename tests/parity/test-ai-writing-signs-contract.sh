@@ -50,6 +50,17 @@ for f in "${SIGNS[@]}"; do
 	fi
 done
 
+# 1b. The reference keeps the rules that stop false positives and carries its
+# source attribution (identical in every location, so the canonical suffices).
+for token in 'Required structure is exempt' 'Do not flag quoted examples' \
+	'Fewer than 3 distinct sign types' 'CC BY-SA 4.0' 'Signs_of_AI_writing'; do
+	if grep -q -- "$token" "$CANON/ai-writing-signs.md"; then
+		pass "reference carries '$token'"
+	else
+		fail "reference missing '$token'"
+	fi
+done
+
 # 2. content-guidelines.md keeps the pinned heading and points at the reference.
 for f in "${GUIDELINES[@]}"; do
 	rel="${f#"$REPO_ROOT"/}"
@@ -68,7 +79,12 @@ done
 # 3. No comma-splice line offers an em dash as a fix.
 for f in "${GUIDELINES[@]}" "${STYLE_RULES[@]}"; do
 	rel="${f#"$REPO_ROOT"/}"
-	if grep -i 'comma splice' "$f" | grep -qi 'em dash\|—'; then
+	# Capture the rule lines first: a missing rule must fail the check rather
+	# than pass vacuously, and a pipe under pipefail can mask a match (SIGPIPE).
+	splice_lines="$(grep -i 'comma splice' "$f" || true)"
+	if [ -z "$splice_lines" ]; then
+		fail "comma-splice rule not found (renamed?): $rel"
+	elif grep -qi 'em dash\|—' <<<"$splice_lines"; then
 		fail "comma-splice rule still offers an em dash: $rel"
 	else
 		pass "no em-dash splice fix: $rel"
