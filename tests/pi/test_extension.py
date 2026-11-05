@@ -242,12 +242,17 @@ def test_registered_content_worker_flow_builds_exact_bounded_task(
     child_request = json.dumps(requests[1])
     assert source_anchor in child_request
     assert rule_anchor in child_request
+    # The shared AI-writing-signs reference must be embedded in both prompts:
+    # Pi workers have no tools, so they cannot read it from disk.
+    assert "## Assistant residue (Critical)" in child_request
+    assert "needs author input" in child_request
     assert "schema_version" in child_request
     confirmation = next(
         record for record in records if record.get("type") == "extension_ui_request"
     )
     assert source_anchor in confirmation["message"]
     assert rule_anchor in confirmation["message"]
+    assert "## Assistant residue (Critical)" in confirmation["message"]
     result = tool_results(records)[0]
     assert not result["isError"]
     envelope = json.loads(result["result"]["content"][0]["text"])

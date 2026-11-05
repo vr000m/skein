@@ -11,7 +11,7 @@ This skill uses the package's `skein_content_review_worker` tool. The worker has
 
 ## 1. Acquire content and confirm type
 
-For a file path, read that one file in the main session. Do not accept a directory/glob in this port; ask the user to invoke one file at a time. For pasted content, use exactly the confirmed text. Never edit during review.
+For a file path, read that one file in the main session. Do not accept a directory/glob in this port; ask the user to invoke one file at a time. For pasted content, use exactly the confirmed text. Never edit during review. The worker accepts at most 90000 characters of content, and the assembled prompt (rules plus content) is also capped at 128 KiB of UTF-8, so non-ASCII text can fail with `task_too_large` below that character count. For a long or non-ASCII file, review it in parts.
 
 Choose type in this order: explicit flag; blog frontmatter (`slug`, `excerpt`, `category`, `authors`); path (`docs|documentation|guides`, `til|tils`, `blog|posts`); TIL frontmatter (`title` + `published_date` without blog fields); content signals; otherwise `general`. Explain the detected type and applicable scope, then ask the user to confirm/change it.
 
