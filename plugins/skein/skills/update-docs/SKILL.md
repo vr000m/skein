@@ -262,16 +262,16 @@ Before spawning the subagent, the main context must:
 
 If `--apply` was passed, or the user confirms, apply the updates. **Always show the report (Phase 3) first**, even in `--apply` mode, so the user sees what will change.
 
-1. Edit each document using the Edit tool (prefer surgical edits over full rewrites)
-2. For dev plans: check boxes, update status, add missing items; refresh stale "PR #N open/pending" text where the PR has merged
-3. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's **existing** lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header, and refresh stale PR refs. If the target section doesn't exist in the current index, leave the row in place and report the mismatch — never create a new lifecycle section in `--apply` mode. If the index has a `Comp` column, refresh a plan-backed row's `Comp` value from the linked plan's normalized primary `**Component**` value (plan is canonical; same derivation as the audit rule); leave plan-less rows' hand-entered `Comp` untouched. Never add or drop the `Comp` column in `--apply` mode — only update existing cells. For **unindexed shipped work** (PR absent from the index): add a row to the matching existing table — plan-backed section if a plan file exists, otherwise the plan-less table. Fill the `Comp` cell **only if the user confirmed the proposed component**; if unconfirmed, leave the `Comp` cell empty and report it rather than inventing a label. Never fabricate a plan-less component silently.
-4. For changelog: insert the new version section following existing format exactly
-5. For README: add missing sections/entries where appropriate
-6. For CLAUDE.md: update commands, layout, or versioning sections
-7. For AGENTS.md: update commands, layout, or tool/API sections
-8. For PR description: use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — it owns which visual (mermaid, file tree, diff snippet, etc.) fits and which formats are markdown-safe in a PR body.
-9. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
-10. Before writing or rewording changelog entries, README text, or PR descriptions, read `${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md`; then write plainly, state the specific change instead of its significance, and avoid the patterns it describes.
+1. Before writing or rewording changelog entries, README text, or PR descriptions, read `${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md`; then write plainly, state the specific change instead of its significance, and avoid the patterns it describes.
+2. Edit each document using the Edit tool (prefer surgical edits over full rewrites)
+3. For dev plans: check boxes, update status, add missing items; refresh stale "PR #N open/pending" text where the PR has merged
+4. For the dev-plans index (`docs/dev_plans/README.md`): move rows between the index's **existing** lifecycle sections to match each linked plan's primary `**Status**:` / `**Status:**` header, and refresh stale PR refs. If the target section doesn't exist in the current index, leave the row in place and report the mismatch — never create a new lifecycle section in `--apply` mode. If the index has a `Comp` column, refresh a plan-backed row's `Comp` value from the linked plan's normalized primary `**Component**` value (plan is canonical; same derivation as the audit rule); leave plan-less rows' hand-entered `Comp` untouched. Never add or drop the `Comp` column in `--apply` mode — only update existing cells. For **unindexed shipped work** (PR absent from the index): add a row to the matching existing table — plan-backed section if a plan file exists, otherwise the plan-less table. Fill the `Comp` cell **only if the user confirmed the proposed component**; if unconfirmed, leave the `Comp` cell empty and report it rather than inventing a label. Never fabricate a plan-less component silently.
+5. For changelog: insert the new version section following existing format exactly
+6. For README: add missing sections/entries where appropriate
+7. For CLAUDE.md: update commands, layout, or versioning sections
+8. For AGENTS.md: update commands, layout, or tool/API sections
+9. For PR description: use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — it owns which visual (mermaid, file tree, diff snippet, etc.) fits and which formats are markdown-safe in a PR body.
+10. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
 
 After applying, show a summary:
 ```

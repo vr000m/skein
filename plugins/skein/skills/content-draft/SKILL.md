@@ -37,7 +37,7 @@ Summarise what was accomplished in the current session. Extract:
 
 Present this summary and ask the user to confirm or adjust before drafting. **This step stays in the main context** because it requires user interaction.
 
-## Phases 3–4: Draft Content and De-LLM Pass (Subagent)
+## Phases 3–4: Draft Content and Authenticity Pass (Subagent)
 
 The actual drafting and authenticity pass involve reading reference files and iterative writing — delegate them to a subagent to keep the main context lean.
 
@@ -153,7 +153,7 @@ Generate a draft following these rules:
 - **No abstraction-only paragraphs**: Each paragraph should contain evidence, a decision, or an outcome.
 - **Write it right**: use "is" and "has" instead of "serves as" or "boasts"; name the specific thing (command, number, file, date) instead of describing its importance; no trailing "-ing" analysis ("..., highlighting X"); no "Challenges and outlook" formula and no "In summary" closer; no hedging disclaimers ("it's important to note"); sentence-case headings and straight quotes unless the target site differs; repeat the plain noun instead of rotating synonyms.
 - **AI-writing signs**: apply the provided AI-writing-signs reference as signals, not bans. Fix by restoring the specific fact or deleting the sentence, never by swapping filler words.
-- **No assistant residue**: Remove assistant-style meta language ("I hope this helps", "would you like me to...", "as of my last update") and placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding).
+- **No assistant residue**: Remove assistant-style meta language ("I hope this helps", "would you like me to...", "as of my last update") and placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding). The one exception is a `[needs author input: <what is missing>]` marker added in Phase 4: keep it visible; never strip it and never fill it with an invented fact.
 
 ## Phase 4: Authenticity Pass
 

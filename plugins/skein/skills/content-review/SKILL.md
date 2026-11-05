@@ -217,7 +217,9 @@ After the report, provide diff-style inline fix suggestions for all Critical and
 > Fixed:    ```javascript\n  const x = 1\n  ```
 ```
 
-For Suggestions, do not produce inline fixes unless the user requests them.
+For an AI-writing sign finding, the `Fixed:` line is either a rewrite that restores a fact present in the draft, or `needs author input: <what is missing>`; never invent the fact to fill it.
+
+For Suggestions, do not produce inline fixes unless the user requests them. A Suggestion-level AI-writing sign finding still quotes the passage and names the sign type in the report.
 
 ## Phase 6: Offer Next Steps
 
