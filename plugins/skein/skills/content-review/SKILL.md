@@ -89,6 +89,7 @@ Read the appropriate reference files based on content type:
 
 For `blog` and `til`: read `references/content-guidelines.md` (relative to this skill's directory) for the full rule set.
 For `technical-doc`, `notion`, and `general`: read `references/writing-style-rules.md` (relative to this skill's directory) for the universal style subset.
+For every content type: read `references/ai-writing-signs.md` (relative to this skill's directory) for the AI-writing sign taxonomy, severity rules, and fix principle.
 
 ## Phase 3: Perform Review
 
@@ -107,9 +108,8 @@ Evaluate the content against each applicable rule category. Collect findings wit
 - Incorrect verb forms after auxiliaries
 - Typos and misspellings (transposed letters, dropped characters, stray spaces)
 - Technical terms not in backticks (filenames, functions, CLI commands, env vars, HTML elements)
-- AI-signalling template phrases and assistant-meta residue (`in this post`, `delve`, `it is worth noting`, `I hope this helps`, placeholder scaffolding)
+- AI-writing signs, per `references/ai-writing-signs.md`: assistant residue, significance inflation, trailing "-ing" analysis, vague attribution, copulative avoidance ("serves as" for "is"), negative parallelism, and style tells. Treat them as signals, not bans; report style feedback, never an AI-detection verdict.
 - Hedge-heavy or abstraction-only prose (paragraphs that lack evidence, decision, or outcome)
-- Overused formatting tics (excessive em dashes, boldface, repeated "rule of three" cadence)
 
 **Structure** (blog, TIL, and technical-doc — adapted by type):
 - TL;DR present and bolded (blog only)
@@ -150,9 +150,11 @@ Evaluate the content against each applicable rule category. Collect findings wit
 
 ### Severity Levels
 
-- **Critical**: Violates a hard rule. Must fix before publishing. Examples: missing TL;DR on blog post, comma splices, American spellings in body text, missing required frontmatter fields, code-prose identifier mismatch, templated AI-signalling phrasing, missing concrete anchors/trade-offs/failure notes.
-- **Important**: Weakens quality. Should fix. Examples: passive voice in key sections, missing code language identifiers, no forward-looking close, bullet lists in body, stale code comments, inconsistent command syntax, excessive hedge-heavy filler.
-- **Suggestion**: Polish items. Nice to have. Examples: could be more concise, alternative word choice, structural reordering, line that deserves its own paragraph.
+- **Critical**: Violates a hard rule. Must fix before publishing. Examples: missing TL;DR on blog post, comma splices, American spellings in body text, missing required frontmatter fields, code-prose identifier mismatch, assistant residue (chat leftovers, placeholders, knowledge-cutoff statements), missing concrete anchors/trade-offs/failure notes.
+- **Important**: Weakens quality. Should fix. Examples: passive voice in key sections, missing code language identifiers, no forward-looking close, bullet lists in body, stale code comments, inconsistent command syntax, excessive hedge-heavy filler, 3 or more distinct AI-writing sign types in one paragraph, or one structural formula repeated 3 or more times.
+- **Suggestion**: Polish items. Nice to have. Examples: could be more concise, alternative word choice, structural reordering, line that deserves its own paragraph, a single AI-writing sign hit, hedging disclaimers, vocabulary-only hits.
+
+**AI-writing sign findings**: quote the passage, name the sign type, and give either a concrete rewrite that restores a fact present in the draft, or `needs author input: <what is missing>`. Never invent a fact, never fix by swapping one filler word for another, and never state or imply that the text is AI-written.
 
 ## Phase 4: Return Structured Report
 
@@ -233,3 +235,4 @@ Only apply changes if the user explicitly asks. Never auto-edit.
 
 - **`references/content-guidelines.md`** — Full blog and TIL guidelines including quality checklists, structure requirements, content approach, SEO rules, and voice/tone guidelines. Load for `blog` and `til` content types.
 - **`references/writing-style-rules.md`** — Universal writing style rules (British English, Oxford comma, active voice, conciseness, proofreading, code formatting). Load for `technical-doc`, `notion`, and `general` content types.
+- **`references/ai-writing-signs.md`** — Taxonomy, severity rules, and fix principle for AI-writing signs. Load for every content type.

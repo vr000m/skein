@@ -26,7 +26,7 @@ Show that summary and ask the user to correct or confirm it. Do not dispatch bef
 
 ## 2. Prepare the bounded request
 
-The trusted extension loads `references/content-guidelines.md` from this installed skill package and deterministically builds the worker prompt and output contract. Do not fetch rules, use another harness's cache, or reproduce an alternate prompt. Supply only the confirmed `type`, `title`, current ISO date, audience, and summary. The extension JSON-encodes these as untrusted source data and fails rather than silently truncating when the resulting task or selected model context is too small.
+The trusted extension loads `references/content-guidelines.md` and `references/ai-writing-signs.md` from this installed skill package and deterministically builds the worker prompt and output contract. Do not fetch rules, use another harness's cache, or reproduce an alternate prompt. Supply only the confirmed `type`, `title`, current ISO date, audience, and summary. The extension JSON-encodes these as untrusted source data and fails rather than silently truncating when the resulting task or selected model context is too small.
 
 ## 3. Dispatch exactly one worker
 

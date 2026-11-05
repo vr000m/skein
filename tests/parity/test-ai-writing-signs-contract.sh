@@ -85,5 +85,56 @@ for f in "${GUIDELINES[@]}"; do
 	fi
 done
 
+# 5. content-review SKILL.md carries the severity mapping and the fix rule.
+for m in skein skein-codex skein-pi; do
+	f="$P/$m/skills/content-review/SKILL.md"
+	rel="${f#"$REPO_ROOT"/}"
+	for token in 'assistant residue' '3 or more distinct' 'needs author input' 'ai-writing-signs'; do
+		if grep -q -- "$token" "$f"; then
+			pass "'$token' present: $rel"
+		else
+			fail "'$token' missing: $rel"
+		fi
+	done
+done
+
+# 6. content-draft (Claude, Codex) uses the reference and the new Phase 4.
+for m in skein skein-codex; do
+	f="$P/$m/skills/content-draft/SKILL.md"
+	rel="${f#"$REPO_ROOT"/}"
+	for token in 'Write it right' 'ai-writing-signs.md' 'needs author input'; do
+		if grep -q -- "$token" "$f"; then
+			pass "'$token' present: $rel"
+		else
+			fail "'$token' missing: $rel"
+		fi
+	done
+	if grep -q 'ever-evolving' "$f"; then
+		fail "old phrase-ban list still present: $rel"
+	else
+		pass "phrase-ban list removed: $rel"
+	fi
+done
+
+# 7. update-docs and release carry the plain-writing pointer (Claude, Codex).
+for m in skein skein-codex; do
+	for s in update-docs release; do
+		f="$P/$m/skills/$s/SKILL.md"
+		rel="${f#"$REPO_ROOT"/}"
+		if grep -q 'content-review/references/ai-writing-signs.md' "$f"; then
+			pass "pointer present: $rel"
+		else
+			fail "pointer missing: $rel"
+		fi
+	done
+done
+
+# 8. The Pi extension loads the reference into both worker prompts.
+if [ "$(grep -c 'ai-writing-signs.md' "$P/skein-pi/extension.ts")" -ge 2 ]; then
+	pass "Pi extension loads ai-writing-signs.md in draft and review prompts"
+else
+	fail "Pi extension does not load ai-writing-signs.md in both prompts"
+fi
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

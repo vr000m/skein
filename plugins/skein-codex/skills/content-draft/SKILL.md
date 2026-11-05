@@ -135,19 +135,19 @@ Generate a draft following these rules:
 - **Decision + trade-off**: When presenting a choice, include what was rejected and one downside of the chosen path.
 - **Failure + adjustment**: Include at least one rough edge or failed attempt and the change that resolved (or mitigated) it.
 - **No abstraction-only paragraphs**: Each paragraph should contain evidence, a decision, or an outcome.
-- **Template phrase ban**: Avoid stock AI-signalling phrasing unless truly necessary (examples: "delve", "ever-evolving", "it is worth noting", "seamless", "leverage", "in conclusion", "this underscores", "this highlights", "this landscape").
-- **Avoid formulaic cadence**: Do not overuse repetitive structures like "not just X, but Y", "not only X, but Y", or repeated rule-of-three rhythms.
+- **Write it right**: use "is" and "has" instead of "serves as" or "boasts"; name the specific thing (command, number, file, date) instead of describing its importance; no trailing "-ing" analysis ("..., highlighting X"); no "Challenges and outlook" formula and no "In summary" closer; no hedging disclaimers ("it's important to note"); sentence-case headings and straight quotes unless the target site differs; repeat the plain noun instead of rotating synonyms.
+- **AI-writing signs**: apply `content-review/references/ai-writing-signs.md` as signals, not bans. Fix by restoring the specific fact or deleting the sentence, never by swapping filler words.
 - **No assistant residue**: Remove assistant-style meta language ("I hope this helps", "would you like me to...", "as of my last update") and placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding).
 
-## Phase 4: De-LLM Authenticity Pass
+## Phase 4: Authenticity Pass
 
 Before returning the draft, run a targeted rewrite pass:
 
-1. Replace generic transitions with concrete statements.
-2. Remove hedge-heavy filler unless uncertainty is material.
-3. Ensure section openers are not repetitive in structure.
-4. Verify the draft includes at least one trade-off and one failure/rough-edge moment.
-5. Remove any banned template phrases and assistant-meta residue.
+1. Scan for assistant residue and remove it entirely.
+2. Check each paragraph against `content-review/references/ai-writing-signs.md`; repair paragraphs where 3 or more distinct sign types cluster or a formula repeats.
+3. Repair by restoring the specific fact from the session context, or by deleting the sentence; never swap one filler word for another. When the fact is not in the session context, leave a visible `[needs author input: <what is missing>]` marker instead of inventing it (content-review reports markers as Critical, so the author must resolve them before publishing).
+4. Verify at least one trade-off and one failure/rough-edge moment.
+5. Ensure section openers are not repetitive in structure.
 
 ## Output
 
@@ -179,4 +179,4 @@ After presenting the draft, offer:
 - Present the session summary for user confirmation before drafting — don't assume context is complete.
 - Always produce `status: 'draft'` in frontmatter. The user publishes when ready.
 - Never write to files without explicit permission.
-- Use the local skill reference file `content-review/references/content-guidelines.md` as the canonical extended guideline set, including the full anti-LLM rule set. Do not fetch guidance from external repos during drafting.
+- Use the local skill reference files `content-review/references/content-guidelines.md` and `content-review/references/ai-writing-signs.md` as the canonical extended guideline set. Do not fetch guidance from external repos during drafting.
