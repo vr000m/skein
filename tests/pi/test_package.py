@@ -51,6 +51,28 @@ def run(argv, env, cwd):
     ).stdout
 
 
+def resolve_pi_cli(launcher):
+    """Return the JavaScript CLI entry point behind a `pi` launcher.
+
+    The dispatcher starts the worker as `node <pi_cli>`, so it needs the JS file.
+    An npm-style install symlinks `pi` straight to it. The managed install
+    (`~/.pi/agent/bin/pi`) is a POSIX shell launcher instead, which Node cannot
+    parse; its JS entry is `install/releases/<current-version>/node_modules/.bin/pi`.
+    """
+    path = Path(launcher).resolve()
+    with path.open("rb") as handle:
+        shebang = handle.readline(256)
+    if b"node" in shebang or path.suffix in {".js", ".mjs", ".cjs"}:
+        return path
+    agent_dir = path.parent.parent
+    version_file = agent_dir / "install" / "current-version"
+    if not version_file.is_file():
+        return path
+    version = version_file.read_text().strip()
+    entry = agent_dir / "install/releases" / version / "node_modules/.bin/pi"
+    return entry.resolve(strict=True)
+
+
 @pytest.fixture
 def sandbox(tmp_path):
     pi = shutil.which("pi")

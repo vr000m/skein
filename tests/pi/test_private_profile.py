@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_package import ROOT
+from test_package import ROOT, resolve_pi_cli
 from test_package import sandbox as sandbox  # noqa: PLC0414 — pytest fixture re-export
 from test_worker import (
     MODEL,
@@ -55,7 +55,7 @@ def profile_args(sandbox, url, tmp_path):
         "approval": approval(url),
         "credential": "approved-fixture-not-a-secret",
         "node": Path(node).resolve(),
-        "pi_cli": Path(sandbox[0]).resolve(),
+        "pi_cli": resolve_pi_cli(sandbox[0]),
         "cwd": sandbox[2],
         "temp_root": tmp_path,
         "system_prompt": "CURATED_PRIVATE_ROLE",
