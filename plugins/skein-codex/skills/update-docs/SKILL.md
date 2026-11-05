@@ -281,7 +281,7 @@ each modified file after editing.
 6. For CLAUDE.md: update commands, layout, or versioning sections
 7. For AGENTS.md: update commands, layout, or tool/API sections
 8. For PR description: only after explicit confirmation for the exact external change, use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — it owns which visual (mermaid, file tree, diff snippet, etc.) fits and which formats are markdown-safe in a PR body.
-9. When writing or rewording changelog entries, README text, or PR descriptions, write plainly: state the specific change instead of its significance, and avoid the patterns in `content-review/references/ai-writing-signs.md`.
+9. Before writing or rewording changelog entries, README text, or PR descriptions, read `"$SKILL_DIR"/../content-review/references/ai-writing-signs.md`; then write plainly, state the specific change instead of its significance, and avoid the patterns it describes.
 
 After applying, show a summary:
 ```

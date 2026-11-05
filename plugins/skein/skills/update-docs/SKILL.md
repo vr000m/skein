@@ -271,7 +271,7 @@ If `--apply` was passed, or the user confirms, apply the updates. **Always show 
 7. For AGENTS.md: update commands, layout, or tool/API sections
 8. For PR description: use `gh pr edit --body` to update. Before writing prose-only, consult `skein:show-me`'s format menu — it owns which visual (mermaid, file tree, diff snippet, etc.) fits and which formats are markdown-safe in a PR body.
 9. **Verify each edit**: re-read the modified file after editing to confirm the change landed correctly
-10. When writing or rewording changelog entries, README text, or PR descriptions, write plainly: state the specific change instead of its significance, and avoid the patterns in `content-review/references/ai-writing-signs.md`.
+10. Before writing or rewording changelog entries, README text, or PR descriptions, read `${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md`; then write plainly, state the specific change instead of its significance, and avoid the patterns it describes.
 
 After applying, show a summary:
 ```

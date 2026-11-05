@@ -159,6 +159,8 @@ This skill is **user-invoked only** (`disable-model-invocation: true`): it pushe
 
 Shared workflow contract.
 
+AI reference: `${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md`.
+
 CALL_LINES_PLACEHOLDER
 
 ## Execution Model
@@ -182,6 +184,8 @@ Tag pushes and release publishes are external, hard-to-reverse actions — alway
 ### Step 1: Resolve
 
 Shared workflow contract.
+
+AI reference: `"$SKILL_DIR"/../content-review/references/ai-writing-signs.md`.
 
 CALL_LINES_PLACEHOLDER
 
