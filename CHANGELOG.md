@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Changed
+- The "anti-LLM" writing guidance in `content-draft` and `content-review` now comes from one shared reference, `references/ai-writing-signs.md`, adapted from Wikipedia's "Signs of AI writing". It replaces the fixed 2023-era phrase ban with a dated sign taxonomy treated as signals, not bans, and with severities: assistant residue is Critical, 3 or more distinct sign types in a paragraph is Important, and a single hit is a Suggestion. Fixes must restore the specific fact or delete the sentence, or flag `needs author input`. Em dashes are no longer recommended as a comma-splice fix. `update-docs` and `release` carry a one-line plain-writing rule, and the Pi extension now loads the reference into its draft and review prompts.
+
 ## [0.10.2] - 2026-10-21
 
 ### Fixed
