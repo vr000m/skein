@@ -61,8 +61,11 @@ def resolve_pi_cli(launcher):
     """
     path = Path(launcher).resolve()
     with path.open("rb") as handle:
-        shebang = handle.readline(256)
-    if b"node" in shebang or path.suffix in {".js", ".mjs", ".cjs"}:
+        shebang = handle.readline(256).split()
+    # Match the interpreter token (`#!/usr/bin/env node`, `#!/usr/bin/node`), not
+    # any path that merely contains "node" (e.g. `#!/opt/node/bin/sh`).
+    is_node_script = bool(shebang) and shebang[-1].rsplit(b"/", 1)[-1] == b"node"
+    if is_node_script or path.suffix in {".js", ".mjs", ".cjs"}:
         return path
     agent_dir = path.parent.parent
     version_file = agent_dir / "install" / "current-version"

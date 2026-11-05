@@ -130,6 +130,18 @@ for m in skein skein-codex; do
 	else
 		pass "phrase-ban list removed: $rel"
 	fi
+	# Both mirrors must rename the phase headings and keep the marker exception
+	# beside the "no assistant residue" rule, or the worker strips the marker.
+	if grep -q 'De-LLM' "$f"; then
+		fail "stale De-LLM heading: $rel"
+	else
+		pass "no stale De-LLM heading: $rel"
+	fi
+	if grep -q 'keep it visible; never strip it' "$f"; then
+		pass "marker exception beside the residue rule: $rel"
+	else
+		fail "residue rule lacks the needs-author-input marker exception: $rel"
+	fi
 done
 
 # 7. update-docs and release carry the plain-writing pointer (Claude, Codex).
@@ -143,10 +155,20 @@ for m in skein skein-codex; do
 			fail "pointer missing: $rel"
 		fi
 	done
+	# update-docs must read the reference before the first edit step.
+	f="$P/$m/skills/update-docs/SKILL.md"
+	rel="${f#"$REPO_ROOT"/}"
+	pointer_line="$(grep -n 'content-review/references/ai-writing-signs.md' "$f" | head -n 1 | cut -d: -f1 || true)"
+	edit_line="$(grep -n '^[0-9]*\. Edit each document' "$f" | head -n 1 | cut -d: -f1 || true)"
+	if [ -n "$pointer_line" ] && [ -n "$edit_line" ] && [ "$pointer_line" -lt "$edit_line" ]; then
+		pass "reference is read before the first edit step: $rel"
+	else
+		fail "reference pointer (line ${pointer_line:-none}) does not precede the edit step (line ${edit_line:-none}): $rel"
+	fi
 done
 
 # 8. The Pi extension loads the reference into both worker prompts.
-if [ "$(grep -c 'ai-writing-signs.md' "$P/skein-pi/extension.ts")" -ge 2 ]; then
+if [ "$(grep -c 'readFileSync(join(refs, "ai-writing-signs.md")' "$P/skein-pi/extension.ts")" -ge 2 ]; then
 	pass "Pi extension loads ai-writing-signs.md in draft and review prompts"
 else
 	fail "Pi extension does not load ai-writing-signs.md in both prompts"
@@ -162,7 +184,7 @@ fi
 for m in skein skein-codex skein-pi; do
 	f="$P/$m/skills/content-review/SKILL.md"
 	rel="${f#"$REPO_ROOT"/}"
-	if grep -qi 'transition words alone are exempt and must not be reported' "$f"; then
+	if grep -qi 'transition words on their own are exempt; do not report them' "$f"; then
 		pass "transition-word exemption present: $rel"
 	else
 		fail "transition-word exemption missing: $rel"

@@ -32,9 +32,9 @@ Text left over from a chat session. Remove it entirely.
 - Refusals or apologies: "I'm sorry, but I can't...", "As an AI language model".
 - Placeholders: `[Your Name]`, `[X]`, `{placeholder}`, `INSERT_..._HERE`, `Subject:` scaffolding, `2025-XX-XX`.
 - Leaked scaffolding: "In this section, we will discuss...", "Here is a draft you can check before publishing".
-
-Do not flag quoted examples (block quotes, inline code, fenced blocks), prose that discusses these phrases (for example a post about prompting or LLM tooling), a legitimate `---` horizontal rule or front-matter delimiter, or `[ ]` / `[x]` task-list items. Flag only residue the author did not mean to publish. A leftover `[needs author input: ...]` marker (added deliberately by content-draft) is Critical because it must be resolved before publishing, but report it as an unresolved marker, not as an AI-writing sign.
 - Leaked markup artefacts, such as `contentReference[...]` or a stray `---` divider that is not front matter.
+
+Do not flag quoted examples (block quotes, inline code, fenced blocks), prose that discusses these phrases (for example a post about prompting or LLM tooling), a legitimate `---` horizontal rule or front-matter delimiter, or `[ ]` / `[x]` / `[X]` task-list items (a bare `[X]` outside a task list is still a placeholder). Flag only residue the author did not mean to publish. A leftover `[needs author input: ...]` marker (added deliberately by content-draft) is Critical because it must be resolved before publishing, but report it as an unresolved marker, not as an AI-writing sign.
 
 ## Content tells
 
@@ -55,7 +55,7 @@ The text gestures at importance instead of stating a fact.
 | Sign | Examples | Usually fixed by |
 |------|----------|------------------|
 | Copulative avoidance | "serves as", "stands as", "functions as", "boasts", "features", "represents", "marks" used instead of "is" or "has" | Write "is" or "has" |
-| Negative parallelism | "not just X, but Y", "not only X but also Y", "It's not X, it's Y", "Y rather than X", the same contrast spread over two sentences | State Y directly; keep the contrast only if X is a real misconception |
+| Negative parallelism | "not just X, but Y", "not only X but also Y", "It's not X, it's Y", the same contrast spread over two sentences | State Y directly; keep the contrast only if X is a real misconception |
 | Rule of three | Triple adjectives or triple short phrases that make an analysis look complete | Keep the items that carry evidence; drop the padding |
 | Elegant variation | Rotating synonyms for one thing ("the tool", "the utility", "the solution") | Repeat the plain noun |
 | Section-summary closer | "In summary", "In conclusion", "Overall", a last paragraph that restates the piece | End on the last substantive point or the next step |
@@ -72,6 +72,7 @@ Count a style tell only when it is not required by the target format.
 
 - **Emoji** at the start of headings or list items.
 - **Bold-header bullet lists**: a list where every item opens with a bolded label ("**Speed:** ...", "**Cost:** ..."). Flag repeated use; one such list that is genuinely a glossary or comparison is fine.
+- **Mechanical boldface**: key phrases bolded at random through running prose, not as a label, a first-use term, or a required marker. One or two deliberate bolds are fine; flag repeated use.
 - **Title Case headings** where the surrounding site or document uses sentence case.
 - **Curly quotes and apostrophes** (`“ ” ’`): flag only when the rest of the file uses straight quotes. Editors and CMSes often convert quotes automatically, so a uniformly curly file is not a finding.
 - **Heading structure errors**: a level-1 heading in the body of a post that already has a title, or several level-1 headings.
@@ -86,7 +87,7 @@ Weakest category. Report as Suggestion only, and never count towards the Importa
 
 - Source-availability hedges: "details are limited", "not widely documented", "based on available information".
 - Didactic hedges: "it's important to note that...", "it is worth noting".
-- Corrective framings (common since mid-2026): "X does not establish Y", "should not be confused with", and "rather than" used to correct an unstated misreading.
+- Corrective framings (common since mid-2026): "X does not establish Y", "should not be confused with", and "rather than" used to correct an unstated misreading (hedging, not negative parallelism; it never counts towards the Important threshold).
 
 Keep a hedge when the uncertainty is real and material; say what is uncertain and why.
 

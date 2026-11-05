@@ -42,9 +42,9 @@ Use these rules to avoid generic template output. Treat them as quality constrai
 - **Failure and adjustment**: Include at least one thing that failed (or nearly failed), why it failed, and what changed.
 - **Original stance**: Include at least one non-obvious opinion grounded in the implementation details or outcome.
 - **No abstraction-only paragraphs**: Every paragraph should contain evidence, a decision, or a result.
-- **Avoid AI-writing signs**: Apply the AI-writing signs reference (`ai-writing-signs.md`, supplied alongside these guidelines). Treat its patterns as signals, not bans: one hit is weak evidence, and density across distinct sign types in one paragraph is the finding. Fix by restoring the specific fact or deleting the sentence; never swap one filler word for another. If the fact is unknown, flag it as needs author input rather than inventing it. This is style feedback, not a verdict that the text is AI-written.
+- **Avoid AI-writing signs**: Apply the AI-writing signs reference (`ai-writing-signs.md`, supplied alongside these guidelines). Treat its patterns as signals, not bans: one hit is weak evidence, and density across distinct sign types in one paragraph is the finding. Repair as the reference describes. This is style feedback, not a verdict that the text is AI-written.
 - **No assistant residue**: Remove chat leftovers entirely ("I hope this helps", "as of my last update", "would you like me to...") and any placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding); see `ai-writing-signs.md`.
-- **Final pass**: Before finalising, check each paragraph against `ai-writing-signs.md` and repair by restoring the fact or deleting, not by rephrasing.
+- **Final pass**: Before finalising, check each paragraph against `ai-writing-signs.md`.
 
 ### Structure Requirements
 
@@ -171,7 +171,7 @@ Always ask for clarification on:
 - [ ] At least one explicit trade-off is stated (`chose X instead of Y`, with downside)
 - [ ] At least one failed attempt (or rough edge) and adjustment is documented
 - [ ] No assistant residue; AI-writing signs checked against `ai-writing-signs.md`
-- [ ] Final pass completed (generic passages repaired by restoring the fact or deleting)
+- [ ] Final pass completed against `ai-writing-signs.md`
 
 ### TIL-Specific Checklist
 

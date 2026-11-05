@@ -110,9 +110,12 @@ def test_pi_references_are_complete_canonical_copies():
 def test_review_worker_worst_case_ascii_prompt_fits_task_budget():
     """Pin the review input cap against the embedded references.
 
-    The cap counts characters; the budget counts UTF-8 bytes. The assertion
-    covers the ASCII worst case. Non-ASCII text can still exceed the budget and
-    fails closed with task_too_large (documented in the content-review skill).
+    The cap counts characters; the budget counts UTF-8 bytes of the whole
+    prompt. The assertion covers plain ASCII content with no escaping. The
+    extension JSON-encodes the content into the prompt, so every newline, quote,
+    or backslash costs a second byte; text dense in those, and non-ASCII text,
+    can still exceed the budget and fails closed with task_too_large (documented
+    in the content-review skill).
     """
     extension = (ROOT / "plugins/skein-pi/extension.ts").read_text()
     assert "const MAX_TASK_BYTES = 128 * 1024;" in extension

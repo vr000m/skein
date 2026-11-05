@@ -127,7 +127,7 @@ Generate a draft following these rules:
   - Tutorial: Prerequisites -> Step-by-step -> Troubleshooting -> Next Steps
   - Industry Analysis: Context -> Trend Analysis -> Implications -> Predictions
   - Opinion: Thesis -> Supporting Evidence -> Counter-arguments -> Conclusion
-- **Close**: Synthesis and forward-looking statement.
+- **Close**: A synthesis that adds a next step or implication, ending forward-looking; do not just recap.
 - **Length**: 800-1,500 words (or content-type-specific range).
 
 ### Style Rules (Both Types)
@@ -151,8 +151,8 @@ Generate a draft following these rules:
 - **Decision + trade-off**: When presenting a choice, include what was rejected and one downside of the chosen path.
 - **Failure + adjustment**: Include at least one rough edge or failed attempt and the change that resolved (or mitigated) it.
 - **No abstraction-only paragraphs**: Each paragraph should contain evidence, a decision, or an outcome.
-- **Write it right**: use "is" and "has" instead of "serves as" or "boasts"; name the specific thing (command, number, file, date) instead of describing its importance; no trailing "-ing" analysis ("..., highlighting X"); no "Challenges and outlook" formula and no "In summary" closer; no hedging disclaimers ("it's important to note"); sentence-case headings and straight quotes unless the target site differs; repeat the plain noun instead of rotating synonyms.
-- **AI-writing signs**: apply the provided AI-writing-signs reference as signals, not bans. Fix by restoring the specific fact or deleting the sentence, never by swapping filler words.
+- **Write it right**: use "is" and "has" instead of "serves as" or "boasts"; name the specific thing (command, number, file, date) instead of describing its importance; no trailing "-ing" analysis ("..., highlighting X"); no "Challenges and outlook" formula and no closing paragraph that only restates the piece (the required close adds a next step or implication); no hedging disclaimers ("it's important to note"); sentence-case headings and straight quotes unless the target site differs; repeat the plain noun instead of rotating synonyms.
+- **AI-writing signs**: apply the provided AI-writing-signs reference as signals, not bans. Phase 4 step 3 says how to repair.
 - **No assistant residue**: Remove assistant-style meta language ("I hope this helps", "would you like me to...", "as of my last update") and placeholder text (`[X]`, `{placeholder}`, `Subject:` scaffolding). The one exception is a `[needs author input: <what is missing>]` marker added in Phase 4: keep it visible; never strip it and never fill it with an invented fact.
 
 ## Phase 4: Authenticity Pass
