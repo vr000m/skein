@@ -29,3 +29,9 @@ Convention: group by originating feature. When an item lands, move it to the rel
 ## Review output formats (from `docs/dev_plans/20261008-feature-review-output-formats.md`)
 
 - **Pi follow-up** — `plugins/skein-pi` was out of scope for the plain-prose rule, the shared HTML `--report` flow, and the show-me review triggers. Pi has Pi-native rewrites with their own state (`.deep-review/latest-pi.json`, `lib/review_gauntlet.py`); port the three changes there in a separate branch.
+
+## AI-writing signs (from `docs/dev_plans/20261104-feature-ai-writing-signs-refresh.md`)
+
+- **Deterministic scanner** — a `scripts/ai-signs-scan.sh` plus a JSON lexicon that prints per-paragraph hit counts as input to `content-review`. Deferred so the taxonomy settles first and to avoid a second surface to keep in mirror parity.
+- **Wire `tests/pi` into `just ci`** — the Pi pytest suite is not referenced by any `justfile` recipe or CI workflow, so regressions there are invisible to `just ci`.
+- **Refresh the dated vocabulary** — the reference lists approximate period buckets with a last-reviewed date; revisit when the source page's vocabulary section changes.

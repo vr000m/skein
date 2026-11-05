@@ -11,7 +11,7 @@ This skill uses the package's `skein_content_review_worker` tool. The worker has
 
 ## 1. Acquire content and confirm type
 
-For a file path, read that one file in the main session. Do not accept a directory/glob in this port; ask the user to invoke one file at a time. For pasted content, use exactly the confirmed text. Never edit during review.
+For a file path, read that one file in the main session. Do not accept a directory/glob in this port; ask the user to invoke one file at a time. For pasted content, use exactly the confirmed text. Never edit during review. The worker accepts at most 90000 characters of content, and the assembled prompt (rules plus content) is also capped at 128 KiB of UTF-8, so non-ASCII text, or text dense in newlines, quotes, and backslashes (the content is JSON-encoded into the prompt), can fail with `task_too_large` below that character count. For a long or non-ASCII file, review it in parts.
 
 Choose type in this order: explicit flag; blog frontmatter (`slug`, `excerpt`, `category`, `authors`); path (`docs|documentation|guides`, `til|tils`, `blog|posts`); TIL frontmatter (`title` + `published_date` without blog fields); content signals; otherwise `general`. Explain the detected type and applicable scope, then ask the user to confirm/change it.
 
@@ -43,14 +43,14 @@ Call `skein_content_review_worker` once with exactly `type`, optional `path`, an
 
 Review scope:
 
-- all types: British English body text (not American-English slug/filename), Oxford commas, active/direct prose, comma splices, repetition, missing words/typos, technical backticks, code/prose consistency, AI-template language, assistant residue, hedging, and formatting tics;
+- all types: British English body text (not American-English slug/filename), Oxford commas, active/direct prose, comma splices, repetition, missing words/typos, technical backticks, code/prose consistency, AI-writing signs (bundled `ai-writing-signs.md` reference), assistant residue, and hedging;
 - blog/TIL: title alignment, concrete anchors, shown outcome, limitations, attribution, an explicit trade-off/downside, and a failed attempt/adjustment;
 - blog: required metadata, 150–160 character excerpt, 3–5 tags, valid category, bold TL;DR, hero image reference, hook, hierarchy, code fences, and target range;
 - TIL: required frontmatter, concise focus, code fences, and a non-abrupt forward-looking close;
 - technical docs: style plus headings, language-tagged fences, code/prose consistency, and complete/marked examples;
 - Notion/general: style only; skip irrelevant SEO/structure findings.
 
-Severity means: critical = hard rule/publication blocker; important = material quality weakness; suggestion = optional polish. Findings must cite actual content. Do not fabricate line numbers, sources, or a failure/trade-off requirement for content types where it is out of scope. Return at most 100 findings and no prose outside the object.
+Severity means: critical = hard rule/publication blocker; important = material quality weakness; suggestion = optional polish. For AI-writing signs: critical = assistant residue left in the published text (not quoted or discussed examples) or an unresolved `[needs author input: ...]` marker; important = 3 or more distinct sign types in one paragraph or one formula repeated 3 or more times; suggestion = fewer than 3 distinct sign types in one paragraph (one grouped finding), a single independently reportable hit, hedging disclaimers, or vocabulary-only hits. Transition words on their own are exempt; do not report them. Give a concrete rewrite that restores a fact present in the content, or `needs author input: <what is missing>`; never invent facts and never state the text is AI-written. Findings must cite actual content. Do not fabricate line numbers, sources, or a failure/trade-off requirement for content types where it is out of scope. Return at most 100 findings and no prose outside the object.
 
 The extension will present the exact task/model/endpoint for approval. On decline, tool error, invalid output, or non-completed status, stop and say no review was accepted; do not salvage partial diagnostics.
 

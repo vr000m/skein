@@ -97,11 +97,45 @@ def test_pi_references_are_complete_canonical_copies():
     canonical = ROOT / "plugins/skein-codex/skills/content-review/references"
     draft = ROOT / "plugins/skein-pi/skills/content-draft/references"
     review = ROOT / "plugins/skein-pi/skills/content-review/references"
-    assert (draft / "content-guidelines.md").read_bytes() == (
-        canonical / "content-guidelines.md"
-    ).read_bytes()
-    for name in ("content-guidelines.md", "writing-style-rules.md"):
+    for name in ("content-guidelines.md", "ai-writing-signs.md"):
+        assert (draft / name).read_bytes() == (canonical / name).read_bytes()
+    for name in (
+        "content-guidelines.md",
+        "writing-style-rules.md",
+        "ai-writing-signs.md",
+    ):
         assert (review / name).read_bytes() == (canonical / name).read_bytes()
+
+
+def test_review_worker_worst_case_ascii_prompt_fits_task_budget():
+    """Pin the review input cap against the embedded references.
+
+    The cap counts characters; the budget counts UTF-8 bytes of the whole
+    prompt. The assertion covers plain ASCII content with no escaping. The
+    extension JSON-encodes the content into the prompt, so every newline, quote,
+    or backslash costs a second byte; text dense in those, and non-ASCII text,
+    can still exceed the budget and fails closed with task_too_large (documented
+    in the content-review skill).
+    """
+    extension = (ROOT / "plugins/skein-pi/extension.ts").read_text()
+    assert "const MAX_TASK_BYTES = 128 * 1024;" in extension
+    match = re.search(
+        r'type: StringEnum\(\["blog", "til", "technical-doc", "notion", "general"\] as const\),\s*'
+        r"path: Type\.Optional\(Type\.String\(\{ maxLength: (\d+) \}\)\),\s*"
+        r"content: Type\.String\(\{ minLength: 1, maxLength: (\d+) \}\)",
+        extension,
+    )
+    assert match, "review worker schema changed; update this budget test"
+    path_cap, content_cap = int(match.group(1)), int(match.group(2))
+    assert content_cap == 90000
+    references = ROOT / "plugins/skein-pi/skills/content-review/references"
+    rules = max(
+        len((references / "content-guidelines.md").read_bytes()),
+        len((references / "writing-style-rules.md").read_bytes()),
+    ) + len((references / "ai-writing-signs.md").read_bytes())
+    scaffold_allowance = 4096  # prompt template text around the rules and content
+    worst = rules + content_cap + path_cap + scaffold_allowance
+    assert worst <= 128 * 1024, f"worst-case prompt {worst} bytes exceeds 128 KiB"
 
 
 def test_worker_prompt_budget_has_no_silent_truncation():

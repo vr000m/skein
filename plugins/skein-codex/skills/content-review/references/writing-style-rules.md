@@ -15,7 +15,7 @@ These rules apply to all content types reviewed by the content-review skill, reg
   - Unnecessary superlatives ("amazing", "incredible", "revolutionary")
   - Excessive adverbs ("really", "very", "extremely")
   - Superfluous words and filler phrases
-- **No comma splices**: Never join two independent clauses with just a comma. Acceptable alternatives: full stop, semicolon, em dash, or conjunction. Wrong: "The model is fast, it runs locally." Right: "The model is fast. It runs locally." or "The model is fast — it runs locally."
+- **No comma splices**: Never join two independent clauses with just a comma. Acceptable alternatives: full stop, semicolon, or conjunction. Wrong: "The model is fast, it runs locally." Right: "The model is fast. It runs locally." or "The model is fast; it runs locally."
 - **No repetition**: Do not present the same information twice in different forms within the same piece. Pick one treatment and commit to it.
 
 ## Proofreading

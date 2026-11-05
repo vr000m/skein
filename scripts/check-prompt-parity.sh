@@ -289,6 +289,10 @@ RELEASE_CODEX_INVOCATION_MODE='Tag pushes and release publishes are external, ha
 RELEASE_CLAUDE_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, subagent-delegated fact-gathering), this skill runs entirely **inline in the main agent context** — no delegating subagent. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
 # shellcheck disable=SC2016
 RELEASE_CODEX_EXECUTION_MODEL='Unlike `rfc-finder`/`update-docs` (read-only, delegated fact-gathering), this skill runs entirely inline in the main context — no delegating subagent, even on harnesses where `spawn_agent` is available. It owns an irreversible external mutation (tag push, release publish) gated on an explicit user-confirmation step (Step 4); a subagent cannot hold that confirmation gate on the caller'\''s behalf.'
+# shellcheck disable=SC2016
+RELEASE_CLAUDE_AI_SIGNS_PATH='${CLAUDE_PLUGIN_ROOT}/skills/content-review/references/ai-writing-signs.md'
+# shellcheck disable=SC2016
+RELEASE_CODEX_AI_SIGNS_PATH='"$SKILL_DIR"/../content-review/references/ai-writing-signs.md'
 
 # Script-invocation call sites (docs/dev_plans/20260917-refactor-release-skill-structure.md,
 # Phase 2, grilled decisions 6/15/23). Each site is ONE exact-full-line
@@ -390,9 +394,16 @@ normalize_release_workflow() {
 		-v codex_invocation_mode="$RELEASE_CODEX_INVOCATION_MODE" \
 		-v claude_execution_model="$RELEASE_CLAUDE_EXECUTION_MODEL" \
 		-v codex_execution_model="$RELEASE_CODEX_EXECUTION_MODEL" \
+		-v claude_ai_signs_path="$RELEASE_CLAUDE_AI_SIGNS_PATH" \
+		-v codex_ai_signs_path="$RELEASE_CODEX_AI_SIGNS_PATH" \
 		-v codex_executable_policy="$RELEASE_CODEX_EXECUTABLE_POLICY" '
 		function emit(line) {
 			print line
+		}
+		function replace_literal(value, needle, replacement, at) {
+			at = index(value, needle)
+			if (at == 0) return value
+			return substr(value, 1, at - 1) replacement substr(value, at + length(needle))
 		}
 		BEGIN {
 			while ((getline entry < callmap) > 0) {
@@ -446,6 +457,11 @@ normalize_release_workflow() {
 			if (line in callline) {
 				emit(callline[line])
 				next
+			}
+			if (harness == "claude") {
+				line = replace_literal(line, claude_ai_signs_path, "__AI_WRITING_SIGNS_PATH__")
+			} else {
+				line = replace_literal(line, codex_ai_signs_path, "__AI_WRITING_SIGNS_PATH__")
 			}
 			emit(line)
 		}
@@ -524,6 +540,10 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 			"$release_claude" "$RELEASE_CLAUDE_EXECUTION_MODEL")"
 		codex_execution_model_count="$(count_release_contract_line \
 			"$release_codex" "$RELEASE_CODEX_EXECUTION_MODEL")"
+		claude_ai_signs_count="$(grep -Foc -- "$RELEASE_CLAUDE_AI_SIGNS_PATH" "$release_claude" || true)"
+		codex_ai_signs_count="$(grep -Foc -- "$RELEASE_CODEX_AI_SIGNS_PATH" "$release_codex" || true)"
+		claude_wrong_ai_signs_count="$(grep -Foc -- "$RELEASE_CODEX_AI_SIGNS_PATH" "$release_claude" || true)"
+		codex_wrong_ai_signs_count="$(grep -Foc -- "$RELEASE_CLAUDE_AI_SIGNS_PATH" "$release_codex" || true)"
 		release_divergence_contract_valid=1
 		claude_policy_count="$(count_release_contract_line "$release_claude" "$RELEASE_CODEX_EXECUTABLE_POLICY")"
 		codex_policy_count="$(count_release_contract_line "$release_codex" "$RELEASE_CODEX_EXECUTABLE_POLICY")"
@@ -576,6 +596,11 @@ if [[ "$release_is_managed" -eq 1 ]]; then
 		fi
 		if [[ "$codex_execution_model_count" -ne 1 ]]; then
 			echo "drift: release Codex execution-model paragraph count is $codex_execution_model_count (expected exactly 1)"
+			PARITY_DIFF=1
+			release_divergence_contract_valid=0
+		fi
+		if [[ "$claude_ai_signs_count" -ne 1 || "$codex_ai_signs_count" -ne 1 || "$claude_wrong_ai_signs_count" -ne 0 || "$codex_wrong_ai_signs_count" -ne 0 ]]; then
+			echo "drift: release AI-writing-signs path counts are Claude=$claude_ai_signs_count Codex=$codex_ai_signs_count wrong-Claude=$claude_wrong_ai_signs_count wrong-Codex=$codex_wrong_ai_signs_count (expected 1/1/0/0)"
 			PARITY_DIFF=1
 			release_divergence_contract_valid=0
 		fi
