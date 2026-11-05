@@ -4,8 +4,15 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-05
+
 ### Changed
-- The "anti-LLM" writing guidance in `content-draft` and `content-review` now comes from one shared reference, `references/ai-writing-signs.md`, adapted from Wikipedia's "Signs of AI writing". It replaces the fixed 2023-era phrase ban with a dated sign taxonomy treated as signals, not bans, and with severities: assistant residue is Critical, 3 or more distinct sign types in a paragraph is Important, and a single hit is a Suggestion. Fixes must restore the specific fact or delete the sentence, or flag `needs author input`. Em dashes are no longer recommended as a comma-splice fix. `update-docs` and `release` carry a one-line plain-writing rule, and the Pi extension now loads the reference into its draft and review prompts.
+- The "anti-LLM" writing guidance in `content-draft` and `content-review` now comes from one shared reference, `references/ai-writing-signs.md`, adapted from Wikipedia's "Signs of AI writing". It replaces the fixed 2023-era phrase ban with a dated sign taxonomy treated as signals, not bans, and with severities: assistant residue is Critical, 3 or more distinct sign types in a paragraph is Important, and a single hit is a Suggestion. Fixes must restore the specific fact or delete the sentence, or flag `needs author input`. Em dashes are no longer recommended as a comma-splice fix. `update-docs` and `release` carry a one-line plain-writing rule, and the Pi extension now loads the reference into its draft and review prompts. The reference exempts quoted or discussed examples of assistant residue, a closing paragraph the content type requires, and transition words on their own. Fewer than 3 distinct sign types in a paragraph is one grouped Suggestion, and an unresolved `[needs author input: ...]` marker is Critical.
+- Delegated `content-draft` and `content-review` workers now receive the exact rule text inline. The main context loads `content-guidelines.md` (or `writing-style-rules.md`) and `ai-writing-signs.md` through the harness path anchor, because a subagent cannot resolve a plugin-relative path from its own working directory. `update-docs` and `release` read the reference through the same anchor.
+- The Pi review worker accepts at most 90000 characters of content (was 100000), so the larger prompt stays under the 128 KiB task cap. The Pi `content-review` skill documents the limit, including that non-ASCII text, or text dense in newlines, quotes or backslashes, can hit the byte cap sooner.
+
+### Fixed
+- The Pi real-pi tests resolve the JavaScript CLI behind the managed `pi` launcher. They passed the shell launcher to `node`, so 7 tests failed after the managed Pi install. Production already used the resolved CLI.
 
 ## [0.10.2] - 2026-10-21
 
@@ -306,7 +313,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/vr000m/skein/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vr000m/skein/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vr000m/skein/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/vr000m/skein/compare/v0.9.2...v0.10.0

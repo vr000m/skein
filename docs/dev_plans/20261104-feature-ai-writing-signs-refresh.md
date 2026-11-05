@@ -109,7 +109,7 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 
 ### Phase 6: Docs, changelog, and end-to-end verification
 
-**Impl files:** `AGENTS.md, CHANGELOG.md, docs/BACKLOG.md, docs/dev_plans/README.md`
+**Impl files:** `AGENTS.md, CHANGELOG.md, docs/BACKLOG.md, docs/dev_plans/README.md, plugins/skein/.claude-plugin/plugin.json, plugins/skein-codex/.codex-plugin/plugin.json`
 **Test files:** `tests/parity/test-ai-writing-signs-contract.sh`
 **Test command:** `just ci`
 **Validation cmd:** `uv run --with pytest python -m pytest tests/pi -q`
@@ -132,6 +132,7 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 - `update-docs/SKILL.md` and `release/SKILL.md` in three mirrors (one line each).
 - `tests/pi/test_single_worker_skills.py:100-103` (extend filename list); `justfile` (register new parity test in `parity-tests`).
 - `AGENTS.md`, `CHANGELOG.md`, `docs/BACKLOG.md`, `docs/dev_plans/README.md`.
+- Added during review (not in the original plan): `plugins/skein-pi/extension.ts` (reference appended to both prompts; review input cap 100000 to 90000), `scripts/check-prompt-parity.sh` and `tests/parity/test-prompt-parity-extended.sh` (anchored `release` reference path), `tests/pi/test_extension.py`, `tests/pi/test_single_worker_skills.py`, `tests/pi/test_package.py`, `tests/pi/test_private_profile.py`, and both plugin manifests (0.11.0).
 
 ### New Files to Create
 
@@ -170,7 +171,7 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 ### Test Results
 
 - [x] `just ci` passes (exit 0)
-- [x] `uv run --with pytest python -m pytest tests/pi -q` passes, 167 (not covered by `just ci`)
+- [x] `uv run --with pytest python -m pytest tests/pi -q` passes, 168 (not covered by `just ci`)
 - [~] Fixture result: LLM-styled fixture yielded Critical (residue) plus Important cluster with `needs author input` fixes. The plain fixture initially yielded a false-positive Suggestion for sentence-initial "Additionally"; the 2026-11-04 review correction now exempts transition words in isolation, with the focused contract test pinning that rule. An end-to-end fixture rerun remains outstanding.
 
 ### Edge Cases Tested
@@ -208,10 +209,15 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 - Explore: `update-docs` and `release` `SKILL.md` contain no existing anti-LLM text; the release em dashes found are title-format literals.
 - Explore: `CODEX_MIRROR_BACKLOG.md` has no content-guidelines entries.
 - Discovered during Phase 3: Pi workers have no tools and receive rules as inline prompt text from `plugins/skein-pi/extension.ts`, which loaded only `content-guidelines.md` / `writing-style-rules.md`. The "read `ai-writing-signs.md`" pointer would have been dead there. Fixed by appending the reference to both the draft and review prompts (not in the original plan; covered by the contract test).
-- Phase 4: `content-draft` heading renamed "Phase 4: De-LLM Authenticity Pass" to "Phase 4: Authenticity Pass" in both mirrors; Codex checked `tests/` and `scripts/` for a pin on the old heading and found none.
-- Phase 5: `update-docs` pointer lands as item 9 (Codex) and item 10 (Claude, after its existing "Verify each edit"); `release` pointer is one sentence appended to the Step 4 "`## What's New` inclusion" bullet, both mirrors. Pi `update-docs` is an audit-only worker and got no pointer; Pi `release` got a plain-writing clause without a path.
+- Phase 4: `content-draft` headings "Phase 4: De-LLM Authenticity Pass" and "Phases 3–4: Draft Content and De-LLM Pass" renamed to "Authenticity Pass" in both mirrors (the Codex "Phases 3–4" heading was missed at first and fixed by the 2026-11-05 review); Codex checked `tests/` and `scripts/` for a pin on the old heading and found none.
+- Phase 5: `update-docs` pointer lands as item 1 of "Apply Updates" in both mirrors (read before any edit; originally appended as item 9 / item 10, moved by the 2026-11-05 review); `release` pointer is one sentence appended to the Step 4 "`## What's New` inclusion" bullet, both mirrors. Pi `update-docs` is an audit-only worker and got no pointer; Pi `release` got a plain-writing clause without a path.
 - Review correction (2026-11-04): delegated `content-draft` and `content-review` now load references through the harness anchor in the main context and inline the exact rule text into worker prompts. The other new `update-docs` and `release` cross-skill pointers are harness-anchored too. Sentence-initial transition words are supporting evidence only and cannot produce a standalone finding.
-- Not yet run: `/code-review xhigh --fix` (user-run), `review-gauntlet`, `/update-docs`, `/review-plan` (marker is still the template placeholder).
+- Code review 2026-11-05: user-run `/code-review xhigh --fix` on the Claude skills returned 13 findings. Fixed: Pi input cap vs the larger prompt; bare cross-skill paths in delegated prompts; marker vs placeholder rule in `content-draft`; `Fixed:` line for AI-sign findings; `update-docs` ordering; stale heading; residue exemption; required-close exemption; severity gaps and hedge wording; vocabulary weighting and spelling; Wikipedia attribution; contract-test `pipefail` weakness. Not changed: the fix principle is restated in about 7 places (low severity).
+- Pi review (clean-context subagent): no blocking findings. Fixed the tool-less "read in this directory" wording (Codex canonical first, then three byte copies), added tests that both prompts embed the reference and that the worst-case ASCII review prompt fits 128 KiB, and documented the character and byte limits. Non-ASCII text can still exceed the byte cap and fails closed with `task_too_large`.
+- Pi real-pi tests (7 failures, also on `main`): the tests passed the managed-install shell launcher to `node`. `resolve_pi_cli()` in `tests/pi/test_package.py` now resolves `install/releases/<version>/node_modules/.bin/pi`. Production (`extension.ts`) already passes `realpathSync(process.argv[1])`.
+- Licence (2026-11-05): a source comparison found no run of 6 or more shared words but a shared taxonomy, order and era word lists ("partly derivative"). Decision: keep the attribution and CC BY-SA 4.0 note on the source and leave the repo MIT; no relicensing or rewrite.
+- Version: bumped both plugin manifests to 0.11.0 and promoted `[Unreleased]` in this PR, per AGENTS.md "Cutting a release". Tag and GitHub release go through `skein:release 0.11.0` after merge.
+- Not run: `/review-plan` (marker stays the template placeholder; plan has `Review Gates: none`), `review-gauntlet`, a full `content-review` / `content-draft` end-to-end run, and a live Pi worker run. A confirming user-run `/code-review xhigh` is pending.
 
 ## Issues & Solutions
 
@@ -219,7 +225,11 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 
 ### Summary
 
+The three skill mirrors share one AI-writing-signs reference (four byte-identical copies, Codex canonical) instead of three drifting phrase-ban lists. `content-review` reports signs with density-based severities and `needs author input` fixes; `content-draft` runs a reference-driven Phase 4; Pi workers get the reference appended to their prompts.
+
 ### Outcomes
+
+`just ci` exit 0; `tests/pi` 168 passed; contract test 65 checks; `check-prompt-parity.sh` passes.
 
 ### Learnings
 
