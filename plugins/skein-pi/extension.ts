@@ -366,7 +366,7 @@ export default function (pi: ExtensionAPI) {
       {
         type: StringEnum(["blog", "til", "technical-doc", "notion", "general"] as const),
         path: Type.Optional(Type.String({ maxLength: 4096 })),
-        content: Type.String({ minLength: 1, maxLength: 100000 }),
+        content: Type.String({ minLength: 1, maxLength: 90000 }),
       },
       { additionalProperties: false },
     ),
