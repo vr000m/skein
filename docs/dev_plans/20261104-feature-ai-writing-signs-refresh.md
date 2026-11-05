@@ -1,6 +1,6 @@
 # Task: Refresh AI-writing-signs guidance in the content skills
 
-**Status**: Not Started
+**Status**: In Progress
 **Component**: content-skills
 **Assigned to**: Claude (Claude mirror, shared files, tests); Codex (Codex mirror, via `codex:rescue`)
 **Priority**: Medium
@@ -162,22 +162,22 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 
 ### Test Approach
 
-- [ ] Byte-identity of `ai-writing-signs.md` across four locations (new contract test)
-- [ ] Grep-level invariants: Anti-LLM heading kept, pointer present, no mirror offers an em dash as a comma-splice fix, severity tokens and "needs author input" present in all `content-review` mirrors
-- [ ] Existing parity (`./scripts/check-prompt-parity.sh`, `tests/parity/*`) and Pi pytest (`tests/pi`) pass
-- [ ] Manual: `content-review` on one LLM-styled and one plain fixture; `content-draft` on a short session summary and check Phase 4 output
+- [x] Byte-identity of `ai-writing-signs.md` across four locations (new contract test)
+- [x] Grep-level invariants: Anti-LLM heading kept, pointer present, no mirror offers an em dash as a comma-splice fix, severity tokens and "needs author input" present in all `content-review` mirrors
+- [x] Existing parity (`./scripts/check-prompt-parity.sh`, `tests/parity/*`) and Pi pytest (`tests/pi`) pass
+- [~] Manual: reference applied to one LLM-styled and one plain fixture by a clean-context reviewer (done); full `content-review` skill run and `content-draft` Phase 4 run not exercised end to end
 
 ### Test Results
 
-- [ ] `just ci` passes
-- [ ] `uv run --with pytest python -m pytest tests/pi -q` passes (not covered by `just ci`)
-- [ ] Manual fixture runs behave as expected
+- [x] `just ci` passes (exit 0)
+- [x] `uv run --with pytest python -m pytest tests/pi -q` passes, 167 (not covered by `just ci`)
+- [~] Fixture result: LLM-styled fixture yielded Critical (residue) plus Important cluster with `needs author input` fixes; plain fixture yielded one Suggestion (sentence-initial "Additionally")
 
 ### Edge Cases Tested
 
-- [ ] A literal use of a flagged word ("underscore" as a verb meaning "draw a line under") is not flagged
-- [ ] Plain human draft with perfect grammar and transition words yields no Important or Critical findings
-- [ ] Missing fact yields "needs author input", not an invented fact
+- [~] A literal use of a flagged word ("underscore" as a verb meaning "draw a line under") is not flagged
+- [x] Plain human draft with perfect grammar and transition words yields no Important or Critical findings (fixture B)
+- [x] Missing fact yields "needs author input", not an invented fact (fixture A)
 
 ## Acceptance Criteria
 
@@ -195,18 +195,22 @@ Replace the dated, triplicated "anti-LLM" rules in `content-draft` and `content-
 
 ## Progress
 
-- [ ] Phase 1: Shared reference file
-- [ ] Phase 2: Rewrite the Anti-LLM rules and fix the em-dash contradiction
-- [ ] Phase 3: `content-review` finding category
-- [ ] Phase 4: `content-draft` drafting and Phase 4 pass
-- [ ] Phase 5: Pointers in `update-docs` and `release`
-- [ ] Phase 6: Docs, changelog, and end-to-end verification
+- [x] Phase 1: Shared reference file
+- [x] Phase 2: Rewrite the Anti-LLM rules and fix the em-dash contradiction
+- [x] Phase 3: `content-review` finding category
+- [x] Phase 4: `content-draft` drafting and Phase 4 pass
+- [x] Phase 5: Pointers in `update-docs` and `release`
+- [x] Phase 6: Docs, changelog, and end-to-end verification
 
 ## Findings
 
 - Explore (2026-11-04): `tests/pi/*` is not referenced by any `justfile` recipe or `.github/workflows/ci.yml`, so `just ci` does not run it; Phase 6 runs it explicitly. Worth a separate fix.
 - Explore: `update-docs` and `release` `SKILL.md` contain no existing anti-LLM text; the release em dashes found are title-format literals.
 - Explore: `CODEX_MIRROR_BACKLOG.md` has no content-guidelines entries.
+- Discovered during Phase 3: Pi workers have no tools and receive rules as inline prompt text from `plugins/skein-pi/extension.ts`, which loaded only `content-guidelines.md` / `writing-style-rules.md`. The "read `ai-writing-signs.md`" pointer would have been dead there. Fixed by appending the reference to both the draft and review prompts (not in the original plan; covered by the contract test).
+- Phase 4: `content-draft` heading renamed "Phase 4: De-LLM Authenticity Pass" to "Phase 4: Authenticity Pass" in both mirrors; Codex checked `tests/` and `scripts/` for a pin on the old heading and found none.
+- Phase 5: `update-docs` pointer lands as item 9 (Codex) and item 10 (Claude, after its existing "Verify each edit"); `release` pointer is one sentence appended to the Step 4 "`## What's New` inclusion" bullet, both mirrors. Pi `update-docs` is an audit-only worker and got no pointer; Pi `release` got a plain-writing clause without a path.
+- Not yet run: `/code-review xhigh --fix` (user-run), `review-gauntlet`, `/update-docs`, `/review-plan` (marker is still the template placeholder).
 
 ## Issues & Solutions
 
