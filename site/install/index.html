@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install skein</title>
+<meta name="description" content="Install the skein skills for Claude Code, Codex CLI or Pi, pin a release, and run a first plan-to-ship loop.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/">skein<span>.</span></a>
+    <nav aria-label="Main">
+      <a href="/#map">Skills</a>
+      <a href="/install" aria-current="page">Install</a>
+      <a href="https://github.com/vr000m/skein">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap prose">
+    <div class="hero">
+      <h1>Install skein</h1>
+      <p class="lede">Skein installs through each harness's own plugin command. There is nothing to clone and no script to run. All skills load under the <code>skein:</code> namespace, such as <code>/skein:dev-plan</code>.</p>
+    </div>
+
+    <div class="harness">
+      <h3>Claude Code</h3>
+      <div class="cmd"><code>/plugin marketplace add vr000m/skein</code><button class="copy" type="button">Copy</button></div>
+      <div class="cmd"><code>/plugin install skein@skein</code><button class="copy" type="button">Copy</button></div>
+      <p class="note">To pick up upstream changes, re-add the marketplace and run the install command again.</p>
+    </div>
+
+    <div class="harness">
+      <h3>Codex CLI</h3>
+      <div class="cmd"><code>codex plugin marketplace add vr000m/skein --ref main</code><button class="copy" type="button">Copy</button></div>
+      <div class="cmd"><code>codex plugin add skein@skein</code><button class="copy" type="button">Copy</button></div>
+      <p class="note">To update, refresh the marketplace snapshot, then reinstall. Repeating <code>marketplace add</code> does not refresh it.</p>
+      <div class="cmd"><code>codex plugin marketplace upgrade skein</code><button class="copy" type="button">Copy</button></div>
+      <div class="cmd"><code>codex plugin add skein@skein</code><button class="copy" type="button">Copy</button></div>
+      <p class="note">Codex <code>conduct</code> and <code>review-gauntlet</code> need <code>spawn_agent</code> and <code>wait_agent</code>. Some review gates are reported as deferred rather than run; the <a href="https://github.com/vr000m/skein#readme">README</a> lists which.</p>
+    </div>
+
+    <div class="harness">
+      <h3>Pi</h3>
+      <p class="note">Pi gets a subset of the skills. Install a pinned Git revision:</p>
+      <div class="cmd"><code>pi install git:github.com/vr000m/skein@COMMIT_SHA</code><button class="copy" type="button">Copy</button></div>
+    </div>
+
+    <h2>Pin a release</h2>
+    <p>Tracking <code>main</code> follows unreleased commits. To stay on a tagged release, pass its tag to Codex. Tags are on the <a href="https://github.com/vr000m/skein/releases">releases page</a>.</p>
+    <div class="cmd"><code>codex plugin marketplace add vr000m/skein --ref vX.Y.Z</code><button class="copy" type="button">Copy</button></div>
+    <p class="note">On Claude Code, resolve to a tag when you add the marketplace.</p>
+
+    <h2>Your first loop</h2>
+    <p>Run these in order on a feature branch. Each hands its output to the next.</p>
+    <ol class="steps">
+      <li>Write the plan.
+        <div class="flow cmd"><code>/skein:dev-plan create feature my-feature</code><button class="copy" type="button">Copy</button></div></li>
+      <li>Stress-test it. Answer the decisions it raises, then have it audited.
+        <div class="flow cmd"><code>/skein:grill docs/dev_plans/my-feature.md</code><button class="copy" type="button">Copy</button></div>
+        <div class="flow cmd"><code>/skein:review-plan docs/dev_plans/my-feature.md</code><button class="copy" type="button">Copy</button></div></li>
+      <li>Build it, one clean-context phase at a time.
+        <div class="flow cmd"><code>/skein:conduct docs/dev_plans/my-feature.md</code><button class="copy" type="button">Copy</button></div></li>
+      <li>Verify. Set <code>Review Gates: full</code> in the plan and conduct chains the gauntlet for you, or run it yourself.
+        <div class="flow cmd"><code>/skein:review-gauntlet</code><button class="copy" type="button">Copy</button></div></li>
+      <li>Bring the docs in line with the diff.
+        <div class="flow cmd"><code>/skein:update-docs</code><button class="copy" type="button">Copy</button></div></li>
+    </ol>
+    <p class="note">If a long run is interrupted, add <code>--resume</code> to <code>conduct</code> or <code>review-gauntlet</code>. Do not restart from scratch.</p>
+
+    <h2>Something not working?</h2>
+    <p>Open an issue on <a href="https://github.com/vr000m/skein/issues">GitHub</a>.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>skein is open source.</span>
+    <span><a href="https://github.com/vr000m/skein">GitHub</a> · <a href="https://github.com/vr000m/skein/releases">Releases</a> · <a href="/">Home</a></span>
+  </div>
+</footer>
+<script src="/main.js" defer></script>
+</body>
+</html>

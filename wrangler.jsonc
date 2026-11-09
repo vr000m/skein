@@ -1,0 +1,12 @@
+{
+  // Static site for skein.sh. Assets-only Worker: no script, just ./site.
+  // Deploy with `npx wrangler deploy`; preview locally with `npx wrangler dev`.
+  "name": "skein-sh",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./site",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "skein.sh", "custom_domain": true }]
+}

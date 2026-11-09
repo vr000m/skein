@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>skein: skills that check each other's work</title>
+<meta name="description" content="Skein is a set of Claude Code and Codex skills that chain planning, building and review into one loop, so each stage hands a checked artifact to the next.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/">skein<span>.</span></a>
+    <nav aria-label="Main">
+      <a href="/#map">Skills</a>
+      <a href="/install">Install</a>
+      <a href="https://github.com/vr000m/skein">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="hero">
+      <h1>Skills that check each other's work.</h1>
+      <p class="lede">Skein is a set of Claude Code and Codex skills that chain planning, building and review into one loop. Each stage hands a checked artifact to the next, and nothing reviews its own output.</p>
+      <div class="cmd"><code>/plugin marketplace add vr000m/skein</code><button class="copy" type="button">Copy</button></div>
+      <div class="cmd"><code>/plugin install skein@skein</code><button class="copy" type="button">Copy</button></div>
+      <div class="hero-actions">
+        <a class="btn" href="/install">Install for Claude Code, Codex or Pi</a>
+        <a class="btn ghost" href="/#map">See how the skills connect</a>
+      </div>
+    </div>
+
+    <section id="map-section" aria-labelledby="map-h">
+      <h2 id="map-h">How the skills connect</h2>
+      <p class="section-lede">A feature moves left to right. Pick a skill to see what it takes in, what it hands on, and the command to run it.</p>
+      <div id="map">
+        <noscript><p>The interactive map needs JavaScript. The skills are listed in the <a href="https://github.com/vr000m/skein#readme">README</a>.</p></noscript>
+      </div>
+    </section>
+
+    <section aria-labelledby="why-h">
+      <h2 id="why-h">Why that makes the code sturdier</h2>
+      <p class="section-lede">None of the skills is clever on its own. The robustness comes from how they are wired together.</p>
+      <div class="why">
+        <article>
+          <h3>Mistakes are caught where they are cheapest</h3>
+          <p><code>grill</code> and <code>review-plan</code> check a plan against the real codebase before any code exists. A wrong assumption costs one edit to a markdown file, not a rewrite.</p>
+        </article>
+        <article>
+          <h3>Nothing marks its own homework</h3>
+          <p>Every review lens, build phase and fixer starts in a fresh context. They cannot inherit the author's blind spots, and the main session stays free to coordinate.</p>
+        </article>
+        <article>
+          <h3>Loops end on evidence</h3>
+          <p><code>review-gauntlet</code> goes round again until findings stop appearing. State lives on disk in <code>.conduct/</code> and <code>.gauntlet/</code>, so an interrupted run resumes with <code>--resume</code> instead of starting over.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="tools-h">
+      <h2 id="tools-h">Also in the box</h2>
+      <p class="section-lede">Standalone skills you can call at any point. Where one pairs with part of the pipeline, it says so.</p>
+      <div class="tools" id="tools-grid"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>skein is open source.</span>
+    <span><a href="https://github.com/vr000m/skein">GitHub</a> · <a href="https://github.com/vr000m/skein/releases">Releases</a> · <a href="/install">Install</a></span>
+  </div>
+</footer>
+<script src="/main.js" defer></script>
+<script src="/graph.js" defer></script>
+</body>
+</html>
