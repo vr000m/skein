@@ -271,7 +271,7 @@
       const box = el("div", "tool");
       box.append(el("div", "name", t.id), richEl("p", null, t.summary));
       if (t.pairsWith.length) {
-        const pairs = el("div", "pairs", "Pairs with ");
+        const pairs = el("div", "pairs", "Use with ");
         t.pairsWith.forEach((p, i) => {
           if (i) pairs.append(", ");
           if (nodes.has(p)) {

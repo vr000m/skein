@@ -168,7 +168,7 @@ h2 { font: 700 clamp(26px, 3.5vw, 36px)/1.15 var(--serif); letter-spacing: -0.01
 .why article { border-top: 2px solid var(--ink); padding-top: 14px; }
 .why h3 { font: 700 20px/1.25 var(--serif); margin: 0 0 8px; }
 .why p { margin: 0; color: var(--muted); font-size: 16px; }
-.why code, .prose code { font: 0.9em var(--mono); background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.why code, .prose code, .panel p code { font: 0.9em var(--mono); background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
 
 /* tools */
 .tools { display: grid; gap: 14px; }
