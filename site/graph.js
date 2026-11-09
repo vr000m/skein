@@ -84,11 +84,11 @@
       if (kids) {
         const group = el("div", "card-group");
         const loops = el("div", "loops");
-        loops.append(el("small", null, "Loops over"));
+        loops.append(el("small", null, "Review gates"));
         for (const k of kids) {
           const chip = el("button", `chip ${k.kind}`, k.id);
           chip.type = "button";
-          if (k.kind !== "skill") chip.append(el("span", "tag", k.kind === "manual" ? "manual" : "built-in"));
+          if (k.kind !== "skill") chip.append(el("span", "tag", k.kind === "manual" ? "run first" : "built-in"));
           chip.addEventListener("click", () => select(k.id, true));
           chips.set(k.id, chip);
           loops.append(chip);
@@ -173,7 +173,7 @@
     if (n.parent) {
       const sibs = (children.get(n.parent) || []).filter((k) => k.id !== n.id);
       cols.append(
-        listBlock("Runs inside", [linkItem(n.parent)]),
+        listBlock(n.kind === "manual" ? "Run before" : "Runs inside", [linkItem(n.parent)]),
         listBlock("Other gates", sibs.map((k) => linkItem(k.id))),
       );
     } else if (n.uses) {
@@ -184,7 +184,7 @@
         listBlock("Hands off to", data.edges.filter((e) => e.from === top).map((e) => linkItem(e.to, e.label))),
       );
       const kids = children.get(top);
-      if (kids) cols.append(listBlock("Loops over", kids.map((k) => linkItem(k.id, k.summary)), "span2"));
+      if (kids) cols.append(listBlock("Review gates", kids.map((k) => linkItem(k.id, k.summary)), "span2"));
       const helpers = data.nodes.filter((h) => (h.uses || []).some((u) => u.id === top));
       if (helpers.length) {
         cols.append(

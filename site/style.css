@@ -46,7 +46,7 @@ a:hover { text-decoration-color: var(--accent); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
 .brand { display: inline-flex; align-items: center; gap: 9px; font: 700 22px var(--serif); text-decoration: none; letter-spacing: -0.01em; }
 .logo-mark { width: 28px; height: 24px; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; }
-nav { display: flex; gap: 20px; font-size: 15px; }
+nav { display: flex; align-items: center; gap: 20px; font-size: 15px; }
 nav a { text-decoration: none; color: var(--muted); }
 nav a:hover, nav a[aria-current="page"] { color: var(--ink); }
 
@@ -111,12 +111,10 @@ h2 { font: 700 clamp(26px, 3.5vw, 36px)/1.15 var(--serif); letter-spacing: -0.01
 .node:hover { border-color: var(--lane-colour); }
 .node .name { display: block; font: 600 14px var(--mono); }
 .node .sum { display: block; font-size: 13px; line-height: 1.4; color: var(--muted); margin-top: 4px; }
-.node.is-selected { border-color: var(--lane-colour); box-shadow: 0 0 0 2px var(--lane-colour); }
-.node.is-related { border-color: var(--lane-colour); }
+.node.is-selected, .card-group.is-selected, .chip.is-selected { border-color: var(--lane-colour); box-shadow: 0 0 0 2px var(--lane-colour); }
+.node.is-related, .card-group.is-related { border-color: var(--lane-colour); }
 
 .card-group { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-.card-group.is-selected { border-color: var(--lane-colour); box-shadow: 0 0 0 2px var(--lane-colour); }
-.card-group.is-related { border-color: var(--lane-colour); }
 .card-group > .node { border: 0; padding: 0; background: none; box-shadow: none; }
 .loops { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line-strong); }
 .loops small { display: block; font: 600 11px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
@@ -127,7 +125,6 @@ h2 { font: 700 clamp(26px, 3.5vw, 36px)/1.15 var(--serif); letter-spacing: -0.01
 }
 .chip.builtin, .chip.manual { border-style: dashed; }
 .chip:hover { border-color: var(--lane-colour); }
-.chip.is-selected { border-color: var(--lane-colour); box-shadow: 0 0 0 2px var(--lane-colour); }
 .chip .tag { color: var(--muted); font-family: var(--sans); font-size: 11px; margin-left: 6px; }
 
 .node.is-dim, .card-group.is-dim { background: transparent; }
@@ -156,11 +153,12 @@ h2 { font: 700 clamp(26px, 3.5vw, 36px)/1.15 var(--serif); letter-spacing: -0.01
 .panel h4 { margin: 0 0 6px; font: 600 12px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .panel ul { list-style: none; margin: 0; padding: 0; }
 .panel li { margin: 4px 0; font-size: 15px; }
-.panel li button { font: 600 14px var(--mono); background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.panel li button, .tool .pairs button { background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.panel li button { font: 600 14px var(--mono); }
 .panel li span { color: var(--muted); font-size: 13px; }
 .panel .none { color: var(--muted); font-size: 14px; }
 .panel .span2 { grid-column: 1 / -1; }
-.tool .pairs button { font: 12px var(--mono); background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.tool .pairs button { font: 12px var(--mono); }
 
 /* why */
 .why { display: grid; gap: 18px; }
@@ -168,7 +166,7 @@ h2 { font: 700 clamp(26px, 3.5vw, 36px)/1.15 var(--serif); letter-spacing: -0.01
 .why article { border-top: 2px solid var(--ink); padding-top: 14px; }
 .why h3 { font: 700 20px/1.25 var(--serif); margin: 0 0 8px; }
 .why p { margin: 0; color: var(--muted); font-size: 16px; }
-.why code, .prose code, .panel p code { font: 0.9em var(--mono); background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.why code, .prose :not(.cmd) > code, .panel p code { font: 0.9em var(--mono); background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
 
 /* tools */
 .tools { display: grid; gap: 14px; }
@@ -209,7 +207,6 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
 /* main.js sets data-next once it runs. Until then (or with JS off) the button
    would be inert and show the wrong icon in dark mode, so keep it invisible. */
 .theme-toggle:not([data-next]) { visibility: hidden; }
-nav { align-items: center; }
 
 .bands { position: relative; z-index: 1; }
 .band { margin-top: 28px; padding-top: 10px; border-top: 3px dashed var(--accent); --lane-colour: var(--accent); }

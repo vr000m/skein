@@ -15,6 +15,23 @@ SITE = REPO / "site"
 SKILLS = REPO / "plugins" / "skein" / "skills"
 GRAPH = json.loads((SITE / "graph.json").read_text())
 PAGES = [SITE / "index.html", SITE / "install" / "index.html", SITE / "404.html"]
+# <link rel> values that fetch a subresource (canonical/alternate do not).
+FETCHED_RELS = {
+    "stylesheet",
+    "icon",
+    "preload",
+    "modulepreload",
+    "prefetch",
+    "manifest",
+}
+
+
+def wrangler_config():
+    """wrangler.jsonc parsed as data, so comments cannot satisfy an assertion."""
+    text = re.sub(
+        r"^\s*//.*$", "", (REPO / "wrangler.jsonc").read_text(), flags=re.MULTILINE
+    )
+    return json.loads(text)
 
 
 def skill_names():
@@ -34,6 +51,8 @@ def test_graph_references_resolve():
     ids = {n["id"] for n in GRAPH["nodes"]}
     by_id = {n["id"]: n for n in GRAPH["nodes"]}
     for n in GRAPH["nodes"]:
+        # graph.js renders these for every node.
+        assert n["summary"] and n["detail"] and n["cmd"], n["id"]
         assert n["lane"] in groups, n["id"]
         assert n["kind"] in {"skill", "builtin", "manual"}, n["id"]
         if "parent" in n:
@@ -53,6 +72,7 @@ def test_graph_references_resolve():
             assert u["id"] in ids and u["note"], (n["id"], u)
     known = ids | {t["id"] for t in GRAPH["tools"]}
     for t in GRAPH["tools"]:
+        assert t["summary"], t["id"]
         assert set(t["pairsWith"]) <= known, t["id"]
 
 
@@ -88,6 +108,18 @@ class _Inline(HTMLParser):
         for key in ("href", "src"):
             if key in a:
                 self.links.append(a[key])
+        # The site makes no external requests; CSP would block them anyway.
+        fetched = (
+            (tag in {"script", "img"} and a.get("src"))
+            or (
+                tag == "link"
+                and FETCHED_RELS & set((a.get("rel") or "").lower().split())
+                and a.get("href")
+            )
+            or None
+        )
+        if fetched and fetched.startswith(("http://", "https://", "//")):
+            self.problems.append(f"external <{tag}> {fetched}")
 
 
 def test_pages_satisfy_csp_and_internal_links_resolve():
@@ -107,15 +139,14 @@ def test_pages_satisfy_csp_and_internal_links_resolve():
 
 
 def test_wrangler_serves_site_dir():
-    cfg = (REPO / "wrangler.jsonc").read_text()
-    assert '"directory": "./site"' in cfg
+    assert wrangler_config()["assets"]["directory"] == "./site"
 
 
 def test_wrangler_has_no_stray_hostnames():
-    cfg = (REPO / "wrangler.jsonc").read_text()
-    assert '"workers_dev": false' in cfg
-    assert '"preview_urls": false' in cfg
-    assert '"pattern": "skein.sh"' in cfg and '"pattern": "www.skein.sh"' in cfg
+    cfg = wrangler_config()
+    assert cfg["workers_dev"] is False
+    assert cfg["preview_urls"] is False
+    assert {r["pattern"] for r in cfg["routes"]} == {"skein.sh", "www.skein.sh"}
 
 
 def test_pages_declare_canonical_url():

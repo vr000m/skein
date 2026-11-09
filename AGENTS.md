@@ -41,10 +41,12 @@ plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle, plus render-report.py and report-hook.sh (opt-in `--report` HTML report; bundled into review-gauntlet and deep-review on both mirrors, never into Pi)
 scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh) and by the two persist-*.sh state-file scripts (persist-common.sh)
 plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
-tests/                       Reconciliation, parity, and auto-fix test harnesses
+tests/                       Reconciliation, parity, and auto-fix test harnesses; `tests/site/` guards the skein.sh site
 docs/dev_plans/              Development plans
 docs/skills_architecture/    Skills architecture design docs (source; rendered via /plan-view --rich)
 justfile                     Task runner config
+site/                        skein.sh static site (hand-written HTML/CSS/JS; `graph.json` is the skill map's single source); no build step
+wrangler.jsonc               Cloudflare Workers config for the site: assets directory `./site`, custom domains skein.sh and www.skein.sh
 .deep-review/                Gitignored runtime state and auto-fix manifests for /deep-review (per-run)
 .review-plan/                Gitignored auto-fix manifests + latest-<harness>.json reconciled-envelope state for /review-plan (per-run)
 .fan-out-state.json          Gitignored per-run state for /fan-out (repo_root plus one record per agent: pid, branch, worktree, log); read by fan-out.sh status/cancel; cleanup reads it only as a diagnostic cross-check (its targets come from `git worktree list`) and removes it

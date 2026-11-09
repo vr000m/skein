@@ -28,7 +28,7 @@
   <div class="wrap prose">
     <div class="hero">
       <h1>Install skein</h1>
-      <p class="lede">Skein installs through each harness's own plugin command. There is nothing to clone and no script to run. All skills load under the <code>skein:</code> namespace, such as <code>/skein:dev-plan</code>.</p>
+      <p class="lede">Skein installs through each harness's own plugin command. There is nothing to clone and no script to run. On Claude Code and Codex, all skills load under the <code>skein:</code> namespace, such as <code>/skein:dev-plan</code>.</p>
     </div>
 
     <h2>Choose your harness</h2>
@@ -52,14 +52,14 @@
 
     <div class="harness">
       <h3>Pi</h3>
-      <p class="note">Pi gets a subset of the skills. Install a pinned Git revision:</p>
+      <p class="note">Pi gets a subset of the skills, run as <code>/skill:skein-&lt;name&gt;</code> rather than under the <code>skein:</code> namespace. Install a pinned Git revision:</p>
       <div class="cmd"><code>pi install git:github.com/vr000m/skein@COMMIT_SHA</code><button class="copy" type="button">Copy</button></div>
     </div>
 
     <h2>Pin a release</h2>
     <p>Tracking <code>main</code> follows unreleased commits. To stay on a tagged release, pass its tag to Codex. Tags are on the <a href="https://github.com/vr000m/skein/releases">releases page</a>.</p>
     <div class="cmd"><code>codex plugin marketplace add vr000m/skein --ref vX.Y.Z</code><button class="copy" type="button">Copy</button></div>
-    <p class="note">On Claude Code, append <code>@vX.Y.Z</code> to <code>vr000m/skein</code> when you first add the marketplace.</p>
+    <p class="note">On Claude Code, append <code>#vX.Y.Z</code> to <code>vr000m/skein</code> when you first add the marketplace.</p>
 
     <h2>Your first loop</h2>
     <p>Run these in order on a feature branch. Each hands its output to the next.</p>
@@ -71,7 +71,7 @@
         <div class="flow cmd"><code>/skein:review-plan docs/dev_plans/YYYYMMDD-feature-my-feature.md</code><button class="copy" type="button">Copy</button></div></li>
       <li>Build it, one clean-context phase at a time.
         <div class="flow cmd"><code>/skein:conduct docs/dev_plans/YYYYMMDD-feature-my-feature.md</code><button class="copy" type="button">Copy</button></div></li>
-      <li>Verify. Set <code>Review Gates: full</code> in the plan, and <code>conduct</code> will run <code>review-gauntlet</code> for you. Alternatively, run <code>review-gauntlet</code> yourself.
+      <li>Verify. If you set <code>Review Gates: full</code> in the plan before step 3, <code>conduct</code> has already run <code>review-gauntlet</code> for you. Otherwise, run it yourself.
         <div class="flow cmd"><code>/skein:review-gauntlet</code><button class="copy" type="button">Copy</button></div></li>
       <li>Bring the docs in line with the diff.
         <div class="flow cmd"><code>/skein:update-docs</code><button class="copy" type="button">Copy</button></div></li>
