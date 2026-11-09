@@ -105,10 +105,28 @@
     {
       "id": "show-me",
       "kind": "skill",
-      "lane": "ship",
+      "lane": "across",
       "summary": "Picks a diagram over prose.",
-      "detail": "Picks a visual format (pseudocode, call tree, component tree, file tree, `mermaid` diagram, diff, or HTML artifact) when a picture explains faster than paragraphs. `update-docs` consults its format menu before it rewrites a PR description. It also suits review findings and run progress.",
-      "cmd": "/skein:show-me how the review loop converges"
+      "detail": "Picks a visual format (pseudocode, call tree, component tree, file tree, `mermaid` diagram, diff, or HTML artifact) when a picture explains faster than paragraphs. Before you build, ask it to draw the state machine, trace a request through the system, or show how components interact, and check that the plan serves its purpose. `update-docs` also consults its format menu before it rewrites a PR description.",
+      "cmd": "/skein:show-me how the review loop converges",
+      "uses": [
+        {
+          "id": "dev-plan",
+          "note": "draw the state machine, request flow, or component interactions"
+        },
+        {
+          "id": "conduct",
+          "note": "show phase progress"
+        },
+        {
+          "id": "review-gauntlet",
+          "note": "present review findings and convergence"
+        },
+        {
+          "id": "update-docs",
+          "note": "choose the format for a PR description"
+        }
+      ]
     },
     {
       "id": "update-docs",
@@ -174,11 +192,6 @@
       "label": "converged branch"
     },
     {
-      "from": "show-me",
-      "to": "update-docs",
-      "label": "format menu"
-    },
-    {
       "from": "update-docs",
       "to": "release",
       "label": "synced docs"
@@ -218,6 +231,13 @@
       "pairsWith": [
         "content-draft"
       ]
+    }
+  ],
+  "bands": [
+    {
+      "id": "across",
+      "label": "Across every stage",
+      "blurb": "Not a step. Use it wherever a picture beats a paragraph."
     }
   ]
 }

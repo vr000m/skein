@@ -210,3 +210,10 @@ footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: s
    would be inert and show the wrong icon in dark mode, so keep it invisible. */
 .theme-toggle:not([data-next]) { visibility: hidden; }
 nav { align-items: center; }
+
+.bands { position: relative; z-index: 1; }
+.band { margin-top: 28px; padding-top: 10px; border-top: 3px dashed var(--accent); --lane-colour: var(--accent); }
+.band h3 { margin: 0; font: 700 12px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.band p.blurb { margin: 2px 0 12px; font-size: 13px; color: var(--muted); }
+.band .node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.band .node .sum { margin-top: 0; }

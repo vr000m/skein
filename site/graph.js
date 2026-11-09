@@ -16,7 +16,8 @@
   }
 
   const nodes = new Map(data.nodes.map((n) => [n.id, n]));
-  const lanesById = new Map(data.lanes.map((l) => [l.id, l]));
+  const bands = data.bands || [];
+  const lanesById = new Map([...data.lanes, ...bands].map((l) => [l.id, l]));
   const laneIndex = new Map(data.lanes.map((l, i) => [l.id, i]));
   const children = new Map();
   for (const n of data.nodes) {
@@ -64,16 +65,21 @@
   const card = new Map(); // id -> outer element used for edge geometry
   const chips = new Map(); // child id -> chip button
 
+  const makeNodeBtn = (n) => {
+    const btn = el("button", "node");
+    btn.type = "button";
+    btn.append(el("span", "name", n.id), richEl("span", "sum", n.summary));
+    btn.addEventListener("click", () => select(n.id, true));
+    return btn;
+  };
+
   for (const lane of data.lanes) {
     const laneEl = el("section", "lane");
     laneEl.dataset.lane = lane.id;
     laneEl.append(el("h3", null, lane.label), el("p", "blurb", lane.blurb));
     const list = el("div", "lane-nodes");
     for (const n of data.nodes.filter((x) => x.lane === lane.id && !x.parent)) {
-      const btn = el("button", "node");
-      btn.type = "button";
-      btn.append(el("span", "name", n.id), richEl("span", "sum", n.summary));
-      btn.addEventListener("click", () => select(n.id, true));
+      const btn = makeNodeBtn(n);
       const kids = children.get(n.id);
       if (kids) {
         const group = el("div", "card-group");
@@ -98,7 +104,21 @@
     laneEl.append(list);
     lanesEl.append(laneEl);
   }
-  root.append(svg, lanesEl);
+
+  // Cross-cutting skills sit in a full-width band under the lanes; they have
+  // no hand-off edges, only `uses` links to the stages they help.
+  const bandsEl = el("div", "bands");
+  for (const band of bands) {
+    const bandEl = el("section", "band");
+    bandEl.append(el("h3", null, band.label), el("p", "blurb", band.blurb));
+    for (const n of data.nodes.filter((x) => x.lane === band.id)) {
+      const btn = makeNodeBtn(n);
+      bandEl.append(btn);
+      card.set(n.id, btn);
+    }
+    bandsEl.append(bandEl);
+  }
+  root.append(svg, lanesEl, bandsEl);
 
   const panel = el("div", "panel");
   panel.setAttribute("aria-live", "polite");
@@ -106,6 +126,12 @@
 
   // ---- panel -------------------------------------------------------------
   const topOf = (n) => n.parent || n.id;
+  // Every relationship that should light up related cards: real hand-off
+  // edges plus a cross-cutting skill's `uses` links.
+  const links = [
+    ...data.edges.map((e) => [e.from, e.to]),
+    ...data.nodes.flatMap((n) => (n.uses || []).map((u) => [n.id, u.id])),
+  ];
 
   const linkItem = (id, label) => {
     const li = el("li");
@@ -135,7 +161,7 @@
   };
 
   function renderPanel(n) {
-    panel.style.setProperty("--lane-colour", `var(--l-${n.lane})`);
+    panel.style.setProperty("--lane-colour", laneIndex.has(n.lane) ? `var(--l-${n.lane})` : "var(--accent)");
     const top = topOf(n);
     const cmd = el("div", "cmd");
     const code = el("code", null, n.cmd);
@@ -150,6 +176,8 @@
         listBlock("Runs inside", [linkItem(n.parent)]),
         listBlock("Other gates", sibs.map((k) => linkItem(k.id))),
       );
+    } else if (n.uses) {
+      cols.append(listBlock("Use it to", n.uses.map((u) => linkItem(u.id, u.note)), "span2"));
     } else {
       cols.append(
         listBlock("Takes", data.edges.filter((e) => e.to === top).map((e) => linkItem(e.from, e.label))),
@@ -157,6 +185,12 @@
       );
       const kids = children.get(top);
       if (kids) cols.append(listBlock("Loops over", kids.map((k) => linkItem(k.id, k.summary)), "span2"));
+      const helpers = data.nodes.filter((h) => (h.uses || []).some((u) => u.id === top));
+      if (helpers.length) {
+        cols.append(
+          listBlock("Helped by", helpers.map((h) => linkItem(h.id, h.uses.find((u) => u.id === top).note)), "span2"),
+        );
+      }
     }
     const heading = el("h3", null, n.id);
     heading.tabIndex = -1; // focus target after a panel link is activated
@@ -179,9 +213,9 @@
     selectedId = id;
     const top = topOf(n);
     const related = new Set([top]);
-    for (const e of data.edges) {
-      if (e.from === top) related.add(e.to);
-      if (e.to === top) related.add(e.from);
+    for (const [from, to] of links) {
+      if (from === top) related.add(to);
+      if (to === top) related.add(from);
     }
     for (const [cid, c] of card) {
       c.classList.toggle("is-selected", cid === top);
