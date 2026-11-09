@@ -108,7 +108,7 @@
       "lane": "across",
       "summary": "Picks a diagram over prose.",
       "detail": "Picks a visual format (pseudocode, call tree, component tree, file tree, `mermaid` diagram, diff, or HTML artifact) when a picture explains faster than paragraphs. Before you build, ask it to draw the state machine, trace a request through the system, or show how components interact, and check that the plan serves its purpose. `update-docs` also consults its format menu before it rewrites a PR description.",
-      "cmd": "/skein:show-me how the review loop converges",
+      "cmd": "/skein:show-me the state diagram of the websocket server",
       "uses": [
         {
           "id": "dev-plan",
