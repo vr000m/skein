@@ -29,6 +29,16 @@
     if (text != null) e.textContent = text;
     return e;
   };
+  const richEl = (tag, cls, text) => {
+    const e = el(tag, cls);
+    let offset = 0;
+    for (const match of text.matchAll(/`([^`]+)`/g)) {
+      e.append(text.slice(offset, match.index), el("code", null, match[1]));
+      offset = match.index + match[0].length;
+    }
+    e.append(text.slice(offset));
+    return e;
+  };
   const svgEl = (tag, attrs = {}) => {
     const e = document.createElementNS(SVG_NS, tag);
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -62,7 +72,7 @@
     for (const n of data.nodes.filter((x) => x.lane === lane.id && !x.parent)) {
       const btn = el("button", "node");
       btn.type = "button";
-      btn.append(el("span", "name", n.id), el("span", "sum", n.summary));
+      btn.append(el("span", "name", n.id), richEl("span", "sum", n.summary));
       btn.addEventListener("click", () => select(n.id, true));
       const kids = children.get(n.id);
       if (kids) {
@@ -103,7 +113,7 @@
     b.type = "button";
     b.addEventListener("click", () => select(id, true));
     li.append(b);
-    if (label) li.append(el("span", null, ` — ${label}`));
+    if (label) li.append(richEl("span", null, ` — ${label}`));
     return li;
   };
   const listBlock = (title, items, cls) => {
@@ -146,7 +156,7 @@
     panel.replaceChildren(
       el("span", "badge", KIND[n.kind](n)),
       el("h3", null, n.id),
-      el("p", null, n.detail),
+      richEl("p", null, n.detail),
       cmd,
       cols,
     );
@@ -239,7 +249,7 @@
   if (toolsEl) {
     for (const t of data.tools) {
       const box = el("div", "tool");
-      box.append(el("div", "name", t.id), el("p", null, t.summary));
+      box.append(el("div", "name", t.id), richEl("p", null, t.summary));
       if (t.pairsWith.length) {
         const pairs = el("div", "pairs", "Pairs with ");
         t.pairsWith.forEach((p, i) => {

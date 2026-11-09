@@ -10,25 +10,25 @@
     {
       "id": "dev-plan", "kind": "skill", "lane": "plan",
       "summary": "Writes the plan from a scan of the real codebase.",
-      "detail": "Creates and updates development plans: objective, phases, files to modify, test strategy. A fresh-context Explore subagent gathers verified paths, patterns and dependency versions first, so the plan cites the codebase instead of guessing at it.",
+      "detail": "Creates and updates development plans: objective, phases, files to modify, test strategy. A fresh-context exploration worker gathers verified paths, patterns, and dependency versions first, so the plan cites the codebase instead of guessing at it.",
       "cmd": "/skein:dev-plan create feature my-feature"
     },
     {
       "id": "grill", "kind": "skill", "lane": "stress",
       "summary": "One-question interview over the plan.",
-      "detail": "Interviews you one question at a time. Facts are verified from the codebase and never asked; only genuine judgment calls reach you, each with a recommended answer you can accept, change or waive.",
+      "detail": "Interviews you one question at a time. The skill verifies facts against the codebase. It asks you only about genuine judgement calls, each with a recommended answer you can accept, change, or waive.",
       "cmd": "/skein:grill docs/dev_plans/my-plan.md"
     },
     {
       "id": "review-plan", "kind": "skill", "lane": "stress",
       "summary": "Five fresh-context lenses audit the plan.",
-      "detail": "Architecture, sequencing, spec-and-testing, assumptions and codebase-claims lenses audit the plan against the actual code, then a contradiction pass flags conflicts inside the plan. A signed-off plan carries a review marker that conduct checks.",
+      "detail": "Architecture, sequencing, spec-and-testing, assumptions, and codebase-claims lenses audit the plan against the actual code, then a contradiction pass flags conflicts inside the plan. A signed-off plan carries a review marker that `conduct` checks.",
       "cmd": "/skein:review-plan docs/dev_plans/my-plan.md"
     },
     {
       "id": "conduct", "kind": "skill", "lane": "build",
       "summary": "Runs the plan phase by phase.",
-      "detail": "Walks a reviewed plan one phase at a time. Each phase's implementation, test and fix loop runs in a clean-context subagent, so the main session stays a conductor and does not run out of context. State is written to .conduct/, so --resume picks up an interrupted run.",
+      "detail": "Walks a reviewed plan one phase at a time. Each phase's implementation, test, and fix loop runs in a clean-context subagent, so the main session stays a conductor and does not run out of context. The skill writes state to `.conduct/`, so `--resume` picks up an interrupted run.",
       "cmd": "/skein:conduct docs/dev_plans/my-plan.md"
     },
     {
@@ -40,13 +40,13 @@
     {
       "id": "review-gauntlet", "kind": "skill", "lane": "verify",
       "summary": "Chains the review gates into a loop.",
-      "detail": "Runs the review gates, applies fixes through isolated fixer subagents, and goes round again until findings stop appearing. Auto-chained from conduct and fan-out when the plan sets Review Gates: full. Its ledger lives in .gauntlet/, so --resume continues an interrupted run.",
+      "detail": "Runs the review gates, applies fixes through isolated fixer subagents, and goes round again until findings stop appearing. Auto-chained from `conduct` and `fan-out` when the plan sets `Review Gates: full`. Its ledger lives in `.gauntlet/`, so `--resume` continues an interrupted run.",
       "cmd": "/skein:review-gauntlet --pr 42"
     },
     {
       "id": "deep-review", "kind": "skill", "lane": "verify", "parent": "review-gauntlet",
       "summary": "Parallel multi-lens review.",
-      "detail": "Independent reviewers for logic, security, spec compliance, architecture and documentation, each with clean context. Findings are reconciled across lenses so duplicates collapse.",
+      "detail": "Five independent reviewers cover logic, security, spec compliance, architecture, and documentation. Each starts with clean context. The review step reconciles findings across lenses, so duplicates collapse.",
       "cmd": "/skein:deep-review"
     },
     {
@@ -58,19 +58,19 @@
     {
       "id": "code-review", "kind": "manual", "lane": "verify", "parent": "review-gauntlet",
       "summary": "Built in. You run it.",
-      "detail": "Claude Code's built-in /code-review. The harness blocks a model from invoking it, so no skill can chain it. Run it yourself before the gauntlet.",
+      "detail": "Claude Code's built-in `/code-review`. The harness blocks a model from invoking it, so no skill can chain it. Run it yourself before the gauntlet.",
       "cmd": "/code-review xhigh --fix"
     },
     {
       "id": "update-docs", "kind": "skill", "lane": "ship",
       "summary": "Fixes docs the diff made stale.",
-      "detail": "Checks dev plans, the changelog, README, AGENTS.md and the PR description against the branch diff, then offers targeted updates. Not chained by the gauntlet; run it once reviews have converged.",
+      "detail": "Checks dev plans, the changelog, `README.md`, `AGENTS.md`, and the PR description against the branch diff, then offers targeted updates. Not chained by the gauntlet; run it once reviews have converged.",
       "cmd": "/skein:update-docs"
     },
     {
       "id": "release", "kind": "skill", "lane": "ship",
       "summary": "Cuts a release from the changelog.",
-      "detail": "Creates or re-syncs a GitHub release from a CHANGELOG.md section, and audits tags, releases and changelog versions for drift.",
+      "detail": "Creates or re-syncs a GitHub release from a `CHANGELOG.md` section, and audits tags, releases, and changelog versions for drift.",
       "cmd": "/skein:release 1.2.3"
     }
   ],
@@ -81,8 +81,8 @@
     { "from": "review-plan", "to": "grill", "label": "contradictions" },
     { "from": "review-plan", "to": "conduct", "label": "review marker" },
     { "from": "review-plan", "to": "fan-out", "label": "review marker" },
-    { "from": "conduct", "to": "review-gauntlet", "label": "Review Gates: full" },
-    { "from": "fan-out", "to": "review-gauntlet", "label": "Review Gates: full" },
+    { "from": "conduct", "to": "review-gauntlet", "label": "`Review Gates: full`" },
+    { "from": "fan-out", "to": "review-gauntlet", "label": "`Review Gates: full`" },
     { "from": "review-gauntlet", "to": "update-docs", "label": "converged branch" },
     { "from": "update-docs", "to": "release", "label": "synced docs" }
   ],
@@ -94,12 +94,12 @@
     },
     {
       "id": "spec-compliance",
-      "summary": "Maps RFC 2119 MUST, SHOULD and MAY requirements to code: Met, Missing, Partial.",
+      "summary": "Maps RFC 2119 MUST, SHOULD, and MAY requirements to code: Met, Missing, Partial.",
       "pairsWith": ["rfc-finder", "deep-review"]
     },
     {
       "id": "show-me",
-      "summary": "Picks a diagram, tree or diff over prose when it explains faster.",
+      "summary": "Picks a diagram, tree, or diff over prose when it explains faster.",
       "pairsWith": ["update-docs", "review-gauntlet"]
     },
     {
@@ -114,7 +114,7 @@
     },
     {
       "id": "content-review",
-      "summary": "Reviews markdown against a style guide and returns graded findings with fixes.",
+      "summary": "Reviews Markdown against a style guide and returns graded findings with fixes.",
       "pairsWith": ["content-draft"]
     }
   ]
