@@ -76,8 +76,8 @@ a:hover { text-decoration-color: var(--accent); }
 /* header */
 .site-header { border-bottom: 1px solid var(--line); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-.brand { font: 700 22px var(--serif); text-decoration: none; letter-spacing: -0.01em; }
-.brand span { color: var(--accent); }
+.brand { display: inline-flex; align-items: center; gap: 9px; font: 700 22px var(--serif); text-decoration: none; letter-spacing: -0.01em; }
+.logo-mark { width: 28px; height: 24px; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; }
 nav { display: flex; gap: 20px; font-size: 15px; }
 nav a { text-decoration: none; color: var(--muted); }
 nav a:hover, nav a[aria-current="page"] { color: var(--ink); }
