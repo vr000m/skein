@@ -18,3 +18,26 @@ document.addEventListener("click", async (event) => {
   }
   setTimeout(() => { btn.textContent = "Copy"; }, 1600);
 });
+
+// Theme toggle: flips between light and dark. With no saved choice the page
+// follows the OS setting; the first click saves an explicit one.
+(() => {
+  const btn = document.querySelector(".theme-toggle");
+  if (!btn) return;
+  const root = document.documentElement;
+  const osDark = window.matchMedia("(prefers-color-scheme: dark)");
+  const current = () => root.dataset.theme || (osDark.matches ? "dark" : "light");
+  const label = () => {
+    const next = current() === "dark" ? "light" : "dark";
+    btn.textContent = next === "dark" ? "Dark" : "Light";
+    btn.setAttribute("aria-label", `Switch to ${next} theme`);
+  };
+  btn.addEventListener("click", () => {
+    const next = current() === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    try { localStorage.setItem("skein-theme", next); } catch {}
+    label();
+  });
+  osDark.addEventListener("change", label);
+  label();
+})();
