@@ -183,10 +183,27 @@ pytest-tests:
     uv run --with pytest pytest plugins/skein-codex/skills/conduct -q
     uv run --with pytest pytest plugins/skein-codex/skills/plan-view -q
 
+# skein.sh static site (site/, served by wrangler.jsonc as a Workers assets-only
+# Worker). There is no bundler: "build" validates the site and dry-runs the
+# deploy bundle without uploading anything.
+site-tests:
+    uv run --with pytest python -m pytest tests/site -q
+
+site-build: site-tests
+    npx --yes wrangler@4 deploy --dry-run
+
+# Local preview at http://localhost:8787 (override with `just site-preview 8799`).
+site-preview port="8787":
+    npx --yes wrangler@4 dev --port {{port}}
+
+# Publishes to Cloudflare (needs `npx wrangler login` once). Tests run first.
+site-deploy: site-tests
+    npx --yes wrangler@4 deploy
+
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
 # runs on every pull request.
-ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests
+ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests site-tests
 
 # Golden comparisons, negative cases and exit-code contract for the release
 # skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).

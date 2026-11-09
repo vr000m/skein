@@ -20,6 +20,10 @@ just noqa-probe                  # Diagnostic (not a suite member): does ~/.clau
 just lint-python                 # ruff format --check + ruff check (rule set = ruff 0.16.6 defaults; docs/ excluded, see ruff.toml)
 just lint                        # lint-python + lint-scripts
 just pytest-tests                # conduct + plan-view pytest suites, one invocation per skill per mirror
+just site-tests                  # skein.sh site guards: every skill on the site once, graph refs resolve, install commands match README, CSP-clean pages
+just site-build                  # site-tests + `wrangler deploy --dry-run` (validates the bundle, uploads nothing)
+just site-preview [port]         # Local preview of site/ via `wrangler dev` (default port 8787)
+just site-deploy                 # site-tests, then `wrangler deploy` to Cloudflare (needs `npx wrangler login` once)
 just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on every PR
 ```
 
