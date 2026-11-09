@@ -53,12 +53,15 @@ def test_graph_references_resolve():
 
 def test_install_commands_match_readme():
     readme = (REPO / "README.md").read_text()
-    html = (SITE / "install" / "index.html").read_text()
+    # The home page hero carries install commands too, so check both pages.
     # `.flow` blocks are example slash-commands, not install commands.
-    cmds = re.findall(r'<div class="cmd"><code>([^<]+)</code>', html)
-    assert cmds, "no install commands found"
-    for cmd in cmds:
-        assert cmd.replace("vX.Y.Z", "main") in readme, f"not in README: {cmd}"
+    for page in (SITE / "index.html", SITE / "install" / "index.html"):
+        cmds = re.findall(r'<div class="cmd"><code>([^<]+)</code>', page.read_text())
+        assert cmds, f"{page.name}: no install commands found"
+        for cmd in cmds:
+            assert cmd.replace("vX.Y.Z", "main") in readme, (
+                f"{page.name}: not in README: {cmd}"
+            )
 
 
 class _Inline(HTMLParser):
@@ -101,3 +104,18 @@ def test_pages_satisfy_csp_and_internal_links_resolve():
 def test_wrangler_serves_site_dir():
     cfg = (REPO / "wrangler.jsonc").read_text()
     assert '"directory": "./site"' in cfg
+
+
+def test_wrangler_has_no_stray_hostnames():
+    cfg = (REPO / "wrangler.jsonc").read_text()
+    assert '"workers_dev": false' in cfg
+    assert '"preview_urls": false' in cfg
+    assert '"pattern": "skein.sh"' in cfg and '"pattern": "www.skein.sh"' in cfg
+
+
+def test_pages_declare_canonical_url():
+    for page, url in [
+        (SITE / "index.html", "https://skein.sh/"),
+        (SITE / "install" / "index.html", "https://skein.sh/install/"),
+    ]:
+        assert f'<link rel="canonical" href="{url}">' in page.read_text(), page.name

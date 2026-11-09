@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-11-09 | feature | skein-sh-site | site | — | feature/skein-sh-site | [plan](20261109-feature-skein-sh-site.md) |
 | 2026-11-04 | feature | ai-writing-signs-refresh | content-skills | — | feature/ai-writing-signs-refresh | [plan](20261104-feature-ai-writing-signs-refresh.md) |
 | 2026-10-16 | feature | gauntlet-contract-design-guardrail | review-skills | — | feature/gauntlet-contract-design-guardrail | [plan](20261016-feature-gauntlet-contract-design-guardrail.md) |
 | 2026-10-08 | feature | review-output-formats | review-skills | — | feature/karpathy-output-formats | [plan](20261008-feature-review-output-formats.md) |

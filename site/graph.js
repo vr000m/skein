@@ -111,7 +111,12 @@
     const li = el("li");
     const b = el("button", null, id);
     b.type = "button";
-    b.addEventListener("click", () => select(id, true));
+    b.addEventListener("click", () => {
+      select(id, true);
+      // The clicked button was destroyed with the old panel; keep keyboard
+      // focus inside the panel instead of dropping it to <body>.
+      panel.querySelector("h3").focus({ preventScroll: true });
+    });
     li.append(b);
     if (label) li.append(richEl("span", null, ` — ${label}`));
     return li;
@@ -153,9 +158,11 @@
       const kids = children.get(top);
       if (kids) cols.append(listBlock("Loops over", kids.map((k) => linkItem(k.id, k.summary)), "span2"));
     }
+    const heading = el("h3", null, n.id);
+    heading.tabIndex = -1; // focus target after a panel link is activated
     panel.replaceChildren(
       el("span", "badge", KIND[n.kind](n)),
-      el("h3", null, n.id),
+      heading,
       richEl("p", null, n.detail),
       cmd,
       cols,
@@ -182,13 +189,20 @@
       c.classList.toggle("is-dim", !related.has(cid));
     }
     for (const [kid, c] of chips) c.classList.toggle("is-selected", kid === id);
+    markPaths(top);
+    renderPanel(n);
+    // No explicit `behavior`: the page's CSS `scroll-behavior` decides, so
+    // prefers-reduced-motion is honoured.
+    if (userInitiated && !wide.matches) {
+      panel.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  // Highlight the edges touching the selected top-level card.
+  function markPaths(top) {
     for (const p of pathEls) {
       const on = p.edge.from === top || p.edge.to === top;
       p.path.classList.toggle("active", on);
-    }
-    renderPanel(n);
-    if (userInitiated && !window.matchMedia("(min-width: 900px)").matches) {
-      panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }
 
@@ -202,10 +216,14 @@
 
     const base = root.getBoundingClientRect();
     svg.setAttribute("viewBox", `0 0 ${base.width} ${base.height}`);
-    const box = (id) => {
-      const r = card.get(id).getBoundingClientRect();
-      return { l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top };
-    };
+    // Measure every card once; the slot sort below would otherwise force a
+    // layout read per comparison.
+    const boxes = new Map();
+    for (const [id, c] of card) {
+      const r = c.getBoundingClientRect();
+      boxes.set(id, { l: r.left - base.left, r: r.right - base.left, t: r.top - base.top, b: r.bottom - base.top });
+    }
+    const box = (id) => boxes.get(id);
     const cy = (id) => (box(id).t + box(id).b) / 2;
     const lane = (id) => laneIndex.get(nodes.get(id).lane);
 
@@ -237,7 +255,9 @@
       svg.append(path);
       pathEls.push({ edge: e, path });
     }
-    if (selectedId) select(selectedId);
+    // Re-apply the highlight to the fresh paths only. Re-running select()
+    // would rebuild the panel and drop focus from whatever the user is on.
+    if (selectedId) markPaths(topOf(nodes.get(selectedId)));
   }
 
   new ResizeObserver(draw).observe(root);
@@ -258,8 +278,10 @@
             const b = el("button", null, p);
             b.type = "button";
             b.addEventListener("click", () => {
-              select(p, false);
-              root.scrollIntoView({ behavior: "smooth", block: "start" });
+              // Narrow: the lanes stack tall, so bring the panel into view.
+              // Wide: the map and panel fit together, so show the map.
+              select(p, true);
+              if (wide.matches) root.scrollIntoView({ block: "start" });
             });
             pairs.append(b);
           } else {

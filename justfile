@@ -190,15 +190,28 @@ site-tests:
     uv run --with pytest python -m pytest tests/site -q
 
 site-build: site-tests
-    npx --yes wrangler@4 deploy --dry-run
+    npx --yes wrangler@4.159.0 deploy --dry-run
 
 # Local preview at http://localhost:8787 (override with `just site-preview 8799`).
 site-preview port="8787":
-    npx --yes wrangler@4 dev --port {{port}}
+    npx --yes wrangler@4.159.0 dev --port {{port}}
 
 # Publishes to Cloudflare (needs `npx wrangler login` once). Tests run first.
+# Refuses to ship uncommitted site files, or a non-main branch unless
+# SITE_DEPLOY_ANY_BRANCH=1 (e.g. for the first deploy from a feature branch).
 site-deploy: site-tests
-    npx --yes wrangler@4 deploy
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain -- site wrangler.jsonc)" ]; then
+        echo "site-deploy: uncommitted changes in site/ or wrangler.jsonc; commit first" >&2
+        exit 1
+    fi
+    branch="$(git branch --show-current)"
+    if [ "$branch" != main ] && [ "${SITE_DEPLOY_ANY_BRANCH:-}" != 1 ]; then
+        echo "site-deploy: on '$branch', not main; merge first or set SITE_DEPLOY_ANY_BRANCH=1" >&2
+        exit 1
+    fi
+    npx --yes wrangler@4.159.0 deploy
 
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml

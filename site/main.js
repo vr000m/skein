@@ -1,5 +1,6 @@
 // Copy-to-clipboard for every <button class="copy"> inside a .cmd block.
 // Delegated so buttons created later (the detail panel) work too.
+const resetTimers = new WeakMap();
 document.addEventListener("click", async (event) => {
   const btn = event.target.closest("button.copy");
   if (!btn) return;
@@ -16,7 +17,10 @@ document.addEventListener("click", async (event) => {
     sel.removeAllRanges();
     sel.addRange(range);
   }
-  setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+  // One reset timer per button, so a second click restarts the 1.6s window
+  // instead of the first click's timer cutting it short.
+  clearTimeout(resetTimers.get(btn));
+  resetTimers.set(btn, setTimeout(() => { btn.textContent = "Copy"; }, 1600));
 });
 
 // Theme toggle: flips between light and dark. With no saved choice the page

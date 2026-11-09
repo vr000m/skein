@@ -26,6 +26,8 @@ Host a small static site at skein.sh on Cloudflare Workers: a home page that sho
 - `site/graph.js` renders HTML cards and measures them to draw SVG edges. Below 900px the lanes stack and edges are hidden; the panel still lists what each skill takes and hands on.
 - `site/_headers` sets a strict CSP (`script-src 'self'; style-src 'self'`), so pages carry no inline script, style or event handlers.
 - Install commands are copied from README.md; a test fails if they drift.
+- Colour tokens are declared once with `light-dark()`; the toggle sets `color-scheme` via `data-theme`.
+- `workers_dev` and `preview_urls` are off, so the site is only reachable on skein.sh and www.skein.sh.
 
 ## Implementation Checklist
 
@@ -45,4 +47,4 @@ Host a small static site at skein.sh on Cloudflare Workers: a home page that sho
 ## Open Questions
 
 - Whether a per-skill page is wanted later, once we see what the panel is missing.
-- `www.skein.sh` is not routed; add a second custom domain or a redirect if wanted.
+- `www.skein.sh` is served as a second custom domain; pages carry a canonical link to the apex.
