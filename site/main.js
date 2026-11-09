@@ -29,7 +29,7 @@ document.addEventListener("click", async (event) => {
   const current = () => root.dataset.theme || (osDark.matches ? "dark" : "light");
   const label = () => {
     const next = current() === "dark" ? "light" : "dark";
-    btn.textContent = next === "dark" ? "Dark" : "Light";
+    btn.dataset.next = next;
     btn.setAttribute("aria-label", `Switch to ${next} theme`);
   };
   btn.addEventListener("click", () => {
