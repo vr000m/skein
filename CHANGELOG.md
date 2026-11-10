@@ -6,6 +6,7 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ### Added
 - `site/`: static site for skein.sh (skill map showing how the skills hand off to each other, plus an install page), served as a Cloudflare Workers assets-only Worker via `wrangler.jsonc`. New recipes `just site-tests`, `site-build`, `site-preview` and `site-deploy`; `site-tests` is part of `just ci`. `site-deploy` refuses uncommitted site files and any branch other than `main` (`SITE_DEPLOY_ANY_BRANCH=1` overrides). The site has a light/dark toggle and `<noscript>` fallbacks.
+- Release editorial preflight: Claude and Codex measure the exact composed release body before confirmation and flag bodies above 3,000 Unicode characters or top-level bullet records above 700 characters without blocking an explicitly accepted payload. The checker is a byte-identical, Bash-3.2-compatible release library with strict UTF-8 validation and a jq-free numeric protocol. Pi presents the same thresholds as guidance without claiming measured counts.
 
 ## [0.11.0] - 2026-11-05
 

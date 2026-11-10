@@ -88,6 +88,8 @@ Tagged releases are published on the [GitHub releases page](https://github.com/v
 
 After merging a release-bearing PR and updating local `main`, use `skein:release` (`/release X.Y.Z` on Claude) to create or re-sync the tag and GitHub release. The skill previews the exact target, title, and body for confirmation before mutating remote state; do not hand-compose the old `git tag` + `gh release create` sequence.
 
+Claude and Codex also run a non-blocking editorial preflight over the exact composed body. Bodies above 3,000 Unicode characters or top-level bullet records above 700 characters are flagged for review before confirmation; the operator can still accept the exact payload. Pi presents the same thresholds as guidance without claiming measured counts. Keep implementation-level detail in `CHANGELOG.md`, while the public release body stays scannable.
+
 ## Setup (for contributors)
 
 1. Install tools:
