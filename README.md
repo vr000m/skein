@@ -115,6 +115,7 @@ plugins/skein-codex/skills/<name>/   Codex skills (mirrored structure; per-harne
 .claude-plugin/marketplace.json      Claude marketplace entry for skein
 .agents/plugins/marketplace.json     Codex marketplace entry for skein
 scripts/                             Canonical shell scripts (bundle/check/reconcile/parity/render/auto-fix)
+site/                                skein.sh static site (Cloudflare Workers assets; `just site-preview`, `just site-deploy`)
 ```
 
 See [AGENTS.md](AGENTS.md) for commands, architecture, authority model, contributor workflow, and the model/effort policy.

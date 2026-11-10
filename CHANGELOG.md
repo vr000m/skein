@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- `site/`: static site for skein.sh (skill map showing how the skills hand off to each other, plus an install page), served as a Cloudflare Workers assets-only Worker via `wrangler.jsonc`. New recipes `just site-tests`, `site-build`, `site-preview` and `site-deploy`; `site-tests` is part of `just ci`. `site-deploy` refuses uncommitted site files and any branch other than `main` (`SITE_DEPLOY_ANY_BRANCH=1` overrides). The site has a light/dark toggle and `<noscript>` fallbacks.
+
 ## [0.11.0] - 2026-11-05
 
 ### Changed
