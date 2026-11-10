@@ -4495,3 +4495,64 @@ def test_release_lagging_window_is_closed() -> None:
         if path.is_file() and "RELEASE_LAGGING_MIRROR_OK" in path.read_text():
             hits.append(path.relative_to(ROOT).as_posix())
     assert not hits, f"RELEASE_LAGGING_MIRROR_OK set/mentioned in: {hits}"
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_preflight_runs_before_confirmation(skill_path: Path) -> None:
+    text = skill_path.read_text()
+    editorial = text.index(
+        "**Editorial preflight (advisory, after the payload snapshot and before confirmation):**"
+    )
+    assert text.index("<!-- skein:step-3 -->") < editorial
+    assert editorial < text.index("<!-- skein:step-4 -->")
+    for phrase in (
+        "at most 65,536 bytes of valid UTF-8 without NUL",
+        "above 3,000 body characters or 700 characters in a bullet record",
+        "1<TAB>BODY_CHARS<TAB>3000<TAB>700<TAB>WARN<TAB>N",
+        "Run its `--validate` mode",
+        "canonical unsigned decimal fields bounded at 65,536 before arithmetic",
+        "This path never resolves `jq`",
+        "Editorial preflight unavailable",
+        "A CHANGELOG revision aborts; commit it and restart at Step 1",
+    ):
+        assert phrase in text
+
+
+def test_editorial_preflight_transport_is_harness_specific() -> None:
+    claude, codex = (path.read_text() for path in RELEASE_SKILLS)
+    assert "${CLAUDE_PLUGIN_ROOT}/skills/release/lib/editorial-preflight.sh" in claude
+    assert '"$SKILL_DIR/lib/editorial-preflight.sh"' in codex
+    assert "first validate `TMPDIR` now" in claude
+    assert "stdout redirected directly to the guarded raw-result file" in claude
+    assert "The model never transcribes checker output" in claude
+    assert "`releaseRun` direct-argv Buffer transport" in codex
+    assert "Never use an ambient shell fallback" in codex
+    for text in (claude, codex):
+        assert "Editorial-checker Bash pin" in text
+        assert "missing or identity-drifted Bash is a hard stop" in text
+        assert "Script/Bash absence" in text
+        assert "Only after a trusted launch" in text
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_warning_displays_all_metadata_and_choices(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    paragraph = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("**Editorial line-item.**")
+    )
+    for phrase in (
+        "Editorial preflight: review recommended",
+        "measured body length beside the 3,000-character limit",
+        "every offending bullet's 1-based ordinal and measured length",
+        "700-character limit",
+        "exactly three actions: revise, explicitly accept the exact title/body already displayed, or abort the release run before any mutation",
+        "carries those literal bytes forward unchanged",
+        "recomputes the payload snapshot",
+        "Editorial preflight unavailable",
+        "do not describe it as clean",
+    ):
+        assert phrase in paragraph

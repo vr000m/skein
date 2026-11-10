@@ -80,3 +80,8 @@ step-a2	plugins/skein/skills/release/SKILL.md	11961
 # "Resolve the classification source" bullet is cut to a short pointer at the
 # script, matching the round-2 pointer-style edit byte-for-byte in intent.
 step-a2	plugins/skein/skills/release/SKILL.md	10595
+# Editorial preflight adds the exact UTF-8/bullet grammar, numeric protocol,
+# harness transport boundary and fail-closed/advisory split between the
+# existing Step 3 snapshot and Step 4 confirmation. The Codex mirror differs
+# only by its registered native-launch call line and stays within tolerance.
+step-3	plugins/skein/skills/release/SKILL.md	32661

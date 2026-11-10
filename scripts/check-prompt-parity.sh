@@ -302,12 +302,13 @@ RELEASE_CODEX_AI_SIGNS_PATH='"$SKILL_DIR"/../content-review/references/ai-writin
 # gated to occur exactly once per mirror below. The Codex half of the mirror
 # lands in Phase 3.5 (RELEASE_LAGGING_MIRROR_OK plane release-skill-md).
 # BEGIN release-call-lines (sourced by tests/parity/test-prompt-parity-extended.sh)
-RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step5-reverify step6-reverify a2-classify)
+RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step3-editorial step5-reverify step6-reverify a2-classify)
 
 release_call_script() {
 	case "$1" in
 	step1b-* | step5-reverify | step6-reverify) echo "read-release-template" ;;
 	step3-recovery | a2-classify) echo "resolve-template-marker" ;;
+	step3-editorial) echo "editorial-preflight" ;;
 	esac
 }
 
@@ -322,6 +323,14 @@ release_call_placeholder() {
 release_call_line() {
 	local harness="$1" site="$2" name guard call args tail
 	name="$(release_call_script "$site")"
+	if [[ "$site" == step3-editorial ]]; then
+		if [[ "$harness" == claude ]]; then
+			printf '%s\n' 'Claude transport: require `[ -x "${CLAUDE_PLUGIN_ROOT}/skills/release/lib/editorial-preflight.sh" ]` or hard-stop with `release lib script missing: reinstall the skein plugin`; then use the already-pinned Bash path in fixed trusted shell source to run `${CLAUDE_PLUGIN_ROOT}/skills/release/lib/editorial-preflight.sh` with stdin redirected from the locked body file and stdout redirected directly to the guarded raw-result file, then run its `--validate` mode with stdin from that locked raw result and stdout redirected directly to the guarded canonical-result file. Body/result bytes never enter model-authored shell source, argv, environment, or a heredoc.'
+		else
+			printf '%s\n' 'Codex transport: require `[ -x "${SKILL_DIR:?}/lib/editorial-preflight.sh" ]` or hard-stop with `release lib script missing: reinstall the skein plugin`; then use [native-launch.md](native-launch.md) and its `releaseRun` direct-argv Buffer transport to spawn the already-pinned Bash path with argv `["$SKILL_DIR/lib/editorial-preflight.sh"]` and `["$SKILL_DIR/lib/editorial-preflight.sh", "--validate"]`, empty environment, the source top-level as cwd, and the exact body/result Buffer as stdin. Never use an ambient shell fallback.'
+		fi
+		return
+	fi
 	if [[ "$harness" == claude ]]; then
 		guard="[ -x \"\${CLAUDE_PLUGIN_ROOT}/skills/release/lib/$name.sh\" ] || { echo \"release lib script missing: reinstall the skein plugin\"; exit 1; }"
 		call="\"\${CLAUDE_PLUGIN_ROOT}/skills/release/lib/$name.sh\""
