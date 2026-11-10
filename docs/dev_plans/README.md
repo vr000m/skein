@@ -9,7 +9,6 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-11-09 | feature | skein-sh-site | site | — | feature/skein-sh-site | [plan](20261109-feature-skein-sh-site.md) |
 | 2026-11-04 | feature | ai-writing-signs-refresh | content-skills | — | feature/ai-writing-signs-refresh | [plan](20261104-feature-ai-writing-signs-refresh.md) |
 | 2026-10-16 | feature | gauntlet-contract-design-guardrail | review-skills | — | feature/gauntlet-contract-design-guardrail | [plan](20261016-feature-gauntlet-contract-design-guardrail.md) |
 | 2026-10-08 | feature | review-output-formats | review-skills | — | feature/karpathy-output-formats | [plan](20261008-feature-review-output-formats.md) |
@@ -25,6 +24,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-11-09 | feature | skein-sh-site | site | [#61](https://github.com/vr000m/skein/pull/61) | feature/skein-sh-site | [plan](20261109-feature-skein-sh-site.md) |
 | 2026-10-03 | bug | codex-conduct-agent-api | planning-skills | [#52](https://github.com/vr000m/skein/pull/52), [docs #53](https://github.com/vr000m/skein/pull/53) | fix/codex-conduct-agent-api | [plan](20261003-bug-codex-conduct-agent-api.md) |
 | 2026-09-29 | feature | pi-plugin-port | meta | [#50](https://github.com/vr000m/skein/pull/50) | feature/pi-plugin-port | [plan](20260929-feature-pi-plugin-port.md) |
 | 2026-09-17 | refactor | release-skill-structure | meta | [#44](https://github.com/vr000m/skein/pull/44) | refactor/release-skill-structure | [plan](20260917-refactor-release-skill-structure.md) |

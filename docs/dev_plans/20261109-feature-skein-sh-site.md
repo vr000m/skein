@@ -1,6 +1,6 @@
 # Task: skein.sh static site
 
-**Status**: In Progress
+**Status**: Shipped (PR #61; production deploy from `main` follows the merge)
 **Component**: site
 **Assigned to**: Claude
 **Priority**: Medium
