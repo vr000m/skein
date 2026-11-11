@@ -4495,3 +4495,239 @@ def test_release_lagging_window_is_closed() -> None:
         if path.is_file() and "RELEASE_LAGGING_MIRROR_OK" in path.read_text():
             hits.append(path.relative_to(ROOT).as_posix())
     assert not hits, f"RELEASE_LAGGING_MIRROR_OK set/mentioned in: {hits}"
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_preflight_runs_before_confirmation(skill_path: Path) -> None:
+    text = skill_path.read_text()
+    editorial = text.index(
+        "**Editorial preflight (advisory, after the payload snapshot and before confirmation):**"
+    )
+    assert text.index("<!-- skein:step-3 -->") < editorial
+    assert editorial < text.index("<!-- skein:step-4 -->")
+    for phrase in (
+        "at most 65,536 bytes of valid UTF-8 without NUL",
+        "above 3,000 body characters or 700 characters in a bullet record",
+        "1<TAB>BODY_CHARS<TAB>3000<TAB>700<TAB>WARN<TAB>N",
+        "Run its `--validate` mode",
+        "canonical unsigned decimal fields bounded at 65,536 before arithmetic",
+        "This path never resolves `jq`",
+        "Editorial preflight unavailable",
+        "A CHANGELOG revision aborts; commit it and restart at Step 1",
+    ):
+        assert phrase in text
+
+
+def test_editorial_preflight_transport_is_harness_specific() -> None:
+    claude, codex = (path.read_text() for path in RELEASE_SKILLS)
+    assert "${CLAUDE_PLUGIN_ROOT}/skills/release/lib/editorial-preflight.sh" in claude
+    assert '"$SKILL_DIR/lib/editorial-preflight.sh"' in codex
+    assert "first validate `TMPDIR` now" in claude
+    assert "stdout redirected directly to the guarded raw-result file" in claude
+    assert "The model never transcribes checker output" in claude
+    assert "pinned `env` path with `-i`" in claude
+    assert "empty environment before Bash starts" in claude
+    assert "`releaseRun` direct-argv Buffer transport" in codex
+    assert "Never use an ambient shell fallback" in codex
+    for text in (claude, codex):
+        assert "Editorial-checker Bash pin" in text
+        assert "missing or identity-drifted Bash is a hard stop" in text
+        assert "Script/Bash absence" in text
+        assert "Only after a trusted launch" in text
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_launch_ignores_hostile_startup_state(
+    skill_path: Path, tmp_path: Path
+) -> None:
+    marker = tmp_path / "startup-ran"
+    hook = tmp_path / "startup.sh"
+    hook.write_text(f"printf injected > {shlex.quote(str(marker))}\n")
+    inherited = dict(os.environ)
+    inherited["BASH_ENV"] = str(hook)
+    inherited["BASH_FUNC_printf%%"] = "() { echo injected; }"
+    result = subprocess.run(
+        [
+            "/usr/bin/env",
+            "-i",
+            "/bin/bash",
+            str(skill_path.parent / "lib/editorial-preflight.sh"),
+        ],
+        check=False,
+        input=b"short",
+        capture_output=True,
+        env=inherited,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert result.stdout == b"1\t5\t3000\t700\t0\t0\n"
+    assert result.stderr == b""
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+@pytest.mark.parametrize("mode", [[], ["--validate"]])
+def test_editorial_rejects_excess_without_waiting_for_eof(
+    skill_path: Path, mode: list[str], tmp_path: Path
+) -> None:
+    # Keep the writer open after 65,537 bytes. The reader must exit without EOF.
+    import threading
+
+    fifo = tmp_path / "input.fifo"
+    os.mkfifo(fifo)
+    release_writer = threading.Event()
+
+    def feed() -> None:
+        with fifo.open("wb", buffering=0) as stream:
+            stream.write(b"x" * 65537)
+            release_writer.wait(5)
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    try:
+        with fifo.open("rb", buffering=0) as stream:
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    str(skill_path.parent / "lib/editorial-preflight.sh"),
+                    *mode,
+                ],
+                check=False,
+                stdin=stream,
+                capture_output=True,
+                env={},
+                timeout=3,
+            )
+        assert result.returncode == 1
+        assert result.stdout == result.stderr == b""
+    finally:
+        release_writer.set()
+        writer.join(timeout=5)
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_warning_displays_all_metadata_and_choices(
+    skill_path: Path,
+) -> None:
+    text = skill_path.read_text()
+    paragraph = next(
+        line
+        for line in text.splitlines()
+        if line.startswith("**Editorial line-item.**")
+    )
+    for phrase in (
+        "Editorial preflight: review recommended",
+        "measured body length beside the 3,000-character limit",
+        "every offending bullet's 1-based ordinal and measured length",
+        "700-character limit",
+        "exactly three actions: revise, explicitly accept the exact title/body already displayed, or abort the release run before any mutation",
+        "carries those literal bytes forward unchanged",
+        "recomputes the payload snapshot",
+        "Editorial preflight unavailable",
+        "do not describe it as clean",
+    ):
+        assert phrase in paragraph
+
+
+def test_editorial_native_buffer_transport_matrix(tmp_path: Path) -> None:
+    """Execute the documented native transport with both caller byte guards."""
+    skill = RELEASE_SKILLS[1]
+    text = skill.read_text()
+    predicates = []
+    for name in ("bodyBuffer", "resultBuffer"):
+        match = re.search(rf"`({name}\.length > 65536)`", text)
+        assert match, f"missing pre-stdin byte guard for {name}"
+        predicates.append(match.group(1))
+    transport = (
+        (skill.parent / "native-launch.md")
+        .read_text()
+        .split("```javascript\n")[1]
+        .split("```")[0]
+    )
+    # Only the two documented predicates vary in the scratch mutation. The
+    # generic transport, including its fatal stdin error handler, stays exact.
+    program = (
+        transport
+        + r"""
+const assert = (await import('node:assert/strict')).default;
+const fs = await import('node:fs/promises');
+const script = SCRIPT;
+const unavailable = 'Editorial preflight unavailable';
+let launches = 0, verifications = 0;
+async function advisory(input, mode, trust = 'ok') {
+  // Script availability and pinned identity verification precede either guard.
+  const stat = await fs.stat(script);
+  if (!(stat.mode & 0o111)) throw Error('missing executable');
+  verifications++;
+  if (trust !== 'ok') throw Error(trust);
+  const bodyBuffer = input, resultBuffer = input;
+  if (mode === 'check' ? (BODY_GUARD) : (RESULT_GUARD)) return unavailable;
+  launches++;
+  const result = await releaseRun({executable:'/bin/bash',
+    argv: mode === 'check' ? [script] : [script, '--validate'],
+    env:{}, cwd:CWD, stdin:input});
+  if (result.code !== 0 || result.stderr.length) return unavailable;
+  return result.stdout;
+}
+const valid = Buffer.from('1\t5\t3000\t700\t0\t0\n');
+const content = [
+  ['empty', Buffer.alloc(0), true, false],
+  ['short', Buffer.from('short'), true, false],
+  ['minus-one', Buffer.alloc(65535, 120), true, false],
+  ['limit', Buffer.alloc(65536, 120), true, false],
+  ['plus-one', Buffer.alloc(65537, 120), false, false],
+  ['large', Buffer.alloc(1048576, 120), false, false],
+  ['unicode-limit', Buffer.from('🙂'.repeat(16384)), true, false],
+  ['unicode-excess', Buffer.from('🙂'.repeat(70000)), false, false],
+  ['invalid', Buffer.from([255]), false, false],
+  ['nul', Buffer.from([0]), false, false],
+  ['protocol', valid, true, true],
+  ['bad-protocol', Buffer.from('01\t5\t3000\t700\t0\t0\n'), true, false],
+];
+for (const mode of ['check','validate']) {
+  for (const [name, input, checkOK, validateOK] of content) {
+    const before = launches, verified = verifications;
+    const result = await advisory(input, mode);
+    assert.equal(verifications, verified+1, name);
+    assert.equal(launches-before, input.length > 65536 ? 0 : 1, name);
+    const ok = mode === 'check' ? checkOK : validateOK;
+    if (!ok) assert.equal(result, unavailable, `${mode}/${name}`);
+    else {
+      assert(Buffer.isBuffer(result), `${mode}/${name}`);
+      const canonical = await advisory(result, 'validate');
+      assert.deepEqual(canonical, result, `${mode}/${name}/roundtrip`);
+    }
+    for (const trust of ['identity drift','pinning failure','launch unavailable']) {
+      const count = launches;
+      await assert.rejects(advisory(input, mode, trust), new RegExp(trust));
+      assert.equal(launches, count);
+    }
+  }
+}
+await assert.rejects(releaseRun({executable:'/missing/editorial/bash', argv:[],
+  env:{}, cwd:CWD, stdin:Buffer.alloc(0)}));
+"""
+    )
+    program = (
+        program.replace(
+            "SCRIPT", json.dumps(str(skill.parent / "lib/editorial-preflight.sh"))
+        )
+        .replace("CWD", json.dumps(str(skill.parent.resolve())))
+        .replace("BODY_GUARD", predicates[0])
+        .replace("RESULT_GUARD", predicates[1])
+    )
+    runner = tmp_path / "transport.mjs"
+    runner.write_text(program)
+    result = subprocess.run(
+        ["node", str(runner)], capture_output=True, timeout=60, check=False
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    # Revert each guard separately in a scratch program. Both must be necessary;
+    # an oversize Buffer must never reach the bounded child's early pipe close.
+    for predicate in predicates:
+        runner.write_text(program.replace(predicate, "false", 1))
+        mutant = subprocess.run(
+            ["node", str(runner)], capture_output=True, timeout=60, check=False
+        )
+        assert mutant.returncode != 0, f"unobserved guard mutation: {predicate}"
+        assert b"AssertionError" in mutant.stderr or b"EPIPE" in mutant.stderr

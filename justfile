@@ -52,6 +52,7 @@ parity-tests:
     bash tests/release/test-scripts.sh
     bash tests/release/test-a2-a25-contract.sh
     bash tests/release/test-presence-differential.sh
+    bash tests/release/test-editorial-preflight.sh
     uv run --with pytest python -m pytest tests/parity/test_skill_md_presence.py -q
     uv run --with pytest python -m pytest tests/parity/test_release_skill_contract.py -q
     uv run --with pytest python -m pytest plugins/skein-codex/skills/release/tests/test_executable_policy.py -q
@@ -225,6 +226,7 @@ release-script-tests:
     bash tests/release/test-scripts.sh
     bash tests/release/test-a2-a25-contract.sh
     bash tests/release/test-presence-differential.sh
+    bash tests/release/test-editorial-preflight.sh
 
 noqa-probe:
     bash tests/plugin/noqa-probe.sh

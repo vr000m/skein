@@ -47,6 +47,20 @@ def test_release_is_user_invoked_read_only_by_default():
     )
 
 
+def test_release_editorial_policy_is_advisory_without_fake_measurement():
+    text = read_skill("release")
+    for phrase in (
+        "at or below 3,000",
+        "above 700",
+        "does not run the bundled measured checker",
+        "claim measured counts",
+        "accept the exact body as shown, revise it, or abort without mutation",
+        "adds no mutation authority",
+        "replace the second explicit confirmation",
+    ):
+        assert phrase in text
+
+
 def test_fan_out_stays_undiscoverable():
     manifest = json.loads((ROOT / "package.json").read_text())
     paths = manifest["pi"]["skills"]

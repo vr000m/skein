@@ -438,7 +438,7 @@ RELEASE_LIB_CODEX_DIR="$RELEASE_LIB_ROOT/plugins/skein-codex/skills/release/lib"
 # exclusion is EMPTY by design (grilled decision 9): the scripts are pure over
 # injected inputs with pre-resolved executables, so they carry no
 # ${CLAUDE_PLUGIN_ROOT}/$SKILL_DIR anchor and are byte-identical across mirrors.
-RELEASE_LIB_PARITY_FILES=(release-common.sh read-release-template.sh resolve-template-marker.sh)
+RELEASE_LIB_PARITY_FILES=(release-common.sh read-release-template.sh resolve-template-marker.sh editorial-preflight.sh)
 RELEASE_LIB_ANCHOR_DIVERGENT=()
 release_lib_drift=()
 while IFS= read -r lib_base; do

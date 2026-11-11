@@ -28,7 +28,7 @@ Invoke each skill as `skein:<name>` (e.g. `skein:dev-plan`, `skein:review-plan`)
 
 Codex `conduct` and `review-gauntlet` require `spawn_agent` and `wait_agent`. Fresh phase workers and fixer batches use `fork_turns="none"` and their Codex dispatch templates; conductors consume delivered final reports and terminal status. Unsupported downstream review gates retain their explicit capability outcomes. Native gauntlet gates review pinned private snapshots, reject escaping/cyclic symlinks and source drift before fixes or ledger accounting, and emit a locally validated strict envelope. The native gate uses Codex 0.160.1’s app-server raw final answer to retain its explicit verdict; unsupported runtimes fail closed.
 
-Codex `release` ships a read-only executable preflight adapter for macOS runtimes with a verified native process launcher. Direct argv and a closed child environment prevent ambient shell startup; the fixed system-interpreter bootstrap trusts the runtime, installed plugin and operating system. Canonical Homebrew Cellar tools may traverse root/current-user-owned directories writable by the system `admin` group; executable files and world-writable paths remain restricted, and pinned identities are reverified before application-tool launches. Claude release policy is unchanged. No directory permissions need to be changed.
+Codex `release` ships a read-only executable preflight adapter for macOS runtimes with a verified native process launcher. Direct argv and a closed child environment prevent ambient shell startup; the fixed system-interpreter bootstrap trusts the runtime, installed plugin and operating system. Canonical Homebrew Cellar tools may traverse root/current-user-owned directories writable by the system `admin` group; executable files and world-writable paths remain restricted, and pinned identities are reverified before application-tool launches. Claude launches the editorial checker through pinned `env -i` so Bash starts with an empty environment. No directory permissions need to be changed.
 
 ## Plugin install
 
@@ -87,6 +87,8 @@ skein follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html); change
 Tagged releases are published on the [GitHub releases page](https://github.com/vr000m/skein/releases) — see the release badge at the top of this file for the current tag. Pin an install to a specific tag with `--ref vX.Y.Z` instead of `--ref main` if you want a stable version rather than tracking `main`.
 
 After merging a release-bearing PR and updating local `main`, use `skein:release` (`/release X.Y.Z` on Claude) to create or re-sync the tag and GitHub release. The skill previews the exact target, title, and body for confirmation before mutating remote state; do not hand-compose the old `git tag` + `gh release create` sequence.
+
+Claude and Codex also run a non-blocking editorial preflight over the exact composed body. Bodies above 3,000 Unicode characters or top-level bullet records above 700 characters are flagged for review before confirmation; the operator can still accept the exact payload. Pi presents the same thresholds as guidance without claiming measured counts. Keep implementation-level detail in `CHANGELOG.md`, while the public release body stays scannable.
 
 ## Setup (for contributors)
 
