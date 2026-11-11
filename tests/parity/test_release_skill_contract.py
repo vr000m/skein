@@ -4627,3 +4627,107 @@ def test_editorial_warning_displays_all_metadata_and_choices(
         "do not describe it as clean",
     ):
         assert phrase in paragraph
+
+
+def test_editorial_native_buffer_transport_matrix(tmp_path: Path) -> None:
+    """Execute the documented native transport with both caller byte guards."""
+    skill = RELEASE_SKILLS[1]
+    text = skill.read_text()
+    predicates = []
+    for name in ("bodyBuffer", "resultBuffer"):
+        match = re.search(rf"`({name}\.length > 65536)`", text)
+        assert match, f"missing pre-stdin byte guard for {name}"
+        predicates.append(match.group(1))
+    transport = (
+        (skill.parent / "native-launch.md")
+        .read_text()
+        .split("```javascript\n")[1]
+        .split("```")[0]
+    )
+    # Only the two documented predicates vary in the scratch mutation. The
+    # generic transport, including its fatal stdin error handler, stays exact.
+    program = (
+        transport
+        + r"""
+const assert = (await import('node:assert/strict')).default;
+const fs = await import('node:fs/promises');
+const script = SCRIPT;
+const unavailable = 'Editorial preflight unavailable';
+let launches = 0, verifications = 0;
+async function advisory(input, mode, trust = 'ok') {
+  // Script availability and pinned identity verification precede either guard.
+  const stat = await fs.stat(script);
+  if (!(stat.mode & 0o111)) throw Error('missing executable');
+  verifications++;
+  if (trust !== 'ok') throw Error(trust);
+  const bodyBuffer = input, resultBuffer = input;
+  if (mode === 'check' ? (BODY_GUARD) : (RESULT_GUARD)) return unavailable;
+  launches++;
+  const result = await releaseRun({executable:'/bin/bash',
+    argv: mode === 'check' ? [script] : [script, '--validate'],
+    env:{}, cwd:CWD, stdin:input});
+  if (result.code !== 0 || result.stderr.length) return unavailable;
+  return result.stdout;
+}
+const valid = Buffer.from('1\t5\t3000\t700\t0\t0\n');
+const content = [
+  ['empty', Buffer.alloc(0), true, false],
+  ['short', Buffer.from('short'), true, false],
+  ['minus-one', Buffer.alloc(65535, 120), true, false],
+  ['limit', Buffer.alloc(65536, 120), true, false],
+  ['plus-one', Buffer.alloc(65537, 120), false, false],
+  ['large', Buffer.alloc(1048576, 120), false, false],
+  ['unicode-limit', Buffer.from('🙂'.repeat(16384)), true, false],
+  ['unicode-excess', Buffer.from('🙂'.repeat(70000)), false, false],
+  ['invalid', Buffer.from([255]), false, false],
+  ['nul', Buffer.from([0]), false, false],
+  ['protocol', valid, true, true],
+  ['bad-protocol', Buffer.from('01\t5\t3000\t700\t0\t0\n'), true, false],
+];
+for (const mode of ['check','validate']) {
+  for (const [name, input, checkOK, validateOK] of content) {
+    const before = launches, verified = verifications;
+    const result = await advisory(input, mode);
+    assert.equal(verifications, verified+1, name);
+    assert.equal(launches-before, input.length > 65536 ? 0 : 1, name);
+    const ok = mode === 'check' ? checkOK : validateOK;
+    if (!ok) assert.equal(result, unavailable, `${mode}/${name}`);
+    else {
+      assert(Buffer.isBuffer(result), `${mode}/${name}`);
+      const canonical = await advisory(result, 'validate');
+      assert.deepEqual(canonical, result, `${mode}/${name}/roundtrip`);
+    }
+    for (const trust of ['identity drift','pinning failure','launch unavailable']) {
+      const count = launches;
+      await assert.rejects(advisory(input, mode, trust), new RegExp(trust));
+      assert.equal(launches, count);
+    }
+  }
+}
+await assert.rejects(releaseRun({executable:'/missing/editorial/bash', argv:[],
+  env:{}, cwd:CWD, stdin:Buffer.alloc(0)}));
+"""
+    )
+    program = (
+        program.replace(
+            "SCRIPT", json.dumps(str(skill.parent / "lib/editorial-preflight.sh"))
+        )
+        .replace("CWD", json.dumps(str(skill.parent.resolve())))
+        .replace("BODY_GUARD", predicates[0])
+        .replace("RESULT_GUARD", predicates[1])
+    )
+    runner = tmp_path / "transport.mjs"
+    runner.write_text(program)
+    result = subprocess.run(
+        ["node", str(runner)], capture_output=True, timeout=60, check=False
+    )
+    assert result.returncode == 0, result.stderr.decode()
+    # Revert each guard separately in a scratch program. Both must be necessary;
+    # an oversize Buffer must never reach the bounded child's early pipe close.
+    for predicate in predicates:
+        runner.write_text(program.replace(predicate, "false", 1))
+        mutant = subprocess.run(
+            ["node", str(runner)], capture_output=True, timeout=60, check=False
+        )
+        assert mutant.returncode != 0, f"unobserved guard mutation: {predicate}"
+        assert b"AssertionError" in mutant.stderr or b"EPIPE" in mutant.stderr
