@@ -162,36 +162,36 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 
 ### Test Approach
 
-- [x] Script boundary tests at 2,999/3,000/3,001 body characters and 699/700/701 bullet characters.
-- [x] Unicode decoder table covers valid minimum/maximum 2-, 3-, and 4-byte scalars, combining scalars, lone continuations, invalid lead bytes, overlong encodings, surrogate encodings, out-of-range encodings, and every truncated sequence length.
-- [x] Valid UTF-8, invalid UTF-8, overlong/surrogate/out-of-range sequences, and NUL tests.
-- [x] Multiline, multiple, `- ` / `* `, indented/nested, H2/H3/H4, LF/CRLF, and terminal-newline bullet-record tests.
-- [x] Exact transport tests include quotes, backticks, command substitutions, a heredoc delimiter line, blank lines, and no final LF; stdout/stderr never contain body content.
-- [x] No-PATH/no-child-process/locale tests run with `/bin/bash` on macOS and Linux. The suite does not assert a Bash 3.2 version. Boundary, warning-polarity, protocol-validation, and continuation-line fixtures pass; the checker mutation self-test changes only `BODY_LIMIT` and proves that threshold is load-bearing.
-- [x] Protocol tests cover checker non-zero, empty/extra output, extra lines/fields, duplicate offender ordinals, fractional/signed/leading-zero/overflow-width values, zero/decreasing ordinals, wrong version/limits, impossible offender lengths, inconsistent count/warn, stderr, the 65,536/65,537-byte ceiling, and a five-second ceiling runtime bound using the selected `/bin/bash`.
-- [x] Prompt tests cover missing/non-executable script, unavailable sanctioned launch support, Bash pin failure, and identity drift as hard stops; only trusted-launch checker/result failures may render the unavailable advisory.
-- [x] Both mirrors prove an untemplated run never resolves `jq` for editorial parsing.
-- [x] Claude/Codex prompt-contract and mirror-parity tests.
-- [x] Pi route contract test.
-- [ ] Full release-script, parity, lint, and CI gates before PR.
+- [x] `tests/release/test-editorial-preflight.sh`: `body-$size` tests 2,999/3,000/3,001 characters; `bullet-$size` tests 699/700/701, including equality and warning polarity.
+- [x] `utf8-valid-boundaries` covers minimum/maximum 2-, 3-, and 4-byte scalars and a combining scalar. `utf8-invalid-*` covers a lone continuation, invalid lead, overlong, surrogate, out-of-range, and selected truncated encodings (one byte of a 2-byte scalar, two of a 3-byte scalar, three of a 4-byte scalar); `nul-rejected` covers NUL.
+- [x] `multiline-record`, `multiple-marker-ordinals`, `h2-boundary`, `literal-prefix-grammar`, and `legacy-snapshot-mixed-record-grammar` cover continuation text, both bullet markers, a short bullet before an offender, H2 boundaries, nested bullets, H4 continuation, and a bullet-shaped line inside a fence.
+- [x] `crlf-record` and `terminal-lf` pin CR+LF measurement and terminal LF; body/bullet fixtures also omit final LF. `shell-text-is-data` uses quotes, backticks, command substitution, and inline `EOF`, checks exact numeric stdout and empty stderr, and verifies that the `touch` payload did not execute.
+- [x] `run_case` launches the checker with an empty environment and an unusable PATH, using `${TEST_BASH:-/bin/bash}`. The suite does not assert an interpreter version or exercise a locale matrix. Its scratch mutation changes only `BODY_LIMIT` and must break the 3,001-character fixture.
+- [x] `validator-valid` accepts two offender rows; `validator-bad-*` rejects missing terminal LF, an extra blank line/field, leading-zero/signed/fractional/overflow-width numbers, wrong version/limits, invalid warning values, duplicate/zero/decreasing ordinals, length 700, and inconsistent row counts/warning polarity.
+- [x] `input-ceiling`, `input-ceiling-multibyte-single-line`, and `input-over-ceiling` cover 65,536-byte ASCII/multibyte input and 65,537-byte rejection. The ASCII ceiling runtime assertion allows at most four whole seconds on the selected Bash, except in optional legacy-comparison mode.
+- [x] `tests/parity/test_release_skill_contract.py`: `test_editorial_native_buffer_transport_matrix` executes both Codex caller guards over empty/short/boundary/oversized/Unicode/invalid/NUL/protocol buffers, round-trips accepted metadata, simulates trust failures, checks a missing executable, and rejects scratch mutations removing either byte guard.
+- [x] `test_editorial_launch_ignores_hostile_startup_state` executes both mirror checkers with hostile inherited startup state; `test_editorial_rejects_excess_without_waiting_for_eof` exercises both modes through an open FIFO.
+- [x] `test_editorial_preflight_runs_before_confirmation`, `test_editorial_preflight_transport_is_harness_specific`, and `test_editorial_warning_displays_all_metadata_and_choices` assert prompt text for ordering, thresholds, advisory failures, hard stops, jq independence, transports, and revision/acceptance choices. These are prompt-contract assertions, not end-to-end release executions.
+- [x] The shell suite compares the two checker files; `tests/parity/test-applier-bundle-parity.sh` registers `editorial-preflight.sh`. `tests/pi/test_orchestration_routes.py::test_release_editorial_policy_is_advisory_without_fake_measurement` asserts Pi's policy-only text and second-confirmation boundary.
+- [x] Full release-script, parity, lint, and CI gates before PR.
 
 ### Test Results
 
 - [x] Focused tests pass.
-- [ ] `just release-script-tests` passes.
-- [ ] `just parity-tests` passes.
-- [ ] `just lint` passes.
-- [ ] `just ci` passes.
+- [x] `just release-script-tests` passes.
+- [x] `just parity-tests` passes.
+- [x] `just lint` passes.
+- [x] `just ci` passes.
 
 ### Edge Cases Tested
 
-- [x] Empty body and body without bullets.
-- [x] Threshold equality versus threshold-plus-one.
-- [x] Final line with and without LF; CRLF classification with exact CR+LF measurement.
-- [x] UTF-8 multibyte characters.
-- [x] Wrapped bullet continuation lines and multiple long bullets.
-- [x] Marker/compare lines do not become bullets.
-- [x] Trusted-launch checker/result failures remain visible and non-blocking; executable trust failures stay hard stops.
+- [x] Empty/no-bullet body: native transport matrix and `body-$size`.
+- [x] Equality/plus-one and newline measurement: `body-$size`, `bullet-$size`, `terminal-lf`, and `crlf-record`.
+- [x] Multibyte and malformed input: `utf8-valid-boundaries`, `utf8-invalid-*`, and `nul-rejected`.
+- [x] Wrapped records and offender ordinals: `multiline-record` and `multiple-marker-ordinals`; two metadata offenders: `validator-valid`.
+- [x] Failure handling: native transport matrix exercises checker/validator rejection and simulated trust failures; prompt assertions require visible unavailable advisories and hard stops.
+
+Coverage is limited to these fixtures. The committed corpus has no dedicated H3-boundary, multiple-long-body-bullet, marker/compare-line, standalone heredoc-delimiter-line, or blank-body-line fixture, and does not enumerate every truncated UTF-8 prefix. Prompt assertions describe required workflow behaviour without proving a live release run.
 
 ## Acceptance Criteria
 
@@ -206,7 +206,7 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - README, AGENTS, CHANGELOG, and this plan describe the final behaviour.
 - Full CI and pre-merge documentation, code-review, and security-review checks pass.
 
-<!-- reviewed: 2026-11-11 @ a2ccf0ce8c18e20504a0a3c04bd547d60a618edc -->
+<!-- reviewed: 2026-11-11 @ 6fc96ed1862b92d1d873c831911d632baf1f819c -->
 
 ## Progress
 
@@ -232,4 +232,6 @@ Review corrections (2026-11-10): Claude now launches both checker modes through 
 
 Implemented the advisory editorial preflight across Claude and Codex, with policy-only guidance on Pi. The two full workflows share a byte-identical, builtins-only checker and validator; Claude keeps payload and result bytes outside model-authored shell source, and both workflows preserve exact-payload confirmation and all existing mutation boundaries.
 
-Focused verification passed: 52 checker cases, 315 release/Pi contract tests, prompt parity, 182 release-library parity checks, and `just lint-scripts`. The full `just ci` run was stopped at the user's request so commits would not wait on the roughly ten-minute gate; it remains required before the PR.
+Initial implementation verification reported 52 shell-suite assertions, 315 release/Pi contract tests, prompt parity, 182 release-library parity checks, and `just lint-scripts`. These are historical run counts, not an exhaustive coverage claim. That full `just ci` run was stopped at the user's request before completion.
+
+Coverage audit (2026-11-11 UTC): the current checked lists now name committed fixtures and distinguish executable checks from prompt-text assertions. Parent-assisted full `just ci` passed for this documentation correction (exit 0; `/private/tmp/skein-editorial-gauntlet-ci.log`), including release-script, parity, lint, 251 Codex conduct tests, 68 Codex plan-view tests, and 7 site tests. Final gauntlet review and post-commit CI remain pending.
