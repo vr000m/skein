@@ -9,6 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-11-10 | feature | release-editorial-preflight | meta | — | feature/release-editorial-preflight | [plan](20261110-feature-release-editorial-preflight.md) |
 | 2026-11-04 | feature | ai-writing-signs-refresh | content-skills | — | feature/ai-writing-signs-refresh | [plan](20261104-feature-ai-writing-signs-refresh.md) |
 | 2026-10-16 | feature | gauntlet-contract-design-guardrail | review-skills | — | feature/gauntlet-contract-design-guardrail | [plan](20261016-feature-gauntlet-contract-design-guardrail.md) |
 | 2026-10-04 | bug | codex-gauntlet-release-runtime | meta | [#54](https://github.com/vr000m/skein/pull/54) | fix/codex-runtime-release-0.9.2 | [plan](20261004-bug-codex-gauntlet-release-runtime.md) |

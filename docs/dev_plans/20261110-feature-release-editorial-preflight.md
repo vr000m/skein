@@ -29,7 +29,7 @@ Historic release plans establish two constraints this work preserves: release co
 - The checker must be deterministic, read the body from stdin, invoke no subprocesses, emit only the fixed numeric line protocol below, and never echo untrusted release text.
 - The checker accepts valid UTF-8 without NUL. Invalid UTF-8 or NUL exits non-zero with empty stdout/stderr and is surfaced by the workflow as `Editorial preflight unavailable`.
 - Count exact Unicode scalar values, including line endings: LF counts as one character, CRLF as two, and a terminal LF counts when present. For bullet-boundary classification only, ignore one CR immediately before LF so CRLF Markdown is recognised without changing its measured length.
-- The warning is non-blocking after a trusted launch. A successfully launched checker that exits non-zero, exceeds its 65,536-byte input ceiling, or yields invalid metadata becomes `Editorial preflight unavailable` in the confirmation; it never silently reports clean and never weakens or bypasses exact-payload confirmation. Missing/non-executable scripts, unavailable sanctioned launch support, Bash pinning failure, or executable identity drift remain existing fail-closed hard stops.
+- The warning is non-blocking after trusted executable verification. Codex checks both body/result Buffer byte lengths before stdin transport and reports unavailable above 65,536 bytes without launching that advisory child; this never bypasses script availability or pinned-executable identity verification. A successfully launched checker that exits non-zero, exceeds its 65,536-byte input ceiling, or yields invalid metadata becomes `Editorial preflight unavailable` in the confirmation; it never silently reports clean and never weakens or bypasses exact-payload confirmation. Missing/non-executable scripts, unavailable sanctioned launch support, Bash pinning failure, or executable identity drift remain existing fail-closed hard stops.
 - A warning must report the measured body length, each long bullet's ordinal/length, and the thresholds, then offer three actions: revise and recompose, explicitly confirm the exact body as written, or abort without mutation.
 - A title or `## What's New` revision reruns in-memory composition, the editorial check, and the confirmed-payload snapshot. A requested CHANGELOG edit aborts the release run; after the edit is committed, the operator starts again from Step 1 and every preflight is repeated. Accepting the warning preserves the exact already-composed payload.
 - Claude and Codex release libraries remain byte-identical and registered in the release-lib parity allowlist. Their SKILL.md path anchors remain harness-specific.
@@ -62,7 +62,7 @@ graph LR
   Q --> R[Pi exact-payload confirmation]
 ```
 
-The full release workflows pass the already-composed body as raw stdin bytes to a fresh, identity-verified Bash process. Codex uses its documented native `shell:false` launcher with Buffer stdin, an empty environment, pinned Bash, and argv `[<script>]`. Claude validates `TMPDIR` before the first advisory file, uses its existing main-context fixed-source shell boundary with the pinned Bash path and a native-written temporary body file redirected to stdin, and redirects checker and validator stdout directly to separate guarded result files before the model reads canonical metadata. Release text and checker output never enter model-authored shell source, argv, a heredoc, or an environment value. Both launch the same anchored script and preserve their existing executable-identity rules.
+The full release workflows pass within-ceiling composed bodies as raw stdin bytes to a fresh, identity-verified Bash process. Codex checks both body/result Buffer lengths after executable verification and before either stdin write; an oversized Buffer records the unavailable advisory without starting that checker mode. Codex uses its documented native `shell:false` launcher with Buffer stdin, an empty environment, pinned Bash, and argv `[<script>]`. Claude validates `TMPDIR` before the first advisory file, uses its existing main-context fixed-source shell boundary with the pinned Bash path and a native-written temporary body file redirected to stdin, and redirects checker and validator stdout directly to separate guarded result files before the model reads canonical metadata. Release text and checker output never enter model-authored shell source, argv, a heredoc, or an environment value. Both launch the same anchored script and preserve their existing executable-identity rules.
 
 The checker emits this exact ASCII protocol, always with a terminal LF:
 
@@ -167,8 +167,8 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - [x] Valid UTF-8, invalid UTF-8, overlong/surrogate/out-of-range sequences, and NUL tests.
 - [x] Multiline, multiple, `- ` / `* `, indented/nested, H2/H3/H4, LF/CRLF, and terminal-newline bullet-record tests.
 - [x] Exact transport tests include quotes, backticks, command substitutions, a heredoc delimiter line, blank lines, and no final LF; stdout/stderr never contain body content.
-- [x] No-PATH/no-child-process/locale/Bash-3.2 compatibility tests and mutation self-tests prove thresholds, warning polarity, protocol validation, and continuation-line accounting are load-bearing. The pre-push macOS run must assert `/bin/bash` is 3.2; hosted Ubuntu CI runs the same fixtures under Linux Bash.
-- [x] Protocol tests cover checker non-zero, empty/extra output, extra lines/fields, duplicate offender ordinals, fractional/signed/leading-zero/overflow-width values, zero/decreasing ordinals, wrong version/limits, impossible offender lengths, inconsistent count/warn, stderr, the 65,536/65,537-byte ceiling, and a five-second ceiling runtime bound on macOS Bash 3.2.
+- [x] No-PATH/no-child-process/locale tests run with `/bin/bash` on macOS and Linux. The suite does not assert a Bash 3.2 version. Boundary, warning-polarity, protocol-validation, and continuation-line fixtures pass; the checker mutation self-test changes only `BODY_LIMIT` and proves that threshold is load-bearing.
+- [x] Protocol tests cover checker non-zero, empty/extra output, extra lines/fields, duplicate offender ordinals, fractional/signed/leading-zero/overflow-width values, zero/decreasing ordinals, wrong version/limits, impossible offender lengths, inconsistent count/warn, stderr, the 65,536/65,537-byte ceiling, and a five-second ceiling runtime bound using the selected `/bin/bash`.
 - [x] Prompt tests cover missing/non-executable script, unavailable sanctioned launch support, Bash pin failure, and identity drift as hard stops; only trusted-launch checker/result failures may render the unavailable advisory.
 - [x] Both mirrors prove an untemplated run never resolves `jq` for editorial parsing.
 - [x] Claude/Codex prompt-contract and mirror-parity tests.
@@ -206,7 +206,7 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - README, AGENTS, CHANGELOG, and this plan describe the final behaviour.
 - Full CI and pre-merge documentation, code-review, and security-review checks pass.
 
-<!-- reviewed: 2026-11-11 @ d11d55f414bae3a85d5b4cfc8be5366d50643de9 -->
+<!-- reviewed: 2026-11-11 @ a2ccf0ce8c18e20504a0a3c04bd547d60a618edc -->
 
 ## Progress
 
