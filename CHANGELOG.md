@@ -4,6 +4,8 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-11
+
 ### Added
 - `site/`: static site for skein.sh (skill map showing how the skills hand off to each other, plus an install page), served as a Cloudflare Workers assets-only Worker via `wrangler.jsonc`. New recipes `just site-tests`, `site-build`, `site-preview` and `site-deploy`; `site-tests` is part of `just ci`. `site-deploy` refuses uncommitted site files and any branch other than `main` (`SITE_DEPLOY_ANY_BRANCH=1` overrides). The site has a light/dark toggle and `<noscript>` fallbacks.
 - Release editorial preflight: Claude and Codex measure the exact composed release body before confirmation and flag bodies above 3,000 Unicode characters or top-level bullet records above 700 characters without blocking an explicitly accepted payload. The checker is a byte-identical, Bash-3.2-compatible release library with strict UTF-8 validation and a jq-free numeric protocol. Pi presents the same thresholds as guidance without claiming measured counts.
@@ -317,7 +319,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/vr000m/skein/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/vr000m/skein/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vr000m/skein/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/vr000m/skein/compare/v0.10.0...v0.10.1
