@@ -50,7 +50,7 @@ def test_release_is_user_invoked_read_only_by_default():
 def test_release_editorial_policy_is_advisory_without_fake_measurement():
     text = read_skill("release")
     for phrase in (
-        "below 3,000",
+        "at or below 3,000",
         "above 700",
         "does not run the bundled measured checker",
         "claim measured counts",

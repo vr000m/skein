@@ -4525,6 +4525,8 @@ def test_editorial_preflight_transport_is_harness_specific() -> None:
     assert "first validate `TMPDIR` now" in claude
     assert "stdout redirected directly to the guarded raw-result file" in claude
     assert "The model never transcribes checker output" in claude
+    assert "pinned `env` path with `-i`" in claude
+    assert "empty environment before Bash starts" in claude
     assert "`releaseRun` direct-argv Buffer transport" in codex
     assert "Never use an ambient shell fallback" in codex
     for text in (claude, codex):
@@ -4532,6 +4534,75 @@ def test_editorial_preflight_transport_is_harness_specific() -> None:
         assert "missing or identity-drifted Bash is a hard stop" in text
         assert "Script/Bash absence" in text
         assert "Only after a trusted launch" in text
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_editorial_launch_ignores_hostile_startup_state(
+    skill_path: Path, tmp_path: Path
+) -> None:
+    marker = tmp_path / "startup-ran"
+    hook = tmp_path / "startup.sh"
+    hook.write_text(f"printf injected > {shlex.quote(str(marker))}\n")
+    inherited = dict(os.environ)
+    inherited["BASH_ENV"] = str(hook)
+    inherited["BASH_FUNC_printf%%"] = "() { echo injected; }"
+    result = subprocess.run(
+        [
+            "/usr/bin/env",
+            "-i",
+            "/bin/bash",
+            str(skill_path.parent / "lib/editorial-preflight.sh"),
+        ],
+        check=False,
+        input=b"short",
+        capture_output=True,
+        env=inherited,
+        timeout=5,
+    )
+    assert result.returncode == 0
+    assert result.stdout == b"1\t5\t3000\t700\t0\t0\n"
+    assert result.stderr == b""
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+@pytest.mark.parametrize("mode", [[], ["--validate"]])
+def test_editorial_rejects_excess_without_waiting_for_eof(
+    skill_path: Path, mode: list[str], tmp_path: Path
+) -> None:
+    # Keep the writer open after 65,537 bytes. The reader must exit without EOF.
+    import threading
+
+    fifo = tmp_path / "input.fifo"
+    os.mkfifo(fifo)
+    release_writer = threading.Event()
+
+    def feed() -> None:
+        with fifo.open("wb", buffering=0) as stream:
+            stream.write(b"x" * 65537)
+            release_writer.wait(5)
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    try:
+        with fifo.open("rb", buffering=0) as stream:
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    str(skill_path.parent / "lib/editorial-preflight.sh"),
+                    *mode,
+                ],
+                check=False,
+                stdin=stream,
+                capture_output=True,
+                env={},
+                timeout=3,
+            )
+        assert result.returncode == 1
+        assert result.stdout == result.stderr == b""
+    finally:
+        release_writer.set()
+        writer.join(timeout=5)
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)

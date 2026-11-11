@@ -17,10 +17,10 @@ fail() {
 
 read_to_eof() {
 	READ_VALUE=
-	IFS= read -r -d '' READ_VALUE
+	IFS= read -r -n 65537 -d '' READ_VALUE
 	read_rc=$?
 	# With an empty delimiter, read returns success only when it encountered a
-	# NUL. Bash variables cannot preserve that byte, so reject the input.
+	# NUL or reached the byte cap. Reject either without draining stdin.
 	[[ "$read_rc" -ne 0 ]] || fail
 }
 

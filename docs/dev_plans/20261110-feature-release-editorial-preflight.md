@@ -184,13 +184,13 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 
 ### Edge Cases Tested
 
-- [ ] Empty body and body without bullets.
-- [ ] Threshold equality versus threshold-plus-one.
-- [ ] Final line with and without LF; CRLF classification with exact CR+LF measurement.
-- [ ] UTF-8 multibyte characters.
-- [ ] Wrapped bullet continuation lines and multiple long bullets.
-- [ ] Marker/compare lines do not become bullets.
-- [ ] Trusted-launch checker/result failures remain visible and non-blocking; executable trust failures stay hard stops.
+- [x] Empty body and body without bullets.
+- [x] Threshold equality versus threshold-plus-one.
+- [x] Final line with and without LF; CRLF classification with exact CR+LF measurement.
+- [x] UTF-8 multibyte characters.
+- [x] Wrapped bullet continuation lines and multiple long bullets.
+- [x] Marker/compare lines do not become bullets.
+- [x] Trusted-launch checker/result failures remain visible and non-blocking; executable trust failures stay hard stops.
 
 ## Acceptance Criteria
 
@@ -205,7 +205,7 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - README, AGENTS, CHANGELOG, and this plan describe the final behaviour.
 - Full CI and pre-merge documentation, code-review, and security-review checks pass.
 
-<!-- reviewed: 2026-11-10 @ c443180451ad0412b94c94b8a1244911f9a71446 -->
+<!-- reviewed: 2026-11-11 @ aa90ebbbe22e2f2c51e4d4c94f6a7b32b09f8991 -->
 
 ## Progress
 
@@ -226,6 +226,8 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - The original byte-at-a-time Bash scanner took about 10.8 seconds at its 64 KiB ceiling. The final scanner processes bounded chunks, preserves the 65,536-byte contract, and has a five-second ceiling regression on macOS Bash 3.2.
 
 ## Final Results
+
+Review corrections (2026-11-10): Claude now launches both checker modes through pinned `env -i` before Bash starts. Both mirrors bound each stdin read to 65,537 bytes, rejecting excess input without waiting for EOF. Regressions exercise hostile `BASH_ENV`, exported functions, and an open FIFO after the byte ceiling in both modes. Pi accepts threshold equality. The runtime gate requires at most four whole seconds, guaranteeing less than five seconds despite timer truncation. Focused release/Pi contracts pass 315 tests; the checker suite passes 52 cases.
 
 Implemented the advisory editorial preflight across Claude and Codex, with policy-only guidance on Pi. The two full workflows share a byte-identical, builtins-only checker and validator; Claude keeps payload and result bytes outside model-authored shell source, and both workflows preserve exact-payload confirmation and all existing mutation boundaries.
 

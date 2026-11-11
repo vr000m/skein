@@ -175,10 +175,10 @@ printf '1\t65536\t3000\t700\t1\t0\n' >"$TMP/expected"
 ceiling_started=$SECONDS
 run_case "input-ceiling" "$TMP/input" "$TMP/expected"
 ceiling_elapsed=$((SECONDS - ceiling_started))
-if [[ -n "$LEGACY_SCRIPT" || "$ceiling_elapsed" -le 5 ]]; then
+if [[ -n "$LEGACY_SCRIPT" || "$ceiling_elapsed" -le 4 ]]; then
 	pass
 else
-	fail "input ceiling took ${ceiling_elapsed}s (expected at most 5s)"
+	fail "input ceiling took ${ceiling_elapsed}s (expected at most 4 whole seconds, ensuring less than 5s)"
 fi
 write_multibyte_repeat "$TMP/input" 16384
 printf '1\t16384\t3000\t700\t1\t0\n' >"$TMP/expected"

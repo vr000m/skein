@@ -48,7 +48,7 @@ summary from factual release content, written plainly: state the specific change
 embedded in release notes.
 
 Before the existing exact-payload mutation confirmation, apply a non-blocking
-editorial reminder: public release bodies should normally stay below 3,000
+editorial reminder: public release bodies should normally stay at or below 3,000
 characters, and a top-level bullet above 700 characters should be reviewed for
 implementation-log detail that belongs in the CHANGELOG rather than the
 reader-facing release. Pi does not run the bundled measured checker, so never
