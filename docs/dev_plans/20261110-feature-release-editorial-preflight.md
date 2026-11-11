@@ -103,11 +103,11 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 **Validation cmd:** `just check-prompt-parity`
 **Goal:** Every harness surfaces the same advisory thresholds before exact-payload confirmation, while payload composition, confirmation, and remote mutation semantics remain unchanged.
 
-- Add Bash to Step 1b's pinned executable set before any later checker launch. Then invoke the checker after final body composition and the existing snapshot, but before confirmation: Codex uses its native direct-argv/Buffer transport. Claude first validates `TMPDIR` at Step 3 using the later payload contract, creates identity-recorded body/raw-result/canonical-result files, native-writes and locks only the body, redirects checker stdout directly to raw-result, and redirects validator stdout directly to canonical-result before the model reads canonical metadata. Lock and identity-check each producer output before the next consumer, then perform identity-aware cleanup. Never interpolate body/result bytes into model-authored shell source, argv, environment, or a heredoc.
+- Add Bash and `env` to Step 1b's pinned executable set before any later checker launch. Then invoke the checker after final body composition and the existing snapshot, but before confirmation: Codex uses its native direct-argv/Buffer transport. Claude first validates `TMPDIR` at Step 3 using the later payload contract, creates identity-recorded body/raw-result/canonical-result files, native-writes and locks only the body, redirects checker stdout directly to raw-result, and redirects validator stdout directly to canonical-result before the model reads canonical metadata. Lock and identity-check each producer output before the next consumer, then perform identity-aware cleanup. Never interpolate body/result bytes into model-authored shell source, argv, environment, or a heredoc.
 - Run the checker output through the same script's `--validate` mode. Define fail-visible/non-blocking handling for checker non-zero, over-ceiling input, empty/extra output, bad line/field count, noncanonical integer, wrong version/limits, bad ordinal ordering, impossible offender length, inconsistent count, or inconsistent warning. Keep script/Bash absence, pinning failure, identity drift, and unsupported sanctioned launch paths as hard stops.
 - Add the measured warning to Step 4. Show body length/limit, every offender ordinal/length and the bullet limit, plus three actions: accept the exact body, revise, or abort without mutation. Title/summary revision recomposes/rechecks in place; CHANGELOG revision aborts and restarts after commit.
 - Add equivalent advisory-policy language to the Pi release route without measured metadata.
-- Pin ordering, thresholds, full warning display, both decisions, hard-stop versus unavailable semantics, revision state transitions, jq independence, and harness-specific anchors/transports in tests.
+- Pin ordering, thresholds, full warning display, all three actions, hard-stop versus unavailable semantics, revision state transitions, jq independence, and harness-specific anchors/transports in tests.
 - Document the reader-facing release-note heuristic and focused test command.
 
 ## Technical Specifications
@@ -119,6 +119,7 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - `plugins/skein-pi/skills/release/SKILL.md` — Pi preparation warning and second-confirmation contract.
 - `tests/parity/test-applier-bundle-parity.sh` — register the new byte-identical release library.
 - `scripts/check-prompt-parity.sh` — register the new harness-specific invocation line and normalized parity placeholder.
+- `tests/parity/.release-region-length-baseline.tsv` — record the expanded release prompt regions.
 - `tests/parity/test_release_skill_contract.py` — structural ordering and semantic assertions for both full mirrors.
 - `tests/pi/test_orchestration_routes.py` — Pi route assertions.
 - `justfile` and `AGENTS.md` — focused test registration/documentation.
@@ -133,17 +134,17 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 
 ### Architecture Decisions
 
-- Use a shipped pure-Bash library instead of model-estimated counts or new external executables. This keeps the check deterministic and preserves the release workflow's pinned-executable boundary.
+- Use a shipped pure-Bash library for deterministic counts. Pin `env` for Claude's isolated interpreter launch; the checker itself invokes no subprocesses. This keeps the check deterministic and preserves the release workflow's pinned-executable boundary.
 - Count validated UTF-8 Unicode scalar values, not bytes, so non-ASCII prose receives documented character semantics. Implement validation/counting with Bash builtins under a byte-stable locale; malformed UTF-8 and NUL take the fixed unavailable path.
 - Emit and validate the exact versioned numeric line protocol above. Fixed ASCII fields prevent release content from reaching diagnostics and avoid an unconditional JSON-parser/`jq` dependency.
 - Keep the check advisory and fail-visible. A missing/malformed result is itself displayed before confirmation but never changes the payload or authorizes mutation.
 - Keep thresholds fixed in the checker and repeated literally in the workflow/tests so drift is caught by contract tests.
-- Pin Bash during Step 1b. Codex launches it through the documented native direct-argv mechanism with an empty environment and Buffer stdin. Claude uses its established fixed-source main-context shell boundary and the dedicated Step 3 identity-locked, byte-readback-verified, native-written body file plus direct-stdout raw and canonical result files defined above; no payload bytes enter model-authored shell source. The script launches no child and never consumes `PATH`.
+- Pin Bash and `env` during Step 1b. Codex launches Bash through the documented native direct-argv mechanism with an empty environment and Buffer stdin. Claude launches pinned Bash through pinned `env -i` within its fixed-source main-context shell boundary, using the dedicated Step 3 identity-locked, byte-readback-verified, native-written body file plus direct-stdout raw and canonical result files defined above; no payload bytes enter model-authored shell source. The script launches no child and never consumes `PATH`.
 
 ### Dependencies
 
 - No new package dependency. The repository has no root `pyproject.toml`, `Cargo.toml`, or `go.mod`; `package.json` contains only Pi skill registration.
-- Bash remains the library runtime; the checker launches no child process.
+- Bash remains the library runtime; the checker launches no child process. The Claude caller requires pinned `env` to clear the child environment before Bash starts.
 
 ### Integration Seams
 
@@ -205,7 +206,7 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 - README, AGENTS, CHANGELOG, and this plan describe the final behaviour.
 - Full CI and pre-merge documentation, code-review, and security-review checks pass.
 
-<!-- reviewed: 2026-11-11 @ aa90ebbbe22e2f2c51e4d4c94f6a7b32b09f8991 -->
+<!-- reviewed: 2026-11-11 @ d11d55f414bae3a85d5b4cfc8be5366d50643de9 -->
 
 ## Progress
 
@@ -227,8 +228,8 @@ Pi remains a separate prompt-only route. It shows the same 3,000/700 heuristic a
 
 ## Final Results
 
-Review corrections (2026-11-10): Claude now launches both checker modes through pinned `env -i` before Bash starts. Both mirrors bound each stdin read to 65,537 bytes, rejecting excess input without waiting for EOF. Regressions exercise hostile `BASH_ENV`, exported functions, and an open FIFO after the byte ceiling in both modes. Pi accepts threshold equality. The runtime gate requires at most four whole seconds, guaranteeing less than five seconds despite timer truncation. Focused release/Pi contracts pass 315 tests; the checker suite passes 52 cases.
+Review corrections (2026-11-10): Claude now launches both checker modes through pinned `env -i` before Bash starts. Both mirrors bound each stdin read to 65,537 bytes, rejecting excess input without waiting for EOF. Regressions exercise hostile `BASH_ENV`, exported functions, and an open FIFO after the byte ceiling in both modes. Pi accepts threshold equality. The runtime gate requires at most four whole seconds, guaranteeing less than five seconds despite timer truncation.
 
 Implemented the advisory editorial preflight across Claude and Codex, with policy-only guidance on Pi. The two full workflows share a byte-identical, builtins-only checker and validator; Claude keeps payload and result bytes outside model-authored shell source, and both workflows preserve exact-payload confirmation and all existing mutation boundaries.
 
-Focused verification passed: 52 checker cases, 309 release/Pi contract tests, prompt parity, 182 release-library parity checks, and `just lint-scripts`. The full `just ci` run was stopped at the user's request so commits would not wait on the roughly ten-minute gate; it remains required before the PR.
+Focused verification passed: 52 checker cases, 315 release/Pi contract tests, prompt parity, 182 release-library parity checks, and `just lint-scripts`. The full `just ci` run was stopped at the user's request so commits would not wait on the roughly ten-minute gate; it remains required before the PR.
