@@ -301,7 +301,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 ## Progress
 
-- [ ] Phase 1: Skill, sidecar, registration and contract tests (one commit)
+- [x] Phase 1: Skill, sidecar, registration and contract tests (one commit)
 - [ ] Phase 2: Human dogfood (conduct pauses here)
 - [ ] Phase 3: Docs, invocation-mode record and full CI
 
@@ -311,6 +311,14 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 
 - `/review-plan` run `20261114T120723`: 41 findings (1 Critical, 26 Important, 14 Minor); all addressed in the contract above. Full envelope: `.review-plan/latest-claude.json`.
 - Codex advisory (codex-cli 0.169.0, ran): verdict NEEDS-INDEPENDENT-CHANGES — sidecar for invocation mode, Codex tool tokens, capability-qualified image/link instructions, `codex exec` note; structure and confirmation rule stay shared. Image comprehension, link retrieval and late-event labelling were not tested; they are Phase 2 cases.
+
+### Phase 1 (2026-11-14, commit 4024b21)
+
+- Codex half drafted by Codex's model via `codex:rescue`; the report said the Codex CLI did not run, but the companion log shows a Codex thread applied the edits and ran shellcheck, shfmt and the Codex contract test. No nested CLI call, no CLI version reported. Reviewed and re-tested here: 55/55.
+- Claude half written here, aligned to the Codex gate block; mirror-parity test passes (blocks byte-identical after removing the two `<!-- harness-tokens -->` lines per file). Contract tests: Claude 60/60, Codex 55/55, parity 6/6.
+- Registration tests pass at 16 skills (presence, managed-skills parity, manifests, Pi inventory, site). Pi plan marker still valid after the new row.
+- `just ci` stops at `lint-python`: pre-existing ruff `SIM102` in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261`, identical to `main`, not touched here. The other ten ci recipes pass when run directly.
+- Phase 2 and 3 not started.
 
 ### Review Waivers
 
