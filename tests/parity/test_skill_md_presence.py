@@ -41,6 +41,7 @@ MANAGED_SKILLS = [
     "dev-plan",
     "fan-out",
     "grill",
+    "in-your-own-words",
     "plan-view",
     "release",
     "review-gauntlet",

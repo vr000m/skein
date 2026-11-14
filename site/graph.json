@@ -231,6 +231,14 @@
       "pairsWith": [
         "content-draft"
       ]
+    },
+    {
+      "id": "in-your-own-words",
+      "summary": "Restates your steering input as goal, problem, ask, guesses and gaps, then stops until you confirm.",
+      "pairsWith": [
+        "grill",
+        "dev-plan"
+      ]
     }
   ],
   "bands": [
