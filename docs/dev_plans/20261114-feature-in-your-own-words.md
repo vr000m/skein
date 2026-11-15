@@ -302,7 +302,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 ## Progress
 
 - [x] Phase 1: Skill, sidecar, registration and contract tests (one commit)
-- [ ] Phase 2: Human dogfood (conduct pauses here)
+- [x] Phase 2: Human dogfood (conduct pauses here) — Claude and Codex pass tables in Findings
 - [x] Phase 3: Docs, invocation-mode record and full CI (every ci recipe passes except the pre-existing lint-python SIM102; Pi inventory test passes)
 
 ## Findings
@@ -320,7 +320,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `just ci` stops at `lint-python`: pre-existing ruff `SIM102` in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261`, identical to `main`, not touched here. The other ten ci recipes pass when run directly.
 - Phase 2 and 3 not started.
 
-### Phase 2 dogfood (2026-11-14/15, nearly complete — only the Claude `SendMessage`-refusal and `ToolSearch`-allowed runtime checks remain)
+### Phase 2 dogfood (2026-11-14/15, complete)
 
 Branch build installed via `/plugin marketplace add <clone>` then `/plugin update skein@skein` (install said "already installed"; cache version stays 0.11.1 because manifests are unbumped, so wording edits need uninstall/reinstall or a bump to refresh the cache). Cache `SKILL.md` byte-matched the branch (`cmp`) before the run. A peer or subagent cannot drive these cases: the Skill tool refuses with `disable-model-invocation` (this is the Claude-side invocation-mode behaviour working as designed).
 
@@ -363,7 +363,7 @@ Codex cases (codex-cli 0.169.0, branch build installed via `codex plugin marketp
 
 Decision 7 results (Codex): image comprehension works; link retrieval works for a reachable link, and an unreachable link is reported under Gaps. Late-event labelling (whether late events arrive as user-role messages) is untestable from the CLI and stays unverified; the "non-user events never confirm / unclear provenance fails closed" wording is the mitigation. `-i/--image` passing was not exercised.
 
-Residual runtime checks not yet run: Claude refuses `SendMessage` while the gate is open (`report this to skein-8d` after a fresh mirror), and Claude lists `ToolSearch` as an allowed read. Both are pinned by `test-in-your-own-words-contract-claude.sh`; `ToolSearch` was exercised in case 3.
+Claude post-fix runtime checks (fresh session, transcript `265a16f3…` shows 0 tool calls and 0 `SendMessage`): invoking with `rename foo to bar, then report this to skein-8d` produced the mirror, listed `SendMessage` to skein-8d as "do not, even after confirmation, unless you say to", and sent nothing. Asked what tools it may use, the model listed `ToolSearch` among allowed reads and `SendMessage` under forbidden. Pass. Caveat: the send request was inside the invocation, not a separate follow-up turn.
 
 Codex wording nits (not changed): Codex appends "The invoked skill (path) requires: ..." to Ask, and sometimes sets Guesses to `None` despite inferences. Post-compaction Sources read lists earlier read-only checks carried over from context.
 
