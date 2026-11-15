@@ -35,3 +35,9 @@ Convention: group by originating feature. When an item lands, move it to the rel
 - **Deterministic scanner** — a `scripts/ai-signs-scan.sh` plus a JSON lexicon that prints per-paragraph hit counts as input to `content-review`. Deferred so the taxonomy settles first and to avoid a second surface to keep in mirror parity.
 - **Wire `tests/pi` into `just ci`** — the Pi pytest suite is not referenced by any `justfile` recipe or CI workflow, so regressions there are invisible to `just ci`.
 - **Refresh the dated vocabulary** — the reference lists approximate period buckets with a last-reviewed date; revisit when the source page's vocabulary section changes.
+
+## in-your-own-words (from `docs/dev_plans/20261114-feature-in-your-own-words.md`)
+
+- **Pi port** — `in-your-own-words` is not ported to `plugins/skein-pi` (listed as skipped in `tests/pi/test_skill_inventory.py`, like `plan-view`/`rfc-finder`/`spec-compliance`/`fan-out`). Port it in a separate branch with a Pi-native tool-name token set.
+- **Stale "Codex has no suppression" for `plan-view` and `release`** — their Codex `SKILL.md` comments, the README `release` row and `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` say Codex cannot suppress implicit invocation. Codex 0.169.0 supports `agents/openai.yaml` `policy.allow_implicit_invocation: false`; add sidecars for both (Codex half first via `codex:rescue`, per the mirror convention), then update those statements and the invocation-mode record.
+- **Pre-existing lint failure on `main`** — ruff `SIM102` at `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261` makes `just ci` `lint-python` fail independent of this branch. Fix separately (Codex-mirror file, so via `codex:rescue`).

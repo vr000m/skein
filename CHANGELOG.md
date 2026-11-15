@@ -4,6 +4,9 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+### Added
+- `in-your-own-words` skill: an alignment gate that restates your steering input (chat, screenshots, links) as Sources read / Goal / Problem / Ask / Guesses / Gaps and stops until you explicitly confirm. User-invoked only: `/skein:in-your-own-words` on Claude (`disable-model-invocation: true`) and `$in-your-own-words` on Codex, where implicit invocation is suppressed by the new sidecar `plugins/skein-codex/skills/in-your-own-words/agents/openai.yaml` (tested on codex-cli 0.169.0). Ships both mirrors, Claude and Codex contract tests, a mirror-parity test, a docs test, and a `tools` entry in `site/graph.json`. Not ported to Pi (tracked in `docs/BACKLOG.md`).
+
 ## [0.11.1] - 2026-11-11
 
 ### Added
