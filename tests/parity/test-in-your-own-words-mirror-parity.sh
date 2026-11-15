@@ -57,8 +57,12 @@ fi
 
 # The harness-tagged lines carry the whole tool policy, so compare their harness-neutral
 # class markers in both mirrors (tool names differ by design and are pinned per harness).
-tagged_line() { # tagged_line <file> <prefix>
-	grep -F ' <!-- harness-tokens -->' "$1" | grep -F -- "- $2" | head -n 1
+tagged_line() { # tagged_line <file> <prefix>: only lines inside the anchored gate block
+	awk -v b="$BEGIN" -v e="$END" '
+		$0 == b { inside = 1; next }
+		$0 == e { inside = 0; next }
+		inside { print }
+	' "$1" | grep -F ' <!-- harness-tokens -->' | grep -F -- "- $2" | head -n 1
 }
 forbidden_markers=(
 	'file edits via'
@@ -74,8 +78,7 @@ forbidden_markers=(
 allowed_markers=(
 	'Allowed before confirmation, including when re-mirroring a correction:'
 	'reading files and search'
-	'read-only'
-	'(`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`) without redirection, `rg --pre`, `--web`, `git -c`, `--ext-diff` or `--textconv`'
+	'limited to exact forms (`cat <file>`, `ls`, `rg <pattern> [path]` with only `-n`, `-i`, `-w`, `-F`, `-l` or `-c`, `git status`, `git diff|log|show --no-ext-diff --no-textconv`, `gh pr|issue view` without `--web`), with no environment assignment, no redirection, no global git option before the subcommand, and no flag that names an output file or a program;'
 	'read-only fetches of supplied links with'
 	'read-only MCP resource reads.'
 )

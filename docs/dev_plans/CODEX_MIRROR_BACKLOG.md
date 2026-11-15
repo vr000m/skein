@@ -18,11 +18,11 @@ Do not list ordinary harness-specific wording as drift. `SKILL.md` files may leg
 
 ### 2026-11-14 — `in-your-own-words` sanctioned Claude/Codex divergence (permanent, harness-imposed — not deferred drift)
 
-Source: `docs/dev_plans/20261114-feature-in-your-own-words.md`. The anchored gate block is identical across mirrors; the divergences below are intentional and need no reconciliation.
+Source: `docs/dev_plans/20261114-feature-in-your-own-words.md`. The anchored gate block is required to be identical across mirrors except for harness-tagged lines; the divergences below are intentional and need no reconciliation.
 
-- **Codex sidecar:** `plugins/skein-codex/skills/in-your-own-words/agents/openai.yaml` sets `policy.allow_implicit_invocation: false`, the Codex counterpart of Claude's `disable-model-invocation: true` frontmatter. The Codex skill directory is therefore not `SKILL.md`-only. Verified on codex-cli 0.169.0; a Codex CLI that does not read the sidecar leaves the skill model-invocable (README states the tested version).
-- **Tool-name tokens:** the forbidden-tool lists use Codex names (`apply_patch`, `exec_command`, `shell_command`, `write_stdin`, `spawn_agent`, `view_image`) instead of Claude's (`Edit`, `Write`, `Bash`, `Agent`, `NotebookEdit`).
-- **Image/link instructions:** the Codex mirror uses `view_image` and `web_search` `open_page`/`find_in_page` for screenshots and links. Screenshot comprehension and link retrieval were not independently verified (Phase 2 dogfood cases).
+- **Codex frontmatter/sidecar:** `plugins/skein-codex/skills/in-your-own-words/agents/openai.yaml` sets `policy.allow_implicit_invocation: false`, the Codex counterpart of Claude's `disable-model-invocation: true` frontmatter; Codex omits that frontmatter key and retains `argument-hint`. The Codex skill directory is therefore not `SKILL.md`-only. Verified on codex-cli 0.169.0; a Codex CLI that does not read the sidecar leaves the skill model-invocable (README states the tested version).
+- **Tool-name tokens:** the forbidden-tool lists use Codex names (`apply_patch`, `exec_command`, `shell_command`, `write_stdin`, `spawn_agent`, `view_image`) instead of Claude's (`Edit`, `Write`, `Bash`, `Agent`, `NotebookEdit`). Codex forbids outward messages via `send_input` where Claude forbids `SendMessage`, and has no equivalent of Claude's `ToolSearch` allowance.
+- **Image/link instructions:** the Codex mirror uses `view_image` and `web__run` (`open`, `find`) for screenshots and links. Screenshot comprehension and link retrieval were not independently verified (Phase 2 dogfood cases).
 - **`codex exec` note:** the Codex mirror states that `codex exec` ends at the gate and confirmation needs a resumed invocation carrying the user's own confirming turn.
 - **Pi:** not ported; tracked in `docs/BACKLOG.md`.
 
