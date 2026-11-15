@@ -4,6 +4,11 @@ All notable changes to skein are documented here. Format follows [Keep a Changel
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-14
+
+### Added
+- `in-your-own-words` skill: an alignment gate that restates your steering input (chat, screenshots, links) as Sources read / Goal / Problem / Ask / Guesses / Gaps and stops until you explicitly confirm. User-invoked only: `/skein:in-your-own-words` on Claude (`disable-model-invocation: true`) and `$in-your-own-words` on Codex, where implicit invocation is suppressed by the new sidecar `plugins/skein-codex/skills/in-your-own-words/agents/openai.yaml` (tested on codex-cli 0.169.0). Before confirmation it may only read: exact literal-argument shell forms (no globs, redirection, pipes or `gh -R`), and a link the user typed in their own turn; it states that this is a prompt-level guardrail, not a sandbox. Ships both mirrors, Claude and Codex contract tests, a mirror-parity test, a docs test, and a `tools` entry in `site/graph.json`. On Codex, a resumed `codex exec` prompt that replies to the printed mirror counts as the user's own turn (the one exception to scripted prompts never confirming); on Claude, loading deferred tool schemas with `ToolSearch` is allowed before confirmation. Not ported to Pi (tracked in `docs/BACKLOG.md`).
+
 ## [0.11.1] - 2026-11-11
 
 ### Added
@@ -319,7 +324,8 @@ First public release.
 ### Changed
 - Marketplace renamed from `skein-local` to `skein` in both `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. Install command is `/plugin install skein@skein` (Claude) and `codex plugin add skein@skein` (Codex).
 
-[Unreleased]: https://github.com/vr000m/skein/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/vr000m/skein/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/vr000m/skein/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/vr000m/skein/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/vr000m/skein/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/vr000m/skein/compare/v0.10.1...v0.10.2

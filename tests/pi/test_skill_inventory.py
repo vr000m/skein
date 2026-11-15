@@ -19,7 +19,7 @@ READY = {
     "conduct",
     "release",
 }
-SKIPPED = {"plan-view", "rfc-finder", "spec-compliance", "fan-out"}
+SKIPPED = {"plan-view", "rfc-finder", "spec-compliance", "fan-out", "in-your-own-words"}
 EXPECTED = {
     "conduct",
     "content-draft",
@@ -28,6 +28,7 @@ EXPECTED = {
     "dev-plan",
     "fan-out",
     "grill",
+    "in-your-own-words",
     "plan-view",
     "release",
     "review-gauntlet",
@@ -53,7 +54,7 @@ def test_inventory_covers_both_harnesses_and_exact_readiness():
         for line in table.splitlines()
         if line.startswith("| ") and "/skill:skein-" in line
     ]
-    assert len(rows) == 15
+    assert len(rows) == 16
     assert {row[0] for row in rows} == EXPECTED
     for name, command, readiness, dependencies, claude, codex, pi in rows:
         assert command == f"`/skill:skein-{name}`"
