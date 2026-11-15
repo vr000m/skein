@@ -393,6 +393,10 @@ Gates: Codex adversarial approved (0 findings); `skein:deep-review` (4 lenses) f
 
 Gates: Codex adversarial approved (0 findings, second consecutive approval); `skein:deep-review` (4 lenses) found 0 Critical, 0 Important and 5 Minor. Fixes: the shell-form qualifier "no unquoted glob, variable, ..." could be read as allowing `"$(cmd)"` inside quotes, so both Allowed lines now say "no glob outside quotes, and no variable, backtick or command substitution even inside quotes" (round 4's wording change introduced the ambiguity); the Claude test now asserts exactly one `- Allowed before` line in the skill and compares it by equality (an extra wider line after the END anchor now fails); plan Requirements name `ToolSearch` (Claude only) and the `codex exec` resume exception, and `CODEX_MIRROR_BACKLOG.md` records the exception. The round 4 and round 5 findings are all Minor and come from the previous round's own wording edits.
 
+### Review-gauntlet stop (2026-11-15)
+
+The loop was stopped manually after round 5 on the user's decision. The ledger decision was `confirm` (one more clean full pass), not `success`. Rounds 4 and 5 each had Codex adversarial approve and only Minor findings, every one introduced by the previous round's own wording edits; `/security-review` last ran in round 3 (clean) and the security lens found no bypass in rounds 4 and 5. Not covered: a clean round 6, and `/security-review` on the final wording. Still owed by the user: rerun of the fresh-session Claude and Codex mirror dogfood (wording changed after the Phase 2 runs).
+
 ### Review Waivers
 
 - (none)
