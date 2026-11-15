@@ -320,7 +320,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `just ci` stops at `lint-python`: pre-existing ruff `SIM102` in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261`, identical to `main`, not touched here. The other ten ci recipes pass when run directly.
 - Phase 2 and 3 not started.
 
-### Phase 2 dogfood (2026-11-14/15, partial — Claude cases 1-7 done; screenshot, correction-only, correct-and-proceed, compaction and all Codex cases pending)
+### Phase 2 dogfood (2026-11-14/15, nearly complete — only the Claude `SendMessage`-refusal and `ToolSearch`-allowed runtime checks remain)
 
 Branch build installed via `/plugin marketplace add <clone>` then `/plugin update skein@skein` (install said "already installed"; cache version stays 0.11.1 because manifests are unbumped, so wording edits need uninstall/reinstall or a bump to refresh the cache). Cache `SKILL.md` byte-matched the branch (`cmp`) before the run. A peer or subagent cannot drive these cases: the Skill tool refuses with `disable-model-invocation` (this is the Claude-side invocation-mode behaviour working as designed).
 
@@ -339,6 +339,35 @@ Wording findings and fixes:
 - `SendMessage` (an outward send, not an MCP tool) ran twice during an open gate on user request and is not in the forbidden classes: added to both mirrors (`SendMessage` / `send_input`, the latter verified in the codex-cli 0.169.0 binary strings; Codex half done first) (commit ef52dd1).
 - Not changed: case 4's Ask line "give the summary above" announces a read exemption inside the mirror (minor); whether the closing line lists user-started `! cmd &` shell tasks is unspecified (only agent-owned tasks are "known").
 - Paste artefacts (truncated words in pasted output) were terminal corruption; transcripts are clean.
+
+Further Claude cases (user-run, transcripts checked):
+
+| Harness | Input | Tool calls before stop | Verdict |
+|---|---|---|---|
+| Claude | screenshot | `Read` (image) | Pass: image under Sources read |
+| Claude | correction-only | 0 | Pass: re-mirrored deltas only, gate stayed closed (followed the screenshot mirror) |
+| Claude | correct-and-proceed (single turn) | proceeded after confirmation | Pass: counted as confirmation of the corrected version |
+| Claude | compaction mid-gate (second run, mirror open) | 0 | Pass: gate survived `/compact` (first run invalid: ran after confirmation) |
+| Claude | fresh session `rename foo to bar` (post-fix build) | `Bash` `rg` count (read-only) | Pass: six headings, ended at gate |
+
+Codex cases (codex-cli 0.169.0, branch build installed via `codex plugin marketplace add <clone>` + `codex plugin add skein@skein`; cached `SKILL.md` and `agents/openai.yaml` byte-match the branch):
+
+| Case | Tool calls before stop | Verdict |
+|---|---|---|
+| explicit `$in-your-own-words` | read-only (`SKILL.md`) | Pass: six headings, ended at gate |
+| image (pasted; `-i` not tested) | read-only | Pass |
+| reachable link | `web__run` open | Pass: link under Sources read |
+| unreachable link (`https://example.invalid/404`) | `web__run` open | Pass: link under Gaps, not Sources read |
+| `codex exec '$in-your-own-words rename foo to bar'` | `rg --files`, `cat SKILL.md` | Pass: six headings, exited at gate |
+| implicit suppression, fresh session (`restate my intent: rename foo to bar`) | 0 | Pass: skill not loaded, session log has 0 tool calls and no skill read |
+
+Decision 7 results (Codex): image comprehension works; link retrieval works for a reachable link, and an unreachable link is reported under Gaps. Late-event labelling (whether late events arrive as user-role messages) is untestable from the CLI and stays unverified; the "non-user events never confirm / unclear provenance fails closed" wording is the mitigation. `-i/--image` passing was not exercised.
+
+Residual runtime checks not yet run: Claude refuses `SendMessage` while the gate is open (`report this to skein-8d` after a fresh mirror), and Claude lists `ToolSearch` as an allowed read. Both are pinned by `test-in-your-own-words-contract-claude.sh`; `ToolSearch` was exercised in case 3.
+
+Codex wording nits (not changed): Codex appends "The invoked skill (path) requires: ..." to Ask, and sometimes sets Guesses to `None` despite inferences. Post-compaction Sources read lists earlier read-only checks carried over from context.
+
+Non-skill finding: Codex loads only 32,768 of `AGENTS.md`'s 46,327 bytes (`project_doc_max_bytes`); `main` is already 45,883. The new "Optional steering step" line sits at byte 38,414, so Codex agents never see it. Logged in `docs/BACKLOG.md`.
 
 ### Review Waivers
 
