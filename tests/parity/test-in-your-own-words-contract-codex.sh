@@ -78,7 +78,7 @@ check "exactly six headings in order, Sources read first" "$rc"
 # (a) Output block and input boundary.
 in_block "first mirror includes every heading" 'On the first mirror, always include all six headings below in this order.'
 in_block "empty sections say None" "Use \`None\` for an empty section."
-in_block "sources are actually consumed" 'List only what was actually consumed, identifying each message, image or fetched link.'
+in_block "sources are actually consumed" 'List only what was actually consumed, identifying each message, image, fetched link, file or lookup result.'
 in_block "Ask includes do and do not" 'State both what to do next and what not to do.'
 in_block "each guess is labelled" 'Label each guess "inferred, not read".'
 in_block "all gaps and questions stay in the block" 'Include every unresolved item, phrased as a question when an answer is needed. There is no separate question channel.'
@@ -86,6 +86,8 @@ in_block "closing status reports nothing changed and known work" 'Close the bloc
 in_block "plain-text confirmation prompt" 'End with the plain-text prompt "Confirm, or correct any section above."'
 in_skill "unreadable inputs are gaps" 'An unreadable image or link goes under Gaps, never Sources read.'
 in_skill "empty input gets one line, no block" 'With no steering input at all, reply with one line asking for it; do not emit a block, and keep the gate closed.'
+in_skill "first supplied input must be mirrored" 'The next turn that supplies input is mirrored first; a bare confirmation with nothing yet mirrored never lifts the stop.'
+in_skill "supplied links use read-only fetches" "Fetch supplied links read-only with \`web_search\` actions \`open_page\` / \`find_in_page\`; never save a fetched response to a file."
 
 # (b) Closed read-only allowlist and forbidden classes.
 in_block "hard stop starts at invocation" 'From invocation until explicit confirmation, all mutations are forbidden. After the block, end the turn and wait.'
@@ -94,8 +96,8 @@ in_block "state-changing shell forbidden" "state-changing use of \`exec_command\
 in_block "subagent dispatch forbidden" "spawning subagents via \`spawn_agent\` and any agent dispatch;"
 in_block "agent and session messages forbidden" "sending messages to other agents or sessions via \`send_input\`;"
 in_block "MCP writes forbidden by capability" 'write-capable MCP tools (create, update, delete, send, publish).'
-in_block "file and shell reads allowed" "Allowed before mirroring: reading files and search; read-only shell (\`cat\`, \`rg\`, \`ls\`, \`git status|diff|log|show\`, \`gh … view\`);"
-in_block "image, supplied link and resource reads allowed" "\`view_image\`; read-only fetches of supplied links with \`web_search\` (\`open_page\`, \`find_in_page\`); read-only MCP resource reads."
+in_block "file and shell reads allowed" "Allowed before confirmation, including when re-mirroring a correction: reading files and search; read-only shell (\`cat\`, \`rg\`, \`ls\`, \`git status|diff|log|show\`, \`gh … view\`);"
+in_block "image, supplied link and resource reads allowed" "\`view_image\`; read-only fetches of supplied links with \`web_search\` (\`open_page\`, \`find_in_page\`); read-only MCP resource reads, and read-only MCP tools used to open supplied links."
 in_block "anything outside allowlist forbidden" 'Anything not on the read-only allowlist is treated as forbidden.'
 
 # (c)-(h) Confirmation semantics, provenance, precedence, trust and persistence.
@@ -129,9 +131,26 @@ rc=0
 [ "$count" -eq 0 ] || rc=1
 check "frontmatter has zero disable-model-invocation lines" "$rc"
 
-# The requested sidecar has exactly this policy, with a boolean rather than a string.
+# Check the policy value while allowing other sidecar metadata.
 rc=0
-[ "$(cat "$SIDECAR")" = $'policy:\n  allow_implicit_invocation: false' ] || rc=1
+if python3 -c 'import yaml' 2>/dev/null; then
+	python3 -c '
+import sys
+import yaml
+with open(sys.argv[1], encoding="utf-8") as source:
+    data = yaml.safe_load(source)
+policy = data.get("policy") if isinstance(data, dict) else None
+sys.exit(0 if isinstance(policy, dict) and policy.get("allow_implicit_invocation") is False else 1)
+' "$SIDECAR" || rc=$?
+else
+	awk '
+		/^[[:space:]]*(#.*)?$/ { next }
+		/^policy:[[:space:]]*(#.*)?$/ { in_policy = 1; next }
+		/^[^[:space:]]/ { in_policy = 0 }
+		in_policy && /^[[:space:]]+allow_implicit_invocation:[[:space:]]+false[[:space:]]*(#.*)?$/ { found = 1 }
+		END { exit !found }
+	' "$SIDECAR" || rc=$?
+fi
 check "sidecar policy disables implicit invocation" "$rc"
 in_skill "exec confirmation needs resume" "\`codex exec\` ends at the gate; confirmation needs a resumed invocation"
 

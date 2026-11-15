@@ -18,10 +18,11 @@ Invoke as `$in-your-own-words [focus]`.
 
 - Use the conversation's steering input and any pasted text.
 - Read screenshots or images supplied via `-i` / `--image`, or inspect a local image with `view_image`.
-- Fetch supplied links read-only with `web_search` actions `open_page` / `find_in_page`, or `curl` only if the sandbox allows network access; never save a fetched response to a file.
+- Fetch supplied links read-only with `web_search` actions `open_page` / `find_in_page`; never save a fetched response to a file.
 - Use the optional focus argument to emphasise the requested issue or goal without inventing missing context.
 - An unreadable image or link goes under Gaps, never Sources read.
 - With no steering input at all, reply with one line asking for it; do not emit a block, and keep the gate closed.
+- The next turn that supplies input is mirrored first; a bare confirmation with nothing yet mirrored never lifts the stop.
 
 <!-- BEGIN IN-YOUR-OWN-WORDS GATE -->
 ## Mirror and confirmation gate
@@ -29,7 +30,7 @@ Invoke as `$in-your-own-words [focus]`.
 On the first mirror, always include all six headings below in this order. Use `None` for an empty section.
 
 ### Sources read
-List only what was actually consumed, identifying each message, image or fetched link.
+List only what was actually consumed, identifying each message, image, fetched link, file or lookup result.
 
 ### Goal
 State the outcome the user wants.
@@ -51,7 +52,7 @@ Close the block with "Changed since invocation: nothing." and list any workers o
 From invocation until explicit confirmation, all mutations are forbidden. After the block, end the turn and wait.
 
 - Forbidden: file edits via `apply_patch`; notebook changes through any tool; state-changing use of `exec_command`, `shell_command`, `write_stdin` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `spawn_agent` and any agent dispatch; sending messages to other agents or sessions via `send_input`; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
-- Allowed before mirroring: reading files and search; read-only shell (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); `view_image`; read-only fetches of supplied links with `web_search` (`open_page`, `find_in_page`); read-only MCP resource reads. <!-- harness-tokens -->
+- Allowed before confirmation, including when re-mirroring a correction: reading files and search; read-only shell (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); `view_image`; read-only fetches of supplied links with `web_search` (`open_page`, `find_in_page`); read-only MCP resource reads, and read-only MCP tools used to open supplied links. <!-- harness-tokens -->
 
 Anything not on the read-only allowlist is treated as forbidden.
 

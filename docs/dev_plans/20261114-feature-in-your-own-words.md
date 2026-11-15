@@ -367,6 +367,8 @@ Claude post-fix runtime checks (fresh session, transcript `265a16f3…` shows 0 
 
 Codex wording nits (not changed): Codex appends "The invoked skill (path) requires: ..." to Ask, and sometimes sets Guesses to `None` despite inferences. Post-compaction Sources read lists earlier read-only checks carried over from context.
 
+Post-dogfood wording fixes from `/code-review xhigh --fix` (Codex half first via `codex:rescue`, then Claude): dropped the `curl` fallback from the Codex Inputs (not on the allowlist); a read-only MCP tool may now open a supplied link; Sources read also lists files and lookup results consumed; the allowlist now applies "before confirmation, including when re-mirroring a correction"; a bare confirmation with nothing yet mirrored never lifts the stop; the Codex sidecar test accepts extra metadata. These are wording-only and test-pinned; the fresh-session runs above predate them and were not repeated.
+
 Non-skill finding: Codex loads only 32,768 of `AGENTS.md`'s 46,327 bytes (`project_doc_max_bytes`); `main` is already 45,883. The new "Optional steering step" line sits at byte 38,414, so Codex agents never see it. Logged in `docs/BACKLOG.md`.
 
 ### Review Waivers

@@ -21,6 +21,7 @@ Invoke as `/skein:in-your-own-words [focus]`.
 - Use the optional focus argument to emphasise the requested issue or goal without inventing missing context.
 - An unreadable image or link goes under Gaps, never Sources read.
 - With no steering input at all, reply with one line asking for it; do not emit a block, and keep the gate closed.
+- The next turn that supplies input is mirrored first; a bare confirmation with nothing yet mirrored never lifts the stop.
 
 <!-- BEGIN IN-YOUR-OWN-WORDS GATE -->
 ## Mirror and confirmation gate
@@ -28,7 +29,7 @@ Invoke as `/skein:in-your-own-words [focus]`.
 On the first mirror, always include all six headings below in this order. Use `None` for an empty section.
 
 ### Sources read
-List only what was actually consumed, identifying each message, image or fetched link.
+List only what was actually consumed, identifying each message, image, fetched link, file or lookup result.
 
 ### Goal
 State the outcome the user wants.
@@ -50,7 +51,7 @@ Close the block with "Changed since invocation: nothing." and list any workers o
 From invocation until explicit confirmation, all mutations are forbidden. After the block, end the turn and wait.
 
 - Forbidden: file edits via `Edit`, `Write`; notebook changes via `NotebookEdit` or any other tool; state-changing use of `Bash` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `Agent` and any agent dispatch; sending messages to other agents or sessions via `SendMessage`; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
-- Allowed before mirroring: reading files and search with `Read`, `Grep`, `Glob`; read-only `Bash` (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); viewing images with `Read`; read-only fetches of supplied links with `WebFetch`; loading deferred tool schemas with `ToolSearch`; read-only MCP resource reads. <!-- harness-tokens -->
+- Allowed before confirmation, including when re-mirroring a correction: reading files and search with `Read`, `Grep`, `Glob`; read-only `Bash` (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); viewing images with `Read`; read-only fetches of supplied links with `WebFetch`; loading deferred tool schemas with `ToolSearch`; read-only MCP resource reads, and read-only MCP tools used to open supplied links. <!-- harness-tokens -->
 
 Anything not on the read-only allowlist is treated as forbidden.
 
