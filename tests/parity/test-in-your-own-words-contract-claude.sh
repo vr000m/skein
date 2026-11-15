@@ -91,7 +91,8 @@ in_block "state-changing shell forbidden" "state-changing use of \`Bash\` (commi
 in_block "subagent dispatch forbidden" "spawning subagents via \`Agent\` and any agent dispatch;"
 in_block "MCP writes forbidden by capability" 'write-capable MCP tools (create, update, delete, send, publish).'
 in_block "file and shell reads allowed" "Allowed before mirroring: reading files and search with \`Read\`, \`Grep\`, \`Glob\`; read-only \`Bash\` (\`cat\`, \`rg\`, \`ls\`, \`git status|diff|log|show\`, \`gh … view\`);"
-in_block "image, supplied link and resource reads allowed" "viewing images with \`Read\`; read-only fetches of supplied links with \`WebFetch\`; read-only MCP resource reads."
+in_block "image, supplied link, tool-schema load and resource reads allowed" "viewing images with \`Read\`; read-only fetches of supplied links with \`WebFetch\`; loading deferred tool schemas with \`ToolSearch\`; read-only MCP resource reads."
+in_block "agent and session messages forbidden" "sending messages to other agents or sessions via \`SendMessage\`;"
 in_block "anything outside allowlist forbidden" 'Anything not on the read-only allowlist is treated as forbidden.'
 
 # (c)-(h) Confirmation semantics, provenance, precedence, trust and persistence.
@@ -128,7 +129,7 @@ check "frontmatter has exactly one disable-model-invocation: true line (got $cou
 
 # Harness tokens stay on two tagged lines inside the gate; the rest is harness-neutral.
 token_lines="$(grep -F -- "$TOKEN_TAG" <<<"$CLAUDE_BLOCK_TEXT" || true)"
-for token in Edit Write NotebookEdit Bash Agent Read Grep Glob WebFetch; do
+for token in Edit Write NotebookEdit Bash Agent SendMessage Read Grep Glob WebFetch ToolSearch; do
 	rc=0
 	grep -qF -- "\`$token\`" <<<"$token_lines" || rc=$?
 	check "Claude token appears on harness-tagged line: $token" "$rc"
@@ -140,7 +141,7 @@ check "two harness-token lines, each ending with exact tag" "$rc"
 
 neutral_block="$(sed '/ <!-- harness-tokens -->$/d' <<<"$CLAUDE_BLOCK_TEXT")"
 rc=0
-if grep -qE '`(Edit|Write|NotebookEdit|Bash|Agent|Read|Grep|Glob|WebFetch|cat|rg|ls|git|gh)' <<<"$neutral_block"; then rc=1; fi
+if grep -qE '`(Edit|Write|NotebookEdit|Bash|Agent|SendMessage|Read|Grep|Glob|WebFetch|ToolSearch|cat|rg|ls|git|gh)' <<<"$neutral_block"; then rc=1; fi
 check "concrete tool tokens stay on tagged lines inside gate" "$rc"
 
 for token in apply_patch spawn_agent exec_command shell_command write_stdin view_image web_search 'codex exec' AskUserQuestion; do

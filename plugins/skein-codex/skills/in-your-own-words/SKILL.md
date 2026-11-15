@@ -50,7 +50,7 @@ Close the block with "Changed since invocation: nothing." and list any workers o
 
 From invocation until explicit confirmation, all mutations are forbidden. After the block, end the turn and wait.
 
-- Forbidden: file edits via `apply_patch`; notebook changes through any tool; state-changing use of `exec_command`, `shell_command`, `write_stdin` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `spawn_agent` and any agent dispatch; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
+- Forbidden: file edits via `apply_patch`; notebook changes through any tool; state-changing use of `exec_command`, `shell_command`, `write_stdin` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `spawn_agent` and any agent dispatch; sending messages to other agents or sessions via `send_input`; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
 - Allowed before mirroring: reading files and search; read-only shell (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); `view_image`; read-only fetches of supplied links with `web_search` (`open_page`, `find_in_page`); read-only MCP resource reads. <!-- harness-tokens -->
 
 Anything not on the read-only allowlist is treated as forbidden.

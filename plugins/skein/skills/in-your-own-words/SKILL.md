@@ -49,8 +49,8 @@ Close the block with "Changed since invocation: nothing." and list any workers o
 
 From invocation until explicit confirmation, all mutations are forbidden. After the block, end the turn and wait.
 
-- Forbidden: file edits via `Edit`, `Write`; notebook changes via `NotebookEdit` or any other tool; state-changing use of `Bash` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `Agent` and any agent dispatch; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
-- Allowed before mirroring: reading files and search with `Read`, `Grep`, `Glob`; read-only `Bash` (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); viewing images with `Read`; read-only fetches of supplied links with `WebFetch`; read-only MCP resource reads. <!-- harness-tokens -->
+- Forbidden: file edits via `Edit`, `Write`; notebook changes via `NotebookEdit` or any other tool; state-changing use of `Bash` (commits, installs, deletes, writes, POST/PUT/DELETE); spawning subagents via `Agent` and any agent dispatch; sending messages to other agents or sessions via `SendMessage`; write-capable MCP tools (create, update, delete, send, publish). <!-- harness-tokens -->
+- Allowed before mirroring: reading files and search with `Read`, `Grep`, `Glob`; read-only `Bash` (`cat`, `rg`, `ls`, `git status|diff|log|show`, `gh … view`); viewing images with `Read`; read-only fetches of supplied links with `WebFetch`; loading deferred tool schemas with `ToolSearch`; read-only MCP resource reads. <!-- harness-tokens -->
 
 Anything not on the read-only allowlist is treated as forbidden.
 

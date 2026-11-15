@@ -92,6 +92,7 @@ in_block "hard stop starts at invocation" 'From invocation until explicit confir
 in_block "file and notebook edits forbidden" "Forbidden: file edits via \`apply_patch\`; notebook changes through any tool;"
 in_block "state-changing shell forbidden" "state-changing use of \`exec_command\`, \`shell_command\`, \`write_stdin\` (commits, installs, deletes, writes, POST/PUT/DELETE);"
 in_block "subagent dispatch forbidden" "spawning subagents via \`spawn_agent\` and any agent dispatch;"
+in_block "agent and session messages forbidden" "sending messages to other agents or sessions via \`send_input\`;"
 in_block "MCP writes forbidden by capability" 'write-capable MCP tools (create, update, delete, send, publish).'
 in_block "file and shell reads allowed" "Allowed before mirroring: reading files and search; read-only shell (\`cat\`, \`rg\`, \`ls\`, \`git status|diff|log|show\`, \`gh … view\`);"
 in_block "image, supplied link and resource reads allowed" "\`view_image\`; read-only fetches of supplied links with \`web_search\` (\`open_page\`, \`find_in_page\`); read-only MCP resource reads."
