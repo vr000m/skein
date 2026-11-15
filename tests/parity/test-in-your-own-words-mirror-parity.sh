@@ -78,8 +78,8 @@ forbidden_markers=(
 allowed_markers=(
 	'Allowed before confirmation, including when re-mirroring a correction:'
 	'reading files and search'
-	'limited to exact forms (`cat -- <file>`, `ls -- [<dir>]`, `rg [-n|-i|-w|-F|-l|-c] -- <pattern> [<path>]`, `git status`, `git diff|log|show --no-ext-diff --no-textconv [<rev>] -- [<path>]`, `gh pr|issue view <number> [--comments]`), with literal arguments only (no glob, variable, backtick or command substitution, no argument starting with `-` except the listed flags, no `-R`, `--repo` or URL for `gh`), and with no environment assignment, no redirection, no pipe, no global git option, and no flag that names an output file or a program;'
-	'read-only fetches of supplied links with'
+	'limited to exact forms (`cat -- <file>`, `ls -- [<dir>]`, `rg [-n] [-i] [-w] [-F] [-l] [-c] -- <pattern> [<path>]`, `git status`, `git diff|log|show --no-ext-diff --no-textconv [<rev>] -- [<path>]`, `gh pr|issue view <number> [--comments]`), with literal arguments only (no unquoted glob, variable, backtick or command substitution, no argument starting with `-` except the listed flags, no `-R`, `--repo` or URL for `gh`), and with no environment assignment, no redirection, no pipe, no global git option, and no flag that names an output file or a program;'
+	'read-only fetches of a link the user typed in their own turn with'
 	'read-only MCP resource reads.'
 )
 for mirror in claude codex; do
