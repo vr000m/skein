@@ -202,7 +202,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `README.md`: skill table row (Claude Yes / Codex Yes / Pi No), skill-count wording, namespaced invocation, tested Codex version, bare-name collision note.
 - `AGENTS.md` Skill Workflow: one line placing the skill before `grill`/`review-plan` steering.
 - `docs/skills_architecture/20260522-design-claude-skills-architecture.md`: Skill Catalogue row (Invocation Mode column), Axis 1 and Axis 2 reasoning paragraph, counts "2 of 15" → "3 of 16" (lines 169 and 171), and the Codex sidecar note at the line-38 Claude-only statement. Update the two pinned assertions in `tests/parity/test_release_skill_contract.py` (l.1055-1056) in the same commit.
-- `CHANGELOG.md` under `## [Unreleased]`; `docs/dev_plans/README.md` index row (component `planning-skills`).
+- `CHANGELOG.md` `## [0.12.0]` (unreleased; both manifests bumped in this branch); `docs/dev_plans/README.md` index row (component `planning-skills`).
 - `docs/dev_plans/CODEX_MIRROR_BACKLOG.md` (path under `docs/dev_plans/`): record the sanctioned divergence (Codex sidecar, tool-name tokens, image/link instructions, `codex exec` note). `docs/BACKLOG.md`: Pi-port entry and the stale Codex "no suppression" comments on `plan-view`/`release`.
 - New `tests/parity/test-in-your-own-words-docs.sh` asserts the README row, AGENTS.md line, CHANGELOG entry, plan-index row and architecture-doc count strings (reference: `tests/parity/test-show-me-triggers-claude.sh` doc checks); wire it into `parity-tests`.
 - Background `just ci` with a Monitor; fix regressions at the root.
@@ -218,7 +218,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - `docs/dev_plans/20260929-feature-pi-plugin-port.md` — readiness-table row (table ~l.249-258, below its marker at l.231).
 - `site/graph.json` — one `tools` entry (`rfc-finder` at the top of `tools` is the shape reference).
 - `justfile` — `parity-tests` recipe (l.30-40; show-me test wiring l.41-42 is the reference).
-- `README.md` (skill table l.8-30), `AGENTS.md` (Skill Workflow l.169), `CHANGELOG.md` (`## [Unreleased]` l.5), `docs/dev_plans/README.md`, `docs/BACKLOG.md`, `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`.
+- `README.md` (skill table l.8-30), `AGENTS.md` (Skill Workflow l.169), `CHANGELOG.md` (`## [0.12.0]`), `docs/dev_plans/README.md`, `docs/BACKLOG.md`, `docs/dev_plans/CODEX_MIRROR_BACKLOG.md`.
 - `docs/skills_architecture/20260522-design-claude-skills-architecture.md` and `tests/parity/test_release_skill_contract.py` (l.1055-1056) — invocation-mode record and its pin.
 
 ### New Files to Create
@@ -297,7 +297,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - The invocation-mode architecture doc and its pin test say "3 of 16"; README, AGENTS.md, CHANGELOG, plan index, BACKLOG and CODEX_MIRROR_BACKLOG are updated and pinned by the docs test.
 - Code reviewed and approved; tests passing; documentation updated.
 
-<!-- reviewed: 2026-11-15 @ 26371bca239331b630f290b695b26edee95f2e6d -->
+<!-- reviewed: 2026-11-15 @ 7941a2006876f4b04d0add07cfc47e42333185a4 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
@@ -403,12 +403,25 @@ The loop was stopped manually after round 5 on the user's decision. The ledger d
 
 ## Issues & Solutions
 
+- **Shell allowlist kept leaking under review.** A flag denylist (round 1) and then an exact-form list without argument slots (round 2) each had bypasses (`--pre`, `-R`, `--output`, `core.fsmonitor`). Solved by exact literal-argument forms with `--`, plus an honest statement that the gate is a prompt guardrail, not a sandbox.
+- **Mirror drift risk.** Solved by the anchored gate block, tagged tool lines, and whole-line pins in both contract tests plus class markers in the parity test.
+
 ## Final Results
 
 ### Summary
 
+`in-your-own-words` ships in both mirrors (Claude `disable-model-invocation: true`; Codex sidecar `allow_implicit_invocation: false`) with contract, parity and docs tests, registered as 16th skill and released as 0.12.0 (unreleased until `/release 0.12.0`). The review-gauntlet was stopped manually after round 5.
+
 ### Outcomes
+
+All Testing and Acceptance boxes are ticked; `just ci` recipes pass. Phase 2 dogfood passed on Claude and Codex before the later wording rounds.
 
 ### Learnings
 
+Prompt-level allowlists attract a new bypass per review round; state the residual honestly and pin exact text rather than hardening flag by flag. Each wording edit needs its own mutation check.
+
 ### Follow-up Work
+
+- Rerun the fresh-session Claude and Codex mirror dogfood on the final wording.
+- Pi port and test-duplication consolidation (see `docs/BACKLOG.md`).
+- Move the dev-plans index row to Shipped after merge.
