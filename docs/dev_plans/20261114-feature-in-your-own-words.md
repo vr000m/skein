@@ -1,6 +1,6 @@
 # Task: in-your-own-words — alignment-gate skill
 
-**Status**: Completed (2026-11-15; review-gauntlet in progress)
+**Status**: Completed (2026-11-15; review-gauntlet stopped manually after round 5)
 **Component**: planning-skills
 **Assigned to**: Claude (Claude mirror) + Codex via `codex:rescue` (Codex mirror)
 **Priority**: Medium
@@ -297,7 +297,7 @@ The Implementation Checklist is part of the **immutable contract** above the rev
 - The invocation-mode architecture doc and its pin test say "3 of 16"; README, AGENTS.md, CHANGELOG, plan index, BACKLOG and CODEX_MIRROR_BACKLOG are updated and pinned by the docs test.
 - Code reviewed and approved; tests passing; documentation updated.
 
-<!-- reviewed: 2026-11-15 @ 75b8c9cb443f9a75abbb1ad9655d50e397f29151 -->
+<!-- reviewed: 2026-11-15 @ 26371bca239331b630f290b695b26edee95f2e6d -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
