@@ -58,15 +58,14 @@ has_fixed "README states tested Codex version 0.169.0" "$README" '0.169.0'
 has_line "AGENTS.md workflow line places skill before grill/review-plan" "$AGENTS" \
 	'^Optional steering step .*`skein:in-your-own-words`'
 
-# CHANGELOG: entry under Unreleased.
-unreleased="$(awk '
-	/^## \[Unreleased\]/ { inb = 1; next }
-	/^## \[/ { inb = 0 }
-	inb { print }
+# CHANGELOG: entry in [Unreleased] or in the release that ships it (0.12.0), above the 0.11.1 section.
+shipping="$(awk '
+	/^## \[0\.11\.1\]/ { exit }
+	{ print }
 ' "$CHANGELOG")"
 rc=0
-printf '%s\n' "$unreleased" | grep -qF '`in-your-own-words` skill' || rc=$?
-check "CHANGELOG [Unreleased] has the in-your-own-words entry" "$rc"
+printf '%s\n' "$shipping" | grep -qF '`in-your-own-words` skill' || rc=$?
+check "CHANGELOG has the in-your-own-words entry above [0.11.1]" "$rc"
 
 # Dev-plan index row.
 has_line "plan index row (2026-11-14, feature, planning-skills)" "$INDEX" \

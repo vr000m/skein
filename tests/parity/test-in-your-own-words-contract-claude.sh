@@ -151,9 +151,11 @@ for token in apply_patch spawn_agent exec_command shell_command write_stdin view
 done
 
 # Axis-1 guard: nothing chains into this skill by name until Decision 5 is revisited.
+# Scan every text file under any skill dir (SKILL.md, references/, *-prompt.md), not just
+# SKILL.md: a skill chains into another through whichever file it loads.
 rc=0
-chained="$(find "$REPO_ROOT/plugins" -path '*/skills/*' -name SKILL.md ! -path '*/in-your-own-words/*' -print0 | xargs -0 grep -l 'in-your-own-words' || true)"
+chained="$(find "$REPO_ROOT/plugins" -path '*/skills/*' -type f ! -path '*/in-your-own-words/*' ! -path '*/__pycache__/*' -print0 | xargs -0 grep -lI 'in-your-own-words' || true)"
 [ -z "$chained" ] || rc=1
-check "no other SKILL.md references in-your-own-words${chained:+: $chained}" "$rc"
+check "no other skill file references in-your-own-words${chained:+: $chained}" "$rc"
 
 finish
