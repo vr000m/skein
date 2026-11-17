@@ -20,6 +20,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-11-16 | feature | cursor-harness-port | meta | — | feature/cursor-harness-port | [plan](20261116-feature-cursor-harness-port.md) |
 
 ## Shipped
 
