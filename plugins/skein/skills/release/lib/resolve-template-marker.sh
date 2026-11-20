@@ -648,24 +648,30 @@ while IFS= read -r t; do
 		else
 			[[ "$name" == "$repo_name $t — "?* ]] && title_ok=1
 		fi
+		# Check (2) of SKILL.md's `ok`/`drifted` bullet is compact-tolerant: a
+		# release body MAY be shorter than its CHANGELOG section, so the old
+		# byte-for-byte `cmp` against $want_section is gone. The body (after the
+		# What's New / compare-line / marker split above) only has to be
+		# non-empty and must not embed a CHANGELOG version header line
+		# (`## [X.Y.Z] ...`), which is the copy-pasted-whole-section failure.
 		body_ok=1
-		cmp -s "$got" "$want_section" || body_ok=0
+		[[ -n "$(tr -d '[:space:]' <"$got")" ]] || body_ok=0
+		grep -a -q -E '^## \[' "$got" && body_ok=0
 		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 && "$body_ok" == 1 ]]; then
 			status="ok"
 		else
 			status="drifted"
 			# SKILL.md's ok/drifted bullet: "name each failed check in the
-			# punch-list Note column — title, exact CHANGELOG bytes, exact
+			# punch-list Note column — title, body, exact
 			# cached-base compare path, and What's New presence-vs-whats_new
 			# are independent checks." Build the note from whichever of the
 			# four independent checks failed, in that order.
 			# ${failed[*]} with IFS=", " joins on only IFS's FIRST character
 			# (a single ','), dropping the space — two failures would render
-			# "title,exact CHANGELOG bytes" instead of "title, exact CHANGELOG
-			# bytes". Join explicitly instead.
+			# "title,body" instead of "title, body". Join explicitly instead.
 			failed=()
 			[[ "$title_ok" == 1 ]] || failed+=("title")
-			[[ "$body_ok" == 1 ]] || failed+=("exact CHANGELOG bytes")
+			[[ "$body_ok" == 1 ]] || failed+=("body (empty or embeds a CHANGELOG header)")
 			[[ "$compare_ok" == 1 ]] || failed+=("exact cached-base compare path")
 			[[ "$whats_new_ok" == 1 ]] || failed+=("What's New presence-vs-whats_new")
 			note=""

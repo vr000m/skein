@@ -380,6 +380,20 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn-bodies" \
 	pass "a2-classify: whats_new:false + present summary is drift" ||
 	bad "a2-classify treated a present summary as ok under whats_new:false: $out"
 
+# L2: a compact body (shorter than its CHANGELOG section) is `ok`, not drift;
+# an empty body or one embedding a CHANGELOG version header is still drift.
+mkdir -p "$TMP/compact-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/compact-bodies/"
+printf '### Added\n\n- Alpha, condensed.\n\n<!-- release-template-sha: %s -->\n' \
+	"$(tr -d '[:space:]' <"$FIX/templated/template-blob-sha.txt")" >"$TMP/compact-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a compact body shorter than its CHANGELOG section is ok" ||
+	bad "a2-classify flagged a compact body as drift: $out"
+[[ "$(jq -r '.rows[] | select(.version == "1.1.0") | .note' <<<"$out")" == "body (empty or embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: an embedded CHANGELOG header is still body drift" ||
+	bad "a2-classify missed an embedded CHANGELOG header: $out"
+
 # C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
 sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"
 out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$FIX/untemplated/bodies" \
