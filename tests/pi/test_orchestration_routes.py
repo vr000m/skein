@@ -93,6 +93,14 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "withheld from re-sync only when re-sync itself would stop",
         "with clause (a)'s publishable-content test",
         "needs CHANGELOG/template edit",
+        # Round 7 (aligned with the Claude/Codex resync-gate/resync-summary
+        # sites): the A4 gate IS the composition hard stop's test, preservation
+        # is judged under the current committed template after the stale
+        # trailer is dropped, and a discard names its line.
+        "the very test the composition hard stop applies",
+        "that is a valid body under the current committed template is preserved",
+        "the old body's own stale compare trailer dropped",
+        "states that it was discarded and which line caused it",
     ):
         assert phrase in text, phrase
     assert "or on explicit request" not in text
