@@ -1020,4 +1020,260 @@ out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/anchor-bodi
 	pass "a2-classify: a bare (non-bold) 'Full diff:' mention inside the summary paragraph is not mistaken for the compare-line boundary" ||
 	bad "a2-classify: awk -v backslash-escape consumption widened the compare-line anchor: $out"
 
+# --- resync-gate / resync-summary: the re-sync decisions as script output ----
+# Step A4's offer gate, Step 3 item 3's hard stop (resync-gate) and Step 3
+# item 1's summary recovery/discard plus Step 3 item 3's preserve decision
+# (resync-summary) are computed by the same functions a2-classify runs
+# (section_publishable, whats_new_split, body_invalid_reason). Each table below
+# is paired with a differential against a2-classify on the same inputs.
+gate_run() { # repo-case version changelog
+	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-gate \
+		--repo "$TMP/repo-$1" --head-sha "$(repo_head "$1")" --changelog "$3" --version "$2" 2>/dev/null
+}
+rsum_run() { # repo-case tag body-file peeled changelog [headingless-summary]
+	local extra=()
+	[[ -n "${6-}" ]] && extra=(--headingless-summary "$6")
+	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-summary \
+		--repo "$TMP/repo-$1" --tag "$2" --body-file "$3" --peeled "$4" --head-sha "$(repo_head "$1")" \
+		--changelog "$5" ${extra[@]+"${extra[@]}"} 2>/dev/null
+}
+# rsum_to_a2_body_note <resync-summary-json> — the body note a2-classify must
+# report for the same body: a2 reads clauses (c)/(d) over the WHOLE body
+# (summary + content block), resync-summary over the content block and the
+# summary separately (invalid_reason / discard), in the same clause order.
+rsum_to_a2_body_note() {
+	jq -r '.rows | . as $r |
+		if ($r.invalid_reason == "body (missing CHANGELOG section)" or $r.invalid_reason == "body (empty)") then $r.invalid_reason
+		elif ($r.invalid_reason == "body (embeds a CHANGELOG header)" or $r.discard == "version-header") then "body (embeds a CHANGELOG header)"
+		elif ($r.invalid_reason == "body (carries an excluded section)" or $r.discard == "excluded-heading") then "body (carries an excluded section)"
+		else "-" end' <<<"$1"
+}
+
+# A second templated fixture with a set compare label, for the recovery-label
+# half of resync-summary (FXX/excl above is label none).
+FXL="$TMP/fx-fcl"
+rm -rf "$FXL" && mkdir -p "$FXL/fcl"
+printf '{"compare_line_label":"Full changelog","excluded_sections":["### Internal"]}\n' >"$FXL/fcl/.release-template.json"
+cp "$FXX/excl/CHANGELOG.md" "$FXL/fcl/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXL" release_build_repo fcl "$TMP/repo-fcl") || bad "fixture build fcl"
+fcl_blob="$("$GIT_REAL" -C "$TMP/repo-fcl" rev-parse HEAD~1:.release-template.json)"
+printf '{"v1.0.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-fcl" rev-parse HEAD~1)" >"$FXL/peeled.json"
+ex_marker="<!-- release-template-sha: $excl_blob -->"
+fcl_marker="<!-- release-template-sha: $fcl_blob -->"
+
+# G1: resync-gate table. Rows: name|repo-case|version|changelog-printf|stops.
+# untemplated = no template (sentinel); excl = current template excludes
+# `### Internal`. Every row is cross-checked against a2-classify's clause (a)
+# on the same CHANGELOG (untemplated: v0.1.0 via u_run; excl: a marker-bound
+# body whose classification source is the same committed template).
+while IFS='|' read -r name c v fmt want; do
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/g-cl.md"
+	got="$(gate_run "$c" "$v" "$TMP/g-cl.md" | jq -r '.rows.stops')"
+	[[ "$got" == "$want" ]] &&
+		pass "resync-gate: $name -> stops=$want" ||
+		bad "resync-gate: $name expected stops=$want, got '$got'"
+	if [[ "$c" == untemplated ]]; then
+		a2out="$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/g-cl.md")"
+	else
+		rm -rf "$TMP/g-bodies" && mkdir -p "$TMP/g-bodies"
+		printf '### Added\n\n- Alpha.\n\n%s\n' "$ex_marker" >"$TMP/g-bodies/v1.0.0.lf.md"
+		a2out="$(a2_run excl "$FXX/list.json" "$TMP/g-bodies" "$FXX/peeled.json" "$TMP/g-cl.md" "" "$FXX/tags.json")"
+	fi
+	a2stop=false
+	[[ "$(note_of "$a2out" "$v")" == *"body (missing CHANGELOG section)"* ]] && a2stop=true
+	[[ "$a2stop" == "$got" ]] &&
+		pass "resync-gate == a2-classify clause (a): $name" ||
+		bad "resync-gate disagrees with a2-classify clause (a): $name (gate=$got a2=$a2stop)"
+done <<'EOG'
+empty section|untemplated|0.1.0|# Changelog\n\n## [0.2.0] - 2026-02-01\n\n- Second.\n\n## [0.1.0] - 2026-01-01\n\n|true
+only compare lines|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n**Full diff:** https://x.invalid/a\n**Full changelog:** https://x.invalid/b\n|true
+missing section|untemplated|0.1.0|# Changelog\n\n## [0.2.0] - 2026-02-01\n\n- Second.\n|true
+prose without subsections|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\nJust prose under the header.\n|false
+all content excluded|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Internal\n\n- Plumbing.\n|true
+compare line plus excluded only|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://x.invalid/a\n\n### Internal\n\n- Plumbing.\n|true
+indented excluded heading (trimmed)|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\n  ### Internal  \n\n- Plumbing.\n|true
+subsection survives exclusion|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n|false
+prose plus all subsections excluded|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\nProse.\n\n### Internal\n\n- Plumbing.\n|false
+EOG
+# The stop reason names clause (a)'s punch-list note verbatim.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Internal\n\n- Plumbing.\n' >"$TMP/g-cl.md"
+[[ "$(gate_run excl 1.0.0 "$TMP/g-cl.md" | jq -r '.rows.reason')" == "body (missing CHANGELOG section)" ]] &&
+	pass "resync-gate: stop reason is clause (a)'s note" || bad "resync-gate: stop reason"
+# A present-but-invalid current template stops too (Step 1b would hard-stop the
+# re-sync first), and resync-summary refuses it outright.
+cp -R "$TMP/repo-excl" "$TMP/repo-exdirty"
+printf '{"bogus": 1}\n' >"$TMP/repo-exdirty/.release-template.json"
+gout="$(gate_run exdirty 1.0.0 "$FXX/excl/CHANGELOG.md")"
+[[ "$(jq -r '.rows.stops' <<<"$gout")" == true && "$(jq -r '.rows.reason' <<<"$gout")" == "template ("* ]] &&
+	pass "resync-gate: an invalid current template stops the re-sync" ||
+	bad "resync-gate: invalid current template not a stop: $gout"
+printf '### Added\n\n- Alpha.\n' >"$TMP/rs-plain.md"
+rsum_run exdirty v1.0.0 "$TMP/rs-plain.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" >"$TMP/rs.out"
+expect_code "resync-summary refuses an invalid current template" 1 $?
+[[ "$(jq -r '.failed_gate' "$TMP/rs.out")" == "current-template-invalid" ]] &&
+	pass "resync-summary names the current-template gate" || bad "resync-summary current-template gate name"
+# Argument contract: a non-strict --version is an environment failure.
+gate_run untemplated 1.0 "$FIX/untemplated/CHANGELOG.md" >/dev/null
+expect_code "resync-gate rejects a non-strict --version" 2 $?
+
+# R1: resync-summary table. Rows: name|repo-case|body-printf (%s = the case's
+# marker; untemplated bodies ignore it)|expected
+# "summary_present,discard,content_block_valid,invalid_reason,preserve".
+while IFS='|' read -r name c fmt want; do
+	case "$c" in
+	excl) mk="$ex_marker" pl="$FXX/peeled.json" tg=v1.0.0 cl="$FXX/excl/CHANGELOG.md" ;;
+	fcl) mk="$fcl_marker" pl="$FXL/peeled.json" tg=v1.0.0 cl="$FXX/excl/CHANGELOG.md" ;;
+	*) mk="" pl="$FIX/untemplated/peeled-commits.json" tg=v0.1.0 cl="$FIX/untemplated/CHANGELOG.md" ;;
+	esac
+	# shellcheck disable=SC2059
+	printf -- "$fmt" "$mk" >"$TMP/rs-body.md"
+	got="$(rsum_run "$c" "$tg" "$TMP/rs-body.md" "$pl" "$cl" |
+		jq -r '.rows | [.summary_present, (.discard // "-"), .content_block_valid, (.invalid_reason // "-"), .preserve] | map(tostring) | join(",")')"
+	[[ "$got" == "$want" ]] &&
+		pass "resync-summary: $name -> $want" ||
+		bad "resync-summary: $name expected '$want', got '$got'"
+done <<'EOR'
+h1 boundary|untemplated|## What's New\nSummary.\n# Added\n- First thing.\n|true,-,true,-,true
+h2 boundary|untemplated|## What's New\nSummary.\n## Added\n- First thing.\n|true,-,true,-,true
+h3 boundary|untemplated|## What's New\nSummary.\n### Added\n- First thing.\n|true,-,true,-,true
+h4 boundary|untemplated|## What's New\nSummary.\n#### Added\n- First thing.\n|true,-,true,-,true
+h5 boundary|untemplated|## What's New\nSummary.\n##### Added\n- First thing.\n|true,-,true,-,true
+h6 boundary|untemplated|## What's New\nSummary.\n###### Added\n- First thing.\n|true,-,true,-,true
+7 hashes continue the summary|untemplated|## What's New\nSummary.\n####### Added\n- First thing.\n|true,-,false,body (empty),false
+4-space heading continues the summary|untemplated|## What's New\nSummary.\n    ### Added\n- First thing.\n|true,-,false,body (empty),false
+tab heading continues the summary|untemplated|## What's New\nSummary.\n\t### Added\n- First thing.\n|true,-,false,body (empty),false
+blank-line boundary over flat content|untemplated|## What's New\n\nSummary.\n\n- First thing.\n|true,-,true,-,true
+no summary, compact block|untemplated|### Added\n\n- First.\n|false,-,true,-,true
+own-label compare line opens the summary|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n- First thing.\n|true,-,false,body (carries a compare-shaped line),false
+stale own-label trailer is dropped|untemplated|### Added\n\n- First thing.\n\n**Full diff:** https://stale.invalid/x\n|false,-,true,-,true
+other-label trailer stays content|untemplated|### Added\n\n- First thing.\n\n**Full changelog:** https://stale.invalid/x\n|false,-,false,body (carries a compare-shaped line),false
+version header in the content block|untemplated|## What's New\nSummary.\n## [0.0.9] - 2025-01-01\n- First thing.\n|true,-,false,body (embeds a CHANGELOG header),false
+summary-only body|untemplated|## What's New\nOnly a summary.\n|true,-,false,body (empty),false
+3-space heading, typographic apostrophe|untemplated|   ## What’s New\nSummary.\n\n- First thing.\n|true,-,true,-,true
+label none: compare-shaped line is summary prose|excl|## What's New\n**Full diff:** not published.\nMore.\n\n### Added\n\n- Alpha.\n\n%s\n|true,-,true,-,true
+excluded heading in the summary (4-space)|excl|## What's New\nSummary.\n    ### Internal\n\n### Added\n\n- Alpha.\n\n%s\n|true,excluded-heading,true,-,true
+excluded heading in the summary (tab)|excl|## What's New\nSummary.\n\t### Internal\n\n### Added\n\n- Alpha.\n\n%s\n|true,excluded-heading,true,-,true
+excluded heading in the content block|excl|### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n\n%s\n|false,-,false,body (carries an excluded section),false
+label none: a compare-shaped line is never stripped|excl|### Added\n\n- Alpha.\n\n**Full diff:** https://x.invalid/a\n\n%s\n|false,-,false,body (carries a compare-shaped line),false
+label set: own trailer dropped|fcl|### Added\n\n- Alpha.\n\n**Full changelog:** https://x.invalid/a\n\n%s\n|false,-,true,-,true
+label set: compare boundary ends the summary|fcl|## What's New\nSummary.\n**Full changelog:** https://x.invalid/a\n|true,-,false,body (empty),false
+label set: Full diff line is content|fcl|### Added\n\n- Alpha.\n\n**Full diff:** https://x.invalid/a\n\n%s\n|false,-,false,body (carries a compare-shaped line),false
+EOR
+# Section missing -> clause (a) -> never preserved.
+printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n- Second.\n' >"$TMP/rs-nosec.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-plain.md" "$FIX/untemplated/peeled-commits.json" "$TMP/rs-nosec.md" | jq -r '.rows.invalid_reason + "," + (.rows.preserve|tostring)')" == "body (missing CHANGELOG section),false" ]] &&
+	pass "resync-summary: a missing CHANGELOG section is never preserved" || bad "resync-summary: missing section preserved"
+# summary_text / discard_line / content_block_text carry the exact split.
+printf "## What's New\nFirst line.\nSecond line.\n    ### Internal\n\n### Added\n\n- Alpha.\n\n%s\n" "$ex_marker" >"$TMP/rs-body.md"
+rs="$(rsum_run excl v1.0.0 "$TMP/rs-body.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md")"
+split_texts="$(jq -r '[.rows.summary_text, .rows.discard_line, .rows.content_block_text] | join("|")' <<<"$rs")"
+[[ "$split_texts" == $'First line.\nSecond line.\n    ### Internal|    ### Internal|### Added\n\n- Alpha.' ]] &&
+	pass "resync-summary: summary_text, discard_line and content_block_text are the exact split" ||
+	bad "resync-summary: split texts wrong: $rs"
+# Marker handling: a bound marker is stripped (recovery template = its blob,
+# label none); a CRLF copy decides identically; an unbound strict marker is
+# kept as body data under the sentinel and named in failed_gate.
+printf '### Added\r\n\r\n- Alpha.\r\n\r\n%s\r\n' "$ex_marker" >"$TMP/rs-crlf.md"
+printf '### Added\n\n- Alpha.\n\n%s\n' "$ex_marker" >"$TMP/rs-lf.md"
+lf="$(rsum_run excl v1.0.0 "$TMP/rs-lf.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" | jq -c '.rows')"
+crlf="$(rsum_run excl v1.0.0 "$TMP/rs-crlf.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" | jq -c '.rows')"
+[[ "$(jq -r '[.recovery_template, .recovery_label, .marker_stripped, .content_block_text] | map(tostring) | join("|")' <<<"$lf")" == $'marker|none|true|### Added\n\n- Alpha.' ]] &&
+	pass "resync-summary: a bound marker is stripped and selects its template's label" ||
+	bad "resync-summary: bound marker handling: $lf"
+[[ "$lf" == "$crlf" ]] && pass "resync-summary: CRLF body == LF body" || bad "resync-summary: CRLF differs: $crlf vs $lf"
+printf '### Added\n\n- Alpha.\n\n<!-- release-template-sha: %s -->\n' "$(printf 'a%.0s' {1..40})" >"$TMP/rs-unbound.md"
+ub="$(rsum_run excl v1.0.0 "$TMP/rs-unbound.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md")"
+[[ "$(jq -r '[.rows.recovery_template, .rows.marker_stripped, (.failed_gate != null), (.rows.content_block_text | test("release-template-sha"))] | map(tostring) | join("|")' <<<"$ub")" == "sentinel|false|true|true" ]] &&
+	pass "resync-summary: an unbound marker is kept as body data under the sentinel" ||
+	bad "resync-summary: unbound marker handling: $ub"
+# Headingless summary: the proved prefix is the discard rule's input and leaves
+# the content block; a version header in it discards it. A prefix that does not
+# match the body is refused.
+printf 'Prefix line.\n## [0.0.9] - 2025-01-01\n\n### Added\n\n- First thing.\n' >"$TMP/rs-hl.md"
+printf 'Prefix line.\n## [0.0.9] - 2025-01-01\n' >"$TMP/rs-hl-prefix.txt"
+hl="$(rsum_run untemplated v0.1.0 "$TMP/rs-hl.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP/rs-hl-prefix.txt")"
+[[ "$(jq -r '[.rows.summary_kind, .rows.discard, .rows.discard_line, .rows.content_block_valid] | map(tostring) | join("|")' <<<"$hl")" == "headingless|version-header|## [0.0.9] - 2025-01-01|true" ]] &&
+	pass "resync-summary: a headingless summary with a version header is discarded" ||
+	bad "resync-summary: headingless discard: $hl"
+printf 'Not the prefix.\n' >"$TMP/rs-hl-bad.txt"
+rsum_run untemplated v0.1.0 "$TMP/rs-hl.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP/rs-hl-bad.txt" >/dev/null
+expect_code "resync-summary refuses a headingless summary that is not the body's prefix" 1 $?
+
+# D1 (the agreement invariant): resync-summary's split == a2-classify's split.
+# On every corpus body a2-classify's full status/note is derived from
+# resync-summary's output alone: the body note via rsum_to_a2_body_note, check
+# (3) from content_block_text (with the exact canonical trailer appended -- or,
+# under label none, no trailer -- a2's compare check fails exactly when a
+# compare-shaped line is left in resync-summary's content block), and check (4)
+# from summary_present (excl's template sets whats_new:false; untemplated has
+# no presence check). A split, boundary label or marker strip that drifted
+# between the two sites breaks at least one row (see the mutation note below).
+expected_a2() { # resync-summary-json whats-new-false(0|1)
+	local parts=() bn want j
+	bn="$(rsum_to_a2_body_note "$1")"
+	[[ "$bn" == "-" ]] || parts+=("$bn")
+	[[ "$(jq -r '.rows.content_block_text | split("\n") | any(test("^[*][*]Full (diff|changelog):[*][*]"))' <<<"$1")" == true ]] &&
+		parts+=("exact cached-base compare path")
+	[[ "$2" == 1 && "$(jq -r '.rows.summary_present' <<<"$1")" == true ]] && parts+=("What's New presence-vs-whats_new")
+	want="ok|"
+	if ((${#parts[@]})); then
+		want="drifted|"
+		for j in "${!parts[@]}"; do
+			((j)) && want+=", "
+			want+="${parts[$j]}"
+		done
+	fi
+	printf '%s' "$want"
+}
+corpus=(
+	'### Added\n\n- Item.'
+	"## What's New\nSummary.\n### Added\n- Item."
+	"## What's New\n\nSummary.\n\n- Item."
+	"## What's New\nSummary.\n    ### Added\n- Item."
+	"## What's New\nSummary.\n\t### Internal\n\n### Added\n\n- Item."
+	"## What's New\nSummary.\n    ### Internal\n\n### Added\n\n- Item."
+	"## What's New\nSummary.\n####### Seven\n\n- Item."
+	"## What's New\n**Full diff:** not published.\nMore.\n\n### Added\n\n- Item."
+	"## What's New\n**Full changelog:** see below.\n\n### Added\n\n- Item."
+	"## What's New\nSummary.\n**Full diff:** stale.\n\n### Added\n- Item."
+	"## What's New\n\n\nSummary.\n# H1\n- Item."
+	"## What's New\nSummary.\n###### H6\n- Item."
+	'### Added\n\n- Item.\n\n### Internal\n\n- Plumbing.'
+	'### Added\n\n- Item.\n\n## [0.0.9] - 2025-01-01'
+	"## What's New\nOnly summary."
+	"   ## What’s New\nSummary.\n\n- Item."
+	"    ## What's New\nSummary.\n\n- Item."
+	"## What's New\nSummary.\n## [0.0.9] - 2025-01-01\n- Item."
+	'- Item.\n**Full changelog:** mid\n- More.'
+	"## What's New\nSummary.\n   ### Internal\n- Item."
+	"\n\n## What's New\nSummary.\n\n### Added\n- Item."
+)
+for i in "${!corpus[@]}"; do
+	core="${corpus[$i]}"
+	# excl: marker-bound v1.0.0, label none, whats_new false, `### Internal` excluded.
+	rm -rf "$TMP/d-ex" && mkdir -p "$TMP/d-ex"
+	# shellcheck disable=SC2059
+	printf -- "$core"'\n\n%s\n' "$ex_marker" >"$TMP/d-ex/v1.0.0.lf.md"
+	a2="$(note_of "$(a2_run excl "$FXX/list.json" "$TMP/d-ex" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" "" "$FXX/tags.json")" 1.0.0)"
+	want="$(expected_a2 "$(rsum_run excl v1.0.0 "$TMP/d-ex/v1.0.0.lf.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md")" 1)"
+	[[ "$a2" == "$want" ]] &&
+		pass "split agreement (excl, label none) corpus #$i: $want" ||
+		bad "split agreement (excl, label none) corpus #$i: a2 '$a2' != resync-derived '$want'"
+	# untemplated: v0.2.0 with its exact canonical trailer, sentinel label Full diff.
+	rm -rf "$TMP/d-un" && mkdir -p "$TMP/d-un" && cp "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/d-un/"
+	# shellcheck disable=SC2059
+	printf -- "$core"'\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n' "$WEB" >"$TMP/d-un/v0.2.0.md"
+	a2="$(note_of "$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/d-un" \
+		"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")" 0.2.0)"
+	want="$(expected_a2 "$(rsum_run untemplated v0.2.0 "$TMP/d-un/v0.2.0.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")" 0)"
+	[[ "$a2" == "$want" ]] &&
+		pass "split agreement (untemplated, label Full diff) corpus #$i: $want" ||
+		bad "split agreement (untemplated, label Full diff) corpus #$i: a2 '$a2' != resync-derived '$want'"
+done
+# Mutation note: replacing resync-summary's whats_new_split label argument with
+# a constant, or its body_stream mode with `keep` for a bound marker, fails rows
+# of this differential (verified when it was written); a2-classify alone
+# cannot fail it because both sides call the same functions.
+
 exit "$fail"
