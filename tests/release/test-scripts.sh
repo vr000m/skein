@@ -393,6 +393,82 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies"
 [[ "$(jq -r '.rows[] | select(.version == "1.1.0") | .note' <<<"$out")" == "body (empty or embeds a CHANGELOG header)" ]] &&
 	pass "a2-classify: an embedded CHANGELOG header is still body drift" ||
 	bad "a2-classify missed an embedded CHANGELOG header: $out"
+# The other half of the L2 contract: a whitespace-only body is still body drift.
+printf '   \n\n<!-- release-template-sha: %s -->\n' \
+	"$(tr -d '[:space:]' <"$FIX/templated/template-blob-sha.txt")" >"$TMP/compact-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .note' <<<"$out")" == "body (empty or embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: a whitespace-only body is still body drift" ||
+	bad "a2-classify accepted a whitespace-only body: $out"
+
+# L3: one body-validity predicate (non-empty section, non-empty content ignoring
+# compare trailers, no version header, no excluded heading) -- each edge case.
+note_of() { jq -r --arg v "$2" '.rows[] | select(.version == $v) | (.status + "|" + (.note // ""))' <<<"$1"; }
+u_run() { # <v0.1.0-body-file> [changelog]
+	rm -rf "$TMP/u-bodies" && mkdir -p "$TMP/u-bodies" && cp "$FIX/untemplated/bodies/"*.md "$TMP/u-bodies/"
+	cp "$1" "$TMP/u-bodies/v0.1.0.md"
+	a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/u-bodies" \
+		"$FIX/untemplated/peeled-commits.json" "${2:-$FIX/untemplated/CHANGELOG.md}"
+}
+printf '### Added\n\n- First.\n\n## [Migration guide](guide.md)\n\nSee the guide.\n' >"$TMP/b-link.md"
+[[ "$(note_of "$(u_run "$TMP/b-link.md")" 0.1.0)" == "ok|" ]] &&
+	pass "a2-classify: a non-version '## [link](url)' heading in a compact body is ok" ||
+	bad "a2-classify rejected a legitimate bracketed heading"
+printf '##  [0.1.0] – 2026-01-01\n\n### Added\n\n- First.\n' >"$TMP/b-hdr.md"
+[[ "$(note_of "$(u_run "$TMP/b-hdr.md")" 0.1.0)" == "drifted|body (empty or embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: a whitespace/en-dash-drifted version header is still body drift" ||
+	bad "a2-classify missed a drifted-spelling version header"
+printf '\n\n## What%ss New\n\nOnly a summary.\n' "'" >"$TMP/b-sum.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum.md")" 0.1.0)" == "drifted|body (empty or embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: a summary-only body behind leading blanks is empty-content drift" ||
+	bad "a2-classify let a summary-only body with leading blanks pass"
+printf '\377### Added\n\n- First \377 thing.\n' >"$TMP/b-bin.md"
+out="$(u_run "$TMP/b-bin.md")"
+[[ "$(note_of "$out" 0.1.0)" == "ok|" ]] &&
+	pass "a2-classify: a stray invalid-UTF-8 byte does not read as an empty body" ||
+	bad "a2-classify mis-handled an invalid-UTF-8 byte: $out"
+{
+	printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n'
+} >"$TMP/cl-empty.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-empty.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: a body over an empty CHANGELOG section is drift, not ok" ||
+	bad "a2-classify passed a body whose CHANGELOG section is empty"
+# A stale compare trailer must not mask an otherwise-empty body.
+cp "$FIX/untemplated/bodies/v0.2.0.md" "$TMP/b-stale-src.md"
+rm -rf "$TMP/u2" && mkdir -p "$TMP/u2" && cp "$FIX/untemplated/bodies/"*.md "$TMP/u2/"
+printf '**Full diff:** https://github.com/example/widgets/compare/v0.0.9...v0.2.0\n' >"$TMP/u2/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/u2" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(note_of "$out" 0.2.0)" == *"body (empty or embeds a CHANGELOG header)"* ]] &&
+	pass "a2-classify: a stale compare trailer does not mask an empty body" ||
+	bad "a2-classify let a compare trailer mask an empty body: $out"
+# An active excluded_sections heading left in the body is drift. Build a one-off
+# templated fixture case (the shipped templated fixture has no exclusions).
+FXX="$TMP/fx-excl"
+rm -rf "$FXX" && mkdir -p "$FXX/excl"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":false,"excluded_sections":["### Internal"]}\n' >"$FXX/excl/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n' >"$FXX/excl/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXX" release_build_repo excl "$TMP/repo-excl") || bad "fixture build excl"
+excl_blob="$("$GIT_REAL" -C "$TMP/repo-excl" rev-parse HEAD~1:.release-template.json)"
+excl_c1="$("$GIT_REAL" -C "$TMP/repo-excl" rev-parse HEAD~1)"
+printf '["v1.0.0"]\n' >"$FXX/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$excl_c1" >"$FXX/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXX/list.json"
+for variant in clean leaked; do
+	rm -rf "$FXX/bodies" && mkdir -p "$FXX/bodies"
+	if [[ "$variant" == clean ]]; then
+		printf '### Added\n\n- Alpha.\n\n<!-- release-template-sha: %s -->\n' "$excl_blob" >"$FXX/bodies/v1.0.0.lf.md"
+		want="ok|"
+	else
+		printf '### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n\n<!-- release-template-sha: %s -->\n' "$excl_blob" >"$FXX/bodies/v1.0.0.lf.md"
+		want="drifted|body (carries an excluded section)"
+	fi
+	out="$(a2_run excl "$FXX/list.json" "$FXX/bodies" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" "" "$FXX/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify: excluded_sections heading in a body ($variant) -> $want" ||
+		bad "a2-classify excluded_sections ($variant) expected '$want': $out"
+done
 
 # C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
 sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"

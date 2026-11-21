@@ -36,6 +36,11 @@
 # jq programs are single-quoted on purpose (they contain $vars for jq).
 # shellcheck disable=SC2016
 set -uo pipefail
+# Release bodies and CHANGELOGs are operator-edited bytes that may carry a stray
+# invalid UTF-8 byte. Under a UTF-8 locale BSD awk/grep/tr abort or truncate on
+# one ("Illegal byte sequence"), which would silently misread a valid body as
+# empty. Every comparison here is bytewise, so pin the C locale for the script.
+export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/release/lib/release-common.sh
@@ -554,7 +559,12 @@ while IFS= read -r t; do
 		# would defeat resolve_source's own patterns, and reading two different byte
 		# streams for "the same body" is exactly the bug SRC_SCAN exists to close.
 		got="$tmp/got.txt"
-		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" >"$got.0"
+		# Leading blank lines are dropped here so the `## What's New` summary is
+		# recognised as the first CONTENT line, not physical line one: a body that
+		# opens with a blank line must not let a summary-only body slip past the
+		# summary split below and read as ordinary content.
+		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" |
+			awk 'f || /[^[:space:]]/ { f = 1; print }' >"$got.0"
 		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 		# What's New prose block runs from the heading up to whichever comes
 		# first of the next "### " heading, the next "## " heading, the
@@ -650,13 +660,29 @@ while IFS= read -r t; do
 		fi
 		# Check (2) of SKILL.md's `ok`/`drifted` bullet is compact-tolerant: a
 		# release body MAY be shorter than its CHANGELOG section, so the old
-		# byte-for-byte `cmp` against $want_section is gone. The body (after the
-		# What's New / compare-line / marker split above) only has to be
-		# non-empty and must not embed a CHANGELOG version header line
-		# (`## [X.Y.Z] ...`), which is the copy-pasted-whole-section failure.
+		# byte-for-byte `cmp` against $want_section is gone. It is replaced by ONE
+		# body-validity predicate (the same one Step 3's re-sync preservation
+		# rule applies): (a) the CHANGELOG section must exist and be non-empty;
+		# (b) the body content, ignoring compare-shaped trailer lines (a stale
+		# trailer must not mask an empty body), must be non-empty; (c) it must
+		# not embed a CHANGELOG version-header line (`## [X.Y.Z]` / `## [Unreleased]`,
+		# whitespace-tolerant -- a legitimate `## [link](url)` heading is fine);
+		# (d) it must not carry a `### <heading>` line for an active
+		# excluded_sections entry. All greps run under LC_ALL=C so a stray
+		# invalid UTF-8 byte cannot abort `tr`/`grep` and read as "empty".
 		body_ok=1
-		[[ -n "$(tr -d '[:space:]' <"$got")" ]] || body_ok=0
-		grep -a -q -E '^## \[' "$got" && body_ok=0
+		body_note=""
+		if [[ -z "$(LC_ALL=C tr -d '[:space:]' <"$want_section")" ]]; then
+			body_ok=0
+			body_note="body (missing CHANGELOG section)"
+		elif ! LC_ALL=C grep -a -v -E '^\*\*Full (diff|changelog):\*\*' "$got" | LC_ALL=C grep -a -q '[^[:space:]]' ||
+			LC_ALL=C grep -a -q -E '^##[[:space:]]*\[([0-9]+\.[0-9]+\.[0-9]+[^]]*|Unreleased)\]' "$got"; then
+			body_ok=0
+			body_note="body (empty or embeds a CHANGELOG header)"
+		elif [[ -n "$SRC_FILE" ]] && LC_ALL=C grep -a -q -x -F -f "$tmp/excl.txt" "$got"; then
+			body_ok=0
+			body_note="body (carries an excluded section)"
+		fi
 		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 && "$body_ok" == 1 ]]; then
 			status="ok"
 		else
@@ -671,7 +697,7 @@ while IFS= read -r t; do
 			# "title,body" instead of "title, body". Join explicitly instead.
 			failed=()
 			[[ "$title_ok" == 1 ]] || failed+=("title")
-			[[ "$body_ok" == 1 ]] || failed+=("body (empty or embeds a CHANGELOG header)")
+			[[ "$body_ok" == 1 ]] || failed+=("$body_note")
 			[[ "$compare_ok" == 1 ]] || failed+=("exact cached-base compare path")
 			[[ "$whats_new_ok" == 1 ]] || failed+=("What's New presence-vs-whats_new")
 			note=""
