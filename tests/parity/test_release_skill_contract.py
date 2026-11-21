@@ -2477,6 +2477,106 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     assert "no subsection content left to publish" not in step3
 
 
+# --- Compact release notes: the valid-body predicate's prose re-sync side -----
+# Moved from tests/release/test-scripts.sh's V9/V12 greps (behaviour suite) so
+# every release prose contract lives here, region-scoped. Audit classification
+# and re-sync action must stay one function of the body, so the prose re-sync
+# side must state the rules resolve-template-marker.sh runs. The Codex mirror's
+# port of the round-5 wording is pending (ported separately via codex:rescue),
+# so these run on the Claude mirror only until that port lands: flip
+# _COMPACT_NOTES_CODEX_PORT_PENDING to False in the port commit.
+_COMPACT_NOTES_CODEX_PORT_PENDING = False
+
+
+def _compact_notes_regions(skill_path: Path) -> tuple[str, str, str]:
+    """(Canonical Format, Step 3, Step A4) spans of the raw SKILL.md."""
+    if _COMPACT_NOTES_CODEX_PORT_PENDING and "skein-codex" in skill_path.parts:
+        pytest.skip("Codex port of the compact-notes round-5 prose is pending")
+    text = skill_path.read_text()
+    canonical = _region_between(text, "canonical-format", "single-version-mode")
+    step_a4 = _region_between(text, "step-a4", "audit-mode-end")
+    return canonical, _step3_region(text), step_a4
+
+
+def _line_with(region: str, needle: str) -> str:
+    lines = [line for line in region.splitlines() if needle in line]
+    assert len(lines) == 1, f"expected one line carrying {needle!r}, got {len(lines)}"
+    return lines[0]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_valid_body_defines_publishable_content_once(
+    skill_path: Path,
+) -> None:
+    """Clause (a) is the ONE definition of publishable CHANGELOG content
+    (after excluded_sections, ignoring compare-shaped lines); Step 3 item 1's
+    summary-discard rule, Step 3 item 3's hard stop and Step A4's re-test name
+    it instead of re-describing it (round 5: A4 omitted the compare-line half
+    and offered a re-sync that Step 3 item 3 then hard-stopped on)."""
+    canonical, step3, step_a4 = _compact_notes_regions(skill_path)
+    clause_a = _line_with(
+        canonical, "the CHANGELOG section has **publishable content**"
+    )
+    for needle in (
+        "after `excluded_sections` are applied, ignoring compare-shaped lines",
+        "Step 3 item 1's summary-discard rule, Step 3 item 3's hard stop and Step A4's re-test apply by name",
+        "(d) the body — summary included, read before the summary is split off",
+        "typographic apostrophe",
+        "valid body",
+        "up to 3 leading spaces (clause (c)'s heading-indentation bound",
+        "non-empty SemVer `-prerelease`/`+build` tail",
+    ):
+        assert needle in clause_a, needle
+    item3 = _line_with(step3, "**CHANGELOG section content.**")
+    assert "leading/trailing whitespace trimmed on both sides" in item3
+    assert "exactly matches" not in item3
+    assert "drop every compare-shaped" in item3
+    assert (
+        "it fails Canonical Format item 2 clause (a)'s publishable-content test"
+        in item3
+    )
+    a4 = _line_with(
+        step_a4, "is withheld from re-sync only when re-sync itself would stop"
+    )
+    for needle in (
+        "current committed template",
+        "Canonical Format item 2 clause (a)'s publishable-content test",
+        "ignoring compare-shaped lines",
+        "needs CHANGELOG/template edit",
+        "Otherwise offer it like any other",
+    ):
+        assert needle in a4, needle
+    assert "is not repairable by re-sync" not in a4
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
+    """Step 3 item 1 defines the summary-discard rule (version header,
+    excluded heading or compare-shaped line); every other mention points at
+    it by name without restating a narrower trigger, and the What's New
+    boundary uses the shared heading-indentation bound."""
+    canonical, step3, _ = _compact_notes_regions(skill_path)
+    rule = _line_with(step3, "**Summary-discard rule: a recovered summary")
+    for needle in (
+        "headed or headingless",
+        "a CHANGELOG version-header line (Canonical Format item 2 clause (c))",
+        "an active `excluded_sections` heading line (clause (d))",
+        "or a compare-shaped line (never publishable content under clause (a)",
+        "is never reused",
+        "the next heading line (any `#` level, up to 3 leading spaces",
+    ):
+        assert needle in rule, needle
+    assert "unless Step 3 item 1's summary-discard rule discards it" in canonical
+    assert "per Step 3 item 1's summary-discard rule" in step3
+    text = skill_path.read_text()
+    for stale in (
+        "version-header rule",
+        "unless it embeds a version header",
+        "Recovery rejection takes precedence",
+    ):
+        assert stale not in text, stale
+
+
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_excluded_sections_scoped_out_of_no_free_text_claim(
     skill_path: Path,
@@ -4314,10 +4414,14 @@ def test_release_golden_recapture_is_descendant_of_original_capture() -> None:
     _assert_strict_ancestor(recapture, "HEAD", "golden_recapture_commit vs HEAD")
 
 
-def _last_region_rows() -> dict[str, tuple[str, int, str]]:
-    """Last appended row per `region` (any file): (file, byte_length, exempt)."""
+def _last_region_rows() -> dict[tuple[str, str], tuple[int, str]]:
+    """Last appended row per (`region`, file): (byte_length, exempt).
+
+    Keyed by file too, so a region with live prose in both SKILL.md and a
+    reference file keeps a guard on each span, and an exempt row exempts only
+    its own file's span."""
     assert _REGION_BASELINE.is_file(), f"missing {_REGION_BASELINE}"
-    rows: dict[str, tuple[str, int, str]] = {}
+    rows: dict[tuple[str, str], tuple[int, str]] = {}
     for line in _REGION_BASELINE.read_text().splitlines():
         if not line.strip() or line.startswith(("#", "region\t")):
             continue
@@ -4325,7 +4429,7 @@ def _last_region_rows() -> dict[str, tuple[str, int, str]]:
         assert len(cells) in (3, 4), f"malformed region-length row: {line!r}"
         region, file, length = cells[0], cells[1], cells[2]
         exempt = cells[3] if len(cells) == 4 else ""
-        rows[region] = (file, int(length), exempt)
+        rows[(region, file)] = (int(length), exempt)
     assert rows, "region-length baseline has no rows"
     return rows
 
@@ -4353,6 +4457,18 @@ def _measured_region_length(file: str, region: str) -> int:
     return len(text[begin:end].encode())
 
 
+def test_release_region_baseline_guards_each_file_span() -> None:
+    """Review-gauntlet round 5: rows keyed by region alone let the appended
+    SKILL.md canonical-format row silently drop the guard on the reference
+    span. Both live spans of a region must keep their own non-exempt row."""
+    rows = _last_region_rows()
+    release = "plugins/skein/skills/release/"
+    for file in ("SKILL.md", "references/template-subsystem.md"):
+        key = ("canonical-format", release + file)
+        assert key in rows, f"no baseline row for {key}"
+        assert not rows[key][1], f"{key} is exempt; its span is unguarded"
+
+
 @pytest.mark.parametrize("mirror", ["plugins/skein/", "plugins/skein-codex/"])
 def test_release_regions_stay_within_tolerance_of_last_baseline_row(
     mirror: str,
@@ -4360,7 +4476,7 @@ def test_release_regions_stay_within_tolerance_of_last_baseline_row(
     if mirror.endswith("skein-codex/") and "release-skill-md" in _RELEASE_LAGGING_ACK:
         pytest.skip("release-skill-md lag acknowledged via RELEASE_LAGGING_MIRROR_OK")
     failures: list[str] = []
-    for region, (file, baseline, exempt) in _last_region_rows().items():
+    for (region, file), (baseline, exempt) in _last_region_rows().items():
         if exempt:
             continue
         mirrored = file.replace("plugins/skein/", mirror, 1)
