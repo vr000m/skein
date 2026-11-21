@@ -107,6 +107,7 @@ just check-prompt-parity         # Claude vs Codex SKILL.md content parity for b
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just reconciliation-tests        # reconciliation parity + fixture + renderer + determinism
+just pi-tests                    # Pi mirror suites (tests/pi)
 just bundle-appliers             # regenerate bundled auto-fix pipeline inside each skill
 ```
 
