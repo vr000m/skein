@@ -90,3 +90,13 @@ step-3	plugins/skein/skills/release/SKILL.md	32661
 # trimmed excluded-heading comparison and the A4 needs-edit exception to the
 # Step 3 snapshot. The Codex mirror differs only by its registered anchors.
 step-3	plugins/skein/skills/release/SKILL.md	36462
+# Compact release notes put the single valid-body predicate (clauses (a)-(e),
+# the What's New heading tolerance and the one precedence rule) into the
+# Claude SKILL.md Canonical Format item 2, growing that span from 4024 to 7668
+# bytes. The last canonical-format row above measured the relocated reference
+# span (template-subsystem.md, unchanged here) and the SKILL.md row is exempt
+# (relocated-to-references), so this growth was unguarded; rows are keyed by
+# region only, so this row moves the guard to the SKILL.md span (the reference
+# span is no longer length-guarded). The Codex mirror differs only by pending
+# port text and stays within tolerance.
+canonical-format	plugins/skein/skills/release/SKILL.md	7668
