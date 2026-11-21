@@ -302,12 +302,12 @@ RELEASE_CODEX_AI_SIGNS_PATH='"$SKILL_DIR"/../content-review/references/ai-writin
 # gated to occur exactly once per mirror below. The Codex half of the mirror
 # lands in Phase 3.5 (RELEASE_LAGGING_MIRROR_OK plane release-skill-md).
 # BEGIN release-call-lines (sourced by tests/parity/test-prompt-parity-extended.sh)
-RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step3-editorial step5-reverify step6-reverify a2-classify)
+RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step3-editorial step5-reverify step6-reverify a2-classify resync-summary resync-gate)
 
 release_call_script() {
 	case "$1" in
 	step1b-* | step5-reverify | step6-reverify) echo "read-release-template" ;;
-	step3-recovery | a2-classify) echo "resolve-template-marker" ;;
+	step3-recovery | a2-classify | resync-summary | resync-gate) echo "resolve-template-marker" ;;
 	step3-editorial) echo "editorial-preflight" ;;
 	esac
 }
@@ -350,6 +350,14 @@ release_call_line() {
 	step3-recovery)
 		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT>'
 		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
+		;;
+	resync-summary)
+		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> [--headingless-summary <file>]'
+		tail=" \`--head-sha\` is the same already-resolved \`TEMPLATE_HEAD_COMMIT\` as \`step3-recovery\`, never a fresh resolution."
+		;;
+	resync-gate)
+		args='--repo <source top-level> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> --version X.Y.Z'
+		tail=" \`--head-sha\` is the same already-resolved \`TEMPLATE_HEAD_COMMIT\`, never a fresh resolution."
 		;;
 	a2-classify)
 		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --tags <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
