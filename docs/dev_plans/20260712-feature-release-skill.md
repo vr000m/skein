@@ -128,7 +128,7 @@ Observed today while auditing `github.com/vr000m/skein/releases`: three release-
 - CHANGELOG content is handled as untrusted data while still supplying verbatim release notes through file-safe mutation transport.
 - Origin, not local tag state, is authoritative for PREV and remote tag/release decisions; local-only and bare-legacy cases remain explicit, non-silent classifications.
 - Ordinary re-sync reproduces an unchanged existing release body byte-for-byte, including preserving the absence of What's New; adding a previously-absent summary requires a separate explicit user choice.
-  - *2026-11-21 note (applies to this and the verbatim-release-notes item above):* compact release bodies are now allowed — new releases stay verbatim by default; re-sync preserves a valid compact content block rather than reproducing the CHANGELOG section byte-for-byte (see CHANGELOG `[Unreleased]` and the release skill's Canonical Format item 2).
+  - *2026-11-20 note (applies to this and the verbatim-release-notes item above):* compact release bodies are now allowed — new releases stay verbatim by default; re-sync preserves a valid compact content block rather than reproducing the CHANGELOG section byte-for-byte (see CHANGELOG `[Unreleased]` and the release skill's Canonical Format item 2).
 - Audit Mode either proves release-inventory completeness below its fixed 1000-entry cap or stops before classification without offering repair suggestions.
 
 ## Final Results
