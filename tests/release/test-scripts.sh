@@ -545,6 +545,8 @@ done <<'EOF'
 - First.\n\n## [1.2.3 compatibility notes]\n|ok|
 - First.\n\n## [1.2.3-rc.1] - 2026-01-01\n|drifted|body (embeds a CHANGELOG header)
 - First.\n\n## [1.2.3+build.5]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3-]\n|ok|
+- First.\n\n## [1.2.3+] - 2026-01-01\n|ok|
 EOF
 
 # V5: a summary-only body whose `## What's New` heading carries trailing
@@ -609,8 +611,8 @@ for variant in was curly; do
 		bad "a2-classify whats_new:false + '$variant' heading expected '$want': $out"
 done
 
-# V8: clause (c) reads the WHOLE body, before the summary is split off, so an
-# indented version header the summary split would swallow is still caught.
+# V8: clause (c) reads the WHOLE body, before the summary is split off; an
+# indented version header right after the summary is caught either way.
 printf '## What%ss New\n\nA summary paragraph.\n   ## [0.1.0] \342\200\223 2026-01-01\n\n- First.\n' "'" >"$TMP/b-sum-hdr.md"
 [[ "$(note_of "$(u_run "$TMP/b-sum-hdr.md")" 0.1.0)" == "drifted|body (embeds a CHANGELOG header)" ]] &&
 	pass "a2-classify: an indented header hidden behind the summary is still body drift" ||
@@ -653,10 +655,10 @@ composed body (bare-### subsection dropped) audits ok|### Added\n\n- Alpha.\n\n#
 bare-### subsection leaked into the body|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.\n\n### \n\n- Beta.|drifted|body (carries an excluded section)
 EOF2
 
-# V12: clause (d) reads the WHOLE body, like clause (c): the summary split ends
-# a summary only at a column-one heading, so an indented (space or tab) excluded
-# heading directly after the summary paragraph would otherwise be absorbed into
-# the discarded summary and escape the check. whats_new:true, so check (4) is
+# V12: clause (d) reads the WHOLE body, like clause (c): a 0-3-space excluded
+# heading ends the summary (V14) and a tab-indented one is a summary
+# continuation line, but both trim to the heading drop_excluded removes at cut
+# time, so both are flagged wherever they sit. whats_new:true, so check (4) is
 # silent and the body note alone decides. Rows: name|body-printf-format|expected.
 FXW="$TMP/fx-excl-wn"
 rm -rf "$FXW" && mkdir -p "$FXW/exclwn"
@@ -683,9 +685,6 @@ summary then a space-indented excluded heading|## What's New\n\nSummary.\n ### I
 summary then a 3-space-indented excluded heading|## What's New\n\nSummary.\n   ### Internal\n\n- Plumbing.|drifted|body (carries an excluded section)
 summary then a tab-indented excluded heading|## What's New\n\nSummary.\n\t### Internal\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
 EOF3
-grep -F -- '(d) the body — summary included, read before the summary is split off' "$ROOT/plugins/skein/skills/release/SKILL.md" >/dev/null &&
-	pass "SKILL.md Canonical Format clause (d) reads the whole body, summary included" ||
-	bad "SKILL.md Canonical Format clause (d) still reads only the content block"
 
 # V13: the section boundary is bounded like has_version_header: up to 3 leading
 # spaces, no tab. A 4-space or tab-indented `## [0.0.1]` is a code-block line of
@@ -707,49 +706,54 @@ tab code line first|\t## [0.0.1] example header in a code block\n- First thing.|
 3-space header ends an empty section|   ## [0.0.1] - 2025-12-01\n\n- Old thing.|drifted|body (missing CHANGELOG section)
 EOF4
 
-# V9: the prose re-sync side states the same rules the audit script runs, so
-# audit classification and re-sync action stay one function of the body.
-SK_CLAUDE="$ROOT/plugins/skein/skills/release/SKILL.md"
-SK_PI="$ROOT/plugins/skein-pi/skills/release/SKILL.md"
-item3="$(grep -F -- '**CHANGELOG section content.**' "$SK_CLAUDE")"
-[[ "$item3" == *"leading/trailing whitespace trimmed on both sides"* && "$item3" != *"exactly matches"* ]] &&
-	pass "SKILL.md Step 3 item 3: exclusion uses the trimmed heading comparison" ||
-	bad "SKILL.md Step 3 item 3 still uses an exact (untrimmed) exclusion match"
-[[ "$item3" == *"drop every compare-shaped"* ]] &&
-	pass "SKILL.md Step 3 item 3: composition drops compare-shaped CHANGELOG lines" ||
-	bad "SKILL.md Step 3 item 3 does not drop compare-shaped lines from composed content"
-grep -F -- 'typographic apostrophe' "$SK_CLAUDE" | grep -q -F -- 'valid body' &&
-	pass "SKILL.md documents the What's New heading tolerance beside the valid-body predicate" ||
-	bad "SKILL.md does not document the What's New heading tolerance"
-! grep -q -F -- 'Recovery rejection takes precedence' "$SK_CLAUDE" &&
-	pass "SKILL.md recovery adds no disqualifier outside the valid-body predicate" ||
-	bad "SKILL.md recovery still disqualifies a body outside the valid-body predicate"
-for needle in '## [Unreleased]' 'leading/trailing whitespace' 'typographic apostrophe' 'refresh content from CHANGELOG'; do
-	grep -q -F -- "$needle" "$SK_PI" &&
-		pass "Pi SKILL.md carries the valid-body detail '$needle'" ||
-		bad "Pi SKILL.md lacks the valid-body detail '$needle'"
+# V14: the What's New summary ends at ANY heading line under the shared
+# HEADING_INDENT_RE bound (0-3 spaces, no tab) -- the same bound the section
+# boundary and clause (c) use. Whole space: indent {0,1,3,4 spaces, tab} x level
+# {##,###} x position {directly after the summary, after a blank line}. A 4-space
+# or tab-indented line directly after the paragraph is not a heading (Markdown
+# reads it as a paragraph continuation), so it stays in the summary and the
+# content block is empty; after a blank line every variant is content.
+for ind in 0 1 3 4 tab; do
+	case "$ind" in tab) pfx=$'\t' ;; *) pfx="$(printf '%*s' "$ind" '')" ;; esac
+	for lvl in '##' '###'; do
+		for pos in adjacent blank; do
+			sep=""
+			[[ "$pos" == blank ]] && sep=$'\n'
+			want="ok|"
+			[[ "$pos" == adjacent && ("$ind" == 4 || "$ind" == tab) ]] && want="drifted|body (empty)"
+			printf "## What's New\n\nSummary.\n%s%s%s Added\n- Alpha.\n" "$sep" "$pfx" "$lvl" >"$TMP/b-split.md"
+			got="$(note_of "$(u_run "$TMP/b-split.md")" 0.1.0)"
+			[[ "$got" == "$want" ]] &&
+				pass "a2-classify summary split: indent=$ind $lvl $pos -> $want" ||
+				bad "a2-classify summary split: indent=$ind $lvl $pos expected '$want', got '$got'"
+		done
+	done
 done
-# A recovered summary that embeds a version header is never reused (Claude + Pi),
-# A4 does not offer a missing-section row for re-sync, and Pi states the
-# compact trigger.
-# shellcheck disable=SC2016 # literal backticks in a fixed-string needle
-grep -q -F -- 'contains a CHANGELOG version-header line (the definition in Canonical Format item 2 clause (c)) or an active `excluded_sections` heading line (clause (d)) is never reused' "$SK_CLAUDE" &&
-	pass "SKILL.md Step 3 item 1: a recovered summary embedding a version header is not reused" ||
-	bad "SKILL.md Step 3 item 1 still reuses a recovered summary that embeds a version header"
-a4="$(grep -F -- 'is withheld from re-sync only when re-sync itself would stop' "$SK_CLAUDE")"
-[[ "$a4" == *"current committed template"* && "$a4" == *"needs CHANGELOG/template edit"* &&
-	"$a4" == *"Otherwise offer it like any other"* && "$a4" != *"is not repairable by re-sync"* ]] &&
-	pass "SKILL.md Step A4: a missing-section row is withheld only when the current template also empties it" ||
-	bad "SKILL.md Step A4 withholds a missing-section row without re-testing under the current template"
-# shellcheck disable=SC2016 # literal backticks in a fixed-string needle
-for needle in 'contains a CHANGELOG version-header line' 'needs CHANGELOG/template edit' 'withheld from re-sync only when re-sync itself would stop' 'no `###` heading line anywhere in the body, including inside the summary' 'release is verbatim by default and goes compact only when' 'may only restate what the section'; do
-	tr '\n' ' ' <"$SK_PI" | tr -s ' ' | grep -q -F -- "$needle" &&
-		pass "Pi SKILL.md carries '$needle'" ||
-		bad "Pi SKILL.md lacks '$needle'"
-done
-! grep -q -F -- 'or on explicit request' "$SK_PI" &&
-	pass "Pi SKILL.md regenerate wording matches the Claude/Codex mirrors" ||
-	bad "Pi SKILL.md still carries the 'or on explicit request' regenerate path"
+# The What's New heading itself takes the same bound: 3 leading spaces is still a
+# summary heading (summary-only body -> empty content); 4 is a code block, so the
+# body is ordinary content.
+while IFS='|' read -r fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/b-wn-ind.md"
+	got="$(note_of "$(u_run "$TMP/b-wn-ind.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify indented What's New heading '$fmt' -> $want" ||
+		bad "a2-classify indented What's New heading '$fmt' expected '$want', got '$got'"
+done <<'EOF5'
+   ## What's New\n\nOnly a summary.\n|drifted|body (empty)
+    ## What's New\n\nOnly a summary.\n|ok|
+EOF5
+# Clause (a) ignores compare-shaped lines with no template too: a CHANGELOG
+# section holding only a `**Full diff:**` line has nothing to publish.
+printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/stale\n' >"$TMP/cl-only-cmp-untpl.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-only-cmp-untpl.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: a section holding only a compare-shaped line is a missing section" ||
+	bad "a2-classify: a compare-only CHANGELOG section was treated as publishable content"
+
+# V9 (prose re-sync side) lives in tests/parity/test_release_skill_contract.py
+# (Claude/Codex, region-scoped) and tests/pi/test_orchestration_routes.py (Pi):
+# this suite asserts script behaviour only.
 
 # C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
 sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"

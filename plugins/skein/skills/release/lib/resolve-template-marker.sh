@@ -413,14 +413,22 @@ repo_name="${web##*/}"
 CHANGELOG_LF="$tmp/changelog-lf.txt"
 sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
-# The ONE section-boundary rule both extractors share: a line that opens like a
-# `## [` header modulo whitespace starts the next section. Leading indentation
-# is bounded exactly as has_version_header bounds it: up to 3 spaces, no tab (4
-# spaces or a tab is a code block, so `    ## [0.0.1] example` stays content).
-# ` ? ? ?` rather than an interval expression, which not every awk supports.
-# Bracket expressions, not `\[`, so the text survives an awk `-v` value's escape
+# The ONE Markdown heading-indentation bound every heading test in this script
+# shares: up to 3 leading spaces, no tab (4 spaces or a tab is a code block or a
+# paragraph continuation, never a heading). ` ? ? ?` rather than an interval
+# expression, which not every awk supports. Every heading pattern below is built
+# on it, so the section boundary, clause (c), the What's New summary split and
+# has_summary cannot disagree about what counts as a heading line.
+HEADING_INDENT_RE='^ ? ? ?'
+# Any ATX heading line (`#`..`######` then whitespace or end of line): where a
+# What's New summary paragraph ends.
+HEADING_START_RE="${HEADING_INDENT_RE}#+([[:space:]]|\$)"
+# The ONE section-boundary rule both extractors share, and has_version_header's
+# first stage: a line that opens like a `## [` header modulo whitespace starts
+# the next section (`    ## [0.0.1] example` stays content). Bracket
+# expressions, not `\[`, so the text survives an awk `-v` value's escape
 # processing.
-VERSION_HEADER_START_RE='^ ? ? ?##[[:space:]]*[[]'
+VERSION_HEADER_START_RE="${HEADING_INDENT_RE}##[[:space:]]*[[]"
 # section <version> — the CHANGELOG section body (header stripped), edges
 # trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
 # extraction+tolerant-matching logic", so a strict miss retries tolerating
@@ -530,25 +538,28 @@ has_content() {
 	awk -v cre="$COMPARE_SHAPED_RE" '$0 ~ cre { next } /[^[:space:]]/ { f = 1; exit } END { exit !f }' "$1"
 }
 # The `## What's New` summary heading as Canonical Format item 2 documents it:
-# tolerant of surrounding whitespace and runs of spaces, and of exactly the real
-# apostrophe encodings -- ASCII `'`, U+2019 and U+2018 (literal UTF-8 bytes; the
-# script runs under the C locale). Nothing wider: `## What was New` is content.
-# ONE pattern feeds the summary split, has_summary and so check (4).
-WHATS_NEW_RE=$'^[[:space:]]*##[[:space:]]+What(\'|\xe2\x80\x99|\xe2\x80\x98)s[[:space:]]+New[[:space:]]*$'
+# HEADING_INDENT_RE's leading-space bound, tolerant of trailing whitespace and
+# runs of spaces, and of exactly the real apostrophe encodings -- ASCII `'`,
+# U+2019 and U+2018 (literal UTF-8 bytes; the script runs under the C locale).
+# Nothing wider: `## What was New` is content. ONE pattern feeds the summary
+# split, has_summary and so check (4).
+WHATS_NEW_RE="$HEADING_INDENT_RE"$'##[[:space:]]+What(\'|\xe2\x80\x99|\xe2\x80\x98)s[[:space:]]+New[[:space:]]*$'
 # has_version_header <file> — does the file carry a CHANGELOG version-header
-# line? Mirrors section_tolerant's squash: up to 3 leading spaces (4 is a code
-# block), then the whitespace-squashed line must read `##[X.Y.Z]` (optionally a
-# SemVer `-prerelease`/`+build` tail of [0-9A-Za-z.+-]) or `##[Unreleased]`,
+# line? Two stages: the line must open like a header (VERSION_HEADER_START_RE,
+# the section boundary's own predicate), then -- mirroring section_tolerant's
+# squash -- the whitespace-squashed line must read `##[X.Y.Z]` (optionally a
+# non-empty SemVer `-prerelease`/`+build` tail of [0-9A-Za-z.+-], so `[1.2.3-]`
+# is not a version) or `##[Unreleased]`,
 # followed by a hyphen, an en dash, or end of line. A link heading such as
 # `## [Migration guide](guide.md)` or `## [1.2.3](guide.md)`, and a heading that
 # merely starts with a version (`## [1.2.3 compatibility notes]`), is not a
 # version header. Single awk pass over the file: no pipe, so no SIGPIPE.
 has_version_header() {
-	awk -v ed="$(printf '\xe2\x80\x93')" '
+	awk -v ed="$(printf '\xe2\x80\x93')" -v hs="$VERSION_HEADER_START_RE" '
 		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
-		/^##/ || /^ ##/ || /^  ##/ || /^   ##/ {
+		$0 ~ hs {
 			s = squash($0)
-			if (match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]*)?|Unreleased)\]/)) {
+			if (match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?|Unreleased)\]/)) {
 				rest = substr(s, RLENGTH + 1)
 				if (rest == "" || substr(rest, 1, 1) == "-" || index(rest, ed) == 1) { f = 1; exit }
 			}
@@ -564,14 +575,16 @@ has_version_header() {
 #       lines, is non-empty -- `body (missing CHANGELOG section)` covers both a
 #       missing section and one left empty by exclusions;
 #   (b) the content block, ignoring compare-shaped lines, is non-empty;
-#   (c) the WHOLE body (summary included, read before the summary split, which
-#       only recognises column-one headings) embeds no CHANGELOG version-header
-#       line (has_version_header);
-#   (d) the WHOLE body (summary included, for the same reason as (c): the
-#       split ends a summary only at a column-one heading, so an indented
-#       `   ### Internal` right after it would otherwise be absorbed) carries no
-#       `###` heading equal, trimmed, to an active excluded_sections entry
-#       (has_excluded_heading).
+#   (c) the WHOLE body (summary included, read before the summary split)
+#       embeds no CHANGELOG version-header line (has_version_header);
+#   (d) the WHOLE body (summary included) carries no `###` heading equal,
+#       trimmed, to an active excluded_sections entry (has_excluded_heading).
+# (c) and (d) read the whole body although the split now ends a summary at any
+# heading line (HEADING_START_RE): (d)'s comparison trims, exactly as
+# drop_excluded does at cut time, so a 4-space/tab-indented `### Internal` is an
+# excluded heading on both sides even though Markdown reads it as a summary
+# continuation line, never a heading; the whole-body scan keeps audit symmetric
+# with that cut-time rule wherever the line sits, and costs nothing for (c).
 # (b) alone reads the content block; (a) reads the CHANGELOG section.
 # Clause (e) — no compare-shaped line inside the content block — is enforced by
 # the compare-path check (3) below, which already drifts on any compare-shaped
@@ -684,8 +697,9 @@ while IFS= read -r t; do
 			awk 'f || /[^[:space:]]/ { f = 1; print }' >"$got.0"
 		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 		# What's New prose block runs from the heading up to whichever comes
-		# first of the next "### " heading, the next "## " heading, the
-		# compare line, or EOF. Real release bodies use both a paragraph
+		# first of the next heading line (HEADING_START_RE: any level, up to 3
+		# leading spaces -- the shared bound -- or a VERSION_HEADER_START_RE
+		# line), the compare line, or EOF. Real release bodies use both a paragraph
 		# immediately after the heading (no blank line) and a blank line
 		# between the heading and the paragraph -- both are well-formed, so
 		# leading blank lines before any paragraph content are swallowed
@@ -721,8 +735,9 @@ while IFS= read -r t; do
 		compare_anchor=""
 		[[ "$label" == "none" ]] || compare_anchor='^[*][*]'"$label"':[*][*]'
 		awk -v anchor="$compare_anchor" -v wn="$WHATS_NEW_RE" \
+			-v hd="$HEADING_START_RE" -v hs="$VERSION_HEADER_START_RE" \
 			'NR == 1 && $0 ~ wn { insummary = 1; started = 0; next }
-			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
+			insummary && ($0 ~ hd || $0 ~ hs || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
 			insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
 			insummary && !started && /^[[:space:]]*$/ { next }
 			insummary { started = 1; next }
