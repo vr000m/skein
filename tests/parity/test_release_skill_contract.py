@@ -2481,17 +2481,13 @@ def test_release_excluded_sections_empty_body_predicate_matches(
 # Moved from tests/release/test-scripts.sh's V9/V12 greps (behaviour suite) so
 # every release prose contract lives here, region-scoped. Audit classification
 # and re-sync action must stay one function of the body, so the prose re-sync
-# side must state the rules resolve-template-marker.sh runs. The Codex mirror's
-# port of the round-5 wording is pending (ported separately via codex:rescue),
-# so these run on the Claude mirror only until that port lands: flip
-# _COMPACT_NOTES_CODEX_PORT_PENDING to False in the port commit.
-_COMPACT_NOTES_CODEX_PORT_PENDING = False
+# side must state the rules resolve-template-marker.sh runs. These pins run on
+# both mirrors; a mirror lag goes through RELEASE_LAGGING_MIRROR_OK, not a
+# per-feature flag.
 
 
 def _compact_notes_regions(skill_path: Path) -> tuple[str, str, str]:
     """(Canonical Format, Step 3, Step A4) spans of the raw SKILL.md."""
-    if _COMPACT_NOTES_CODEX_PORT_PENDING and "skein-codex" in skill_path.parts:
-        pytest.skip("Codex port of the compact-notes round-5 prose is pending")
     text = skill_path.read_text()
     canonical = _region_between(text, "canonical-format", "single-version-mode")
     step_a4 = _region_between(text, "step-a4", "audit-mode-end")
@@ -2509,24 +2505,33 @@ def test_release_valid_body_defines_publishable_content_once(
     skill_path: Path,
 ) -> None:
     """Clause (a) is the ONE definition of publishable CHANGELOG content
-    (after excluded_sections, ignoring compare-shaped lines); Step 3 item 1's
-    summary-discard rule, Step 3 item 3's hard stop and Step A4's re-test name
-    it instead of re-describing it (round 5: A4 omitted the compare-line half
-    and offered a re-sync that Step 3 item 3 then hard-stopped on)."""
+    (after excluded_sections, ignoring compare-shaped lines); Step 3 item 3's
+    hard stop and Step A4's re-test name it instead of re-describing it (round
+    5: A4 omitted the compare-line half and offered a re-sync that Step 3 item
+    3 then hard-stopped on). Round 6: A4 applies it to EVERY offered row,
+    whatever field drifted (a title-only drift over a section the current
+    template empties was offered, then hard-stopped); the summary-discard rule
+    no longer applies it (a compare-shaped line is not a discard trigger); the
+    heading-bound claim names only the structural heading tests."""
     canonical, step3, step_a4 = _compact_notes_regions(skill_path)
     clause_a = _line_with(
         canonical, "the CHANGELOG section has **publishable content**"
     )
     for needle in (
         "after `excluded_sections` are applied, ignoring compare-shaped lines",
-        "Step 3 item 1's summary-discard rule, Step 3 item 3's hard stop and Step A4's re-test apply by name",
+        "which Step 3 item 3's hard stop and Step A4's re-test apply by name",
         "(d) the body — summary included, read before the summary is split off",
         "typographic apostrophe",
         "valid body",
         "up to 3 leading spaces (clause (c)'s heading-indentation bound",
-        "non-empty SemVer `-prerelease`/`+build` tail",
+        "SemVer `-prerelease` and/or `+build` tail of dot-separated non-empty identifiers",
+        "`[1.2.3+.]`",
+        "shared by every structural heading test",
+        "(d)'s excluded-heading comparison is the trimmed cut-time one by design",
     ):
         assert needle in clause_a, needle
+    assert "summary-discard rule, Step 3 item 3's hard stop" not in clause_a
+    assert "shared by every heading test" not in clause_a
     item3 = _line_with(step3, "**CHANGELOG section content.**")
     assert "leading/trailing whitespace trimmed on both sides" in item3
     assert "exactly matches" not in item3
@@ -2539,6 +2544,8 @@ def test_release_valid_body_defines_publishable_content_once(
         step_a4, "is withheld from re-sync only when re-sync itself would stop"
     )
     for needle in (
+        "Every fixable row, whatever field drifted",
+        "before offering any row",
         "current committed template",
         "Canonical Format item 2 clause (a)'s publishable-content test",
         "ignoring compare-shaped lines",
@@ -2551,21 +2558,38 @@ def test_release_valid_body_defines_publishable_content_once(
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
-    """Step 3 item 1 defines the summary-discard rule (version header,
-    excluded heading or compare-shaped line); every other mention points at
-    it by name without restating a narrower trigger, and the What's New
-    boundary uses the shared heading-indentation bound."""
+    """Step 3 item 1 defines the summary-discard rule (version header or
+    excluded heading); every other mention points at it by name without
+    restating a narrower trigger, and the What's New boundary uses the shared
+    heading-indentation bound and levels 1-6.
+
+    Round 6 invariant (audit side: tests/release/test-scripts.sh V15): any
+    summary Audit accepts is recovered unchanged and kept, any summary re-sync
+    discards is one Audit flags. So the recovery boundary is Audit's split
+    (leading blank lines skipped), a compare-shaped line is not a discard
+    trigger (under label none Audit keeps it as summary prose), and a
+    headingless prefix carrying the template's own compare line is not a
+    summary (wrapped, Audit's split would end at it)."""
     canonical, step3, _ = _compact_notes_regions(skill_path)
     rule = _line_with(step3, "**Summary-discard rule: a recovered summary")
     for needle in (
         "headed or headingless",
         "a CHANGELOG version-header line (Canonical Format item 2 clause (c))",
         "an active `excluded_sections` heading line (clause (d))",
-        "or a compare-shaped line (never publishable content under clause (a)",
         "is never reused",
-        "the next heading line (any `#` level, up to 3 leading spaces",
+        "the next heading line (levels 1–6, `#` to `######`",
+        "or a 7+-hash line, continues the paragraph",
+        "blank lines between the heading and the paragraph's first text are skipped",
+        "a compare-shaped line is not a trigger",
+        "any other compare-shaped line is summary prose on both sides",
     ):
         assert needle in rule, needle
+    assert "or a compare-shaped line (never publishable" not in rule
+    assert "any `#` level" not in rule
+    assert (
+        "prefix bytes consisting only of compare-shaped lines, or carrying a "
+        "line matching the recovery template's own compare line, are not a summary"
+    ) in step3
     assert "unless Step 3 item 1's summary-discard rule discards it" in canonical
     assert "per Step 3 item 1's summary-discard rule" in step3
     text = skill_path.read_text()
@@ -4460,11 +4484,17 @@ def _measured_region_length(file: str, region: str) -> int:
 def test_release_region_baseline_guards_each_file_span() -> None:
     """Review-gauntlet round 5: rows keyed by region alone let the appended
     SKILL.md canonical-format row silently drop the guard on the reference
-    span. Both live spans of a region must keep their own non-exempt row."""
+    span. Every region spliced from a reference file keeps a non-exempt row
+    for that reference span, and canonical-format (live prose in SKILL.md
+    too, not just a pointer) also keeps one for its SKILL.md span."""
     rows = _last_region_rows()
     release = "plugins/skein/skills/release/"
-    for file in ("SKILL.md", "references/template-subsystem.md"):
-        key = ("canonical-format", release + file)
+    keys = [("canonical-format", release + "SKILL.md")]
+    keys += [
+        (region, release + "references/" + ref_name)
+        for region, _needle, ref_name, _section in _REFERENCE_SPLICES
+    ]
+    for key in keys:
         assert key in rows, f"no baseline row for {key}"
         assert not rows[key][1], f"{key} is exempt; its span is unguarded"
 
