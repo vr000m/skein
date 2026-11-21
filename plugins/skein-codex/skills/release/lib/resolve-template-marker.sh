@@ -413,6 +413,10 @@ repo_name="${web##*/}"
 CHANGELOG_LF="$tmp/changelog-lf.txt"
 sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
+# The ONE section-boundary rule both extractors share: a line that opens like a
+# `## [` header modulo whitespace starts the next section. Bracket expressions,
+# not `\[`, so the text survives an awk `-v` value's escape processing.
+VERSION_HEADER_START_RE='^[[:space:]]*##[[:space:]]*[[]'
 # section <version> — the CHANGELOG section body (header stripped), edges
 # trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
 # extraction+tolerant-matching logic", so a strict miss retries tolerating
@@ -431,11 +435,14 @@ section() {
 # unrelated trailing text — match here and start extraction from the wrong
 # place; the documented tolerant retry below (whitespace/punctuation drift
 # only, SKILL.md Step 1 item 5) is the sole sanctioned fallback for anything
-# looser than this exact shape.
+# looser than this exact shape. The section ENDS at any line section_tolerant
+# would treat as a header (VERSION_HEADER_START_RE), not only a single-space
+# `## [`: a strict start with a narrower end let an empty section swallow a
+# following `##  [1.0.0]  –  date` release's header and notes.
 section_exact() {
-	awk -v want="## [$1] - " '
+	awk -v want="## [$1] - " -v hs="$VERSION_HEADER_START_RE" '
 		index($0, want) == 1 { on = 1; next }
-		/^## \[/ { on = 0 }
+		$0 ~ hs { on = 0 }
 		on { print }
 	' "$CHANGELOG_LF" | trim_edges
 }
@@ -447,9 +454,9 @@ section_exact() {
 # reopen the same "## [0.1.0]bogus" hole section_exact's fix above closes,
 # just one fallback stage later.
 section_tolerant() {
-	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" '
+	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" -v hs="$VERSION_HEADER_START_RE" '
 		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
-		/^[[:space:]]*##[[:space:]]*\[/ {
+		$0 ~ hs {
 			s = squash($0)
 			on = (index(s, h) == 1) || (index(s, e) == 1)
 			next
@@ -468,7 +475,14 @@ trim_edges() {
 # trimmed on both sides. Shared, as an awk function prefix, by every program that
 # compares a line against an excluded_sections entry (excluded_headings,
 # drop_excluded, clause (d)) so the cut-time and audit sides cannot diverge.
+# EXCL_AWK adds the list loader and the ONE heading predicate (`###` then
+# whitespace or end of line, after trimming) both drop_excluded and
+# has_excluded_heading use, so an entry that trims to a bare `###` is a heading
+# on both sides, never dropped at cut time on one and flagged on the other.
 TRIM_AWK='function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }'
+EXCL_AWK="$TRIM_AWK"'
+function load_excl(f, l) { while ((getline l < f) > 0) ex[l] = 1 }
+function is_h3(t) { return t ~ /^###([[:space:]]|$)/ }'
 # A compare-shaped line (`**Full diff:**`/`**Full changelog:**`), label-agnostic.
 # Bracket expressions instead of `\*` so the SAME text is safe both for
 # `grep -E` and for an awk `-v` value (whose escape processing eats `\*`).
@@ -483,15 +497,26 @@ excluded_headings() {
 		awk "$TRIM_AWK"' { t = trim($0); if (t != "") print t }'
 }
 # drop_excluded <excluded-headings-file> — filters the section on stdin by the
-# list excluded_headings built: a `### ` heading whose trimmed text equals an
-# entry starts a skipped subsection (Step 3 item 3's cut-time rule).
+# list excluded_headings built: a `###` heading (is_h3) whose trimmed text
+# equals an entry starts a skipped subsection (Step 3 item 3's cut-time rule).
 drop_excluded() {
-	awk -v exfile="$1" "$TRIM_AWK"'
-		BEGIN { while ((getline l < exfile) > 0) ex[l] = 1 }
+	awk -v exfile="$1" "$EXCL_AWK"'
+		BEGIN { load_excl(exfile) }
 		{ t = trim($0) }
-		t ~ /^### / { skip = (t in ex) }
+		is_h3(t) { skip = (t in ex) }
 		!skip { print }
 	' | trim_edges
+}
+# has_excluded_heading <file> <excluded-headings-file> — clause (d): does the
+# file carry a `###` heading (is_h3) whose trimmed text equals an entry? The
+# same loader and predicate drop_excluded uses.
+has_excluded_heading() {
+	awk -v exfile="$2" "$EXCL_AWK"'
+		BEGIN { load_excl(exfile) }
+		{ t = trim($0) }
+		is_h3(t) && (t in ex) { f = 1; exit }
+		END { exit !f }
+	' "$1"
 }
 # has_content <file> — does the file carry a non-whitespace line other than a
 # compare-shaped one? Clause (a) (composition drops compare-shaped CHANGELOG
@@ -538,8 +563,8 @@ has_version_header() {
 #   (c) the WHOLE body (summary included, read before the summary split, which
 #       only recognises column-one headings) embeds no CHANGELOG version-header
 #       line (has_version_header);
-#   (d) the content block carries no line equal, trimmed, to an active
-#       excluded_sections entry.
+#   (d) the content block carries no `###` heading equal, trimmed, to an
+#       active excluded_sections entry (has_excluded_heading).
 # Clause (e) — no compare-shaped line inside the content block — is enforced by
 # the compare-path check (3) below, which already drifts on any compare-shaped
 # line other than the one exact canonical trailer, so it is not re-reported here.
@@ -552,11 +577,7 @@ body_invalid_reason() {
 		echo "body (empty)"
 	elif has_version_header "$4"; then
 		echo "body (embeds a CHANGELOG header)"
-	elif awk -v exfile="$3" "$TRIM_AWK"'
-		BEGIN { while ((getline l < exfile) > 0) ex[l] = 1 }
-		trim($0) in ex { f = 1; exit }
-		END { exit !f }
-	' "$1"; then
+	elif has_excluded_heading "$1" "$3"; then
 		echo "body (carries an excluded section)"
 	fi
 }
@@ -638,11 +659,8 @@ while IFS= read -r t; do
 		excl_list="$tmp/excl.list"
 		: >"$excl_list"
 		[[ -n "$SRC_FILE" ]] && excluded_headings "$SRC_FILE" >"$excl_list"
-		if [[ -n "$SRC_FILE" ]]; then
-			section "$ver" | drop_excluded "$excl_list" >"$section_after_excl"
-		else
-			section "$ver" >"$section_after_excl"
-		fi
+		# One path: with an empty list drop_excluded passes every line through.
+		section "$ver" | drop_excluded "$excl_list" >"$section_after_excl"
 		# Body: strip a trailing marker, an optional What's New paragraph, and the compare line.
 		# Read from SRC_SCAN (the CR-normalized stream resolve_source already built
 		# for marker detection), never the raw $bfile: a CRLF body's marker line
@@ -689,21 +707,10 @@ while IFS= read -r t; do
 		# matching either label unconditionally (the previous bug here) mis-
 		# ends the scan on that line and leaks it, plus everything after it,
 		# into the CHANGELOG-content comparison below.
-		# `-v anchor=...` runs awk's own C-string escape processing on the
-		# VALUE before it ever becomes a dynamic regexp, consuming a single
-		# backslash-asterisk down to nothing (verified: `-v anchor='^\*\*X'`
-		# compiles to the regexp `^X`, not `^\*\*X` -- awk's leading `**`
-		# with nothing to repeat is elided as a no-op, not treated as two
-		# literal asterisks). That silently widened the anchor to match ANY
-		# line starting with the bare label text, no markdown bold required,
-		# reopening the same false-"drifted" bug class this rewrite exists to
-		# close: ordinary prose beginning "Full diff: ..." (no `**`) would
-		# now end the scan early. Doubling the backslashes here survives
-		# -v's one round of consumption so the regexp the awk program
-		# actually compiles still contains a literal backslash before each
-		# asterisk.
+		# Bracket-expression form, for the `-v` escape reason COMPARE_SHAPED_RE's
+		# comment gives.
 		compare_anchor=""
-		[[ "$label" == "none" ]] || compare_anchor='^\\*\\*'"$label"':\\*\\*'
+		[[ "$label" == "none" ]] || compare_anchor='^[*][*]'"$label"':[*][*]'
 		awk -v anchor="$compare_anchor" -v wn="$WHATS_NEW_RE" \
 			'NR == 1 && $0 ~ wn { insummary = 1; started = 0; next }
 			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
