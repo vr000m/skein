@@ -380,7 +380,7 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn-bodies" \
 	pass "a2-classify: whats_new:false + present summary is drift" ||
 	bad "a2-classify treated a present summary as ok under whats_new:false: $out"
 
-# L2: a compact body (shorter than its CHANGELOG section) is `ok`, not drift;
+# V1: a compact body (shorter than its CHANGELOG section) is `ok`, not drift;
 # an empty body or one embedding a CHANGELOG version header is still drift.
 mkdir -p "$TMP/compact-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/compact-bodies/"
 # The compact content block is "### Added\n\n- Alpha." (19 bytes), genuinely
@@ -404,7 +404,7 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies"
 [[ "$(jq -r '.rows[] | select(.version == "1.1.0") | .note' <<<"$out")" == "body (embeds a CHANGELOG header)" ]] &&
 	pass "a2-classify: an embedded CHANGELOG header is still body drift" ||
 	bad "a2-classify missed an embedded CHANGELOG header: $out"
-# The other half of the L2 contract: a whitespace-only body is still body drift.
+# The other half of the V1 contract: a whitespace-only body is still body drift.
 printf '   \n\n<!-- release-template-sha: %s -->\n' \
 	"$(tr -d '[:space:]' <"$FIX/templated/template-blob-sha.txt")" >"$TMP/compact-bodies/v1.0.0.lf.md"
 out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies" \
@@ -413,7 +413,7 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies"
 	pass "a2-classify: a whitespace-only body is still body drift" ||
 	bad "a2-classify accepted a whitespace-only body: $out"
 
-# L3: one body-validity predicate (non-empty section, non-empty content ignoring
+# V2: one body-validity predicate (non-empty section, non-empty content ignoring
 # compare trailers, no version header, no excluded heading) -- each edge case.
 note_of() { jq -r --arg v "$2" '.rows[] | select(.version == $v) | (.status + "|" + (.note // ""))' <<<"$1"; }
 u_run() { # <v0.1.0-body-file> [changelog]
@@ -481,12 +481,21 @@ for variant in clean leaked; do
 		bad "a2-classify excluded_sections ($variant) expected '$want': $out"
 done
 
-# L4: the whole valid-body predicate, table-driven over its clauses (Canonical
+# V3: the whole valid-body predicate, table-driven over its clauses (Canonical
 # Format item 2): one passing compact body, then each clause failing ALONE.
 # Clause (e) -- a compare-shaped line inside the content block -- is enforced
 # by the compare-path check (3), so its note is that check's, not a body note.
 # Rows: name|changelog-file|body-printf-format|expected status|note
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-only-excl.md"
+# A CHANGELOG `### Internal ` heading (trailing space) is excluded by the
+# trimmed comparison exactly as at cut time, so the composed block (Added only)
+# round-trips to `ok`.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-ws-excl.md"
+# A section left with only a compare-shaped line after exclusions has nothing to
+# publish: composition drops compare-shaped lines, so clause (a) fails.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/x\n\n### Internal\n\n- Plumbing.\n' >"$FXX/cl-only-cmp.md"
+# A section carrying a literal compare-shaped line composes WITHOUT it.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x\n' >"$FXX/cl-lit-cmp.md"
 cl_full="$FXX/excl/CHANGELOG.md"
 while IFS='|' read -r name cl fmt want; do
 	[[ "$cl" == full ]] && cl="$cl_full"
@@ -505,9 +514,13 @@ valid compact body|full|### Added\n\n- Alpha (short).|ok|
 (c) embeds a version header|full|## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.|drifted|body (embeds a CHANGELOG header)
 (d) excluded heading with trailing space|full|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
 (e) compare-shaped line in the content block|full|### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x|drifted|exact cached-base compare path
+(d) trailing-space CHANGELOG heading excluded at cut time, then audited|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.|ok|
+(d) trailing-space CHANGELOG heading leaked into the body|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
+(a) section holds only a compare-shaped line after exclusion|$FXX/cl-only-cmp.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
+(e) section's literal compare-shaped line dropped by composition|$FXX/cl-lit-cmp.md|### Added\n\n- Alpha.|ok|
 EOF
 
-# L5: version-header clause (c) matches the documented whitespace-tolerant
+# V4: version-header clause (c) matches the documented whitespace-tolerant
 # header shape and nothing wider. Rows: body-printf-format|expected.
 while IFS='|' read -r fmt want; do
 	# shellcheck disable=SC2059
@@ -524,9 +537,12 @@ done <<'EOF'
 - First.\n\n## [Unreleased]\n|drifted|body (embeds a CHANGELOG header)
 - First.\n\n## [1.2.3](guide.md)\n|ok|
 - First.\n\n## [Migration guide](guide.md)\n|ok|
+- First.\n\n## [1.2.3 compatibility notes]\n|ok|
+- First.\n\n## [1.2.3-rc.1] - 2026-01-01\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+build.5]\n|drifted|body (embeds a CHANGELOG header)
 EOF
 
-# L6: a summary-only body whose `## What's New` heading carries trailing
+# V5: a summary-only body whose `## What's New` heading carries trailing
 # whitespace (or a typographic apostrophe) is still split as a summary, so its
 # content is empty -- the split and has_summary share one heading pattern.
 printf '## What%ss New  \n\nOnly a summary.\n' "'" >"$TMP/b-sum-ws.md"
@@ -538,7 +554,7 @@ printf '## What\342\200\231s New\n\nOnly a summary.\n' >"$TMP/b-sum-curly.md"
 	pass "a2-classify: summary-only body with a typographic apostrophe is empty-content drift" ||
 	bad "a2-classify missed a typographic-apostrophe What's New heading"
 
-# L7: a large valid body (>128KB) is ok -- the content test reads the file in
+# V6: a large valid body (>128KB) is ok -- the content test reads the file in
 # one awk pass, so no `grep | grep -q` pipe can SIGPIPE under pipefail.
 {
 	printf '### Added\n\n'
@@ -552,6 +568,74 @@ done
 [[ "$big_ok" == 1 ]] &&
 	pass "a2-classify: a >128KB valid body is ok on every run" ||
 	bad "a2-classify misread a >128KB valid body as drift"
+
+# V7: the `## What's New` heading is recognised modulo surrounding whitespace and
+# a typographic apostrophe, and nothing wider: `## What was New` / `## Whatxs New`
+# are ordinary content, never a summary. Rows: body-printf-format|expected.
+while IFS='|' read -r fmt want; do
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/b-wn.md"
+	[[ "$want" == ok ]] && want="ok|"
+	got="$(note_of "$(u_run "$TMP/b-wn.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify What's New heading '$fmt' -> $want" ||
+		bad "a2-classify What's New heading '$fmt' expected '$want', got '$got'"
+done <<'EOF'
+## What was New\n\n- First.\n|ok|
+## Whatxs New\n\n- First.\n|ok|
+## What\342\200\230s New\n\nOnly a summary.\n|drifted|body (empty)
+EOF
+# The same single heading pattern drives whats_new:false check (4).
+for variant in was curly; do
+	rm -rf "$TMP/wn4" && mkdir -p "$TMP/wn4" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/wn4/"
+	if [[ "$variant" == was ]]; then
+		hdr='## What was New' want="ok|"
+	else
+		hdr="$(printf '## What\342\200\231s New')" want="drifted|What's New presence-vs-whats_new"
+	fi
+	{
+		printf '%s\n\nAlpha lands.\n\n' "$hdr"
+		cat "$FIX/templated/bodies/v1.0.0.lf.md"
+	} >"$TMP/wn4/v1.0.0.lf.md"
+	out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn4" \
+		"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify whats_new:false + '$variant' heading -> $want" ||
+		bad "a2-classify whats_new:false + '$variant' heading expected '$want': $out"
+done
+
+# V8: clause (c) reads the WHOLE body, before the summary is split off, so an
+# indented version header the summary split would swallow is still caught.
+printf '## What%ss New\n\nA summary paragraph.\n   ## [0.1.0] \342\200\223 2026-01-01\n\n- First.\n' "'" >"$TMP/b-sum-hdr.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum-hdr.md")" 0.1.0)" == "drifted|body (embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: an indented header hidden behind the summary is still body drift" ||
+	bad "a2-classify: the summary split hid an embedded CHANGELOG header"
+
+# V9: the prose re-sync side states the same rules the audit script runs, so
+# audit classification and re-sync action stay one function of the body.
+SK_CLAUDE="$ROOT/plugins/skein/skills/release/SKILL.md"
+SK_PI="$ROOT/plugins/skein-pi/skills/release/SKILL.md"
+item3="$(grep -F -- '**CHANGELOG section content.**' "$SK_CLAUDE")"
+[[ "$item3" == *"leading/trailing whitespace trimmed on both sides"* && "$item3" != *"exactly matches"* ]] &&
+	pass "SKILL.md Step 3 item 3: exclusion uses the trimmed heading comparison" ||
+	bad "SKILL.md Step 3 item 3 still uses an exact (untrimmed) exclusion match"
+[[ "$item3" == *"drop every compare-shaped"* ]] &&
+	pass "SKILL.md Step 3 item 3: composition drops compare-shaped CHANGELOG lines" ||
+	bad "SKILL.md Step 3 item 3 does not drop compare-shaped lines from composed content"
+grep -F -- 'typographic apostrophe' "$SK_CLAUDE" | grep -q -F -- 'valid body' &&
+	pass "SKILL.md documents the What's New heading tolerance beside the valid-body predicate" ||
+	bad "SKILL.md does not document the What's New heading tolerance"
+! grep -q -F -- 'Recovery rejection takes precedence' "$SK_CLAUDE" &&
+	pass "SKILL.md recovery adds no disqualifier outside the valid-body predicate" ||
+	bad "SKILL.md recovery still disqualifies a body outside the valid-body predicate"
+for needle in '## [Unreleased]' 'leading/trailing whitespace' 'typographic apostrophe' 'refresh content from CHANGELOG'; do
+	grep -q -F -- "$needle" "$SK_PI" &&
+		pass "Pi SKILL.md carries the valid-body detail '$needle'" ||
+		bad "Pi SKILL.md lacks the valid-body detail '$needle'"
+done
+! grep -q -F -- 'or on explicit request' "$SK_PI" &&
+	pass "Pi SKILL.md regenerate wording matches the Claude/Codex mirrors" ||
+	bad "Pi SKILL.md still carries the 'or on explicit request' regenerate path"
 
 # C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
 sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"
