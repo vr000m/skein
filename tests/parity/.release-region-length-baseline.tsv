@@ -85,3 +85,8 @@ step-a2	plugins/skein/skills/release/SKILL.md	10595
 # existing Step 3 snapshot and Step 4 confirmation. The Codex mirror differs
 # only by its registered native-launch call line and stays within tolerance.
 step-3	plugins/skein/skills/release/SKILL.md	32661
+# Compact release notes add the single valid-body precedence rule, the summary-
+# reuse rule (a recovered summary carrying a version header is redrafted), the
+# trimmed excluded-heading comparison and the A4 needs-edit exception to the
+# Step 3 snapshot. The Codex mirror differs only by its registered anchors.
+step-3	plugins/skein/skills/release/SKILL.md	36462
