@@ -413,16 +413,21 @@ repo_name="${web##*/}"
 CHANGELOG_LF="$tmp/changelog-lf.txt"
 sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
-# The ONE Markdown heading-indentation bound every heading test in this script
-# shares: up to 3 leading spaces, no tab (4 spaces or a tab is a code block or a
-# paragraph continuation, never a heading). ` ? ? ?` rather than an interval
-# expression, which not every awk supports. Every heading pattern below is built
-# on it, so the section boundary, clause (c), the What's New summary split and
-# has_summary cannot disagree about what counts as a heading line.
+# The ONE Markdown heading-indentation bound every STRUCTURAL heading test in
+# this script shares: up to 3 leading spaces, no tab (4 spaces or a tab is a code
+# block or a paragraph continuation, never a heading). ` ? ? ?` rather than an
+# interval expression, which not every awk supports. The structural heading
+# patterns below are built on it, so the section boundary, clause (c), the
+# What's New summary split and has_summary cannot disagree about what counts as
+# a heading line. The excluded-heading comparison (is_h3, below) is deliberately
+# NOT one of them: it is the trimmed cut-time comparison drop_excluded applies
+# to the CHANGELOG, so audit and cut time stay symmetric.
 HEADING_INDENT_RE='^ ? ? ?'
-# Any ATX heading line (`#`..`######` then whitespace or end of line): where a
-# What's New summary paragraph ends.
-HEADING_START_RE="${HEADING_INDENT_RE}#+([[:space:]]|\$)"
+# Any ATX heading line (levels 1-6: `#`..`######`, then whitespace or end of
+# line): where a What's New summary paragraph ends. One `#` plus up to five
+# optional ones, not `#+` (7+ hashes is paragraph text) and not an interval
+# expression (not every awk supports one).
+HEADING_START_RE="${HEADING_INDENT_RE}##?#?#?#?#?([[:space:]]|\$)"
 # The ONE section-boundary rule both extractors share, and has_version_header's
 # first stage: a line that opens like a `## [` header modulo whitespace starts
 # the next section (`    ## [0.0.1] example` stays content). Bracket
@@ -548,8 +553,9 @@ WHATS_NEW_RE="$HEADING_INDENT_RE"$'##[[:space:]]+What(\'|\xe2\x80\x99|\xe2\x80\x
 # line? Two stages: the line must open like a header (VERSION_HEADER_START_RE,
 # the section boundary's own predicate), then -- mirroring section_tolerant's
 # squash -- the whitespace-squashed line must read `##[X.Y.Z]` (optionally a
-# non-empty SemVer `-prerelease`/`+build` tail of [0-9A-Za-z.+-], so `[1.2.3-]`
-# is not a version) or `##[Unreleased]`,
+# SemVer `-prerelease` and/or `+build` tail, each a dot-separated run of
+# NON-EMPTY [0-9A-Za-z-] identifiers, so `[1.2.3-]`, `[1.2.3+.]` and
+# `[1.2.3-rc..1]` are not versions) or `##[Unreleased]`,
 # followed by a hyphen, an en dash, or end of line. A link heading such as
 # `## [Migration guide](guide.md)` or `## [1.2.3](guide.md)`, and a heading that
 # merely starts with a version (`## [1.2.3 compatibility notes]`), is not a
@@ -559,7 +565,7 @@ has_version_header() {
 		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
 		$0 ~ hs {
 			s = squash($0)
-			if (match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.+-]+)?|Unreleased)\]/)) {
+			if (match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|Unreleased)\]/)) {
 				rest = substr(s, RLENGTH + 1)
 				if (rest == "" || substr(rest, 1, 1) == "-" || index(rest, ed) == 1) { f = 1; exit }
 			}
@@ -697,7 +703,7 @@ while IFS= read -r t; do
 			awk 'f || /[^[:space:]]/ { f = 1; print }' >"$got.0"
 		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 		# What's New prose block runs from the heading up to whichever comes
-		# first of the next heading line (HEADING_START_RE: any level, up to 3
+		# first of the next heading line (HEADING_START_RE: levels 1-6, up to 3
 		# leading spaces -- the shared bound -- or a VERSION_HEADER_START_RE
 		# line), the compare line, or EOF. Real release bodies use both a paragraph
 		# immediately after the heading (no blank line) and a blank line

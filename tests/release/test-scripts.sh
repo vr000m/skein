@@ -547,6 +547,14 @@ done <<'EOF'
 - First.\n\n## [1.2.3+build.5]\n|drifted|body (embeds a CHANGELOG header)
 - First.\n\n## [1.2.3-]\n|ok|
 - First.\n\n## [1.2.3+] - 2026-01-01\n|ok|
+- First.\n\n## [1.2.3-rc.1]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+b1]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3-rc.1+b.2] - 2026-01-01\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+.]\n|ok|
+- First.\n\n## [1.2.3-rc..1]\n|ok|
+- First.\n\n## [1.2.3-.rc]\n|ok|
+- First.\n\n## [1.2.3-rc.]\n|ok|
+- First.\n\n## [1.2.3+b.]\n|ok|
 EOF
 
 # V5: a summary-only body whose `## What's New` heading carries trailing
@@ -727,6 +735,24 @@ for ind in 0 1 3 4 tab; do
 				pass "a2-classify summary split: indent=$ind $lvl $pos -> $want" ||
 				bad "a2-classify summary split: indent=$ind $lvl $pos expected '$want', got '$got'"
 		done
+	done
+done
+# An ATX heading has 1-6 hashes: hash count {1..8} x position {directly after the
+# summary, after a blank line}. 7+ hashes is paragraph text, so directly after
+# the summary it is a continuation line (content empty); after a blank line it
+# is an ordinary content paragraph (ok).
+for n in 1 2 3 4 5 6 7 8; do
+	hashes="$(printf '%*s' "$n" '' | tr ' ' '#')"
+	for pos in adjacent blank; do
+		sep=""
+		[[ "$pos" == blank ]] && sep=$'\n'
+		want="ok|"
+		[[ "$pos" == adjacent && "$n" -gt 6 ]] && want="drifted|body (empty)"
+		printf "## What's New\n\nSummary.\n%s%s Still text\n" "$sep" "$hashes" >"$TMP/b-lvl.md"
+		got="$(note_of "$(u_run "$TMP/b-lvl.md")" 0.1.0)"
+		[[ "$got" == "$want" ]] &&
+			pass "a2-classify summary split: $n hashes $pos -> $want" ||
+			bad "a2-classify summary split: $n hashes $pos expected '$want', got '$got'"
 	done
 done
 # The What's New heading itself takes the same bound: 3 leading spaces is still a
@@ -947,6 +973,34 @@ out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bo
 [[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
 	pass "a2-classify: compare_line_label:none ignores a Full-diff-shaped line inside the What's New paragraph" ||
 	bad "a2-classify: compare_line_label:none boundary anchor not parametrized by label: $out"
+
+# V15 (audit side of the summary-semantics invariant): summary shape x label ->
+# audit class. The re-sync side of the same rows is pinned in
+# tests/parity/test_release_skill_contract.py (Step 3 item 1's summary-discard
+# rule has no compare-shaped trigger; the recovery boundary is the audit split),
+# so every row audited `ok` is one re-sync preserves, and the one row re-sync
+# cannot keep (its own compare line opening the summary) is one audit flags.
+# Rows: name|case|body-printf-format (%s = this case's canonical trailer)|expected.
+while IFS='|' read -r name c fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	trailer=""
+	[[ "$c" == untemplated ]] && trailer="$(printf '\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0' "$WEB")"
+	rm -rf "$TMP/v15" && mkdir -p "$TMP/v15" && cp "$FIX/$c/bodies/v0.1.0.md" "$TMP/v15/"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n' "$trailer" >"$TMP/v15/v0.2.0.md"
+	got="$(note_of "$(a2_run "$c" "$FIX/$c/release-list.json" "$TMP/v15" \
+		"$FIX/$c/peeled-commits.json" "$FIX/$c/CHANGELOG.md")" 0.2.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify summary semantics: $name -> $want" ||
+		bad "a2-classify summary semantics: $name expected '$want', got '$got'"
+done <<'EOF6'
+normal summary, label none|none-label|## What's New\n\nSummary.\n\n### Added\n\n- Second thing.%s|ok|
+compare-shaped line first, label none|none-label|## What's New\n**Full diff:** not published.\nMore summary.\n\n### Added\n\n- Second thing.%s|ok|
+compare-shaped line only, label none|none-label|## What's New\n\n**Full diff:** not published.\n\n### Added\n\n- Second thing.%s|ok|
+leading blank lines, label none|none-label|## What's New\n\n\nSummary.\n\n### Added\n\n- Second thing.%s|ok|
+other-label compare-shaped line first, label Full diff|untemplated|## What's New\n**Full changelog:** see below.\n\n### Added\n\n- Second thing.%s|ok|
+own-label compare line first, label Full diff|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n\n- Second thing.%s|drifted|exact cached-base compare path
+EOF6
 
 # Regression (adversarial-review finding): `awk -v anchor="$compare_anchor"`
 # runs awk's own C-string escape processing on the VALUE before it becomes a
