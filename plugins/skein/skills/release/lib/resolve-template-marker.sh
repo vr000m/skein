@@ -414,9 +414,13 @@ CHANGELOG_LF="$tmp/changelog-lf.txt"
 sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
 # The ONE section-boundary rule both extractors share: a line that opens like a
-# `## [` header modulo whitespace starts the next section. Bracket expressions,
-# not `\[`, so the text survives an awk `-v` value's escape processing.
-VERSION_HEADER_START_RE='^[[:space:]]*##[[:space:]]*[[]'
+# `## [` header modulo whitespace starts the next section. Leading indentation
+# is bounded exactly as has_version_header bounds it: up to 3 spaces, no tab (4
+# spaces or a tab is a code block, so `    ## [0.0.1] example` stays content).
+# ` ? ? ?` rather than an interval expression, which not every awk supports.
+# Bracket expressions, not `\[`, so the text survives an awk `-v` value's escape
+# processing.
+VERSION_HEADER_START_RE='^ ? ? ?##[[:space:]]*[[]'
 # section <version> — the CHANGELOG section body (header stripped), edges
 # trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
 # extraction+tolerant-matching logic", so a strict miss retries tolerating
@@ -563,8 +567,12 @@ has_version_header() {
 #   (c) the WHOLE body (summary included, read before the summary split, which
 #       only recognises column-one headings) embeds no CHANGELOG version-header
 #       line (has_version_header);
-#   (d) the content block carries no `###` heading equal, trimmed, to an
-#       active excluded_sections entry (has_excluded_heading).
+#   (d) the WHOLE body (summary included, for the same reason as (c): the
+#       split ends a summary only at a column-one heading, so an indented
+#       `   ### Internal` right after it would otherwise be absorbed) carries no
+#       `###` heading equal, trimmed, to an active excluded_sections entry
+#       (has_excluded_heading).
+# (b) alone reads the content block; (a) reads the CHANGELOG section.
 # Clause (e) — no compare-shaped line inside the content block — is enforced by
 # the compare-path check (3) below, which already drifts on any compare-shaped
 # line other than the one exact canonical trailer, so it is not re-reported here.
@@ -577,7 +585,7 @@ body_invalid_reason() {
 		echo "body (empty)"
 	elif has_version_header "$4"; then
 		echo "body (embeds a CHANGELOG header)"
-	elif has_excluded_heading "$1" "$3"; then
+	elif has_excluded_heading "$4" "$3"; then
 		echo "body (carries an excluded section)"
 	fi
 }
@@ -706,7 +714,8 @@ while IFS= read -r t; do
 		# changelog:**` must stay ordinary summary prose, not a boundary --
 		# matching either label unconditionally (the previous bug here) mis-
 		# ends the scan on that line and leaks it, plus everything after it,
-		# into the CHANGELOG-content comparison below.
+		# into the content block the valid-body predicate reads below (clause
+		# (b)'s emptiness test and check (3)'s compare-shaped-line test).
 		# Bracket-expression form, for the `-v` escape reason COMPARE_SHAPED_RE's
 		# comment gives.
 		compare_anchor=""

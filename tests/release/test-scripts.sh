@@ -278,8 +278,8 @@ crlf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.crlf.md" | jq -r 
 
 # round-2 fix 1 root cause: resolve_source's ok/drifted comparison read the RAW
 # $bfile (not the CR-normalized SRC_SCAN), so a CRLF marker line's `-->$` never
-# matched and a correctly-composed CRLF release misclassified `drifted`
-# ("exact CHANGELOG bytes"). The CRLF fixture was previously exercised only via
+# matched and a correctly-composed CRLF release misclassified `drifted` (then
+# a body-bytes note; check (2) is now the valid-body predicate). The CRLF fixture was previously exercised only via
 # step3-recovery (above), never through a2-classify's own comparison path —
 # that gap is what let the bug ship. Swap v1.0.0's classified body for the
 # CRLF variant and require the SAME `ok` status the LF golden already pins.
@@ -653,6 +653,60 @@ composed body (bare-### subsection dropped) audits ok|### Added\n\n- Alpha.\n\n#
 bare-### subsection leaked into the body|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.\n\n### \n\n- Beta.|drifted|body (carries an excluded section)
 EOF2
 
+# V12: clause (d) reads the WHOLE body, like clause (c): the summary split ends
+# a summary only at a column-one heading, so an indented (space or tab) excluded
+# heading directly after the summary paragraph would otherwise be absorbed into
+# the discarded summary and escape the check. whats_new:true, so check (4) is
+# silent and the body note alone decides. Rows: name|body-printf-format|expected.
+FXW="$TMP/fx-excl-wn"
+rm -rf "$FXW" && mkdir -p "$FXW/exclwn"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":true,"excluded_sections":["### Internal"]}\n' >"$FXW/exclwn/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n' >"$FXW/exclwn/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXW" release_build_repo exclwn "$TMP/repo-exclwn") || bad "fixture build exclwn"
+wn_blob="$("$GIT_REAL" -C "$TMP/repo-exclwn" rev-parse HEAD~1:.release-template.json)"
+printf '["v1.0.0"]\n' >"$FXW/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-exclwn" rev-parse HEAD~1)" >"$FXW/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXW/list.json"
+while IFS='|' read -r name fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	rm -rf "$FXW/bodies" && mkdir -p "$FXW/bodies"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n\n<!-- release-template-sha: %s -->\n' "$wn_blob" >"$FXW/bodies/v1.0.0.lf.md"
+	out="$(a2_run exclwn "$FXW/list.json" "$FXW/bodies" "$FXW/peeled.json" "$FXW/exclwn/CHANGELOG.md" "" "$FXW/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify summary + excluded heading: $name -> $want" ||
+		bad "a2-classify summary + excluded heading: $name expected '$want': $out"
+done <<'EOF3'
+summary then a clean content block|## What's New\n\nSummary.\n\n### Added\n\n- Alpha.|ok|
+summary then a column-one excluded heading|## What's New\n\nSummary.\n### Internal\n\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+summary then a space-indented excluded heading|## What's New\n\nSummary.\n ### Internal\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+summary then a 3-space-indented excluded heading|## What's New\n\nSummary.\n   ### Internal\n\n- Plumbing.|drifted|body (carries an excluded section)
+summary then a tab-indented excluded heading|## What's New\n\nSummary.\n\t### Internal\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+EOF3
+grep -F -- '(d) the body — summary included, read before the summary is split off' "$ROOT/plugins/skein/skills/release/SKILL.md" >/dev/null &&
+	pass "SKILL.md Canonical Format clause (d) reads the whole body, summary included" ||
+	bad "SKILL.md Canonical Format clause (d) still reads only the content block"
+
+# V13: the section boundary is bounded like has_version_header: up to 3 leading
+# spaces, no tab. A 4-space or tab-indented `## [0.0.1]` is a code-block line of
+# the 0.1.0 section, not the next header, so the section stays non-empty (ok);
+# a 3-space-indented one is a header and ends the (then empty) section.
+# Rows: name|0.1.0-section-printf-format|expected.
+while IFS='|' read -r name sec want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n$sec\n" >"$TMP/cl-code.md"
+	printf -- '- First thing.\n' >"$TMP/b-code.md"
+	got="$(note_of "$(u_run "$TMP/b-code.md" "$TMP/cl-code.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify section boundary: $name -> $want" ||
+		bad "a2-classify section boundary: $name expected '$want', got '$got'"
+done <<'EOF4'
+4-space code line first|    ## [0.0.1] example header in a code block\n- First thing.|ok|
+tab code line first|\t## [0.0.1] example header in a code block\n- First thing.|ok|
+3-space header ends an empty section|   ## [0.0.1] - 2025-12-01\n\n- Old thing.|drifted|body (missing CHANGELOG section)
+EOF4
+
 # V9: the prose re-sync side states the same rules the audit script runs, so
 # audit classification and re-sync action stay one function of the body.
 SK_CLAUDE="$ROOT/plugins/skein/skills/release/SKILL.md"
@@ -678,13 +732,17 @@ done
 # A recovered summary that embeds a version header is never reused (Claude + Pi),
 # A4 does not offer a missing-section row for re-sync, and Pi states the
 # compact trigger.
-grep -q -F -- 'contains a CHANGELOG version-header line (the definition in Canonical Format item 2 clause (c)) is never reused' "$SK_CLAUDE" &&
+# shellcheck disable=SC2016 # literal backticks in a fixed-string needle
+grep -q -F -- 'contains a CHANGELOG version-header line (the definition in Canonical Format item 2 clause (c)) or an active `excluded_sections` heading line (clause (d)) is never reused' "$SK_CLAUDE" &&
 	pass "SKILL.md Step 3 item 1: a recovered summary embedding a version header is not reused" ||
 	bad "SKILL.md Step 3 item 1 still reuses a recovered summary that embeds a version header"
-grep -q -F -- 'is not repairable by re-sync' "$SK_CLAUDE" && grep -q -F -- 'needs CHANGELOG/template edit' "$SK_CLAUDE" &&
-	pass "SKILL.md Step A4: a missing-section drift row is reported, not offered for re-sync" ||
-	bad "SKILL.md Step A4 still offers a missing-section drift row for re-sync"
-for needle in 'contains a CHANGELOG version-header line' 'needs CHANGELOG/template edit' 'release is verbatim by default and goes compact only when' 'may only restate what the section'; do
+a4="$(grep -F -- 'is withheld from re-sync only when re-sync itself would stop' "$SK_CLAUDE")"
+[[ "$a4" == *"current committed template"* && "$a4" == *"needs CHANGELOG/template edit"* &&
+	"$a4" == *"Otherwise offer it like any other"* && "$a4" != *"is not repairable by re-sync"* ]] &&
+	pass "SKILL.md Step A4: a missing-section row is withheld only when the current template also empties it" ||
+	bad "SKILL.md Step A4 withholds a missing-section row without re-testing under the current template"
+# shellcheck disable=SC2016 # literal backticks in a fixed-string needle
+for needle in 'contains a CHANGELOG version-header line' 'needs CHANGELOG/template edit' 'withheld from re-sync only when re-sync itself would stop' 'no `###` heading line anywhere in the body, including inside the summary' 'release is verbatim by default and goes compact only when' 'may only restate what the section'; do
 	tr '\n' ' ' <"$SK_PI" | tr -s ' ' | grep -q -F -- "$needle" &&
 		pass "Pi SKILL.md carries '$needle'" ||
 		bad "Pi SKILL.md lacks '$needle'"
@@ -879,7 +937,7 @@ out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies
 # all -- so a `## What's New` paragraph whose prose happens to open with bold
 # text shaped like a compare trailer (`**Full diff:**`) must stay ordinary
 # summary prose, not get mistaken for the boundary and leaked into the
-# CHANGELOG-content comparison below it.
+# content block the valid-body predicate reads.
 out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bodies" \
 	"$FIX/none-label/peeled-commits.json" "$FIX/none-label/CHANGELOG.md")"
 [[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
