@@ -494,6 +494,10 @@ printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### I
 # A section left with only a compare-shaped line after exclusions has nothing to
 # publish: composition drops compare-shaped lines, so clause (a) fails.
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/x\n\n### Internal\n\n- Plumbing.\n' >"$FXX/cl-only-cmp.md"
+# Cut-time trimmed exclusion, observed through clause (a): the section's only
+# non-compare content is a trailing-space `### Internal ` subsection, so the
+# trimmed drop_excluded empties it (an untrimmed one would keep it -> ok).
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/x\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-ws-excl-cmp.md"
 # A section carrying a literal compare-shaped line composes WITHOUT it.
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x\n' >"$FXX/cl-lit-cmp.md"
 cl_full="$FXX/excl/CHANGELOG.md"
@@ -514,7 +518,8 @@ valid compact body|full|### Added\n\n- Alpha (short).|ok|
 (c) embeds a version header|full|## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.|drifted|body (embeds a CHANGELOG header)
 (d) excluded heading with trailing space|full|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
 (e) compare-shaped line in the content block|full|### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x|drifted|exact cached-base compare path
-(d) trailing-space CHANGELOG heading excluded at cut time, then audited|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.|ok|
+(d) trailing-space CHANGELOG heading excluded at cut time (rest is a compare line)|$FXX/cl-ws-excl-cmp.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
+(d) trailing-space CHANGELOG heading excluded at cut time, composed body audited|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.|ok|
 (d) trailing-space CHANGELOG heading leaked into the body|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
 (a) section holds only a compare-shaped line after exclusion|$FXX/cl-only-cmp.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
 (e) section's literal compare-shaped line dropped by composition|$FXX/cl-lit-cmp.md|### Added\n\n- Alpha.|ok|
@@ -611,6 +616,43 @@ printf '## What%ss New\n\nA summary paragraph.\n   ## [0.1.0] \342\200\223 2026-
 	pass "a2-classify: an indented header hidden behind the summary is still body drift" ||
 	bad "a2-classify: the summary split hid an embedded CHANGELOG header"
 
+# V10: a CHANGELOG section ends at any header section_tolerant recognises, not
+# only a single-space `## [`: an empty 0.1.0 section directly above
+# `##  [0.0.9]  –  date` must not absorb 0.0.9's header and notes.
+printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n##  [0.0.9]  \342\200\223  2025-12-01\n\n### Added\n\n- Old thing.\n' >"$TMP/cl-empty-ws-next.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-empty-ws-next.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: an empty section above a whitespace-drifted header is still missing" ||
+	bad "a2-classify: an empty CHANGELOG section absorbed the next release's notes"
+
+# V11: drop_excluded and clause (d) share one heading predicate, so an
+# excluded_sections entry that trims to a bare `###` is a heading on both sides.
+# Rows: name|section-printf-format|body-printf-format|expected.
+FXH="$TMP/fx-excl-bare"
+rm -rf "$FXH" && mkdir -p "$FXH/exclbare"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":false,"excluded_sections":["###  "]}\n' >"$FXH/exclbare/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Placeholder.\n' >"$FXH/exclbare/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXH" release_build_repo exclbare "$TMP/repo-exclbare") || bad "fixture build exclbare"
+bare_blob="$("$GIT_REAL" -C "$TMP/repo-exclbare" rev-parse HEAD~1:.release-template.json)"
+printf '["v1.0.0"]\n' >"$FXH/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-exclbare" rev-parse HEAD~1)" >"$FXH/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXH/list.json"
+while IFS='|' read -r name sec fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n$sec\n" >"$FXH/cl.md"
+	rm -rf "$FXH/bodies" && mkdir -p "$FXH/bodies"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n\n<!-- release-template-sha: %s -->\n' "$bare_blob" >"$FXH/bodies/v1.0.0.lf.md"
+	out="$(a2_run exclbare "$FXH/list.json" "$FXH/bodies" "$FXH/peeled.json" "$FXH/cl.md" "" "$FXH/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify bare-### exclusion: $name -> $want" ||
+		bad "a2-classify bare-### exclusion: $name expected '$want': $out"
+done <<'EOF2'
+section only the bare-### subsection is empty after exclusion|### \n\n- Beta.|- Beta.|drifted|body (missing CHANGELOG section)
+composed body (bare-### subsection dropped) audits ok|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.|ok|
+bare-### subsection leaked into the body|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.\n\n### \n\n- Beta.|drifted|body (carries an excluded section)
+EOF2
+
 # V9: the prose re-sync side states the same rules the audit script runs, so
 # audit classification and re-sync action stay one function of the body.
 SK_CLAUDE="$ROOT/plugins/skein/skills/release/SKILL.md"
@@ -632,6 +674,20 @@ for needle in '## [Unreleased]' 'leading/trailing whitespace' 'typographic apost
 	grep -q -F -- "$needle" "$SK_PI" &&
 		pass "Pi SKILL.md carries the valid-body detail '$needle'" ||
 		bad "Pi SKILL.md lacks the valid-body detail '$needle'"
+done
+# A recovered summary that embeds a version header is never reused (Claude + Pi),
+# A4 does not offer a missing-section row for re-sync, and Pi states the
+# compact trigger.
+grep -q -F -- 'contains a CHANGELOG version-header line (the definition in Canonical Format item 2 clause (c)) is never reused' "$SK_CLAUDE" &&
+	pass "SKILL.md Step 3 item 1: a recovered summary embedding a version header is not reused" ||
+	bad "SKILL.md Step 3 item 1 still reuses a recovered summary that embeds a version header"
+grep -q -F -- 'is not repairable by re-sync' "$SK_CLAUDE" && grep -q -F -- 'needs CHANGELOG/template edit' "$SK_CLAUDE" &&
+	pass "SKILL.md Step A4: a missing-section drift row is reported, not offered for re-sync" ||
+	bad "SKILL.md Step A4 still offers a missing-section drift row for re-sync"
+for needle in 'contains a CHANGELOG version-header line' 'needs CHANGELOG/template edit' 'release is verbatim by default and goes compact only when' 'may only restate what the section'; do
+	tr '\n' ' ' <"$SK_PI" | tr -s ' ' | grep -q -F -- "$needle" &&
+		pass "Pi SKILL.md carries '$needle'" ||
+		bad "Pi SKILL.md lacks '$needle'"
 done
 ! grep -q -F -- 'or on explicit request' "$SK_PI" &&
 	pass "Pi SKILL.md regenerate wording matches the Claude/Codex mirrors" ||
