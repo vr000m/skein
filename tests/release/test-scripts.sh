@@ -278,8 +278,8 @@ crlf_dec="$(rec templated v1.0.0 "$FIX/templated/bodies/v1.0.0.crlf.md" | jq -r 
 
 # round-2 fix 1 root cause: resolve_source's ok/drifted comparison read the RAW
 # $bfile (not the CR-normalized SRC_SCAN), so a CRLF marker line's `-->$` never
-# matched and a correctly-composed CRLF release misclassified `drifted`
-# ("exact CHANGELOG bytes"). The CRLF fixture was previously exercised only via
+# matched and a correctly-composed CRLF release misclassified `drifted` (then
+# a body-bytes note; check (2) is now the valid-body predicate). The CRLF fixture was previously exercised only via
 # step3-recovery (above), never through a2-classify's own comparison path —
 # that gap is what let the bug ship. Swap v1.0.0's classified body for the
 # CRLF variant and require the SAME `ok` status the LF golden already pins.
@@ -379,6 +379,407 @@ out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn-bodies" \
 [[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "drifted" ]] &&
 	pass "a2-classify: whats_new:false + present summary is drift" ||
 	bad "a2-classify treated a present summary as ok under whats_new:false: $out"
+
+# V1: a compact body (shorter than its CHANGELOG section) is `ok`, not drift;
+# an empty body or one embedding a CHANGELOG version header is still drift.
+mkdir -p "$TMP/compact-bodies" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/compact-bodies/"
+# The compact content block is "### Added\n\n- Alpha." (19 bytes), genuinely
+# shorter than the 1.0.0 CHANGELOG section ("### Added\n\n- Alpha feature.", 28).
+printf '### Added\n\n- Alpha.\n\n<!-- release-template-sha: %s -->\n' \
+	"$(tr -d '[:space:]' <"$FIX/templated/template-blob-sha.txt")" >"$TMP/compact-bodies/v1.0.0.lf.md"
+printf '### Added\n\n- Alpha.' >"$TMP/compact-block.txt"
+awk '/^## \[1\.0\.0\]/ { on = 1; next } /^## \[/ { on = 0 }
+	on { l[NR] = $0; if (NF) { if (!first) first = NR; last = NR } }
+	END { for (i = first; i <= last; i++) printf "%s%s", l[i], (i < last ? "\n" : "") }' \
+	"$FIX/templated/CHANGELOG.md" >"$TMP/compact-section.txt"
+[[ "$(wc -c <"$TMP/compact-block.txt")" -lt "$(wc -c <"$TMP/compact-section.txt")" ]] &&
+	! cmp -s "$TMP/compact-block.txt" "$TMP/compact-section.txt" &&
+	pass "a2-classify fixture: the compact block is shorter than, and not, the CHANGELOG section" ||
+	bad "a2-classify fixture: the compact block is not genuinely shorter than its CHANGELOG section"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .status' <<<"$out")" == "ok" ]] &&
+	pass "a2-classify: a compact body shorter than its CHANGELOG section is ok" ||
+	bad "a2-classify flagged a compact body as drift: $out"
+[[ "$(jq -r '.rows[] | select(.version == "1.1.0") | .note' <<<"$out")" == "body (embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: an embedded CHANGELOG header is still body drift" ||
+	bad "a2-classify missed an embedded CHANGELOG header: $out"
+# The other half of the V1 contract: a whitespace-only body is still body drift.
+printf '   \n\n<!-- release-template-sha: %s -->\n' \
+	"$(tr -d '[:space:]' <"$FIX/templated/template-blob-sha.txt")" >"$TMP/compact-bodies/v1.0.0.lf.md"
+out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/compact-bodies" \
+	"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+[[ "$(jq -r '.rows[] | select(.version == "1.0.0") | .note' <<<"$out")" == "body (empty)" ]] &&
+	pass "a2-classify: a whitespace-only body is still body drift" ||
+	bad "a2-classify accepted a whitespace-only body: $out"
+
+# V2: one body-validity predicate (non-empty section, non-empty content ignoring
+# compare trailers, no version header, no excluded heading) -- each edge case.
+note_of() { jq -r --arg v "$2" '.rows[] | select(.version == $v) | (.status + "|" + (.note // ""))' <<<"$1"; }
+u_run() { # <v0.1.0-body-file> [changelog]
+	rm -rf "$TMP/u-bodies" && mkdir -p "$TMP/u-bodies" && cp "$FIX/untemplated/bodies/"*.md "$TMP/u-bodies/"
+	cp "$1" "$TMP/u-bodies/v0.1.0.md"
+	a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/u-bodies" \
+		"$FIX/untemplated/peeled-commits.json" "${2:-$FIX/untemplated/CHANGELOG.md}"
+}
+printf '### Added\n\n- First.\n\n## [Migration guide](guide.md)\n\nSee the guide.\n' >"$TMP/b-link.md"
+[[ "$(note_of "$(u_run "$TMP/b-link.md")" 0.1.0)" == "ok|" ]] &&
+	pass "a2-classify: a non-version '## [link](url)' heading in a compact body is ok" ||
+	bad "a2-classify rejected a legitimate bracketed heading"
+printf '##  [0.1.0] – 2026-01-01\n\n### Added\n\n- First.\n' >"$TMP/b-hdr.md"
+[[ "$(note_of "$(u_run "$TMP/b-hdr.md")" 0.1.0)" == "drifted|body (embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: a whitespace/en-dash-drifted version header is still body drift" ||
+	bad "a2-classify missed a drifted-spelling version header"
+printf '\n\n## What%ss New\n\nOnly a summary.\n' "'" >"$TMP/b-sum.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum.md")" 0.1.0)" == "drifted|body (empty)" ]] &&
+	pass "a2-classify: a summary-only body behind leading blanks is empty-content drift" ||
+	bad "a2-classify let a summary-only body with leading blanks pass"
+printf '\377### Added\n\n- First \377 thing.\n' >"$TMP/b-bin.md"
+out="$(u_run "$TMP/b-bin.md")"
+[[ "$(note_of "$out" 0.1.0)" == "ok|" ]] &&
+	pass "a2-classify: a stray invalid-UTF-8 byte does not read as an empty body" ||
+	bad "a2-classify mis-handled an invalid-UTF-8 byte: $out"
+{
+	printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n'
+} >"$TMP/cl-empty.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-empty.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: a body over an empty CHANGELOG section is drift, not ok" ||
+	bad "a2-classify passed a body whose CHANGELOG section is empty"
+# A stale compare trailer must not mask an otherwise-empty body.
+cp "$FIX/untemplated/bodies/v0.2.0.md" "$TMP/b-stale-src.md"
+rm -rf "$TMP/u2" && mkdir -p "$TMP/u2" && cp "$FIX/untemplated/bodies/"*.md "$TMP/u2/"
+printf '**Full diff:** https://github.com/example/widgets/compare/v0.0.9...v0.2.0\n' >"$TMP/u2/v0.2.0.md"
+out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/u2" \
+	"$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+[[ "$(note_of "$out" 0.2.0)" == *"body (empty)"* ]] &&
+	pass "a2-classify: a stale compare trailer does not mask an empty body" ||
+	bad "a2-classify let a compare trailer mask an empty body: $out"
+# An active excluded_sections heading left in the body is drift. Build a one-off
+# templated fixture case (the shipped templated fixture has no exclusions).
+FXX="$TMP/fx-excl"
+rm -rf "$FXX" && mkdir -p "$FXX/excl"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":false,"excluded_sections":["### Internal"]}\n' >"$FXX/excl/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n' >"$FXX/excl/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXX" release_build_repo excl "$TMP/repo-excl") || bad "fixture build excl"
+excl_blob="$("$GIT_REAL" -C "$TMP/repo-excl" rev-parse HEAD~1:.release-template.json)"
+excl_c1="$("$GIT_REAL" -C "$TMP/repo-excl" rev-parse HEAD~1)"
+printf '["v1.0.0"]\n' >"$FXX/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$excl_c1" >"$FXX/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXX/list.json"
+for variant in clean leaked; do
+	rm -rf "$FXX/bodies" && mkdir -p "$FXX/bodies"
+	if [[ "$variant" == clean ]]; then
+		printf '### Added\n\n- Alpha.\n\n<!-- release-template-sha: %s -->\n' "$excl_blob" >"$FXX/bodies/v1.0.0.lf.md"
+		want="ok|"
+	else
+		printf '### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n\n<!-- release-template-sha: %s -->\n' "$excl_blob" >"$FXX/bodies/v1.0.0.lf.md"
+		want="drifted|body (carries an excluded section)"
+	fi
+	out="$(a2_run excl "$FXX/list.json" "$FXX/bodies" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" "" "$FXX/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify: excluded_sections heading in a body ($variant) -> $want" ||
+		bad "a2-classify excluded_sections ($variant) expected '$want': $out"
+done
+
+# V3: the whole valid-body predicate, table-driven over its clauses (Canonical
+# Format item 2): one passing compact body, then each clause failing ALONE.
+# Clause (e) -- a compare-shaped line inside the content block -- is enforced
+# by the compare-path check (3), so its note is that check's, not a body note.
+# Rows: name|changelog-file|body-printf-format|expected status|note
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-only-excl.md"
+# A CHANGELOG `### Internal ` heading (trailing space) is excluded by the
+# trimmed comparison exactly as at cut time, so the composed block (Added only)
+# round-trips to `ok`.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-ws-excl.md"
+# A section left with only a compare-shaped line after exclusions has nothing to
+# publish: composition drops compare-shaped lines, so clause (a) fails.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/x\n\n### Internal\n\n- Plumbing.\n' >"$FXX/cl-only-cmp.md"
+# Cut-time trimmed exclusion, observed through clause (a): the section's only
+# non-compare content is a trailing-space `### Internal ` subsection, so the
+# trimmed drop_excluded empties it (an untrimmed one would keep it -> ok).
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/x\n\n### Internal \n\n- Plumbing.\n' >"$FXX/cl-ws-excl-cmp.md"
+# A section carrying a literal compare-shaped line composes WITHOUT it.
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x\n' >"$FXX/cl-lit-cmp.md"
+cl_full="$FXX/excl/CHANGELOG.md"
+while IFS='|' read -r name cl fmt want; do
+	[[ "$cl" == full ]] && cl="$cl_full"
+	[[ "$want" == ok ]] && want="ok|" # read drops the trailing empty field
+	rm -rf "$FXX/bodies" && mkdir -p "$FXX/bodies"
+	# shellcheck disable=SC2059 # fmt is the table's printf format on purpose
+	printf -- "$fmt"'\n\n<!-- release-template-sha: %s -->\n' "$excl_blob" >"$FXX/bodies/v1.0.0.lf.md"
+	out="$(a2_run excl "$FXX/list.json" "$FXX/bodies" "$FXX/peeled.json" "$cl" "" "$FXX/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify predicate table: $name -> $want" ||
+		bad "a2-classify predicate table: $name expected '$want': $out"
+done <<EOF
+valid compact body|full|### Added\n\n- Alpha (short).|ok|
+(a) section empty after exclusion (trailing-space CHANGELOG heading)|$FXX/cl-only-excl.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
+(b) whitespace-only content|full|   |drifted|body (empty)
+(c) embeds a version header|full|## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.|drifted|body (embeds a CHANGELOG header)
+(d) excluded heading with trailing space|full|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
+(e) compare-shaped line in the content block|full|### Added\n\n- Alpha.\n\n**Full diff:** https://example.invalid/x|drifted|exact cached-base compare path
+(d) trailing-space CHANGELOG heading excluded at cut time (rest is a compare line)|$FXX/cl-ws-excl-cmp.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
+(d) trailing-space CHANGELOG heading excluded at cut time, composed body audited|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.|ok|
+(d) trailing-space CHANGELOG heading leaked into the body|$FXX/cl-ws-excl.md|### Added\n\n- Alpha.\n\n### Internal \n\n- Plumbing.|drifted|body (carries an excluded section)
+(a) section holds only a compare-shaped line after exclusion|$FXX/cl-only-cmp.md|### Added\n\n- Alpha.|drifted|body (missing CHANGELOG section)
+(e) section's literal compare-shaped line dropped by composition|$FXX/cl-lit-cmp.md|### Added\n\n- Alpha.|ok|
+EOF
+
+# V4: version-header clause (c) matches the documented whitespace-tolerant
+# header shape and nothing wider. Rows: body-printf-format|expected.
+while IFS='|' read -r fmt want; do
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/b-vh.md"
+	[[ "$want" == ok ]] && want="ok|" # read drops the trailing empty field
+	got="$(note_of "$(u_run "$TMP/b-vh.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify version-header shape '$fmt' -> $want" ||
+		bad "a2-classify version-header shape '$fmt' expected '$want', got '$got'"
+done <<'EOF'
+## [ 0.1.0 ] - 2026-01-01\n\n- First.\n|drifted|body (embeds a CHANGELOG header)
+   ## [0.1.0] - 2026-01-01\n\n- First.\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [0.1.0]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [Unreleased]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3](guide.md)\n|ok|
+- First.\n\n## [Migration guide](guide.md)\n|ok|
+- First.\n\n## [1.2.3 compatibility notes]\n|ok|
+- First.\n\n## [1.2.3-rc.1] - 2026-01-01\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+build.5]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3-]\n|ok|
+- First.\n\n## [1.2.3+] - 2026-01-01\n|ok|
+- First.\n\n## [1.2.3-rc.1]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+b1]\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3-rc.1+b.2] - 2026-01-01\n|drifted|body (embeds a CHANGELOG header)
+- First.\n\n## [1.2.3+.]\n|ok|
+- First.\n\n## [1.2.3-rc..1]\n|ok|
+- First.\n\n## [1.2.3-.rc]\n|ok|
+- First.\n\n## [1.2.3-rc.]\n|ok|
+- First.\n\n## [1.2.3+b.]\n|ok|
+EOF
+
+# V5: a summary-only body whose `## What's New` heading carries trailing
+# whitespace (or a typographic apostrophe) is still split as a summary, so its
+# content is empty -- the split and has_summary share one heading pattern.
+printf '## What%ss New  \n\nOnly a summary.\n' "'" >"$TMP/b-sum-ws.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum-ws.md")" 0.1.0)" == "drifted|body (empty)" ]] &&
+	pass "a2-classify: summary-only body with a trailing-space heading is empty-content drift" ||
+	bad "a2-classify let a trailing-space What's New heading slip past the summary split"
+printf '## What\342\200\231s New\n\nOnly a summary.\n' >"$TMP/b-sum-curly.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum-curly.md")" 0.1.0)" == "drifted|body (empty)" ]] &&
+	pass "a2-classify: summary-only body with a typographic apostrophe is empty-content drift" ||
+	bad "a2-classify missed a typographic-apostrophe What's New heading"
+
+# V6: a large valid body (>128KB) is ok -- the content test reads the file in
+# one awk pass, so no `grep | grep -q` pipe can SIGPIPE under pipefail.
+{
+	printf '### Added\n\n'
+	for i in $(seq 1 3000); do printf -- '- First thing, padded line %05d of a long compact digest body.\n' "$i"; done
+} >"$TMP/b-big.md"
+[[ "$(wc -c <"$TMP/b-big.md")" -gt 131072 ]] || bad "a2-classify large-body fixture is not >128KB"
+big_ok=1
+for _ in 1 2 3 4 5; do
+	[[ "$(note_of "$(u_run "$TMP/b-big.md")" 0.1.0)" == "ok|" ]] || big_ok=0
+done
+[[ "$big_ok" == 1 ]] &&
+	pass "a2-classify: a >128KB valid body is ok on every run" ||
+	bad "a2-classify misread a >128KB valid body as drift"
+
+# V7: the `## What's New` heading is recognised modulo surrounding whitespace and
+# a typographic apostrophe, and nothing wider: `## What was New` / `## Whatxs New`
+# are ordinary content, never a summary. Rows: body-printf-format|expected.
+while IFS='|' read -r fmt want; do
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/b-wn.md"
+	[[ "$want" == ok ]] && want="ok|"
+	got="$(note_of "$(u_run "$TMP/b-wn.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify What's New heading '$fmt' -> $want" ||
+		bad "a2-classify What's New heading '$fmt' expected '$want', got '$got'"
+done <<'EOF'
+## What was New\n\n- First.\n|ok|
+## Whatxs New\n\n- First.\n|ok|
+## What\342\200\230s New\n\nOnly a summary.\n|drifted|body (empty)
+EOF
+# The same single heading pattern drives whats_new:false check (4).
+for variant in was curly; do
+	rm -rf "$TMP/wn4" && mkdir -p "$TMP/wn4" && cp "$FIX/templated/bodies/"*.lf.md "$TMP/wn4/"
+	if [[ "$variant" == was ]]; then
+		hdr='## What was New' want="ok|"
+	else
+		hdr="$(printf '## What\342\200\231s New')" want="drifted|What's New presence-vs-whats_new"
+	fi
+	{
+		printf '%s\n\nAlpha lands.\n\n' "$hdr"
+		cat "$FIX/templated/bodies/v1.0.0.lf.md"
+	} >"$TMP/wn4/v1.0.0.lf.md"
+	out="$(a2_run templated "$FIX/templated/release-list.json" "$TMP/wn4" \
+		"$FIX/templated/peeled-commits.json" "$FIX/templated/CHANGELOG.md")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify whats_new:false + '$variant' heading -> $want" ||
+		bad "a2-classify whats_new:false + '$variant' heading expected '$want': $out"
+done
+
+# V8: clause (c) reads the WHOLE body, before the summary is split off; an
+# indented version header right after the summary is caught either way.
+printf '## What%ss New\n\nA summary paragraph.\n   ## [0.1.0] \342\200\223 2026-01-01\n\n- First.\n' "'" >"$TMP/b-sum-hdr.md"
+[[ "$(note_of "$(u_run "$TMP/b-sum-hdr.md")" 0.1.0)" == "drifted|body (embeds a CHANGELOG header)" ]] &&
+	pass "a2-classify: an indented header hidden behind the summary is still body drift" ||
+	bad "a2-classify: the summary split hid an embedded CHANGELOG header"
+
+# V10: a CHANGELOG section ends at any header section_tolerant recognises, not
+# only a single-space `## [`: an empty 0.1.0 section directly above
+# `##  [0.0.9]  –  date` must not absorb 0.0.9's header and notes.
+printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n##  [0.0.9]  \342\200\223  2025-12-01\n\n### Added\n\n- Old thing.\n' >"$TMP/cl-empty-ws-next.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-empty-ws-next.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: an empty section above a whitespace-drifted header is still missing" ||
+	bad "a2-classify: an empty CHANGELOG section absorbed the next release's notes"
+
+# V11: drop_excluded and clause (d) share one heading predicate, so an
+# excluded_sections entry that trims to a bare `###` is a heading on both sides.
+# Rows: name|section-printf-format|body-printf-format|expected.
+FXH="$TMP/fx-excl-bare"
+rm -rf "$FXH" && mkdir -p "$FXH/exclbare"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":false,"excluded_sections":["###  "]}\n' >"$FXH/exclbare/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- Placeholder.\n' >"$FXH/exclbare/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXH" release_build_repo exclbare "$TMP/repo-exclbare") || bad "fixture build exclbare"
+bare_blob="$("$GIT_REAL" -C "$TMP/repo-exclbare" rev-parse HEAD~1:.release-template.json)"
+printf '["v1.0.0"]\n' >"$FXH/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-exclbare" rev-parse HEAD~1)" >"$FXH/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXH/list.json"
+while IFS='|' read -r name sec fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n$sec\n" >"$FXH/cl.md"
+	rm -rf "$FXH/bodies" && mkdir -p "$FXH/bodies"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n\n<!-- release-template-sha: %s -->\n' "$bare_blob" >"$FXH/bodies/v1.0.0.lf.md"
+	out="$(a2_run exclbare "$FXH/list.json" "$FXH/bodies" "$FXH/peeled.json" "$FXH/cl.md" "" "$FXH/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify bare-### exclusion: $name -> $want" ||
+		bad "a2-classify bare-### exclusion: $name expected '$want': $out"
+done <<'EOF2'
+section only the bare-### subsection is empty after exclusion|### \n\n- Beta.|- Beta.|drifted|body (missing CHANGELOG section)
+composed body (bare-### subsection dropped) audits ok|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.|ok|
+bare-### subsection leaked into the body|### Added\n\n- Alpha.\n\n### \n\n- Beta.|### Added\n\n- Alpha.\n\n### \n\n- Beta.|drifted|body (carries an excluded section)
+EOF2
+
+# V12: clause (d) reads the WHOLE body, like clause (c): a 0-3-space excluded
+# heading ends the summary (V14) and a tab-indented one is a summary
+# continuation line, but both trim to the heading drop_excluded removes at cut
+# time, so both are flagged wherever they sit. whats_new:true, so check (4) is
+# silent and the body note alone decides. Rows: name|body-printf-format|expected.
+FXW="$TMP/fx-excl-wn"
+rm -rf "$FXW" && mkdir -p "$FXW/exclwn"
+printf '{"title_format":"bare","compare_line_label":"none","whats_new":true,"excluded_sections":["### Internal"]}\n' >"$FXW/exclwn/.release-template.json"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n' >"$FXW/exclwn/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXW" release_build_repo exclwn "$TMP/repo-exclwn") || bad "fixture build exclwn"
+wn_blob="$("$GIT_REAL" -C "$TMP/repo-exclwn" rev-parse HEAD~1:.release-template.json)"
+printf '["v1.0.0"]\n' >"$FXW/tags.json"
+printf '{"v1.0.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-exclwn" rev-parse HEAD~1)" >"$FXW/peeled.json"
+printf '[{"tagName":"v1.0.0","name":"v1.0.0"}]\n' >"$FXW/list.json"
+while IFS='|' read -r name fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	rm -rf "$FXW/bodies" && mkdir -p "$FXW/bodies"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n\n<!-- release-template-sha: %s -->\n' "$wn_blob" >"$FXW/bodies/v1.0.0.lf.md"
+	out="$(a2_run exclwn "$FXW/list.json" "$FXW/bodies" "$FXW/peeled.json" "$FXW/exclwn/CHANGELOG.md" "" "$FXW/tags.json")"
+	[[ "$(note_of "$out" 1.0.0)" == "$want" ]] &&
+		pass "a2-classify summary + excluded heading: $name -> $want" ||
+		bad "a2-classify summary + excluded heading: $name expected '$want': $out"
+done <<'EOF3'
+summary then a clean content block|## What's New\n\nSummary.\n\n### Added\n\n- Alpha.|ok|
+summary then a column-one excluded heading|## What's New\n\nSummary.\n### Internal\n\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+summary then a space-indented excluded heading|## What's New\n\nSummary.\n ### Internal\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+summary then a 3-space-indented excluded heading|## What's New\n\nSummary.\n   ### Internal\n\n- Plumbing.|drifted|body (carries an excluded section)
+summary then a tab-indented excluded heading|## What's New\n\nSummary.\n\t### Internal\n- Plumbing.\n\n### Added\n\n- Alpha.|drifted|body (carries an excluded section)
+EOF3
+
+# V13: the section boundary is bounded like has_version_header: up to 3 leading
+# spaces, no tab. A 4-space or tab-indented `## [0.0.1]` is a code-block line of
+# the 0.1.0 section, not the next header, so the section stays non-empty (ok);
+# a 3-space-indented one is a header and ends the (then empty) section.
+# Rows: name|0.1.0-section-printf-format|expected.
+while IFS='|' read -r name sec want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n$sec\n" >"$TMP/cl-code.md"
+	printf -- '- First thing.\n' >"$TMP/b-code.md"
+	got="$(note_of "$(u_run "$TMP/b-code.md" "$TMP/cl-code.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify section boundary: $name -> $want" ||
+		bad "a2-classify section boundary: $name expected '$want', got '$got'"
+done <<'EOF4'
+4-space code line first|    ## [0.0.1] example header in a code block\n- First thing.|ok|
+tab code line first|\t## [0.0.1] example header in a code block\n- First thing.|ok|
+3-space header ends an empty section|   ## [0.0.1] - 2025-12-01\n\n- Old thing.|drifted|body (missing CHANGELOG section)
+EOF4
+
+# V14: the What's New summary ends at ANY heading line under the shared
+# HEADING_INDENT_RE bound (0-3 spaces, no tab) -- the same bound the section
+# boundary and clause (c) use. Whole space: indent {0,1,3,4 spaces, tab} x level
+# {##,###} x position {directly after the summary, after a blank line}. A 4-space
+# or tab-indented line directly after the paragraph is not a heading (Markdown
+# reads it as a paragraph continuation), so it stays in the summary and the
+# content block is empty; after a blank line every variant is content.
+for ind in 0 1 3 4 tab; do
+	case "$ind" in tab) pfx=$'\t' ;; *) pfx="$(printf '%*s' "$ind" '')" ;; esac
+	for lvl in '##' '###'; do
+		for pos in adjacent blank; do
+			sep=""
+			[[ "$pos" == blank ]] && sep=$'\n'
+			want="ok|"
+			[[ "$pos" == adjacent && ("$ind" == 4 || "$ind" == tab) ]] && want="drifted|body (empty)"
+			printf "## What's New\n\nSummary.\n%s%s%s Added\n- Alpha.\n" "$sep" "$pfx" "$lvl" >"$TMP/b-split.md"
+			got="$(note_of "$(u_run "$TMP/b-split.md")" 0.1.0)"
+			[[ "$got" == "$want" ]] &&
+				pass "a2-classify summary split: indent=$ind $lvl $pos -> $want" ||
+				bad "a2-classify summary split: indent=$ind $lvl $pos expected '$want', got '$got'"
+		done
+	done
+done
+# An ATX heading has 1-6 hashes: hash count {1..8} x position {directly after the
+# summary, after a blank line}. 7+ hashes is paragraph text, so directly after
+# the summary it is a continuation line (content empty); after a blank line it
+# is an ordinary content paragraph (ok).
+for n in 1 2 3 4 5 6 7 8; do
+	hashes="$(printf '%*s' "$n" '' | tr ' ' '#')"
+	for pos in adjacent blank; do
+		sep=""
+		[[ "$pos" == blank ]] && sep=$'\n'
+		want="ok|"
+		[[ "$pos" == adjacent && "$n" -gt 6 ]] && want="drifted|body (empty)"
+		printf "## What's New\n\nSummary.\n%s%s Still text\n" "$sep" "$hashes" >"$TMP/b-lvl.md"
+		got="$(note_of "$(u_run "$TMP/b-lvl.md")" 0.1.0)"
+		[[ "$got" == "$want" ]] &&
+			pass "a2-classify summary split: $n hashes $pos -> $want" ||
+			bad "a2-classify summary split: $n hashes $pos expected '$want', got '$got'"
+	done
+done
+# The What's New heading itself takes the same bound: 3 leading spaces is still a
+# summary heading (summary-only body -> empty content); 4 is a code block, so the
+# body is ordinary content.
+while IFS='|' read -r fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/b-wn-ind.md"
+	got="$(note_of "$(u_run "$TMP/b-wn-ind.md")" 0.1.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify indented What's New heading '$fmt' -> $want" ||
+		bad "a2-classify indented What's New heading '$fmt' expected '$want', got '$got'"
+done <<'EOF5'
+   ## What's New\n\nOnly a summary.\n|drifted|body (empty)
+    ## What's New\n\nOnly a summary.\n|ok|
+EOF5
+# Clause (a) ignores compare-shaped lines with no template too: a CHANGELOG
+# section holding only a `**Full diff:**` line has nothing to publish.
+printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n### Added\n\n- Second thing.\n\n## [0.1.0] - 2026-01-01\n\n**Full diff:** https://example.invalid/stale\n' >"$TMP/cl-only-cmp-untpl.md"
+[[ "$(note_of "$(u_run "$FIX/untemplated/bodies/v0.1.0.md" "$TMP/cl-only-cmp-untpl.md")" 0.1.0)" == "drifted|body (missing CHANGELOG section)" ]] &&
+	pass "a2-classify: a section holding only a compare-shaped line is a missing section" ||
+	bad "a2-classify: a compare-only CHANGELOG section was treated as publishable content"
+
+# V9 (prose re-sync side) lives in tests/parity/test_release_skill_contract.py
+# (Claude/Codex, region-scoped) and tests/pi/test_orchestration_routes.py (Pi):
+# this suite asserts script behaviour only.
 
 # C8: the CHANGELOG header match tolerates whitespace/punctuation drift.
 sed 's/^## \[0\.1\.0\] - /##  [0.1.0]  – /' "$FIX/untemplated/CHANGELOG.md" >"$TMP/drifted-changelog.md"
@@ -566,12 +967,40 @@ out="$(a2_run untemplated "$FIX/untemplated/release-list.json" "$TMP/flat-bodies
 # all -- so a `## What's New` paragraph whose prose happens to open with bold
 # text shaped like a compare trailer (`**Full diff:**`) must stay ordinary
 # summary prose, not get mistaken for the boundary and leaked into the
-# CHANGELOG-content comparison below it.
+# content block the valid-body predicate reads.
 out="$(a2_run none-label "$FIX/none-label/release-list.json" "$FIX/none-label/bodies" \
 	"$FIX/none-label/peeled-commits.json" "$FIX/none-label/CHANGELOG.md")"
 [[ "$(jq -r '.rows[] | select(.version == "0.2.0") | .status' <<<"$out")" == "ok" ]] &&
 	pass "a2-classify: compare_line_label:none ignores a Full-diff-shaped line inside the What's New paragraph" ||
 	bad "a2-classify: compare_line_label:none boundary anchor not parametrized by label: $out"
+
+# V15 (audit side of the summary-semantics invariant): summary shape x label ->
+# audit class. The re-sync side of the same rows is pinned in
+# tests/parity/test_release_skill_contract.py (Step 3 item 1's summary-discard
+# rule has no compare-shaped trigger; the recovery boundary is the audit split),
+# so every row audited `ok` is one re-sync preserves, and the one row re-sync
+# cannot keep (its own compare line opening the summary) is one audit flags.
+# Rows: name|case|body-printf-format (%s = this case's canonical trailer)|expected.
+while IFS='|' read -r name c fmt want; do
+	[[ "$want" == ok ]] && want="ok|"
+	trailer=""
+	[[ "$c" == untemplated ]] && trailer="$(printf '\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0' "$WEB")"
+	rm -rf "$TMP/v15" && mkdir -p "$TMP/v15" && cp "$FIX/$c/bodies/v0.1.0.md" "$TMP/v15/"
+	# shellcheck disable=SC2059
+	printf -- "$fmt"'\n' "$trailer" >"$TMP/v15/v0.2.0.md"
+	got="$(note_of "$(a2_run "$c" "$FIX/$c/release-list.json" "$TMP/v15" \
+		"$FIX/$c/peeled-commits.json" "$FIX/$c/CHANGELOG.md")" 0.2.0)"
+	[[ "$got" == "$want" ]] &&
+		pass "a2-classify summary semantics: $name -> $want" ||
+		bad "a2-classify summary semantics: $name expected '$want', got '$got'"
+done <<'EOF6'
+normal summary, label none|none-label|## What's New\n\nSummary.\n\n### Added\n\n- Second thing.%s|ok|
+compare-shaped line first, label none|none-label|## What's New\n**Full diff:** not published.\nMore summary.\n\n### Added\n\n- Second thing.%s|ok|
+compare-shaped line only, label none|none-label|## What's New\n\n**Full diff:** not published.\n\n### Added\n\n- Second thing.%s|ok|
+leading blank lines, label none|none-label|## What's New\n\n\nSummary.\n\n### Added\n\n- Second thing.%s|ok|
+other-label compare-shaped line first, label Full diff|untemplated|## What's New\n**Full changelog:** see below.\n\n### Added\n\n- Second thing.%s|ok|
+own-label compare line first, label Full diff|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n\n- Second thing.%s|drifted|exact cached-base compare path
+EOF6
 
 # Regression (adversarial-review finding): `awk -v anchor="$compare_anchor"`
 # runs awk's own C-string escape processing on the VALUE before it becomes a

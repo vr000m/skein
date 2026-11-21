@@ -36,6 +36,11 @@
 # jq programs are single-quoted on purpose (they contain $vars for jq).
 # shellcheck disable=SC2016
 set -uo pipefail
+# Release bodies and CHANGELOGs are operator-edited bytes that may carry a stray
+# invalid UTF-8 byte. Under a UTF-8 locale BSD awk/grep/tr abort or truncate on
+# one ("Illegal byte sequence"), which would silently misread a valid body as
+# empty. Every comparison here is bytewise, so pin the C locale for the script.
+export LC_ALL=C
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=plugins/skein/skills/release/lib/release-common.sh
@@ -408,6 +413,27 @@ repo_name="${web##*/}"
 CHANGELOG_LF="$tmp/changelog-lf.txt"
 sed $'s/\r$//' <"$changelog" >"$CHANGELOG_LF"
 
+# The ONE Markdown heading-indentation bound every STRUCTURAL heading test in
+# this script shares: up to 3 leading spaces, no tab (4 spaces or a tab is a code
+# block or a paragraph continuation, never a heading). ` ? ? ?` rather than an
+# interval expression, which not every awk supports. The structural heading
+# patterns below are built on it, so the section boundary, clause (c), the
+# What's New summary split and has_summary cannot disagree about what counts as
+# a heading line. The excluded-heading comparison (is_h3, below) is deliberately
+# NOT one of them: it is the trimmed cut-time comparison drop_excluded applies
+# to the CHANGELOG, so audit and cut time stay symmetric.
+HEADING_INDENT_RE='^ ? ? ?'
+# Any ATX heading line (levels 1-6: `#`..`######`, then whitespace or end of
+# line): where a What's New summary paragraph ends. One `#` plus up to five
+# optional ones, not `#+` (7+ hashes is paragraph text) and not an interval
+# expression (not every awk supports one).
+HEADING_START_RE="${HEADING_INDENT_RE}##?#?#?#?#?([[:space:]]|\$)"
+# The ONE section-boundary rule both extractors share, and has_version_header's
+# first stage: a line that opens like a `## [` header modulo whitespace starts
+# the next section (`    ## [0.0.1] example` stays content). Bracket
+# expressions, not `\[`, so the text survives an awk `-v` value's escape
+# processing.
+VERSION_HEADER_START_RE="${HEADING_INDENT_RE}##[[:space:]]*[[]"
 # section <version> — the CHANGELOG section body (header stripped), edges
 # trimmed. SKILL.md's A2 `ok`/`drifted` bullet extracts with "Step 1's exact
 # extraction+tolerant-matching logic", so a strict miss retries tolerating
@@ -426,11 +452,14 @@ section() {
 # unrelated trailing text — match here and start extraction from the wrong
 # place; the documented tolerant retry below (whitespace/punctuation drift
 # only, SKILL.md Step 1 item 5) is the sole sanctioned fallback for anything
-# looser than this exact shape.
+# looser than this exact shape. The section ENDS at any line section_tolerant
+# would treat as a header (VERSION_HEADER_START_RE), not only a single-space
+# `## [`: a strict start with a narrower end let an empty section swallow a
+# following `##  [1.0.0]  –  date` release's header and notes.
 section_exact() {
-	awk -v want="## [$1] - " '
+	awk -v want="## [$1] - " -v hs="$VERSION_HEADER_START_RE" '
 		index($0, want) == 1 { on = 1; next }
-		/^## \[/ { on = 0 }
+		$0 ~ hs { on = 0 }
 		on { print }
 	' "$CHANGELOG_LF" | trim_edges
 }
@@ -442,9 +471,9 @@ section_exact() {
 # reopen the same "## [0.1.0]bogus" hole section_exact's fix above closes,
 # just one fallback stage later.
 section_tolerant() {
-	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" '
+	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" -v hs="$VERSION_HEADER_START_RE" '
 		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
-		/^[[:space:]]*##[[:space:]]*\[/ {
+		$0 ~ hs {
 			s = squash($0)
 			on = (index(s, h) == 1) || (index(s, e) == 1)
 			next
@@ -459,15 +488,125 @@ trim_edges() {
 		for (i = s; i <= e; i++) print l[i]
 	}'
 }
-# drop_excluded <template-json> — filters the section on stdin by excluded_sections.
+# Canonical Format item 2's ONE heading comparison: leading/trailing whitespace
+# trimmed on both sides. Shared, as an awk function prefix, by every program that
+# compares a line against an excluded_sections entry (excluded_headings,
+# drop_excluded, clause (d)) so the cut-time and audit sides cannot diverge.
+# EXCL_AWK adds the list loader and the ONE heading predicate (`###` then
+# whitespace or end of line, after trimming) both drop_excluded and
+# has_excluded_heading use, so an entry that trims to a bare `###` is a heading
+# on both sides, never dropped at cut time on one and flagged on the other.
+TRIM_AWK='function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }'
+EXCL_AWK="$TRIM_AWK"'
+function load_excl(f, l) { while ((getline l < f) > 0) ex[l] = 1 }
+function is_h3(t) { return t ~ /^###([[:space:]]|$)/ }'
+# A compare-shaped line (`**Full diff:**`/`**Full changelog:**`), label-agnostic.
+# Bracket expressions instead of `\*` so the SAME text is safe both for
+# `grep -E` and for an awk `-v` value (whose escape processing eats `\*`).
+COMPARE_SHAPED_RE='^[*][*]Full (diff|changelog):[*][*]'
+# excluded_headings <template-json> — the template's active excluded_sections
+# entries, one per line, trimmed. Built explicitly into its own file per
+# candidate and read by BOTH sides of the exclusion contract: drop_excluded (the
+# CHANGELOG side) and body_invalid_reason's clause (d) (the body side), so the
+# two can never match different lists.
+excluded_headings() {
+	"$JQ" -r '(.excluded_sections // [])[]' <"$1" |
+		awk "$TRIM_AWK"' { t = trim($0); if (t != "") print t }'
+}
+# drop_excluded <excluded-headings-file> — filters the section on stdin by the
+# list excluded_headings built: a `###` heading (is_h3) whose trimmed text
+# equals an entry starts a skipped subsection (Step 3 item 3's cut-time rule).
 drop_excluded() {
-	local excl="$tmp/excl.txt"
-	"$JQ" -r '(.excluded_sections // [])[]' <"$1" >"$excl"
-	awk -v exfile="$excl" '
-		BEGIN { while ((getline l < exfile) > 0) ex[l] = 1 }
-		/^### / { skip = ($0 in ex) }
+	awk -v exfile="$1" "$EXCL_AWK"'
+		BEGIN { load_excl(exfile) }
+		{ t = trim($0) }
+		is_h3(t) { skip = (t in ex) }
 		!skip { print }
 	' | trim_edges
+}
+# has_excluded_heading <file> <excluded-headings-file> — clause (d): does the
+# file carry a `###` heading (is_h3) whose trimmed text equals an entry? The
+# same loader and predicate drop_excluded uses.
+has_excluded_heading() {
+	awk -v exfile="$2" "$EXCL_AWK"'
+		BEGIN { load_excl(exfile) }
+		{ t = trim($0) }
+		is_h3(t) && (t in ex) { f = 1; exit }
+		END { exit !f }
+	' "$1"
+}
+# has_content <file> — does the file carry a non-whitespace line other than a
+# compare-shaped one? Clause (a) (composition drops compare-shaped CHANGELOG
+# lines, so a section of only those has nothing to publish) and clause (b) (a
+# stale trailer must not mask an empty body). Single awk pass: no SIGPIPE.
+has_content() {
+	awk -v cre="$COMPARE_SHAPED_RE" '$0 ~ cre { next } /[^[:space:]]/ { f = 1; exit } END { exit !f }' "$1"
+}
+# The `## What's New` summary heading as Canonical Format item 2 documents it:
+# HEADING_INDENT_RE's leading-space bound, tolerant of trailing whitespace and
+# runs of spaces, and of exactly the real apostrophe encodings -- ASCII `'`,
+# U+2019 and U+2018 (literal UTF-8 bytes; the script runs under the C locale).
+# Nothing wider: `## What was New` is content. ONE pattern feeds the summary
+# split, has_summary and so check (4).
+WHATS_NEW_RE="$HEADING_INDENT_RE"$'##[[:space:]]+What(\'|\xe2\x80\x99|\xe2\x80\x98)s[[:space:]]+New[[:space:]]*$'
+# has_version_header <file> — does the file carry a CHANGELOG version-header
+# line? Two stages: the line must open like a header (VERSION_HEADER_START_RE,
+# the section boundary's own predicate), then -- mirroring section_tolerant's
+# squash -- the whitespace-squashed line must read `##[X.Y.Z]` (optionally a
+# SemVer `-prerelease` and/or `+build` tail, each a dot-separated run of
+# NON-EMPTY [0-9A-Za-z-] identifiers, so `[1.2.3-]`, `[1.2.3+.]` and
+# `[1.2.3-rc..1]` are not versions) or `##[Unreleased]`,
+# followed by a hyphen, an en dash, or end of line. A link heading such as
+# `## [Migration guide](guide.md)` or `## [1.2.3](guide.md)`, and a heading that
+# merely starts with a version (`## [1.2.3 compatibility notes]`), is not a
+# version header. Single awk pass over the file: no pipe, so no SIGPIPE.
+has_version_header() {
+	awk -v ed="$(printf '\xe2\x80\x93')" -v hs="$VERSION_HEADER_START_RE" '
+		function squash(s) { gsub(/[[:space:]]/, "", s); return s }
+		$0 ~ hs {
+			s = squash($0)
+			if (match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|Unreleased)\]/)) {
+				rest = substr(s, RLENGTH + 1)
+				if (rest == "" || substr(rest, 1, 1) == "-" || index(rest, ed) == 1) { f = 1; exit }
+			}
+		}
+		END { exit !f }
+	' "$1"
+}
+# body_invalid_reason <content-block> <section-after-excl> <excluded-headings-file> <whole-body> —
+# Canonical Format item 2's valid-body predicate, the audit's executable form
+# of it (Step 3's re-sync preservation follows the same prose definition).
+# Prints the first failing clause's punch-list note, or nothing when valid:
+#   (a) the CHANGELOG section, after exclusions and ignoring compare-shaped
+#       lines, is non-empty -- `body (missing CHANGELOG section)` covers both a
+#       missing section and one left empty by exclusions;
+#   (b) the content block, ignoring compare-shaped lines, is non-empty;
+#   (c) the WHOLE body (summary included, read before the summary split)
+#       embeds no CHANGELOG version-header line (has_version_header);
+#   (d) the WHOLE body (summary included) carries no `###` heading equal,
+#       trimmed, to an active excluded_sections entry (has_excluded_heading).
+# (c) and (d) read the whole body although the split now ends a summary at any
+# heading line (HEADING_START_RE): (d)'s comparison trims, exactly as
+# drop_excluded does at cut time, so a 4-space/tab-indented `### Internal` is an
+# excluded heading on both sides even though Markdown reads it as a summary
+# continuation line, never a heading; the whole-body scan keeps audit symmetric
+# with that cut-time rule wherever the line sits, and costs nothing for (c).
+# (b) alone reads the content block; (a) reads the CHANGELOG section.
+# Clause (e) — no compare-shaped line inside the content block — is enforced by
+# the compare-path check (3) below, which already drifts on any compare-shaped
+# line other than the one exact canonical trailer, so it is not re-reported here.
+# Every test is a single awk pass reading the file directly: a `grep | grep -q`
+# pipe under pipefail returns 141 (SIGPIPE) on a large body and misreads it.
+body_invalid_reason() {
+	if ! has_content "$2"; then
+		echo "body (missing CHANGELOG section)"
+	elif ! has_content "$1"; then
+		echo "body (empty)"
+	elif has_version_header "$4"; then
+		echo "body (embeds a CHANGELOG header)"
+	elif has_excluded_heading "$4" "$3"; then
+		echo "body (carries an excluded section)"
+	fi
 }
 
 # SKILL.md Step A1 item 4: only STRICT `vX.Y.Z` names enter the T/R/C union —
@@ -495,7 +634,9 @@ all_tags="$("$JQ" -r '.[]' <"$tags" | grep -E "$SEMVER_TAG" | sort -V)"
 # rather than letting each affected row's `prev` silently null out.
 while IFS= read -r t; do
 	[[ "$t" =~ $SEMVER_TAG ]] || continue
-	printf '%s\n' "$all_tags" | grep -qxF "$t" ||
+	# Here-string, not `printf | grep -q`: under pipefail a large inventory
+	# would SIGPIPE the writer once grep -q exits early and read as "absent".
+	grep -qxF "$t" <<<"$all_tags" ||
 		die "release-list tag '$t' is absent from --tags's inventory" 1 gate-failed tag-not-in-inventory
 done < <("$JQ" -r '.[].tagName' <"$list")
 rows="[]"
@@ -541,12 +682,12 @@ while IFS= read -r t; do
 			title_format="$("$JQ" -r '.title_format // "canonical"' <"$SRC_FILE")"
 			label="$("$JQ" -r '.compare_line_label // "Full diff"' <"$SRC_FILE")"
 		fi
-		want_section="$tmp/want.txt"
-		if [[ -n "$SRC_FILE" ]]; then
-			section "$ver" | drop_excluded "$SRC_FILE" >"$want_section"
-		else
-			section "$ver" >"$want_section"
-		fi
+		section_after_excl="$tmp/section-after-excl.txt"
+		excl_list="$tmp/excl.list"
+		: >"$excl_list"
+		[[ -n "$SRC_FILE" ]] && excluded_headings "$SRC_FILE" >"$excl_list"
+		# One path: with an empty list drop_excluded passes every line through.
+		section "$ver" | drop_excluded "$excl_list" >"$section_after_excl"
 		# Body: strip a trailing marker, an optional What's New paragraph, and the compare line.
 		# Read from SRC_SCAN (the CR-normalized stream resolve_source already built
 		# for marker detection), never the raw $bfile: a CRLF body's marker line
@@ -554,11 +695,17 @@ while IFS= read -r t; do
 		# would defeat resolve_source's own patterns, and reading two different byte
 		# streams for "the same body" is exactly the bug SRC_SCAN exists to close.
 		got="$tmp/got.txt"
-		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" >"$got.0"
+		# Leading blank lines are dropped here so the `## What's New` summary is
+		# recognised as the first CONTENT line, not physical line one: a body that
+		# opens with a blank line must not let a summary-only body slip past the
+		# summary split below and read as ordinary content.
+		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$SRC_SCAN" |
+			awk 'f || /[^[:space:]]/ { f = 1; print }' >"$got.0"
 		# SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 		# What's New prose block runs from the heading up to whichever comes
-		# first of the next "### " heading, the next "## " heading, the
-		# compare line, or EOF. Real release bodies use both a paragraph
+		# first of the next heading line (HEADING_START_RE: levels 1-6, up to 3
+		# leading spaces -- the shared bound -- or a VERSION_HEADER_START_RE
+		# line), the compare line, or EOF. Real release bodies use both a paragraph
 		# immediately after the heading (no blank line) and a blank line
 		# between the heading and the paragraph -- both are well-formed, so
 		# leading blank lines before any paragraph content are swallowed
@@ -587,25 +734,16 @@ while IFS= read -r t; do
 		# changelog:**` must stay ordinary summary prose, not a boundary --
 		# matching either label unconditionally (the previous bug here) mis-
 		# ends the scan on that line and leaks it, plus everything after it,
-		# into the CHANGELOG-content comparison below.
-		# `-v anchor=...` runs awk's own C-string escape processing on the
-		# VALUE before it ever becomes a dynamic regexp, consuming a single
-		# backslash-asterisk down to nothing (verified: `-v anchor='^\*\*X'`
-		# compiles to the regexp `^X`, not `^\*\*X` -- awk's leading `**`
-		# with nothing to repeat is elided as a no-op, not treated as two
-		# literal asterisks). That silently widened the anchor to match ANY
-		# line starting with the bare label text, no markdown bold required,
-		# reopening the same false-"drifted" bug class this rewrite exists to
-		# close: ordinary prose beginning "Full diff: ..." (no `**`) would
-		# now end the scan early. Doubling the backslashes here survives
-		# -v's one round of consumption so the regexp the awk program
-		# actually compiles still contains a literal backslash before each
-		# asterisk.
+		# into the content block the valid-body predicate reads below (clause
+		# (b)'s emptiness test and check (3)'s compare-shaped-line test).
+		# Bracket-expression form, for the `-v` escape reason COMPARE_SHAPED_RE's
+		# comment gives.
 		compare_anchor=""
-		[[ "$label" == "none" ]] || compare_anchor='^\\*\\*'"$label"':\\*\\*'
-		awk -v anchor="$compare_anchor" \
-			'NR == 1 && /^## What.s New$/ { insummary = 1; started = 0; next }
-			insummary && (/^### / || /^## / || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
+		[[ "$label" == "none" ]] || compare_anchor='^[*][*]'"$label"':[*][*]'
+		awk -v anchor="$compare_anchor" -v wn="$WHATS_NEW_RE" \
+			-v hd="$HEADING_START_RE" -v hs="$VERSION_HEADER_START_RE" \
+			'NR == 1 && $0 ~ wn { insummary = 1; started = 0; next }
+			insummary && ($0 ~ hd || $0 ~ hs || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
 			insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
 			insummary && !started && /^[[:space:]]*$/ { next }
 			insummary { started = 1; next }
@@ -617,7 +755,7 @@ while IFS= read -r t; do
 		# ignored; `true`/unset impose no presence requirement here.
 		whats_new_ok=1
 		has_summary=0
-		head -n 1 "$got.0" | grep -a -q -E '^## What.s New$' && has_summary=1
+		awk -v wn="$WHATS_NEW_RE" 'NR == 1 { f = ($0 ~ wn); exit } END { exit !f }' "$got.0" && has_summary=1
 		if [[ -n "$SRC_FILE" ]]; then
 			wn="$("$JQ" -r 'if has("whats_new") then (.whats_new | tostring) else "unset" end' <"$SRC_FILE")"
 			[[ "$wn" == "false" && "$has_summary" == 1 ]] && whats_new_ok=0
@@ -625,10 +763,10 @@ while IFS= read -r t; do
 		# $prev is already computed once per candidate, above the bfile lookup.
 		compare_ok=1
 		if [[ "$label" == "none" ]]; then
-			grep -a -q -E '^\*\*Full (diff|changelog):\*\*' "$got.1" && compare_ok=0
+			grep -a -q -E "$COMPARE_SHAPED_RE" "$got.1" && compare_ok=0
 			cp "$got.1" "$got"
 		else
-			nlines="$(grep -a -c -E '^\*\*Full (diff|changelog):\*\*' "$got.1")"
+			nlines="$(grep -a -c -E "$COMPARE_SHAPED_RE" "$got.1")"
 			if [[ -n "$prev" ]]; then
 				expected="**$label:** $web/compare/$prev...$t"
 				if [[ "$nlines" == 1 && "$(tail -n 1 "$got.1")" == "$expected" ]]; then
@@ -648,24 +786,27 @@ while IFS= read -r t; do
 		else
 			[[ "$name" == "$repo_name $t — "?* ]] && title_ok=1
 		fi
+		# Check (2) of SKILL.md's `ok`/`drifted` bullet is compact-tolerant: a
+		# release body MAY be shorter than its CHANGELOG section, so its bytes are
+		# not compared. It must instead be a valid body (body_invalid_reason).
+		body_note="$(body_invalid_reason "$got" "$section_after_excl" "$excl_list" "$got.0")"
 		body_ok=1
-		cmp -s "$got" "$want_section" || body_ok=0
+		[[ -z "$body_note" ]] || body_ok=0
 		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 && "$body_ok" == 1 ]]; then
 			status="ok"
 		else
 			status="drifted"
 			# SKILL.md's ok/drifted bullet: "name each failed check in the
-			# punch-list Note column — title, exact CHANGELOG bytes, exact
+			# punch-list Note column — title, body, exact
 			# cached-base compare path, and What's New presence-vs-whats_new
 			# are independent checks." Build the note from whichever of the
 			# four independent checks failed, in that order.
 			# ${failed[*]} with IFS=", " joins on only IFS's FIRST character
 			# (a single ','), dropping the space — two failures would render
-			# "title,exact CHANGELOG bytes" instead of "title, exact CHANGELOG
-			# bytes". Join explicitly instead.
+			# "title,body" instead of "title, body". Join explicitly instead.
 			failed=()
 			[[ "$title_ok" == 1 ]] || failed+=("title")
-			[[ "$body_ok" == 1 ]] || failed+=("exact CHANGELOG bytes")
+			[[ "$body_ok" == 1 ]] || failed+=("$body_note")
 			[[ "$compare_ok" == 1 ]] || failed+=("exact cached-base compare path")
 			[[ "$whats_new_ok" == 1 ]] || failed+=("What's New presence-vs-whats_new")
 			note=""

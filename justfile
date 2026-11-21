@@ -188,6 +188,11 @@ pytest-tests:
     uv run --with pytest pytest plugins/skein-codex/skills/conduct -q
     uv run --with pytest pytest plugins/skein-codex/skills/plan-view -q
 
+# Pi mirror suites (tests/pi): extension/package guards and the Pi release
+# skill's prose pins, which carry the valid-body predicate inline.
+pi-tests:
+    uv run --with pytest python -m pytest tests/pi -q
+
 # skein.sh static site (site/, served by wrangler.jsonc as a Workers assets-only
 # Worker). There is no bundler: "build" validates the site and dry-runs the
 # deploy bundle without uploading anything.
@@ -221,7 +226,7 @@ site-deploy: site-tests
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
 # runs on every pull request.
-ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests site-tests
+ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests pi-tests site-tests
 
 # Golden comparisons, negative cases and exit-code contract for the release
 # skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).
