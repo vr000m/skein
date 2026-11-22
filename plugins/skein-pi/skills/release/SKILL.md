@@ -63,8 +63,9 @@ split), and the trailing
 compare line. A body is a **valid body** (the Claude/Codex release skill's
 Canonical Format item 2) when all hold: (a) the CHANGELOG section has
 publishable content: something is left after exclusions, ignoring
-compare-shaped lines (the one definition the composition hard stop and the
-audit re-test below both apply); (b) the content block,
+compare-shaped lines, and those published bytes are NUL-free valid UTF-8
+(the one definition the composition hard stop and the audit re-test below
+both apply); (b) the content block,
 ignoring compare-shaped lines, is non-empty; (c) the whole body, summary
 included, embeds no CHANGELOG version-header line: `## [X.Y.Z]` (optionally a
 SemVer `-prerelease` and/or `+build` tail of dot-separated non-empty
@@ -83,10 +84,13 @@ discarded one, none for an absence); an invalid one is regenerated from the CHAN
 section automatically and the confirmation states that it was; the
 confirmation also offers an explicit "refresh content from CHANGELOG" choice
 that regenerates a valid block, but only when the regenerated body would
-itself pass audit (judged as below); otherwise never offer it (for example a
-compact body with no summary over a section that opens with `## What's New`:
-regeneration keeps the absence, so audit reads the whole regenerated block as
-the summary and finds the content block empty). If the regenerated body, judged with the
+itself pass audit (judged as below); otherwise never offer it. For example,
+for a compact body with no summary, regeneration keeps the absence, so audit
+splits a leading `## What's New` paragraph of the regenerated block off as the
+summary: the refresh is unsafe only when no publishable content remains after
+that split (a section holding only `## What's New` and its paragraph), and a
+section with more after the paragraph (`### Added` items) regenerates safely,
+so the refresh is offered. If the regenerated body, judged with the
 summary it will carry (a fresh draft replaces a discarded summary; an absence is
 kept), would itself drift in audit (for example a section that opens with
 `## What's New` under `whats_new: false`), stop instead of publishing it; the
