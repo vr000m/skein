@@ -1145,7 +1145,7 @@ h6 boundary|untemplated|## What's New\nSummary.\n###### Added\n- First thing.\n|
 tab heading continues the summary|untemplated|## What's New\nSummary.\n\t### Added\n- First thing.\n|true,-,false,body (empty),false
 blank-line boundary over flat content|untemplated|## What's New\n\nSummary.\n\n- First thing.\n|true,-,true,-,true
 no summary, compact block|untemplated|### Added\n\n- First.\n|false,-,true,-,true
-own-label compare line opens the summary|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n- First thing.\n|true,-,false,body (carries a compare-shaped line),false
+own-label compare line opens the summary (empty summary is audit drift)|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n- First thing.\n|true,audit-drift,false,body (carries a compare-shaped line),false
 stale own-label trailer is dropped|untemplated|### Added\n\n- First thing.\n\n**Full diff:** https://stale.invalid/x\n|false,-,true,-,true
 other-label trailer stays content|untemplated|### Added\n\n- First thing.\n\n**Full changelog:** https://stale.invalid/x\n|false,-,false,body (carries a compare-shaped line),false
 version header in the content block|untemplated|## What's New\nSummary.\n## [0.0.9] - 2025-01-01\n- First thing.\n|true,-,false,body (embeds a CHANGELOG header),false
@@ -1157,9 +1157,17 @@ excluded heading in the summary (tab)|excl|## What's New\nSummary.\n\t### Intern
 excluded heading in the content block|excl|### Added\n\n- Alpha.\n\n### Internal\n\n- Plumbing.\n\n%s\n|false,-,false,body (carries an excluded section),false
 label none: a compare-shaped line is never stripped|excl|### Added\n\n- Alpha.\n\n**Full diff:** https://x.invalid/a\n\n%s\n|false,-,false,body (carries a compare-shaped line),false
 label set: own trailer dropped|fcl|### Added\n\n- Alpha.\n\n**Full changelog:** https://x.invalid/a\n\n%s\n|false,-,true,-,true
-label set: compare boundary ends the summary|fcl|## What's New\nSummary.\n**Full changelog:** https://x.invalid/a\n|true,-,false,body (empty),false
+label set: compare boundary ends the summary|fcl|## What's New\nSummary.\n**Full changelog:** https://x.invalid/a\n\n%s\n|true,-,false,body (empty),false
+sentinel recovery, Full changelog current: its compare line in the summary is audit drift|fcl|## What's New\nSummary.\n**Full changelog:** https://x.invalid/a\n|true,audit-drift,false,body (empty),false
 label set: Full diff line is content|fcl|### Added\n\n- Alpha.\n\n**Full diff:** https://x.invalid/a\n\n%s\n|false,-,false,body (carries a compare-shaped line),false
 EOR
+# The bound Full changelog recovery template really selects its label: the
+# summary ends at its compare line (codex round-7 test finding: the row above
+# once ran under the sentinel because it carried no marker).
+printf "## What's New\nSummary.\n**Full changelog:** https://x.invalid/a\n\n%s\n" "$fcl_marker" >"$TMP/rs-body.md"
+[[ "$(rsum_run fcl v1.0.0 "$TMP/rs-body.md" "$FXL/peeled.json" "$FXX/excl/CHANGELOG.md" | jq -r '[.rows.recovery_template, .rows.recovery_label, .rows.summary_text] | join("|")')" == "marker|Full changelog|Summary." ]] &&
+	pass "resync-summary: a bound Full changelog template ends the summary at its own compare line" ||
+	bad "resync-summary: Full changelog recovery boundary"
 # Section missing -> clause (a) -> never preserved.
 printf '# Changelog\n\n## [0.2.0] - 2026-02-01\n\n- Second.\n' >"$TMP/rs-nosec.md"
 [[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-plain.md" "$FIX/untemplated/peeled-commits.json" "$TMP/rs-nosec.md" | jq -r '.rows.invalid_reason + "," + (.rows.preserve|tostring)')" == "body (missing CHANGELOG section),false" ]] &&
@@ -1173,7 +1181,8 @@ split_texts="$(jq -r '[.rows.summary_text, .rows.discard_line, .rows.content_blo
 	bad "resync-summary: split texts wrong: $rs"
 # Marker handling: a bound marker is stripped (recovery template = its blob,
 # label none); a CRLF copy decides identically; an unbound strict marker is
-# kept as body data under the sentinel and named in failed_gate.
+# parsed under the sentinel, named in rows.recovery_note (failed_gate stays
+# null on exit 0) and peeled off the content block (logic round-7 finding).
 printf '### Added\r\n\r\n- Alpha.\r\n\r\n%s\r\n' "$ex_marker" >"$TMP/rs-crlf.md"
 printf '### Added\n\n- Alpha.\n\n%s\n' "$ex_marker" >"$TMP/rs-lf.md"
 lf="$(rsum_run excl v1.0.0 "$TMP/rs-lf.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" | jq -c '.rows')"
@@ -1184,9 +1193,15 @@ crlf="$(rsum_run excl v1.0.0 "$TMP/rs-crlf.md" "$FXX/peeled.json" "$FXX/excl/CHA
 [[ "$lf" == "$crlf" ]] && pass "resync-summary: CRLF body == LF body" || bad "resync-summary: CRLF differs: $crlf vs $lf"
 printf '### Added\n\n- Alpha.\n\n<!-- release-template-sha: %s -->\n' "$(printf 'a%.0s' {1..40})" >"$TMP/rs-unbound.md"
 ub="$(rsum_run excl v1.0.0 "$TMP/rs-unbound.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md")"
-[[ "$(jq -r '[.rows.recovery_template, .rows.marker_stripped, (.failed_gate != null), (.rows.content_block_text | test("release-template-sha"))] | map(tostring) | join("|")' <<<"$ub")" == "sentinel|false|true|true" ]] &&
-	pass "resync-summary: an unbound marker is kept as body data under the sentinel" ||
+[[ "$(jq -r '[.rows.recovery_template, .rows.marker_stripped, .failed_gate, (.rows.recovery_note != null), (.rows.peeled_marker_line | test("^<!-- release-template-sha: a{40} -->$")), .rows.content_block_text, .rows.preserve] | map(tostring) | join("|")' <<<"$ub")" == $'sentinel|false|null|true|true|### Added\n\n- Alpha.|true' ]] &&
+	pass "resync-summary: an unbound marker is peeled off and reported in rows.recovery_note" ||
 	bad "resync-summary: unbound marker handling: $ub"
+# The peel happens before the stale-trailer drop, so a valid compact body with
+# a stale own-label trailer and an unbound marker is preserved.
+printf '### Added\n\n- Alpha.\n\n**Full diff:** https://stale.invalid/x\n\n<!-- release-template-sha: %s -->\n' "$(printf 'a%.0s' {1..40})" >"$TMP/rs-unbound2.md"
+[[ "$(rsum_run excl v1.0.0 "$TMP/rs-unbound2.md" "$FXX/peeled.json" "$FXX/excl/CHANGELOG.md" | jq -r '[.rows.content_block_text, .rows.preserve] | map(tostring) | join("|")')" == $'### Added\n\n- Alpha.|true' ]] &&
+	pass "resync-summary: an unbound marker does not defeat the stale-trailer drop" ||
+	bad "resync-summary: unbound marker blocked the trailer drop"
 # Headingless summary: the proved prefix is the discard rule's input and leaves
 # the content block; a version header in it discards it. A prefix that does not
 # match the body is refused.
@@ -1275,5 +1290,229 @@ done
 # a constant, or its body_stream mode with `keep` for a bound marker, fails rows
 # of this differential (verified when it was written); a2-classify alone
 # cannot fail it because both sides call the same functions.
+
+# Headingless not-a-summary rule (arch round-7 finding: it was prose-only). A
+# proved prefix of only compare-shaped lines, or carrying the recovery label's
+# compare line, is not a summary: it stays in the content block, so the block
+# carries a compare-shaped line and is regenerated.
+printf '**Full diff:** https://x/compare/a...b\n\n### Added\n\n- First thing.\n' >"$TMP/rs-hlc.md"
+printf '**Full diff:** https://x/compare/a...b\n' >"$TMP/rs-hlc-prefix.txt"
+hlc="$(rsum_run untemplated v0.1.0 "$TMP/rs-hlc.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP/rs-hlc-prefix.txt")"
+[[ "$(jq -r '[.rows.summary_present, .rows.invalid_reason, .rows.preserve] | map(tostring) | join("|")' <<<"$hlc")" == "false|body (carries a compare-shaped line)|false" ]] &&
+	pass "resync-summary: a compare-shaped-only headingless prefix is not a summary" ||
+	bad "resync-summary: compare-only headingless prefix accepted: $hlc"
+printf 'Intro.\n**Full diff:** see below\n\n### Added\n\n- First thing.\n' >"$TMP/rs-hla.md"
+printf 'Intro.\n**Full diff:** see below\n' >"$TMP/rs-hla-prefix.txt"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-hla.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP/rs-hla-prefix.txt" | jq -r '.rows.summary_present')" == false ]] &&
+	pass "resync-summary: a headingless prefix carrying the recovery label's compare line is not a summary" ||
+	bad "resync-summary: headingless prefix with the recovery compare line accepted"
+
+# Byte safety (codex/logic round-7 findings): a NUL or an invalid UTF-8 byte
+# anywhere in the body fails closed -- nothing reused, no text emitted, the
+# block regenerated -- and the output is strict JSON.
+for bytes_case in nul ff c080; do
+	case "$bytes_case" in
+	nul) printf '### Added\n\n- before\000after\n' >"$TMP/rs-bytes.md" ;;
+	ff) printf "## What's New\nSum\377mary.\n\n### Added\n\n- First.\n" >"$TMP/rs-bytes.md" ;;
+	c080) printf '### Added\n\n- \300\200 overlong.\n' >"$TMP/rs-bytes.md" ;;
+	esac
+	rsum_run untemplated v0.1.0 "$TMP/rs-bytes.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" >"$TMP/rs-bytes.out"
+	if python3 -c 'import json,sys; r=json.load(open(sys.argv[1],encoding="utf-8",errors="strict"))["rows"]; sys.exit(0 if (r["content_block_text"] is None and r["summary_text"] is None and r["preserve"] is False and r["invalid_reason"]=="body (not valid UTF-8 text)" and (r["discard"]=="invalid-bytes")==r["summary_present"]) else 1)' "$TMP/rs-bytes.out"; then
+		pass "resync-summary: byte gate fails closed on $bytes_case"
+	else
+		bad "resync-summary: byte gate on $bytes_case: $(cat -v "$TMP/rs-bytes.out")"
+	fi
+done
+# Valid multibyte UTF-8 and a mid-line CR pass through byte-exactly; a trailing
+# CR per line is removed (the documented LF-normalised contract, codex finding
+# on CRLF): the preserved block is what Step 4 shows and Step 6 publishes.
+printf '### Added\r\n\r\n- Caf\303\251 \342\200\224 a\rb.\r\n' >"$TMP/rs-utf.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-utf.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -j '.rows.content_block_text' | od -An -c | tr -s ' \n' ' ')" == "$(printf '### Added\n\n- Caf\303\251 \342\200\224 a\rb.' | od -An -c | tr -s ' \n' ' ')" ]] &&
+	pass "resync-summary: content_block_text is LF-normalised and otherwise byte-exact" ||
+	bad "resync-summary: content_block_text bytes changed"
+# Serialisation is linear (security/codex finding: the shell escaper went
+# quadratic on one control byte): a ~64 KiB body with a form feed and an ESC.
+{
+	printf '### Added\n\n'
+	for _ in $(seq 1 1100); do printf -- '- %s\n' "$(printf 'x%.0s' {1..56})"; done
+	printf -- '- form\014feed and esc\033.\n'
+} >"$TMP/rs-big.md"
+big_start=$SECONDS
+big="$(rsum_run untemplated v0.1.0 "$TMP/rs-big.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md")"
+big_secs=$((SECONDS - big_start))
+[[ "$big_secs" -le 5 && "$(jq -r '.rows.content_block_text | test("form\ffeed and esc\u001b")' <<<"$big")" == true ]] &&
+	pass "resync-summary: a 64 KiB body with control bytes serialises in ${big_secs}s" ||
+	bad "resync-summary: large control-byte body took ${big_secs}s or lost bytes"
+
+# resync-gate's no-decision state: an environment failure exits 2 with rows
+# null, which SKILL.md's callers must treat as a stop (codex round-7 finding:
+# A4 offered a repair on it).
+touch "$TMP/not-a-dir"
+TMPDIR="$TMP/not-a-dir" RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-gate \
+	--repo "$TMP/repo-untemplated" --head-sha "$(repo_head untemplated)" --changelog "$FIX/untemplated/CHANGELOG.md" --version 0.1.0 >"$TMP/gate-nd.out" 2>/dev/null
+expect_code "resync-gate with an unusable TMPDIR is an environment failure" 2 $?
+[[ "$(jq -r '[.rows, .failed_gate] | map(tostring) | join("|")' "$TMP/gate-nd.out")" == "null|tmpdir" ]] &&
+	pass "resync-gate: no decision means rows null" || bad "resync-gate no-decision shape: $(cat "$TMP/gate-nd.out")"
+
+# M1 -- THE RE-SYNC ROUND TRIP (Guardrail 8 whole-space test). Invariant: any
+# body a re-sync composes from resync-summary's rows -- the summary under
+# `## What's New` when reusable (present, discard null, current whats_new not
+# false), rows.content_block_text when preserve is true else the block
+# regenerated from the CHANGELOG section under the current template, a blank
+# line plus `**<label>:** <web>/compare/vPREV...vNEW` when the current label is
+# not none, a blank line plus the current marker when templated -- is
+# classified `ok` by a2-classify under that same current template.
+# State space: recovery template x current template over
+# {none, Full diff, Full changelog, no-template} (16 pairs, recovery != current
+# in 12) x every D1 corpus body, plus headingless prefixes (with
+# --headingless-summary) and raw bodies ending in an unbound marker. The
+# summary kind (headed/headingless/none), marker state (bound/none/unbound)
+# and body shape vary across the corpus. One repo per pair: commit 1 carries
+# the recovery template (the tags' peeled commit, so its marker binds through
+# the origin anchor), HEAD carries the current one. Pairs run in parallel.
+m1_tpl() { # key -> template JSON ("" = no template)
+	case "$1" in
+	none) printf '{"compare_line_label":"none","excluded_sections":["### Internal"]}\n' ;;
+	fd) printf '{"compare_line_label":"Full diff","excluded_sections":["### Internal"]}\n' ;;
+	fc) printf '{"compare_line_label":"Full changelog","excluded_sections":["### Internal"]}\n' ;;
+	esac
+}
+m1_label() { case "$1" in none) echo none ;; fc) echo "Full changelog" ;; *) echo "Full diff" ;; esac }
+M1_SECTION=$'### Added\n\n- Item.\n\n### Internal\n\n- Plumbing.'
+m1_hl=(
+	'Prefix para.'
+	'**Full diff:** https://x/compare/a...b'
+	'Line one.\n\nLine two.'
+	'Intro.\n**Full changelog:** see below'
+	'Intro.\n**Full diff:** see below'
+	'Intro.\n### Heading'
+)
+m1_raw=(
+	'### Added\n\n- Item.\n\n**Full diff:** https://stale.invalid/x\n\n<!-- release-template-sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
+	"## What's New\nSummary.\n\n### Added\n\n- Item.\n\n<!-- release-template-sha: bad -->"
+	'### Added\n\n- Item.\n<!-- release-template-sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n- More.'
+)
+m1_pair() { # recovery current
+	local r="$1" c="$2" d="$TMP/m1-$1-$2" n i k v prev tag rl cl rblob="" cblob="" old rs rc
+	local total=$((${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]}))
+	rm -rf "$d" && mkdir -p "$d/repo" "$d/bodies" "$d/old"
+	(
+		release_git_env
+		"$GIT_REAL" -c commit.gpgsign=false init -q --object-format=sha1 -b main "$d/repo"
+		{
+			printf '# Changelog\n'
+			for ((n = total + 1; n >= 1; n--)); do printf '\n## [0.%d.0] - 2026-01-01\n\n%s\n' "$n" "$M1_SECTION"; done
+		} >"$d/repo/CHANGELOG.md"
+		"$GIT_REAL" -C "$d/repo" add CHANGELOG.md
+		if [[ "$r" != notpl ]]; then
+			m1_tpl "$r" >"$d/repo/.release-template.json"
+			"$GIT_REAL" -C "$d/repo" add .release-template.json
+		fi
+		"$GIT_REAL" -C "$d/repo" -c commit.gpgsign=false commit -q --no-verify -m recovery
+		if [[ "$c" == notpl ]]; then
+			[[ "$r" == notpl ]] || "$GIT_REAL" -C "$d/repo" rm -q .release-template.json
+		else
+			m1_tpl "$c" >"$d/repo/.release-template.json"
+			"$GIT_REAL" -C "$d/repo" add .release-template.json
+		fi
+		"$GIT_REAL" -C "$d/repo" -c commit.gpgsign=false commit -q --no-verify --allow-empty -m current
+	) || {
+		echo "FAIL: M1 $r->$c: repo build"
+		return
+	}
+	local c1 head
+	c1="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD~1)"
+	head="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD)"
+	[[ "$r" == notpl ]] || rblob="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD~1:.release-template.json)"
+	[[ "$c" == notpl ]] || cblob="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD:.release-template.json)"
+	rl="$(m1_label "$r")" cl="$(m1_label "$c")"
+	jq -n --argjson t "$((total + 1))" '[range(1; $t + 1) | "v0.\(.).0"]' >"$d/tags.json"
+	jq -n --argjson t "$((total + 1))" --arg c1 "$c1" '[range(1; $t + 1) | {key: "v0.\(.).0", value: $c1}] | from_entries' >"$d/peeled.json"
+	jq -n --argjson t "$((total + 1))" '[range(1; $t + 1) | {tagName: "v0.\(.).0", name: "widgets v0.\(.).0 — Highlight"}]' >"$d/list.json"
+	for ((k = 0; k < total; k++)); do
+		v="0.$((k + 2)).0" tag="v0.$((k + 2)).0" prev="v0.$((k + 1)).0"
+		old="$d/old/$tag.md"
+		local hl_arg=()
+		if ((k < ${#corpus[@]})); then
+			# shellcheck disable=SC2059
+			printf -- "${corpus[$k]}" >"$old"
+		elif ((k < ${#corpus[@]} + ${#m1_hl[@]})); then
+			i=$((k - ${#corpus[@]}))
+			# shellcheck disable=SC2059
+			printf -- "${m1_hl[$i]}" >"$d/old/$tag.prefix"
+			{
+				cat "$d/old/$tag.prefix"
+				printf '\n\n%s' "$M1_SECTION"
+			} >"$old"
+			hl_arg=(--headingless-summary "$d/old/$tag.prefix")
+		else
+			i=$((k - ${#corpus[@]} - ${#m1_hl[@]}))
+			# shellcheck disable=SC2059
+			printf -- "${m1_raw[$i]}\n" >"$old"
+		fi
+		if ((k < ${#corpus[@]} + ${#m1_hl[@]})); then
+			[[ "$rl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$rl" "$WEB" "$prev" "$tag" >>"$old"
+			[[ -z "$rblob" ]] || printf '\n\n<!-- release-template-sha: %s -->' "$rblob" >>"$old"
+			printf '\n' >>"$old"
+		fi
+		rc=0
+		rs="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-summary \
+			--repo "$d/repo" --tag "$tag" --body-file "$old" --peeled "$d/peeled.json" --head-sha "$head" \
+			--changelog "$d/repo/CHANGELOG.md" ${hl_arg[@]+"${hl_arg[@]}"} 2>/dev/null)" || rc=$?
+		if [[ "$rc" != 0 ]] || ! jq -e '.rows | type == "object"' <<<"$rs" >/dev/null 2>&1; then
+			echo "FAIL: M1 $r->$c #$k: resync-summary failed: $rs"
+			continue
+		fi
+		echo "$rs" >"$d/old/$tag.rs.json"
+		{
+			if [[ "$(jq -r '.rows.summary_present and .rows.discard == null' <<<"$rs")" == true ]]; then
+				printf "## What's New\n%s\n\n" "$(jq -j '.rows.summary_text' <<<"$rs")"
+			fi
+			if [[ "$(jq -r '.rows.preserve' <<<"$rs")" == true ]]; then
+				jq -j '.rows.content_block_text' <<<"$rs"
+			elif [[ "$c" == notpl ]]; then
+				printf '%s' "$M1_SECTION"
+			else
+				printf '### Added\n\n- Item.'
+			fi
+			[[ "$cl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$cl" "$WEB" "$prev" "$tag"
+			[[ -z "$cblob" ]] || printf '\n\n<!-- release-template-sha: %s -->' "$cblob"
+			printf '\n'
+		} >"$d/bodies/$tag.md"
+	done
+	local a2
+	a2="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
+		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bodies" --peeled "$d/peeled.json" \
+		--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
+	for ((k = 0; k < total; k++)); do
+		v="0.$((k + 2)).0"
+		got="$(note_of "$a2" "$v")"
+		if [[ "$got" == "ok|" ]]; then
+			echo "PASS: M1 round trip $r->$c #$k: ok"
+		else
+			echo "FAIL: M1 round trip $r->$c #$k: '$got' (old body $d/old/v$v.md; rows $(cat "$d/old/v$v.rs.json" 2>/dev/null))"
+		fi
+	done
+}
+m1_pids=()
+for m1_r in none fd fc notpl; do
+	for m1_c in none fd fc notpl; do
+		m1_pair "$m1_r" "$m1_c" >"$TMP/m1-$m1_r-$m1_c.log" 2>&1 &
+		m1_pids+=($!)
+	done
+done
+for m1_pid in "${m1_pids[@]}"; do wait "$m1_pid"; done
+m1_pass=0
+for m1_log in "$TMP"/m1-*.log; do
+	m1_pass=$((m1_pass + $(grep -c '^PASS: ' "$m1_log")))
+	if grep -q '^FAIL: ' "$m1_log"; then
+		grep '^FAIL: ' "$m1_log" >&2
+		fail=1
+	fi
+done
+m1_want=$((16 * (${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]})))
+[[ "$m1_pass" == "$m1_want" ]] &&
+	pass "M1 re-sync round trip: $m1_pass/$m1_want composed bodies audit ok under the current template" ||
+	bad "M1 re-sync round trip: $m1_pass/$m1_want composed bodies audit ok"
 
 exit "$fail"
