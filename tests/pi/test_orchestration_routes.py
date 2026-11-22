@@ -101,6 +101,11 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "that is a valid body under the current committed template is preserved",
         "the old body's own stale compare trailer dropped",
         "states that it was discarded and which line caused it",
+        # Round 7: the restored "or" (Pi's only statement of the rule), the
+        # round-trip discard, and the honest prose-only scope.
+        "version-header line (clause (c)'s definition), or an active",
+        "would make the re-synced body drift in audit",
+        "these re-sync rules exist only as this prose",
     ):
         assert phrase in text, phrase
     assert "or on explicit request" not in text
