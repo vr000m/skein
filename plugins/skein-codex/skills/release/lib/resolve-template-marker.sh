@@ -28,11 +28,16 @@
 #     Emits only the marker decision for one body (no ok/drifted comparison).
 #   resolve-template-marker.sh --site resync-gate --repo DIR --head-sha 40-HEX
 #       --changelog FILE --version X.Y.Z
-#     Emits rows = {stops, reason}: would a re-sync stop at the publishable-
-#       content test (Canonical Format item 2 clause (a)) under the CURRENT
-#       committed template? Step A4's offer gate and Step 3 item 3's hard stop.
-#       Only exit 0 with rows.stops == false is a "proceed"; a non-zero exit
-#       (rows null) is no decision, and both callers treat it as a stop.
+#     Emits rows = {stops, reason, summary_required} for a composition with NO
+#       existing release body (a new release; Step A4's offer for a row with no
+#       release): stops when the CURRENT committed template is invalid, the
+#       section fails clause (a) (Canonical Format item 2), or the block
+#       regenerated from it would audit drifted with the summary Step 3 may
+#       draft (none under whats_new:false); summary_required = the composed
+#       body audits ok only with that summary. A re-sync of an existing release
+#       takes its stop from resync-summary's rows.stops instead. Only exit 0
+#       with rows.stops == false is a "proceed"; a non-zero exit (rows null) is
+#       no decision, and every caller treats it as a stop.
 #   resolve-template-marker.sh --site resync-summary --repo DIR --tag TAG
 #       --body-file FILE --peeled FILE --head-sha 40-HEX --changelog FILE
 #       [--headingless-summary FILE]
@@ -40,17 +45,31 @@
 #       marker_stripped, summary_present, summary_kind, summary_text, discard,
 #       discard_line, peeled_marker_line, content_block_text,
 #       content_block_valid, invalid_reason, preserve, regenerate_safe,
-#       regenerate_reason}: Step 3 item 1's summary recovery/discard and Step 3
-#       item 3's preserve-vs-regenerate decision for one fetched body.
+#       regenerate_reason, stops, reason, summary_required}: Step 3 item 1's
+#       summary recovery/discard and Step 3 item 3's preserve-vs-regenerate
+#       decision for one fetched body; stops (preserve and regenerate both
+#       unsafe) is the re-sync's one stop (Step 3 item 3, and Step A4's offer
+#       for a row with a release), reason its regenerate_reason.
 #       Invariant: the body a re-sync composes from these rows on either branch
+#       (with the summary Step 3 composes: the reusable one, a fresh draft for
+#       a discarded one, none for an absent one or under whats_new:false)
 #       audits `ok` under the current template, or the row marks that branch
-#       unsafe (see the site's comment). Only exit 0 yields rows; a non-zero
-#       exit (rows null) is no decision, and the caller stops the re-sync.
+#       unsafe (see the site's comment); summary_required = a publishable
+#       branch audits ok only with its summary. Only exit 0 yields rows; a
+#       non-zero exit (rows null) is no decision, and the caller stops.
 #       summary_text/content_block_text are the body's bytes with a trailing CR
 #       per line removed (LF-normalised), serialised by jq; a body that is not
 #       NUL-free valid UTF-8 emits both as null with preserve=false.
 #       recovery_note names an unbound/ambiguous marker on exit 0 (failed_gate
 #       stays exit-1-only).
+#   resolve-template-marker.sh --site body-check --repo DIR --head-sha 40-HEX
+#       --changelog FILE --tag TAG --body-file FILE --web-base-url URL
+#       [--prev vX.Y.Z]
+#     Emits rows = {ok, reason}: does the EXACT composed body Step 4 shows
+#       (summary as drafted or overridden, block, trailer, marker) audit `ok`
+#       under the current template (a2-classify's marker resolution and body
+#       checks (2)-(4), at the real PREV)? Step 3 runs it on every composed or
+#       recomposed body; only exit 0 with rows.ok == true lets Step 4 confirm.
 #   --head-sha is REQUIRED at every site: the caller resolves HEAD once
 #     (SKILL.md's single-resolution rule) and passes the literal SHA in; this
 #     script never self-resolves HEAD, matching read-release-template.sh's
@@ -77,7 +96,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SCRIPT="resolve-template-marker"
 site="" repo="" list="" bodies="" peeled="" tags="" changelog="" web="" tag="" body_file="" head_sha=""
-version="" headingless=""
+version="" headingless="" prev_arg=""
 
 die() { # code decision gate
 	echo "resolve-template-marker.sh: $1" >&2
@@ -100,13 +119,14 @@ while [[ $# -gt 0 ]]; do
 	--head-sha) head_sha="${2-}" ;;
 	--version) version="${2-}" ;;
 	--headingless-summary) headingless="${2-}" ;;
+	--prev) prev_arg="${2-}" ;;
 	*) die "unknown argument: $1" 2 environment-failure bad-arguments ;;
 	esac
 	shift 2 || die "missing value for an argument" 2 environment-failure bad-arguments
 done
 
 case "$site" in
-a2-classify | step3-recovery | resync-gate | resync-summary) ;;
+a2-classify | step3-recovery | resync-gate | resync-summary | body-check) ;;
 *) die "unknown --site" 2 environment-failure bad-arguments ;;
 esac
 release_require_exe RELEASE_GIT || die "RELEASE_GIT must be an absolute executable path" 2 environment-failure git-unresolvable
@@ -125,8 +145,10 @@ need_jq() {
 }
 [[ "$site" == "a2-classify" ]] && need_jq
 [[ -d "$repo" ]] || die "--repo is not a directory" 2 environment-failure repo-unreadable
-# resync-gate binds no marker, so it alone takes no --peeled.
-[[ "$site" == "resync-gate" || -r "$peeled" ]] || die "--peeled unreadable" 2 environment-failure input-unreadable
+# resync-gate binds no marker, and body-check binds its composed marker only
+# through the current-HEAD anchor (the marker Step 3 composes is HEAD's blob),
+# so neither takes --peeled.
+[[ "$site" == "resync-gate" || "$site" == "body-check" || -r "$peeled" ]] || die "--peeled unreadable" 2 environment-failure input-unreadable
 
 TPATH=".release-template.json"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/release-marker.XXXXXX")" || die "mktemp failed" 2 environment-failure tmpdir
@@ -823,7 +845,7 @@ PROBE_WEB="https://resync.invalid/probe" PROBE_PREV="vPREV"
 # removed), a regenerated block as the raw section's bytes (regen_block).
 # Reads cur_label, cur_wn, tag, ver, excl_list. Sets AUD_FAIL.
 compose_audits() {
-	local c="$tmp/composed.txt" fails=() f
+	local c="$tmp/composed.txt"
 	{
 		if [[ "$1" != - ]]; then
 			printf '%s\n' "## What's New"
@@ -839,10 +861,20 @@ compose_audits() {
 		return 1
 	fi
 	body_stream "$c" strip >"$c.0"
-	audit_body_checks "$c.0" "$cur_label" "$cur_wn" "$PROBE_PREV" "$tag" "$PROBE_WEB" "$excl_list" "$ver" "$c.a"
+	audit_current "$c.0" "$PROBE_PREV" "$PROBE_WEB" "$c.a"
+}
+# audit_current <marker-stripped-stream> <prev> <web> <out> — a2-classify's
+# body checks (2)-(4) (audit_body_checks) under the CURRENT template's label,
+# whats_new and excluded list, with the failures joined into AUD_FAIL in
+# a2-classify's punch-list order. Shared by compose_audits (the verdicts, at
+# the probe PREV) and body-check (the exact composed body, at the real PREV).
+audit_current() {
+	local fails=() f
+	audit_body_checks "$1" "$cur_label" "$cur_wn" "$2" "$tag" "$3" "$excl_list" "$ver" "$4"
 	[[ -z "$AUD_BODY_NOTE" ]] || fails+=("$AUD_BODY_NOTE")
 	[[ "$AUD_COMPARE_OK" == 1 ]] || fails+=("exact cached-base compare path")
 	[[ "$AUD_WN_OK" == 1 ]] || fails+=("What's New presence-vs-whats_new")
+	AUD_FAIL=""
 	for f in ${fails[@]+"${fails[@]}"}; do
 		[[ -n "$AUD_FAIL" ]] && AUD_FAIL+=", "
 		AUD_FAIL+="$f"
@@ -860,31 +892,52 @@ regen_block() {
 		awk -v cre="$COMPARE_SHAPED_RE" '$0 !~ cre' | trim_edges >"$1"
 }
 # A representative drafted summary: one plain paragraph, no heading, no compare
-# or marker line -- the shape Step 3 drafts. Any summary Step 3 may compose
-# behaves like it under Audit's split: a reused one passed the discard rules
-# and the summary-alone probe (the split ends it exactly at the separator), so
-# the content block, checks (c)/(d) and check (4) see the same bytes.
+# or marker line -- the shape Step 3 drafts. It stands in for a summary Step 3
+# has not drafted yet; the text actually drafted (or typed at Step 4) is
+# checked exactly by the body-check site before Step 4 confirms it. A reused
+# summary is passed as itself, never approximated by this one.
 DRAFTED_SUMMARY="$tmp/drafted-summary.txt"
 printf 'Drafted summary.\n' >"$DRAFTED_SUMMARY"
-# regenerate_verdict <summary-present 0|1> — THE regenerate-branch verdict, ONE
-# function of (current template, CHANGELOG section, summary present) that
-# every consumer acts on: resync-gate (a new release's composition and Step
-# A4's offer gate for a row with no release) and resync-summary (a re-sync's
-# regenerate branch, and so Step A4's offer gate for a row with a release).
-# A summary is present only when the current whats_new is not false. Sets
-# regen_reason (empty = safe) and regen_needs_summary (true = safe only with
-# the summary: Step 3 must then keep it, never compose a bare body).
-regenerate_verdict() {
-	local s=-
-	regen_reason="" regen_needs_summary=false
-	[[ "$1" == 1 && "$cur_wn" != false ]] && s="$DRAFTED_SUMMARY"
-	if ! compose_audits "$s" "$REGEN"; then
-		regen_reason="body (regenerated block would audit drifted: $AUD_FAIL)"
+# step3_summary <summary-present 0|1> — THE summary Step 3 composes, as a
+# compose_audits argument: none (`-`) when the old body has none (an ordinary
+# re-sync preserves the absence) or the current whats_new is false; the
+# recovered summary when reusable (reuse=1); otherwise a fresh draft
+# (DRAFTED_SUMMARY: a new release, or a discarded summary's replacement).
+step3_summary() {
+	if [[ "$1" == 1 && "$cur_wn" != false ]]; then
+		if [[ "${reuse:-0}" == 1 ]]; then echo "$summary"; else echo "$DRAFTED_SUMMARY"; fi
+	else
+		echo -
+	fi
+}
+# branch_verdict <block-file> <summary-file|-> — THE verdict for one branch, the
+# ONE function of (current template, block, summary Step 3 composes) behind
+# every publish decision: resync-summary's preserve branch (the recovered
+# block) and regenerate branch (regenerate_verdict), and resync-gate (a new
+# release, and Step A4's offer for a row with no release). Fails with
+# bv_reason when the composed body would audit drifted; else
+# bv_needs_summary=true when only the composition WITH the summary passes
+# (Step 3 must then keep a summary, never compose a bare body).
+branch_verdict() {
+	bv_reason="" bv_needs_summary=false
+	if ! compose_audits "$2" "$1"; then
+		bv_reason="$AUD_FAIL"
 		return 1
 	fi
-	if [[ "$s" != - ]] && ! compose_audits - "$REGEN"; then
-		regen_needs_summary=true
+	if [[ "$2" != - ]] && ! compose_audits - "$1"; then
+		bv_needs_summary=true
 	fi
+	return 0
+}
+# regenerate_verdict <summary-file|-> — branch_verdict over the regenerated
+# block (REGEN). Sets regen_reason (empty = safe) and regen_needs_summary.
+regenerate_verdict() {
+	regen_reason="" regen_needs_summary=false
+	if ! branch_verdict "$REGEN" "$1"; then
+		regen_reason="body (regenerated block would audit drifted: $bv_reason)"
+		return 1
+	fi
+	regen_needs_summary="$bv_needs_summary"
 	return 0
 }
 
@@ -931,10 +984,71 @@ if [[ "$site" == "resync-gate" ]]; then
 	current_template_fields
 	ver="$version" tag="v$version"
 	regen_block "$REGEN"
-	if regenerate_verdict 1; then
+	if regenerate_verdict "$(step3_summary 1)"; then
 		release_emit "$SCRIPT" "$site" "resync-gate-pass" 0 "" '{"stops":false,"reason":null,"summary_required":'"$regen_needs_summary"'}' "$gate_case"
 	else
 		release_emit "$SCRIPT" "$site" "resync-gate-stop" 0 "" '{"stops":true,"reason":"'"$(release_json_escape "$regen_reason")"'","summary_required":false}' "$gate_case"
+	fi
+	exit 0
+fi
+
+# --site body-check: does the EXACT body Step 4 is about to show (the summary
+# as drafted or as the user replaced it, the block, the real trailer, the
+# marker) audit `ok` under the CURRENT committed template? The verdicts above
+# judge a summary not yet written with DRAFTED_SUMMARY; this site closes that
+# gap by running a2-classify's own marker resolution (resolve_source; the
+# composed marker can bind only through the current-HEAD anchor, so no
+# --peeled is read) and checks (2)-(4) (audit_current) over the composed bytes
+# at the real PREV. A templated body must carry the bound current marker; an
+# untemplated one no marker-shaped line. Not checked: check (1), the title.
+# rows = {ok, reason}: Step 3 runs it on every composed or recomposed body and
+# Step 4 confirms only on exit 0 with rows.ok true; rows.ok false means edit
+# the summary again (or take the drafted/bare body the rows allow) or stop;
+# a non-zero exit (rows null) is no decision, a stop. Exit 1
+# current-template-invalid as at resync-summary. Runs no jq unless the
+# template is present (the reason goes through release_json_escape).
+if [[ "$site" == "body-check" ]]; then
+	[[ -r "$changelog" && -r "$body_file" && -n "$web" ]] ||
+		die "--changelog, --body-file and --web-base-url are required" 2 environment-failure input-unreadable
+	[[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+		die "--tag must be a strict vX.Y.Z" 2 environment-failure bad-arguments
+	[[ -z "$prev_arg" || "$prev_arg" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+		die "--prev must be a strict vX.Y.Z" 2 environment-failure bad-arguments
+	ver="${tag#v}"
+	normalise_changelog
+	excl_list="$tmp/excl.list"
+	current_excluded_headings "$excl_list" ||
+		die "current template invalid: ${CUR_STATE#invalid:}" 1 hard-stop current-template-invalid
+	current_template_fields
+	check_case="untemplated" bc_fail=""
+	[[ "$CUR_STATE" == valid ]] && check_case="templated"
+	if [[ "$CUR_STATE" != valid ]]; then
+		# Untemplated: no marker may appear (a2-classify would mark the body
+		# unresolvable), and jq is never needed.
+		if sed $'s/\r$//' <"$body_file" | grep -a -q -E "$MARKER_SHAPED_RE"; then
+			bc_fail="template marker (a marker-shaped line in an untemplated body)"
+		fi
+		sed $'s/\r$//' <"$body_file" >"$tmp/body-lf.txt"
+		SRC_SCAN="$tmp/body-lf.txt"
+	else
+		peeled="$tmp/no-peeled.json"
+		printf '{}\n' >"$peeled"
+		PEELED_SHAPE_OK=1
+		resolve_source "$tag" "$body_file"
+		case "$SRC_KIND" in
+		marker) ;;
+		unresolvable) bc_fail="template marker ($SRC_NOTE)" ;;
+		*) bc_fail="template marker (missing)" ;;
+		esac
+	fi
+	if [[ -z "$bc_fail" ]]; then
+		body_stream "$SRC_SCAN" strip >"$tmp/body-check.0"
+		audit_current "$tmp/body-check.0" "$prev_arg" "$web" "$tmp/body-check.a" || bc_fail="$AUD_FAIL"
+	fi
+	if [[ -z "$bc_fail" ]]; then
+		release_emit "$SCRIPT" "$site" "body-check-pass" 0 "" '{"ok":true,"reason":null}' "$check_case"
+	else
+		release_emit "$SCRIPT" "$site" "body-check-fail" 0 "" '{"ok":false,"reason":"'"$(release_json_escape "$bc_fail")"'"}' "$check_case"
 	fi
 	exit 0
 fi
@@ -983,22 +1097,24 @@ summary_kind_of() {
 # audits `ok` under the current template, or the row says that branch is
 # unsafe; rows.stops (preserve false and regenerate unsafe) is the re-sync's
 # one stop, which Step 3 item 3 and Step A4 (for a row with a release) both
-# act on. Preserve branch: compose_audits over the summary when reusable
-# (present, non-empty, not discarded, current whats_new not false) and the
-# recovered content block; a discarded summary is judged absent there, which
-# can only be stricter (a preserved block carries no compare-shaped line, so a
-# leading paragraph never removes content it would keep). Regenerate branch:
-# regenerate_verdict, present when Step 3 will compose a summary (a reusable
-# one, or a fresh draft replacing a discarded one), absent when the old body
-# has none (an ordinary re-sync preserves the absence). A summary that alone
-# makes the branch to be published drift is discarded (`audit-drift`).
+# act on. BOTH branches are judged by the one branch_verdict, with the one
+# summary Step 3 composes (step3_summary): the reusable summary (present,
+# non-empty, not discarded, current whats_new not false), a fresh draft in
+# place of a discarded one, none for an absent one or under whats_new:false.
+# Preserve branch: branch_verdict over the recovered content block (a discarded
+# summary is NOT judged absent: Step 3 prepends a fresh draft, which can keep a
+# block-opening `## What's New` stanza as content where a bare body would
+# consume it as the summary). Regenerate branch: regenerate_verdict. A reused
+# summary that makes the branch to be published drift where a fresh draft
+# would not is discarded (`audit-drift`).
 # rows.summary_required: a branch the rows mark publishable audits ok only
 # with its summary, so Step 4 never offers a bare body.
 # A summary is also tested on its own (followed by a non-heading paragraph
 # line), because a reused summary precedes either block: Audit's split must
 # end it exactly where it ends.
-# Not probed (judgment calls Step 4 shows): a compact digest of the
-# regenerated block.
+# Not probed here (Step 4's judgment calls): the summary text Step 3 actually
+# drafts or the user types, and a compact digest -- body-check audits the
+# exact composed body before Step 4 confirms it.
 # --headingless-summary FILE: for a body with no `## What's New` heading, the
 # exact prefix bytes Step 3's byte-exact headingless recovery already proved;
 # the discard rule then runs over it and it is removed from the content block
@@ -1042,7 +1158,29 @@ if [[ "$site" == "resync-summary" ]]; then
 	summary_kind="" discard="" discard_line="" peeled_marker="" invalid_reason="" regen_reason=""
 	summary_required=false hl=0
 	[[ -n "$headingless" ]] && hl=1
-	body_stream "$SRC_SCAN" "$strip" | trim_edges >"$got.0"
+	# Byte-safety gate, decided FIRST: a NUL or an invalid UTF-8 byte anywhere in
+	# the body (or the proved prefix) means nothing is reused and no text is
+	# emitted (the invalid-bytes branch below). That branch still classifies the
+	# summary, and every line tool here (awk above all: BSD awk drops a line's
+	# bytes from a NUL on, so `\0First.` would read as a blank line) is not
+	# NUL-safe; so the classification pipeline reads a copy with each NUL mapped
+	# to the placeholder \001 (not whitespace, not a structural byte: a line
+	# with a NUL stays a content line, as with any other byte). The copy feeds
+	# classification only -- its bytes are never emitted.
+	bytes_ok=1
+	if ! body_bytes_ok "$body_file" || { [[ "$hl" == 1 ]] && ! body_bytes_ok "$headingless"; }; then
+		bytes_ok=0
+	fi
+	cls_scan="$SRC_SCAN" cls_headingless="$headingless"
+	if [[ "$bytes_ok" == 0 ]]; then
+		cls_scan="$tmp/scan-cls.txt"
+		tr '\000' '\001' <"$SRC_SCAN" >"$cls_scan"
+		if [[ "$hl" == 1 ]]; then
+			cls_headingless="$tmp/headingless-cls.txt"
+			tr '\000' '\001' <"$headingless" >"$cls_headingless"
+		fi
+	fi
+	body_stream "$cls_scan" "$strip" | trim_edges >"$got.0"
 	# A trailing marker-shaped line kept as body data (an unbound/ambiguous
 	# marker) is peeled off with its separator BEFORE the summary split and
 	# reported, never left in the summary or the content block: the re-sync
@@ -1081,18 +1219,21 @@ if [[ "$site" == "resync-summary" ]]; then
 	# A headingless prefix replaces the (then empty) split summary: normalised
 	# the way a2-classify will read it once published (one CR per line removed).
 	if [[ "$hl" == 1 ]] && ! has_whats_new_heading "$got.0"; then
-		sed $'s/\r$//' <"$headingless" | trim_edges >"$summary"
+		sed $'s/\r$//' <"$cls_headingless" | trim_edges >"$summary"
 	fi
-	# Byte-safety gate first: a NUL or an invalid UTF-8 byte anywhere in the body
-	# (or the proved prefix) means nothing is reused and no text is emitted. The
-	# summary is classified by the same summary_kind_of as below, so an empty
-	# headed summary is absent here too; a present one is discarded and Step 3
-	# redrafts it, which the regenerate verdict accounts for.
-	if ! body_bytes_ok "$body_file" || { [[ "$hl" == 1 ]] && ! body_bytes_ok "$headingless"; }; then
+	# Invalid-bytes branch: the summary is classified by the same summary_kind_of
+	# as below (over the NUL-mapped copy), so an empty headed summary is absent
+	# here too; a present one is discarded and Step 3 redrafts it, which the
+	# regenerate verdict accounts for (step3_summary with reuse=0). A peeled
+	# marker line carrying the placeholder byte is not reported, so no mapped
+	# byte is ever output.
+	reuse=0
+	if [[ "$bytes_ok" == 0 ]]; then
+		[[ "$peeled_marker" != *$'\001'* ]] || peeled_marker=""
 		summary_kind="$(summary_kind_of "$got.0" "$summary" "$hl")"
 		[[ -z "$summary_kind" ]] || discard="invalid-bytes"
 		invalid_reason="body (not valid UTF-8 text)"
-		if regenerate_verdict "$([[ -n "$summary_kind" ]] && echo 1 || echo 0)"; then
+		if regenerate_verdict "$(step3_summary "$([[ -n "$summary_kind" ]] && echo 1 || echo 0)")"; then
 			summary_required="$regen_needs_summary"
 		fi
 		emit_rows false
@@ -1166,34 +1307,33 @@ if [[ "$site" == "resync-summary" ]]; then
 			reuse=0
 		fi
 	fi
-	sum_arg=-
-	[[ "$reuse" == 1 ]] && sum_arg="$summary"
-	# Preserve branch: summary-if-reusable + the recovered content block.
-	if [[ -z "$invalid_reason" ]] && ! compose_audits "$sum_arg" "$content"; then
-		if [[ "$reuse" == 1 ]] && compose_audits - "$content"; then
-			discard="audit-drift"
-			discard_line=""
-			reuse=0 sum_arg=-
-		else
-			invalid_reason="body (re-sync would audit drifted: $AUD_FAIL)"
+	present=0
+	[[ -n "$summary_kind" ]] && present=1
+	# Preserve branch: branch_verdict over the recovered content block with the
+	# summary Step 3 composes (step3_summary). A reused summary that makes it
+	# drift where a fresh draft would not is discarded (Step 3 then drafts one).
+	pres_needs=false
+	if [[ -z "$invalid_reason" ]]; then
+		if ! branch_verdict "$content" "$(step3_summary "$present")"; then
+			pres_fail="$bv_reason"
+			if [[ "$reuse" == 1 ]] && branch_verdict "$content" "$DRAFTED_SUMMARY"; then
+				discard="audit-drift" discard_line="" reuse=0
+			else
+				invalid_reason="body (re-sync would audit drifted: $pres_fail)"
+			fi
 		fi
+		[[ -z "$invalid_reason" ]] && pres_needs="$bv_needs_summary"
 	fi
-	# Regenerate branch: regenerate_verdict, with a summary present whenever
-	# Step 3 composes one -- the reusable summary, or the fresh draft replacing
-	# a discarded one. A reused summary behaves like the drafted one (see
-	# DRAFTED_SUMMARY); if composing it with the regenerated block drifts anyway
-	# while that block is the branch to be published, it is discarded instead.
-	if regenerate_verdict "$([[ -n "$summary_kind" ]] && echo 1 || echo 0)"; then
-		if [[ "$reuse" == 1 && -n "$invalid_reason" ]] && ! compose_audits "$summary" "$REGEN"; then
-			discard="audit-drift"
-			discard_line=""
-			reuse=0 sum_arg=-
-		fi
-		[[ "$regen_needs_summary" == true ]] && summary_required=true
+	# Regenerate branch: the same branch_verdict (regenerate_verdict) with the
+	# same summary. While the regenerated block is the branch to be published,
+	# a reused summary that makes it drift where a fresh draft would not is
+	# discarded the same way.
+	if ! regenerate_verdict "$(step3_summary "$present")" &&
+		[[ "$reuse" == 1 && -n "$invalid_reason" ]] && regenerate_verdict "$DRAFTED_SUMMARY"; then
+		discard="audit-drift" discard_line="" reuse=0
 	fi
-	if [[ -z "$invalid_reason" && "$reuse" == 1 ]] && ! compose_audits - "$content"; then
-		summary_required=true
-	fi
+	[[ -z "$invalid_reason" && "$pres_needs" == true ]] && summary_required=true
+	[[ -z "$regen_reason" && "$regen_needs_summary" == true ]] && summary_required=true
 	emit_rows true
 	exit 0
 fi
