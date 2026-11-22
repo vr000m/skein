@@ -82,7 +82,11 @@ re-synced body will carry: the reusable one, a fresh draft replacing a
 discarded one, none for an absence); an invalid one is regenerated from the CHANGELOG
 section automatically and the confirmation states that it was; the
 confirmation also offers an explicit "refresh content from CHANGELOG" choice
-that regenerates a valid block. If the regenerated body, judged with the
+that regenerates a valid block, but only when the regenerated body would
+itself pass audit (judged as below); otherwise never offer it (for example a
+compact body with no summary over a section that opens with `## What's New`:
+regeneration keeps the absence, so audit reads the whole regenerated block as
+the summary and finds the content block empty). If the regenerated body, judged with the
 summary it will carry (a fresh draft replaces a discarded summary; an absence is
 kept), would itself drift in audit (for example a section that opens with
 `## What's New` under `whats_new: false`), stop instead of publishing it; the
@@ -96,7 +100,7 @@ A recovered summary, headed or headingless,
 that contains a CHANGELOG version-header line (clause (c)'s definition), or an
 active `excluded_sections` heading line (clause (d)) is never reused (audit
 flags both wherever they sit; a compare-shaped line is not a trigger: the
-summary already ends at the template's own compare line, as in audit, and any
+summary already ends at the recovery template's own compare line, as in audit, and any
 other compare-shaped line is summary prose on both sides): discard
 it, draft a fresh summary (or omit it when `whats_new: false` or the user asks
 for a bare body), and the confirmation
@@ -104,8 +108,11 @@ states that it was discarded and which line caused it. A summary that, reused
 under the current template, would make the re-synced body drift in audit (for
 example a line that template's compare label ends the summary at) is redrafted
 the same way. A headingless prefix made only of
-compare-shaped lines, or carrying the template's own compare line, is not a
-summary. In audit, every fixable row, whatever field drifted (not only a
+compare-shaped lines, or carrying the recovery template's own compare line, is
+not a summary. The **recovery template** is the one the old body was cut
+under: the template its bound marker names, else the no-template default
+(`Full diff`); it governs only parsing the old body, never the current
+committed template the re-synced body is judged under. In audit, every fixable row, whatever field drifted (not only a
 `body (missing CHANGELOG section)` note), is withheld from re-sync only when
 re-sync itself would stop: re-sync composes with the current committed template, so
 re-test the section under it with clause (a)'s publishable-content test
