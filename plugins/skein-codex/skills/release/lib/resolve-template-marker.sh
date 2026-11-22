@@ -39,10 +39,13 @@
 #     Emits rows = {recovery_template, recovery_label, recovery_note,
 #       marker_stripped, summary_present, summary_kind, summary_text, discard,
 #       discard_line, peeled_marker_line, content_block_text,
-#       content_block_valid, invalid_reason, preserve}: Step 3 item 1's summary
-#       recovery/discard and Step 3 item 3's preserve-vs-regenerate decision for
-#       one fetched body. Invariant: the body a re-sync composes from these
-#       rows audits `ok` under the current template (see the site's comment).
+#       content_block_valid, invalid_reason, preserve, regenerate_safe,
+#       regenerate_reason}: Step 3 item 1's summary recovery/discard and Step 3
+#       item 3's preserve-vs-regenerate decision for one fetched body.
+#       Invariant: the body a re-sync composes from these rows on either branch
+#       audits `ok` under the current template, or the row marks that branch
+#       unsafe (see the site's comment). Only exit 0 yields rows; a non-zero
+#       exit (rows null) is no decision, and the caller stops the re-sync.
 #       summary_text/content_block_text are the body's bytes with a trailing CR
 #       per line removed (LF-normalised), serialised by jq; a body that is not
 #       NUL-free valid UTF-8 emits both as null with preserve=false.
@@ -636,8 +639,9 @@ body_invalid_reason() {
 # body carries either no marker-shaped line (a no-op) or exactly one bound
 # strict marker as its final line -- so the strip removes exactly that bound
 # marker. `keep` (resync-summary over an unbound/ambiguous marker, which
-# a2-classify never splits) preserves the line as body data, as Step 3 item 1
-# requires. Leading blank lines are dropped either way so the `## What's New`
+# a2-classify never splits) keeps the line; resync-summary then peels a final
+# one into peeled_marker_line, and a marker-shaped line anywhere else makes
+# the block unpreservable. Leading blank lines are dropped either way so the `## What's New`
 # summary is recognised as the first CONTENT line, not physical line one: a
 # body that opens with a blank line must not let a summary-only body slip past
 # the summary split and read as ordinary content.
@@ -832,20 +836,28 @@ fi
 #     trailer strip);
 #   - the CURRENT committed template (the active template every re-sync
 #     composes with) governs everything about the NEW body.
-# THE INVARIANT this site owns: whatever it lets a re-sync publish -- the
-# summary when reusable (present, not discarded, current whats_new not false)
-# under `## What's New`, the content block when preserve is true, the current
-# label's compare trailer, the current marker -- audits `ok` under the current
-# template. It is enforced, not argued: the composed body goes through
-# audit_body_checks (a2-classify's own checks (2)-(4)) under the current
-# template's label/whats_new/excluded list, and a summary or block that would
-# make it drift is discarded (`audit-drift`) or not preserved. The compare
-# trailer is composed with a probe PREV/URL: check (3) depends on PREV only
-# through whether a trailer is appended, and with or without one it passes
-# exactly when no compare-shaped line reaches the post-summary content, so the
-# verdict is PREV-independent. A summary is also tested on its own (followed
-# by a non-heading paragraph line), because a reused summary precedes a
-# regenerated block too: Audit's split must end it exactly where it ends.
+# THE INVARIANT this site owns: the body a re-sync publishes on EITHER branch
+# audits `ok` under the current template, or the row says that branch is
+# unsafe. compose_audits builds that body mechanically -- the summary when
+# reusable (present, non-empty, not discarded, current whats_new not false)
+# under `## What's New`, then the block (preserve: the recovered content
+# block; regenerate: the CHANGELOG section as Step 3 item 3 composes it --
+# current exclusions dropped, compare-shaped lines dropped, edges trimmed),
+# then the current label's compare trailer (the current marker binds by
+# construction) -- normalises it exactly as a2-classify normalises a published
+# body (resolve_source's one trailing CR per line), and only then runs the
+# marker test and audit_body_checks (a2-classify's checks (2)-(4)) under the
+# current template's label/whats_new/excluded list. preserve is the preserve
+# branch's verdict, regenerate_safe the regenerate branch's; a summary that
+# alone makes the branch to be published drift is discarded (`audit-drift`).
+# The compare trailer is composed with a probe PREV/URL: check (3) depends on
+# PREV only through whether a trailer is appended, and with or without one it
+# passes exactly when no compare-shaped line reaches the post-summary content,
+# so the verdict is PREV-independent. A summary is also tested on its own
+# (followed by a non-heading paragraph line), because a reused summary precedes
+# either block: Audit's split must end it exactly where it ends.
+# Not probed (judgment calls Step 3 drafts, Step 4 shows): a freshly drafted
+# summary and a compact digest of the regenerated block.
 # --headingless-summary FILE: for a body with no `## What's New` heading, the
 # exact prefix bytes Step 3's byte-exact headingless recovery already proved;
 # the discard rule then runs over it and it is removed from the content block.
@@ -853,7 +865,8 @@ fi
 # compare line, is not a summary (wrapped, Audit's split would end at it): it
 # stays in the content block.
 # Every rows field is serialised by the pinned jq (--arg, and --rawfile for
-# the two free-form texts), so this site pins jq unconditionally.
+# the two free-form texts), so this site pins jq unconditionally: SKILL.md
+# pins jq for every re-sync, templated or not, and any non-zero exit stops it.
 if [[ "$site" == "resync-summary" ]]; then
 	[[ -r "$body_file" && -n "$tag" && -r "$changelog" ]] ||
 		die "--tag, --body-file and --changelog are required" 2 environment-failure input-unreadable
@@ -890,27 +903,84 @@ if [[ "$site" == "resync-summary" ]]; then
 	[[ "$SRC_KIND" == marker ]] && marker_stripped=true
 	summary_case="untemplated"
 	[[ "$SRC_KIND" == marker || "$CUR_STATE" == valid ]] && summary_case="templated"
-	got="$tmp/got.txt" summary="$tmp/summary.txt" content="$tmp/content.txt"
+	got="$tmp/got.txt" summary="$tmp/summary.txt" content="$tmp/content.txt" regen="$tmp/regen.txt"
 	: >"$content"
-	body_stream "$SRC_SCAN" "$strip" >"$got.0"
+	summary_kind="" discard="" discard_line="" peeled_marker="" invalid_reason="" regen_reason=""
+	body_stream "$SRC_SCAN" "$strip" | trim_edges >"$got.0"
+	# A trailing marker-shaped line kept as body data (an unbound/ambiguous
+	# marker) is peeled off with its separator BEFORE the summary split and
+	# reported, never left in the summary or the content block: the re-sync
+	# appends its own marker, and a kept one would mask the stale trailer below,
+	# swallow a summary-only body's prose, and make the published body
+	# unresolvable.
+	last="$(tail -n 1 "$got.0")"
+	if [[ "$last" =~ $MARKER_SHAPED_RE ]]; then
+		peeled_marker="$last"
+		sed '$d' "$got.0" | trim_edges >"$got.p"
+		mv "$got.p" "$got.0"
+	fi
 	whats_new_split "$got.0" "$recovery_label" "$got.1" "$summary"
-	summary_kind="" discard="" discard_line="" peeled_marker="" invalid_reason=""
+	# The regenerated block, exactly as Step 3 item 3 composes a new one from the
+	# section: the current template's exclusions dropped (drop_excluded, the
+	# cut-time rule), then every compare-shaped line dropped, edges trimmed.
+	section "$ver" | drop_excluded "$excl_list" | awk -v cre="$COMPARE_SHAPED_RE" '$0 !~ cre' | trim_edges >"$regen"
 	emit_rows() { # with-texts(true|false)
 		local rows
 		rows="$("$JQ" -cn --argjson tx "$1" \
 			--arg rt "$recovery_template" --arg rl "$recovery_label" --arg rn "$recovery_note" \
 			--argjson ms "$marker_stripped" --arg sk "$summary_kind" --arg dc "$discard" \
 			--arg dl "$discard_line" --arg pm "$peeled_marker" --arg ir "$invalid_reason" \
-			--rawfile st "$summary" --rawfile cb "$content" '
+			--arg rr "$regen_reason" --rawfile st "$summary" --rawfile cb "$content" '
 			def opt: if . == "" then null else . end;
 			{recovery_template: $rt, recovery_label: $rl, recovery_note: ($rn | opt),
 			 marker_stripped: $ms, summary_present: ($sk != ""), summary_kind: ($sk | opt),
 			 summary_text: (if $tx and $sk != "" then ($st | rtrimstr("\n")) else null end),
 			 discard: ($dc | opt), discard_line: ($dl | opt), peeled_marker_line: ($pm | opt),
 			 content_block_text: (if $tx then ($cb | rtrimstr("\n")) else null end),
-			 content_block_valid: ($ir == ""), invalid_reason: ($ir | opt), preserve: ($ir == "")}')" ||
+			 content_block_valid: ($ir == ""), invalid_reason: ($ir | opt), preserve: ($ir == ""),
+			 regenerate_safe: ($rr == ""), regenerate_reason: ($rr | opt)}')" ||
 			die "rows serialisation failed" 2 environment-failure jq-failed
 		release_emit "$SCRIPT" "$site" "resync-summary" 0 "" "$rows" "$summary_case"
+	}
+	# compose_audits <with-summary 0|1> <block-file> — THE composer: the body a
+	# re-sync would publish (summary, block, current trailer; the current marker
+	# binds by construction, so a marker-shaped line anywhere else is the only
+	# marker failure), normalised the way a2-classify's resolve_source
+	# normalises a published body (one trailing CR per line) BEFORE any check,
+	# then a2-classify's own checks. Sets AUD_FAIL.
+	compose_audits() {
+		local c="$tmp/composed.txt" fails=() f
+		{
+			if [[ "$1" == 1 ]]; then
+				printf '%s\n' "## What's New"
+				cat "$summary"
+				printf '\n'
+			fi
+			cat "$2"
+			[[ "$cur_label" == none ]] || printf '\n**%s:** %s/compare/%s...%s\n' "$cur_label" "$PROBE_WEB" "$PROBE_PREV" "$tag"
+		} | sed $'s/\r$//' >"$c"
+		AUD_FAIL=""
+		if grep -a -q -E "$MARKER_SHAPED_RE" "$c"; then
+			AUD_FAIL="a marker-shaped line"
+			return 1
+		fi
+		body_stream "$c" strip >"$c.0"
+		audit_body_checks "$c.0" "$cur_label" "$cur_wn" "$PROBE_PREV" "$tag" "$PROBE_WEB" "$excl_list" "$ver" "$c.a"
+		[[ -z "$AUD_BODY_NOTE" ]] || fails+=("$AUD_BODY_NOTE")
+		[[ "$AUD_COMPARE_OK" == 1 ]] || fails+=("exact cached-base compare path")
+		[[ "$AUD_WN_OK" == 1 ]] || fails+=("What's New presence-vs-whats_new")
+		for f in ${fails[@]+"${fails[@]}"}; do
+			[[ -n "$AUD_FAIL" ]] && AUD_FAIL+=", "
+			AUD_FAIL+="$f"
+		done
+		[[ -z "$AUD_FAIL" ]]
+	}
+	# regenerate_branch <reuse 0|1> — the regenerate branch's verdict, with the
+	# summary the branch would carry. Sets regen_reason (empty = safe).
+	regenerate_branch() {
+		compose_audits "$1" "$regen" && return 0
+		regen_reason="body (regenerated block would audit drifted: $AUD_FAIL)"
+		return 1
 	}
 	# Byte-safety gate first: a NUL or an invalid UTF-8 byte anywhere in the body
 	# (or the proved prefix) means nothing is reused and no text is emitted.
@@ -922,6 +992,7 @@ if [[ "$site" == "resync-summary" ]]; then
 		fi
 		[[ -z "$summary_kind" ]] || discard="invalid-bytes"
 		invalid_reason="body (not valid UTF-8 text)"
+		regenerate_branch 0
 		emit_rows false
 		exit 0
 	fi
@@ -929,6 +1000,13 @@ if [[ "$site" == "resync-summary" ]]; then
 		summary_kind="headed"
 		[[ -z "$headingless" ]] ||
 			die "--headingless-summary given for a body with a What's New heading" 1 hard-stop headingless-summary-mismatch
+		# An empty headed summary (the heading followed directly by a boundary)
+		# is an absent summary, not a discard: an ordinary re-sync preserves the
+		# absence rather than drafting one.
+		if ! grep -a -q '[^[:space:]]' "$summary"; then
+			summary_kind=""
+			: >"$summary"
+		fi
 	elif [[ -n "$headingless" ]]; then
 		# The prefix must be the content's first lines followed by one blank line.
 		sed $'s/\r$//' <"$headingless" | trim_edges >"$summary"
@@ -952,17 +1030,6 @@ if [[ "$site" == "resync-summary" ]]; then
 			summary_kind="headingless"
 		fi
 	fi
-	# A trailing marker-shaped line kept as body data (an unbound/ambiguous
-	# marker) is peeled off with its separator and reported, never left in the
-	# content block: the re-sync appends its own marker, and a kept one would
-	# both mask the stale trailer below and make the published body
-	# unresolvable.
-	last="$(tail -n 1 "$got.1")"
-	if [[ "$last" =~ $MARKER_SHAPED_RE ]]; then
-		peeled_marker="$last"
-		sed '$d' "$got.1" | trim_edges >"$got.3"
-		mv "$got.3" "$got.1"
-	fi
 	# Drop the recovery template's own trailing compare line (any URL: recovery
 	# neither blesses nor needs a current trailer -- it is regenerated).
 	trailer_re='^[*][*]'"$recovery_label"':[*][*] .'
@@ -971,79 +1038,65 @@ if [[ "$site" == "resync-summary" ]]; then
 	else
 		cp "$got.1" "$content"
 	fi
-	# Content-block validity under the current template: body_invalid_reason
-	# (clauses (a)-(d)) over the block, then clause (e) and the marker shape.
-	invalid_reason="$(body_invalid_reason "$content" "$ver" "$excl_list" "$content")"
-	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$COMPARE_SHAPED_RE" "$content"; then
+	# Content-block validity under the current template, over the block as
+	# a2-classify will read it once published (one trailing CR per line
+	# removed): body_invalid_reason (clauses (a)-(d)), then clause (e) and the
+	# marker shape.
+	sed $'s/\r$//' <"$content" >"$content.n"
+	invalid_reason="$(body_invalid_reason "$content.n" "$ver" "$excl_list" "$content.n")"
+	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$COMPARE_SHAPED_RE" "$content.n"; then
 		invalid_reason="body (carries a compare-shaped line)"
 	fi
-	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$MARKER_SHAPED_RE" "$content"; then
+	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$MARKER_SHAPED_RE" "$content.n"; then
 		invalid_reason="body (carries a marker-shaped line)"
 	fi
 	if [[ -n "$summary_kind" ]]; then
-		if discard_line="$(has_version_header "$summary")"; then
+		sed $'s/\r$//' <"$summary" >"$summary.n"
+		if discard_line="$(has_version_header "$summary.n")"; then
 			discard="version-header"
-		elif discard_line="$(has_excluded_heading "$summary" "$excl_list")"; then
+		elif discard_line="$(has_excluded_heading "$summary.n" "$excl_list")"; then
 			discard="excluded-heading"
 		else
 			discard_line=""
 		fi
 	fi
-	# compose_audits <with-summary 0|1> <block-file> — does the body a re-sync
-	# would publish (summary, block, current trailer; the current marker binds
-	# by construction, so a marker-shaped line anywhere else is the only marker
-	# failure) pass audit_body_checks under the current template? Sets AUD_FAIL.
-	compose_audits() {
-		local c="$tmp/composed.txt" fails=() f
-		{
-			if [[ "$1" == 1 ]]; then
-				printf '%s\n' "## What's New"
-				cat "$summary"
-				printf '\n'
-			fi
-			cat "$2"
-			[[ "$cur_label" == none ]] || printf '\n**%s:** %s/compare/%s...%s\n' "$cur_label" "$PROBE_WEB" "$PROBE_PREV" "$tag"
-		} >"$c"
-		AUD_FAIL=""
-		if grep -a -q -E "$MARKER_SHAPED_RE" "$c"; then
-			AUD_FAIL="a marker-shaped line"
-			return 1
-		fi
-		body_stream "$c" strip >"$c.0"
-		audit_body_checks "$c.0" "$cur_label" "$cur_wn" "$PROBE_PREV" "$tag" "$PROBE_WEB" "$excl_list" "$ver" "$c.a"
-		[[ -z "$AUD_BODY_NOTE" ]] || fails+=("$AUD_BODY_NOTE")
-		[[ "$AUD_COMPARE_OK" == 1 ]] || fails+=("exact cached-base compare path")
-		[[ "$AUD_WN_OK" == 1 ]] || fails+=("What's New presence-vs-whats_new")
-		for f in ${fails[@]+"${fails[@]}"}; do
-			[[ -n "$AUD_FAIL" ]] && AUD_FAIL+=", "
-			AUD_FAIL+="$f"
-		done
-		[[ -z "$AUD_FAIL" ]]
-	}
 	reuse=0
 	[[ -n "$summary_kind" && -z "$discard" && "$cur_wn" != false ]] && reuse=1
 	if [[ "$reuse" == 1 ]]; then
 		# The summary on its own: Audit's split of `## What's New` + summary +
-		# a following paragraph line must return the summary unchanged.
+		# a following paragraph line must return the (normalised) summary
+		# unchanged.
 		printf -- '- probe\n' >"$tmp/probe-block.txt"
 		compose_audits 1 "$tmp/probe-block.txt" >/dev/null 2>&1
-		if ! cmp -s "$tmp/composed.txt.a.summary" "$summary" || grep -a -q -E "$MARKER_SHAPED_RE" "$summary"; then
+		if ! cmp -s "$tmp/composed.txt.a.summary" "$summary.n" || grep -a -q -E "$MARKER_SHAPED_RE" "$summary.n"; then
 			discard="audit-drift"
 			discard_line="$(awk -v pf="$tmp/composed.txt.a.summary" '
 				BEGIN { while ((getline l < pf) > 0) n++ }
-				NR > n && /[^[:space:]]/ { print; exit }' "$summary")"
-			if marker_line="$(grep -a -m 1 -E "$MARKER_SHAPED_RE" "$summary")"; then
+				NR > n && /[^[:space:]]/ { print; exit }' "$summary.n")"
+			if marker_line="$(grep -a -m 1 -E "$MARKER_SHAPED_RE" "$summary.n")"; then
 				discard_line="$marker_line"
 			fi
 			reuse=0
 		fi
 	fi
+	# Preserve branch: summary-if-reusable + the recovered content block.
 	if [[ -z "$invalid_reason" ]] && ! compose_audits "$reuse" "$content"; then
 		if [[ "$reuse" == 1 ]] && compose_audits 0 "$content"; then
 			discard="audit-drift"
 			discard_line=""
+			reuse=0
 		else
 			invalid_reason="body (re-sync would audit drifted: $AUD_FAIL)"
+		fi
+	fi
+	# Regenerate branch: summary-if-reusable + the regenerated block. When it is
+	# the branch to be published (preserve false) and only the summary makes it
+	# drift, the summary is discarded instead.
+	if ! regenerate_branch "$reuse"; then
+		if [[ "$reuse" == 1 && -n "$invalid_reason" ]] && compose_audits 0 "$regen"; then
+			discard="audit-drift"
+			discard_line=""
+			regen_reason=""
 		fi
 	fi
 	emit_rows true
