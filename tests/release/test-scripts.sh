@@ -1145,7 +1145,7 @@ h6 boundary|untemplated|## What's New\nSummary.\n###### Added\n- First thing.\n|
 tab heading continues the summary|untemplated|## What's New\nSummary.\n\t### Added\n- First thing.\n|true,-,false,body (empty),false
 blank-line boundary over flat content|untemplated|## What's New\n\nSummary.\n\n- First thing.\n|true,-,true,-,true
 no summary, compact block|untemplated|### Added\n\n- First.\n|false,-,true,-,true
-own-label compare line opens the summary (empty summary is audit drift)|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n- First thing.\n|true,audit-drift,false,body (carries a compare-shaped line),false
+own-label compare line opens the summary (an empty summary is absent)|untemplated|## What's New\n**Full diff:** stale.\n\n### Added\n- First thing.\n|false,-,false,body (carries a compare-shaped line),false
 stale own-label trailer is dropped|untemplated|### Added\n\n- First thing.\n\n**Full diff:** https://stale.invalid/x\n|false,-,true,-,true
 other-label trailer stays content|untemplated|### Added\n\n- First thing.\n\n**Full changelog:** https://stale.invalid/x\n|false,-,false,body (carries a compare-shaped line),false
 version header in the content block|untemplated|## What's New\nSummary.\n## [0.0.9] - 2025-01-01\n- First thing.\n|true,-,false,body (embeds a CHANGELOG header),false
@@ -1214,6 +1214,48 @@ hl="$(rsum_run untemplated v0.1.0 "$TMP/rs-hl.md" "$FIX/untemplated/peeled-commi
 printf 'Not the prefix.\n' >"$TMP/rs-hl-bad.txt"
 rsum_run untemplated v0.1.0 "$TMP/rs-hl.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" "$TMP/rs-hl-bad.txt" >/dev/null
 expect_code "resync-summary refuses a headingless summary that is not the body's prefix" 1 $?
+
+# Round 8: the composer probes the body each branch would PUBLISH, normalised
+# the way a2-classify normalises a published body, before any check.
+# (a) A marker split from its line end by two CRs survives recovery's one-CR
+# strip as `-->\r`; A2 strips that last CR and finds the marker, so the block
+# is not preserved (codex round-8 finding).
+printf '### Added\n\n- Item.\n<!-- release-template-sha: bad -->\r\r\n- More.\n' >"$TMP/rs-cr2.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-cr2.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.invalid_reason, .rows.preserve, .rows.regenerate_safe] | map(tostring) | join("|")')" == "body (carries a marker-shaped line)|false|true" ]] &&
+	pass "resync-summary: a CR-split marker A2 would find blocks preservation" ||
+	bad "resync-summary: CR-split marker preserved"
+# (b) An empty headed summary is an absent summary (no discard, block kept).
+printf "## What's New\n\n### Added\n\n- Item.\n" >"$TMP/rs-empty-sum.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-empty-sum.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.summary_present, .rows.discard, .rows.discard_line, .rows.content_block_text, .rows.preserve] | map(tostring) | join("|")')" == $'false|null|null|### Added\n\n- Item.|true' ]] &&
+	pass "resync-summary: an empty headed summary is absent, not discarded" ||
+	bad "resync-summary: empty headed summary discarded"
+# (c) A final unbound marker is peeled BEFORE the summary split, so a
+# summary-only body keeps its reusable summary.
+printf "## What's New\nSummary.\n<!-- release-template-sha: bad -->\n" >"$TMP/rs-sum-mk.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-sum-mk.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.summary_text, .rows.discard, .rows.peeled_marker_line, .rows.preserve, .rows.regenerate_safe] | map(tostring) | join("|")')" == "Summary.|null|<!-- release-template-sha: bad -->|false|true" ]] &&
+	pass "resync-summary: the unbound marker is peeled before the summary split" ||
+	bad "resync-summary: summary lost to an unbound marker"
+# (d) The regenerate branch is probed too: under whats_new:false a CHANGELOG
+# section that opens with `## What's New` regenerates into a body A2 flags, so
+# the row says regenerate_safe=false (SKILL.md stops instead of publishing).
+printf "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n## What's New\nOverview.\n\n### Added\n\n- Item.\n" >"$TMP/rs-wn-cl.md"
+: >"$TMP/rs-empty.md"
+[[ "$(rsum_run excl v1.0.0 "$TMP/rs-empty.md" "$FXX/peeled.json" "$TMP/rs-wn-cl.md" | jq -r '[.rows.preserve, .rows.regenerate_safe, .rows.regenerate_reason] | map(tostring) | join("|")')" == "false|false|body (regenerated block would audit drifted: What's New presence-vs-whats_new)" ]] &&
+	pass "resync-summary: an unsafe regenerated block is reported, never silently published" ||
+	bad "resync-summary: regenerate branch not probed"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-empty.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.preserve, .rows.regenerate_safe, .rows.regenerate_reason] | map(tostring) | join("|")')" == "false|true|null" ]] &&
+	pass "resync-summary: an ordinary regenerated block is safe" || bad "resync-summary: ordinary regenerate marked unsafe"
+# (e) Precondition contract: resync-summary always needs the pinned jq, so
+# SKILL.md pins jq for every re-sync (templated or not). An untemplated
+# re-sync with RELEASE_JQ unset is the no-decision state: exit 2,
+# jq-unresolvable, rows null, which the caller treats as a stop.
+env -u RELEASE_JQ RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-summary \
+	--repo "$TMP/repo-untemplated" --tag v0.1.0 --body-file "$FIX/untemplated/bodies/v0.1.0.md" \
+	--peeled "$FIX/untemplated/peeled-commits.json" --head-sha "$(repo_head untemplated)" \
+	--changelog "$FIX/untemplated/CHANGELOG.md" >"$TMP/rs-nojq.out" 2>/dev/null
+expect_code "resync-summary without a pinned jq is an environment failure" 2 $?
+[[ "$(jq -r '[.rows, .failed_gate] | map(tostring) | join("|")' "$TMP/rs-nojq.out")" == "null|jq-unresolvable" ]] &&
+	pass "resync-summary: untemplated, no jq -> no decision (rows null)" || bad "resync-summary no-jq shape: $(cat "$TMP/rs-nojq.out")"
 
 # D1 (the agreement invariant): resync-summary's split == a2-classify's split.
 # On every corpus body a2-classify's full status/note is derived from
@@ -1354,30 +1396,44 @@ expect_code "resync-gate with an unusable TMPDIR is an environment failure" 2 $?
 [[ "$(jq -r '[.rows, .failed_gate] | map(tostring) | join("|")' "$TMP/gate-nd.out")" == "null|tmpdir" ]] &&
 	pass "resync-gate: no decision means rows null" || bad "resync-gate no-decision shape: $(cat "$TMP/gate-nd.out")"
 
-# M1 -- THE RE-SYNC ROUND TRIP (Guardrail 8 whole-space test). Invariant: any
-# body a re-sync composes from resync-summary's rows -- the summary under
+# M1 -- THE RE-SYNC ROUND TRIP (Guardrail 8 whole-space test). Invariant: the
+# body a re-sync publishes on EITHER branch, composed from resync-summary's
+# rows exactly as SKILL.md Step 3 item 3 composes it, is classified `ok` by
+# a2-classify under that same current template -- or the row says the branch
+# is unsafe and the skill does not publish it. Composition: the summary under
 # `## What's New` when reusable (present, discard null, current whats_new not
-# false), rows.content_block_text when preserve is true else the block
-# regenerated from the CHANGELOG section under the current template, a blank
-# line plus `**<label>:** <web>/compare/vPREV...vNEW` when the current label is
-# not none, a blank line plus the current marker when templated -- is
-# classified `ok` by a2-classify under that same current template.
-# State space: recovery template x current template over
-# {none, Full diff, Full changelog, no-template} (16 pairs, recovery != current
-# in 12) x every D1 corpus body, plus headingless prefixes (with
-# --headingless-summary) and raw bodies ending in an unbound marker. The
-# summary kind (headed/headingless/none), marker state (bound/none/unbound)
-# and body shape vary across the corpus. One repo per pair: commit 1 carries
-# the recovery template (the tags' peeled commit, so its marker binds through
-# the origin anchor), HEAD carries the current one. Pairs run in parallel.
+# false); then the block -- preserve branch: rows.content_block_text, only
+# when preserve is true; regenerate branch: the version's CHANGELOG section
+# with the current template's excluded subsections and every compare-shaped
+# line dropped, edges trimmed; then a blank line plus
+# `**<label>:** <web>/compare/vPREV...vNEW` when the current label is not none
+# and a blank line plus the current marker when templated. The composed bytes
+# keep any CR the rows carry; a2-classify applies its own CR normalisation.
+# Two-sided: regenerate_safe=false must mean that composed body really drifts.
+# State space: recovery template {none, Full diff, Full changelog, no-template}
+# x current template {none, Full diff, Full changelog} x whats_new {unset,
+# true, false} plus no-template (4 x 10 = 40 pairs) x every D1 corpus body,
+# headingless prefixes (with --headingless-summary), raw bodies (unbound and
+# CR-split markers, an empty headed summary, a summary before an unbound
+# marker) and empty bodies over non-default CHANGELOG sections (one opening
+# with `## What's New`, one carrying a compare-shaped line) x branch
+# {preserve, regenerate}. One repo per pair: commit 1 carries the recovery
+# template (the tags' peeled commit, so its marker binds through the origin
+# anchor), HEAD carries the current one. Pairs run in parallel.
 m1_tpl() { # key -> template JSON ("" = no template)
+	local label wn=""
 	case "$1" in
-	none) printf '{"compare_line_label":"none","excluded_sections":["### Internal"]}\n' ;;
-	fd) printf '{"compare_line_label":"Full diff","excluded_sections":["### Internal"]}\n' ;;
-	fc) printf '{"compare_line_label":"Full changelog","excluded_sections":["### Internal"]}\n' ;;
+	none*) label=none ;;
+	fc*) label="Full changelog" ;;
+	*) label="Full diff" ;;
 	esac
+	case "$1" in
+	*wt) wn=',"whats_new":true' ;;
+	*wf) wn=',"whats_new":false' ;;
+	esac
+	printf '{"compare_line_label":"%s","excluded_sections":["### Internal"]%s}\n' "$label" "$wn"
 }
-m1_label() { case "$1" in none) echo none ;; fc) echo "Full changelog" ;; *) echo "Full diff" ;; esac }
+m1_label() { case "$1" in none*) echo none ;; fc*) echo "Full changelog" ;; *) echo "Full diff" ;; esac }
 M1_SECTION=$'### Added\n\n- Item.\n\n### Internal\n\n- Plumbing.'
 m1_hl=(
 	'Prefix para.'
@@ -1391,17 +1447,45 @@ m1_raw=(
 	'### Added\n\n- Item.\n\n**Full diff:** https://stale.invalid/x\n\n<!-- release-template-sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->'
 	"## What's New\nSummary.\n\n### Added\n\n- Item.\n\n<!-- release-template-sha: bad -->"
 	'### Added\n\n- Item.\n<!-- release-template-sha: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->\n\n- More.'
+	'### Added\n\n- Item.\n<!-- release-template-sha: bad -->\r\r\n- More.'
+	"## What's New\n\n### Added\n\n- Item."
+	"## What's New\nSummary.\n<!-- release-template-sha: bad -->"
 )
+# Empty old bodies (always regenerated) over these CHANGELOG sections.
+m1_sec=(
+	$'## What\'s New\nOverview.\n\n### Added\n\n- Item.'
+	$'### Added\n\n- Item.\n\n**Full diff:** https://x/compare/a...b\n\n### Internal\n\n- Plumbing.'
+)
+m1_regen() { # section-text templated(0|1) -> Step 3 item 3's regenerated block
+	printf '%s\n' "$1" | awk -v ex="$2" '
+		{ t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t) }
+		t ~ /^###([[:space:]]|$)/ { skip = (ex == 1 && t == "### Internal") }
+		skip { next }
+		/^[*][*]Full (diff|changelog):[*][*]/ { next }
+		{ l[++n] = $0 }
+		END {
+			s = 1; while (s <= n && l[s] ~ /^[[:space:]]*$/) s++
+			e = n; while (e >= s && l[e] ~ /^[[:space:]]*$/) e--
+			for (i = s; i <= e; i++) { printf "%s", l[i]; if (i < e) printf "\n" }
+		}'
+}
 m1_pair() { # recovery current
-	local r="$1" c="$2" d="$TMP/m1-$1-$2" n i k v prev tag rl cl rblob="" cblob="" old rs rc
-	local total=$((${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]}))
-	rm -rf "$d" && mkdir -p "$d/repo" "$d/bodies" "$d/old"
+	local r="$1" c="$2" d="$TMP/m1-$1-$2" n i k v prev tag rl cl rblob="" cblob="" old rs rc cwn=unset ctpl=0
+	local ncorp=${#corpus[@]} nhl=${#m1_hl[@]} nraw=${#m1_raw[@]} nsec=${#m1_sec[@]}
+	local total=$((ncorp + nhl + nraw + nsec))
+	local secs=()
+	for ((k = 0; k < total; k++)); do
+		secs[k]="$M1_SECTION"
+		((k >= ncorp + nhl + nraw)) && secs[k]="${m1_sec[$((k - ncorp - nhl - nraw))]}"
+	done
+	rm -rf "$d" && mkdir -p "$d/repo" "$d/bp" "$d/bg" "$d/old"
 	(
 		release_git_env
 		"$GIT_REAL" -c commit.gpgsign=false init -q --object-format=sha1 -b main "$d/repo"
 		{
 			printf '# Changelog\n'
-			for ((n = total + 1; n >= 1; n--)); do printf '\n## [0.%d.0] - 2026-01-01\n\n%s\n' "$n" "$M1_SECTION"; done
+			for ((n = total + 1; n >= 2; n--)); do printf '\n## [0.%d.0] - 2026-01-01\n\n%s\n' "$n" "${secs[$((n - 2))]}"; done
+			printf '\n## [0.1.0] - 2026-01-01\n\n%s\n' "$M1_SECTION"
 		} >"$d/repo/CHANGELOG.md"
 		"$GIT_REAL" -C "$d/repo" add CHANGELOG.md
 		if [[ "$r" != notpl ]]; then
@@ -1424,7 +1508,11 @@ m1_pair() { # recovery current
 	c1="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD~1)"
 	head="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD)"
 	[[ "$r" == notpl ]] || rblob="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD~1:.release-template.json)"
-	[[ "$c" == notpl ]] || cblob="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD:.release-template.json)"
+	[[ "$c" == notpl ]] || {
+		cblob="$("$GIT_REAL" -C "$d/repo" rev-parse HEAD:.release-template.json)"
+		ctpl=1
+	}
+	case "$c" in *wf) cwn=false ;; *wt) cwn=true ;; esac
 	rl="$(m1_label "$r")" cl="$(m1_label "$c")"
 	jq -n --argjson t "$((total + 1))" '[range(1; $t + 1) | "v0.\(.).0"]' >"$d/tags.json"
 	jq -n --argjson t "$((total + 1))" --arg c1 "$c1" '[range(1; $t + 1) | {key: "v0.\(.).0", value: $c1}] | from_entries' >"$d/peeled.json"
@@ -1433,11 +1521,11 @@ m1_pair() { # recovery current
 		v="0.$((k + 2)).0" tag="v0.$((k + 2)).0" prev="v0.$((k + 1)).0"
 		old="$d/old/$tag.md"
 		local hl_arg=()
-		if ((k < ${#corpus[@]})); then
+		if ((k < ncorp)); then
 			# shellcheck disable=SC2059
 			printf -- "${corpus[$k]}" >"$old"
-		elif ((k < ${#corpus[@]} + ${#m1_hl[@]})); then
-			i=$((k - ${#corpus[@]}))
+		elif ((k < ncorp + nhl)); then
+			i=$((k - ncorp))
 			# shellcheck disable=SC2059
 			printf -- "${m1_hl[$i]}" >"$d/old/$tag.prefix"
 			{
@@ -1445,12 +1533,14 @@ m1_pair() { # recovery current
 				printf '\n\n%s' "$M1_SECTION"
 			} >"$old"
 			hl_arg=(--headingless-summary "$d/old/$tag.prefix")
-		else
-			i=$((k - ${#corpus[@]} - ${#m1_hl[@]}))
+		elif ((k < ncorp + nhl + nraw)); then
+			i=$((k - ncorp - nhl))
 			# shellcheck disable=SC2059
 			printf -- "${m1_raw[$i]}\n" >"$old"
+		else
+			: >"$old"
 		fi
-		if ((k < ${#corpus[@]} + ${#m1_hl[@]})); then
+		if ((k < ncorp + nhl)); then
 			[[ "$rl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$rl" "$WEB" "$prev" "$tag" >>"$old"
 			[[ -z "$rblob" ]] || printf '\n\n<!-- release-template-sha: %s -->' "$rblob" >>"$old"
 			printf '\n' >>"$old"
@@ -1464,39 +1554,59 @@ m1_pair() { # recovery current
 			continue
 		fi
 		echo "$rs" >"$d/old/$tag.rs.json"
-		{
-			if [[ "$(jq -r '.rows.summary_present and .rows.discard == null' <<<"$rs")" == true ]]; then
-				printf "## What's New\n%s\n\n" "$(jq -j '.rows.summary_text' <<<"$rs")"
-			fi
-			if [[ "$(jq -r '.rows.preserve' <<<"$rs")" == true ]]; then
-				jq -j '.rows.content_block_text' <<<"$rs"
-			elif [[ "$c" == notpl ]]; then
-				printf '%s' "$M1_SECTION"
-			else
-				printf '### Added\n\n- Item.'
-			fi
-			[[ "$cl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$cl" "$WEB" "$prev" "$tag"
-			[[ -z "$cblob" ]] || printf '\n\n<!-- release-template-sha: %s -->' "$cblob"
-			printf '\n'
-		} >"$d/bodies/$tag.md"
+		local sum_part="" br
+		if [[ "$cwn" != false && "$(jq -r '.rows.summary_present and .rows.discard == null' <<<"$rs")" == true ]]; then
+			sum_part="$(
+				jq -j '.rows.summary_text' <<<"$rs"
+				printf x
+			)"
+			sum_part="## What's New"$'\n'"${sum_part%x}"$'\n\n'
+		fi
+		for br in bp bg; do
+			{
+				printf '%s' "$sum_part"
+				if [[ "$br" == bp && "$(jq -r '.rows.preserve' <<<"$rs")" == true ]]; then
+					jq -j '.rows.content_block_text' <<<"$rs"
+				else
+					m1_regen "${secs[$k]}" "$ctpl"
+				fi
+				[[ "$cl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$cl" "$WEB" "$prev" "$tag"
+				[[ -z "$cblob" ]] || printf '\n\n<!-- release-template-sha: %s -->' "$cblob"
+				printf '\n'
+			} >"$d/$br/$tag.md"
+		done
 	done
-	local a2
-	a2="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
-		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bodies" --peeled "$d/peeled.json" \
+	local a2p a2g gp gg
+	a2p="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
+		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bp" --peeled "$d/peeled.json" \
+		--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
+	a2g="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
+		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bg" --peeled "$d/peeled.json" \
 		--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
 	for ((k = 0; k < total; k++)); do
 		v="0.$((k + 2)).0"
-		got="$(note_of "$a2" "$v")"
-		if [[ "$got" == "ok|" ]]; then
-			echo "PASS: M1 round trip $r->$c #$k: ok"
+		rs="$(cat "$d/old/v$v.rs.json" 2>/dev/null)" || continue
+		gp="$(note_of "$a2p" "$v")" gg="$(note_of "$a2g" "$v")"
+		if [[ "$(jq -r '.rows.preserve' <<<"$rs")" != true ]]; then
+			echo "PASS: M1 preserve $r->$c #$k: not preserved"
+		elif [[ "$gp" == "ok|" ]]; then
+			echo "PASS: M1 preserve $r->$c #$k: ok"
 		else
-			echo "FAIL: M1 round trip $r->$c #$k: '$got' (old body $d/old/v$v.md; rows $(cat "$d/old/v$v.rs.json" 2>/dev/null))"
+			echo "FAIL: M1 preserve $r->$c #$k: '$gp' (old body $d/old/v$v.md; rows $rs)"
+		fi
+		if [[ "$(jq -r '.rows.regenerate_safe' <<<"$rs")" == true ]]; then
+			[[ "$gg" == "ok|" ]] && echo "PASS: M1 regenerate $r->$c #$k: ok" ||
+				echo "FAIL: M1 regenerate $r->$c #$k: '$gg' (old body $d/old/v$v.md; rows $rs)"
+		else
+			[[ "$gg" != "ok|" ]] && echo "PASS: M1 regenerate $r->$c #$k: unsafe and drifts ($gg)" ||
+				echo "FAIL: M1 regenerate $r->$c #$k: marked unsafe but audits ok (rows $rs)"
 		fi
 	done
 }
+M1_CUR=(none fd fc nonewt fdwt fcwt nonewf fdwf fcwf notpl)
 m1_pids=()
 for m1_r in none fd fc notpl; do
-	for m1_c in none fd fc notpl; do
+	for m1_c in "${M1_CUR[@]}"; do
 		m1_pair "$m1_r" "$m1_c" >"$TMP/m1-$m1_r-$m1_c.log" 2>&1 &
 		m1_pids+=($!)
 	done
@@ -1510,9 +1620,25 @@ for m1_log in "$TMP"/m1-*.log; do
 		fail=1
 	fi
 done
-m1_want=$((16 * (${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]})))
+m1_want=$((2 * 4 * ${#M1_CUR[@]} * (${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]} + ${#m1_sec[@]})))
 [[ "$m1_pass" == "$m1_want" ]] &&
-	pass "M1 re-sync round trip: $m1_pass/$m1_want composed bodies audit ok under the current template" ||
-	bad "M1 re-sync round trip: $m1_pass/$m1_want composed bodies audit ok"
+	pass "M1 re-sync round trip: $m1_pass/$m1_want branch bodies audit ok or are reported unsafe" ||
+	bad "M1 re-sync round trip: $m1_pass/$m1_want branch bodies audit ok or are reported unsafe"
+# Targeted cells (each also a named row above): the CR-split marker is never
+# preserved, the empty headed summary is absent, the summary before an unbound
+# marker is reused, and the What's New-opening section is unsafe to
+# regenerate under whats_new:false only.
+m1_rows() { cat "$TMP/m1-$1-$2/old/v0.$3.0.rs.json"; }
+m1_base=$((${#corpus[@]} + ${#m1_hl[@]} + 2))
+[[ "$(m1_rows none fd $((m1_base + 3)) | jq -r '.rows.preserve')" == false ]] &&
+	pass "M1 cell: a CR-split marker is never preserved" || bad "M1 cell: CR-split marker preserved"
+[[ "$(m1_rows notpl notpl $((m1_base + 4)) | jq -r '[.rows.summary_present, .rows.discard] | map(tostring) | join("|")')" == "false|null" ]] &&
+	pass "M1 cell: an empty headed summary is absent" || bad "M1 cell: empty headed summary"
+[[ "$(m1_rows notpl fd $((m1_base + 5)) | jq -r '[.rows.summary_text, .rows.discard] | map(tostring) | join("|")')" == "Summary.|null" ]] &&
+	pass "M1 cell: a summary before an unbound marker is reusable" || bad "M1 cell: summary before an unbound marker"
+m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows fd "$m1_c" $((m1_base + 6)) | jq -r '.rows.regenerate_safe')"; done)"
+[[ "$m1_wn" == "none=true fd=true fc=true nonewt=true fdwt=true fcwt=true nonewf=false fdwf=false fcwf=false notpl=true " ]] &&
+	pass "M1 cell: a What's New-opening section is unsafe to regenerate exactly under whats_new:false" ||
+	bad "M1 cell: What's New-opening regenerate safety: $m1_wn"
 
 exit "$fail"

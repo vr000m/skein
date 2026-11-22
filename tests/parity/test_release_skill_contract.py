@@ -2066,7 +2066,10 @@ def test_release_marker_strip_requires_strict_bound_marker(
     assert re.search(r"regardless of whether", step_3_contract, re.IGNORECASE)
     assert "recovery-marker-ambiguous" in step_3_contract
     assert re.search(r"preserve the raw body|remains body data", step_3_contract)
-    assert "never discard the line" in step_3_contract
+    # Round 8: an ambiguous final marker is peeled into peeled_marker_line and
+    # reported, never composed into the payload -- so the old "never discard
+    # the line" wording (which contradicted the peel) is now "unreported".
+    assert "never drop the line unreported" in step_3_contract
     assert re.search(
         r"headed-summary boundary scan in item 1", step_3_contract, re.IGNORECASE
     )
@@ -2612,8 +2615,13 @@ def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
         # not NUL-free valid UTF-8 (tests/release/test-scripts.sh M1).
         "It also reports `audit-drift`",
         "`invalid-bytes` for a body that is not NUL-free valid UTF-8",
+        # Round 8: an empty headed summary is absent (no discard), and the
+        # confirmation's fallback when discard_line is null.
+        "an empty summary is absent, not discarded",
+        "quotes `discard_line` (or, when it is null, names the `discard` reason)",
     ):
         assert needle in rule, needle
+    assert "or an empty summary)" not in rule
     assert "the next heading line (levels 1–6" not in rule
     assert "or a compare-shaped line (never publishable" not in rule
     assert "any `#` level" not in rule
@@ -2689,8 +2697,27 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         "each line's trailing CR removed",
         "not NUL-free valid UTF-8 both are null",
         "only exit 0 with `rows.stops` `false` proceeds",
+        # Round 8: resync-summary's own no-decision rule (mirrors resync-gate's),
+        # the regenerate branch's verdict, and the peeled marker is never
+        # composed into the payload.
+        (
+            "Only exit 0 yields usable rows; any other result (exit 1 "
+            "`headingless-summary-mismatch` or `current-template-invalid`, exit 2 "
+            "such as `git-unresolvable` or `jq-unresolvable`) stops the re-sync."
+        ),
+        "`regenerate_safe`, `regenerate_reason`",
+        "report it, never compose it",
+        "preserved or regenerated block",
     ):
         assert needle in summary_call, needle
+    assert "the payload is LF throughout" not in summary_call
+    marker_para = _line_with(step3, "**Try the unmodified body first")
+    assert (
+        "is `peeled_marker_line`, reported in Step 4 and never composed into the payload"
+        in marker_para
+    )
+    assert "never discard the line" not in marker_para
+    assert "is preserved and surfaced as data" not in marker_para
     assert "`resync-summary` it resolves" not in summary_call
     gate_call = _line_with(step3, "--site resync-gate --repo <source top-level>")
     assert "`A2_HEAD_COMMIT` in Step A4" in gate_call
@@ -2700,8 +2727,12 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         "when `rows.preserve` is `true`",
         "carry `rows.content_block_text` into the composed payload unchanged",
         "naming `rows.invalid_reason` for a regenerated block",
+        # Round 8: the regenerate branch is probed; an unsafe one stops.
+        "unless `rows.regenerate_safe` is `false`: then stop and report `rows.regenerate_reason`",
+        "(only when `rows.regenerate_safe` is `true`)",
     ):
         assert needle in item3, needle
+    assert "Step 3 item 3 stops instead when `regenerate_safe` is `false`" in canonical
     assert "re-sync has no script" not in canonical
     assert (
         "`resync-gate` runs clause (a); `resync-summary` tests a recovered content block"
@@ -2718,6 +2749,9 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     # composed-body audit both call.
     assert script.count('whats_new_split "$') == 2
     assert script.count('audit_body_checks "$') >= 2
+    # Round 8: both branches go through the one composer.
+    assert 'compose_audits "$1" "$regen"' in script
+    assert 'regenerate_safe: ($rr == "")' in script
     # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
     assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script
     assert "resync" in text
@@ -3254,6 +3288,12 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     assert re.search(r"must not stop an\s+untemplated run", item_1) or (
         "must not stop an untemplated run" in item_1
     )
+    # Round 8: resync-summary needs jq on every re-sync, so a re-sync pins it
+    # (tests/release/test-scripts.sh pins the no-jq exit-2 no-decision row).
+    assert (
+        "**Re-sync exception:** `resync-summary` (Step 3 item 1) needs `jq`" in item_1
+    )
+    assert "an unresolvable `jq` stops the re-sync" in item_1
 
     # Step 2's unconditional set no longer lists jq, and says why.
     pinned = text[
@@ -3819,7 +3859,7 @@ def test_release_marker_shaped_unbound_body_is_preserved_as_explicit_drift(
     assert "successfully bind" in recovery
     assert "preserve the raw body as the unmodified candidate" in recovery
     assert "recovery-marker-ambiguous" in recovery
-    assert "never discard the line" in recovery
+    assert "never drop the line unreported" in recovery
     assert "never ... hard-stop" not in recovery
     assert "hard-stop as `recovery-template-unresolvable`" in recovery
 
