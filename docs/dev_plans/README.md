@@ -20,6 +20,8 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
+| 2026-11-22 | feature | comment-hygiene | meta | — | feature/comment-hygiene-and-decisions | [plan](20261122-feature-comment-hygiene.md) |
+| 2026-11-22 | feature | decision-records | meta | — | feature/comment-hygiene-and-decisions | [plan](20261122-feature-decision-records.md) |
 
 ## Shipped
 
