@@ -77,7 +77,9 @@ leading/trailing whitespace trimmed, equals an active `excluded_sections`
 entry; (e) no compare-shaped line sits inside the content block. On a re-sync,
 a recovered content block (the old body's own stale compare trailer dropped)
 that is a valid body under the current committed template is preserved, never
-expanded; an invalid one is regenerated from the CHANGELOG
+expanded (judged, like the regenerated body below, with the summary the
+re-synced body will carry: the reusable one, a fresh draft replacing a
+discarded one, none for an absence); an invalid one is regenerated from the CHANGELOG
 section automatically and the confirmation states that it was; the
 confirmation also offers an explicit "refresh content from CHANGELOG" choice
 that regenerates a valid block. If the regenerated body, judged with the
@@ -85,7 +87,12 @@ summary it will carry (a fresh draft replaces a discarded summary; an absence is
 kept), would itself drift in audit (for example a section that opens with
 `## What's New` under `whats_new: false`), stop instead of publishing it; the
 same check stops a new release, and a body that passes only with its summary
-keeps it (never a bare body). A recovered summary, headed or headingless,
+keeps it (never a bare body). Those checks stand in for a summary not yet
+written, so before confirmation re-check the exact composed body, including a
+summary the user typed in place of the draft, against the audit rules above;
+if it would drift (for example a typed summary opening with the template's
+compare label), show why and ask for another edit or abort, never confirm it.
+A recovered summary, headed or headingless,
 that contains a CHANGELOG version-header line (clause (c)'s definition), or an
 active `excluded_sections` heading line (clause (d)) is never reused (audit
 flags both wherever they sit; a compare-shaped line is not a trigger: the
