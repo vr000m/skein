@@ -2548,8 +2548,11 @@ def test_release_valid_body_defines_publishable_content_once(
     # the standalone generated line the prompt-parity checker pins.
     # Round 7 (codex): only an explicit `false` on exit 0 proceeds; a
     # no-decision result (non-zero exit, rows null) is a stop too.
+    # Round 9: one output per path -- resync-gate's for a new release,
+    # resync-summary's (which alone sees the old body) for a re-sync.
     assert (
-        "with the `resync-gate` call above, stopping unless it exits 0 with "
+        "Decide it from `rows.stops` (`resync-gate` for a new release, "
+        "`resync-summary` for a re-sync), stopping unless it exits 0 with "
         "`rows.stops` `false`" in item3
     )
     assert "Step A4 withholds a fixable row on exactly this output" in item3
@@ -2561,10 +2564,15 @@ def test_release_valid_body_defines_publishable_content_once(
         "Every fixable row, whatever field drifted",
         "Before offering any row",
         "current committed template",
-        "Canonical Format item 2 clause (a)'s publishable-content test",
-        # Round 7: the A4 offer gate is Step 3 item 3's own resync-gate call,
-        # so the offer and the hard stop are one script output.
-        "run Step 3 item 3's `--site resync-gate` call",
+        # Round 7: the A4 offer gate is Step 3 item 3's own call, so the offer
+        # and the hard stop are one script output. Round 9: for a row with a
+        # release that call is resync-summary (preserve vs regenerate depends
+        # on the old body), else resync-gate.
+        "run the call Step 3 item 3 stops on for its path",
+        (
+            "`resync-summary` over A2's fetched body (run as Step 3 item 1 runs it) "
+            "when a release exists, else `--site resync-gate`"
+        ),
         "`--head-sha <A2_HEAD_COMMIT>`",
         "When `rows.stops` is `true`",
         "with `rows.reason`",
@@ -2684,7 +2692,10 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         assert "release lib script missing: reinstall the skein plugin" in call
         for flag in flags:
             assert flag in call, (site, flag)
-    summary_call = _line_with(step3, "On the re-sync path run the two calls above.")
+    summary_call = _line_with(
+        step3,
+        "On the re-sync path run the first two calls above; on a new release, `resync-gate`.",
+    )
     for needle in (
         "resolves the recovery template exactly as `step3-recovery` does",
         "uses it only to parse the old body",
@@ -2706,8 +2717,16 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
             "such as `git-unresolvable` or `jq-unresolvable`) stops the re-sync."
         ),
         "`regenerate_safe`, `regenerate_reason`",
-        "report it, never compose it",
         "preserved or regenerated block",
+        # Round 9: the peeled marker's destination and why it is dropped, the
+        # one stop output per path, the summary dimension of the regenerate
+        # verdict, and the no-bare-body rule.
+        "kept out of the content block; the re-sync writes its own marker",
+        "state both in the Step 4 confirmation",
+        "`stops`, `reason`, `summary_required`",
+        "judging regeneration with the summary Step 3 will compose (a fresh draft for a discarded one)",
+        "`resync-summary`'s for an existing release, else `resync-gate`'s",
+        "When `rows.summary_required` is `true`, keep a `## What's New` summary; never offer a bare body.",
     ):
         assert needle in summary_call, needle
     assert "the payload is LF throughout" not in summary_call
@@ -2735,7 +2754,8 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     assert "Step 3 item 3 stops instead when `regenerate_safe` is `false`" in canonical
     assert "re-sync has no script" not in canonical
     assert (
-        "`resync-gate` runs clause (a); `resync-summary` tests a recovered content block"
+        "`resync-gate` runs clause (a) and the regenerate test for a new release; "
+        "`resync-summary` tests a recovered content block and the regenerate branch"
         in canonical
     )
     assert (
@@ -2749,8 +2769,14 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     # composed-body audit both call.
     assert script.count('whats_new_split "$') == 2
     assert script.count('audit_body_checks "$') >= 2
-    # Round 8: both branches go through the one composer.
-    assert 'compose_audits "$1" "$regen"' in script
+    # Round 8: both branches go through the one composer. Round 9: the
+    # regenerate verdict is ONE function both resync sites call, and the
+    # summary classification is one helper both resync-summary branches call.
+    assert 'compose_audits "$s" "$REGEN"' in script
+    assert script.count("regenerate_verdict 1") == 1
+    assert script.count('regenerate_verdict "$(') == 2
+    assert script.count('summary_kind_of "$got.0" "$summary" "$hl"') == 2
+    assert 'SECTION_SRC="$changelog" section "$ver"' in script
     assert 'regenerate_safe: ($rr == "")' in script
     # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
     assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script

@@ -99,3 +99,12 @@ step-3	plugins/skein/skills/release/SKILL.md	36462
 # round 5), so the template-subsystem.md row above still guards the reference
 # span. The Codex mirror carries the same port and stays within tolerance.
 canonical-format	plugins/skein/skills/release/SKILL.md	7668
+# Review-gauntlet round 9: the regenerate verdict became one function both
+# resync sites run, so Step 3 now routes its one stop per path (resync-gate
+# for a new release, resync-summary's rows.stops for a re-sync), names the
+# summary dimension of that verdict and the new stops/reason/summary_required
+# fields with the no-bare-body rule, and restores the peeled marker's Step 4
+# destination; Step A4 routes its offer gate to the same per-path call. The
+# Codex mirror ports the same text (its step-3 span runs ~16 bytes higher).
+step-3	plugins/skein/skills/release/SKILL.md	40449
+step-a4	plugins/skein/skills/release/SKILL.md	5745	

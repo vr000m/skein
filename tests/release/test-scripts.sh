@@ -1100,6 +1100,26 @@ EOG
 printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n### Internal\n\n- Plumbing.\n' >"$TMP/g-cl.md"
 [[ "$(gate_run excl 1.0.0 "$TMP/g-cl.md" | jq -r '.rows.reason')" == "body (missing CHANGELOG section)" ]] &&
 	pass "resync-gate: stop reason is clause (a)'s note" || bad "resync-gate: stop reason"
+# G2 (round 9): resync-gate also runs regenerate_verdict, the one regenerate
+# function resync-summary runs, with the summary a new release may draft (none
+# under whats_new:false): a new release and A4's offer for a row with no
+# release stop exactly when the composed body would audit drifted. Rows:
+# name|repo-case|version|changelog-printf|stops,summary_required,reason-prefix.
+while IFS='|' read -r name c v fmt want; do
+	# shellcheck disable=SC2059
+	printf -- "$fmt" >"$TMP/g-cl.md"
+	got="$(gate_run "$c" "$v" "$TMP/g-cl.md" | jq -r '.rows | [.stops, .summary_required, ((.reason // "-") | .[0:46])] | map(tostring) | join(",")')"
+	[[ "$got" == "$want" ]] &&
+		pass "resync-gate (regenerate verdict): $name -> $want" ||
+		bad "resync-gate (regenerate verdict): $name expected '$want', got '$got'"
+done <<'EOG'
+What's New-opening section under whats_new false|excl|1.0.0|# Changelog\n\n## [1.0.0] - 2026-01-01\n\n## What's New\nOverview.\n\n### Added\n\n- Item.\n|true,false,body (regenerated block would audit drifted: W
+What's New-only section, no template: safe only with the drafted summary|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n## What's New\nOverview.\n|false,true,-
+What's New-opening section with content, no template|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n## What's New\nOverview.\n\n### Added\n\n- Item.\n|false,false,-
+marker-shaped line in the section|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- First.\n<!-- release-template-sha: x -->\n- Last.\n|true,false,body (regenerated block would audit drifted: a
+CR-split marker in the section is not one once published|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- First.\n<!-- release-template-sha: bad -->\r\r\n- Last.\n|false,false,-
+ordinary section|untemplated|0.1.0|# Changelog\n\n## [0.1.0] - 2026-01-01\n\n### Added\n\n- Item.\n|false,false,-
+EOG
 # A present-but-invalid current template stops too (Step 1b would hard-stop the
 # re-sync first), and resync-summary refuses it outright.
 cp -R "$TMP/repo-excl" "$TMP/repo-exdirty"
@@ -1245,6 +1265,26 @@ printf "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n## What's New\nOverview.\n\n##
 	bad "resync-summary: regenerate branch not probed"
 [[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-empty.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.preserve, .rows.regenerate_safe, .rows.regenerate_reason] | map(tostring) | join("|")')" == "false|true|null" ]] &&
 	pass "resync-summary: an ordinary regenerated block is safe" || bad "resync-summary: ordinary regenerate marked unsafe"
+# Round 9. (d') rows.stops is the re-sync's one stop (preserve false and
+# regenerate unsafe), the output Step 3 item 3 and Step A4 both act on.
+[[ "$(rsum_run excl v1.0.0 "$TMP/rs-empty.md" "$FXX/peeled.json" "$TMP/rs-wn-cl.md" | jq -r '[.rows.stops, .rows.reason] | map(tostring) | join("|")')" == "true|body (regenerated block would audit drifted: What's New presence-vs-whats_new)" ]] &&
+	pass "resync-summary: rows.stops carries the regenerate stop and its reason" ||
+	bad "resync-summary: rows.stops/reason wrong for an unsafe regenerate"
+# (f) The regenerate branch is judged with the summary Step 3 composes: a
+# discarded summary is redrafted (whats_new unset), and the drafted summary
+# keeps a What's New-only section from being consumed as the summary.
+printf "## What's New\nOld.\n    ### Internal\n" >"$TMP/rs-disc.md"
+printf "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n## What's New\nOverview.\n" >"$TMP/rs-wnonly-cl.md"
+[[ "$(rsum_run fcl v1.0.0 "$TMP/rs-disc.md" "$FXL/peeled.json" "$TMP/rs-wnonly-cl.md" | jq -r '[.rows.discard, .rows.preserve, .rows.regenerate_safe, .rows.summary_required, .rows.stops] | map(tostring) | join("|")')" == "excluded-heading|false|true|true|false" ]] &&
+	pass "resync-summary: a redrafted summary makes the regenerate branch safe (and required)" ||
+	bad "resync-summary: regenerate probe ignored the redrafted summary"
+# (g) The regenerated block is the RAW section (Step 3 copies it verbatim),
+# normalised once, as a2-classify normalises the published body: a CHANGELOG
+# line `<marker>\r\r` is `<marker>\r` once published, not marker-shaped.
+printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- First.\n<!-- release-template-sha: bad -->\r\r\n- Last.\n' >"$TMP/rs-cr-cl.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-empty.md" "$FIX/untemplated/peeled-commits.json" "$TMP/rs-cr-cl.md" | jq -r '[.rows.regenerate_safe, .rows.stops] | map(tostring) | join("|")')" == "true|false" ]] &&
+	pass "resync-summary: the regenerate probe strips one CR, as Audit does" ||
+	bad "resync-summary: the regenerate probe normalised the CHANGELOG twice"
 # (e) Precondition contract: resync-summary always needs the pinned jq, so
 # SKILL.md pins jq for every re-sync (templated or not). An untemplated
 # re-sync with RELEASE_JQ unset is the no-decision state: exit 2,
@@ -1351,20 +1391,34 @@ printf 'Intro.\n**Full diff:** see below\n' >"$TMP/rs-hla-prefix.txt"
 
 # Byte safety (codex/logic round-7 findings): a NUL or an invalid UTF-8 byte
 # anywhere in the body fails closed -- nothing reused, no text emitted, the
-# block regenerated -- and the output is strict JSON.
-for bytes_case in nul ff c080; do
+# block regenerated -- and the output is strict JSON. The summary is classified
+# by the same summary_kind_of as a byte-valid body (round 9: the byte-failure
+# branch once called an empty headed summary present): each case's
+# summary_present must equal that of the same body with the bad bytes replaced
+# by a plain `x` (the clean twin), and a present one is discarded.
+for bytes_case in nul ff c080 ffempty nulempty; do
 	case "$bytes_case" in
-	nul) printf '### Added\n\n- before\000after\n' >"$TMP/rs-bytes.md" ;;
-	ff) printf "## What's New\nSum\377mary.\n\n### Added\n\n- First.\n" >"$TMP/rs-bytes.md" ;;
-	c080) printf '### Added\n\n- \300\200 overlong.\n' >"$TMP/rs-bytes.md" ;;
+	nul) fmt='### Added\n\n- before%safter\n' bb='\000' ;;
+	ff) fmt="## What's New\nSum%smary.\n\n### Added\n\n- First.\n" bb='\377' ;;
+	c080) fmt='### Added\n\n- %s overlong.\n' bb='\300\200' ;;
+	ffempty) fmt="## What's New\n\n### Added\n\n- %s.\n" bb='\377' ;;
+	nulempty) fmt="## What's New\n\n### Added\n\n- Sec%sond.\n" bb='\000' ;;
 	esac
+	# shellcheck disable=SC2059
+	printf -- "$(printf -- "$fmt" "$bb")" >"$TMP/rs-bytes.md"
+	# shellcheck disable=SC2059
+	printf -- "$fmt" x >"$TMP/rs-bytes-clean.md"
+	clean_sp="$(rsum_run untemplated v0.1.0 "$TMP/rs-bytes-clean.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '.rows.summary_present')"
 	rsum_run untemplated v0.1.0 "$TMP/rs-bytes.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" >"$TMP/rs-bytes.out"
-	if python3 -c 'import json,sys; r=json.load(open(sys.argv[1],encoding="utf-8",errors="strict"))["rows"]; sys.exit(0 if (r["content_block_text"] is None and r["summary_text"] is None and r["preserve"] is False and r["invalid_reason"]=="body (not valid UTF-8 text)" and (r["discard"]=="invalid-bytes")==r["summary_present"]) else 1)' "$TMP/rs-bytes.out"; then
-		pass "resync-summary: byte gate fails closed on $bytes_case"
+	if python3 -c 'import json,sys; r=json.load(open(sys.argv[1],encoding="utf-8",errors="strict"))["rows"]; sp=sys.argv[2]=="true"; sys.exit(0 if (r["content_block_text"] is None and r["summary_text"] is None and r["preserve"] is False and r["invalid_reason"]=="body (not valid UTF-8 text)" and r["summary_present"] is sp and (r["discard"]=="invalid-bytes")==sp) else 1)' "$TMP/rs-bytes.out" "$clean_sp"; then
+		pass "resync-summary: byte gate fails closed on $bytes_case (summary_present=$clean_sp, as its clean twin)"
 	else
-		bad "resync-summary: byte gate on $bytes_case: $(cat -v "$TMP/rs-bytes.out")"
+		bad "resync-summary: byte gate on $bytes_case (clean twin summary_present=$clean_sp): $(cat -v "$TMP/rs-bytes.out")"
 	fi
 done
+[[ "$(printf "## What's New\n\n### Added\n\n- \377.\n" >"$TMP/rs-bytes.md" && rsum_run untemplated v0.1.0 "$TMP/rs-bytes.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.summary_present, .rows.discard] | map(tostring) | join("|")')" == "false|null" ]] &&
+	pass "resync-summary: an empty headed summary is absent in the byte-failure branch too" ||
+	bad "resync-summary: byte-failure branch reports an empty headed summary as present"
 # Valid multibyte UTF-8 and a mid-line CR pass through byte-exactly; a trailing
 # CR per line is removed (the documented LF-normalised contract, codex finding
 # on CRLF): the preserved block is what Step 4 shows and Step 6 publishes.
@@ -1451,11 +1505,22 @@ m1_raw=(
 	"## What's New\n\n### Added\n\n- Item."
 	"## What's New\nSummary.\n<!-- release-template-sha: bad -->"
 )
-# Empty old bodies (always regenerated) over these CHANGELOG sections.
+# Old bodies (m1_sec_old; empty when unset, so always regenerated) over these
+# CHANGELOG sections: one opening with `## What's New`, one carrying a
+# compare-shaped line, one carrying a CR-split marker (`-->\r\r`: published
+# verbatim, Audit strips one CR, so it is not marker-shaped), and a
+# What's New-only section under an old body whose summary is discarded for an
+# excluded heading (redrafted unless whats_new:false).
 m1_sec=(
 	$'## What\'s New\nOverview.\n\n### Added\n\n- Item.'
 	$'### Added\n\n- Item.\n\n**Full diff:** https://x/compare/a...b\n\n### Internal\n\n- Plumbing.'
+	$'- First.\n<!-- release-template-sha: bad -->\r\r\n- Last.'
+	$'## What\'s New\nOverview.'
 )
+m1_sec_old=("" "" "" "## What's New\nOld.\n    ### Internal")
+# The summary Step 3 drafts in place of a discarded one (a different text from
+# the script's own probe paragraph, on purpose).
+M1_DRAFT="Updates the parser."
 m1_regen() { # section-text templated(0|1) -> Step 3 item 3's regenerated block
 	printf '%s\n' "$1" | awk -v ex="$2" '
 		{ t = $0; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t) }
@@ -1478,7 +1543,7 @@ m1_pair() { # recovery current
 		secs[k]="$M1_SECTION"
 		((k >= ncorp + nhl + nraw)) && secs[k]="${m1_sec[$((k - ncorp - nhl - nraw))]}"
 	done
-	rm -rf "$d" && mkdir -p "$d/repo" "$d/bp" "$d/bg" "$d/old"
+	rm -rf "$d" && mkdir -p "$d/repo" "$d/bp" "$d/bg" "$d/xp" "$d/xg" "$d/bn" "$d/bx" "$d/old"
 	(
 		release_git_env
 		"$GIT_REAL" -c commit.gpgsign=false init -q --object-format=sha1 -b main "$d/repo"
@@ -1538,7 +1603,8 @@ m1_pair() { # recovery current
 			# shellcheck disable=SC2059
 			printf -- "${m1_raw[$i]}\n" >"$old"
 		else
-			: >"$old"
+			# shellcheck disable=SC2059
+			printf -- "${m1_sec_old[$((k - ncorp - nhl - nraw))]}" >"$old"
 		fi
 		if ((k < ncorp + nhl)); then
 			[[ "$rl" == none ]] || printf '\n\n**%s:** %s/compare/%s...%s' "$rl" "$WEB" "$prev" "$tag" >>"$old"
@@ -1554,6 +1620,9 @@ m1_pair() { # recovery current
 			continue
 		fi
 		echo "$rs" >"$d/old/$tag.rs.json"
+		# The summary Step 3 composes: the reusable one as recovered, a fresh
+		# draft in place of a discarded one (unless whats_new:false), else none
+		# (an ordinary re-sync preserves an absence).
 		local sum_part="" br
 		if [[ "$cwn" != false && "$(jq -r '.rows.summary_present and .rows.discard == null' <<<"$rs")" == true ]]; then
 			sum_part="$(
@@ -1561,11 +1630,21 @@ m1_pair() { # recovery current
 				printf x
 			)"
 			sum_part="## What's New"$'\n'"${sum_part%x}"$'\n\n'
+		elif [[ "$cwn" != false && "$(jq -r '.rows.summary_present' <<<"$rs")" == true ]]; then
+			sum_part="## What's New"$'\n'"$M1_DRAFT"$'\n\n'
 		fi
-		for br in bp bg; do
+		# bp/bg: each branch as Step 3 composes it; xp/xg: the same branch with
+		# no summary (the bare body summary_required forbids); bn/bx: the new-
+		# release composition (no old body) with the summary Step 3 may draft,
+		# and bare -- resync-gate's domain, checked once per current template.
+		for br in bp bg xp xg bn bx; do
+			[[ "$br" == b[nx] && "$r" != notpl ]] && continue
 			{
-				printf '%s' "$sum_part"
-				if [[ "$br" == bp && "$(jq -r '.rows.preserve' <<<"$rs")" == true ]]; then
+				case "$br" in
+				bp | bg) printf '%s' "$sum_part" ;;
+				bn) [[ "$cwn" == false ]] || printf '%s\n\n' "## What's New"$'\n'"$M1_DRAFT" ;;
+				esac
+				if [[ "$br" == [bx]p && "$(jq -r '.rows.preserve' <<<"$rs")" == true ]]; then
 					jq -j '.rows.content_block_text' <<<"$rs"
 				else
 					m1_regen "${secs[$k]}" "$ctpl"
@@ -1575,31 +1654,81 @@ m1_pair() { # recovery current
 				printf '\n'
 			} >"$d/$br/$tag.md"
 		done
+		if [[ "$r" == notpl ]]; then
+			RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site resync-gate \
+				--repo "$d/repo" --head-sha "$head" --changelog "$d/repo/CHANGELOG.md" --version "$v" \
+				>"$d/old/$tag.gate.json" 2>/dev/null
+		fi
 	done
-	local a2p a2g gp gg
-	a2p="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
-		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bp" --peeled "$d/peeled.json" \
-		--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
-	a2g="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
-		--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/bg" --peeled "$d/peeled.json" \
-		--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
+	local -a a2=()
+	local br_i brs=(bp bg xp xg)
+	[[ "$r" == notpl ]] && brs+=(bn bx)
+	for br_i in "${!brs[@]}"; do
+		a2[br_i]="$(RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site a2-classify \
+			--repo "$d/repo" --release-list "$d/list.json" --bodies-dir "$d/${brs[$br_i]}" --peeled "$d/peeled.json" \
+			--tags "$d/tags.json" --changelog "$d/repo/CHANGELOG.md" --web-base-url "$WEB" --head-sha "$head" 2>/dev/null)"
+	done
+	local gp gg xp xg gn gx pr rg st sr gt
 	for ((k = 0; k < total; k++)); do
 		v="0.$((k + 2)).0"
 		rs="$(cat "$d/old/v$v.rs.json" 2>/dev/null)" || continue
-		gp="$(note_of "$a2p" "$v")" gg="$(note_of "$a2g" "$v")"
-		if [[ "$(jq -r '.rows.preserve' <<<"$rs")" != true ]]; then
+		gp="$(note_of "${a2[0]}" "$v")" gg="$(note_of "${a2[1]}" "$v")"
+		xp="$(note_of "${a2[2]}" "$v")" xg="$(note_of "${a2[3]}" "$v")"
+		# Every cell needs an audit row for the version: a missing row (note_of
+		# prints nothing) is a failure, never evidence for either direction.
+		if [[ -z "$gp" || -z "$gg" || -z "$xp" || -z "$xg" ]]; then
+			echo "FAIL: M1 $r->$c #$k: no audit row (bp '$gp' bg '$gg' xp '$xp' xg '$xg')"
+			continue
+		fi
+		IFS='|' read -r pr rg st sr <<<"$(jq -r '.rows | [.preserve, .regenerate_safe, .stops, .summary_required] | map(tostring) | join("|")' <<<"$rs")"
+		if [[ "$pr" != true ]]; then
 			echo "PASS: M1 preserve $r->$c #$k: not preserved"
 		elif [[ "$gp" == "ok|" ]]; then
 			echo "PASS: M1 preserve $r->$c #$k: ok"
 		else
 			echo "FAIL: M1 preserve $r->$c #$k: '$gp' (old body $d/old/v$v.md; rows $rs)"
 		fi
-		if [[ "$(jq -r '.rows.regenerate_safe' <<<"$rs")" == true ]]; then
+		if [[ "$rg" == true ]]; then
 			[[ "$gg" == "ok|" ]] && echo "PASS: M1 regenerate $r->$c #$k: ok" ||
 				echo "FAIL: M1 regenerate $r->$c #$k: '$gg' (old body $d/old/v$v.md; rows $rs)"
 		else
 			[[ "$gg" != "ok|" ]] && echo "PASS: M1 regenerate $r->$c #$k: unsafe and drifts ($gg)" ||
 				echo "FAIL: M1 regenerate $r->$c #$k: marked unsafe but audits ok (rows $rs)"
+		fi
+		# rows.stops is the re-sync's one stop: Step 3 and A4 act on it alone.
+		[[ "$st" == "$([[ "$pr" != true && "$rg" != true ]] && echo true || echo false)" ]] &&
+			echo "PASS: M1 stops $r->$c #$k: $st" ||
+			echo "FAIL: M1 stops $r->$c #$k: stops=$st with preserve=$pr regenerate_safe=$rg"
+		# summary_required, two-sided: false -> every publishable branch's bare
+		# body audits ok; true -> some publishable branch's bare body drifts.
+		local bare_bad=0
+		[[ "$pr" == true && "$xp" != "ok|" ]] && bare_bad=1
+		[[ "$rg" == true && "$xg" != "ok|" ]] && bare_bad=1
+		[[ "$sr" == "$([[ "$bare_bad" == 1 ]] && echo true || echo false)" ]] &&
+			echo "PASS: M1 summary_required $r->$c #$k: $sr" ||
+			echo "FAIL: M1 summary_required $r->$c #$k: $sr but bare publishable branch drift=$bare_bad (xp '$xp' xg '$xg'; rows $rs)"
+		[[ "$r" == notpl ]] || continue
+		# New-release composition (resync-gate), two-sided and with a row.
+		gn="$(note_of "${a2[4]}" "$v")" gx="$(note_of "${a2[5]}" "$v")"
+		gt="$(jq -r '.rows | [.stops, .summary_required] | map(tostring) | join("|")' "$d/old/v$v.gate.json" 2>/dev/null)"
+		if [[ -z "$gn" || -z "$gx" || ! "$gt" =~ ^(true|false)\|(true|false)$ ]]; then
+			echo "FAIL: M1 new release $c #$k: no audit row or gate row (bn '$gn' bx '$gx' gate '$gt')"
+			continue
+		fi
+		if [[ "$gt" == false\|* ]]; then
+			[[ "$gn" == "ok|" ]] && echo "PASS: M1 new release $c #$k: gate passes and audits ok" ||
+				echo "FAIL: M1 new release $c #$k: gate passes but '$gn'"
+		else
+			[[ "$gn" != "ok|" ]] && echo "PASS: M1 new release $c #$k: gate stops and drifts ($gn)" ||
+				echo "FAIL: M1 new release $c #$k: gate stops but audits ok"
+		fi
+		if [[ "$gt" == false\|* ]]; then
+			[[ "$gt" == *\|"$([[ "$gx" == "ok|" ]] && echo false || echo true)" ]] &&
+				echo "PASS: M1 new release summary_required $c #$k: $gt" ||
+				echo "FAIL: M1 new release summary_required $c #$k: gate $gt, bare '$gx'"
+		else
+			[[ "$gt" == *\|false ]] && echo "PASS: M1 new release summary_required $c #$k: stop" ||
+				echo "FAIL: M1 new release summary_required $c #$k: a stop with summary_required"
 		fi
 	done
 }
@@ -1620,7 +1749,11 @@ for m1_log in "$TMP"/m1-*.log; do
 		fail=1
 	fi
 done
-m1_want=$((2 * 4 * ${#M1_CUR[@]} * (${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]} + ${#m1_sec[@]})))
+# Per cell: preserve, regenerate, stops, summary_required (4 x 4 recovery x
+# 10 current); plus new release and its summary_required once per current
+# template (the notpl recovery pairs).
+m1_cells=$((${#corpus[@]} + ${#m1_hl[@]} + ${#m1_raw[@]} + ${#m1_sec[@]}))
+m1_want=$((4 * 4 * ${#M1_CUR[@]} * m1_cells + 2 * ${#M1_CUR[@]} * m1_cells))
 [[ "$m1_pass" == "$m1_want" ]] &&
 	pass "M1 re-sync round trip: $m1_pass/$m1_want branch bodies audit ok or are reported unsafe" ||
 	bad "M1 re-sync round trip: $m1_pass/$m1_want branch bodies audit ok or are reported unsafe"
@@ -1640,5 +1773,25 @@ m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows fd "$
 [[ "$m1_wn" == "none=true fd=true fc=true nonewt=true fdwt=true fcwt=true nonewf=false fdwf=false fcwf=false notpl=true " ]] &&
 	pass "M1 cell: a What's New-opening section is unsafe to regenerate exactly under whats_new:false" ||
 	bad "M1 cell: What's New-opening regenerate safety: $m1_wn"
+# Round 9 cells. The same section is a new-release stop exactly under
+# whats_new:false (resync-gate == resync-summary's regenerate verdict there).
+m1_gate() { cat "$TMP/m1-notpl-$1/old/v0.$2.0.gate.json"; }
+m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_gate "$m1_c" $((m1_base + 6)) | jq -r '.rows.stops')"; done)"
+[[ "$m1_wn" == "none=false fd=false fc=false nonewt=false fdwt=false fcwt=false nonewf=true fdwf=true fcwf=true notpl=false " ]] &&
+	pass "M1 cell: a What's New-opening section stops a new release exactly under whats_new:false" ||
+	bad "M1 cell: What's New-opening new-release stop: $m1_wn"
+# A CR-split marker in the section (published verbatim, one CR stripped by
+# Audit) never makes regeneration unsafe.
+m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s' "$(m1_rows notpl "$m1_c" $((m1_base + 8)) | jq -r '.rows.regenerate_safe')"; done)"
+[[ "$m1_wn" == "truetruetruetruetruetruetruetruetruetrue" ]] &&
+	pass "M1 cell: a CR-split marker in the section is safe to regenerate" ||
+	bad "M1 cell: CR-split marker section regenerate safety: $m1_wn"
+# A discarded summary over a What's New-only section: the redraft makes the
+# regenerate branch safe and required, except under whats_new:false (no
+# summary, so the section's own heading drifts).
+m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows notpl "$m1_c" $((m1_base + 9)) | jq -r '[.rows.regenerate_safe, .rows.summary_required, .rows.stops] | map(tostring) | join(",")')"; done)"
+[[ "$m1_wn" == "none=true,true,false fd=true,true,false fc=true,true,false nonewt=true,true,false fdwt=true,true,false fcwt=true,true,false nonewf=false,false,true fdwf=false,false,true fcwf=false,false,true notpl=true,true,false " ]] &&
+	pass "M1 cell: a redrafted summary is part of the regenerate verdict" ||
+	bad "M1 cell: redrafted-summary regenerate verdict: $m1_wn"
 
 exit "$fail"

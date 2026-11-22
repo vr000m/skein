@@ -108,8 +108,13 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "these re-sync rules exist only as this prose",
         # Round 8: the regenerate branch is checked too (Claude/Codex:
         # resync-summary's regenerate_safe); Pi states it as a stop.
-        "If the regenerated body would itself drift in audit",
         "stop instead of publishing it",
+        # Round 9: the regenerate check is judged with the summary the body
+        # will carry, stops a new release too, and gates the audit offer.
+        "judged with the summary it will carry",
+        "the same check stops a new release",
+        "keeps it (never a bare body)",
+        "plus the regenerated-body drift check",
     ):
         assert phrase in text, phrase
     assert "or on explicit request" not in text
