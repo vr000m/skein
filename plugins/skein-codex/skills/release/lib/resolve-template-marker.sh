@@ -2,7 +2,11 @@
 # resolve-template-marker.sh — Audit Step A2's classification-source resolution
 # (three-pattern marker search, dual-anchor binding, tracked-mode gate, current
 # template fallback) plus the ok/drifted comparison, extracted from SKILL.md
-# prose. Pure over injected inputs (grilled decision 9): the gh / ls-remote
+# prose, and the re-sync decisions that must agree with it: Step 3's recovery
+# marker decision (step3-recovery), Step 3 item 3's publishable-content stop and
+# Step A4's offer gate (resync-gate), and Step 3's summary recovery/discard and
+# preserve-vs-regenerate decision (resync-summary), all computed by the same
+# functions a2-classify runs. Pure over injected inputs (grilled decision 9): the gh / ls-remote
 # fetches stay in SKILL.md and their results arrive as files; the only git the
 # script runs is read-only inspection of the explicit --repo, through the
 # pinned RELEASE_GIT. Pinned jq arrives in RELEASE_JQ. Stdout is JSON
@@ -27,14 +31,23 @@
 #     Emits rows = {stops, reason}: would a re-sync stop at the publishable-
 #       content test (Canonical Format item 2 clause (a)) under the CURRENT
 #       committed template? Step A4's offer gate and Step 3 item 3's hard stop.
+#       Only exit 0 with rows.stops == false is a "proceed"; a non-zero exit
+#       (rows null) is no decision, and both callers treat it as a stop.
 #   resolve-template-marker.sh --site resync-summary --repo DIR --tag TAG
 #       --body-file FILE --peeled FILE --head-sha 40-HEX --changelog FILE
 #       [--headingless-summary FILE]
-#     Emits rows = {recovery_template, recovery_label, marker_stripped,
-#       summary_present, summary_kind, summary_text, discard, discard_line,
-#       content_block_text, content_block_valid, invalid_reason, preserve}:
-#       Step 3 item 1's summary recovery/discard and Step 3 item 3's
-#       preserve-vs-regenerate decision for one fetched body.
+#     Emits rows = {recovery_template, recovery_label, recovery_note,
+#       marker_stripped, summary_present, summary_kind, summary_text, discard,
+#       discard_line, peeled_marker_line, content_block_text,
+#       content_block_valid, invalid_reason, preserve}: Step 3 item 1's summary
+#       recovery/discard and Step 3 item 3's preserve-vs-regenerate decision for
+#       one fetched body. Invariant: the body a re-sync composes from these
+#       rows audits `ok` under the current template (see the site's comment).
+#       summary_text/content_block_text are the body's bytes with a trailing CR
+#       per line removed (LF-normalised), serialised by jq; a body that is not
+#       NUL-free valid UTF-8 emits both as null with preserve=false.
+#       recovery_note names an unbound/ambiguous marker on exit 0 (failed_gate
+#       stays exit-1-only).
 #   --head-sha is REQUIRED at every site: the caller resolves HEAD once
 #     (SKILL.md's single-resolution rule) and passes the literal SHA in; this
 #     script never self-resolves HEAD, matching read-release-template.sh's
@@ -578,7 +591,8 @@ section_publishable() {
 }
 # body_invalid_reason <content-block> <version> <excluded-headings-file> <whole-body> —
 # Canonical Format item 2's valid-body predicate, the audit's executable form
-# of it (Step 3's re-sync preservation follows the same prose definition).
+# of it. Callers: audit_body_checks (a2-classify, and resync-summary's composed
+# re-sync body) and resync-summary's content-block validity test.
 # Prints the first failing clause's punch-list note, or nothing when valid:
 #   (a) section_publishable -- `body (missing CHANGELOG section)` covers both
 #       a missing section and one left empty by exclusions;
@@ -627,9 +641,10 @@ body_invalid_reason() {
 # summary is recognised as the first CONTENT line, not physical line one: a
 # body that opens with a blank line must not let a summary-only body slip past
 # the summary split and read as ordinary content.
+MARKER_SHAPED_RE='^<!-- release-template-sha:.*-->$'
 body_stream() {
 	if [[ "$2" == strip ]]; then
-		grep -a -v -E '^<!-- release-template-sha:.*-->$' "$1"
+		grep -a -v -E "$MARKER_SHAPED_RE" "$1"
 	else
 		cat "$1"
 	fi | awk 'f || /[^[:space:]]/ { f = 1; print }'
@@ -693,6 +708,53 @@ whats_new_split() {
 		{ print }' "$1" | trim_edges >"$3"
 }
 
+# template_label / template_whats_new <template-json> — the two template fields
+# the body checks read (an unset label is "Full diff"; whats_new is
+# "true"/"false"/"unset").
+template_label() { "$JQ" -r '.compare_line_label // "Full diff"' <"$1"; }
+template_whats_new() { "$JQ" -r 'if has("whats_new") then (.whats_new | tostring) else "unset" end' <"$1"; }
+
+# audit_body_checks <stream> <label> <whats_new> <prev> <tag> <web> <excl> <ver> <out>
+# Audit Step A2's body-side checks (2), (3) and (4) over one marker-stripped
+# body stream (body_stream's output) under one template's fields: <label> its
+# compare_line_label, <whats_new> template_whats_new's value, <excl> its
+# excluded_headings file. The ONE implementation a2-classify runs per candidate
+# and resync-summary runs over the body a re-sync would publish, so "re-sync
+# would publish it" and "audit accepts it" are the same predicate. Writes the
+# split (whats_new_split) to <out>.1 / <out>.summary and the content block
+# (compare trailer dropped when exact) to <out>; sets AUD_BODY_NOTE (empty =
+# valid body), AUD_COMPARE_OK and AUD_WN_OK (1 = check passed).
+audit_body_checks() {
+	local stream="$1" label="$2" wnv="$3" prev="$4" t="$5" webu="$6" excl="$7" v="$8" out="$9"
+	local nlines expected
+	whats_new_split "$stream" "$label" "$out.1" "$out.summary"
+	AUD_WN_OK=1
+	[[ "$wnv" == "false" ]] && has_whats_new_heading "$stream" && AUD_WN_OK=0
+	AUD_COMPARE_OK=1
+	if [[ "$label" == "none" ]]; then
+		grep -a -q -E "$COMPARE_SHAPED_RE" "$out.1" && AUD_COMPARE_OK=0
+		cp "$out.1" "$out"
+	else
+		nlines="$(grep -a -c -E "$COMPARE_SHAPED_RE" "$out.1")"
+		if [[ -n "$prev" ]]; then
+			expected="**$label:** $webu/compare/$prev...$t"
+			if [[ "$nlines" == 1 && "$(tail -n 1 "$out.1")" == "$expected" ]]; then
+				sed '$d' "$out.1" | trim_edges >"$out"
+			else
+				AUD_COMPARE_OK=0
+				cp "$out.1" "$out"
+			fi
+		else
+			[[ "$nlines" == 0 ]] || AUD_COMPARE_OK=0
+			cp "$out.1" "$out"
+		fi
+	fi
+	# Check (2) is compact-tolerant: a release body MAY be shorter than its
+	# CHANGELOG section, so its bytes are not compared. It must instead be a
+	# valid body (body_invalid_reason).
+	AUD_BODY_NOTE="$(body_invalid_reason "$out" "$v" "$excl" "$stream")"
+}
+
 # current_excluded_headings <out-file> — the CURRENT committed template's
 # excluded_sections (resolve_current_template's two-sided, fail-closed oracle
 # at --head-sha, the template every re-sync composes with), one per line, via
@@ -708,20 +770,32 @@ current_excluded_headings() {
 	*) return 1 ;;
 	esac
 }
-json_str() { printf '"%s"' "$(release_json_escape "$1")"; }
-json_str_or_null() { if [[ -n "$1" ]]; then json_str "$1"; else printf null; fi; }
+# body_bytes_ok <file> — the resync-summary byte-safety gate: the file is
+# NUL-free valid UTF-8. A body that fails it is never parsed into reusable text
+# (NUL would be dropped by every line tool, an invalid byte would be rewritten
+# by jq or rejected by a strict JSON reader), so the block is regenerated and
+# no text field is emitted. The UTF-8 test is the pinned jq's own decoder: its
+# raw-string read rewrites every invalid sequence to U+FFFD, so the round trip
+# is byte-identical exactly when the input is valid UTF-8.
+body_bytes_ok() {
+	cmp -s <(tr -d '\000' <"$1") "$1" || return 1
+	# shellcheck disable=SC2094 # both sides only read the file
+	"$JQ" -j -Rs . <"$1" | cmp -s - "$1"
+}
 
 # --site resync-gate: would a re-sync of --version stop at Step 3 item 3's
 # publishable-content hard stop under the CURRENT committed template? Step A4
 # withholds a fixable row exactly when this says stops, and Step 3 item 3 hard-
-# stops exactly when it says stops -- one call, so the two cannot disagree --
-# and the test is section_publishable, the very function a2-classify's
-# clause (a) runs (via body_invalid_reason). Template choice: always the
-# current committed template at --head-sha (re-sync composes with it), never
-# A2's historical classification source. A present-but-invalid current
-# template is also a stop (Step 1b would hard-stop the re-sync first), reported
-# as `template (<note>)`; with a valid or absent template the verdict is
-# exactly clause (a).
+# stops exactly when it says stops. Both run this same function over the same
+# inputs, but at the caller's own already-resolved HEAD (A4 at A2's, Step 3 at
+# Step 1b's), so a template commit landing between the two can only turn an
+# offered row into Step 3's hard stop, never publish an empty body. The test is
+# section_publishable, the very function a2-classify's clause (a) runs (via
+# body_invalid_reason). Template choice: always the current committed template
+# at --head-sha (re-sync composes with it), never A2's historical
+# classification source. A present-but-invalid current template is also a stop
+# (Step 1b would hard-stop the re-sync first), reported as `template (<note>)`;
+# with a valid or absent template the verdict is exactly clause (a).
 if [[ "$site" == "resync-gate" ]]; then
 	[[ -r "$changelog" ]] || die "--changelog unreadable" 2 environment-failure input-unreadable
 	[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
@@ -730,8 +804,11 @@ if [[ "$site" == "resync-gate" ]]; then
 	excl_list="$tmp/excl.list"
 	gate_case="untemplated"
 	if ! current_excluded_headings "$excl_list"; then
-		reason="template (${CUR_STATE#invalid:})"
-		release_emit "$SCRIPT" "$site" "resync-gate-stop" 0 "" "{\"stops\":true,\"reason\":$(json_str "$reason")}" templated
+		# A present (if invalid) template: pin jq to serialise the free-form note.
+		need_jq
+		rows="$("$JQ" -cn --arg r "template (${CUR_STATE#invalid:})" '{stops: true, reason: $r}')" ||
+			die "rows serialisation failed" 2 environment-failure jq-failed
+		release_emit "$SCRIPT" "$site" "resync-gate-stop" 0 "" "$rows" templated
 		exit 0
 	fi
 	[[ "$CUR_STATE" == valid ]] && gate_case="templated"
@@ -743,9 +820,9 @@ if [[ "$site" == "resync-gate" ]]; then
 	exit 0
 fi
 
-# --site resync-summary: Step 3 item 1's headed-summary recovery + summary-
-# discard rule and Step 3 item 3's preserve-vs-regenerate decision, for ONE
-# fetched release body, computed by the same functions a2-classify runs.
+# --site resync-summary: Step 3 item 1's summary recovery + summary-discard rule
+# and Step 3 item 3's preserve-vs-regenerate decision, for ONE fetched release
+# body, computed by the same functions a2-classify runs.
 # Template choices (SKILL.md Step 3):
 #   - recovery template (resolve_source at the step3-recovery rules: a bound
 #     strict marker's blob, else the no-template sentinel) governs PARSING the
@@ -754,19 +831,29 @@ fi
 #     trailer to drop (sentinel = "Full diff"; "none" = no compare boundary, no
 #     trailer strip);
 #   - the CURRENT committed template (the active template every re-sync
-#     composes with) governs everything about the NEW body: the excluded list
-#     for the discard rule's clause (d), and the valid-body test of the content
-#     block that would be carried into it (clauses (a)-(e)).
-# Content-block validity runs body_invalid_reason with the content block as
-# its "whole body" argument: the re-synced body is (reused or fresh summary) +
-# content block + regenerated trailer/marker, and a reused summary carries no
-# (c)/(d) line by the discard rule, so (c)/(d) over the new whole body equals
-# (c)/(d) over the content block. Clause (e) -- a compare-shaped line left in
-# the content block after the recovery trailer is dropped -- is tested here
-# explicitly (a2-classify enforces it through check (3), not this predicate).
+#     composes with) governs everything about the NEW body.
+# THE INVARIANT this site owns: whatever it lets a re-sync publish -- the
+# summary when reusable (present, not discarded, current whats_new not false)
+# under `## What's New`, the content block when preserve is true, the current
+# label's compare trailer, the current marker -- audits `ok` under the current
+# template. It is enforced, not argued: the composed body goes through
+# audit_body_checks (a2-classify's own checks (2)-(4)) under the current
+# template's label/whats_new/excluded list, and a summary or block that would
+# make it drift is discarded (`audit-drift`) or not preserved. The compare
+# trailer is composed with a probe PREV/URL: check (3) depends on PREV only
+# through whether a trailer is appended, and with or without one it passes
+# exactly when no compare-shaped line reaches the post-summary content, so the
+# verdict is PREV-independent. A summary is also tested on its own (followed
+# by a non-heading paragraph line), because a reused summary precedes a
+# regenerated block too: Audit's split must end it exactly where it ends.
 # --headingless-summary FILE: for a body with no `## What's New` heading, the
 # exact prefix bytes Step 3's byte-exact headingless recovery already proved;
 # the discard rule then runs over it and it is removed from the content block.
+# A prefix of only compare-shaped lines, or one carrying the recovery label's
+# compare line, is not a summary (wrapped, Audit's split would end at it): it
+# stays in the content block.
+# Every rows field is serialised by the pinned jq (--arg, and --rawfile for
+# the two free-form texts), so this site pins jq unconditionally.
 if [[ "$site" == "resync-summary" ]]; then
 	[[ -r "$body_file" && -n "$tag" && -r "$changelog" ]] ||
 		die "--tag, --body-file and --changelog are required" 2 environment-failure input-unreadable
@@ -774,6 +861,7 @@ if [[ "$site" == "resync-summary" ]]; then
 		die "--tag must be a strict vX.Y.Z" 2 environment-failure bad-arguments
 	[[ -z "$headingless" || -r "$headingless" ]] ||
 		die "--headingless-summary unreadable" 2 environment-failure input-unreadable
+	need_jq
 	ver="${tag#v}"
 	normalise_changelog
 	resolve_source "$tag" "$body_file"
@@ -781,18 +869,62 @@ if [[ "$site" == "resync-summary" ]]; then
 	case "$SRC_KIND" in
 	marker)
 		recovery_template="marker"
-		recovery_label="$("$JQ" -r '.compare_line_label // "Full diff"' <"$SRC_FILE")"
+		recovery_label="$(template_label "$SRC_FILE")"
 		;;
 	unresolvable) strip="keep" ;;
 	esac
 	excl_list="$tmp/excl.list"
 	current_excluded_headings "$excl_list" ||
 		die "current template invalid: ${CUR_STATE#invalid:}" 1 hard-stop current-template-invalid
-	got="$tmp/got.txt"
+	cur_label="Full diff" cur_wn="unset"
+	if [[ "$CUR_STATE" == valid ]]; then
+		cur_label="$(template_label "$CUR_FILE")"
+		cur_wn="$(template_whats_new "$CUR_FILE")"
+	fi
+	PROBE_WEB="https://resync.invalid/probe" PROBE_PREV="vPREV"
+	# recovery_note: resolve_source's note for an unbound/ambiguous marker (the
+	# body was then parsed raw, under the sentinel); empty otherwise.
+	recovery_note=""
+	[[ "$SRC_KIND" == unresolvable ]] && recovery_note="$SRC_NOTE"
+	marker_stripped=false
+	[[ "$SRC_KIND" == marker ]] && marker_stripped=true
+	summary_case="untemplated"
+	[[ "$SRC_KIND" == marker || "$CUR_STATE" == valid ]] && summary_case="templated"
+	got="$tmp/got.txt" summary="$tmp/summary.txt" content="$tmp/content.txt"
+	: >"$content"
 	body_stream "$SRC_SCAN" "$strip" >"$got.0"
-	summary="$tmp/summary.txt"
 	whats_new_split "$got.0" "$recovery_label" "$got.1" "$summary"
-	summary_kind=""
+	summary_kind="" discard="" discard_line="" peeled_marker="" invalid_reason=""
+	emit_rows() { # with-texts(true|false)
+		local rows
+		rows="$("$JQ" -cn --argjson tx "$1" \
+			--arg rt "$recovery_template" --arg rl "$recovery_label" --arg rn "$recovery_note" \
+			--argjson ms "$marker_stripped" --arg sk "$summary_kind" --arg dc "$discard" \
+			--arg dl "$discard_line" --arg pm "$peeled_marker" --arg ir "$invalid_reason" \
+			--rawfile st "$summary" --rawfile cb "$content" '
+			def opt: if . == "" then null else . end;
+			{recovery_template: $rt, recovery_label: $rl, recovery_note: ($rn | opt),
+			 marker_stripped: $ms, summary_present: ($sk != ""), summary_kind: ($sk | opt),
+			 summary_text: (if $tx and $sk != "" then ($st | rtrimstr("\n")) else null end),
+			 discard: ($dc | opt), discard_line: ($dl | opt), peeled_marker_line: ($pm | opt),
+			 content_block_text: (if $tx then ($cb | rtrimstr("\n")) else null end),
+			 content_block_valid: ($ir == ""), invalid_reason: ($ir | opt), preserve: ($ir == "")}')" ||
+			die "rows serialisation failed" 2 environment-failure jq-failed
+		release_emit "$SCRIPT" "$site" "resync-summary" 0 "" "$rows" "$summary_case"
+	}
+	# Byte-safety gate first: a NUL or an invalid UTF-8 byte anywhere in the body
+	# (or the proved prefix) means nothing is reused and no text is emitted.
+	if ! body_bytes_ok "$body_file" || { [[ -n "$headingless" ]] && ! body_bytes_ok "$headingless"; }; then
+		if has_whats_new_heading "$got.0"; then
+			summary_kind="headed"
+		elif [[ -n "$headingless" ]]; then
+			summary_kind="headingless"
+		fi
+		[[ -z "$summary_kind" ]] || discard="invalid-bytes"
+		invalid_reason="body (not valid UTF-8 text)"
+		emit_rows false
+		exit 0
+	fi
 	if has_whats_new_heading "$got.0"; then
 		summary_kind="headed"
 		[[ -z "$headingless" ]] ||
@@ -808,25 +940,46 @@ if [[ "$site" == "resync-summary" ]]; then
 			END { if (n == 0 || NR <= n + 1) bad = 1; exit bad }
 		' "$got.1" >"$got.2" ||
 			die "--headingless-summary is not a blank-line-separated prefix of the body" 1 hard-stop headingless-summary-mismatch
-		trim_edges <"$got.2" >"$got.1"
-		summary_kind="headingless"
+		recovery_anchor=""
+		[[ "$recovery_label" == none ]] || recovery_anchor='^[*][*]'"$recovery_label"':[*][*]'
+		if awk -v cre="$COMPARE_SHAPED_RE" -v anchor="$recovery_anchor" '
+			anchor != "" && $0 ~ anchor { hit = 1 }
+			/[^[:space:]]/ && $0 !~ cre { other = 1 }
+			END { exit !(hit || !other) }' "$summary"; then
+			: >"$summary" # not a summary: the prefix stays in the content block
+		else
+			trim_edges <"$got.2" >"$got.1"
+			summary_kind="headingless"
+		fi
+	fi
+	# A trailing marker-shaped line kept as body data (an unbound/ambiguous
+	# marker) is peeled off with its separator and reported, never left in the
+	# content block: the re-sync appends its own marker, and a kept one would
+	# both mask the stale trailer below and make the published body
+	# unresolvable.
+	last="$(tail -n 1 "$got.1")"
+	if [[ "$last" =~ $MARKER_SHAPED_RE ]]; then
+		peeled_marker="$last"
+		sed '$d' "$got.1" | trim_edges >"$got.3"
+		mv "$got.3" "$got.1"
 	fi
 	# Drop the recovery template's own trailing compare line (any URL: recovery
 	# neither blesses nor needs a current trailer -- it is regenerated).
-	# A bash regex over the captured last line, not `tail | grep -q` (SIGPIPE
-	# under pipefail).
-	content="$tmp/content.txt"
 	trailer_re='^[*][*]'"$recovery_label"':[*][*] .'
 	if [[ "$recovery_label" != "none" && "$(tail -n 1 "$got.1")" =~ $trailer_re ]]; then
 		sed '$d' "$got.1" | trim_edges >"$content"
 	else
 		cp "$got.1" "$content"
 	fi
+	# Content-block validity under the current template: body_invalid_reason
+	# (clauses (a)-(d)) over the block, then clause (e) and the marker shape.
 	invalid_reason="$(body_invalid_reason "$content" "$ver" "$excl_list" "$content")"
 	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$COMPARE_SHAPED_RE" "$content"; then
 		invalid_reason="body (carries a compare-shaped line)"
 	fi
-	discard="" discard_line=""
+	if [[ -z "$invalid_reason" ]] && grep -a -q -E "$MARKER_SHAPED_RE" "$content"; then
+		invalid_reason="body (carries a marker-shaped line)"
+	fi
 	if [[ -n "$summary_kind" ]]; then
 		if discard_line="$(has_version_header "$summary")"; then
 			discard="version-header"
@@ -836,27 +989,64 @@ if [[ "$site" == "resync-summary" ]]; then
 			discard_line=""
 		fi
 	fi
-	valid=true
-	[[ -z "$invalid_reason" ]] || valid=false
-	summary_json=null
-	[[ -n "$summary_kind" ]] && summary_json="$(json_str "$(cat "$summary")")"
-	present=false
-	[[ -n "$summary_kind" ]] && present=true
-	marker_stripped=false
-	[[ "$SRC_KIND" == marker ]] && marker_stripped=true
-	obj="{\"recovery_template\":\"$recovery_template\",\"recovery_label\":$(json_str "$recovery_label")"
-	obj+=",\"marker_stripped\":$marker_stripped,\"summary_present\":$present"
-	obj+=",\"summary_kind\":$(json_str_or_null "$summary_kind"),\"summary_text\":$summary_json"
-	obj+=",\"discard\":$(json_str_or_null "$discard"),\"discard_line\":$(json_str_or_null "$discard_line")"
-	obj+=",\"content_block_text\":$(json_str "$(cat "$content")"),\"content_block_valid\":$valid"
-	obj+=",\"invalid_reason\":$(json_str_or_null "$invalid_reason"),\"preserve\":$valid}"
-	summary_case="untemplated"
-	[[ "$SRC_KIND" == marker || "$CUR_STATE" == valid ]] && summary_case="templated"
-	# failed_gate carries resolve_source's note for an unbound/ambiguous marker
-	# (the body was then parsed raw, under the sentinel), null otherwise.
-	recovery_note=""
-	[[ "$SRC_KIND" == unresolvable ]] && recovery_note="$SRC_NOTE"
-	release_emit "$SCRIPT" "$site" "resync-summary" 0 "$recovery_note" "$obj" "$summary_case"
+	# compose_audits <with-summary 0|1> <block-file> — does the body a re-sync
+	# would publish (summary, block, current trailer; the current marker binds
+	# by construction, so a marker-shaped line anywhere else is the only marker
+	# failure) pass audit_body_checks under the current template? Sets AUD_FAIL.
+	compose_audits() {
+		local c="$tmp/composed.txt" fails=() f
+		{
+			if [[ "$1" == 1 ]]; then
+				printf '%s\n' "## What's New"
+				cat "$summary"
+				printf '\n'
+			fi
+			cat "$2"
+			[[ "$cur_label" == none ]] || printf '\n**%s:** %s/compare/%s...%s\n' "$cur_label" "$PROBE_WEB" "$PROBE_PREV" "$tag"
+		} >"$c"
+		AUD_FAIL=""
+		if grep -a -q -E "$MARKER_SHAPED_RE" "$c"; then
+			AUD_FAIL="a marker-shaped line"
+			return 1
+		fi
+		body_stream "$c" strip >"$c.0"
+		audit_body_checks "$c.0" "$cur_label" "$cur_wn" "$PROBE_PREV" "$tag" "$PROBE_WEB" "$excl_list" "$ver" "$c.a"
+		[[ -z "$AUD_BODY_NOTE" ]] || fails+=("$AUD_BODY_NOTE")
+		[[ "$AUD_COMPARE_OK" == 1 ]] || fails+=("exact cached-base compare path")
+		[[ "$AUD_WN_OK" == 1 ]] || fails+=("What's New presence-vs-whats_new")
+		for f in ${fails[@]+"${fails[@]}"}; do
+			[[ -n "$AUD_FAIL" ]] && AUD_FAIL+=", "
+			AUD_FAIL+="$f"
+		done
+		[[ -z "$AUD_FAIL" ]]
+	}
+	reuse=0
+	[[ -n "$summary_kind" && -z "$discard" && "$cur_wn" != false ]] && reuse=1
+	if [[ "$reuse" == 1 ]]; then
+		# The summary on its own: Audit's split of `## What's New` + summary +
+		# a following paragraph line must return the summary unchanged.
+		printf -- '- probe\n' >"$tmp/probe-block.txt"
+		compose_audits 1 "$tmp/probe-block.txt" >/dev/null 2>&1
+		if ! cmp -s "$tmp/composed.txt.a.summary" "$summary" || grep -a -q -E "$MARKER_SHAPED_RE" "$summary"; then
+			discard="audit-drift"
+			discard_line="$(awk -v pf="$tmp/composed.txt.a.summary" '
+				BEGIN { while ((getline l < pf) > 0) n++ }
+				NR > n && /[^[:space:]]/ { print; exit }' "$summary")"
+			if marker_line="$(grep -a -m 1 -E "$MARKER_SHAPED_RE" "$summary")"; then
+				discard_line="$marker_line"
+			fi
+			reuse=0
+		fi
+	fi
+	if [[ -z "$invalid_reason" ]] && ! compose_audits "$reuse" "$content"; then
+		if [[ "$reuse" == 1 ]] && compose_audits 0 "$content"; then
+			discard="audit-drift"
+			discard_line=""
+		else
+			invalid_reason="body (re-sync would audit drifted: $AUD_FAIL)"
+		fi
+	fi
+	emit_rows true
 	exit 0
 fi
 
@@ -981,49 +1171,26 @@ while IFS= read -r t; do
 		# Audit's split and Step 3's recovery boundary cannot disagree.
 		got="$tmp/got.txt"
 		body_stream "$SRC_SCAN" strip >"$got.0"
-		whats_new_split "$got.0" "$label" "$got.1" "$tmp/summary.txt"
 		# Check (4) of SKILL.md's `ok`/`drifted` bullet: the split-out
 		# `## What's New` paragraph's PRESENCE must match the classification
 		# source's `whats_new` when it is explicitly set. `whats_new: false`
 		# makes a present summary drift, not something merely stripped and
 		# ignored; `true`/unset impose no presence requirement here.
-		whats_new_ok=1
-		has_summary=0
-		has_whats_new_heading "$got.0" && has_summary=1
-		if [[ -n "$SRC_FILE" ]]; then
-			wn="$("$JQ" -r 'if has("whats_new") then (.whats_new | tostring) else "unset" end' <"$SRC_FILE")"
-			[[ "$wn" == "false" && "$has_summary" == 1 ]] && whats_new_ok=0
-		fi
+		wn="unset"
+		[[ -n "$SRC_FILE" ]] && wn="$(template_whats_new "$SRC_FILE")"
 		# $prev is already computed once per candidate, above the bfile lookup.
-		compare_ok=1
-		if [[ "$label" == "none" ]]; then
-			grep -a -q -E "$COMPARE_SHAPED_RE" "$got.1" && compare_ok=0
-			cp "$got.1" "$got"
-		else
-			nlines="$(grep -a -c -E "$COMPARE_SHAPED_RE" "$got.1")"
-			if [[ -n "$prev" ]]; then
-				expected="**$label:** $web/compare/$prev...$t"
-				if [[ "$nlines" == 1 && "$(tail -n 1 "$got.1")" == "$expected" ]]; then
-					sed '$d' "$got.1" | trim_edges >"$got"
-				else
-					compare_ok=0
-					cp "$got.1" "$got"
-				fi
-			else
-				[[ "$nlines" == 0 ]] || compare_ok=0
-				cp "$got.1" "$got"
-			fi
-		fi
+		# Checks (2)-(4) are audit_body_checks, the function resync-summary also
+		# runs over the body a re-sync would publish.
+		audit_body_checks "$got.0" "$label" "$wn" "$prev" "$t" "$web" "$excl_list" "$ver" "$got"
+		compare_ok="$AUD_COMPARE_OK"
+		whats_new_ok="$AUD_WN_OK"
 		title_ok=0
 		if [[ "$title_format" == "bare" ]]; then
 			[[ "$name" == "$t" ]] && title_ok=1
 		else
 			[[ "$name" == "$repo_name $t — "?* ]] && title_ok=1
 		fi
-		# Check (2) of SKILL.md's `ok`/`drifted` bullet is compact-tolerant: a
-		# release body MAY be shorter than its CHANGELOG section, so its bytes are
-		# not compared. It must instead be a valid body (body_invalid_reason).
-		body_note="$(body_invalid_reason "$got" "$ver" "$excl_list" "$got.0")"
+		body_note="$AUD_BODY_NOTE"
 		body_ok=1
 		[[ -z "$body_note" ]] || body_ok=0
 		if [[ "$title_ok" == 1 && "$compare_ok" == 1 && "$whats_new_ok" == 1 && "$body_ok" == 1 ]]; then
