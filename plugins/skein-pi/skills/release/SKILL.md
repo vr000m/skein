@@ -80,9 +80,12 @@ that is a valid body under the current committed template is preserved, never
 expanded; an invalid one is regenerated from the CHANGELOG
 section automatically and the confirmation states that it was; the
 confirmation also offers an explicit "refresh content from CHANGELOG" choice
-that regenerates a valid block. If the regenerated body would itself drift in
-audit (for example a section that opens with `## What's New` under
-`whats_new: false`), stop instead of publishing it. A recovered summary, headed or headingless,
+that regenerates a valid block. If the regenerated body, judged with the
+summary it will carry (a fresh draft replaces a discarded summary; an absence is
+kept), would itself drift in audit (for example a section that opens with
+`## What's New` under `whats_new: false`), stop instead of publishing it; the
+same check stops a new release, and a body that passes only with its summary
+keeps it (never a bare body). A recovered summary, headed or headingless,
 that contains a CHANGELOG version-header line (clause (c)'s definition), or an
 active `excluded_sections` heading line (clause (d)) is never reused (audit
 flags both wherever they sit; a compare-shaped line is not a trigger: the
@@ -100,7 +103,9 @@ summary. In audit, every fixable row, whatever field drifted (not only a
 re-sync itself would stop: re-sync composes with the current committed template, so
 re-test the section under it with clause (a)'s publishable-content test
 (after that template's exclusions, ignoring compare-shaped lines), the very
-test the composition hard stop applies; if it fails, composition stops, so report the row as "needs CHANGELOG/template
+test the composition hard stop applies, plus the regenerated-body drift check
+above whenever re-sync would regenerate the block (or compose a new release);
+if either fails, composition stops, so report the row as "needs CHANGELOG/template
 edit" instead of offering a re-sync; otherwise offer the re-sync. This mirror
 has no release script: these re-sync rules exist only as this prose.
 Draft only the short title highlight and optional
