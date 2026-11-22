@@ -25,7 +25,7 @@ just site-tests                  # skein.sh site guards: every skill on the site
 just site-build                  # site-tests + `wrangler deploy --dry-run` (validates the bundle, uploads nothing)
 just site-preview [port]         # Local preview of site/ via `wrangler dev` (default port 8787)
 just site-deploy                 # site-tests, then `wrangler deploy` to Cloudflare; refuses uncommitted site files and non-main branches (SITE_DEPLOY_ANY_BRANCH=1 overrides). Needs `npx wrangler login` once
-just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on non-draft PRs (it also runs on `ready_for_review`, `workflow_dispatch` and pushes to main, installs the Pi CLI for `tests/pi`, and cancels a superseded run only on pull requests); local `just ci` is the gate, so push when a round is done, not per commit
+just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on non-draft PRs (it also runs on `ready_for_review`, `workflow_dispatch` and pushes to main, installs the Pi CLI for `tests/pi`, and cancels a superseded run only on pull requests: every push-to-main or dispatched run has its own concurrency group, so none is cancelled or replaced while queued); local `just ci` is the gate, so push when a round is done, not per commit
 ```
 
 Requires: `brew install just jq shellcheck shfmt ruff uv`. Optional: `brew install pre-commit && pre-commit install` runs ruff, shellcheck and shfmt on every commit (`.pre-commit-config.yaml`); pin the ruff rev there and in `.github/workflows/ci.yml` to the same version.
