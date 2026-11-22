@@ -64,6 +64,10 @@ Out of scope: the retroactive audit skill (plan C); migrating existing code comm
 
 ## Implementation Checklist
 
+Each mirror-spanning phase is split into `a` (Codex), `b` (Claude) and `c` (Pi) sub-phases, run in that order. Every sub-phase names its executor in its first bullet. `a` and `b` land as one commit (Codex half first, Claude aligned to its bytes); `c` is a separate Pi commit.
+
+`conduct` dispatches Claude subagents only. For `a` and `c` phases the main session performs the hand-off itself (`codex:rescue` for Codex, a non-interactive Pi run for Pi) and then runs the phase's declared test command. Whether `conduct` can pause at such a phase for an external executor is unverified; if it cannot, walk the phases in order by hand and use `conduct` only for Claude-owned phases (1, `b`, and the verify phase).
+
 ### Phase 1: Folder, record format and validator
 
 **Impl files:** `docs/decisions/README.md, scripts/check-decisions.sh, justfile, AGENTS.md`
@@ -86,48 +90,125 @@ Out of scope: the retroactive audit skill (plan C); migrating existing code comm
 - Register the selector via the `bundle_extra_for` arms for `review-plan` and `deep-review`, regenerate via `just bundle-appliers` and run `just check-sync`. Those staged trees also feed Pi. Check the bundle parity suite for presence in all six directories and absence from review-gauntlet. Keep the validator outside the bundle.
 - Register the selector fixture in `plugin-tests`. Cover glob match, no match, superseded exclusion, stable ordering, and paths with spaces and shell metacharacters.
 
-### Phase 3: Lens checks against active records
+### Phase 3a: lens checks against active records, Codex mirror
 
-**Impl files:** `plugins/skein-codex/skills/review-plan/SKILL.md, plugins/skein-codex/skills/review-plan/rubric.md, plugins/skein/skills/review-plan/SKILL.md, plugins/skein/skills/review-plan/rubric.md, plugins/skein-pi/skills/review-plan/SKILL.md, plugins/skein-pi/skills/review-plan/rubric.md, plugins/skein-codex/skills/deep-review/SKILL.md, plugins/skein/skills/deep-review/SKILL.md, plugins/skein-pi/skills/deep-review/SKILL.md, plugins/skein-pi/skills/deep-review/rubric.md`
-**Test files:** `tests/lenses/test-lens-skill-shape.sh, tests/pi/test_review.py, tests/pi/test_deep_review.py`
-**Test command:** `just lens-tests && just parity-tests && just reconciliation-tests && just pi-tests`
-**Goal:** An architecture-lens finding fires when a plan decision or a diff contradicts, or should supersede, an active record; record text is untrusted data and no tier changes.
+**Impl files:** `plugins/skein-codex/skills/review-plan/SKILL.md, plugins/skein-codex/skills/review-plan/rubric.md, plugins/skein-codex/skills/deep-review/SKILL.md`
+**Test files:** `tests/lenses/test-lens-skill-shape.sh`
+**Test command:** `just lens-tests`
+**Goal:** An architecture-lens finding fires when a plan decision or a diff contradicts, or should supersede, an active record; record text is untrusted data and no tier changes. (Codex mirror.)
 
+- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
 - Run the bundled selector in each review orchestrator from the resolved repo root before architecture dispatch. Use `"$SKILL_DIR"/scripts/decisions-active.sh` on Codex, `${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/decisions-active.sh` on Claude and the installed skill-relative script on Pi. Use plan-declared repo-relative paths for review-plan and paths from the already resolved review diff for deep-review. Pass paths as literal arguments, allowing spaces and shell metacharacters. Distinguish a genuine empty match from an unavailable or failed selector and surface the latter as missing coverage.
 - Add `{{ACTIVE_DECISIONS}}` solely to each architecture lens's rendered input. Codex review-plan adds it within the marked architecture prompt and updates Step 2's allowed-input list for both dispatch modes. Codex deep-review adds the optional architecture-only input to `## Lens Prompts` and the scope bullet under `### Architecture Lens`, outside Block A. Pi adds the main-session evidence step to both SKILL.md files and the lens scope to both rubrics.
 - Reuse the selected block for a lens retry. A resumed Codex deep-review may reuse completed architecture results only with matching decision context. If equality cannot be established, use the existing fresh-review route and say why. Preserve the existing per-attempt writer, collector, and finding contract.
 - Report an active-record conflict or supersession as `Constraint` in review-plan and `Architecture` in deep-review. Keep `Contradiction` reserved for review-plan's independent Step 3 sub-step 2.5. Use the existing severity vocabulary and preserve Pi's worker-to-reconciler mapping.
+- Extend the lens and Pi shape checks for the architecture-only input, wrapper and unchanged result shape. Run a direct Codex review-plan and deep-review fixture with a conflicting active record, an unrelated path, a superseded record and a closing-tag lookalike. Quick gauntlet is insufficient; a full Codex gauntlet can also defer deep-review when its delegation prerequisites are unmet.
+
+### Phase 3b: lens checks against active records, Claude mirror
+
+**Impl files:** `plugins/skein/skills/review-plan/SKILL.md, plugins/skein/skills/review-plan/rubric.md, plugins/skein/skills/deep-review/SKILL.md`
+**Test files:** `tests/lenses/test-lens-skill-shape.sh`
+**Test command:** `just lens-tests && just parity-tests && just reconciliation-tests`
+**Goal:** An architecture-lens finding fires when a plan decision or a diff contradicts, or should supersede, an active record; record text is untrusted data and no tier changes. (Claude mirror, aligned to the Codex half.)
+
+- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
 - Codex first via `codex:rescue`; Claude and Pi aligned; `rubric.md` byte-identical Claude vs Codex.
+- Align the Claude mirror to the Codex half from phase 3a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
+- Resolve the selector via `${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/decisions-active.sh`; `rubric.md` stays byte-identical to Codex's.
+
+### Phase 3c: lens checks against active records, Pi mirror
+
+**Impl files:** `plugins/skein-pi/skills/review-plan/SKILL.md, plugins/skein-pi/skills/review-plan/rubric.md, plugins/skein-pi/skills/deep-review/SKILL.md, plugins/skein-pi/skills/deep-review/rubric.md`
+**Test files:** `tests/pi/test_review.py, tests/pi/test_deep_review.py`
+**Test command:** `just pi-tests`
+**Goal:** An architecture-lens finding fires when a plan decision or a diff contradicts, or should supersede, an active record; record text is untrusted data and no tier changes. (Pi mirror.)
+
+- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
+- Run the bundled selector in each review orchestrator from the resolved repo root before architecture dispatch. Use `"$SKILL_DIR"/scripts/decisions-active.sh` on Codex, `${CLAUDE_PLUGIN_ROOT}/skills/<skill>/scripts/decisions-active.sh` on Claude and the installed skill-relative script on Pi. Use plan-declared repo-relative paths for review-plan and paths from the already resolved review diff for deep-review. Pass paths as literal arguments, allowing spaces and shell metacharacters. Distinguish a genuine empty match from an unavailable or failed selector and surface the latter as missing coverage.
 - Pi dispatch contract: update review-plan's `Lens protocol` allowed inputs, which currently says evidence is for `codebase-claims` only, to allow the selected records for architecture only; retain the factual packet unchanged. Update deep-review's packet preparation similarly. Supply installed-rubric scope plus bounded escaped selected records in the existing `skein_worker` `prompt`, never as a new tool parameter. Preserve `role`/`prompt`, category, severity, `reviewed_units`, and persistence schemas; no extension.ts lens schema change is needed. A plan-target deep-review uses plan-declared paths, while current-diff review uses resolved diff paths. If required paths/evidence cannot be resolved, show missing coverage rather than asserting no applicable decisions.
 - Pi retries reuse the exact selected snapshot and report selector failure as degraded; Pi deep-review does not support `--continue` and must not gain a resume/cache feature from the Codex requirement. Use `Constraint`/`Architecture` and the existing critical/important/suggestion mapping without adding fields or categories.
-- Extend the lens and Pi shape checks for the architecture-only input, wrapper and unchanged result shape. Run a direct Codex review-plan and deep-review fixture with a conflicting active record, an unrelated path, a superseded record and a closing-tag lookalike. Quick gauntlet is insufficient; a full Codex gauntlet can also defer deep-review when its delegation prerequisites are unmet.
 - In `tests/pi/test_review.py` and `test_deep_review.py`, extend the required canonical-script sets to include `decisions-active.sh`, asserting byte identity to canonical scripts, plus packet tests for architecture-only delivery, conflict/no-match/superseded fixtures and closing-tag lookalikes. Keep explicit approval, no-tools and unchanged disk-first shape assertions. Pi runtime lens-quality exercises need separately approved workers; static prompt/packet tests alone do not prove detection quality.
+- Apply the shared wording from phase 3a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
 
-### Phase 4: update-docs promotion and template
+### Phase 4a: update-docs promotion and template, Codex mirror
 
-**Impl files:** `plugins/skein-codex/skills/update-docs/SKILL.md, plugins/skein/skills/update-docs/SKILL.md, plugins/skein-pi/skills/update-docs/SKILL.md, plugins/skein-pi/extension.ts, plugins/skein/skills/dev-plan/template.md, plugins/skein-codex/skills/dev-plan/template.md, plugins/skein-pi/skills/dev-plan/references/template.md, justfile`
-**Test files:** `tests/plugin/test-promotion-marker.sh, tests/pi/test_update_docs.py, tests/pi/test_plan_composition.py`
-**Test command:** `just parity-tests && just pi-tests && bash tests/plugin/test-promotion-marker.sh`
-**Goal:** Promotion is offered, never imposed, and never changes bytes above the review marker (invariants I1 and I3).
+**Impl files:** `plugins/skein-codex/skills/update-docs/SKILL.md, plugins/skein-codex/skills/dev-plan/template.md, justfile`
+**Test files:** `tests/plugin/test-promotion-marker.sh`
+**Test command:** `bash tests/plugin/test-promotion-marker.sh`
+**Goal:** Promotion is offered, never imposed, and never changes bytes above the review marker (invariants I1 and I3). (Codex mirror.)
 
+- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
 - Gather evidence in the read-only audit and offer each qualifying decision in main-context Phase 4 (Codex `SKILL.md:266-294`), including `Applies to` inferred from Files to Modify. Extend both the apply-target allowlist and the file-creation rule for the exact approved record, and keep the Phase 3 report first. Re-read the live plan and targets, require a valid real marker, and obtain explicit per-record approval even with `--apply`. If a required path is outside the writable sandbox or the live inputs changed, surface the blocker before any write.
+- Add the `## Promoted Decisions` workspace section below the marker in all three templates. Keep the Codex-only `quick` header value and the existing per-mirror header wording intact.
+- Register the promotion fixture in `plugin-tests`. Capture the exact signed prefix and marker on a signed fixture, then verify both after promotion without running the marker writer again. Exercise approved, declined, repeated and `--apply` without per-record approval paths, and missing, placeholder and stale markers.
+
+### Phase 4b: update-docs promotion and template, Claude mirror
+
+**Impl files:** `plugins/skein/skills/update-docs/SKILL.md, plugins/skein/skills/dev-plan/template.md`
+**Test files:** `tests/plugin/test-promotion-marker.sh`
+**Test command:** `just parity-tests && bash tests/plugin/test-promotion-marker.sh`
+**Goal:** Promotion is offered, never imposed, and never changes bytes above the review marker (invariants I1 and I3). (Claude mirror, aligned to the Codex half.)
+
+- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
+- Align the Claude mirror to the Codex half from phase 4a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
+- Add `## Promoted Decisions` below the marker in the Claude template, byte-aligned with Codex's except the existing `Review Gates` header difference.
+
+### Phase 4c: update-docs promotion and template, Pi mirror
+
+**Impl files:** `plugins/skein-pi/skills/update-docs/SKILL.md, plugins/skein-pi/extension.ts, plugins/skein-pi/skills/dev-plan/references/template.md`
+**Test files:** `tests/pi/test_update_docs.py, tests/pi/test_plan_composition.py`
+**Test command:** `just pi-tests`
+**Goal:** Promotion is offered, never imposed, and never changes bytes above the review marker (invariants I1 and I3). (Pi mirror.)
+
+- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
 - On Pi, return candidates as audit findings from the existing bounded plan snapshot. The main session verifies the live source plan and any supersession targets and offers the exact writes. Preserve the tool's closed input schema and the no-write contract.
 - Extend `extension.ts::updateDocsPrompt()` with the promotion criteria and named source sections so its no-tools worker can actually offer candidates. Gather both `### Architecture Decisions` and `## Findings` in `relevant_plan` within its 30,000-character field limit and the combined 96 KiB serialized-input limit; narrow explicitly or stop, never silently omit either source section. The nine input keys stay unchanged. Put each offer in the existing finding `recommendation`/report with `location` equal to the supplied `relevant_plan_path`; a new `docs/decisions/` location is rejected by `validateDocAudit()`. Do not send unseen record contents or claim that the audit verified supersession links.
 - Narrowly amend Pi SKILL.md's current "Edit only existing documentation files" rule to permit only the exact individually approved new record under `docs/decisions/`, plus approved live supersession targets and the below-marker plan link. Preserve "No automatic writes", explicit target selection, stale-snapshot checks and the ban on PR edits; Pi still does not implement `--apply`. Main session verifies record graph inputs and source marker before writes and verifies the unchanged signed prefix afterward.
 - Extend `tests/pi/test_update_docs.py` for promotion instructions and candidate payload reaching the no-tools worker, acceptance of a source-plan-anchored recommendation, rejection of new-record locations/extra fields, preserved budgets, and no documentation writes from the tool. Cover approved/declined/stale main-session promotion contracts separately from mocked audit success. Extend `tests/pi/test_plan_composition.py` for the new below-marker heading while retaining template/rubric byte identity with Codex; Pi inherits Codex template bytes, including its header values, without acquiring unsupported conduct routes.
-- Add the `## Promoted Decisions` workspace section below the marker in all three templates. Keep the Codex-only `quick` header value and the existing per-mirror header wording intact.
-- Register the promotion fixture in `plugin-tests`. Capture the exact signed prefix and marker on a signed fixture, then verify both after promotion without running the marker writer again. Exercise approved, declined, repeated and `--apply` without per-record approval paths, and missing, placeholder and stale markers.
+- Apply the shared wording from phase 4a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
+- Add `## Promoted Decisions` to the Pi template (`references/template.md`), keeping template byte identity with Codex.
 
-### Phase 5: conduct nudge, verify and docs
+### Phase 5a: conduct nudge, Codex mirror
 
-**Impl files:** `plugins/skein-codex/skills/conduct/SKILL.md, plugins/skein/skills/conduct/SKILL.md, plugins/skein-pi/skills/conduct/SKILL.md, AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md`
-**Test files:** `tests/gauntlet/test-conduct-hook.sh, tests/pi/test_orchestration_routes.py`
-**Test command:** `just ci`
-**Goal:** The terminal handback points at `/update-docs` so promotion does not depend on memory, and the full CI is green.
+**Impl files:** `plugins/skein-codex/skills/conduct/SKILL.md`
+**Test files:** `tests/gauntlet/test-conduct-hook.sh`
+**Test command:** `bash tests/gauntlet/test-conduct-hook.sh`
+**Goal:** The terminal handback points at `/update-docs` so promotion does not depend on memory, and the full CI is green. (Codex mirror.)
 
+- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
 - Add the text to the successful terminal handback. On Codex use the `Review Gauntlet Auto-Chain` completion seam after CI parity and any opted-in `quick` or `full` run. Keep the nudge out of Step 9a's intermediate summary and out of blocked, CI-failed or non-clean gauntlet handbacks. Preserve the existing Codex capability messages and top-level dispatch. Align Claude's healthy completion path and Pi's `Handback contract` using their own supported routes.
-- Pi completion is sequential and main-session-owned: it has no CI-parity Python-conductor return seam or automatic gauntlet chain. Add a text-only `/skill:skein-update-docs` nudge only when all declared phases, tests/validation and approval/verification requirements are complete, not at intermediate, blocked, declined or degraded handbacks. Do not add auto-chain or `quick`/`full` modes. Extend `tests/pi/test_orchestration_routes.py` for those conditions and preserve A's comment-notice handback.
 - Extend `test-conduct-hook.sh` with a Codex-specific terminal-seam check. Its existing Claude-only gate assertions stay scoped to Claude. The marker parity tests guard byte identity and remain unchanged.
+
+### Phase 5b: conduct nudge, Claude mirror
+
+**Impl files:** `plugins/skein/skills/conduct/SKILL.md`
+**Test files:** `tests/gauntlet/test-conduct-hook.sh`
+**Test command:** `just gauntlet-tests`
+**Goal:** The terminal handback points at `/update-docs` so promotion does not depend on memory, and the full CI is green. (Claude mirror, aligned to the Codex half.)
+
+- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
+- Align the Claude mirror to the Codex half from phase 5a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
+- Add the text-only `/update-docs` pointer to Claude's healthy completion path only.
+
+### Phase 5c: conduct nudge, Pi mirror
+
+**Impl files:** `plugins/skein-pi/skills/conduct/SKILL.md`
+**Test files:** `tests/pi/test_orchestration_routes.py`
+**Test command:** `just pi-tests`
+**Goal:** The terminal handback points at `/update-docs` so promotion does not depend on memory, and the full CI is green. (Pi mirror.)
+
+- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
+- Pi completion is sequential and main-session-owned: it has no CI-parity Python-conductor return seam or automatic gauntlet chain. Add a text-only `/skill:skein-update-docs` nudge only when all declared phases, tests/validation and approval/verification requirements are complete, not at intermediate, blocked, declined or degraded handbacks. Do not add auto-chain or `quick`/`full` modes. Extend `tests/pi/test_orchestration_routes.py` for those conditions and preserve A's comment-notice handback.
+- Apply the shared wording from phase 5a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
+
+### Phase 6: Verify and docs
+
+**Impl files:** `AGENTS.md, CHANGELOG.md, docs/dev_plans/README.md`
+**Test files:** `tests/gauntlet/test-conduct-hook.sh`
+**Test command:** `just ci`
+**Goal:** The full CI is green, A's policy block names the pointer form, and B's docs are updated.
+
+- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).: Claude (main session). Runs after every `a`/`b`/`c` phase above has landed.
 - Update A's policy block in AGENTS.md to name the `see docs/decisions/<file>` pointer form.
 - Run `just ci` in a background job and wait for the exit status. Use a sufficient Codex conduct `--test-timeout` for the declared command. Update B's `CHANGELOG.md` entry and plans index row, then run `/update-docs` after reviews converge.
 
@@ -197,10 +278,10 @@ Current Claude evidence for the same protected wording: deep-review persists per
 
 | Seam | Writer (task) | Caller (task) | Contract |
 |------|---------------|---------------|----------|
-| Record format | `docs/decisions/README.md` and `check-decisions.sh` (Phase 1) | `decisions-active.sh` (Phase 2), `update-docs` (Phase 4) | One header grammar; the validator is the source of truth, the others parse the same fields. |
-| Selected records | `decisions-active.sh` (Phase 2) | review orchestrators, then their architecture lenses (Phase 3) | Active-only, `Applies to`-matched, bounded, escaped and delivered inside `<untrusted-content>`. |
-| Promotion note | `update-docs` (Phase 4) | marker verification via `marker.py` | Only bytes below the marker change. The writer signs the test fixture once. |
-| Nudge | `conduct` handback (Phase 5) | `update-docs` (Phase 4) | Text pointer only; never an invocation. |
+| Record format | `docs/decisions/README.md` and `check-decisions.sh` (Phase 1) | `decisions-active.sh` (Phase 2), `update-docs` (Phases 4a–4c) | One header grammar; the validator is the source of truth, the others parse the same fields. |
+| Selected records | `decisions-active.sh` (Phase 2) | review orchestrators, then their architecture lenses (Phases 3a–3c) | Active-only, `Applies to`-matched, bounded, escaped and delivered inside `<untrusted-content>`. |
+| Promotion note | `update-docs` (Phases 4a–4c) | marker verification via `marker.py` | Only bytes below the marker change. The writer signs the test fixture once. |
+| Nudge | `conduct` handback (Phases 5a–5c) | `update-docs` (Phases 4a–4c) | Text pointer only; never an invocation. |
 
 ## Architecture & Call Flow
 
@@ -275,9 +356,16 @@ sequenceDiagram
 
 - [ ] Phase 1: Folder, record format and validator
 - [ ] Phase 2: Active-record selector and bundling
-- [ ] Phase 3: Lens checks against active records
-- [ ] Phase 4: update-docs promotion and template
-- [ ] Phase 5: conduct nudge, verify and docs
+- [ ] Phase 3a: Lens checks against active records (Codex)
+- [ ] Phase 3b: Lens checks against active records (Claude)
+- [ ] Phase 3c: Lens checks against active records (Pi)
+- [ ] Phase 4a: update-docs promotion and template (Codex)
+- [ ] Phase 4b: update-docs promotion and template (Claude)
+- [ ] Phase 4c: update-docs promotion and template (Pi)
+- [ ] Phase 5a: conduct nudge (Codex)
+- [ ] Phase 5b: conduct nudge (Claude)
+- [ ] Phase 5c: conduct nudge (Pi)
+- [ ] Phase 6: Verify and docs
 
 ## Findings
 
@@ -291,6 +379,7 @@ sequenceDiagram
 - Pi review (2026-11-22): Corrected — Pi has no automatic gauntlet/completion seam matching Codex; specified a sequential all-phases-complete text nudge using /skill:skein-update-docs and test_orchestration_routes.py coverage, retaining A's handback policy.
 - Pi review (2026-11-22): Confirmed — Pi is excluded from prompt-parity, its tests run via just pi-tests, root package.json registers the extension and eleven skills, and the five absent harness-specific skills need no changes; corrected the manifest/dependency wording.
 - Pi review (2026-11-22): Wrong, protected — the grilled no-persistence claim is also false for Pi (attempt streams and latest-pi.json exist); left the decision and all Codex review log lines intact and added adjacent Pi evidence without widening promotion beyond the plan.
+- Claude review (2026-11-22): Split phases 3–5 by mirror (a Codex, b Claude, c Pi) and moved AGENTS.md pointer, CHANGELOG, README and the final `just ci` into a new Phase 6 so no mirror phase owns shared docs; selector phase 2 stays single (bundler generates all six dirs). All original bullets preserved verbatim; no decision touched.
 - Claude review (2026-11-22): Wrong, protected — the grilled no-persistence claim is also false for Claude (`.deep-review/lenses/`, `latest-claude.json`, `.gauntlet/*/round-N/deep-review-reconciled.json`, all gitignored); decision left untouched, adjacent evidence added, promotion boundary unchanged.
 - Pi review (2026-11-22): Confirmed — A-to-B ordering and ownership are compatible on Pi: A owns worker/comment policy and advice separation, B owns architecture evidence, promotion and terminal nudge; added explicit preservation at shared handbacks.
 - Pi review (2026-11-22): Unverifiable — future contradiction detection quality, approval flows and runtime gate availability need implementation and explicitly approved exercises; this source review ran no workers or full test suites.
