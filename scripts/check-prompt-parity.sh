@@ -302,12 +302,12 @@ RELEASE_CODEX_AI_SIGNS_PATH='"$SKILL_DIR"/../content-review/references/ai-writin
 # gated to occur exactly once per mirror below. The Codex half of the mirror
 # lands in Phase 3.5 (RELEASE_LAGGING_MIRROR_OK plane release-skill-md).
 # BEGIN release-call-lines (sourced by tests/parity/test-prompt-parity-extended.sh)
-RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step3-editorial step5-reverify step6-reverify a2-classify)
+RELEASE_CALL_SITES=(step1b-precondition step1b-validate step3-recovery step3-editorial step5-reverify step6-reverify a2-classify resync-summary resync-gate body-check)
 
 release_call_script() {
 	case "$1" in
 	step1b-* | step5-reverify | step6-reverify) echo "read-release-template" ;;
-	step3-recovery | a2-classify) echo "resolve-template-marker" ;;
+	step3-recovery | a2-classify | resync-summary | resync-gate | body-check) echo "resolve-template-marker" ;;
 	step3-editorial) echo "editorial-preflight" ;;
 	esac
 }
@@ -318,6 +318,13 @@ release_call_placeholder() {
 	up="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
 	echo "__RELEASE_CALL_${up//-/_}__"
 }
+
+# The two sites Step 3 AND Step A4 both run (resync-summary, resync-gate) take
+# one neutral head placeholder, defined once here, so one generated line is
+# true in both flows: Step 3 passes TEMPLATE_HEAD_COMMIT, A4 A2_HEAD_COMMIT.
+# Step-3-only sites (step3-recovery, body-check) keep TEMPLATE_HEAD_COMMIT.
+# shellcheck disable=SC2016
+RELEASE_FLOW_HEAD_TAIL=' `<FLOW_HEAD_COMMIT>` is the HEAD commit already resolved for the calling flow — `TEMPLATE_HEAD_COMMIT` in Step 3 (the one `step3-recovery` uses), `A2_HEAD_COMMIT` in Step A4 — never a fresh resolution.'
 
 # shellcheck disable=SC2016
 release_call_line() {
@@ -350,6 +357,18 @@ release_call_line() {
 	step3-recovery)
 		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT>'
 		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
+		;;
+	resync-summary)
+		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <FLOW_HEAD_COMMIT> --changelog <file> [--headingless-summary <file>]'
+		tail="$RELEASE_FLOW_HEAD_TAIL"
+		;;
+	resync-gate)
+		args='--repo <source top-level> --head-sha <FLOW_HEAD_COMMIT> --changelog <file> --version X.Y.Z'
+		tail="$RELEASE_FLOW_HEAD_TAIL"
+		;;
+	body-check)
+		args='--repo <source top-level> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> --tag <vX.Y.Z> --body-file <file> --web-base-url <WEB_BASE_URL> [--prev <vPREV>]'
+		tail=" \`--body-file\` holds the exact composed body; \`--prev\` is Step 2's PREV tag, omitted when there is none; \`--head-sha\` is the same already-resolved \`TEMPLATE_HEAD_COMMIT\`, never a fresh resolution."
 		;;
 	a2-classify)
 		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --tags <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'

@@ -1,5 +1,5 @@
 # captured-at: 7a31bf77ce137a85e0e199cd7445b4f13bc4652d
-# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included. `captured-at` anchors ONLY the file's origin commit (Phase 1.5's anchor-landing commit, whose prose is byte-identical to its parent 7983f45dd758b2c763ab000d9a7934a2f05b26b9 apart from the anchor comments themselves) — used by test_release_region_length_baseline_predates_phase2's ancestry pin, not a claim about every row below. This file is APPEND-ONLY (round-3 documentation fix): each subsequent block of rows was measured on the tree of whatever commit last touched that region, not on the captured-at commit's tree; `_last_region_rows()` reads only the LAST row per region, so a later block's rows supersede an earlier block's for that region without deleting it (kept for history). A `#`-prefixed comment immediately above a block names the commit/change that produced it when that context is not otherwise obvious.
+# regions are anchor-to-next-anchor byte spans of the Claude SKILL.md (last region ends at `## Worked Example`), anchor-comment bytes included. `captured-at` anchors ONLY the file's origin commit (Phase 1.5's anchor-landing commit, whose prose is byte-identical to its parent 7983f45dd758b2c763ab000d9a7934a2f05b26b9 apart from the anchor comments themselves) — used by test_release_region_length_baseline_predates_phase2's ancestry pin, not a claim about every row below. This file is APPEND-ONLY (round-3 documentation fix): each subsequent block of rows was measured on the tree of whatever commit last touched that region, not on the captured-at commit's tree; `_last_region_rows()` reads only the LAST row per (region, file) pair, so a later block's rows supersede an earlier block's for that region's span in that file without deleting it (kept for history); a region with live prose in both SKILL.md and a reference file keeps a guard on each span, and an exempt row exempts only its own file. A `#`-prefixed comment immediately above a block names the commit/change that produced it when that context is not otherwise obvious.
 region	file	byte_length	exempt
 canonical-format	plugins/skein/skills/release/SKILL.md	6838	
 single-version-mode	plugins/skein/skills/release/SKILL.md	59	
@@ -85,3 +85,45 @@ step-a2	plugins/skein/skills/release/SKILL.md	10595
 # existing Step 3 snapshot and Step 4 confirmation. The Codex mirror differs
 # only by its registered native-launch call line and stays within tolerance.
 step-3	plugins/skein/skills/release/SKILL.md	32661
+# Compact release notes add the single valid-body precedence rule, the summary-
+# reuse rule (a recovered summary carrying a version header is redrafted), the
+# trimmed excluded-heading comparison and the A4 needs-edit exception to the
+# Step 3 snapshot. The Codex mirror differs only by its registered anchors.
+step-3	plugins/skein/skills/release/SKILL.md	36462
+# Compact release notes put the single valid-body predicate (clauses (a)-(e),
+# the What's New heading tolerance and the one precedence rule) into the
+# Claude SKILL.md Canonical Format item 2, growing that span from 4024 to 7668
+# bytes. The last SKILL.md canonical-format row above was exempt
+# (relocated-to-references), so this growth was unguarded; this row supersedes
+# it for the SKILL.md span. Rows are keyed by (region, file) (review-gauntlet
+# round 5), so the template-subsystem.md row above still guards the reference
+# span. The Codex mirror carries the same port and stays within tolerance.
+canonical-format	plugins/skein/skills/release/SKILL.md	7668
+# Review-gauntlet round 9: the regenerate verdict became one function both
+# resync sites run, so Step 3 now routes its one stop per path (resync-gate
+# for a new release, resync-summary's rows.stops for a re-sync), names the
+# summary dimension of that verdict and the new stops/reason/summary_required
+# fields with the no-bare-body rule, and restores the peeled marker's Step 4
+# destination; Step A4 routes its offer gate to the same per-path call. The
+# Codex mirror ports the same text (its step-3 span runs ~16 bytes higher).
+step-3	plugins/skein/skills/release/SKILL.md	40449
+step-a4	plugins/skein/skills/release/SKILL.md	5745	
+# Compact-notes review-gauntlet round 1 (G2): Step 1 item 3's section boundary
+# was "the next `## [` header", a looser predicate than Canonical Format item 2
+# clause (c)'s version-header test, so a link heading such as
+# `## [Migration guide](guide.md)` cut a section short. The item now names
+# clause (c)'s definition (SemVer or `Unreleased` in brackets, then a hyphen,
+# en dash or end of line) as the one boundary and states that a link heading
+# is content. The Codex mirror ports the same text.
+step-1-item-1	plugins/skein/skills/release/SKILL.md	2295	
+# Compact-notes review-gauntlet round 2: round 1 made clause (c)'s SemVer-only
+# version header the section boundary too, so a dated non-SemVer release header
+# (`## [0.9] - date`) no longer ended an empty section. Step 1 item 3 now names
+# two predicates -- the boundary (clause (c)'s header OR any dated release-like
+# header A1 item 2 inventories) and clause (c)'s narrower test -- and lists the
+# lines that stay content; item 4 adds the publishable-bytes stop. Canonical
+# Format clause (a) gains the NUL-free valid UTF-8 rule for the bytes Step 3
+# publishes and its audit note, and A2's note list names it. The Codex mirror
+# ports the same text.
+canonical-format	plugins/skein/skills/release/SKILL.md	8703
+step-1-item-1	plugins/skein/skills/release/SKILL.md	3051

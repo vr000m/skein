@@ -18,7 +18,7 @@ Several published Skein release bodies needed retrospective condensation because
 
 The release workflow already composes the complete body before its payload snapshot and explicit confirmation. The warning therefore belongs after final body composition and its existing snapshot, but before confirmation. It is advisory: an operator can accept the exact body as written, revise title/summary prose in memory, or abort to edit and commit the CHANGELOG before a fresh run. Existing release identity, destination, tag, template, payload-hash, and TOCTOU checks remain authoritative.
 
-Historic release plans establish two constraints this work preserves: release content remains a verbatim CHANGELOG-section copy by default, and Claude/Codex workflow contracts must remain parity-checked. Pi exposes a separate user-invoked, read-only-by-default preparation contract. It carries the same editorial thresholds as prose guidance before its second confirmation, but does not claim measured metadata because Pi has no stable bundled-checker launch path.
+Historic release plans establish two constraints this work preserves: release content remains a verbatim CHANGELOG-section copy by default (**2026-11-20 note:** release bodies may now also be a shorter compact digest that audit accepts and re-sync preserves when valid — see CHANGELOG `[Unreleased]`), and Claude/Codex workflow contracts must remain parity-checked. Pi exposes a separate user-invoked, read-only-by-default preparation contract. It carries the same editorial thresholds as prose guidance before its second confirmation, but does not claim measured metadata because Pi has no stable bundled-checker launch path.
 
 ## Requirements
 

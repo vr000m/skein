@@ -61,6 +61,86 @@ def test_release_editorial_policy_is_advisory_without_fake_measurement():
         assert phrase in text
 
 
+def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
+    """Pi cannot read the Claude/Codex release skill, so it carries the full
+    valid-body predicate and the re-sync rules audit classification depends
+    on (moved from tests/release/test-scripts.sh's V9 prose greps)."""
+    raw = read_skill("release")
+    text = " ".join(raw.split())
+    for phrase in (
+        "## [Unreleased]",
+        "leading/trailing whitespace",
+        "typographic apostrophe",
+        "refresh content from CHANGELOG",
+        "release is verbatim by default and goes compact only when",
+        "may only restate what the section",
+        "no `###` heading line anywhere in the body, including inside the summary",
+        "up to 3 leading spaces",
+        "SemVer `-prerelease` and/or `+build` tail of dot-separated non-empty identifiers",
+        # Summary boundary = the audit split: leading blanks skipped, 1-6 hashes.
+        "blank lines before the summary's first text are skipped",
+        "levels 1-6",
+        # Clause (a) is the one publishable-content definition, applied by
+        # name by the hard stop and the A4 re-test (every offered row).
+        "the CHANGELOG section has publishable content",
+        "ignoring compare-shaped lines",
+        "A section with no publishable content (clause (a) below) is a hard stop",
+        "contains a CHANGELOG version-header line",
+        "is never reused",
+        "a compare-shaped line is not a trigger",
+        # Round-1 G5: the compare line that marks a headingless prefix (and
+        # ends a recovered summary) is the recovery template's -- the one the
+        # old body was cut under -- as resync-summary's recovery_label.
+        "carrying the recovery template's own compare line, is not a summary",
+        "the summary already ends at the recovery template's own compare line",
+        "The **recovery template** is the one the old body was cut under",
+        # Round-1 G5: the refresh choice is withheld exactly when regeneration
+        # would fail audit (resync-summary's regenerate_safe false).
+        "but only when the regenerated body would itself pass audit",
+        "otherwise never offer it",
+        "every fixable row, whatever field drifted",
+        "withheld from re-sync only when re-sync itself would stop",
+        "with clause (a)'s publishable-content test",
+        "needs CHANGELOG/template edit",
+        # Round 7 (aligned with the Claude/Codex resync-gate/resync-summary
+        # sites): the A4 gate IS the composition hard stop's test, preservation
+        # is judged under the current committed template after the stale
+        # trailer is dropped, and a discard names its line.
+        "the very test the composition hard stop applies",
+        "that is a valid body under the current committed template is preserved",
+        "the old body's own stale compare trailer dropped",
+        "states that it was discarded and which line caused it",
+        # Round 7: the restored "or" (Pi's only statement of the rule), the
+        # round-trip discard, and the honest prose-only scope.
+        "version-header line (clause (c)'s definition), or an active",
+        "would make the re-synced body drift in audit",
+        "these re-sync rules exist only as this prose",
+        # Round 8: the regenerate branch is checked too (Claude/Codex:
+        # resync-summary's regenerate_safe); Pi states it as a stop.
+        "stop instead of publishing it",
+        # Round 9: the regenerate check is judged with the summary the body
+        # will carry, stops a new release too, and gates the audit offer.
+        "judged with the summary it will carry",
+        "the same check stops a new release",
+        "keeps it (never a bare body)",
+        "plus the regenerated-body drift check",
+        # Compact-notes round 2: the refresh example states the script's exact
+        # condition (resync-summary's regenerate_safe), with an unsafe and a
+        # safe case, and clause (a) carries the publishable-bytes rule.
+        "the refresh is unsafe only when no publishable content remains after that split",
+        "(a section holding only `## What's New` and its paragraph)",
+        "a section with more after the paragraph (`### Added` items) regenerates safely",
+        "those published bytes are NUL-free valid UTF-8",
+    ):
+        assert phrase in text, phrase
+    # Round 2: a leading `## What's New` alone never made regeneration unsafe.
+    assert "over a section that opens with `## What's New`: regeneration" not in text
+    assert "reads the whole regenerated block as the summary" not in text
+    assert "or on explicit request" not in text
+    assert "the summary ends at the first blank line" not in text
+    assert "or a compare-shaped line (never publishable" not in text
+
+
 def test_fan_out_stays_undiscoverable():
     manifest = json.loads((ROOT / "package.json").read_text())
     paths = manifest["pi"]["skills"]

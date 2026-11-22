@@ -2066,7 +2066,10 @@ def test_release_marker_strip_requires_strict_bound_marker(
     assert re.search(r"regardless of whether", step_3_contract, re.IGNORECASE)
     assert "recovery-marker-ambiguous" in step_3_contract
     assert re.search(r"preserve the raw body|remains body data", step_3_contract)
-    assert "never discard the line" in step_3_contract
+    # Round 8: an ambiguous final marker is peeled into peeled_marker_line and
+    # reported, never composed into the payload -- so the old "never discard
+    # the line" wording (which contradicted the peel) is now "unreported".
+    assert "never drop the line unreported" in step_3_contract
     assert re.search(
         r"headed-summary boundary scan in item 1", step_3_contract, re.IGNORECASE
     )
@@ -2475,6 +2478,401 @@ def test_release_excluded_sections_empty_body_predicate_matches(
     assert "leave no subsection content at all" not in step3
     assert "no subsection content left to publish" not in canonical_format
     assert "no subsection content left to publish" not in step3
+
+
+# --- Compact release notes: the valid-body predicate's prose re-sync side -----
+# Moved from tests/release/test-scripts.sh's V9/V12 greps (behaviour suite) so
+# every release prose contract lives here, region-scoped. Audit classification
+# and re-sync action must stay one function of the body, so the prose re-sync
+# side must state the rules resolve-template-marker.sh runs. These pins run on
+# both mirrors; a mirror lag goes through RELEASE_LAGGING_MIRROR_OK, not a
+# per-feature flag.
+
+
+def _compact_notes_regions(skill_path: Path) -> tuple[str, str, str]:
+    """(Canonical Format, Step 3, Step A4) spans of the raw SKILL.md."""
+    text = skill_path.read_text()
+    canonical = _region_between(text, "canonical-format", "single-version-mode")
+    step_a4 = _region_between(text, "step-a4", "audit-mode-end")
+    return canonical, _step3_region(text), step_a4
+
+
+def _line_with(region: str, needle: str) -> str:
+    lines = [line for line in region.splitlines() if needle in line]
+    assert len(lines) == 1, f"expected one line carrying {needle!r}, got {len(lines)}"
+    return lines[0]
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_valid_body_defines_publishable_content_once(
+    skill_path: Path,
+) -> None:
+    """Clause (a) is the ONE definition of publishable CHANGELOG content
+    (after excluded_sections, ignoring compare-shaped lines); Step 3 item 3's
+    hard stop and Step A4's re-test name it instead of re-describing it (round
+    5: A4 omitted the compare-line half and offered a re-sync that Step 3 item
+    3 then hard-stopped on). Round 6: A4 applies it to EVERY offered row,
+    whatever field drifted (a title-only drift over a section the current
+    template empties was offered, then hard-stopped); the summary-discard rule
+    no longer applies it (a compare-shaped line is not a discard trigger); the
+    heading-bound claim names only the structural heading tests."""
+    canonical, step3, step_a4 = _compact_notes_regions(skill_path)
+    clause_a = _line_with(
+        canonical, "the CHANGELOG section has **publishable content**"
+    )
+    for needle in (
+        "after `excluded_sections` are applied, ignoring compare-shaped lines",
+        "which Step 3 item 3's hard stop and Step A4's re-test apply by name",
+        "(d) the body — summary included, read before the summary is split off",
+        "typographic apostrophe",
+        "valid body",
+        "up to 3 leading spaces (clause (c)'s heading-indentation bound",
+        "SemVer `-prerelease` and/or `+build` tail of dot-separated non-empty identifiers",
+        "`[1.2.3+.]`",
+        "shared by every structural heading test",
+        "(d)'s excluded-heading comparison is the trimmed cut-time one by design",
+    ):
+        assert needle in clause_a, needle
+    assert "summary-discard rule, Step 3 item 3's hard stop" not in clause_a
+    assert "shared by every heading test" not in clause_a
+    item3 = _line_with(step3, "**CHANGELOG section content.**")
+    assert "leading/trailing whitespace trimmed on both sides" in item3
+    assert "exactly matches" not in item3
+    assert "drop every compare-shaped" in item3
+    assert (
+        "it fails Canonical Format item 2 clause (a)'s publishable-content test"
+        in item3
+    )
+    # The hard stop is the resync-gate site's output (the function a2-classify's
+    # clause (a) runs), not a prose re-derivation of the test; the call itself is
+    # the standalone generated line the prompt-parity checker pins.
+    # Round 7 (codex): only an explicit `false` on exit 0 proceeds; a
+    # no-decision result (non-zero exit, rows null) is a stop too.
+    # Round 9: one output per path -- resync-gate's for a new release,
+    # resync-summary's (which alone sees the old body) for a re-sync.
+    assert (
+        "Decide it from `rows.stops` (`resync-gate` for a new release, "
+        "`resync-summary` for a re-sync), stopping unless it exits 0 with "
+        "`rows.stops` `false`" in item3
+    )
+    assert "Step A4 withholds a fixable row on exactly this output" in item3
+    assert "Test body emptiness, not subsection existence" not in item3
+    a4 = _line_with(
+        step_a4, "is withheld from re-sync only when re-sync itself would stop"
+    )
+    for needle in (
+        "Every fixable row, whatever field drifted",
+        "Before offering any row",
+        "current committed template",
+        # Round 7: the A4 offer gate is Step 3 item 3's own call, so the offer
+        # and the hard stop are one script output. Round 9: for a row with a
+        # release that call is resync-summary (preserve vs regenerate depends
+        # on the old body), else resync-gate.
+        "run the call Step 3 item 3 stops on for its path",
+        (
+            "`resync-summary` over A2's fetched body (run as Step 3 item 1 runs it) "
+            "when a release exists, else `--site resync-gate`"
+        ),
+        "`--head-sha <A2_HEAD_COMMIT>`",
+        "When `rows.stops` is `true`",
+        "with `rows.reason`",
+        "needs CHANGELOG/template edit",
+        "Offer it like any other fixable row only on exit 0 with `rows.stops` `false`",
+        "on any other result (non-zero exit, `rows` null) report it and withhold the row",
+    ):
+        assert needle in a4, needle
+    assert "is not repairable by re-sync" not in a4
+    assert "ignoring compare-shaped lines" not in a4
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
+    """Step 3 item 1 defines the summary-discard rule (version header or
+    excluded heading); every other mention points at it by name without
+    restating a narrower trigger, and the What's New boundary uses the shared
+    heading-indentation bound and levels 1-6.
+
+    Round 6 invariant (audit side: tests/release/test-scripts.sh V15): any
+    summary Audit accepts is recovered unchanged and kept, any summary re-sync
+    discards is one Audit flags. So the recovery boundary is Audit's split
+    (leading blank lines skipped), a compare-shaped line is not a discard
+    trigger (under label none Audit keeps it as summary prose), and a
+    headingless prefix carrying the template's own compare line is not a
+    summary (wrapped, Audit's split would end at it)."""
+    canonical, step3, _ = _compact_notes_regions(skill_path)
+    rule = _line_with(step3, "**Summary-discard rule: a recovered summary")
+    for needle in (
+        "headed or headingless",
+        "a CHANGELOG version-header line (Canonical Format item 2 clause (c))",
+        "an active `excluded_sections` heading line (clause (d))",
+        "is never reused",
+        "a compare-shaped line is not a trigger",
+        # Round 7: the boundary (levels 1-6, the shared indent bound, the
+        # blank-line boundary, leading blanks skipped, the label-parametrized
+        # compare boundary) is resync-summary's whats_new_split -- the same
+        # function as Audit's split -- pinned behaviourally by
+        # tests/release/test-scripts.sh R1/D1, so the prose names the script
+        # output instead of restating the boundary.
+        "from the `resync-summary` call below — never by re-deriving the boundary",
+        "its `summary_text` is the prose block",
+        "Audit's own What's New split (one shared function",
+        "`resync-summary` reports it as `discard` (`version-header` or `excluded-heading`)",
+        "quotes `discard_line`",
+        # Round 7: the script also discards a summary whose reuse would make
+        # the composed body audit drifted, and any summary of a body that is
+        # not NUL-free valid UTF-8 (tests/release/test-scripts.sh M1).
+        "It also reports `audit-drift`",
+        "`invalid-bytes` for a body that is not NUL-free valid UTF-8",
+        # Round 8: an empty headed summary is absent (no discard), and the
+        # confirmation's fallback when discard_line is null.
+        "an empty summary is absent, not discarded",
+        "quotes `discard_line` (or, when it is null, names the `discard` reason)",
+    ):
+        assert needle in rule, needle
+    assert "or an empty summary)" not in rule
+    assert "the next heading line (levels 1–6" not in rule
+    assert "or a compare-shaped line (never publishable" not in rule
+    assert "any `#` level" not in rule
+    # Round 7 (arch): the headingless not-a-summary rule is resync-summary
+    # code now; the prose points at the script output instead of restating it.
+    assert (
+        "whether recovered prefix bytes are a summary at all is "
+        "`resync-summary`'s decision (`summary_present`"
+    ) in step3
+    assert "prefix bytes consisting only of compare-shaped lines" not in step3
+    assert "unless Step 3 item 1's summary-discard rule discards it" in canonical
+    assert "per Step 3 item 1's summary-discard rule" in step3
+    text = skill_path.read_text()
+    for stale in (
+        "version-header rule",
+        "unless it embeds a version header",
+        "Recovery rejection takes precedence",
+    ):
+        assert stale not in text, stale
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_section_boundary_and_publishable_bytes_contract(
+    skill_path: Path,
+) -> None:
+    """Compact-notes round 2: two header predicates, one byte contract.
+
+    The CHANGELOG section boundary (A1 item 2's release-like headers, dated
+    non-SemVer ones included) and clause (c)'s version header (SemVer only)
+    are two named predicates, B a strict subset of A; the bytes Step 3
+    publishes from a section must be NUL-free valid UTF-8.
+    """
+    text = skill_path.read_text(encoding="utf-8")
+    script = (skill_path.parent / "lib/resolve-template-marker.sh").read_text(
+        encoding="utf-8"
+    )
+    item3 = _line_with(text, "3. Extract everything between that header")
+    assert "the next release header line (or EOF)" in item3
+    assert (
+        "any dated release-like `## [<raw-version>]` header A1 item 2 inventories"
+        in item3
+    )
+    assert "`## [0.9] - date`" in item3
+    assert "Clause (c)'s version header is the narrower test" in item3
+    assert "a reference definition such as `## [text]: url`" in item3
+    assert "`## [1.2.3 compatibility notes]` are section content" in item3
+    assert "next CHANGELOG version-header line (or EOF), exactly as" not in item3
+    assert (
+        "carry a NUL or are not valid UTF-8 (Canonical Format item 2 clause (a))"
+        in text
+    )
+    assert (
+        "are NUL-free valid UTF-8 — the skill's one definition of publishable" in text
+    )
+    assert "`body (CHANGELOG section not valid UTF-8 text)`" in text
+    assert "fails with `body (not valid UTF-8 text)`" in text
+    # Script: two predicates, each consumer on its own.
+    assert "function is_boundary(l," in script
+    assert "if (is_vh(l)) return 1" in script
+    assert script.count("is_boundary($0)") == 3
+    assert script.count("is_vh($0)") == 1
+    assert "\t\tis_vh($0) { f = 1; print; exit }" in script
+    # Publishable bytes: NUL maps to a never-valid byte in the publish view,
+    # and one predicate validates the published block and the composed body.
+    assert "tr '\\000' '\\377' <\"$changelog\" >\"$CHANGELOG_RAW\"" in script
+    assert 'bytes_safe "$f.bytes" || return 2' in script
+    assert 'if ! bytes_safe "$body_file"; then' in script
+    assert 'bytes_safe "$1" || return 1' in script
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
+    """Round 7 root-cause fix: the three re-sync decisions that kept drifting
+    from the audit script across rounds 4-6 (Step A4's offer gate, Step 3 item
+    1's summary boundary/discard, Step 3 item 3's preserve test) are now
+    resolve-template-marker.sh output (`resync-gate`, `resync-summary`),
+    computed by the functions a2-classify runs. Pin the call shape: the
+    missing-script guard, the site, every required flag, and which template
+    governs what; and that the script really offers both sites."""
+    text = skill_path.read_text()
+    canonical, step3, _ = _compact_notes_regions(skill_path)
+    for site, flags in (
+        (
+            "resync-summary",
+            (
+                "--repo <source top-level>",
+                "--tag <vX.Y.Z>",
+                "--body-file <file>",
+                "--peeled <file>",
+                "--head-sha <FLOW_HEAD_COMMIT>",
+                "--changelog <file>",
+                "[--headingless-summary <file>]",
+            ),
+        ),
+        (
+            "resync-gate",
+            (
+                "--repo <source top-level>",
+                "--head-sha <FLOW_HEAD_COMMIT>",
+                "--changelog <file>",
+                "--version X.Y.Z",
+            ),
+        ),
+    ):
+        # Harness-neutral: the Claude and Codex anchors differ only before
+        # `lib/resolve-template-marker.sh`.
+        call = _line_with(step3, f"--site {site} --repo <source top-level>")
+        assert re.search(rf"lib/resolve-template-marker\.sh\"? --site {site} ", call)
+        assert "release lib script missing: reinstall the skein plugin" in call
+        for flag in flags:
+            assert flag in call, (site, flag)
+    summary_call = _line_with(
+        step3,
+        "On the re-sync path run the first two calls above; on a new release, `resync-gate`.",
+    )
+    for needle in (
+        "resolves the recovery template exactly as `step3-recovery` does",
+        "uses it only to parse the old body",
+        "the current committed template at `--head-sha` governs the summary-discard rule and the valid-body test",
+        # Round 7: the round-trip invariant, the two new rows fields, the
+        # LF-normalised/byte-gated text contract and the gate's proceed rule.
+        "`peeled_marker_line`",
+        "`recovery_note`",
+        "audits `ok` under the current template",
+        "each line's trailing CR removed",
+        "not NUL-free valid UTF-8 both are null",
+        "only exit 0 with `rows.stops` `false` proceeds",
+        # Round 8: resync-summary's own no-decision rule (mirrors resync-gate's),
+        # the regenerate branch's verdict, and the peeled marker is never
+        # composed into the payload.
+        (
+            "Only exit 0 yields usable rows; any other result (exit 1 "
+            "`headingless-summary-mismatch` or `current-template-invalid`, exit 2 "
+            "such as `git-unresolvable` or `jq-unresolvable`) stops the re-sync."
+        ),
+        "`regenerate_safe`, `regenerate_reason`",
+        "preserved or regenerated block",
+        # Round 9: the peeled marker's destination and why it is dropped, the
+        # one stop output per path, the summary dimension of the regenerate
+        # verdict, and the no-bare-body rule.
+        "kept out of the content block; the re-sync writes its own marker",
+        "state both in the Step 4 confirmation",
+        "`stops`, `reason`, `summary_required`",
+        # Round 10: both branches are judged with the summary Step 3 composes.
+        "judging both branches with the summary Step 3 will compose (the reusable one, a fresh draft for a discarded one, none for an absent one)",
+        "`resync-summary`'s for an existing release, else `resync-gate`'s",
+        "When `rows.summary_required` is `true`, keep a `## What's New` summary; never offer a bare body.",
+    ):
+        assert needle in summary_call, needle
+    assert "the payload is LF throughout" not in summary_call
+    marker_para = _line_with(step3, "**Try the unmodified body first")
+    assert (
+        "is `peeled_marker_line`, reported in Step 4 and never composed into the payload"
+        in marker_para
+    )
+    assert "never discard the line" not in marker_para
+    assert "is preserved and surfaced as data" not in marker_para
+    assert "`resync-summary` it resolves" not in summary_call
+    gate_call = _line_with(step3, "--site resync-gate --repo <source top-level>")
+    summary_call_line = _line_with(
+        step3, "--site resync-summary --repo <source top-level>"
+    )
+    # Round-1 G6: Step 3 and Step A4 both run these two sites, so the one
+    # generated line names a neutral placeholder bound per flow, never Step 3's
+    # TEMPLATE_HEAD_COMMIT alone (A4 runs them at A2_HEAD_COMMIT).
+    for call_line in (gate_call, summary_call_line):
+        assert "`TEMPLATE_HEAD_COMMIT` in Step 3" in call_line
+        assert "`A2_HEAD_COMMIT` in Step A4" in call_line
+        assert "--head-sha <TEMPLATE_HEAD_COMMIT>" not in call_line
+    # Round 10: the exact composed body (a drafted or user-typed summary
+    # included) is script-checked before Step 4 confirms it, and every Step 4
+    # recomposition re-runs the check.
+    check_call = _line_with(step3, "--site body-check --repo <source top-level>")
+    for flag in (
+        "--head-sha <TEMPLATE_HEAD_COMMIT>",
+        "--changelog <file>",
+        "--tag <vX.Y.Z>",
+        "--body-file <file>",
+        "--web-base-url <WEB_BASE_URL>",
+        "[--prev <vPREV>]",
+    ):
+        assert flag in check_call, flag
+    check_para = _line_with(step3, "**Body check (blocking,")
+    for needle in (
+        "Only exit 0 with `rows.ok` `true` may reach Step 4's confirmation.",
+        "unless `rows.summary_required` is `true`",
+        "any other result stops",
+        "Step 4 re-runs it on every recomposition.",
+    ):
+        assert needle in check_para, needle
+    assert "re-run Step 3's body check over it before proceeding" in text
+    item3 = _line_with(step3, "**CHANGELOG section content.**")
+    for needle in (
+        "take the preserve decision from `resync-summary`",
+        "when `rows.preserve` is `true`",
+        "carry `rows.content_block_text` into the composed payload unchanged",
+        "naming `rows.invalid_reason` for a regenerated block",
+        # Round 8: the regenerate branch is probed; an unsafe one stops.
+        "unless `rows.regenerate_safe` is `false`: then stop and report `rows.regenerate_reason`",
+        "(only when `rows.regenerate_safe` is `true`)",
+    ):
+        assert needle in item3, needle
+    assert "Step 3 item 3 stops instead when `regenerate_safe` is `false`" in canonical
+    assert "re-sync has no script" not in canonical
+    assert (
+        "`resync-gate` runs clause (a) and the regenerate test for a new release; "
+        "`resync-summary` tests a recovered content block and the regenerate branch"
+        in canonical
+    )
+    assert (
+        "--headingless-summary <file>` so the summary-discard rule runs over it"
+        in step3
+    )
+    script = _resolve_template_marker_script(skill_path).read_text()
+    assert (
+        "a2-classify | step3-recovery | resync-gate | resync-summary | body-check)"
+        in script
+    )
+    assert script.count('section_publishable "$') >= 2
+    # Audit's checks (2)-(4) are one function a2-classify and resync-summary's
+    # composed-body audit both call.
+    assert script.count('whats_new_split "$') == 2
+    assert script.count('audit_body_checks "$') >= 2
+    # Round 8: both branches go through the one composer. Round 9: the
+    # regenerate verdict is ONE function both resync sites call, and the
+    # summary classification is one helper both resync-summary branches call.
+    # Round 10: both branches (and resync-gate) go through ONE branch_verdict
+    # with ONE summary choice (step3_summary); body-check audits the exact
+    # composed body with the same audit_current compose_audits uses.
+    assert 'branch_verdict "$REGEN" "$1"' in script
+    assert script.count('branch_verdict "$content" "$(step3_summary "$present")"') == 1
+    assert script.count('regenerate_verdict "$(step3_summary ') == 3
+    assert script.count('audit_current "$') == 2
+    assert script.count('summary_kind_of "$got.0" "$summary" "$hl"') == 2
+    # Compact-notes round 2: the regenerated block IS section_block, the one
+    # cut of the publishable bytes that clause (a)'s byte test also validates.
+    assert 'SECTION_SRC="$CHANGELOG_RAW" section "$1"' in script
+    assert 'section_block "$ver" "$excl_list" >"$1"' in script
+    assert 'section_block "$1" "$2" >"$f.bytes"' in script
+    assert 'regenerate_safe: ($rr == "")' in script
+    # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
+    assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script
+    assert "resync" in text
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
@@ -3008,6 +3406,12 @@ def test_release_jq_pin_is_conditional_on_template_presence(
     assert re.search(r"must not stop an\s+untemplated run", item_1) or (
         "must not stop an untemplated run" in item_1
     )
+    # Round 8: resync-summary needs jq on every re-sync, so a re-sync pins it
+    # (tests/release/test-scripts.sh pins the no-jq exit-2 no-decision row).
+    assert (
+        "**Re-sync exception:** `resync-summary` (Step 3 item 1) needs `jq`" in item_1
+    )
+    assert "an unresolvable `jq` stops the re-sync" in item_1
 
     # Step 2's unconditional set no longer lists jq, and says why.
     pinned = text[
@@ -3573,7 +3977,7 @@ def test_release_marker_shaped_unbound_body_is_preserved_as_explicit_drift(
     assert "successfully bind" in recovery
     assert "preserve the raw body as the unmodified candidate" in recovery
     assert "recovery-marker-ambiguous" in recovery
-    assert "never discard the line" in recovery
+    assert "never drop the line unreported" in recovery
     assert "never ... hard-stop" not in recovery
     assert "hard-stop as `recovery-template-unresolvable`" in recovery
 
@@ -4314,10 +4718,14 @@ def test_release_golden_recapture_is_descendant_of_original_capture() -> None:
     _assert_strict_ancestor(recapture, "HEAD", "golden_recapture_commit vs HEAD")
 
 
-def _last_region_rows() -> dict[str, tuple[str, int, str]]:
-    """Last appended row per `region` (any file): (file, byte_length, exempt)."""
+def _last_region_rows() -> dict[tuple[str, str], tuple[int, str]]:
+    """Last appended row per (`region`, file): (byte_length, exempt).
+
+    Keyed by file too, so a region with live prose in both SKILL.md and a
+    reference file keeps a guard on each span, and an exempt row exempts only
+    its own file's span."""
     assert _REGION_BASELINE.is_file(), f"missing {_REGION_BASELINE}"
-    rows: dict[str, tuple[str, int, str]] = {}
+    rows: dict[tuple[str, str], tuple[int, str]] = {}
     for line in _REGION_BASELINE.read_text().splitlines():
         if not line.strip() or line.startswith(("#", "region\t")):
             continue
@@ -4325,7 +4733,7 @@ def _last_region_rows() -> dict[str, tuple[str, int, str]]:
         assert len(cells) in (3, 4), f"malformed region-length row: {line!r}"
         region, file, length = cells[0], cells[1], cells[2]
         exempt = cells[3] if len(cells) == 4 else ""
-        rows[region] = (file, int(length), exempt)
+        rows[(region, file)] = (int(length), exempt)
     assert rows, "region-length baseline has no rows"
     return rows
 
@@ -4353,6 +4761,24 @@ def _measured_region_length(file: str, region: str) -> int:
     return len(text[begin:end].encode())
 
 
+def test_release_region_baseline_guards_each_file_span() -> None:
+    """Review-gauntlet round 5: rows keyed by region alone let the appended
+    SKILL.md canonical-format row silently drop the guard on the reference
+    span. Every region spliced from a reference file keeps a non-exempt row
+    for that reference span, and canonical-format (live prose in SKILL.md
+    too, not just a pointer) also keeps one for its SKILL.md span."""
+    rows = _last_region_rows()
+    release = "plugins/skein/skills/release/"
+    keys = [("canonical-format", release + "SKILL.md")]
+    keys += [
+        (region, release + "references/" + ref_name)
+        for region, _needle, ref_name, _section in _REFERENCE_SPLICES
+    ]
+    for key in keys:
+        assert key in rows, f"no baseline row for {key}"
+        assert not rows[key][1], f"{key} is exempt; its span is unguarded"
+
+
 @pytest.mark.parametrize("mirror", ["plugins/skein/", "plugins/skein-codex/"])
 def test_release_regions_stay_within_tolerance_of_last_baseline_row(
     mirror: str,
@@ -4360,7 +4786,7 @@ def test_release_regions_stay_within_tolerance_of_last_baseline_row(
     if mirror.endswith("skein-codex/") and "release-skill-md" in _RELEASE_LAGGING_ACK:
         pytest.skip("release-skill-md lag acknowledged via RELEASE_LAGGING_MIRROR_OK")
     failures: list[str] = []
-    for region, (file, baseline, exempt) in _last_region_rows().items():
+    for (region, file), (baseline, exempt) in _last_region_rows().items():
         if exempt:
             continue
         mirrored = file.replace("plugins/skein/", mirror, 1)
