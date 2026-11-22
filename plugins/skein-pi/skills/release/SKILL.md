@@ -80,7 +80,9 @@ that is a valid body under the current committed template is preserved, never
 expanded; an invalid one is regenerated from the CHANGELOG
 section automatically and the confirmation states that it was; the
 confirmation also offers an explicit "refresh content from CHANGELOG" choice
-that regenerates a valid block. A recovered summary, headed or headingless,
+that regenerates a valid block. If the regenerated body would itself drift in
+audit (for example a section that opens with `## What's New` under
+`whats_new: false`), stop instead of publishing it. A recovered summary, headed or headingless,
 that contains a CHANGELOG version-header line (clause (c)'s definition), or an
 active `excluded_sections` heading line (clause (d)) is never reused (audit
 flags both wherever they sit; a compare-shaped line is not a trigger: the

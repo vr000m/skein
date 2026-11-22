@@ -106,6 +106,10 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "version-header line (clause (c)'s definition), or an active",
         "would make the re-synced body drift in audit",
         "these re-sync rules exist only as this prose",
+        # Round 8: the regenerate branch is checked too (Claude/Codex:
+        # resync-summary's regenerate_safe); Pi states it as a stop.
+        "If the regenerated body would itself drift in audit",
+        "stop instead of publishing it",
     ):
         assert phrase in text, phrase
     assert "or on explicit request" not in text
