@@ -2724,7 +2724,8 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         "kept out of the content block; the re-sync writes its own marker",
         "state both in the Step 4 confirmation",
         "`stops`, `reason`, `summary_required`",
-        "judging regeneration with the summary Step 3 will compose (a fresh draft for a discarded one)",
+        # Round 10: both branches are judged with the summary Step 3 composes.
+        "judging both branches with the summary Step 3 will compose (the reusable one, a fresh draft for a discarded one, none for an absent one)",
         "`resync-summary`'s for an existing release, else `resync-gate`'s",
         "When `rows.summary_required` is `true`, keep a `## What's New` summary; never offer a bare body.",
     ):
@@ -2740,6 +2741,28 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     assert "`resync-summary` it resolves" not in summary_call
     gate_call = _line_with(step3, "--site resync-gate --repo <source top-level>")
     assert "`A2_HEAD_COMMIT` in Step A4" in gate_call
+    # Round 10: the exact composed body (a drafted or user-typed summary
+    # included) is script-checked before Step 4 confirms it, and every Step 4
+    # recomposition re-runs the check.
+    check_call = _line_with(step3, "--site body-check --repo <source top-level>")
+    for flag in (
+        "--head-sha <TEMPLATE_HEAD_COMMIT>",
+        "--changelog <file>",
+        "--tag <vX.Y.Z>",
+        "--body-file <file>",
+        "--web-base-url <WEB_BASE_URL>",
+        "[--prev <vPREV>]",
+    ):
+        assert flag in check_call, flag
+    check_para = _line_with(step3, "**Body check (blocking,")
+    for needle in (
+        "Only exit 0 with `rows.ok` `true` may reach Step 4's confirmation.",
+        "unless `rows.summary_required` is `true`",
+        "any other result stops",
+        "Step 4 re-runs it on every recomposition.",
+    ):
+        assert needle in check_para, needle
+    assert "re-run Step 3's body check over it before proceeding" in text
     item3 = _line_with(step3, "**CHANGELOG section content.**")
     for needle in (
         "take the preserve decision from `resync-summary`",
@@ -2763,7 +2786,10 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         in step3
     )
     script = _resolve_template_marker_script(skill_path).read_text()
-    assert "a2-classify | step3-recovery | resync-gate | resync-summary)" in script
+    assert (
+        "a2-classify | step3-recovery | resync-gate | resync-summary | body-check)"
+        in script
+    )
     assert script.count('section_publishable "$') >= 2
     # Audit's checks (2)-(4) are one function a2-classify and resync-summary's
     # composed-body audit both call.
@@ -2772,9 +2798,13 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     # Round 8: both branches go through the one composer. Round 9: the
     # regenerate verdict is ONE function both resync sites call, and the
     # summary classification is one helper both resync-summary branches call.
-    assert 'compose_audits "$s" "$REGEN"' in script
-    assert script.count("regenerate_verdict 1") == 1
-    assert script.count('regenerate_verdict "$(') == 2
+    # Round 10: both branches (and resync-gate) go through ONE branch_verdict
+    # with ONE summary choice (step3_summary); body-check audits the exact
+    # composed body with the same audit_current compose_audits uses.
+    assert 'branch_verdict "$REGEN" "$1"' in script
+    assert script.count('branch_verdict "$content" "$(step3_summary "$present")"') == 1
+    assert script.count('regenerate_verdict "$(step3_summary ') == 3
+    assert script.count('audit_current "$') == 2
     assert script.count('summary_kind_of "$got.0" "$summary" "$hl"') == 2
     assert 'SECTION_SRC="$changelog" section "$ver"' in script
     assert 'regenerate_safe: ($rr == "")' in script

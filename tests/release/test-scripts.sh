@@ -1285,6 +1285,17 @@ printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- First.\n<!-- release-templat
 [[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-empty.md" "$FIX/untemplated/peeled-commits.json" "$TMP/rs-cr-cl.md" | jq -r '[.rows.regenerate_safe, .rows.stops] | map(tostring) | join("|")')" == "true|false" ]] &&
 	pass "resync-summary: the regenerate probe strips one CR, as Audit does" ||
 	bad "resync-summary: the regenerate probe normalised the CHANGELOG twice"
+# Round 10. (h) The PRESERVE branch is judged with the summary Step 3 composes
+# too (one branch_verdict for both branches): a discarded summary is redrafted,
+# and the draft keeps a block-opening `## What's New` stanza as content where a
+# bare body would consume it as the summary (audit: body (empty)). So the block
+# is preserved, a summary is required, and -- with a section whose regenerated
+# block is unsafe (a marker-shaped line) -- the re-sync does not stop.
+printf "## What's New\nOld.\n    ### Internal\n\n## What's New\nOverview.\n" >"$TMP/rs-f1.md"
+printf '# Changelog\n\n## [1.0.0] - 2026-01-01\n\n- First.\n<!-- release-template-sha: x -->\n- Last.\n' >"$TMP/rs-f1-cl.md"
+[[ "$(rsum_run fcl v1.0.0 "$TMP/rs-f1.md" "$FXL/peeled.json" "$TMP/rs-f1-cl.md" | jq -r '[.rows.discard, .rows.preserve, .rows.regenerate_safe, .rows.summary_required, .rows.stops, .rows.content_block_text] | map(tostring) | join("|")')" == $'excluded-heading|true|false|true|false|## What\'s New\nOverview.' ]] &&
+	pass "resync-summary: the preserve branch is judged with the redrafted summary" ||
+	bad "resync-summary: preserve verdict ignored the redrafted summary"
 # (e) Precondition contract: resync-summary always needs the pinned jq, so
 # SKILL.md pins jq for every re-sync (templated or not). An untemplated
 # re-sync with RELEASE_JQ unset is the no-decision state: exit 2,
@@ -1396,9 +1407,17 @@ printf 'Intro.\n**Full diff:** see below\n' >"$TMP/rs-hla-prefix.txt"
 # branch once called an empty headed summary present): each case's
 # summary_present must equal that of the same body with the bad bytes replaced
 # by a plain `x` (the clean twin), and a present one is discarded.
-for bytes_case in nul ff c080 ffempty nulempty; do
+# Round 10: BSD awk drops a line's bytes from a NUL on, so the classification
+# reads a NUL-mapped copy; nullead/nulmid/nulhead/nulh3 put the NUL at the
+# start of a summary line, mid-summary-line, inside the What's New heading and
+# inside a content heading (the older cases put it inside a bullet).
+for bytes_case in nul ff c080 ffempty nulempty nullead nulmid nulhead nulh3; do
 	case "$bytes_case" in
 	nul) fmt='### Added\n\n- before%safter\n' bb='\000' ;;
+	nullead) fmt="## What's New\n%sFirst.\n\n### Added\n\n- Item.\n" bb='\000' ;;
+	nulmid) fmt="## What's New\nFir%sst.\n\n### Added\n\n- Item.\n" bb='\000' ;;
+	nulhead) fmt="## What's%s New\nFirst.\n\n### Added\n\n- Item.\n" bb='\000' ;;
+	nulh3) fmt="## What's New\nFirst.\n### Add%sed\n\n- Item.\n" bb='\000' ;;
 	ff) fmt="## What's New\nSum%smary.\n\n### Added\n\n- First.\n" bb='\377' ;;
 	c080) fmt='### Added\n\n- %s overlong.\n' bb='\300\200' ;;
 	ffempty) fmt="## What's New\n\n### Added\n\n- %s.\n" bb='\377' ;;
@@ -1419,6 +1438,14 @@ done
 [[ "$(printf "## What's New\n\n### Added\n\n- \377.\n" >"$TMP/rs-bytes.md" && rsum_run untemplated v0.1.0 "$TMP/rs-bytes.md" "$FIX/untemplated/peeled-commits.json" "$FIX/untemplated/CHANGELOG.md" | jq -r '[.rows.summary_present, .rows.discard] | map(tostring) | join("|")')" == "false|null" ]] &&
 	pass "resync-summary: an empty headed summary is absent in the byte-failure branch too" ||
 	bad "resync-summary: byte-failure branch reports an empty headed summary as present"
+# The NUL-led summary over a What's New-only section: detected, so the
+# regenerated block is judged with a fresh draft and the re-sync proceeds with
+# a required summary (round 10: the NUL once hid the summary and stopped it).
+printf "## What's New\n\000First.\n\n### Added\n\n- Item.\n" >"$TMP/rs-bytes.md"
+printf "# Changelog\n\n## [0.1.0] - 2026-01-01\n\n## What's New\nOverview.\n" >"$TMP/rs-bytes-cl.md"
+[[ "$(rsum_run untemplated v0.1.0 "$TMP/rs-bytes.md" "$FIX/untemplated/peeled-commits.json" "$TMP/rs-bytes-cl.md" | jq -r '[.rows.summary_present, .rows.discard, .rows.regenerate_safe, .rows.summary_required, .rows.stops] | map(tostring) | join("|")')" == "true|invalid-bytes|true|true|false" ]] &&
+	pass "resync-summary: a NUL-led summary is detected and redrafted, not a stop" ||
+	bad "resync-summary: a NUL-led summary was lost to the line tools"
 # Valid multibyte UTF-8 and a mid-line CR pass through byte-exactly; a trailing
 # CR per line is removed (the documented LF-normalised contract, codex finding
 # on CRLF): the preserved block is what Step 4 shows and Step 6 publishes.
@@ -1449,6 +1476,74 @@ TMPDIR="$TMP/not-a-dir" RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/reso
 expect_code "resync-gate with an unusable TMPDIR is an environment failure" 2 $?
 [[ "$(jq -r '[.rows, .failed_gate] | map(tostring) | join("|")' "$TMP/gate-nd.out")" == "null|tmpdir" ]] &&
 	pass "resync-gate: no decision means rows null" || bad "resync-gate no-decision shape: $(cat "$TMP/gate-nd.out")"
+
+# B1 (round 10): body-check audits the EXACT composed body Step 4 confirms --
+# including a summary the user typed in place of the draft, which the verdicts
+# above only approximate with a representative paragraph. Differential: on
+# every row body-check's ok == a2-classify's ok for the same body (title kept
+# canonical so only the body checks decide), and a failure reason is a2's note.
+bc_run() { # repo-case tag body-file changelog [prev]
+	local extra=()
+	[[ -n "${5-}" ]] && extra=(--prev "$5")
+	RELEASE_JQ="$JQ_REAL" RELEASE_GIT="$GIT_REAL" "$LIB/resolve-template-marker.sh" --site body-check \
+		--repo "$TMP/repo-$1" --head-sha "$(repo_head "$1")" --changelog "$4" --tag "$2" \
+		--body-file "$3" --web-base-url "$WEB" ${extra[@]+"${extra[@]}"} 2>/dev/null
+}
+fcl_head_marker="<!-- release-template-sha: $("$GIT_REAL" -C "$TMP/repo-fcl" rev-parse HEAD:.release-template.json) -->"
+printf '[{"tagName":"v1.0.0","name":"%s v1.0.0 — Highlight"}]\n' "${WEB##*/}" >"$TMP/bc-list-fcl.json"
+printf '[{"tagName":"v0.2.0","name":"%s v0.2.0 — Highlight"}]\n' "${WEB##*/}" >"$TMP/bc-list-un.json"
+printf "# Changelog\n\n## [1.0.0] - 2026-01-01\n\n## What's New\nOverview.\n" >"$TMP/bc-cl-fcl.md"
+printf "# Changelog\n\n## [0.2.0] - 2026-02-01\n\n## What's New\nOverview.\n\n## [0.1.0] - 2026-01-01\n\n- First.\n" >"$TMP/bc-cl-un.md"
+# Rows: name|repo-case|summary-printf ("" = bare body)|want-ok. Bodies are
+# composed as Step 3 composes them: summary, the regenerated block (the section
+# `## What's New\nOverview.`), the trailer (untemplated: Full diff at PREV
+# v0.1.0; fcl: label Full changelog, no PREV for v1.0.0), the current marker.
+while IFS='|' read -r name c sfmt want; do
+	{
+		# shellcheck disable=SC2059
+		[[ -z "$sfmt" ]] || printf -- "## What's New\n$sfmt\n\n"
+		printf "## What's New\nOverview.\n"
+		if [[ "$c" == untemplated ]]; then
+			printf '\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n' "$WEB"
+		else
+			printf '\n%s\n' "$fcl_head_marker"
+		fi
+	} >"$TMP/bc-body.md"
+	rm -rf "$TMP/bc-bodies" && mkdir -p "$TMP/bc-bodies"
+	if [[ "$c" == untemplated ]]; then
+		got="$(bc_run untemplated v0.2.0 "$TMP/bc-body.md" "$TMP/bc-cl-un.md" v0.1.0 | jq -r '[.rows.ok, (.rows.reason // "")] | map(tostring) | join("|")')"
+		cp "$TMP/bc-body.md" "$TMP/bc-bodies/v0.2.0.md"
+		a2="$(note_of "$(a2_run untemplated "$TMP/bc-list-un.json" "$TMP/bc-bodies" "$FIX/untemplated/peeled-commits.json" "$TMP/bc-cl-un.md")" 0.2.0)"
+	else
+		got="$(bc_run fcl v1.0.0 "$TMP/bc-body.md" "$TMP/bc-cl-fcl.md" | jq -r '[.rows.ok, (.rows.reason // "")] | map(tostring) | join("|")')"
+		cp "$TMP/bc-body.md" "$TMP/bc-bodies/v1.0.0.md"
+		a2="$(note_of "$(a2_run fcl "$TMP/bc-list-fcl.json" "$TMP/bc-bodies" "$FXL/peeled.json" "$TMP/bc-cl-fcl.md" "" "$FXX/tags.json")" 1.0.0)"
+	fi
+	a2ok=false
+	[[ "$a2" == "ok|" ]] && a2ok=true
+	[[ "${got%%|*}" == "$want" ]] && pass "body-check: $name -> ok=$want" || bad "body-check: $name expected ok=$want, got '$got'"
+	[[ "${got%%|*}" == "$a2ok" && ("$a2ok" == true || "${got#*|}" == "${a2#drifted|}") ]] &&
+		pass "body-check == a2-classify: $name" || bad "body-check disagrees with a2-classify: $name (body-check '$got', a2 '$a2')"
+done <<'EOB'
+user summary opening with the Full diff label (the review repro)|untemplated|**Full diff:** The parser now emits offsets.|false
+plain user summary|untemplated|The parser now emits offsets.|true
+bare body over a What's New-only section|untemplated||false
+user summary with a version header|untemplated|Notes.\n## [0.0.9] - 2025-01-01|false
+user summary opening with the Full changelog label|fcl|**Full changelog:** The parser now emits offsets.|false
+plain user summary, templated|fcl|The parser now emits offsets.|true
+user summary carrying an excluded heading|fcl|Notes.\n    ### Internal|false
+EOB
+# Marker rules (not a2-differential: a2 would fall back to the current template
+# for a markerless body): a templated body must carry the bound current marker,
+# an untemplated one no marker-shaped line.
+printf "## What's New\nThe parser now emits offsets.\n\n## What's New\nOverview.\n" >"$TMP/bc-nomk.md"
+[[ "$(bc_run fcl v1.0.0 "$TMP/bc-nomk.md" "$TMP/bc-cl-fcl.md" | jq -r '[.rows.ok, .rows.reason] | map(tostring) | join("|")')" == "false|template marker (missing)" ]] &&
+	pass "body-check: a templated body without the current marker fails" || bad "body-check: missing marker accepted"
+printf "## What's New\nOverview.\n\n**Full diff:** %s/compare/v0.1.0...v0.2.0\n\n%s\n" "$WEB" "$fcl_head_marker" >"$TMP/bc-mk.md"
+[[ "$(bc_run untemplated v0.2.0 "$TMP/bc-mk.md" "$TMP/bc-cl-un.md" v0.1.0 | jq -r '.rows.ok')" == false ]] &&
+	pass "body-check: a marker in an untemplated body fails" || bad "body-check: marker in an untemplated body accepted"
+bc_run untemplated 0.2.0 "$TMP/bc-mk.md" "$TMP/bc-cl-un.md" >/dev/null
+expect_code "body-check rejects a non-strict --tag" 2 $?
 
 # M1 -- THE RE-SYNC ROUND TRIP (Guardrail 8 whole-space test). Invariant: the
 # body a re-sync publishes on EITHER branch, composed from resync-summary's
@@ -1516,8 +1611,12 @@ m1_sec=(
 	$'### Added\n\n- Item.\n\n**Full diff:** https://x/compare/a...b\n\n### Internal\n\n- Plumbing.'
 	$'- First.\n<!-- release-template-sha: bad -->\r\r\n- Last.'
 	$'## What\'s New\nOverview.'
+	$'### Added\n\n- Item.'
 )
-m1_sec_old=("" "" "" "## What's New\nOld.\n    ### Internal")
+# The last pair (round 10): an old body whose discarded summary precedes a
+# block opening with a `## What's New` stanza -- preservable only with the
+# redrafted summary Step 3 composes (the preserve verdict's summary dimension).
+m1_sec_old=("" "" "" "## What's New\nOld.\n    ### Internal" "## What's New\nOld.\n    ### Internal\n\n## What's New\nOverview.")
 # The summary Step 3 drafts in place of a discarded one (a different text from
 # the script's own probe paragraph, on purpose).
 M1_DRAFT="Updates the parser."
@@ -1793,5 +1892,14 @@ m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows notpl
 [[ "$m1_wn" == "none=true,true,false fd=true,true,false fc=true,true,false nonewt=true,true,false fdwt=true,true,false fcwt=true,true,false nonewf=false,false,true fdwf=false,false,true fcwf=false,false,true notpl=true,true,false " ]] &&
 	pass "M1 cell: a redrafted summary is part of the regenerate verdict" ||
 	bad "M1 cell: redrafted-summary regenerate verdict: $m1_wn"
+# Round 10: the same redraft is part of the PRESERVE verdict. The block opening
+# with a `## What's New` stanza is preserved (summary required) wherever Step 3
+# composes a summary -- a redraft under an excluding template, the reused
+# summary without one -- and not under whats_new:false (no summary: the stanza
+# would be read as one).
+m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows notpl "$m1_c" $((m1_base + 10)) | jq -r '[.rows.preserve, .rows.summary_required] | map(tostring) | join(",")')"; done)"
+[[ "$m1_wn" == "none=true,true fd=true,true fc=true,true nonewt=true,true fdwt=true,true fcwt=true,true nonewf=false,false fdwf=false,false fcwf=false,false notpl=true,true " ]] &&
+	pass "M1 cell: a redrafted summary is part of the preserve verdict" ||
+	bad "M1 cell: redrafted-summary preserve verdict: $m1_wn"
 
 exit "$fail"
