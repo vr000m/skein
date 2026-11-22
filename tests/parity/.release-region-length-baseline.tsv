@@ -116,3 +116,14 @@ step-a4	plugins/skein/skills/release/SKILL.md	5745
 # en dash or end of line) as the one boundary and states that a link heading
 # is content. The Codex mirror ports the same text.
 step-1-item-1	plugins/skein/skills/release/SKILL.md	2295	
+# Compact-notes review-gauntlet round 2: round 1 made clause (c)'s SemVer-only
+# version header the section boundary too, so a dated non-SemVer release header
+# (`## [0.9] - date`) no longer ended an empty section. Step 1 item 3 now names
+# two predicates -- the boundary (clause (c)'s header OR any dated release-like
+# header A1 item 2 inventories) and clause (c)'s narrower test -- and lists the
+# lines that stay content; item 4 adds the publishable-bytes stop. Canonical
+# Format clause (a) gains the NUL-free valid UTF-8 rule for the bytes Step 3
+# publishes and its audit note, and A2's note list names it. The Codex mirror
+# ports the same text.
+canonical-format	plugins/skein/skills/release/SKILL.md	8703
+step-1-item-1	plugins/skein/skills/release/SKILL.md	3051

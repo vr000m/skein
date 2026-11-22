@@ -124,8 +124,18 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "the same check stops a new release",
         "keeps it (never a bare body)",
         "plus the regenerated-body drift check",
+        # Compact-notes round 2: the refresh example states the script's exact
+        # condition (resync-summary's regenerate_safe), with an unsafe and a
+        # safe case, and clause (a) carries the publishable-bytes rule.
+        "the refresh is unsafe only when no publishable content remains after that split",
+        "(a section holding only `## What's New` and its paragraph)",
+        "a section with more after the paragraph (`### Added` items) regenerates safely",
+        "those published bytes are NUL-free valid UTF-8",
     ):
         assert phrase in text, phrase
+    # Round 2: a leading `## What's New` alone never made regeneration unsafe.
+    assert "over a section that opens with `## What's New`: regeneration" not in text
+    assert "reads the whole regenerated block as the summary" not in text
     assert "or on explicit request" not in text
     assert "the summary ends at the first blank line" not in text
     assert "or a compare-shaped line (never publishable" not in text

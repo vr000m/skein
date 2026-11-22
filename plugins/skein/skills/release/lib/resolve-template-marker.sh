@@ -69,7 +69,9 @@
 #     Emits rows = {ok, reason}: does the EXACT composed body Step 4 shows
 #       (summary as drafted or overridden, block, trailer, marker) audit `ok`
 #       under the current template (a2-classify's marker resolution and body
-#       checks (2)-(4), at the real PREV)? Step 3 runs it on every composed or
+#       checks (2)-(4), at the real PREV)? A body carrying a NUL or an invalid
+#       UTF-8 byte is ok:false (`body (not valid UTF-8 text)`) before any
+#       classification: it is the publish payload. Step 3 runs it on every composed or
 #       recomposed body; only exit 0 with rows.ok == true lets Step 4 confirm.
 #   --head-sha is REQUIRED at every site: the caller resolves HEAD once
 #     (SKILL.md's single-resolution rule) and passes the literal SHA in; this
@@ -457,19 +459,25 @@ fi
 # normalized. A function (called once by every site that reads the CHANGELOG:
 # a2-classify, resync-gate, resync-summary) rather than top-level code, so the
 # helpers below stay side-effect-free definitions every site can share.
-# CHANGELOG_RAW is the same bytes with NUL mapped but every CR kept (the
-# section bytes Step 3 copies verbatim; regen_block reads it), so both CHANGELOG
-# readers see NUL as normalise_body maps it.
+# CHANGELOG_RAW is the PUBLISHABLE-bytes view: every CR kept (the section bytes
+# Step 3 copies verbatim; section_block reads it) and each NUL mapped to \377,
+# a byte that is never valid UTF-8, so bytes_safe over a block cut from it fails
+# exactly when the real section bytes carry a NUL or an invalid UTF-8 byte
+# (no line tool here is NUL-safe, so the NUL itself cannot be carried). Two
+# views, two concepts: CHANGELOG_LF (NUL as normalise_body's \001) CLASSIFIES
+# the section's lines, CHANGELOG_RAW VALIDATES the bytes Step 3 publishes. Both
+# map NUL to a non-space, non-structural byte, so every boundary agrees.
 CHANGELOG_LF="$tmp/changelog-lf.txt"
 CHANGELOG_RAW="$tmp/changelog-raw.txt"
 normalise_changelog() {
 	normalise_body "$changelog" "$CHANGELOG_LF"
-	tr '\000' '\001' <"$changelog" >"$CHANGELOG_RAW"
+	tr '\000' '\377' <"$changelog" >"$CHANGELOG_RAW"
 }
 # SECTION_SRC — the file section_exact/section_tolerant read: CHANGELOG_LF for
 # every comparison, but CHANGELOG_RAW (CRs kept) when building the block Step 3
-# item 3 publishes (it copies the section's bytes verbatim, CRs included), so the
-# regenerate probe normalises those bytes exactly once, as a2-classify will.
+# item 3 publishes (section_block: it copies the section's bytes verbatim, CRs
+# included), so the regenerate probe normalises those bytes exactly once, as
+# a2-classify will, and bytes_safe validates exactly the published bytes.
 # The boundaries are identical either way: every header test ignores a
 # trailing CR (index prefix, squash, start-anchored regex).
 SECTION_SRC=""
@@ -489,28 +497,43 @@ HEADING_INDENT_RE='^ ? ? ?'
 # optional ones, not `#+` (7+ hashes is paragraph text) and not an interval
 # expression (not every awk supports one).
 HEADING_START_RE="${HEADING_INDENT_RE}##?#?#?#?#?([[:space:]]|\$)"
-# VERSION_HEADER_START_RE is is_vh's first stage only: a line that opens like a
-# `## [` header modulo whitespace (`    ## [0.0.1] example` stays content).
-# Bracket expressions, not `\[`, so the text survives an awk `-v` value's
-# escape processing. Never a boundary on its own: a Markdown link heading such
-# as `  ## [Migration guide](guide.md)` opens the same way and is content.
+# VERSION_HEADER_START_RE is the shared first stage of both header predicates
+# below: a line that opens like a `## [` header modulo whitespace
+# (`    ## [0.0.1] example` stays content). Bracket expressions, not `\[`, so
+# the text survives an awk `-v` value's escape processing. Never a boundary on
+# its own: a Markdown link heading such as `  ## [Migration guide](guide.md)`
+# opens the same way and is content.
 VERSION_HEADER_START_RE="${HEADING_INDENT_RE}##[[:space:]]*[[]"
-# VH_AWK -- THE ONE CHANGELOG version-header predicate, is_vh(line), shared as an
-# awk function prefix by every reader that asks "is this a version header": the
-# section start/end of section_exact and section_tolerant, clause (c)'s
-# has_version_header, and the What's New split's boundary. Two stages: the line
-# opens like a header (VERSION_HEADER_START_RE), then the whitespace-squashed
-# line reads `##[X.Y.Z]` (optionally a SemVer `-prerelease` and/or `+build`
-# tail, each a dot-separated run of NON-EMPTY [0-9A-Za-z-] identifiers, so
-# `[1.2.3-]`, `[1.2.3+.]` and `[1.2.3-rc..1]` are not versions) or
-# `##[Unreleased]`, followed by a hyphen, an en dash, or end of line. A link
-# heading such as `## [Migration guide](guide.md)` or `## [1.2.3](guide.md)`,
-# and a heading that merely starts with a version (`## [1.2.3 compatibility
-# notes]`), is not a version header -- so it neither ends a section nor is
-# flagged by clause (c): a predicate split between "any `## [` line" (the
-# boundary) and this test (clause (c)) let a link heading inside a section end
-# the extraction, and audit then reported a publishable section as missing.
-# Every awk program that uses it takes VH_AWK_ARGS.
+# VH_AWK -- the CHANGELOG's TWO header predicates, shared as one awk function
+# prefix. They answer two different questions, so they are two functions:
+#
+#   is_vh(line)       -- (B) clause (c)'s VERSION HEADER, deliberately narrow:
+#     after the first stage, the whitespace-squashed line reads `##[X.Y.Z]`
+#     (optionally a SemVer `-prerelease` and/or `+build` tail, each a
+#     dot-separated run of NON-EMPTY [0-9A-Za-z-] identifiers, so `[1.2.3-]`,
+#     `[1.2.3+.]` and `[1.2.3-rc..1]` are not versions) or `##[Unreleased]`,
+#     then a hyphen, an en dash or end of line. A body line that is one is an
+#     embedded CHANGELOG header (has_version_header; the summary discard).
+#   is_boundary(line) -- (A) the SECTION BOUNDARY, the release-like header that
+#     ends the current release's notes, matching SKILL.md A1 item 2's inventory
+#     of `## [<raw-version>]` release headers: is_vh, OR (first stage, then)
+#     the squashed line reads `##[<text>]` with a non-empty <text> and a hyphen
+#     or en dash right after the bracket -- a DATED release header whatever its
+#     version text (`## [0.9] - date`, `## [v0.9.0] - date`, `## [0.9.0.1] -
+#     date`: malformed, reported by A1.4, but still the next release's header).
+#     Used by section_exact, section_tolerant and the What's New split.
+#
+# Relationship: B is a strict subset of A; they differ only on a dated header
+# whose bracketed text is not SemVer/Unreleased (A yes, B no). Neither accepts
+# a link heading (`## [Migration guide](guide.md)`, `## [1.2.3](guide.md)`), a
+# reference definition (`## [text]: url`), an undated non-version bracket
+# heading (`## [1.2.3 compatibility notes]`), an empty `## []`/`## [`, or a
+# line indented 4+ spaces or by a tab: those are section content. Why two:
+# extracting with B let an empty section absorb the next release's notes under
+# a dated non-SemVer header; extracting with "any `## [` line" let a link
+# heading cut a section short; flagging with A would make clause (c) reject a
+# body for a `## [1.2.3 compatibility notes] - x` style line it does not name.
+# Every awk program that uses them takes VH_AWK_ARGS.
 VH_AWK='function squash(s) { gsub(/[[:space:]]/, "", s); return s }
 function is_vh(l,   s, rest) {
 	if (l !~ vhs) return 0
@@ -518,6 +541,15 @@ function is_vh(l,   s, rest) {
 	if (!match(s, /^##\[([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|Unreleased)\]/)) return 0
 	rest = substr(s, RLENGTH + 1)
 	return rest == "" || substr(rest, 1, 1) == "-" || index(rest, vhed) == 1
+}
+function is_boundary(l,   s, j, rest) {
+	if (is_vh(l)) return 1
+	if (l !~ vhs) return 0
+	s = substr(squash(l), 4)
+	j = index(s, "]")
+	if (j < 2) return 0
+	rest = substr(s, j + 1)
+	return substr(rest, 1, 1) == "-" || index(rest, vhed) == 1
 }'
 VH_AWK_ARGS=(-v "vhs=$VERSION_HEADER_START_RE" -v "vhed=$(printf '\xe2\x80\x93')")
 # section <version> — the CHANGELOG section body (header stripped), edges
@@ -538,14 +570,14 @@ section() {
 # unrelated trailing text — match here and start extraction from the wrong
 # place; the documented tolerant retry below (whitespace/punctuation drift
 # only, SKILL.md Step 1 item 5) is the sole sanctioned fallback for anything
-# looser than this exact shape. The section ENDS at any version header (is_vh,
-# the one predicate section_tolerant also uses), not only a single-space
-# `## [`: a strict start with a narrower end let an empty section swallow a
-# following `##  [1.0.0]  –  date` release's header and notes.
+# looser than this exact shape. The section ENDS at any section boundary
+# (is_boundary, the one predicate section_tolerant also uses), not only a
+# single-space `## [`: a strict start with a narrower end let an empty section
+# swallow a following `##  [1.0.0]  –  date` release's header and notes.
 section_exact() {
 	awk -v want="## [$1] - " "${VH_AWK_ARGS[@]}" "$VH_AWK"'
 		index($0, want) == 1 { on = 1; next }
-		is_vh($0) { on = 0 }
+		is_boundary($0) { on = 0 }
 		on { print }
 	' "${SECTION_SRC:-$CHANGELOG_LF}" | trim_edges
 }
@@ -558,7 +590,7 @@ section_exact() {
 # just one fallback stage later.
 section_tolerant() {
 	awk -v h="##[$1]-" -v e="##[$1]$(printf '\xe2\x80\x93')" "${VH_AWK_ARGS[@]}" "$VH_AWK"'
-		is_vh($0) {
+		is_boundary($0) {
 			s = squash($0)
 			on = (index(s, h) == 1) || (index(s, e) == 1)
 			next
@@ -636,8 +668,9 @@ has_content() {
 # Nothing wider: `## What was New` is content. ONE pattern feeds the summary
 # split, has_summary and so check (4).
 WHATS_NEW_RE="$HEADING_INDENT_RE"$'##[[:space:]]+What(\'|\xe2\x80\x99|\xe2\x80\x98)s[[:space:]]+New[[:space:]]*$'
-# has_version_header <file> — does the file carry a CHANGELOG version-header
-# line (is_vh, the ONE predicate the section extractors also end on)? Single
+# has_version_header <file> — clause (c): does the file carry a CHANGELOG
+# version-header line (is_vh, predicate B -- the narrow subset of the section
+# boundary is_boundary; see VH_AWK)? Single
 # awk pass over the file: no pipe, so no SIGPIPE. Prints the first matching
 # line (raw) on stdout, like has_excluded_heading.
 has_version_header() {
@@ -646,18 +679,77 @@ has_version_header() {
 		END { exit !f }
 	' "$1"
 }
+# bytes_safe <file> — THE byte-safety predicate for bytes this skill
+# PUBLISHES: NUL-free, valid UTF-8 (the scalar ranges editorial-preflight.sh,
+# Step 4's checker, accepts: no overlong form, no surrogate, nothing past
+# U+10FFFF). jq-free on purpose: resync-gate and body-check run in an
+# untemplated repo without jq. Every step reads a file (tr/cmp, then bash
+# `read` only after NUL is ruled out), never a pipe into an early-exiting
+# reader. A file of only ASCII bytes takes the tr/cmp fast path.
+UTF8_HIGH=$'[\x80-\xff]'
+utf8_line_ok() {
+	local v="$1"
+	# shellcheck disable=SC2053
+	[[ "$v" == *$UTF8_HIGH* ]] || return 0
+	v=${v//$'\xe0'[$'\xa0'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//$'\xed'[$'\x80'-$'\x9f'][$'\x80'-$'\xbf']/x}
+	v=${v//[$'\xe1'-$'\xec'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//[$'\xee'-$'\xef'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//$'\xf0'[$'\x90'-$'\xbf'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//$'\xf4'[$'\x80'-$'\x8f'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//[$'\xf1'-$'\xf3'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf'][$'\x80'-$'\xbf']/x}
+	v=${v//[$'\xc2'-$'\xdf'][$'\x80'-$'\xbf']/x}
+	# shellcheck disable=SC2053
+	[[ "$v" != *$UTF8_HIGH* ]]
+}
+bytes_safe() {
+	local line
+	tr -d '\000' <"$1" >"$tmp/safe-nonul"
+	cmp -s "$tmp/safe-nonul" "$1" || return 1
+	tr -d '\200-\377' <"$1" >"$tmp/safe-ascii"
+	cmp -s "$tmp/safe-ascii" "$1" && return 0
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		utf8_line_ok "$line" || return 1
+	done <"$1"
+	return 0
+}
+# section_block <version> <excluded-headings-file> — THE bytes Step 3 item 3
+# publishes from the section: the RAW section bytes (SECTION_SRC=CHANGELOG_RAW,
+# CRs kept, NUL as \377), the exclusions dropped (drop_excluded, the cut-time
+# rule), every compare-shaped line dropped, edges trimmed. regen_block and
+# section_publishable's byte test both read it, so the bytes validated are the
+# bytes published.
+section_block() {
+	SECTION_SRC="$CHANGELOG_RAW" section "$1" | drop_excluded "$2" |
+		awk -v cre="$COMPARE_SHAPED_RE" '$0 !~ cre' | trim_edges
+}
 # section_publishable <version> <excluded-headings-file> — Canonical Format
 # item 2 clause (a), the skill's ONE publishable-content test: the CHANGELOG
 # section (Step 1's exact+tolerant extraction) after drop_excluded, ignoring
-# compare-shaped lines (has_content), is non-empty. A missing section and one
-# emptied by exclusions both fail. The single function behind three decisions
-# that must agree: a2-classify's clause (a) (via body_invalid_reason), the
-# resync-gate site (Step A4's offer gate and Step 3 item 3's hard stop), and
-# resync-summary's content-block validity (again via body_invalid_reason).
+# compare-shaped lines (has_content), is non-empty (else returns 1), AND the
+# bytes Step 3 would publish from it (section_block) are NUL-free valid UTF-8
+# (bytes_safe; else returns 2). A missing section and one emptied by
+# exclusions both return 1. The byte test reads the publishable bytes only: a
+# NUL in an excluded subsection, a dropped compare-shaped line, a header line
+# or another release's section never reaches it. Contrast the OLD release
+# body, which is classified with NUL mapped (normalise_body) and is never
+# republished verbatim from a NUL-carrying copy. The single function behind
+# the decisions that must agree: a2-classify's clause (a) (via
+# body_invalid_reason), the resync-gate site (Step A4's offer gate and Step 3
+# item 3's hard stop), resync-summary's both branches and body-check (again via
+# body_invalid_reason).
 section_publishable() {
 	local f="$tmp/section-after-excl.txt"
 	section "$1" | drop_excluded "$2" >"$f"
-	has_content "$f"
+	has_content "$f" || return 1
+	section_block "$1" "$2" >"$f.bytes"
+	bytes_safe "$f.bytes" || return 2
+	return 0
+}
+# section_unpublishable_reason <code> — clause (a)'s punch-list note for a
+# section_publishable failure code.
+section_unpublishable_reason() {
+	if [[ "$1" == 2 ]]; then echo "body (CHANGELOG section not valid UTF-8 text)"; else echo "body (missing CHANGELOG section)"; fi
 }
 # body_invalid_reason <content-block> <version> <excluded-headings-file> <whole-body> —
 # Canonical Format item 2's valid-body predicate, the audit's executable form
@@ -665,7 +757,9 @@ section_publishable() {
 # re-sync body) and resync-summary's content-block validity test.
 # Prints the first failing clause's punch-list note, or nothing when valid:
 #   (a) section_publishable -- `body (missing CHANGELOG section)` covers both
-#       a missing section and one left empty by exclusions;
+#       a missing section and one left empty by exclusions; `body (CHANGELOG
+#       section not valid UTF-8 text)` a section whose publishable bytes carry
+#       a NUL or an invalid UTF-8 byte;
 #   (b) the content block, ignoring compare-shaped lines, is non-empty;
 #   (c) the WHOLE body (summary included, read before the summary split)
 #       embeds no CHANGELOG version-header line (has_version_header);
@@ -684,8 +778,10 @@ section_publishable() {
 # Every test is a single awk pass reading the file directly: a `grep | grep -q`
 # pipe under pipefail returns 141 (SIGPIPE) on a large body and misreads it.
 body_invalid_reason() {
-	if ! section_publishable "$2" "$3"; then
-		echo "body (missing CHANGELOG section)"
+	local sp=0
+	section_publishable "$2" "$3" || sp=$?
+	if [[ "$sp" != 0 ]]; then
+		section_unpublishable_reason "$sp"
 	elif ! has_content "$1"; then
 		echo "body (empty)"
 	elif has_version_header "$4" >/dev/null; then
@@ -734,7 +830,8 @@ has_whats_new_heading() {
 # SKILL.md's own recovery-boundary definition (Step 3 item 1): the
 # What's New prose block runs from the heading up to whichever comes
 # first of the next heading line (HEADING_START_RE: levels 1-6, up to 3
-# leading spaces -- the shared bound -- or a version header, is_vh),
+# leading spaces -- the shared bound -- or a section boundary, is_boundary,
+# the release-header test the CHANGELOG extractors end on),
 # the compare line, or EOF. Real release bodies use both a paragraph
 # immediately after the heading (no blank line) and a blank line
 # between the heading and the paragraph -- both are well-formed, so
@@ -772,7 +869,7 @@ whats_new_split() {
 	awk -v anchor="$compare_anchor" -v wn="$WHATS_NEW_RE" \
 		-v hd="$HEADING_START_RE" "${VH_AWK_ARGS[@]}" -v sumfile="$4" "$VH_AWK"'
 		NR == 1 && $0 ~ wn { insummary = 1; started = 0; next }
-		insummary && ($0 ~ hd || is_vh($0) || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
+		insummary && ($0 ~ hd || is_boundary($0) || (anchor != "" && $0 ~ anchor)) { insummary = 0; print; next }
 		insummary && started && /^[[:space:]]*$/ { insummary = 0; next }
 		insummary && !started && /^[[:space:]]*$/ { next }
 		insummary { started = 1; print > sumfile; next }
@@ -847,12 +944,12 @@ current_excluded_headings() {
 # by jq or rejected by a strict JSON reader), so the block is regenerated and
 # no text field is emitted. The UTF-8 test is the pinned jq's own decoder: its
 # raw-string read rewrites every invalid sequence to U+FFFD, so the round trip
-# is byte-identical exactly when the input is valid UTF-8.
+# is byte-identical exactly when the input is valid UTF-8. bytes_safe runs
+# first, so anything the publish-side predicate rejects is rejected here too.
 # Both sides are files, never a pipe into cmp: cmp exits at the first
 # difference, which would SIGPIPE a producer still writing a large body.
 body_bytes_ok() {
-	tr -d '\000' <"$1" >"$tmp/bytes-nonul"
-	cmp -s "$tmp/bytes-nonul" "$1" || return 1
+	bytes_safe "$1" || return 1
 	"$JQ" -j -Rs . <"$1" >"$tmp/bytes-jq" || return 1
 	cmp -s "$tmp/bytes-jq" "$1"
 }
@@ -923,15 +1020,13 @@ audit_current() {
 	done
 	[[ -z "$AUD_FAIL" ]]
 }
-# regen_block <out> — the block Step 3 item 3 composes from the section: the
-# RAW section bytes (SECTION_SRC=CHANGELOG_RAW; Step 3 copies them verbatim, so
-# the one CR strip compose_audits applies is the only one, as in a2-classify), the current
-# template's exclusions dropped (drop_excluded, the cut-time rule), every
-# compare-shaped line dropped, edges trimmed.
+# regen_block <out> — the block Step 3 item 3 composes from the section under
+# the current template's exclusions: section_block (the RAW section bytes;
+# Step 3 copies them verbatim, so the one CR strip compose_audits applies is the
+# only one, as in a2-classify).
 REGEN="$tmp/regen.txt"
 regen_block() {
-	SECTION_SRC="$CHANGELOG_RAW" section "$ver" | drop_excluded "$excl_list" |
-		awk -v cre="$COMPARE_SHAPED_RE" '$0 !~ cre' | trim_edges >"$1"
+	section_block "$ver" "$excl_list" >"$1"
 }
 # A representative drafted summary: one plain paragraph, no heading, no compare
 # or marker line -- the shape Step 3 drafts. It stands in for a summary Step 3
@@ -1019,8 +1114,10 @@ if [[ "$site" == "resync-gate" ]]; then
 		exit 0
 	fi
 	[[ "$CUR_STATE" == valid ]] && gate_case="templated"
-	if ! section_publishable "$version" "$excl_list"; then
-		release_emit "$SCRIPT" "$site" "resync-gate-stop" 0 "" '{"stops":true,"reason":"body (missing CHANGELOG section)","summary_required":false}' "$gate_case"
+	sp=0
+	section_publishable "$version" "$excl_list" || sp=$?
+	if [[ "$sp" != 0 ]]; then
+		release_emit "$SCRIPT" "$site" "resync-gate-stop" 0 "" '{"stops":true,"reason":"'"$(section_unpublishable_reason "$sp")"'","summary_required":false}' "$gate_case"
 		exit 0
 	fi
 	current_template_fields
@@ -1064,7 +1161,13 @@ if [[ "$site" == "body-check" ]]; then
 	current_template_fields
 	check_case="untemplated" bc_fail=""
 	[[ "$CUR_STATE" == valid ]] && check_case="templated"
-	if [[ "$CUR_STATE" != valid ]]; then
+	# The composed body is published as these exact bytes: a NUL or an invalid
+	# UTF-8 byte anywhere in it fails closed (bytes_safe, the predicate the
+	# CHANGELOG section's publishable bytes pass in clause (a)), before any
+	# classification, which reads the NUL-mapped copy.
+	if ! bytes_safe "$body_file"; then
+		bc_fail="body (not valid UTF-8 text)"
+	elif [[ "$CUR_STATE" != valid ]]; then
 		# Untemplated: no marker may appear (a2-classify would mark the body
 		# unresolvable), and jq is never needed. The probe reads the normalised
 		# file itself, never a pipe: `sed | grep -q` under pipefail let grep's

@@ -1989,9 +1989,10 @@ fcl|valid|last|true|true
 EOG1
 
 # G2 -- ONE VERSION-HEADER PREDICATE (Guardrail 8 whole-space table).
-# Invariant: a line ends a CHANGELOG section (section_exact AND
-# section_tolerant) exactly when clause (c) flags it as an embedded version
-# header -- both are is_vh. Old defect: the extractors ended at any `## [` line,
+# Invariant: for these forms (none is a dated non-SemVer header, the one place
+# the section boundary is_boundary and clause (c)'s is_vh differ -- see G5) a
+# line ends a CHANGELOG section (section_exact AND section_tolerant) exactly
+# when clause (c) flags it. Old defect: the extractors ended at any `## [` line,
 # so `  ## [Migration guide](guide.md)` inside a section cut it short and audit
 # reported a publishable section missing. State space: line form {dash header,
 # no-space bare header, [Unreleased], spaced en-dash header, link heading,
@@ -2056,6 +2057,8 @@ r1_want=$((${#r1_forms[@]} * ${#r1_indents[@]} * 2 * 5))
 # every reader (resolve_source's marker/separator decision, the split, the
 # checks) reads normalise_body's NUL-mapped stream, so each row's structural
 # result equals its `x` twin's at a2-classify, body-check and resync-summary;
+# body-check, which audits bytes about to be published, instead fails such a
+# body closed (`body (not valid UTF-8 text)`) and agrees with a2 on the twin;
 # (2) no verbatim body text is reported from a byte-invalid body
 # (peeled_marker_line, summary_text, content_block_text all null). Old
 # defects: resolve_source's bash `read` saw a NUL-only line as blank, unbinding
@@ -2101,8 +2104,12 @@ for c in untemplated fcl; do
 				bad "G3 bytes $row: resync-summary '$st_b' vs x twin '$st_x'"
 			[[ -n "$a2_b" && "$a2_b" == "$a2_x" ]] && pass "G3 bytes $row: a2-classify as its x twin ($a2_b)" ||
 				bad "G3 bytes $row: a2-classify '$a2_b' vs x twin '$a2_x'"
-			[[ -n "$bc_b" && "$bc_b" == "$bc_x" && "${bc_b%%|*}" == "$([[ "$a2_b" == "ok|" ]] && echo true || echo false)" ]] &&
-				pass "G3 bytes $row: body-check as its x twin and == a2" ||
+			# Round 2: body-check audits bytes about to be PUBLISHED, so a NUL or
+			# invalid byte fails it closed before any classification (the
+			# old-body classification above keeps the NUL mapping); its
+			# structural verdict is the x twin's, which agrees with a2.
+			[[ "$bc_b" == "false|body (not valid UTF-8 text)" && "${bc_x%%|*}" == "$([[ "$a2_x" == "ok|" ]] && echo true || echo false)" ]] &&
+				pass "G3 bytes $row: body-check fails the byte-invalid body closed; its x twin == a2" ||
 				bad "G3 bytes $row: body-check '$bc_b' (x twin '$bc_x', a2 '$a2_b')"
 			[[ "$(jq -r '.rows | [.peeled_marker_line, .summary_text, .content_block_text, .preserve] | map(tostring) | join("|")' <<<"$rs_b")" == "null|null|null|false" ]] &&
 				pass "G4 bytes $row: no verbatim body text is reported" ||
@@ -2135,6 +2142,183 @@ for bb in '\000' x; do
 	[[ "$got" == "marker|headed|false" ]] &&
 		pass "G3 repro ($bb before the separator): the marker binds, the summary is kept and the re-sync proceeds" ||
 		bad "G3 repro ($bb before the separator): '$got'"
+done
+
+# --- compact-notes gauntlet round 2 ------------------------------------------
+# G5 -- TWO HEADER PREDICATES (Guardrail 8 whole-space table). Invariants:
+# (A) a line ends a CHANGELOG section -- in section_exact, section_tolerant and
+# the What's New split (a2-classify, resync-gate, body-check, resync-summary's
+# step-3 recovery) -- exactly when it is a release header: clause (c)'s version
+# header OR a dated `## [<text>] - date` header whatever <text> is (A1 item 2's
+# release-like inventory); (B) clause (c) flags a body line exactly when it is
+# a SemVer/`Unreleased` version header. B is a strict subset of A; they differ
+# only on dated non-SemVer headers. Old defect (round 1): one predicate (B)
+# served both, so `## [0.9] - date` no longer ended an empty `## [1.0.0]`
+# section, which absorbed the next release's notes (ab44e92 stopped it). State
+# space: form x indent {0,1,2,3,4 spaces, tab} x target header {exact,
+# tolerant}. Columns: form|A|B. Rows run in parallel.
+r2_ed="$(printf '\xe2\x80\x93')"
+r2_forms=('## [0.0.8]|1|1' '## [0.0.8] - 2025-01-01|1|1' "## [ 0.0.8 ] $r2_ed 2025|1|1" '##[0.0.8]|1|1'
+	'## [Unreleased]|1|1' '## [0.9] - 2025-01-01|1|0' '## [v0.9.0] - 2025-01-01|1|0' '## [0.9.0.1] - 2025-01-01|1|0'
+	"##[0.9] $r2_ed 2025|1|0" '##[v0.9.0] - 2025-01-01|1|0' '## [0.9]|0|0' '## [v0.9.0]|0|0'
+	'## [1.2.3 compatibility notes]|0|0' '## [Migration guide](guide.md)|0|0' '## [Migration guide](guide.md) - x|0|0'
+	'## [text]: https://example.com|0|0' '## [|0|0' '## [] - 2025-01-01|0|0')
+r2_g5_row() { # form-index indent-index mode
+	local f="${r2_forms[$1]}" ind="${r1_indents[$2]}" mode="$3" d="$TMP/r2-g5-$1-$2-$3"
+	local line form a b hdr row g w got heading=0 wsum
+	form="${f%%|*}" a="${f#*|}" a="${a%%|*}" b="${f##*|}" line="$ind$form"
+	[[ "$2" -ge 4 ]] && a=0 b=0
+	[[ "$line" =~ ^\ ?\ ?\ ?#{1,6}([[:space:]]|$) ]] && heading=1
+	hdr='## [0.1.0] - 2026-01-01'
+	[[ "$mode" == tolerant ]] && hdr="##  [ 0.1.0 ]  $r2_ed  2026-01-01"
+	mkdir -p "$d"
+	printf '# Changelog\n\n%s\n\n%s\n\n- Item.\n\n## [0.0.1] - 2024-01-01\n\n- Old.\n' "$hdr" "$line" >"$d/cl1.md"
+	printf '# Changelog\n\n%s\n\n- Item.\n' "$hdr" >"$d/cl2.md"
+	printf -- '- Item.\n' >"$d/b1.md"
+	printf -- '- Item.\n\n%s\n' "$line" >"$d/b2.md"
+	printf "## What's New\nSummary.\n%s\n\n- Item.\n" "$line" >"$d/b3.md"
+	row="$mode/indent$2/$(printf '%q' "$form")"
+	g="$(gate_run untemplated 0.1.0 "$d/cl1.md" | jq -r '[.rows.stops, (.rows.reason // "")] | map(tostring) | join("|")')"
+	w="false|"
+	[[ "$a" == 1 ]] && w="true|body (missing CHANGELOG section)"
+	[[ "$g" == "$w" ]] && echo "PASS: G5 $row: resync-gate '$g'" || echo "FAIL: G5 $row: resync-gate '$g', want '$w' (A=$a)"
+	w="ok|"
+	[[ "$a" == 1 ]] && w="drifted|body (missing CHANGELOG section)"
+	got="$(r1_a2 untemplated "$d/b1.md" "$d/cl1.md")"
+	[[ "$got" == "$w" ]] && echo "PASS: G5 $row: a2 boundary '$got'" || echo "FAIL: G5 $row: a2 boundary '$got', want '$w' (A=$a)"
+	got="$(r1_bc untemplated "$d/b1.md" "$d/cl1.md")"
+	[[ "$got" == "$([[ "$a" == 1 ]] && echo "false|body (missing CHANGELOG section)" || echo "true|")" ]] &&
+		echo "PASS: G5 $row: body-check boundary == a2" || echo "FAIL: G5 $row: body-check boundary '$got' (A=$a)"
+	w="ok|"
+	[[ "$b" == 1 ]] && w="drifted|body (embeds a CHANGELOG header)"
+	got="$(r1_a2 untemplated "$d/b2.md" "$d/cl2.md")"
+	[[ "$got" == "$w" ]] && echo "PASS: G5 $row: a2 clause (c) '$got'" || echo "FAIL: G5 $row: a2 clause (c) '$got', want '$w' (B=$b)"
+	got="$(r1_bc untemplated "$d/b2.md" "$d/cl2.md")"
+	[[ "$got" == "$([[ "$b" == 1 ]] && echo "false|body (embeds a CHANGELOG header)" || echo "true|")" ]] &&
+		echo "PASS: G5 $row: body-check clause (c) == a2" || echo "FAIL: G5 $row: body-check clause (c) '$got' (B=$b)"
+	# Step 3's recovery split ends the summary at a heading line or a section
+	# boundary (A), never later: the line itself stays in the content block.
+	wsum="Summary."
+	[[ "$a" == 1 || "$heading" == 1 ]] || wsum="Summary."$'\n'"$line"
+	got="$(rsum_run untemplated v0.1.0 "$d/b3.md" "$FIX/untemplated/peeled-commits.json" "$d/cl2.md" | jq -r '.rows.summary_text')"
+	[[ "$got" == "$wsum" ]] && echo "PASS: G5 $row: step3 recovery summary boundary" ||
+		echo "FAIL: G5 $row: step3 recovery summary '$got', want '$wsum' (A=$a heading=$heading)"
+}
+r2_pids=()
+for fi_ in "${!r2_forms[@]}"; do
+	for ii in "${!r1_indents[@]}"; do
+		for mode in exact tolerant; do
+			r2_g5_row "$fi_" "$ii" "$mode" >"$TMP/r2-g5-$fi_-$ii-$mode.log" 2>&1 &
+			r2_pids+=($!)
+		done
+	done
+	for p in "${r2_pids[@]}"; do wait "$p"; done
+	r2_pids=()
+done
+r2_pass=0
+for l in "$TMP"/r2-g5-*.log; do
+	r2_pass=$((r2_pass + $(grep -c '^PASS: ' "$l")))
+	grep '^FAIL: ' "$l" >&2 && fail=1
+done
+r2_want=$((${#r2_forms[@]} * ${#r1_indents[@]} * 2 * 6))
+[[ "$r2_pass" == "$r2_want" ]] &&
+	pass "G5 header-predicate table: $r2_pass/$r2_want verdicts match predicate A (boundary) / B (clause (c))" ||
+	bad "G5 header-predicate table: $r2_pass/$r2_want verdicts match predicate A (boundary) / B (clause (c))"
+
+# G6 -- PUBLISHABLE CHANGELOG BYTES (Guardrail 8 whole-space table).
+# Invariant: a NUL or an invalid UTF-8 byte in the bytes Step 3 publishes from
+# the CHANGELOG section (after exclusions, compare-shaped lines dropped) fails
+# closed with `body (CHANGELOG section not valid UTF-8 text)` at resync-gate
+# (stops), a2-classify and body-check (clause (a)) and resync-summary (both
+# branches unsafe, stops); a byte outside those bytes (the header line,
+# another release, an excluded subsection) changes no verdict. Old defect:
+# normalise_changelog mapped NUL to \001, so a NUL-only section passed every
+# gate and only Step 6 staging rejected the published NUL. State space: byte
+# {NUL, \xff, none} x position x {untemplated, templated (fcl, `### Internal`
+# excluded)} x consumer.
+r2_in_section=" start midline wholeline link bullet "
+r2_g6_fmt() { # position version
+	local h="# Changelog\n\n## [$2] - 2026-01-01" t='\n\n## [0.0.1] - 2024-01-01\n\n- Old.\n'
+	case "$1" in
+	start) printf '%s\n' "$h\n\n%s### Added\n\n- Item.$t" ;;
+	midline) printf '%s\n' "$h\n\n### Added\n\n- It%sem.$t" ;;
+	wholeline) printf '%s\n' "$h\n\n### Added\n\n- Item.\n%s$t" ;;
+	link) printf '%s\n' "$h\n\n### Added\n\n- Item.\n\n## [Mig%sration](guide.md)$t" ;;
+	bullet) printf '%s\n' "$h\n\n### Added\n\n- %sItem.$t" ;;
+	header) printf '%s\n' "$h%s\n\n### Added\n\n- Item.$t" ;;
+	outside) printf '%s\n' "$h\n\n### Added\n\n- Item.\n\n## [0.0.1] - 2024-01-01\n\n- Ol%sd.\n" ;;
+	excluded) printf '%s\n' "$h\n\n### Added\n\n- Item.\n\n### Internal\n\n- Se%scret.$t" ;;
+	esac
+}
+r2_bytes_reason="body (CHANGELOG section not valid UTF-8 text)"
+for c in untemplated fcl; do
+	v=0.1.0 tg=v0.1.0
+	[[ "$c" == fcl ]] && v=1.0.0 tg=v1.0.0
+	printf -- '- Item.\n' >"$TMP/r2-compact.md"
+	[[ "$c" == fcl ]] && printf '\n%s\n' "$fcl_head_marker" >>"$TMP/r2-compact.md"
+	positions="start midline wholeline link bullet header outside"
+	[[ "$c" == fcl ]] && positions+=" excluded"
+	for pos in $positions; do
+		fmt="$(r2_g6_fmt "$pos" "$v")"
+		for bb in '\000' '\377' ''; do
+			# shellcheck disable=SC2059
+			printf -- "${fmt//%s/$bb}" >"$TMP/r2-cl.md"
+			isfail=0
+			[[ -n "$bb" && "$r2_in_section" == *" $pos "* ]] && isfail=1
+			row="$c/$pos/${bb:-none}"
+			got="$(gate_run "$c" "$v" "$TMP/r2-cl.md" | jq -r '[.rows.stops, (.rows.reason // "")] | map(tostring) | join("|")')"
+			w="false|"
+			[[ "$isfail" == 1 ]] && w="true|$r2_bytes_reason"
+			[[ "$got" == "$w" ]] && pass "G6 $row: resync-gate '$got'" || bad "G6 $row: resync-gate '$got', want '$w'"
+			got="$(r1_a2 "$c" "$TMP/r2-compact.md" "$TMP/r2-cl.md")"
+			w="ok|"
+			[[ "$isfail" == 1 ]] && w="drifted|$r2_bytes_reason"
+			[[ "$got" == "$w" ]] && pass "G6 $row: a2-classify '$got'" || bad "G6 $row: a2-classify '$got', want '$w'"
+			got="$(r1_bc "$c" "$TMP/r2-compact.md" "$TMP/r2-cl.md")"
+			w="true|"
+			[[ "$isfail" == 1 ]] && w="false|$r2_bytes_reason"
+			[[ "$got" == "$w" ]] && pass "G6 $row: body-check '$got' == a2" || bad "G6 $row: body-check '$got', want '$w'"
+			got="$(rsum_run "$c" "$tg" "$TMP/r2-compact.md" "$(r1_peeled "$c")" "$TMP/r2-cl.md" |
+				jq -r '.rows | [.preserve, .regenerate_safe, .stops, ((.reason // "") | contains("not valid UTF-8 text"))] | map(tostring) | join("|")')"
+			w="true|true|false|false"
+			[[ "$isfail" == 1 ]] && w="false|false|true|true"
+			[[ "$got" == "$w" ]] && pass "G6 $row: resync-summary '$got'" || bad "G6 $row: resync-summary '$got', want '$w'"
+		done
+	done
+	# The composed body body-check audits is published as-is: a NUL or invalid
+	# byte anywhere in it fails closed, whatever the (clean) CHANGELOG says.
+	# shellcheck disable=SC2059
+	printf -- "$(r2_g6_fmt midline "$v")" "" >"$TMP/r2-cl.md"
+	for bpos in start midline wholeline; do
+		for bb in '\000' '\377' ''; do
+			case "$bpos" in
+			start) bfmt='%s### Added\n\n- Item.\n' ;;
+			midline) bfmt='### Added\n\n- It%sem.\n' ;;
+			wholeline) bfmt='### Added\n\n- Item.\n%s\n' ;;
+			esac
+			# shellcheck disable=SC2059
+			printf -- "${bfmt//%s/$bb}" >"$TMP/r2-body.md"
+			[[ "$bpos" == wholeline && -z "$bb" ]] && printf -- '### Added\n\n- Item.\n' >"$TMP/r2-body.md"
+			[[ "$c" == fcl ]] && printf '\n%s\n' "$fcl_head_marker" >>"$TMP/r2-body.md"
+			got="$(r1_bc "$c" "$TMP/r2-body.md" "$TMP/r2-cl.md")"
+			w="true|"
+			[[ -n "$bb" ]] && w="false|body (not valid UTF-8 text)"
+			[[ "$got" == "$w" ]] && pass "G6 $c/composed-body/$bpos/${bb:-none}: body-check '$got'" ||
+				bad "G6 $c/composed-body/$bpos/${bb:-none}: body-check '$got', want '$w'"
+		done
+	done
+done
+# bytes_safe accepts exactly the scalar ranges Step 4's checker accepts: valid
+# multi-byte text passes; overlong, surrogate, truncated and >U+10FFFF fail.
+printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- %s\n' "$(printf 'caf\xc3\xa9 \xe2\x80\x93 \xf0\x9f\x98\x80 \xf4\x8f\xbf\xbf')" >"$TMP/r2-utf.md"
+[[ "$(gate_run untemplated 0.1.0 "$TMP/r2-utf.md" | jq -r '.rows.stops')" == false ]] &&
+	pass "G6 valid multi-byte UTF-8 section passes" || bad "G6 valid multi-byte UTF-8 section stopped"
+for seq in '\300\257' '\355\240\200' '\342\202' '\364\220\200\200' '\200' '\370\210\200\200\200'; do
+	# shellcheck disable=SC2059
+	printf "# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- x${seq}y\n" >"$TMP/r2-utf.md"
+	got="$(gate_run untemplated 0.1.0 "$TMP/r2-utf.md" | jq -r '.rows.reason // ""')"
+	[[ "$got" == "$r2_bytes_reason" ]] && pass "G6 invalid sequence $seq fails closed" ||
+		bad "G6 invalid sequence $seq: '$got'"
 done
 
 exit "$fail"

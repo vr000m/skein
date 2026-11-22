@@ -2652,6 +2652,55 @@ def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
 
 
 @pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
+def test_release_section_boundary_and_publishable_bytes_contract(
+    skill_path: Path,
+) -> None:
+    """Compact-notes round 2: two header predicates, one byte contract.
+
+    The CHANGELOG section boundary (A1 item 2's release-like headers, dated
+    non-SemVer ones included) and clause (c)'s version header (SemVer only)
+    are two named predicates, B a strict subset of A; the bytes Step 3
+    publishes from a section must be NUL-free valid UTF-8.
+    """
+    text = skill_path.read_text(encoding="utf-8")
+    script = (skill_path.parent / "lib/resolve-template-marker.sh").read_text(
+        encoding="utf-8"
+    )
+    item3 = _line_with(text, "3. Extract everything between that header")
+    assert "the next release header line (or EOF)" in item3
+    assert (
+        "any dated release-like `## [<raw-version>]` header A1 item 2 inventories"
+        in item3
+    )
+    assert "`## [0.9] - date`" in item3
+    assert "Clause (c)'s version header is the narrower test" in item3
+    assert "a reference definition such as `## [text]: url`" in item3
+    assert "`## [1.2.3 compatibility notes]` are section content" in item3
+    assert "next CHANGELOG version-header line (or EOF), exactly as" not in item3
+    assert (
+        "carry a NUL or are not valid UTF-8 (Canonical Format item 2 clause (a))"
+        in text
+    )
+    assert (
+        "are NUL-free valid UTF-8 — the skill's one definition of publishable" in text
+    )
+    assert "`body (CHANGELOG section not valid UTF-8 text)`" in text
+    assert "fails with `body (not valid UTF-8 text)`" in text
+    # Script: two predicates, each consumer on its own.
+    assert "function is_boundary(l," in script
+    assert "if (is_vh(l)) return 1" in script
+    assert script.count("is_boundary($0)") == 3
+    assert script.count("is_vh($0)") == 1
+    assert "\t\tis_vh($0) { f = 1; print; exit }" in script
+    # Publishable bytes: NUL maps to a never-valid byte in the publish view,
+    # and one predicate validates the published block and the composed body.
+    assert "tr '\\000' '\\377' <\"$changelog\" >\"$CHANGELOG_RAW\"" in script
+    assert 'bytes_safe "$f.bytes" || return 2' in script
+    assert 'if ! bytes_safe "$body_file"; then' in script
+    assert 'bytes_safe "$1" || return 1' in script
+
+
+@pytest.mark.parametrize("skill_path", RELEASE_SKILLS)
 def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     """Round 7 root-cause fix: the three re-sync decisions that kept drifting
     from the audit script across rounds 4-6 (Step A4's offer gate, Step 3 item
@@ -2815,7 +2864,11 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     assert script.count('regenerate_verdict "$(step3_summary ') == 3
     assert script.count('audit_current "$') == 2
     assert script.count('summary_kind_of "$got.0" "$summary" "$hl"') == 2
-    assert 'SECTION_SRC="$CHANGELOG_RAW" section "$ver"' in script
+    # Compact-notes round 2: the regenerated block IS section_block, the one
+    # cut of the publishable bytes that clause (a)'s byte test also validates.
+    assert 'SECTION_SRC="$CHANGELOG_RAW" section "$1"' in script
+    assert 'section_block "$ver" "$excl_list" >"$1"' in script
+    assert 'section_block "$1" "$2" >"$f.bytes"' in script
     assert 'regenerate_safe: ($rr == "")' in script
     # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
     assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script
