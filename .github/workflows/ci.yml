@@ -9,9 +9,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Only a newer push to the same PR cancels a run; runs on main never cancel each other.
+# Only a newer push to the same PR cancels a run. Every other run (push to main,
+# workflow_dispatch) gets its own group keyed by run_id: GitHub keeps one pending
+# run per group, so a shared group would let a later push or dispatch replace a
+# queued one even with cancel-in-progress false.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
