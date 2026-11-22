@@ -2543,9 +2543,11 @@ def test_release_valid_body_defines_publishable_content_once(
     # The hard stop is the resync-gate site's output (the function a2-classify's
     # clause (a) runs), not a prose re-derivation of the test; the call itself is
     # the standalone generated line the prompt-parity checker pins.
+    # Round 7 (codex): only an explicit `false` on exit 0 proceeds; a
+    # no-decision result (non-zero exit, rows null) is a stop too.
     assert (
-        "with the `resync-gate` call above, stopping when `rows.stops` is `true`"
-        in item3
+        "with the `resync-gate` call above, stopping unless it exits 0 with "
+        "`rows.stops` `false`" in item3
     )
     assert "Step A4 withholds a fixable row on exactly this output" in item3
     assert "Test body emptiness, not subsection existence" not in item3
@@ -2564,7 +2566,8 @@ def test_release_valid_body_defines_publishable_content_once(
         "When `rows.stops` is `true`",
         "with `rows.reason`",
         "needs CHANGELOG/template edit",
-        "Otherwise offer it like any other",
+        "Offer it like any other fixable row only on exit 0 with `rows.stops` `false`",
+        "on any other result (non-zero exit, `rows` null) report it and withhold the row",
     ):
         assert needle in a4, needle
     assert "is not repairable by re-sync" not in a4
@@ -2604,15 +2607,23 @@ def test_release_summary_discard_rule_is_defined_once(skill_path: Path) -> None:
         "Audit's own What's New split (one shared function",
         "`resync-summary` reports it as `discard` (`version-header` or `excluded-heading`)",
         "quotes `discard_line`",
+        # Round 7: the script also discards a summary whose reuse would make
+        # the composed body audit drifted, and any summary of a body that is
+        # not NUL-free valid UTF-8 (tests/release/test-scripts.sh M1).
+        "It also reports `audit-drift`",
+        "`invalid-bytes` for a body that is not NUL-free valid UTF-8",
     ):
         assert needle in rule, needle
     assert "the next heading line (levels 1–6" not in rule
     assert "or a compare-shaped line (never publishable" not in rule
     assert "any `#` level" not in rule
+    # Round 7 (arch): the headingless not-a-summary rule is resync-summary
+    # code now; the prose points at the script output instead of restating it.
     assert (
-        "prefix bytes consisting only of compare-shaped lines, or carrying a "
-        "line matching the recovery template's own compare line, are not a summary"
+        "whether recovered prefix bytes are a summary at all is "
+        "`resync-summary`'s decision (`summary_present`"
     ) in step3
+    assert "prefix bytes consisting only of compare-shaped lines" not in step3
     assert "unless Step 3 item 1's summary-discard rule discards it" in canonical
     assert "per Step 3 item 1's summary-discard rule" in step3
     text = skill_path.read_text()
@@ -2670,8 +2681,19 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
         "resolves the recovery template exactly as `step3-recovery` does",
         "uses it only to parse the old body",
         "the current committed template at `--head-sha` governs the summary-discard rule and the valid-body test",
+        # Round 7: the round-trip invariant, the two new rows fields, the
+        # LF-normalised/byte-gated text contract and the gate's proceed rule.
+        "`peeled_marker_line`",
+        "`recovery_note`",
+        "audits `ok` under the current template",
+        "each line's trailing CR removed",
+        "not NUL-free valid UTF-8 both are null",
+        "only exit 0 with `rows.stops` `false` proceeds",
     ):
         assert needle in summary_call, needle
+    assert "`resync-summary` it resolves" not in summary_call
+    gate_call = _line_with(step3, "--site resync-gate --repo <source top-level>")
+    assert "`A2_HEAD_COMMIT` in Step A4" in gate_call
     item3 = _line_with(step3, "**CHANGELOG section content.**")
     for needle in (
         "take the preserve decision from `resync-summary`",
@@ -2692,7 +2714,12 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     script = _resolve_template_marker_script(skill_path).read_text()
     assert "a2-classify | step3-recovery | resync-gate | resync-summary)" in script
     assert script.count('section_publishable "$') >= 2
-    assert script.count('whats_new_split "$got.0"') == 2
+    # Audit's checks (2)-(4) are one function a2-classify and resync-summary's
+    # composed-body audit both call.
+    assert script.count('whats_new_split "$') == 2
+    assert script.count('audit_body_checks "$') >= 2
+    # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
+    assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script
     assert "resync" in text
 
 

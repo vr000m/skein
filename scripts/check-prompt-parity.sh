@@ -357,7 +357,7 @@ release_call_line() {
 		;;
 	resync-gate)
 		args='--repo <source top-level> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> --version X.Y.Z'
-		tail=" \`--head-sha\` is the same already-resolved \`TEMPLATE_HEAD_COMMIT\`, never a fresh resolution."
+		tail=" \`--head-sha\` is the caller's own already-resolved HEAD (\`TEMPLATE_HEAD_COMMIT\` here, \`A2_HEAD_COMMIT\` in Step A4), never a fresh resolution."
 		;;
 	a2-classify)
 		args='--repo <source top-level> --release-list <file> --bodies-dir <dir> --peeled <file> --tags <file> --changelog <file> --web-base-url <url> --head-sha <A2_HEAD_COMMIT>'
