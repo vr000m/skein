@@ -187,6 +187,8 @@ Current Codex evidence for the promotion boundary: deep-review does persist loca
 
 Current Pi evidence for the same protected wording: deep-review persists attempt files and `.deep-review/latest-pi.json`. This contradicts the literal claim of no persistence in the grilled decision above; leave that decision untouched and retain its operative boundary: promotion uses only the two named plan sections, never imports Pi review state. A's informational candidate advice remains separate from B's manually captured promotion inputs.
 
+Current Claude evidence for the same protected wording: deep-review persists per-run lens state under `.deep-review/lenses/<run_id>/`, plus `.deep-review/latest-claude.json` (keys: run_id, diff_hash, base/head commit, lenses), and gauntlet keeps `deep-review-reconciled.json` per round under `.gauntlet/<run>/round-N/`. Findings carry `category: Architecture` (47 of 114 in the local sample). All of it is local and gitignored, so "not durable or shared" holds and "no persistence" does not. The operative boundary is unchanged: promotion reads only the two named plan sections and never imports `.deep-review/` or `.gauntlet/` state.
+
 ### Dependencies
 
 - Bash, git, `jq`-free for the new validator/selector. No new dependencies. The repo-root `package.json` (name `skein-pi`) lists Pi skills and extension.ts, with no dependency entries; there is no `plugins/skein-pi/package.json`. Existing Pi runtime dependencies remain unchanged.
@@ -289,6 +291,7 @@ sequenceDiagram
 - Pi review (2026-11-22): Corrected — Pi has no automatic gauntlet/completion seam matching Codex; specified a sequential all-phases-complete text nudge using /skill:skein-update-docs and test_orchestration_routes.py coverage, retaining A's handback policy.
 - Pi review (2026-11-22): Confirmed — Pi is excluded from prompt-parity, its tests run via just pi-tests, root package.json registers the extension and eleven skills, and the five absent harness-specific skills need no changes; corrected the manifest/dependency wording.
 - Pi review (2026-11-22): Wrong, protected — the grilled no-persistence claim is also false for Pi (attempt streams and latest-pi.json exist); left the decision and all Codex review log lines intact and added adjacent Pi evidence without widening promotion beyond the plan.
+- Claude review (2026-11-22): Wrong, protected — the grilled no-persistence claim is also false for Claude (`.deep-review/lenses/`, `latest-claude.json`, `.gauntlet/*/round-N/deep-review-reconciled.json`, all gitignored); decision left untouched, adjacent evidence added, promotion boundary unchanged.
 - Pi review (2026-11-22): Confirmed — A-to-B ordering and ownership are compatible on Pi: A owns worker/comment policy and advice separation, B owns architecture evidence, promotion and terminal nudge; added explicit preservation at shared handbacks.
 - Pi review (2026-11-22): Unverifiable — future contradiction detection quality, approval flows and runtime gate availability need implementation and explicitly approved exercises; this source review ran no workers or full test suites.
 - Codex review (2026-11-22): Confirmed — Codex's template has Architecture Decisions at 100–102, and grill Step 4 delegates accepted decisions to dev-plan update above the marker.
