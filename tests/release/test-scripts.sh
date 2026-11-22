@@ -1902,4 +1902,239 @@ m1_wn="$(for m1_c in "${M1_CUR[@]}"; do printf '%s=%s ' "$m1_c" "$(m1_rows notpl
 	pass "M1 cell: a redrafted summary is part of the preserve verdict" ||
 	bad "M1 cell: redrafted-summary preserve verdict: $m1_wn"
 
+# --- compact-notes gauntlet round 1 ------------------------------------------
+# Shared single-version inputs: untemplated v0.1.0 (first release, no PREV) and
+# fcl v1.0.0 (label Full changelog, `### Internal` excluded, first release).
+printf '[{"tagName":"v0.1.0","name":"%s v0.1.0 — Highlight"}]\n' "${WEB##*/}" >"$TMP/r1-list-un.json"
+printf '["v0.1.0"]\n' >"$TMP/r1-tags-un.json"
+r1_a2() { # repo-case body-file changelog -> a2's status|note for the one version
+	local d v=0.1.0
+	d="$(mktemp -d "$TMP/r1-a2.XXXXXX")"
+	if [[ "$1" == untemplated ]]; then
+		cp "$2" "$d/v0.1.0.md"
+		note_of "$(a2_run untemplated "$TMP/r1-list-un.json" "$d" "$FIX/untemplated/peeled-commits.json" "$3" "" "$TMP/r1-tags-un.json")" "$v"
+	else
+		v=1.0.0
+		cp "$2" "$d/v1.0.0.md"
+		note_of "$(a2_run fcl "$TMP/bc-list-fcl.json" "$d" "$FXL/peeled.json" "$3" "" "$FXX/tags.json")" "$v"
+	fi
+	rm -rf "$d"
+}
+r1_bc() { # repo-case body-file changelog -> body-check's ok|reason
+	local t=v0.1.0
+	[[ "$1" == untemplated ]] || t=v1.0.0
+	bc_run "$1" "$t" "$2" "$3" | jq -r '[.rows.ok, (.rows.reason // "")] | map(tostring) | join("|")'
+}
+r1_peeled() { [[ "$1" == untemplated ]] && echo "$FIX/untemplated/peeled-commits.json" || echo "$FXL/peeled.json"; }
+r1_tag() { [[ "$1" == untemplated ]] && echo v0.1.0 || echo v1.0.0; }
+r1_cl() { [[ "$1" == untemplated ]] && echo "$FIX/untemplated/CHANGELOG.md" || echo "$FXL/fcl/CHANGELOG.md"; }
+
+# G1 -- LARGE BODIES (Guardrail 8 whole-space table). Invariant: body-check
+# agrees with a2-classify on the exact bytes at any body size. Old defect:
+# body-check's untemplated marker probe was `sed | grep -q`; past the 64KB pipe
+# buffer grep's early exit SIGPIPEd sed, pipefail made the probe 141, the
+# diagnostic was skipped and the strip removed the malformed marker -- ok:true
+# where a2 says unresolvable. State space: size {>64KB, >128KB} x marker
+# {malformed, valid 40-hex, absent} x position {first, middle, last} x
+# {untemplated, templated (fcl; the valid marker is the bound current one)},
+# each row comparing body-check, a2-classify and resync-summary. Columns:
+# case|kind|pos|a2-ok|resync-summary preserve (a final marker is peeled, a
+# marker anywhere else makes the block unpreservable).
+r1_lines=(7000 14000)
+while IFS='|' read -r c kind pos want_ok want_pr; do
+	case "$kind" in
+	bad) mk='<!-- release-template-sha: bad -->' ;;
+	valid) [[ "$c" == untemplated ]] && mk="<!-- release-template-sha: $(printf 'a%.0s' {1..40}) -->" || mk="$fcl_head_marker" ;;
+	absent) mk="" ;;
+	esac
+	for n in "${r1_lines[@]}"; do
+		awk -v n="$n" -v mk="$mk" -v pos="$pos" 'BEGIN {
+			if (mk != "" && pos == "first") print mk
+			for (i = 1; i <= n; i++) { print "- detail."; if (mk != "" && pos == "middle" && i == int(n / 2)) print mk }
+			if (mk != "" && pos == "last") { print ""; print mk }
+		}' >"$TMP/r1-big.md"
+		size=$(($(wc -c <"$TMP/r1-big.md")))
+		r1a2="$(r1_a2 "$c" "$TMP/r1-big.md" "$(r1_cl "$c")")"
+		got_bc="$(r1_bc "$c" "$TMP/r1-big.md" "$(r1_cl "$c")")"
+		rs="$(rsum_run "$c" "$(r1_tag "$c")" "$TMP/r1-big.md" "$(r1_peeled "$c")" "$(r1_cl "$c")" | jq -r '[.rows.preserve, (.rows.peeled_marker_line // "")] | map(tostring) | join("|")')"
+		a2ok=false
+		[[ "$r1a2" == "ok|" ]] && a2ok=true
+		row="$c/$kind/$pos/${size}B"
+		[[ "$a2ok" == "$want_ok" ]] && pass "G1 large body $row: a2 ok=$want_ok" || bad "G1 large body $row: a2 '$r1a2', want ok=$want_ok"
+		[[ "${got_bc%%|*}" == "$a2ok" ]] &&
+			pass "G1 large body $row: body-check == a2-classify" ||
+			bad "G1 large body $row: body-check '$got_bc' disagrees with a2 '$r1a2'"
+		[[ "${rs%%|*}" == "$want_pr" ]] && pass "G1 large body $row: resync-summary preserve=$want_pr" ||
+			bad "G1 large body $row: resync-summary '$rs', want preserve=$want_pr"
+		if [[ "$want_pr" == true && "$kind" != absent && ! ("$c" == fcl && "$kind" == valid) ]]; then
+			[[ "${rs#*|}" == "$mk" ]] && pass "G1 large body $row: final marker peeled verbatim" ||
+				bad "G1 large body $row: peeled_marker_line '${rs#*|}'"
+		fi
+		((size > 64 * 1024)) || bad "G1 large body $row: only $size bytes"
+	done
+done <<'EOG1'
+untemplated|absent|none|true|true
+untemplated|bad|first|false|false
+untemplated|bad|middle|false|false
+untemplated|bad|last|false|true
+untemplated|valid|first|false|false
+untemplated|valid|middle|false|false
+untemplated|valid|last|false|true
+fcl|bad|first|false|false
+fcl|bad|middle|false|false
+fcl|bad|last|false|true
+fcl|valid|first|false|false
+fcl|valid|middle|false|false
+fcl|valid|last|true|true
+EOG1
+
+# G2 -- ONE VERSION-HEADER PREDICATE (Guardrail 8 whole-space table).
+# Invariant: a line ends a CHANGELOG section (section_exact AND
+# section_tolerant) exactly when clause (c) flags it as an embedded version
+# header -- both are is_vh. Old defect: the extractors ended at any `## [` line,
+# so `  ## [Migration guide](guide.md)` inside a section cut it short and audit
+# reported a publishable section missing. State space: line form {dash header,
+# no-space bare header, [Unreleased], spaced en-dash header, link heading,
+# version link heading, version-prefixed prose heading, empty prerelease} x
+# indent {0,1,2,3,4 spaces, tab} x target header {exact, tolerant}. Per row:
+# resync-gate and a2-classify/body-check over the regenerated block (the line
+# right under the header), and a2-classify/body-check over a body embedding
+# the line (clause (c)). Rows run in parallel.
+r1_forms=('## [0.0.8] - 2025-01-01|1' '##[0.0.8]|1' '## [Unreleased]|1' "## [ 0.0.8 ] $(printf '\xe2\x80\x93') 2025|1"
+'## [Migration guide](guide.md)|0' '## [1.2.3](guide.md)|0' '## [1.2.3 compatibility notes]|0' '## [1.2.3-]|0')
+r1_indents=('' ' ' '  ' '   ' '    ' $'\t')
+r1_g2_row() { # form-index indent-index mode
+	local f="${r1_forms[$1]}" ind="${r1_indents[$2]}" mode="$3" d="$TMP/r1-g2-$1-$2-$3" hdr line vh want1 want2 g a b
+	line="$ind${f%|*}" vh="${f##*|}"
+	[[ "$2" -ge 4 ]] && vh=0
+	hdr='## [0.1.0] - 2026-01-01'
+	[[ "$mode" == tolerant ]] && hdr="##  [ 0.1.0 ]  $(printf '\xe2\x80\x93')  2026-01-01"
+	mkdir -p "$d"
+	printf '# Changelog\n\n%s\n\n%s\n\n- Item.\n\n## [0.0.9] - 2025-01-01\n\n- Old.\n' "$hdr" "$line" >"$d/cl1.md"
+	printf '# Changelog\n\n%s\n\n- Item.\n' "$hdr" >"$d/cl2.md"
+	printf '%s\n\n- Item.\n' "$line" >"$d/b1.md"
+	printf -- '- Item.\n\n%s\n' "$line" >"$d/b2.md"
+	want1="ok|" want2="ok|"
+	[[ "$vh" == 1 ]] && want1="drifted|body (missing CHANGELOG section)" want2="drifted|body (embeds a CHANGELOG header)"
+	local row
+	row="$mode/indent$2/$(printf '%q' "${f%|*}")"
+	g="$(gate_run untemplated 0.1.0 "$d/cl1.md" | jq -r '.rows.stops')"
+	[[ "$g" == "$([[ "$vh" == 1 ]] && echo true || echo false)" ]] && echo "PASS: G2 $row: resync-gate stops=$g" ||
+		echo "FAIL: G2 $row: resync-gate stops=$g (vh=$vh)"
+	for k in 1 2; do
+		a="$(r1_a2 untemplated "$d/b$k.md" "$d/cl$k.md")"
+		b="$(r1_bc untemplated "$d/b$k.md" "$d/cl$k.md")"
+		local w=$want1
+		[[ "$k" == 2 ]] && w=$want2
+		[[ "$a" == "$w" ]] && echo "PASS: G2 $row: a2 body$k '$a'" || echo "FAIL: G2 $row: a2 body$k '$a', want '$w'"
+		[[ "$b" == "$([[ "$w" == "ok|" ]] && echo "true|" || echo "false|${w#drifted|}")" ]] &&
+			echo "PASS: G2 $row: body-check body$k == a2" || echo "FAIL: G2 $row: body-check body$k '$b' vs a2 '$a'"
+	done
+}
+r1_pids=()
+for fi_ in "${!r1_forms[@]}"; do
+	for ii in "${!r1_indents[@]}"; do
+		for mode in exact tolerant; do
+			r1_g2_row "$fi_" "$ii" "$mode" >"$TMP/r1-g2-$fi_-$ii-$mode.log" 2>&1 &
+			r1_pids+=($!)
+		done
+	done
+done
+for p in "${r1_pids[@]}"; do wait "$p"; done
+r1_pass=0
+for l in "$TMP"/r1-g2-*.log; do
+	r1_pass=$((r1_pass + $(grep -c '^PASS: ' "$l")))
+	grep '^FAIL: ' "$l" >&2 && fail=1
+done
+r1_want=$((${#r1_forms[@]} * ${#r1_indents[@]} * 2 * 5))
+[[ "$r1_pass" == "$r1_want" ]] &&
+	pass "G2 version-header table: $r1_pass/$r1_want section boundaries agree with clause (c)" ||
+	bad "G2 version-header table: $r1_pass/$r1_want section boundaries agree with clause (c)"
+
+# G3+G4 -- NUL / INVALID BYTES (Guardrail 8 whole-space table). Invariants:
+# (1) a NUL or invalid UTF-8 byte is classified as any other content byte --
+# every reader (resolve_source's marker/separator decision, the split, the
+# checks) reads normalise_body's NUL-mapped stream, so each row's structural
+# result equals its `x` twin's at a2-classify, body-check and resync-summary;
+# (2) no verbatim body text is reported from a byte-invalid body
+# (peeled_marker_line, summary_text, content_block_text all null). Old
+# defects: resolve_source's bash `read` saw a NUL-only line as blank, unbinding
+# a marker that binds with any other byte (the summary was then parsed under
+# the wrong label and lost); jq rewrote an invalid byte in peeled_marker_line
+# to U+FFFD. State space: byte {NUL, \xff} x position {start of a summary
+# line, inside a heading, the line right before the marker separator, inside
+# the marker line, mid-line} x {untemplated, templated (fcl, bound marker)}.
+r1_mk_un="<!-- release-template-sha: $(printf 'a%.0s' {1..40}) -->"
+r1_struct() { jq -r '.rows | [.recovery_template, .marker_stripped, .summary_kind, .recovery_note] | map(tostring) | join("|")' <<<"$1" 2>/dev/null; }
+for c in untemplated fcl; do
+	mk="$fcl_marker"
+	[[ "$c" == untemplated ]] && mk="$r1_mk_un"
+	for pos in sumlead heading presep inmarker midline; do
+		case "$pos" in
+		sumlead) fmt="## What's New\n%sSummary.\n\n### Added\n\n- Content.\n" ;;
+		heading) fmt="## What's New\nSummary.\n\n### Add%sed\n\n- Content.\n" ;;
+		presep) fmt="## What's New\nSummary.\n\n### Added\n\n- Content.\n%s\n" ;;
+		inmarker) fmt="## What's New\nSummary.\n\n### Added\n\n- Content.\n\n<!-- release-template-sha: %s -->\n" ;;
+		midline) fmt="## What's New\nSummary.\n\n### Added\n\n- Con%stent.\n" ;;
+		esac
+		for bb in '\000' '\377'; do
+			# Substitute the escape text into the format (never through `$(...)`,
+			# which would strip the body's trailing newline on one side only).
+			# shellcheck disable=SC2059
+			printf -- "${fmt//%s/$bb}" >"$TMP/r1-b.md"
+			# shellcheck disable=SC2059
+			printf -- "$fmt" x >"$TMP/r1-x.md"
+			# The templated body carries its bound marker (the untemplated one an
+			# unbound marker) except where the byte sits in the marker line.
+			if [[ "$pos" != inmarker && ("$c" == fcl || "$pos" == presep) ]]; then
+				printf '\n%s\n' "$mk" >>"$TMP/r1-b.md"
+				printf '\n%s\n' "$mk" >>"$TMP/r1-x.md"
+			fi
+			row="$c/$pos/$bb"
+			tg="$(r1_tag "$c")" pl="$(r1_peeled "$c")" cl="$(r1_cl "$c")"
+			rs_b="$(rsum_run "$c" "$tg" "$TMP/r1-b.md" "$pl" "$cl")" rs_x="$(rsum_run "$c" "$tg" "$TMP/r1-x.md" "$pl" "$cl")"
+			a2_b="$(r1_a2 "$c" "$TMP/r1-b.md" "$cl")" a2_x="$(r1_a2 "$c" "$TMP/r1-x.md" "$cl")"
+			bc_b="$(r1_bc "$c" "$TMP/r1-b.md" "$cl")" bc_x="$(r1_bc "$c" "$TMP/r1-x.md" "$cl")"
+			st_b="$(r1_struct "$rs_b")" st_x="$(r1_struct "$rs_x")"
+			[[ -n "$st_b" && "$st_b" == "$st_x" ]] &&
+				pass "G3 bytes $row: resync-summary classifies as its x twin ($st_b)" ||
+				bad "G3 bytes $row: resync-summary '$st_b' vs x twin '$st_x'"
+			[[ -n "$a2_b" && "$a2_b" == "$a2_x" ]] && pass "G3 bytes $row: a2-classify as its x twin ($a2_b)" ||
+				bad "G3 bytes $row: a2-classify '$a2_b' vs x twin '$a2_x'"
+			[[ -n "$bc_b" && "$bc_b" == "$bc_x" && "${bc_b%%|*}" == "$([[ "$a2_b" == "ok|" ]] && echo true || echo false)" ]] &&
+				pass "G3 bytes $row: body-check as its x twin and == a2" ||
+				bad "G3 bytes $row: body-check '$bc_b' (x twin '$bc_x', a2 '$a2_b')"
+			[[ "$(jq -r '.rows | [.peeled_marker_line, .summary_text, .content_block_text, .preserve] | map(tostring) | join("|")' <<<"$rs_b")" == "null|null|null|false" ]] &&
+				pass "G4 bytes $row: no verbatim body text is reported" ||
+				bad "G4 bytes $row: byte-invalid body reported text: $(jq -c '.rows | {peeled_marker_line, summary_text, content_block_text, preserve}' <<<"$rs_b" | cat -v)"
+		done
+	done
+done
+# The G3 review repro: an old body cut under a `compare_line_label: none`
+# template whose summary opens with literal `**Full diff:**` prose, a NUL-only
+# line right before the marker separator, the current template allowing a
+# summary, and a What's New-only section. The marker binds, so the summary is
+# parsed under label none (present, discarded for its bytes, redrafted) and
+# the re-sync proceeds -- as with the NUL replaced by `x`.
+FXN="$TMP/fx-none-hist"
+rm -rf "$FXN" && mkdir -p "$FXN/nh"
+printf '{"compare_line_label":"none"}\n' >"$FXN/nh/.release-template.json"
+printf "# Changelog\n\n## [0.1.0] - 2026-01-01\n\n## What's New\nOverview.\n" >"$FXN/nh/CHANGELOG.md"
+(RELEASE_FIXTURES_DIR="$FXN" release_build_repo nh "$TMP/repo-nh") || bad "fixture build nh"
+nh_blob="$("$GIT_REAL" -C "$TMP/repo-nh" rev-parse HEAD~1:.release-template.json)"
+printf '{"v0.1.0": "%s"}\n' "$("$GIT_REAL" -C "$TMP/repo-nh" rev-parse HEAD~1)" >"$FXN/peeled.json"
+(
+	release_git_env
+	printf '{"compare_line_label":"Full diff"}\n' >"$TMP/repo-nh/.release-template.json"
+	"$GIT_REAL" -C "$TMP/repo-nh" add .release-template.json
+	"$GIT_REAL" -C "$TMP/repo-nh" -c commit.gpgsign=false commit -q --no-verify -m current
+) || bad "fixture build nh current"
+for bb in '\000' x; do
+	printf "## What's New\n**Full diff:** literal prose\n\n- Content.\n$bb\n\n<!-- release-template-sha: %s -->\n" "$nh_blob" >"$TMP/r1-nh.md"
+	got="$(rsum_run nh v0.1.0 "$TMP/r1-nh.md" "$FXN/peeled.json" "$FXN/nh/CHANGELOG.md" | jq -r '.rows | [.recovery_template, .summary_kind, .stops] | map(tostring) | join("|")')"
+	[[ "$got" == "marker|headed|false" ]] &&
+		pass "G3 repro ($bb before the separator): the marker binds, the summary is kept and the re-sync proceeds" ||
+		bad "G3 repro ($bb before the separator): '$got'"
+done
+
 exit "$fail"

@@ -108,3 +108,11 @@ canonical-format	plugins/skein/skills/release/SKILL.md	7668
 # Codex mirror ports the same text (its step-3 span runs ~16 bytes higher).
 step-3	plugins/skein/skills/release/SKILL.md	40449
 step-a4	plugins/skein/skills/release/SKILL.md	5745	
+# Compact-notes review-gauntlet round 1 (G2): Step 1 item 3's section boundary
+# was "the next `## [` header", a looser predicate than Canonical Format item 2
+# clause (c)'s version-header test, so a link heading such as
+# `## [Migration guide](guide.md)` cut a section short. The item now names
+# clause (c)'s definition (SemVer or `Unreleased` in brackets, then a hyphen,
+# en dash or end of line) as the one boundary and states that a link heading
+# is content. The Codex mirror ports the same text.
+step-1-item-1	plugins/skein/skills/release/SKILL.md	2295	

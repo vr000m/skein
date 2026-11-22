@@ -88,7 +88,16 @@ def test_release_valid_body_contract_matches_the_claude_codex_mirrors():
         "contains a CHANGELOG version-header line",
         "is never reused",
         "a compare-shaped line is not a trigger",
-        "carrying the template's own compare line, is not a summary",
+        # Round-1 G5: the compare line that marks a headingless prefix (and
+        # ends a recovered summary) is the recovery template's -- the one the
+        # old body was cut under -- as resync-summary's recovery_label.
+        "carrying the recovery template's own compare line, is not a summary",
+        "the summary already ends at the recovery template's own compare line",
+        "The **recovery template** is the one the old body was cut under",
+        # Round-1 G5: the refresh choice is withheld exactly when regeneration
+        # would fail audit (resync-summary's regenerate_safe false).
+        "but only when the regenerated body would itself pass audit",
+        "otherwise never offer it",
         "every fixable row, whatever field drifted",
         "withheld from re-sync only when re-sync itself would stop",
         "with clause (a)'s publishable-content test",

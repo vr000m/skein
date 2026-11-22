@@ -2670,7 +2670,7 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
                 "--tag <vX.Y.Z>",
                 "--body-file <file>",
                 "--peeled <file>",
-                "--head-sha <TEMPLATE_HEAD_COMMIT>",
+                "--head-sha <FLOW_HEAD_COMMIT>",
                 "--changelog <file>",
                 "[--headingless-summary <file>]",
             ),
@@ -2679,7 +2679,7 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
             "resync-gate",
             (
                 "--repo <source top-level>",
-                "--head-sha <TEMPLATE_HEAD_COMMIT>",
+                "--head-sha <FLOW_HEAD_COMMIT>",
                 "--changelog <file>",
                 "--version X.Y.Z",
             ),
@@ -2740,7 +2740,16 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     assert "is preserved and surfaced as data" not in marker_para
     assert "`resync-summary` it resolves" not in summary_call
     gate_call = _line_with(step3, "--site resync-gate --repo <source top-level>")
-    assert "`A2_HEAD_COMMIT` in Step A4" in gate_call
+    summary_call_line = _line_with(
+        step3, "--site resync-summary --repo <source top-level>"
+    )
+    # Round-1 G6: Step 3 and Step A4 both run these two sites, so the one
+    # generated line names a neutral placeholder bound per flow, never Step 3's
+    # TEMPLATE_HEAD_COMMIT alone (A4 runs them at A2_HEAD_COMMIT).
+    for call_line in (gate_call, summary_call_line):
+        assert "`TEMPLATE_HEAD_COMMIT` in Step 3" in call_line
+        assert "`A2_HEAD_COMMIT` in Step A4" in call_line
+        assert "--head-sha <TEMPLATE_HEAD_COMMIT>" not in call_line
     # Round 10: the exact composed body (a drafted or user-typed summary
     # included) is script-checked before Step 4 confirms it, and every Step 4
     # recomposition re-runs the check.
@@ -2806,7 +2815,7 @@ def test_release_resync_decisions_are_script_output(skill_path: Path) -> None:
     assert script.count('regenerate_verdict "$(step3_summary ') == 3
     assert script.count('audit_current "$') == 2
     assert script.count('summary_kind_of "$got.0" "$summary" "$hl"') == 2
-    assert 'SECTION_SRC="$changelog" section "$ver"' in script
+    assert 'SECTION_SRC="$CHANGELOG_RAW" section "$ver"' in script
     assert 'regenerate_safe: ($rr == "")' in script
     # failed_gate stays exit-1-only: resync-summary's exit-0 emit passes "".
     assert 'release_emit "$SCRIPT" "$site" "resync-summary" 0 "" ' in script

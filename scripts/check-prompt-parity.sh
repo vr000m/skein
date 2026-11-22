@@ -319,6 +319,13 @@ release_call_placeholder() {
 	echo "__RELEASE_CALL_${up//-/_}__"
 }
 
+# The two sites Step 3 AND Step A4 both run (resync-summary, resync-gate) take
+# one neutral head placeholder, defined once here, so one generated line is
+# true in both flows: Step 3 passes TEMPLATE_HEAD_COMMIT, A4 A2_HEAD_COMMIT.
+# Step-3-only sites (step3-recovery, body-check) keep TEMPLATE_HEAD_COMMIT.
+# shellcheck disable=SC2016
+RELEASE_FLOW_HEAD_TAIL=' `<FLOW_HEAD_COMMIT>` is the HEAD commit already resolved for the calling flow — `TEMPLATE_HEAD_COMMIT` in Step 3 (the one `step3-recovery` uses), `A2_HEAD_COMMIT` in Step A4 — never a fresh resolution.'
+
 # shellcheck disable=SC2016
 release_call_line() {
 	local harness="$1" site="$2" name guard call args tail
@@ -352,12 +359,12 @@ release_call_line() {
 		tail=" \`--head-sha\` is mandatory: the script never self-resolves \`HEAD\` (Step 1b's single-resolution rule), so pass this step's own \`TEMPLATE_HEAD_COMMIT\`, already resolved once in Step 1b — never a fresh resolution here."
 		;;
 	resync-summary)
-		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> [--headingless-summary <file>]'
-		tail=" \`--head-sha\` is the same already-resolved \`TEMPLATE_HEAD_COMMIT\` as \`step3-recovery\`, never a fresh resolution."
+		args='--repo <source top-level> --tag <vX.Y.Z> --body-file <file> --peeled <file> --head-sha <FLOW_HEAD_COMMIT> --changelog <file> [--headingless-summary <file>]'
+		tail="$RELEASE_FLOW_HEAD_TAIL"
 		;;
 	resync-gate)
-		args='--repo <source top-level> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> --version X.Y.Z'
-		tail=" \`--head-sha\` is the caller's own already-resolved HEAD (\`TEMPLATE_HEAD_COMMIT\` here, \`A2_HEAD_COMMIT\` in Step A4), never a fresh resolution."
+		args='--repo <source top-level> --head-sha <FLOW_HEAD_COMMIT> --changelog <file> --version X.Y.Z'
+		tail="$RELEASE_FLOW_HEAD_TAIL"
 		;;
 	body-check)
 		args='--repo <source top-level> --head-sha <TEMPLATE_HEAD_COMMIT> --changelog <file> --tag <vX.Y.Z> --body-file <file> --web-base-url <WEB_BASE_URL> [--prev <vPREV>]'
