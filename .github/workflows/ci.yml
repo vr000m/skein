@@ -1,12 +1,21 @@
 name: ci
 
+# Local `just ci` is the gate; push when a round is done, not per commit.
+# Draft PRs skip the jobs; mark the PR ready (or run this workflow by hand) to test on GitHub.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     env:
       PYTEST_ADDOPTS: -p no:cacheprovider
@@ -26,11 +35,20 @@ jobs:
           curl -sSL -o /usr/local/bin/shfmt \
             https://github.com/mvdan/sh/releases/download/v3.12.0/shfmt_v3.12.0_linux_amd64
           sudo chmod +x /usr/local/bin/shfmt
+      # tests/pi runs the real Pi CLI (readiness suite fails, never skips, without it).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Pi CLI
+        run: |
+          npm install -g @earendil-works/pi-coding-agent@1.5.0
+          pi --version
       - name: just ci
         run: just ci
 
   pytest-py313:
     name: pytest (python 3.13)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     env:
       PYTEST_ADDOPTS: -p no:cacheprovider
