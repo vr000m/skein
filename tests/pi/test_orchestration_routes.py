@@ -26,6 +26,32 @@ def test_conduct_is_pi_native_sequential_and_main_owned():
         "explicit paths",
     ):
         assert phrase in text
+    normalized = " ".join(text.split())
+    for phrase in (
+        "with explicit approval for each launch",
+        "Both role requests use only `role` and `prompt`",
+        "outside untrusted snapshots",
+        "first launches and every retry for both the implementer and test-writer",
+        "For both the implementer and test-writer, include the static Comments rule",
+        "Every retry carries the same static Comments rule",
+        "Comment only a non-obvious why",
+        "comment that restates the code",
+        "comment that excuses a hack: fix the hack, or report it",
+        "docstrings, linter and type pragmas, license headers",
+        "a full issue URL or `#N`",
+        "tautology or stale and lies inside a hunk or function the change already touches",
+        "never sweep untouched code",
+        "Never delete an excuse comment silently",
+        "cross-file or long-lived decision stays in place",
+        "`Excuse: <file:line> <why>`",
+        "`Decision candidate: <file:line> <why>`",
+        "Validate labelled notices",
+        "Print validated `Excuse:` and `Decision candidate:` notices",
+        "one notice block per phase boundary",
+        "not persisted, and may be lost on `--resume`",
+        "Add no new report keys",
+    ):
+        assert phrase in normalized, phrase
 
 
 def test_release_is_user_invoked_read_only_by_default():
