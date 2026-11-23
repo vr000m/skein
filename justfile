@@ -70,7 +70,7 @@ gauntlet-tests:
     uv run --with pytest python -m pytest tests/gauntlet/test_native_gates.py -q
     bash tests/gauntlet/test-goal-field-schema.sh
     bash tests/gauntlet/test-goal-injection.sh
-    bash tests/gauntlet/test-comment-policy-briefs.sh --mirror claude
+    bash tests/gauntlet/test-comment-policy-briefs.sh
     bash tests/gauntlet/test-goal-docs.sh
     bash tests/gauntlet/test-gauntlet-skill-shape.sh
     bash tests/gauntlet/test-design-deltas.sh
