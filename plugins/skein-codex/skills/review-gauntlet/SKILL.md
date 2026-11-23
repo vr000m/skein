@@ -1088,12 +1088,17 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
     --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" \
     "$gate_out_dir/<name>.envelope.json" > "$gate_out_dir/<name>.normalized.jsonl"
   ```
-- **Cross-gate dedup**: pool every gate's normalized findings, then reconcile them. Pass the pooled file as a **positional path**, not on stdin — the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
+- **Cross-gate dedup**: in a full round, pool every gate's normalized findings, split advice, and reconcile the actionable stream. In quick mode, keep pooling the single native gate stream directly into `findings.jsonl` for reconciliation.
   ```
-  cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings.jsonl"
+  cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings-pooled.jsonl"
+  advice_filter='(.category == "Documentation") and (.severity == "Minor") and ((.summary // "") | startswith("Decision candidate:"))'
+  jq -c "select($advice_filter | not)" "$gate_out_dir/findings-pooled.jsonl" > "$gate_out_dir/findings.jsonl"
+  jq -c "select($advice_filter)" "$gate_out_dir/findings-pooled.jsonl" > "$gate_out_dir/advice.jsonl"
   "$SKILL_DIR"/lib/run-gate.sh reconcile \
     "$gate_out_dir/findings.jsonl" > "$gate_out_dir/reconciled.json"
   ```
+  **Advice split (decision candidates).** A finding is advice only when it carries the exact `Decision candidate:` summary prefix AND severity Minor under category `Documentation`. The split runs BEFORE `run-gate.sh reconcile`, so a decision candidate is never merged with an excuse finding that shares its `(file, line, category)`. `findings.jsonl` holds only actionable findings, and everything downstream reads only it: `reconciled.json`, `run-gate.sh route`, the gate status, `--count`, `--present-keys`, the annotated envelope and the fixer batch. A gate whose findings are all advice counts as having no findings for convergence, and advice never reaches `convergence-ledger.sh`. A near-miss prefix (any casing or spelling of "decision candidate" that fails the exact test) stays in `findings.jsonl` as an actionable finding and is also listed to the operator, labelled near miss. Print the advice once, in the round's terminal message, with its `file:line` and summary; this skill adds no report section and does not change `render-report.py` or `convergence-ledger.sh`. The quick route is unchanged.
+  Pool every gate's `.normalized.jsonl` into `findings-pooled.jsonl` first — the split `findings.jsonl` that `reconcile` reads is the concatenation across **all** gates minus advice, which is what makes cross-gate corroboration possible at all. Pass it as a **positional path**, not on stdin: the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
 - **Route trivial vs substantive findings**:
   ```
   "$SKILL_DIR"/lib/run-gate.sh route \
@@ -1110,6 +1115,7 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   `(kind, file, line, status, ...)`, so it must be joined back to
   `annotated-envelope.json` to recover each finding's `category` and `summary`.
 - **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's gate envelopes, run `run-gate.sh status-row` and print the row it emits — the ONLY gate-status table this skill shows, script-emitted, never hand-authored:
+  For full rounds, make a status-only copy of each envelope and use its path in the corresponding variable in this block. Populate `.findings` from `findings.jsonl`, matching the record's `lens` to the slot's `normalize --gate` name. If the split removes all findings from a `needs-attention` envelope, set the copy's status to `approve`. Keep the original envelopes and use their gate outcomes to classify unresolved slots.
   ```
   "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_review"
   "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_adversarial"

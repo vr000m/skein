@@ -297,6 +297,12 @@ Look for:
 - Dev-plan drift
 - Missing command or workflow documentation
 - Stale examples or outdated references
+- Comments the diff ADDS (never pre-existing comments). The signals are lexical and adjacent-line, from the diff alone; there is no whole-file evidence step. Classify each as one of:
+  - excuse (Important): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, on or next to the line it excuses
+  - tautology (Minor): an added comment whose words restate the identifiers of the adjacent line
+  - stale (Minor): an added comment naming a symbol that the same diff removes or renames
+  - decision candidate (Minor, informational): an added comment that states a choice with a lexical marker (`because`, `instead of`, `rather than`, `chose`) next to the line implementing it. Begin its `summary` with exactly `Decision candidate:`
+  Use category `Documentation` and set the location to the added line. Never flag docstrings, linter and type pragmas, license headers, or TODOs that link an issue (a full issue URL or `#N`).
 
 Ignore:
 - Code behavior unless the docs misstate it

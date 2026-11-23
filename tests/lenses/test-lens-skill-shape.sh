@@ -816,37 +816,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Documentation Lens comment classes (Claude mirror; the Codex counterpart is
-# added with the Codex half). Static shape only: the lens text carries the four
-# classes with their severities, added-only scope, the exemptions, the
-# `Decision candidate:` prefix and Claude's retained typo ignore line. A model
+# Documentation Lens comment classes and each mirror's ignore line. A model
 # run on tests/lenses/fixtures/documentation-lens.diff is the sampled check.
 # ---------------------------------------------------------------------------
 
 DOC_LENS_MD="$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+CODEX_DOC_LENS_MD="$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
 DOC_LENS_FIXTURE="$ROOT_DIR/tests/lenses/fixtures/documentation-lens.diff"
-doc_lens="$(awk '/^#### Documentation Lens/{f=1; next} /^#### /{f=0} f' "$DOC_LENS_MD")"
 
 doc_lens_has() {
 	local pattern="$1" label="$2"
 	if grep -Eq -- "$pattern" <<<"$doc_lens"; then
-		pass "Documentation Lens (Claude): $label"
+		pass "Documentation Lens ($doc_lens_mirror): $label"
 	else
-		fail "Documentation Lens (Claude): $label"
+		fail "Documentation Lens ($doc_lens_mirror): $label"
 	fi
 }
 
-doc_lens_has 'excuse \(Important\)' "excuse class is Important"
-doc_lens_has 'tautology \(Minor\)' "tautology class is Minor"
-doc_lens_has 'stale \(Minor\)' "stale class is Minor"
-doc_lens_has 'decision candidate \(Minor, informational\)' "decision candidate class is Minor and informational"
-doc_lens_has 'Comments the diff ADDS \(never pre-existing comments\)' "scope is added comments only"
-doc_lens_has 'no whole-file evidence step' "no whole-file evidence step"
-doc_lens_has 'symbol that the same diff removes or renames' "stale is limited to symbols the same diff removes or renames"
-doc_lens_has 'docstrings, linter and type pragmas, license headers, or TODOs that link an issue' "exemptions are listed"
-doc_lens_has 'exactly .Decision candidate:.' "exact Decision candidate: prefix"
-doc_lens_has 'Minor typos in comments within the diff' "Claude's retained typo ignore line"
-doc_lens_has 'category .Documentation.' "uses the existing Documentation category"
+for doc_lens_mirror in Claude Codex; do
+	case "$doc_lens_mirror" in
+	Claude)
+		doc_lens="$(awk '/^#### Documentation Lens/{f=1; next} /^#### /{f=0} f' "$DOC_LENS_MD")"
+		doc_lens_has 'Minor typos in comments within the diff' "retains the typo ignore line"
+		;;
+	Codex)
+		doc_lens="$(awk '/^### Documentation Lens$/{f=1; next} /^<!-- BEGIN PROSE RULE BLOCK A -->$/{f=0} f' "$CODEX_DOC_LENS_MD")"
+		doc_lens_has 'Code behavior unless the docs misstate it' "retains the code behavior ignore line"
+		;;
+	esac
+	doc_lens_has 'excuse \(Important\)' "excuse class is Important"
+	doc_lens_has 'tautology \(Minor\)' "tautology class is Minor"
+	doc_lens_has 'stale \(Minor\)' "stale class is Minor"
+	doc_lens_has 'decision candidate \(Minor, informational\)' "decision candidate class is Minor and informational"
+	doc_lens_has 'Comments the diff ADDS \(never pre-existing comments\)' "scope is added comments only"
+	doc_lens_has 'no whole-file evidence step' "no whole-file evidence step"
+	doc_lens_has 'symbol that the same diff removes or renames' "stale is limited to symbols the same diff removes or renames"
+	doc_lens_has 'docstrings, linter and type pragmas, license headers, or TODOs that link an issue' "exemptions are listed"
+	doc_lens_has 'exactly .Decision candidate:.' "exact Decision candidate: prefix"
+	doc_lens_has 'category .Documentation.' "uses the existing Documentation category"
+done
 
 if [[ -s "$DOC_LENS_FIXTURE" ]] && grep -q '^+.*hack: workaround' "$DOC_LENS_FIXTURE" &&
 	grep -q '^+.*increment the hit counter' "$DOC_LENS_FIXTURE" &&

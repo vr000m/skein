@@ -941,9 +941,8 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'Every fixer dispatch, including quick-mode 
 	"Codex mirror: full, quick, resumed and retry dispatches use the filled fixer brief"
 
 # ---------------------------------------------------------------------------
-# Advice seam (decision candidates): Claude mirror. The split runs before the
-# reconciler, only the exact prefix plus severity Minor is advice, a near miss
-# stays actionable, and the documented jq filter really splits that way.
+# The advice split runs before the reconciler. Only an exact-prefix Minor
+# Documentation finding is advice, and a near miss stays actionable.
 # ---------------------------------------------------------------------------
 
 assert_advice_seam_for() {
@@ -972,21 +971,29 @@ assert_advice_seam_for() {
 		return
 	fi
 	sample="$(printf '%s\n' \
-		'{"category":"Documentation","severity":"Minor","summary":"Decision candidate: keep"}' \
-		'{"category":"Documentation","severity":"Important","summary":"excuse comment"}' \
+		'{"file":"example.py","line":7,"category":"Documentation","severity":"Minor","summary":"Decision candidate: keep"}' \
+		'{"file":"example.py","line":7,"category":"Documentation","severity":"Important","summary":"excuse comment"}' \
 		'{"category":"Documentation","severity":"Important","summary":"Decision candidate: wrong severity"}' \
 		'{"category":"Documentation","severity":"Minor","summary":"decision candidate: near miss"}' \
 		'{"category":"Logic","severity":"Minor","summary":"Decision candidate: wrong category"}')"
-	advice="$(jq -c "select($filter)" <<<"$sample" | wc -l | tr -d ' ')"
-	actionable="$(jq -c "select($filter | not)" <<<"$sample" | wc -l | tr -d ' ')"
-	if [[ "$advice" == "1" && "$actionable" == "4" ]]; then
+	advice="$(jq -r "select($filter) | .summary" <<<"$sample")"
+	actionable="$(jq -r "select($filter | not) | .summary" <<<"$sample")"
+	if [[ "$advice" == "Decision candidate: keep" &&
+		"$actionable" == $'excuse comment\nDecision candidate: wrong severity\ndecision candidate: near miss\nDecision candidate: wrong category' ]]; then
 		pass "$label: documented advice filter splits exact-prefix Minor from the malformed, same-line excuse and wrong-category cases"
 	else
-		fail "$label: documented advice filter split $advice advice / $actionable actionable (want 1 / 4)"
+		fail "$label: documented advice filter put the wrong summaries in advice or actionable findings"
 	fi
 }
 
 assert_advice_seam_for "$SKILL_MD" "Claude mirror"
+assert_advice_seam_for "$CODEX_SKILL_MD" "Codex mirror"
+assert_grep_fixed "$CODEX_SKILL_MD" 'cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings-pooled.jsonl"' \
+	"Codex mirror: full rounds pool the normalized gates before the split"
+assert_grep_fixed "$CODEX_SKILL_MD" 'jq -c "select($advice_filter | not)" "$gate_out_dir/findings-pooled.jsonl" > "$gate_out_dir/findings.jsonl"' \
+	"Codex mirror: only actionable findings feed the reconciler input"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Populate `.findings` from `findings.jsonl`, matching the record' \
+	"Codex mirror: gate-status rows count actionable findings per slot"
 
 assert_grep_i "$SKILL_MD" 'seam still moving' \
 	"Claude mirror: documents the conductor-side seam tripwire"
