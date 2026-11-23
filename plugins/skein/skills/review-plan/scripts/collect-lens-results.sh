@@ -228,7 +228,10 @@
 #
 # `findings` are the union, across every attempt, of `finding` lines,
 # deduplicated by a (file, line, category, advice) signature (case-insensitive
-# on category only), first occurrence wins — the reconciler's (file, line,
+# on category only), the more severe row winning a collision and the first
+# occurrence winning a tie (the reconciler also keeps the highest severity,
+# so a lower-severity row that arrives first cannot hide, for example, a
+# same-line excuse behind a near-miss candidate) — the reconciler's (file, line,
 # category) cross-lens signature, applied here cross-attempt instead (R4:
 # "deduped by the reconciler's (file, line, category) signature"), plus one
 # advice bit. The bit is set only for an exact `Decision candidate:` summary
@@ -840,6 +843,11 @@ while [[ "$i" -lt "$n" ]]; do
 		# file/line for the dedup key: prefer explicit .file/.line, else
 		# split a combined "file:line" .location (persist-lens-result.sh
 		# own wire format) on the last ":".
+		# A key collision keeps the more severe row, as the reconciler
+		# does, so a lower-severity row arriving first never hides it.
+		def sev_rank:
+			((.severity // "") | if type == "string" then ascii_downcase else "" end) as $s
+			| if $s == "critical" then 3 elif $s == "important" then 2 elif $s == "minor" then 1 else 0 end;
 		def key_file:
 			if has("file") then (.file // "")
 			else (
@@ -884,7 +892,10 @@ while [[ "$i" -lt "$n" ]]; do
 						and (($f.summary // "") | type == "string" and startswith("Decision candidate:"))
 					then "advice" else "" end) as $advice
 				| ($file + "|" + $line + "|" + $cat + "|" + $advice) as $key
-				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key, _file: $file, _line: $line}] end
+				| ($f + {_key: $key, _file: $file, _line: $line}) as $row
+				| if any(.[]; ._key == $key)
+					then map(if ._key == $key and (($row | sev_rank) > sev_rank) then $row else . end)
+					else . + [$row] end
 			)
 		) as $dedup_raw
 		| ($dedup_raw | map(del(._key, ._file, ._line))) as $dedup_findings

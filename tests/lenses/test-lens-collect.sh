@@ -2130,11 +2130,39 @@ if [[ "$adv_dup_got" == "temporary hack|" ]]; then
 else
 	fail "(ADV-control) expected one non-advice finding, got '$adv_dup_got'"
 fi
-adv_near_got="$(adv_case near "$adv_excuse" "${adv_candidate/Decision candidate:/decision candidate:}")"
-if [[ "$adv_near_got" == "temporary hack|" ]]; then
-	pass "(ADV-near-miss) a near-miss prefix is not advice, so it still dedups with the excuse"
-else
-	fail "(ADV-near-miss) expected the near miss to dedup, got '$adv_near_got'"
-fi
+adv_near="${adv_candidate/Decision candidate:/decision candidate:}"
+for adv_order in excuse-first near-first; do
+	if [[ "$adv_order" == excuse-first ]]; then
+		adv_near_got="$(adv_case "near-$adv_order" "$adv_excuse" "$adv_near")"
+	else
+		adv_near_got="$(adv_case "near-$adv_order" "$adv_near" "$adv_excuse")"
+	fi
+	if [[ "$adv_near_got" == "temporary hack|" ]]; then
+		pass "(ADV-near-miss-$adv_order) a near miss is not advice, so it dedups into the more severe excuse"
+	else
+		fail "(ADV-near-miss-$adv_order) expected the excuse to survive the collision, got '$adv_near_got'"
+	fi
+done
+
+# The collector's advice bit and review-gauntlet's documented advice_filter
+# must agree on every row: a row the filter calls advice survives beside a
+# same-line excuse, and any other row dedups into it.
+adv_filter="$(sed -n "s/^  advice_filter='\(.*\)'\$/\1/p" "$REPO_ROOT/plugins/skein/skills/review-gauntlet/SKILL.md" | head -1)"
+adv_i=0
+for adv_row in \
+	"$adv_candidate" \
+	"$adv_near" \
+	'{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"Decision candidate: wrong severity"}' \
+	'{"type":"finding","file":"x.py","line":3,"category":"documentation","severity":"Minor","summary":"Decision candidate: wrong category case"}' \
+	'{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":5}'; do
+	adv_i=$((adv_i + 1))
+	adv_two="$(adv_case "agree-$adv_i" "$adv_excuse" "$adv_row" | tr -cd '|' | wc -c | tr -d ' ')"
+	adv_is_advice="$(jq -r "$adv_filter" <<<"$adv_row" 2>/dev/null || echo error)"
+	if [[ ("$adv_is_advice" == true && "$adv_two" == 2) || ("$adv_is_advice" == false && "$adv_two" == 1) ]]; then
+		pass "(ADV-agree-$adv_i) collector advice bit agrees with advice_filter ($adv_is_advice)"
+	else
+		fail "(ADV-agree-$adv_i) collector kept $adv_two rows but advice_filter said '$adv_is_advice'"
+	fi
+done
 
 finish

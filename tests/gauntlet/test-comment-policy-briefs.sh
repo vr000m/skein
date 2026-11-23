@@ -86,6 +86,11 @@ comments_outside_data() {
 
 # AGENTS.md carries the policy block (mirror-independent).
 assert_phrases "AGENTS.md" AGENTS.md
+if grep -q -F -- 'Decision candidate:' AGENTS.md; then
+	pass "AGENTS.md carries the literal 'Decision candidate:' label"
+else
+	fail "AGENTS.md missing the literal 'Decision candidate:' label"
+fi
 
 check_mirror() {
 	local m="$1" dir

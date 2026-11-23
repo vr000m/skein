@@ -8,12 +8,14 @@
 # justfile. For a merge commit M, `<M^1> <M>` measures the merged PR.
 #
 # This is a HEURISTIC, documented so counts stay comparable across runs:
-#   - excluded: shebang lines, linter/type pragmas (`# shellcheck`, `# noqa`,
+#   - excluded: shebang lines (line 1, or an indented justfile recipe
+#     shebang), linter/type pragmas (`# shellcheck`, `# noqa`,
 #     `# type:`), license headers (`# Copyright`, `# SPDX-`), and TODO lines
 #     that carry an issue link (a URL or `#N`);
 #   - excluded: lines inside a shell heredoc body (*.sh and justfile only). An
 #     opener counts only outside quotes, comments and `((...))` arithmetic, and
-#     only when its terminator follows; otherwise it is not a heredoc. In a
+#     only when its terminator follows; otherwise it is not a heredoc. Every
+#     opener on one line is honoured, and their bodies are skipped in order. In a
 #     justfile the terminator may be indented, because just strips recipe
 #     indentation before the shell sees it;
 #   - NOT excluded (known over-count): `#` lines inside Python docstrings or
@@ -25,7 +27,7 @@
 #
 # Output: one integer. With --verbose, one "<count> <path>" line per file with
 # a non-zero count, then "total <N>". A revision that does not name a commit
-# exits 2 with no count.
+# exits 2 with no count. Paths are repo-root relative wherever it runs from.
 set -euo pipefail
 
 verbose=0
@@ -39,6 +41,7 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 base="$1"
 head="${2:-HEAD}"
+cd "$(git rev-parse --show-toplevel)"
 for rev in "$base" "$head"; do
 	if ! git rev-parse --verify --quiet --end-of-options "$rev^{commit}" >/dev/null; then
 		echo "${0##*/}: not a commit: $rev" >&2
@@ -66,6 +69,7 @@ IFS= read -r -d '' count_prog <<'AWK' || true
 function heredoc_opener(s,   i, n, c, q, j, tok) {
 	n = length(s)
 	q = ""
+	ndelim = 0
 	for (i = 1; i <= n; i++) {
 		c = substr(s, i, 1)
 		if (q != "") {
@@ -75,34 +79,36 @@ function heredoc_opener(s,   i, n, c, q, j, tok) {
 		}
 		if (c == "\\") { i++; continue }
 		if (c == "\"" || c == "'") { q = c; continue }
-		if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;]/)) return 0
+		if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;]/)) break
 		if (substr(s, i, 2) == "((") {
 			j = index(substr(s, i + 2), "))")
-			if (j == 0) return 0
+			if (j == 0) break
 			i += j + 2
 			continue
 		}
 		if (substr(s, i, 3) == "<<<") { i += 2; continue }
 		if (substr(s, i, 2) == "<<") {
-			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_]*["']?/)) return 0
+			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_]*["']?/)) break
 			tok = substr(s, i, RLENGTH)
-			dash = (tok ~ /^<<-/)
+			i += RLENGTH - 1
+			ndelim++
+			dashes[ndelim] = (tok ~ /^<<-/)
 			sub(/^<<-?[ \t]*["']?/, "", tok)
 			sub(/["']$/, "", tok)
-			delim = tok
-			return 1
+			delims[ndelim] = tok
 		}
 	}
-	return 0
+	return ndelim
 }
-function is_terminator(s,   cmp) {
+function is_terminator(s, k,   cmp) {
 	cmp = s
 	if (kind == "justfile") sub(/^[ \t]+/, "", cmp)
-	else if (dash) sub(/^\t+/, "", cmp)
-	return cmp == delim
+	else if (dashes[k]) sub(/^\t+/, "", cmp)
+	return cmp == delims[k]
 }
 function counts(line, n) {
 	if (n == 1 && line ~ /^#!/) return 0
+	if (kind == "justfile" && line ~ /^[ \t]+#!/) return 0
 	if (line ~ /^[ \t]*#[ \t]*(shellcheck|noqa|type:)/) return 0
 	if (line ~ /^[ \t]*#[ \t]*(Copyright|SPDX-)/) return 0
 	if (line ~ /TODO/ && (line ~ /https?:\/\// || line ~ /#[0-9]+/)) return 0
@@ -121,10 +127,15 @@ END {
 		if (line ~ /^[ \t]*#/) {
 			if ((i in is_added) && counts(line, i)) count++
 		} else if (kind != "other" && heredoc_opener(line)) {
-			for (j = i + 1; j <= NR; j++)
-				if (is_terminator(L[j])) break
-			if (j <= NR) {
-				i = j + 1
+			last = i
+			for (k = 1; k <= ndelim; k++) {
+				for (j = last + 1; j <= NR; j++)
+					if (is_terminator(L[j], k)) break
+				if (j > NR) break
+				last = j
+			}
+			if (last > i) {
+				i = last + 1
 				continue
 			}
 		}

@@ -136,6 +136,24 @@ assert_eq "merged hunks count only added lines" "2" \
 assert_eq "explicit head is honoured when HEAD is later" "1" "$("$COUNTER" "$head1" "$merge")"
 assert_eq "same base against HEAD counts the later commits" "5" "$("$COUNTER" "$head1")"
 
+# --- a subdirectory run sees the same repo-root paths ----------------------
+mkdir -p sub
+assert_eq "counts the same from a subdirectory" "1" "$(cd sub && "$COUNTER" "$merge^1" "$merge")"
+
+# --- every heredoc body on one command is skipped --------------------------
+f_base="$(git rev-parse HEAD)"
+printf 'cat <<FIRST <<SECOND\nfirst body\nFIRST\n# second body, not a comment\nSECOND\n# after both\n' >f.sh
+git add f.sh
+git commit -q -m "two heredocs"
+assert_eq "both heredoc bodies on one line are skipped" "1" "$("$COUNTER" "$f_base" HEAD)"
+
+# --- an indented justfile recipe shebang is not a comment ------------------
+j_base="$(git rev-parse HEAD)"
+printf 'script:\n    #!/usr/bin/env bash\n    # recipe comment\n    echo hi\n' >>justfile
+git add justfile
+git commit -q -m "shebang recipe"
+assert_eq "justfile recipe shebang is excluded" "1" "$("$COUNTER" "$j_base" HEAD)"
+
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
