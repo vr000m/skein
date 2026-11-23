@@ -106,7 +106,10 @@ def test_fixer_route_is_pi_native_and_rejects_auto_fix():
         "Never delete an excuse comment silently",
         "Repair the underlying hack, remove the excuse comment in the same change",
         "claim the finding in claimed",
-        "otherwise report it as an Excuse: notice in summary",
+        "otherwise report it as an Excuse: <file:line> notice in summary",
+        "(the repair makes it stale)",
+        "when it names a Documentation finding in this batch",
+        "Copy each claimed finding's file, line, category and summary",
         "excludes it from later fixer batches",
         "cross-file or long-lived decision stays in place",
         "Decision candidate: <file:line> <why>",
@@ -225,9 +228,21 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
     )
     for phrase in (
         "Before reconciliation, call `project_gate_findings(raw_gate)`",
-        "raw per-lens findings, not its structurally reconciled report",
-        "exact `Decision candidate:` summary prefix AND Pi severity `suggestion`",
-        "A near-miss prefix stays actionable",
+        (
+            "raw per-lens findings (the collector's `--findings-jsonl` stream), "
+            "not its structurally reconciled report"
+        ),
+        (
+            "exact `Decision candidate:` summary prefix AND severity Minor "
+            "(canonical `Minor` or Pi `suggestion`)"
+        ),
+        "keep their disk-first `Critical|Important|Minor` severities",
+        "matched on file, line, category and summary",
+        'Exclude only the findings `excuse_exclusions(proposal["summary"], batch)` returns',
+        (
+            "near-miss prefix (any casing or spelling of the prefix that fails "
+            "the exact test) stays actionable"
+        ),
         "same-line excuse-plus-candidate cannot merge into advice",
         "Retain each original gate envelope",
         "print advice once",
@@ -240,6 +255,104 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
         "a quarantine is not convergence",
     ):
         assert phrase in text, phrase
+
+
+def test_advice_projection_reads_canonical_disk_first_severity():
+    candidate = documentation_finding(severity="Minor")
+    excuse = documentation_finding("temporary hack", severity="Important")
+    result = review_gauntlet.project_gate_findings(
+        {"gate": "deep-review", "status": "findings", "findings": [candidate, excuse]}
+    )
+    assert result["advice"] == [candidate]
+    assert result["gate"]["findings"] == [excuse]
+    assert result["gate"]["findings"][0]["severity"] == "Important"
+
+
+@pytest.mark.parametrize(
+    ("summary", "near_miss"),
+    [
+        ("decision candidate: keep", True),
+        ("Decision candiate: keep", True),
+        ("Decison candidate: keep", True),
+        ("Decision-candidate: keep", True),
+        ("Decision candidate keep the bound", True),
+        ("Decision: keep", False),
+        ("Typo in docstring", False),
+        ("temporary hack", False),
+    ],
+)
+def test_near_miss_covers_casing_and_spelling(summary, near_miss):
+    result = review_gauntlet.project_gate_findings(
+        {
+            "gate": "deep-review",
+            "status": "findings",
+            "findings": [documentation_finding(summary)],
+        }
+    )
+    assert result["advice"] == []
+    assert bool(result["near_misses"]) is near_miss
+
+
+def fixer_envelope(claimed, summary="done"):
+    proposal = {
+        "schema_version": 1,
+        "status": "ok",
+        "summary": summary,
+        "claimed": claimed,
+        "patches": [],
+        "blast_radius": "local",
+    }
+    return {
+        "status": "completed",
+        "result": {
+            "status": "ok",
+            "findings": [],
+            "artifact": {"format": "markdown", "content": json.dumps(proposal)},
+        },
+    }
+
+
+def claim_for(finding, summary):
+    return {
+        "file": finding["file"],
+        "line": finding["line"],
+        "category": finding["category"],
+        "summary": summary,
+        "root_cause": "cause",
+        "regression_test": "test",
+    }
+
+
+def test_claim_must_match_batch_summary_not_only_location():
+    excuse = documentation_finding("temporary hack", severity="Important")
+    candidate_summary = documentation_finding()["summary"]
+    with pytest.raises(ValueError, match="fixer_claim_not_in_batch"):
+        review_gauntlet.validate_fixer_result(
+            fixer_envelope([claim_for(excuse, candidate_summary)]), [excuse]
+        )
+    accepted = review_gauntlet.validate_fixer_result(
+        fixer_envelope([claim_for(excuse, "  Temporary   HACK ")]), [excuse]
+    )
+    assert accepted["claimed"][0]["summary"] == "  Temporary   HACK "
+
+
+def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
+    excuse = documentation_finding("temporary hack", severity="Important")
+    critical = {
+        "file": "x.py",
+        "line": 9,
+        "category": "Security",
+        "severity": "Critical",
+        "summary": "injection",
+    }
+    collected = documentation_finding("stale name", line="12")
+    batch = [excuse, critical, collected]
+    summary = (
+        "Excuse: x.py:3 cannot repair in scope. Excuse: x.py:9 also skip. "
+        "Excuse: x.py:12 stale. Excuse: other.py:3 not in batch."
+    )
+    assert review_gauntlet.excuse_exclusions(summary, batch) == [excuse, collected]
+    assert review_gauntlet.excuse_exclusions("no notices", batch) == []
 
 
 def test_refresh_removes_stale_entry_and_reprobes_available(tmp_path):

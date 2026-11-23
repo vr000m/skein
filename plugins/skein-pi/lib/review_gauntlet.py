@@ -7,7 +7,9 @@ must be deterministic and testable without a live provider.
 
 from __future__ import annotations
 
+import difflib
 import json
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
@@ -16,6 +18,9 @@ import capability_cache
 STABLE_UNAVAILABLE_REASONS = frozenset(
     {"gate_not_installed", "executable_missing", "skill_not_registered"}
 )
+MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
+ADVICE_PREFIX = "Decision candidate:"
+_EXCUSE_NOTICE = re.compile(r"Excuse:\s*(\S+):(\d+)")
 TRANSIENT_REASONS = frozenset(
     {
         "timeout",
@@ -130,6 +135,40 @@ def zero_runnable_stop(result: Coverage) -> str | None:
     return None
 
 
+def _near_miss_prefix(summary: object) -> bool:
+    """Match any casing or spelling of the advice prefix that is not exact."""
+    if not isinstance(summary, str):
+        return False
+    head = summary.split(":", 1)[0] if ":" in summary else " ".join(summary.split()[:2])
+    letters = "".join(char for char in head.lower() if char.isalpha())
+    return difflib.SequenceMatcher(None, letters, "decisioncandidate").ratio() >= 0.8
+
+
+def _summary_key(summary: object) -> str:
+    return " ".join(str(summary or "").split()).lower()
+
+
+def excuse_exclusions(
+    summary: str, batch: Iterable[Mapping[str, object]]
+) -> list[dict[str, object]]:
+    """Return the batch findings that a fixer's Excuse: notices may exclude.
+
+    A notice counts only when its ``file:line`` names a Documentation finding
+    in the dispatched batch; any other notice is ignored, so untrusted fixer
+    text cannot drop a finding from later batches.
+    """
+    cited = {
+        (file, line.lstrip("0") or "0")
+        for file, line in _EXCUSE_NOTICE.findall(summary)
+    }
+    return [
+        dict(finding)
+        for finding in batch
+        if finding.get("category") == "Documentation"
+        and (finding.get("file"), str(finding.get("line")).lstrip("0") or "0") in cited
+    ]
+
+
 def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
     """Split raw Pi findings before reconciliation without upgrading coverage."""
     status = gate.get("status")
@@ -145,22 +184,16 @@ def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
     near_misses = []
     for finding in findings:
         summary = finding.get("summary", "")
-        exact_prefix = isinstance(summary, str) and summary.startswith(
-            "Decision candidate:"
-        )
+        exact_prefix = isinstance(summary, str) and summary.startswith(ADVICE_PREFIX)
         if (
             finding.get("category") == "Documentation"
-            and finding.get("severity") == "suggestion"
+            and finding.get("severity") in MINOR_SEVERITIES
             and exact_prefix
         ):
             advice.append(dict(finding))
         else:
             actionable.append(dict(finding))
-            if (
-                isinstance(summary, str)
-                and summary.lower().startswith("decision candidate")
-                and not exact_prefix
-            ):
+            if not exact_prefix and _near_miss_prefix(summary):
                 near_misses.append(dict(finding))
     projected = dict(gate, findings=actionable, findings_count=len(actionable))
     if status in {"passed", "findings"}:
@@ -220,9 +253,12 @@ def fixer_request(
             "fix's blast radius; never sweep untouched code or widen a fix "
             "beyond its finding. Never delete an excuse comment silently. "
             "Repair the underlying hack, remove the excuse comment in the same "
-            "change and claim the finding in claimed; otherwise report it as "
-            "an Excuse: notice in summary. The main session lists it for the "
-            "operator and excludes it from later fixer batches. A comment that "
+            "change (the repair makes it stale) and claim the finding in claimed; "
+            "otherwise report it as an Excuse: <file:line> notice in summary. The "
+            "main session lists it for the operator and excludes it from later "
+            "fixer batches when it names a Documentation finding in this batch. "
+            "Copy each claimed finding's file, line, category and summary from "
+            "the batch. A comment that "
             "records a cross-file or long-lived decision stays in place. List it "
             "in summary as Decision candidate: <file:line> <why>; it is information "
             "for the operator, never a claim or a design delta. Add no report keys. "
@@ -302,11 +338,22 @@ def validate_fixer_result(
             raise ValueError("fixer_claim_invalid")
     claim_files = {claim["file"] for claim in proposal["claimed"]}
     expected = {
-        (finding.get("file"), finding.get("line"), finding.get("category"))
+        (
+            finding.get("file"),
+            finding.get("line"),
+            finding.get("category"),
+            _summary_key(finding.get("summary")),
+        )
         for finding in expected_findings
     }
     for claim in proposal["claimed"]:
-        if (claim["file"], claim["line"], claim["category"]) not in expected:
+        key = (
+            claim["file"],
+            claim["line"],
+            claim["category"],
+            _summary_key(claim["summary"]),
+        )
+        if key not in expected:
             raise ValueError("fixer_claim_not_in_batch")
     for patch in proposal["patches"]:
         if not isinstance(patch, dict) or set(patch) != {

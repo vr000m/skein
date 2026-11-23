@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 import subprocess
+import sys
 
 from test_package import (
     ALLOWLIST,
@@ -15,6 +17,9 @@ from test_package import (
 from test_package import sandbox as sandbox  # noqa: PLC0414 — pytest fixture re-export
 
 SKILL = ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md"
+sys.path.insert(0, str(ROOT / "plugins/skein-pi/lib"))
+
+import review_gauntlet
 
 
 def test_deep_review_is_registered_after_readiness_review():
@@ -81,15 +86,22 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         assert phrase in rubric, phrase
 
 
+def _skill_severity_map():
+    match = re.search(
+        r"map `([a-z|]+)` to `([A-Za-z|]+)`", " ".join(SKILL.read_text().split())
+    )
+    assert match, "SKILL.md no longer states the worker-to-disk severity map"
+    return dict(zip(match[1].split("|"), match[2].split("|"), strict=True))
+
+
 def test_documentation_synthetic_packet_preserves_severity_and_raw_advice(tmp_path):
     packet = {
         "diff": (
-            "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,5 @@\n"
+            "--- a/x.py\n+++ b/x.py\n@@ -1,2 +1,4 @@\n"
             " # pre-existing comment\n-old_name()\n"
-            "+# temporary hack\n+new_name()\n"
-            "+# chose new_name instead of old_name\n+new_name()\n"
+            "+# temporary hack; chose new_name instead of old_name\n+new_name()\n"
         ),
-        "added_lines": {"x.py": [2, 3, 4, 5]},
+        "added_lines": {"x.py": [2, 3]},
         "adjacent_code": "new_name()",
         "removed_or_renamed_symbols": ["old_name"],
     }
@@ -105,7 +117,7 @@ def test_documentation_synthetic_packet_preserves_severity_and_raw_advice(tmp_pa
         {
             "category": "Documentation",
             "severity": "suggestion",
-            "location": "x.py:4",
+            "location": "x.py:2",
             "summary": "Decision candidate: chose new_name instead of old_name",
             "evidence": "added choice comment next to new_name()",
             "recommendation": "Keep the comment",
@@ -113,19 +125,41 @@ def test_documentation_synthetic_packet_preserves_severity_and_raw_advice(tmp_pa
     ]
     assert "-old_name()" in packet["diff"]
     assert "old_name" in packet["removed_or_renamed_symbols"]
-    assert "new_name()" in packet["adjacent_code"]
     assert 1 not in packet["added_lines"]["x.py"]
-    severity_map = {
+    severity_map = _skill_severity_map()
+    assert severity_map == {
         "critical": "Critical",
         "important": "Important",
         "suggestion": "Minor",
     }
-    records = []
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
+    scripts = SKILL.parent / "scripts"
+    persist = [
+        str(scripts / "persist-lens-result.sh"),
+        "--root",
+        str(repo),
+        "--skill",
+        "deep-review",
+        "--run-id",
+        "documentation-fixture",
+        "--lens",
+        "documentation",
+        "--attempt",
+        "1",
+        "--json-file",
+    ]
+    records = [
+        {"type": "start", "units": ["x.py"]},
+        {"type": "progress", "unit": "x.py"},
+    ]
     for finding in worker_findings:
         file, line = finding["location"].rsplit(":", 1)
         assert int(line) in packet["added_lines"][file]
         records.append(
             {
+                "type": "finding",
                 **{
                     key: finding[key]
                     for key in ("category", "location", "summary", "evidence")
@@ -134,46 +168,52 @@ def test_documentation_synthetic_packet_preserves_severity_and_raw_advice(tmp_pa
                 "suggestion": finding["recommendation"],
             }
         )
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-    subprocess.run(
+    records.append({"type": "done", "status": "completed"})
+    for index, record in enumerate(records):
+        path = tmp_path / f"record-{index}.json"
+        path.write_text(json.dumps(record))
+        subprocess.run([*persist, str(path)], check=True, capture_output=True)
+    collected = subprocess.run(
         [
-            str(SKILL.parent / "scripts/persist-deep-review-state.sh"),
-            "--harness",
-            "pi",
+            str(scripts / "collect-lens-results.sh"),
+            "--root",
+            str(repo),
+            "--skill",
+            "deep-review",
             "--run-id",
             "documentation-fixture",
-            "--base-commit",
-            "base",
-            "--head-commit",
-            "head",
-            "--diff-hash",
-            "diff",
-            "--review-focus-hash",
-            "",
-            "--from-collector",
+            "--expected",
+            "documentation:x.py",
+            "--findings-jsonl",
         ],
-        input=json.dumps(
-            {"documentation": {"status": "completed", "findings": records}}
-        ),
         cwd=repo,
         text=True,
         capture_output=True,
         check=True,
     )
-    saved = json.loads((repo / ".deep-review/latest-pi.json").read_text())
-    persisted = saved["lenses"]["documentation"]["findings"]
-    assert [item["severity"] for item in persisted] == ["Important", "Minor"]
-    reverse_map = {value: key for key, value in severity_map.items()}
-    assert [reverse_map[item["severity"]] for item in persisted] == [
-        "important",
-        "suggestion",
+    raw = [json.loads(line) for line in collected.stdout.splitlines()]
+    assert [(item["severity"], item["summary"]) for item in raw] == [
+        ("Important", "Excuse: temporary hack"),
+        ("Minor", "Decision candidate: chose new_name instead of old_name"),
     ]
-    assert [item["summary"] for item in persisted] == [
-        item["summary"] for item in worker_findings
+    projection = review_gauntlet.project_gate_findings(
+        {"gate": "deep-review", "status": "findings", "findings": raw}
+    )
+    assert [item["summary"] for item in projection["advice"]] == [
+        "Decision candidate: chose new_name instead of old_name"
     ]
-    assert [item["location"] for item in persisted] == ["x.py:2", "x.py:4"]
+    actionable = projection["gate"]["findings"]
+    reconciled = subprocess.run(
+        [str(scripts / "reconcile-findings.sh"), "--skill", "deep-review"],
+        input="".join(json.dumps(item) + "\n" for item in actionable),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    merged = json.loads(reconciled.stdout)["findings"]
+    assert [(item["severity"], item["summary"]) for item in merged] == [
+        ("Important", "Excuse: temporary hack")
+    ]
 
 
 def test_deep_review_bundles_canonical_required_scripts():

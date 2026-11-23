@@ -44,11 +44,14 @@ coverage counts, and the exact stop/terminal reason.
 
 Before reconciliation, call `project_gate_findings(raw_gate)` from
 `lib/review_gauntlet.py` on each original gate envelope. For deep-review, use
-raw per-lens findings, not its structurally reconciled report: map disk-first
-`Critical|Important|Minor` back to Pi `critical|important|suggestion` with the
-summary prefix unchanged. Separate into operator advice only `Documentation`
-findings with the exact `Decision candidate:` summary prefix AND Pi severity
-`suggestion` (Minor). A near-miss prefix stays actionable and is also shown to
+raw per-lens findings (the collector's `--findings-jsonl` stream), not its
+structurally reconciled report, and keep their disk-first
+`Critical|Important|Minor` severities with the summary prefix unchanged: the
+reconciler ranks only those canonical values. Separate into operator advice
+only `Documentation` findings with the exact `Decision candidate:` summary
+prefix AND severity Minor (canonical `Minor` or Pi `suggestion`). A near-miss
+prefix (any casing or spelling of the prefix that fails the exact test) stays
+actionable and is also shown to
 the operator, labelled near miss. Split BEFORE reconciliation so a same-line
 excuse-plus-candidate cannot merge into advice: the excuse remains actionable.
 Retain each original gate envelope and the returned `advice` and `near_misses`
@@ -68,14 +71,18 @@ accept `auto_fix` blocks in this port. For substantive findings, construct a
 extension's `skein_worker` (the tool accepts only those two fields). The child
 returns a generic worker envelope and never writes files. The main session must
 call `validate_fixer_result(envelope, expected_findings=batch)`; reject any
-claim outside that batch or any malformed patch. Only then may it inspect the
+claim outside that batch, matched on file, line, category and summary, or any
+malformed patch. Only then may it inspect the
 proposal, apply approved edits, re-read the targets, and verify the live diff
 before recording a round. Do not invoke a Claude `Agent`,
 Codex `spawn_agent`, `codex`, `gh`, or a nested review skill. Run the
 repository's required validation command after approved edits. A worker claim
 alone is not evidence that a fix landed. Validate summary notices, list unresolved
 `Excuse:` notices for the operator and exclude those findings from later fixer
-batches without claiming they were fixed. Keep `Decision candidate:` notices as
+batches without claiming they were fixed. Exclude only the findings
+`excuse_exclusions(proposal["summary"], batch)` returns: a notice must name the
+`file:line` of a Documentation finding in the dispatched batch, and any other
+notice excludes nothing. Keep `Decision candidate:` notices as
 information only: leave the comment in place, never claim it or create a design
 delta. Retain unresolved actionable findings in round evidence; a quarantine is
 not convergence.
