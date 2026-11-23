@@ -302,7 +302,7 @@ Look for:
   - tautology (Minor): an added comment whose words restate the identifiers of the adjacent line
   - stale (Minor): an added comment naming a symbol that the same diff removes or renames
   - decision candidate (Minor, informational): an added comment that states a choice with a lexical marker (`because`, `instead of`, `rather than`, `chose`) next to the line implementing it. Begin its `summary` with exactly `Decision candidate:`
-  Use category `Documentation` and set the location to the added line. Never flag docstrings, linter and type pragmas, license headers, or TODOs that link an issue (a full issue URL or `#N`).
+  One class per comment: when a comment matches more than one class, report it once, under the first that matches in the order excuse, stale, tautology, decision candidate. Use category `Documentation` and set the location to the added line. Never flag docstrings, linter and type pragmas, license headers, or TODOs that link an issue (a full issue URL or `#N`).
 
 Ignore:
 - Code behavior unless the docs misstate it
@@ -546,13 +546,17 @@ Procedure:
    It emits recovered findings from the collected attempt files, including findings from incomplete
    lenses; their non-terminal status remains report metadata. Never hand-assemble this file from lens
    replies. The combined stream is written to `findings.jsonl`.
-2. **Pipe through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. Invoke it with the literal command:
+2. **Set decision candidates aside, then pipe the rest through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. It merges by `(file, line, category)` and keeps one summary, so a same-line excuse would absorb a decision candidate. First set aside every row `advice_filter` matches: category `Documentation`, severity `Minor` and a string summary that begins with exactly `Decision candidate:`, the predicate `skein:review-gauntlet` splits advice on. Reconcile the rest, then append the set-aside rows back unmerged, one finding each, so a same-line excuse and candidate stay separate findings in this skill's output. A set-aside row carries no `auto_fix` proposal: a candidate is information, not an edit. Invoke it with the literal commands:
 
    ```
-   cat findings.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review
+   advice_filter='(.category == "Documentation") and (.severity == "Minor") and ((.summary | type) == "string") and (.summary | startswith("Decision candidate:"))'
+   jq -c "select($advice_filter | not)" findings.jsonl > findings-actionable.jsonl
+   jq -c "select($advice_filter)" findings.jsonl > findings-advice.jsonl
+   cat findings-actionable.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review \
+     | jq --slurpfile advice findings-advice.jsonl '($advice | map({severity, category, file, line: ((.line // "") | if . == "" then -1 else (tonumber? // -1) end), lenses: [.lens], summary, evidence, suggestion}) | sort_by(.file, .line, .summary)) as $rows | .findings += $rows | .summary.raw += ($rows | length) | .summary.unique += ($rows | length)'
    ```
 
-   The script emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+   The pipeline emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`, with the set-aside candidates after the reconciled findings. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
