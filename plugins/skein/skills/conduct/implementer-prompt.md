@@ -42,6 +42,10 @@ This is iteration {{ITERATION}} of a bounded fix loop (cap 3).
 4. Do not add dependencies, abstractions, or features beyond what this phase requires.
 5. Do not modify the plan file.
 
+## Comments
+
+Comment only a non-obvious why. Do not add a comment that restates the code, and do not add a comment that excuses a hack: fix the hack, or report it. Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`). Delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches; never sweep untouched code. Never delete an excuse comment silently. A comment that records a cross-file or long-lived decision stays in place.
+
 ## Git Discipline
 
 Stage your changes with `git add`. Do NOT run `git commit`, `git commit --amend`, `git push`, `git rebase`, `git reset`, `git stash`, or any command that advances HEAD. The conductor creates the phase-boundary commit after tests pass; a commit from you is a protocol violation that will be flagged.
@@ -87,6 +91,7 @@ Output discipline: your reply must contain **exactly one** fenced ```json block,
 ```
 
 - `files_changed` lists every staged path. Empty list only if you made no changes.
+- If you leave an excuse comment in place or keep a decision-record comment, end `summary` with one labelled entry each: `Excuse: <file:line> <why>` and `Decision candidate: <file:line> <why>`. Add no new report keys.
 - Set `blocked: true` only if the phase cannot be completed as specified; put the reason in `explanation`.
 - `needs_test_coverage` lists behaviours you implemented that the test-writer should cover but that the plan did not call out explicitly.
 - If your `summary` cites diagnostic numbers (counts, ratios, percentages) from queries you ran, state every filter you applied — especially lifecycle filters (`archived=0`, `deleted IS NULL`, `superseded_by IS NULL`, soft-delete or status columns). A ratio without its filter is misleading in a summary-only report and can drive wrong decisions downstream.
