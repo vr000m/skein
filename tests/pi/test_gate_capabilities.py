@@ -128,6 +128,120 @@ def test_fixer_route_is_pi_native_and_rejects_auto_fix():
         raise AssertionError("auto-fix proposal was accepted by Pi route")
 
 
+def documentation_finding(summary="Decision candidate: chose a bound", **overrides):
+    return {
+        "file": "x.py",
+        "line": 3,
+        "category": "Documentation",
+        "severity": "suggestion",
+        "summary": summary,
+        **overrides,
+    }
+
+
+def test_advice_projection_splits_before_same_line_reconciliation():
+    candidate = documentation_finding()
+    excuse = documentation_finding("temporary hack", severity="important")
+    malformed = documentation_finding("decision candidate: chose a bound")
+    wrong_severity = documentation_finding(severity="important")
+    wrong_category = documentation_finding(category="Logic")
+    raw = {
+        "gate": "deep-review",
+        "status": "findings",
+        "findings": [candidate, excuse, malformed, wrong_severity, wrong_category],
+        "duration": 2,
+    }
+    original = json.loads(json.dumps(raw))
+    result = review_gauntlet.project_gate_findings(raw)
+    assert raw == original
+    assert result["advice"] == [candidate]
+    assert result["near_misses"] == [malformed]
+    assert result["advice_count"] == 1
+    assert result["findings_count"] == 4
+    assert result["gate"] == {
+        **raw,
+        "findings": [excuse, malformed, wrong_severity, wrong_category],
+        "findings_count": 4,
+    }
+    batch = result["gate"]["findings"]
+    payload = json.loads(
+        review_gauntlet.fixer_request(batch)["prompt"].split("INPUT=")[1]
+    )
+    assert payload["findings"] == batch
+    assert candidate not in batch
+    pi_ledger.PiLedger._validate_round(
+        {"status": "continue", "gates": [result["gate"]], "findings_count": 4}
+    )
+
+
+@pytest.mark.parametrize(
+    ("gate_status", "decision"),
+    [("findings", "success"), ("skipped", "partial"), ("degraded", "degraded")],
+)
+def test_advice_only_projects_ledger_without_upgrading_coverage(
+    tmp_path, gate_status, decision
+):
+    raw = {
+        "gate": "deep-review",
+        "status": gate_status,
+        "reason": "partial coverage" if gate_status != "findings" else None,
+        "findings": [documentation_finding()],
+        "findings_count": 1,
+    }
+    result = review_gauntlet.project_gate_findings(raw)
+    projected = result["gate"]
+    assert result["advice"] == raw["findings"]
+    assert result["findings_count"] == projected["findings_count"] == 0
+    assert projected["findings"] == []
+    assert projected["reason"] == raw["reason"]
+    assert projected["status"] == (
+        "passed" if gate_status == "findings" else gate_status
+    )
+    ledger = pi_ledger.PiLedger(tmp_path / "run.json", "target")
+    assert (
+        ledger.append({"status": decision, "gates": [projected], "findings_count": 0})
+        == decision
+    )
+    assert ledger.read()["rounds"][0]["findings_count"] == 0
+    assert raw["findings_count"] == 1
+    with pytest.raises(ValueError, match="at least one finding"):
+        review_gauntlet.fixer_request(projected["findings"])
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [{"status": "unknown"}, {"status": "findings", "findings": [None]}],
+)
+def test_advice_projection_rejects_malformed_gate(raw):
+    with pytest.raises(ValueError):
+        review_gauntlet.project_gate_findings(raw)
+
+
+def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
+    text = " ".join(
+        (Path(__file__).parents[2] / "plugins/skein-pi/skills/review-gauntlet/SKILL.md")
+        .read_text()
+        .split()
+    )
+    for phrase in (
+        "Before reconciliation, call `project_gate_findings(raw_gate)`",
+        "raw per-lens findings, not its structurally reconciled report",
+        "exact `Decision candidate:` summary prefix AND Pi severity `suggestion`",
+        "A near-miss prefix stays actionable",
+        "same-line excuse-plus-candidate cannot merge into advice",
+        "Retain each original gate envelope",
+        "print advice once",
+        "Do not claim that the raw review had no findings",
+        "Advice-only input must not trigger a fixer or another round",
+        "projection preserves skipped/degraded status and reason",
+        "only projected gates to `PiLedger.append`",
+        "never count advice",
+        "exclude those findings from later fixer batches",
+        "a quarantine is not convergence",
+    ):
+        assert phrase in text, phrase
+
+
 def test_refresh_removes_stale_entry_and_reprobes_available(tmp_path):
     cache = tmp_path / "capabilities.json"
     review_gauntlet.probe(

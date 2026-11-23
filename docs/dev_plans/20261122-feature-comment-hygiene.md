@@ -337,6 +337,8 @@ sequenceDiagram
 
 ## Findings
 
+- Pi execution (2c, 3c, 4c; 2026-11-23): `just pi-tests` passed per phase (170, 171, 180 tests respectively); scoped Python files also pass `ruff format` and `ruff check`. A repeat 4c run hit a transient timeout in untouched `tests/pi/test_dispatcher.py::test_real_pi_success` (179 passed, 1 failed); the unchanged full-suite rerun passed all 180 in 40.54s. No timeout or dispatcher changes were made. Tests cover static prompt contracts and bounded synthetic persistence/projection, not live Documentation Lens quality; model sampling remains Phase 5. No implementation-scope deviation; concurrent Codex edits were left untouched.
+
 - Pi review (2026-11-22): Confirmed — conduct has no prompt templates; its two mechanical roles use approved no-tools `skein_worker` requests described in SKILL.md, and the main session owns edits/tests/commits; corrected the imprecise line reference and added explicit retry/handback tasks and orchestration-route tests.
 - Claude review (2026-11-22): Split phases 2–4 by mirror (a Codex, b Claude, c Pi) so each executor gets a scoped block; shared tests stay with a/b, tests/pi with c; added plugins/skein-pi/lib/review_gauntlet.py to 4c impl files because the candidate-seam bullet edits it. All original bullets preserved verbatim; no decision touched.
 - Pi review (2026-11-22): Corrected — scoped terminal role JSON fields to Claude/Codex; Pi notices use the generic envelope summary or proposal/report prose without new tool fields.

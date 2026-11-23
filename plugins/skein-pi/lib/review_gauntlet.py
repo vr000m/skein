@@ -130,6 +130,50 @@ def zero_runnable_stop(result: Coverage) -> str | None:
     return None
 
 
+def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
+    """Split raw Pi findings before reconciliation without upgrading coverage."""
+    status = gate.get("status")
+    findings = gate.get("findings", [])
+    if status not in {"passed", "findings", "skipped", "degraded"}:
+        raise ValueError("invalid gate status")
+    if not isinstance(findings, list) or any(
+        not isinstance(finding, dict) for finding in findings
+    ):
+        raise ValueError("invalid gate findings")
+    actionable = []
+    advice = []
+    near_misses = []
+    for finding in findings:
+        summary = finding.get("summary", "")
+        exact_prefix = isinstance(summary, str) and summary.startswith(
+            "Decision candidate:"
+        )
+        if (
+            finding.get("category") == "Documentation"
+            and finding.get("severity") == "suggestion"
+            and exact_prefix
+        ):
+            advice.append(dict(finding))
+        else:
+            actionable.append(dict(finding))
+            if (
+                isinstance(summary, str)
+                and summary.lower().startswith("decision candidate")
+                and not exact_prefix
+            ):
+                near_misses.append(dict(finding))
+    projected = dict(gate, findings=actionable, findings_count=len(actionable))
+    if status in {"passed", "findings"}:
+        projected["status"] = "findings" if actionable else "passed"
+    return {
+        "gate": projected,
+        "advice": advice,
+        "near_misses": near_misses,
+        "findings_count": len(actionable),
+        "advice_count": len(advice),
+    }
+
+
 def fixer_request(
     findings: list[Mapping[str, object]],
     *,
