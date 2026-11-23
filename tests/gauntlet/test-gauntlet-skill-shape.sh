@@ -889,8 +889,7 @@ assert_guardrail8_for "$CODEX_SKILL_MD" "Codex mirror"
 
 # ---------------------------------------------------------------------------
 # Guardrail 9: every fixer brief carries the why-only comment rule and the
-# excuse route. Claude-only until the Codex session adds its mirror (the Codex
-# counterpart call is added with the Codex half).
+# excuse route.
 # ---------------------------------------------------------------------------
 
 assert_guardrail9_for() {
@@ -937,6 +936,9 @@ assert_guardrail9_for() {
 }
 
 assert_guardrail9_for "$SKILL_MD" "Claude mirror"
+assert_guardrail9_for "$CODEX_SKILL_MD" "Codex mirror"
+assert_grep_fixed "$CODEX_SKILL_MD" 'Every fixer dispatch, including quick-mode fixes, resumed batches and retries, uses [worker-dispatch.md](worker-dispatch.md): call `spawn_agent` with the filled fixer prompt as the full message' \
+	"Codex mirror: full, quick, resumed and retry dispatches use the filled fixer brief"
 
 # ---------------------------------------------------------------------------
 # Advice seam (decision candidates): Claude mirror. The split runs before the

@@ -1062,6 +1062,18 @@ Guardrails 3, 6, and 7 do not cover this contract. A test for the reported case 
 
 When the plan is silent on a new design consideration, check its scope. If it is inside the contract already being fixed, decide it in this phase. Record a design delta. Use Guardrail 1 only when the delta contradicts or expands the plan's stated intent. Never put a design delta in `claimed`.
 
+### Guardrail 9 — keep comments why-only in every fix
+
+Every fixer brief's Constraints section must carry this rule unconditionally, for every fixer dispatch, whether or not a finding mentions comments. Comment only a non-obvious why. Do not add a comment that restates the code, and do not add a comment that excuses a hack: fix the hack, or report it. Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`).
+
+The fixer may delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches, within the fix's blast radius. It never sweeps comments elsewhere in the file; Guardrails 6 and 7 still bound the fix to its finding.
+
+**Excuse route.** When a finding flags an added excuse comment, the fixer takes exactly one of two paths. (a) It repairs the underlying hack, removes the excuse comment in the same change and claims the finding in `claimed`. (b) It cannot repair the hack without leaving the fix's scope or contradicting the design intent, so it reports the finding as a design conflict through Guardrail 1's existing quarantine path; it adds no new counter. The fixer never deletes an excuse comment silently, and never claims an excuse finding it did not repair.
+
+**Decision candidates.** A comment that records a cross-file or long-lived decision stays in place. The fixer lists it in its report `summary` as `Decision candidate: <file:line> <why>`. A candidate is information for the operator: it does not appear in `claimed` and it creates no design delta. The report keys stay exactly as Guardrail 2's fixer output schema defines them.
+
+This is a fixer-prompt requirement, not a mechanical gate. Like Guardrails 3, 4, 6 and 7, there is no deterministic backstop, only the instruction and the shape assertions that pin its key phrases.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
