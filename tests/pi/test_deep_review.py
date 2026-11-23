@@ -64,8 +64,12 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         "Require explicit approval for each worker launch",
         "Keep raw Documentation findings",
         "preserve that exact prefix unchanged during severity mapping",
-        "first set aside every `Documentation` row whose severity is `Minor`",
-        "under their own `Decision candidates` heading",
+        "first set aside every row that is advice (category `Documentation`, severity `Minor`",
+        "or a near miss of that prefix",
+        "append the set-aside rows to its `findings` unmerged, one finding each",
+        "add their count to `summary.raw` and `summary.unique`",
+        "a review whose only findings are set-aside rows is not clean",
+        "findings, set-aside rows included, grouped",
     ):
         assert phrase in text, phrase
     for phrase in (
@@ -89,8 +93,9 @@ def test_documentation_packet_and_lens_are_added_diff_only():
             "stale, tautology, decision candidate."
         ),
         "Never relabel an excuse as advice",
-        "sets exact-prefix Minor candidates aside before reconciliation",
-        "after exact-prefix Minor `Decision candidate:` rows are set aside",
+        "Begin its `summary` with exactly `Excuse:`",
+        "sets candidates and near misses aside before reconciliation and appends them unmerged",
+        "(exact-prefix Minor advice and near misses) are set aside and appended back unmerged",
     ):
         assert phrase in rubric, phrase
 

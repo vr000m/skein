@@ -19,6 +19,7 @@ STABLE_UNAVAILABLE_REASONS = frozenset(
 )
 MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
 ADVICE_PREFIX = "Decision candidate:"
+EXCUSE_PREFIX = "Excuse:"
 _EXCUSE_NOTICE = re.compile(
     r"(?:^|(?<=[.;!?])[ \t]+)Excuse:[ \t]*[`'\"(\[<]*([^\s`'\"()\[\]<>]+):(\d+)"
     r"[`'\")\]>]*(?=[\s.,;]|$)",
@@ -153,6 +154,14 @@ def _summary_key(summary: object) -> str:
     return " ".join(str(summary or "").split()).lower()
 
 
+def _line_key(line: object) -> str | None:
+    """Collector rows carry the line as a string such as ``"3"`` and claims as an
+    int, so every claim and notice comparison goes through this one key."""
+    if line is None or line == "":
+        return None
+    return str(line).lstrip("0") or "0"
+
+
 def _notice_path(path: object) -> str:
     text = str(path)
     while text.startswith("./"):
@@ -167,14 +176,15 @@ def excuse_exclusions(
 
     A notice counts only when it opens a line or a sentence, carries a whole
     line number, and its ``file:line`` names an excuse-class finding (a
-    Documentation finding above Minor) in the dispatched batch; any other
+    Documentation finding above Minor whose summary begins with ``Excuse:``,
+    as the documentation lens reports it) in the dispatched batch; any other
     notice, including an ``Excuse:`` quoted inside other text, is ignored, so
     untrusted fixer text cannot drop an ordinary finding from later batches.
     Backticks, quotes or brackets around the ``file:line`` and a leading
     ``./`` are ignored.
     """
     cited = {
-        (_notice_path(file), line.lstrip("0") or "0")
+        (_notice_path(file), _line_key(line))
         for file, line in _EXCUSE_NOTICE.findall(summary)
     }
     return [
@@ -182,11 +192,8 @@ def excuse_exclusions(
         for finding in batch
         if finding.get("category") == "Documentation"
         and finding.get("severity") not in MINOR_SEVERITIES
-        and (
-            _notice_path(finding.get("file")),
-            str(finding.get("line")).lstrip("0") or "0",
-        )
-        in cited
+        and str(finding.get("summary", "")).startswith(EXCUSE_PREFIX)
+        and (_notice_path(finding.get("file")), _line_key(finding.get("line"))) in cited
     ]
 
 
@@ -217,8 +224,10 @@ def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
             if _near_miss_prefix(summary):
                 near_misses.append(dict(finding))
     projected = dict(gate, findings=actionable, findings_count=len(actionable))
-    if status in {"passed", "findings"}:
-        projected["status"] = "findings" if actionable else "passed"
+    if status in {"passed", "findings"} and actionable:
+        projected["status"] = "findings"
+    elif status == "findings" and advice:
+        projected["status"] = "passed"
     return {
         "gate": projected,
         "advice": advice,
@@ -277,8 +286,8 @@ def fixer_request(
             "change (the repair makes it stale) and claim the finding in claimed; "
             "otherwise report it as an Excuse: <file:line> notice in summary. The "
             "main session lists it for the operator and excludes it from later "
-            "fixer batches when it names a Documentation finding above Minor in "
-            "this batch. "
+            "fixer batches when it names an `Excuse:` Documentation finding above "
+            "Minor in this batch. "
             "Copy each claimed finding's file, line, category and summary from "
             "the batch. A comment that "
             "records a cross-file or long-lived decision stays in place. List it "
@@ -362,7 +371,7 @@ def validate_fixer_result(
     expected = {
         (
             finding.get("file"),
-            finding.get("line"),
+            _line_key(finding.get("line")),
             finding.get("category"),
             _summary_key(finding.get("summary")),
         )
@@ -371,7 +380,7 @@ def validate_fixer_result(
     for claim in proposal["claimed"]:
         key = (
             claim["file"],
-            claim["line"],
+            _line_key(claim["line"]),
             claim["category"],
             _summary_key(claim["summary"]),
         )

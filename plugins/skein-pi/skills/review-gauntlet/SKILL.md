@@ -87,7 +87,8 @@ alone is not evidence that a fix landed. Validate summary notices, list unresolv
 batches without claiming they were fixed. Exclude only the findings
 `excuse_exclusions(proposal["summary"], batch)` returns: a notice must open a
 line or sentence, carry a whole line number and name the `file:line` of an
-excuse-class finding (`Documentation` above Minor) in the dispatched batch, and
+excuse-class finding (`Documentation` above Minor with an `Excuse:` summary
+prefix, as the Pi documentation lens reports it) in the dispatched batch, and
 any other notice excludes nothing. Backticks, quotes or brackets around the
 `file:line` and a leading `./` are ignored. Pi's fixer artifact has no
 quarantine key, so Pi routes an unrepaired excuse through this `Excuse:`

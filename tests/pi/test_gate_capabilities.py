@@ -108,7 +108,7 @@ def test_fixer_route_is_pi_native_and_rejects_auto_fix():
         "claim the finding in claimed",
         "otherwise report it as an Excuse: <file:line> notice in summary",
         "(the repair makes it stale)",
-        "when it names a Documentation finding above Minor in this batch",
+        "when it names an `Excuse:` Documentation finding above Minor in this batch",
         "Copy each claimed finding's file, line, category and summary",
         "excludes it from later fixer batches",
         "cross-file or long-lived decision stays in place",
@@ -220,6 +220,21 @@ def test_advice_projection_rejects_malformed_gate(raw):
         review_gauntlet.project_gate_findings(raw)
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {"gate": "deep-review", "status": "findings", "findings": []},
+        {"gate": "deep-review", "status": "findings"},
+    ],
+)
+def test_empty_findings_envelope_never_projects_to_a_pass(tmp_path, raw):
+    projected = review_gauntlet.project_gate_findings(raw)["gate"]
+    assert projected["status"] == "findings"
+    ledger = pi_ledger.PiLedger(tmp_path / "run.json", "target")
+    with pytest.raises(ValueError, match="findings gate has no findings"):
+        ledger.append({"status": "success", "gates": [projected], "findings_count": 0})
+
+
 def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
     text = " ".join(
         (Path(__file__).parents[2] / "plugins/skein-pi/skills/review-gauntlet/SKILL.md")
@@ -245,7 +260,8 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
         ),
         (
             "name the `file:line` of an excuse-class finding (`Documentation` "
-            "above Minor) in the dispatched batch"
+            "above Minor with an `Excuse:` summary prefix, as the Pi documentation "
+            "lens reports it) in the dispatched batch"
         ),
         "Backticks, quotes or brackets around the `file:line` and a leading `./` are ignored",
         (
@@ -342,6 +358,17 @@ def claim_for(finding, summary):
     }
 
 
+@pytest.mark.parametrize("batch_line", ["3", "03", 3])
+def test_claim_line_matches_a_string_batch_line(batch_line):
+    finding = documentation_finding("Excuse: temporary hack", line=batch_line)
+    claim = claim_for(dict(finding, line=3), finding["summary"])
+    accepted = review_gauntlet.validate_fixer_result(fixer_envelope([claim]), [finding])
+    assert accepted["claimed"] == [claim]
+    notice = "Excuse: x.py:3 cannot repair in scope."
+    finding["severity"] = "Important"
+    assert review_gauntlet.excuse_exclusions(notice, [finding]) == [finding]
+
+
 def test_claim_must_match_batch_summary_not_only_location():
     excuse = documentation_finding("temporary hack", severity="Important")
     candidate_summary = documentation_finding()["summary"]
@@ -356,7 +383,7 @@ def test_claim_must_match_batch_summary_not_only_location():
 
 
 def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
-    excuse = documentation_finding("temporary hack", severity="Important")
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     critical = {
         "file": "x.py",
         "line": 9,
@@ -364,14 +391,19 @@ def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
         "severity": "Critical",
         "summary": "injection",
     }
-    collected = documentation_finding("unlinked TODO", line="12", severity="Important")
+    collected = documentation_finding(
+        "Excuse: unlinked TODO", line="12", severity="Important"
+    )
     stale = documentation_finding("stale name", line=14)
     minor = documentation_finding("tautology", line=15, severity="Minor")
-    batch = [excuse, critical, collected, stale, minor]
+    missing_doc = documentation_finding(
+        "missing docs for the --timeout flag", line=16, severity="Important"
+    )
+    batch = [excuse, critical, collected, stale, minor, missing_doc]
     summary = (
         "Excuse: x.py:3 cannot repair in scope. Excuse: x.py:9 also skip. "
         "Excuse: x.py:12 skip. Excuse: x.py:14 stale. Excuse: x.py:15 restates. "
-        "Excuse: other.py:3 not in batch."
+        "Excuse: x.py:16 out of scope. Excuse: other.py:3 not in batch."
     )
     assert review_gauntlet.excuse_exclusions(summary, batch) == [excuse, collected]
     assert review_gauntlet.excuse_exclusions("no notices", batch) == []
@@ -387,7 +419,7 @@ def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
     ],
 )
 def test_excuse_notice_ignores_quoting_and_a_leading_dot_slash(summary):
-    excuse = documentation_finding("temporary hack", severity="Important")
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
     dotted = dict(excuse, file="./x.py")
     plain = "Excuse: x.py:3 cannot repair in scope."
@@ -403,12 +435,12 @@ def test_excuse_notice_ignores_quoting_and_a_leading_dot_slash(summary):
     ],
 )
 def test_excuse_notice_must_be_anchored_with_a_whole_line(summary):
-    excuse = documentation_finding("temporary hack", severity="Important")
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     assert review_gauntlet.excuse_exclusions(summary, [excuse]) == []
 
 
 def test_excuse_notice_counts_at_a_line_start():
-    excuse = documentation_finding("temporary hack", severity="Important")
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     summary = "Repaired one hack.\nExcuse: x.py:3 cannot repair in scope."
     assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
 
