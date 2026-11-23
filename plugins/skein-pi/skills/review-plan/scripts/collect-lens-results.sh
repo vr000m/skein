@@ -227,11 +227,15 @@
 # `unreviewed` := assigned - reviewed, in assigned order.
 #
 # `findings` are the union, across every attempt, of `finding` lines,
-# deduplicated by a (file, line, category) signature (case-insensitive on
-# file/category), first occurrence wins — the SAME (file, line, category)
-# signature the reconciler uses for cross-lens merging, applied here
-# cross-attempt instead (R4: "deduped by the reconciler's (file, line,
-# category) signature"). This is intentionally NOT the R5 regression key
+# deduplicated by a (file, line, category, advice) signature (case-insensitive
+# on category only), first occurrence wins — the reconciler's (file, line,
+# category) cross-lens signature, applied here cross-attempt instead (R4:
+# "deduped by the reconciler's (file, line, category) signature"), plus one
+# advice bit. The bit is set only for an exact `Decision candidate:` summary
+# at severity Minor under category Documentation, the predicate
+# review-gauntlet uses to split advice before its reconcile. Without it a
+# same-line excuse and decision candidate collapse here into whichever came
+# first, before any advice split can run. This is intentionally NOT the R5 regression key
 # (scripts/finding-key.sh, Phase 3) — a different signature for a
 # different purpose. A finding line may carry `file`/`line` directly, or a
 # combined `location` field ("file:line") as persist-lens-result.sh writes
@@ -875,7 +879,11 @@ while [[ "$i" -lt "$n" ]]; do
 				# Folding the path here made this collector a third,
 				# contradictory identity policy that silently dropped a
 				# Foo.md:10 / foo.md:10 pair down to one finding.
-				| ($file + "|" + $line + "|" + $cat) as $key
+				| (if (($f.category // "") == "Documentation")
+						and (($f.severity // "") == "Minor")
+						and (($f.summary // "") | type == "string" and startswith("Decision candidate:"))
+					then "advice" else "" end) as $advice
+				| ($file + "|" + $line + "|" + $cat + "|" + $advice) as $key
 				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key, _file: $file, _line: $line}] end
 			)
 		) as $dedup_raw

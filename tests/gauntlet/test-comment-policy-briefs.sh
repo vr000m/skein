@@ -93,7 +93,7 @@ check_mirror() {
 	claude) dir="plugins/skein/skills/conduct" ;;
 	codex) dir="plugins/skein-codex/skills/conduct" ;;
 	esac
-	local role file fixture rendered_new rendered_old out
+	local role file fixture rendered_new rendered_old out diff_rc
 	for role in implementer test-writer; do
 		file="$dir/$role-prompt.md"
 		fixture="tests/gauntlet/fixtures/conduct-templates/$role-prompt.md"
@@ -121,8 +121,11 @@ check_mirror() {
 		# No-goal rendering: only added lines, all belonging to the planned additions.
 		rendered_old="$(render_template "$fixture")"
 		rendered_new="$(render_template "$file")"
-		out="$(diff <(printf '%s\n' "$rendered_old") <(printf '%s\n' "$rendered_new") || true)"
-		if grep -q '^<' <<<"$out"; then
+		diff_rc=0
+		out="$(diff <(printf '%s\n' "$rendered_old") <(printf '%s\n' "$rendered_new"))" || diff_rc=$?
+		if [[ "$diff_rc" -gt 1 ]]; then
+			fail "$m $role no-goal rendering comparison did not run (diff exit $diff_rc)"
+		elif grep -q '^<' <<<"$out"; then
 			fail "$m $role no-goal rendering removes or rewrites existing lines"
 		else
 			local stray

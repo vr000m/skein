@@ -864,6 +864,11 @@ if [[ -s "$DOC_LENS_FIXTURE" ]] && grep -q '^+.*hack: workaround' "$DOC_LENS_FIX
 else
 	fail "documentation lens fixture diff or expected findings missing or incomplete"
 fi
+if git apply --numstat "$DOC_LENS_FIXTURE" >/dev/null 2>&1; then
+	pass "documentation lens fixture is a well-formed patch (hunk counts match its lines)"
+else
+	fail "documentation lens fixture is a corrupt patch: git apply --numstat rejects it"
+fi
 
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"

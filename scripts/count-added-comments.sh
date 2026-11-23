@@ -11,14 +11,21 @@
 #   - excluded: shebang lines, linter/type pragmas (`# shellcheck`, `# noqa`,
 #     `# type:`), license headers (`# Copyright`, `# SPDX-`), and TODO lines
 #     that carry an issue link (a URL or `#N`);
-#   - excluded: lines inside a shell heredoc body (*.sh and justfile only);
+#   - excluded: lines inside a shell heredoc body (*.sh and justfile only). An
+#     opener counts only outside quotes, comments and `((...))` arithmetic, and
+#     only when its terminator follows; otherwise it is not a heredoc. In a
+#     justfile the terminator may be indented, because just strips recipe
+#     indentation before the shell sees it;
 #   - NOT excluded (known over-count): `#` lines inside Python docstrings or
-#     other multi-line strings, and heredoc-like text the opener regex misses;
+#     other multi-line strings;
 #   - markdown is never read, so HTML BEGIN/END markers cannot count.
 # Only ADDED lines count; removed comments, diff headers and context never do.
+# Added lines are read from the `+` lines of the diff body, not from hunk
+# ranges, so `diff.interHunkContext` cannot pull context lines into the count.
 #
 # Output: one integer. With --verbose, one "<count> <path>" line per file with
-# a non-zero count, then "total <N>".
+# a non-zero count, then "total <N>". A revision that does not name a commit
+# exits 2 with no count.
 set -euo pipefail
 
 verbose=0
@@ -32,75 +39,123 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
 fi
 base="$1"
 head="${2:-HEAD}"
+for rev in "$base" "$head"; do
+	if ! git rev-parse --verify --quiet --end-of-options "$rev^{commit}" >/dev/null; then
+		echo "${0##*/}: not a commit: $rev" >&2
+		exit 2
+	fi
+done
 
-# awk program: argv ranges "start-end ..." name the added lines of one file.
-# kind is "shell" (heredoc tracking on) or "other".
-IFS= read -r -d '' awk_prog <<'AWK' || true
-function in_added(n,   i) {
-	for (i = 1; i <= nr; i++)
-		if (n >= lo[i] && n <= hi[i]) return 1
-	return 0
+# Prints the new-side line numbers of the `+` lines in one file's diff.
+IFS= read -r -d '' added_prog <<'AWK' || true
+/^@@ / {
+	plus = $3; sub(/^\+/, "", plus)
+	split(plus, a, ",")
+	nl = a[1] + 0
+	inhunk = 1
+	next
 }
-BEGIN {
-	nr = split(ranges, parts, " ")
-	for (i = 1; i <= nr; i++) {
-		split(parts[i], se, "-")
-		lo[i] = se[1] + 0
-		hi[i] = se[2] + 0
-	}
-	count = 0
-	inhd = 0
-}
-{
-	line = $0
-	if (inhd) {
-		cmp = line
-		if (dash) sub(/^\t+/, "", cmp)
-		if (cmp == delim) inhd = 0
-		next
-	}
-	is_comment = (line ~ /^[ \t]*#/)
-	if (kind == "shell" && !is_comment && match(line, /<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_]*["']?/)) {
-		if (RSTART == 1 || substr(line, RSTART - 1, 1) != "<") {
-			tok = substr(line, RSTART, RLENGTH)
+!inhunk { next }
+/^\+/ { printf "%d ", nl; nl++; next }
+/^ / { nl++ }
+AWK
+
+# Counts comment lines of one file at <head> whose line numbers are in `added`.
+# kind is "shell", "justfile" (heredoc tracking on) or "other".
+IFS= read -r -d '' count_prog <<'AWK' || true
+function heredoc_opener(s,   i, n, c, q, j, tok) {
+	n = length(s)
+	q = ""
+	for (i = 1; i <= n; i++) {
+		c = substr(s, i, 1)
+		if (q != "") {
+			if (q == "\"" && c == "\\") i++
+			else if (c == q) q = ""
+			continue
+		}
+		if (c == "\\") { i++; continue }
+		if (c == "\"" || c == "'") { q = c; continue }
+		if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t;]/)) return 0
+		if (substr(s, i, 2) == "((") {
+			j = index(substr(s, i + 2), "))")
+			if (j == 0) return 0
+			i += j + 2
+			continue
+		}
+		if (substr(s, i, 3) == "<<<") { i += 2; continue }
+		if (substr(s, i, 2) == "<<") {
+			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_]*["']?/)) return 0
+			tok = substr(s, i, RLENGTH)
 			dash = (tok ~ /^<<-/)
 			sub(/^<<-?[ \t]*["']?/, "", tok)
 			sub(/["']$/, "", tok)
 			delim = tok
-			inhd = 1
+			return 1
 		}
 	}
-	if (!is_comment || !in_added(NR)) next
-	if (NR == 1 && line ~ /^#!/) next
-	if (line ~ /^[ \t]*#[ \t]*(shellcheck|noqa|type:)/) next
-	if (line ~ /^[ \t]*#[ \t]*(Copyright|SPDX-)/) next
-	if (line ~ /TODO/ && (line ~ /https?:\/\// || line ~ /#[0-9]+/)) next
-	count++
+	return 0
 }
-END { print count }
+function is_terminator(s,   cmp) {
+	cmp = s
+	if (kind == "justfile") sub(/^[ \t]+/, "", cmp)
+	else if (dash) sub(/^\t+/, "", cmp)
+	return cmp == delim
+}
+function counts(line, n) {
+	if (n == 1 && line ~ /^#!/) return 0
+	if (line ~ /^[ \t]*#[ \t]*(shellcheck|noqa|type:)/) return 0
+	if (line ~ /^[ \t]*#[ \t]*(Copyright|SPDX-)/) return 0
+	if (line ~ /TODO/ && (line ~ /https?:\/\// || line ~ /#[0-9]+/)) return 0
+	return 1
+}
+BEGIN {
+	nadd = split(added, parts, " ")
+	for (k = 1; k <= nadd; k++) is_added[parts[k] + 0] = 1
+}
+{ L[NR] = $0 }
+END {
+	count = 0
+	i = 1
+	while (i <= NR) {
+		line = L[i]
+		if (line ~ /^[ \t]*#/) {
+			if ((i in is_added) && counts(line, i)) count++
+		} else if (kind != "other" && heredoc_opener(line)) {
+			for (j = i + 1; j <= NR; j++)
+				if (is_terminator(L[j])) break
+			if (j <= NR) {
+				i = j + 1
+				continue
+			}
+		}
+		i++
+	}
+	print count
+}
 AWK
+
+names="$(mktemp)"
+trap 'rm -f "$names"' EXIT
+git diff --name-only -z --diff-filter=AM --no-renames --end-of-options "$base...$head" -- \
+	'*.sh' '*.py' '*.jq' 'justfile' '*/justfile' >"$names"
 
 total=0
 details=""
 while IFS= read -r -d '' file; do
 	case "$file" in
-	*.sh | justfile | */justfile) kind="shell" ;;
+	*.sh) kind="shell" ;;
+	justfile | */justfile) kind="justfile" ;;
 	*) kind="other" ;;
 	esac
-	ranges="$(git diff -U0 --no-color --no-renames "$base...$head" -- "$file" |
-		awk '/^@@ /{
-			plus = $3; sub(/^\+/, "", plus)
-			n = split(plus, a, ",")
-			start = a[1]; len = (n > 1) ? a[2] : 1
-			if (len > 0) printf "%d-%d ", start, start + len - 1
-		}')"
-	[[ -n "$ranges" ]] || continue
-	n="$(git show "$head:$file" | awk -v kind="$kind" -v ranges="$ranges" "$awk_prog")"
+	added="$(git diff -U0 --no-color --no-ext-diff --no-renames --end-of-options "$base...$head" -- "$file" |
+		awk "$added_prog")"
+	[[ -n "$added" ]] || continue
+	n="$(git show --end-of-options "$head:$file" | awk -v kind="$kind" -v added="$added" "$count_prog")"
 	if [[ "$n" -gt 0 ]]; then
 		total=$((total + n))
 		details="${details}${n} ${file}"$'\n'
 	fi
-done < <(git diff --name-only -z --diff-filter=AM --no-renames "$base...$head" -- '*.sh' '*.py' '*.jq' 'justfile' '*/justfile')
+done <"$names"
 
 if [[ "$verbose" -eq 1 ]]; then
 	printf '%s' "$details"

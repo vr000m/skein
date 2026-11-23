@@ -64,6 +64,11 @@ cat <<-INDENTED
 	# indented heredoc body, not a comment
 	INDENTED
 x=$(cat <<<"herestring")
+# after herestring
+echo "use <<EOF in docs"
+# after quoted opener
+y=$((1<<n))
+# after arithmetic
 EOF
 cat >b.py <<'EOF'
 #!/usr/bin/env python3
@@ -75,26 +80,26 @@ cat >b.py <<'EOF'
 x = 1
 EOF
 printf '# jq comment\n.\n' >c.jq
-printf '# just comment\ndefault:\n\techo ok\n' >justfile
+printf '# just comment\ndefault:\n\tcat <<EOF\n\t# heredoc body in a recipe\n\tEOF\n\t# after recipe heredoc\n' >justfile
 printf '<!-- BEGIN X -->\n# markdown heading\n' >notes.md
 git add a.sh b.py c.jq justfile notes.md
 git commit -q -m head
 head1="$(git rev-parse HEAD)"
 
-assert_eq "total over fixture" "5" "$("$COUNTER" "$base" "$head1")"
-assert_eq "head defaults to HEAD" "5" "$("$COUNTER" "$base")"
+assert_eq "total over fixture" "9" "$("$COUNTER" "$base" "$head1")"
+assert_eq "head defaults to HEAD" "9" "$("$COUNTER" "$base")"
 
 verbose="$("$COUNTER" --verbose "$base" "$head1")"
 case "$verbose" in
-*"2 a.sh"*) pass "verbose names a.sh with 2" ;;
-*) fail "verbose missing '2 a.sh': $verbose" ;;
+*"5 a.sh"*) pass "verbose names a.sh with 5" ;;
+*) fail "verbose missing '5 a.sh': $verbose" ;;
 esac
 case "$verbose" in
-*"1 b.py"*"1 c.jq"*"1 justfile"*) pass "verbose names py, jq and justfile" ;;
+*"1 b.py"*"1 c.jq"*"2 justfile"*) pass "verbose names py, jq and justfile" ;;
 *) fail "verbose missing py/jq/justfile entries: $verbose" ;;
 esac
 case "$verbose" in
-*"total 5") pass "verbose ends with total" ;;
+*"total 9") pass "verbose ends with total" ;;
 *) fail "verbose missing total line: $verbose" ;;
 esac
 
@@ -114,13 +119,43 @@ git checkout -q main
 git merge -q --no-ff feat -m merge
 merge="$(git rev-parse HEAD)"
 assert_eq "merge commit measured as M^1 M" "1" "$("$COUNTER" "$merge^1" "$merge")"
-assert_eq "explicit head differs from HEAD range" "1" "$("$COUNTER" "$head1" "$merge")"
+
+# --- interHunkContext must not pull unchanged comments into the count ------
+printf '# keep 1\necho a\n# keep 2\necho b\n' >e.sh
+git add e.sh
+git commit -q -m "e base"
+e_base="$(git rev-parse HEAD)"
+printf '# new 1\n# keep 1\necho a\n# keep 2\necho b\n# new 2\n' >e.sh
+git add e.sh
+git commit -q -m "e head"
+assert_eq "merged hunks count only added lines" "2" \
+	"$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.interHunkContext GIT_CONFIG_VALUE_0=1000 \
+		"$COUNTER" "$e_base" HEAD)"
+
+# --- explicit head: HEAD has moved past $merge, so the two ranges differ ---
+assert_eq "explicit head is honoured when HEAD is later" "1" "$("$COUNTER" "$head1" "$merge")"
+assert_eq "same base against HEAD counts the later commits" "5" "$("$COUNTER" "$head1")"
 
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
 else
 	pass "missing base argument fails"
+fi
+rc=0
+out="$("$COUNTER" no-such-ref-xyz 2>/dev/null)" || rc=$?
+assert_eq "invalid base exits 2" "2" "$rc"
+assert_eq "invalid base prints no count" "" "$out"
+rc=0
+out="$("$COUNTER" "$base" no-such-ref-xyz 2>/dev/null)" || rc=$?
+assert_eq "invalid head exits 2" "2" "$rc"
+rc=0
+"$COUNTER" "--output=$tmp/pwned" >/dev/null 2>&1 || rc=$?
+assert_eq "dash-prefixed base is rejected" "2" "$rc"
+if compgen -G "$tmp/pwned*" >/dev/null; then
+	fail "dash-prefixed base reached git as an option and wrote a file"
+else
+	pass "dash-prefixed base is never parsed as a git option"
 fi
 
 echo "---"

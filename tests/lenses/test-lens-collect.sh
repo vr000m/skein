@@ -2089,4 +2089,52 @@ else
 	fail "(R11-F19d/control) expected '0 7 ', got '$f19b_lines'"
 fi
 
+# ---------------------------------------------------------------------------
+# (ADV) a same-line excuse and decision candidate survive collection.
+#
+# review-gauntlet splits advice (exact `Decision candidate:` + Minor +
+# Documentation) before its reconcile. The collector's own dedup ran earlier
+# on (file, line, category) only, so whichever of the pair came first erased
+# the other. Invariant: the advice bit is part of the dedup key, so the pair
+# is two findings in either order, while two non-advice findings, or two
+# advice findings, on the same (file, line, category) still dedup to one.
+# ---------------------------------------------------------------------------
+
+adv_excuse='{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"temporary hack"}'
+adv_candidate='{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":"Decision candidate: chose a dict"}'
+adv_case() {
+	local tag="$1" first="$2" second="$3"
+	local dir="$TMPDIR_ROOT/case-adv-$tag"
+	make_scratch_repo "$dir"
+	{
+		printf '%s\n' '{"type":"start","units":["u1"]}' "$first" "$second"
+		printf '%s\n' '{"type":"progress","unit":"u1"}' '{"type":"done","status":"completed"}'
+	} | write_lens_file "$(lens_file "$dir" deep-review "adv-$tag" documentation 1)"
+	run_collect_jsonl "$dir" deep-review "adv-$tag" "documentation:u1" | jq -r '.summary' | sort | tr '\n' '|'
+}
+for adv_order in excuse-first candidate-first; do
+	if [[ "$adv_order" == excuse-first ]]; then
+		adv_got="$(adv_case "$adv_order" "$adv_excuse" "$adv_candidate")"
+	else
+		adv_got="$(adv_case "$adv_order" "$adv_candidate" "$adv_excuse")"
+	fi
+	if [[ "$adv_got" == "Decision candidate: chose a dict|temporary hack|" ]]; then
+		pass "(ADV-$adv_order) same-line excuse and decision candidate are two findings"
+	else
+		fail "(ADV-$adv_order) expected both findings, got '$adv_got'"
+	fi
+done
+adv_dup_got="$(adv_case dup "$adv_excuse" "${adv_excuse/temporary hack/second excuse}")"
+if [[ "$adv_dup_got" == "temporary hack|" ]]; then
+	pass "(ADV-control) two non-advice findings on one (file, line, category) still dedup, first wins"
+else
+	fail "(ADV-control) expected one non-advice finding, got '$adv_dup_got'"
+fi
+adv_near_got="$(adv_case near "$adv_excuse" "${adv_candidate/Decision candidate:/decision candidate:}")"
+if [[ "$adv_near_got" == "temporary hack|" ]]; then
+	pass "(ADV-near-miss) a near-miss prefix is not advice, so it still dedups with the excuse"
+else
+	fail "(ADV-near-miss) expected the near miss to dedup, got '$adv_near_got'"
+fi
+
 finish

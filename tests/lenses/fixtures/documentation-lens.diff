@@ -2,7 +2,7 @@ diff --git a/src/cache.py b/src/cache.py
 index 1111111..2222222 100644
 --- a/src/cache.py
 +++ b/src/cache.py
-@@ -1,12 +1,20 @@
+@@ -1,6 +1,19 @@
  # Pre-existing comment: this module is a thin wrapper and must stay that way.
  import time
  
