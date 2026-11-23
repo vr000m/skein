@@ -89,7 +89,7 @@ function heredoc_opener(s,   i, n, c, q, j, tok) {
 		}
 		if (substr(s, i, 3) == "<<<") { i += 2; continue }
 		if (substr(s, i, 2) == "<<") {
-			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_-]*["']?/)) break
+			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z0-9_][A-Za-z0-9_-]*["']?/)) break
 			tok = substr(s, i, RLENGTH)
 			i += RLENGTH - 1
 			ndelim++
@@ -149,9 +149,11 @@ AWK
 names="$(mktemp)"
 trap 'rm -f "$names"' EXIT
 # Rename detection on, and each diff below names both sides, so a moved file
-# counts only the lines its move changed, never its whole body.
-git diff --name-status -z --diff-filter=AMR -M --end-of-options "$base...$head" -- \
-	'*.sh' '*.py' '*.jq' 'justfile' '*/justfile' >"$names"
+# counts only the lines its move changed, never its whole body. The file-type
+# filter runs on the destination after Git pairs renames: a pathspec here would
+# drop a source such as `x.txt` renamed to `x.sh`, and the rename would read as
+# an addition of the whole file.
+git diff --name-status -z --diff-filter=AMR -M --end-of-options "$base...$head" >"$names"
 
 total=0
 details=""
@@ -164,7 +166,8 @@ while IFS= read -r -d '' status; do
 	case "$file" in
 	*.sh) kind="shell" ;;
 	justfile | */justfile) kind="justfile" ;;
-	*) kind="other" ;;
+	*.py | *.jq) kind="other" ;;
+	*) continue ;;
 	esac
 	added="$(git diff -U0 --no-color --no-ext-diff -M --end-of-options "$base...$head" -- "$old" "$file" |
 		awk "$added_prog")"

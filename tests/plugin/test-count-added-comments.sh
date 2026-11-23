@@ -173,6 +173,24 @@ git add renamed-again.sh
 git commit -q -m "rename with an edit"
 assert_eq "a rename with an added comment counts only that comment" "1" "$("$COUNTER" "$r_base" HEAD)"
 
+# --- a rename into a counted file type counts only its edit ----------------
+printf '# kept 1\n# kept 2\necho a\n' >notes.txt
+git add notes.txt
+git commit -q -m "uncounted type"
+t_base="$(git rev-parse HEAD)"
+git mv notes.txt notes.sh
+printf '# added on type rename\n' >>notes.sh
+git add notes.sh
+git commit -q -m "rename into a counted type"
+assert_eq "a rename into a counted type counts only its added comment" "1" "$("$COUNTER" "$t_base" HEAD)"
+
+# --- a numeric heredoc delimiter still closes its body ---------------------
+n_base="$(git rev-parse HEAD)"
+printf "cat <<'123'\n# heredoc body, not a comment\n123\n# after the heredoc\n" >n.sh
+git add n.sh
+git commit -q -m "numeric heredoc"
+assert_eq "a numeric heredoc delimiter is honoured" "1" "$("$COUNTER" "$n_base" HEAD)"
+
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
