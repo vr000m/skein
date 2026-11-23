@@ -22,6 +22,7 @@
 #     other multi-line strings;
 #   - markdown is never read, so HTML BEGIN/END markers cannot count.
 # Only ADDED lines count; removed comments, diff headers and context never do.
+# A renamed file counts only the lines its rename changed.
 # Added lines are read from the `+` lines of the diff body, not from hunk
 # ranges, so `diff.interHunkContext` cannot pull context lines into the count.
 #
@@ -88,7 +89,7 @@ function heredoc_opener(s,   i, n, c, q, j, tok) {
 		}
 		if (substr(s, i, 3) == "<<<") { i += 2; continue }
 		if (substr(s, i, 2) == "<<") {
-			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_]*["']?/)) break
+			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z_][A-Za-z0-9_-]*["']?/)) break
 			tok = substr(s, i, RLENGTH)
 			i += RLENGTH - 1
 			ndelim++
@@ -147,18 +148,25 @@ AWK
 
 names="$(mktemp)"
 trap 'rm -f "$names"' EXIT
-git diff --name-only -z --diff-filter=AM --no-renames --end-of-options "$base...$head" -- \
+# Rename detection on, and each diff below names both sides, so a moved file
+# counts only the lines its move changed, never its whole body.
+git diff --name-status -z --diff-filter=AMR -M --end-of-options "$base...$head" -- \
 	'*.sh' '*.py' '*.jq' 'justfile' '*/justfile' >"$names"
 
 total=0
 details=""
-while IFS= read -r -d '' file; do
+while IFS= read -r -d '' status; do
+	IFS= read -r -d '' file
+	old="$file"
+	if [[ "$status" == R* ]]; then
+		IFS= read -r -d '' file
+	fi
 	case "$file" in
 	*.sh) kind="shell" ;;
 	justfile | */justfile) kind="justfile" ;;
 	*) kind="other" ;;
 	esac
-	added="$(git diff -U0 --no-color --no-ext-diff --no-renames --end-of-options "$base...$head" -- "$file" |
+	added="$(git diff -U0 --no-color --no-ext-diff -M --end-of-options "$base...$head" -- "$old" "$file" |
 		awk "$added_prog")"
 	[[ -n "$added" ]] || continue
 	n="$(git show --end-of-options "$head:$file" | awk -v kind="$kind" -v added="$added" "$count_prog")"

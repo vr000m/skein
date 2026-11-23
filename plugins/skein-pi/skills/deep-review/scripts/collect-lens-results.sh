@@ -227,18 +227,19 @@
 # `unreviewed` := assigned - reviewed, in assigned order.
 #
 # `findings` are the union, across every attempt, of `finding` lines,
-# deduplicated by a (file, line, category, advice) signature (case-insensitive
+# deduplicated by a (file, line, category, class) signature (case-insensitive
 # on category only), the more severe row winning a collision and the first
 # occurrence winning a tie (the reconciler also keeps the highest severity,
-# so a lower-severity row that arrives first cannot hide, for example, a
-# same-line excuse behind a near-miss candidate) — the reconciler's (file, line,
-# category) cross-lens signature, applied here cross-attempt instead (R4:
-# "deduped by the reconciler's (file, line, category) signature"), plus one
-# advice bit. The bit is set only for an exact `Decision candidate:` summary
-# at severity Minor under category Documentation, the predicate
-# review-gauntlet uses to split advice before its reconcile. Without it a
-# same-line excuse and decision candidate collapse here into whichever came
-# first, before any advice split can run. This is intentionally NOT the R5 regression key
+# so a lower-severity row that arrives first cannot hide a severer one) --
+# the reconciler's (file, line, category) cross-lens signature, applied here
+# cross-attempt instead (R4: "deduped by the reconciler's (file, line,
+# category) signature"), plus one class. The class is `advice` for an exact
+# `Decision candidate:` summary at severity Minor under category
+# Documentation (the predicate review-gauntlet splits advice on), `near` for
+# a summary review-gauntlet's near_miss_filter lists as a near miss, and
+# empty otherwise. Without it a same-line excuse, decision candidate and
+# near miss collapse here into one row before the advice split or near-miss
+# list sees them. This is intentionally NOT the R5 regression key
 # (scripts/finding-key.sh, Phase 3) — a different signature for a
 # different purpose. A finding line may carry `file`/`line` directly, or a
 # combined `location` field ("file:line") as persist-lens-result.sh writes
@@ -890,8 +891,10 @@ while [[ "$i" -lt "$n" ]]; do
 				| (if (($f.category // "") == "Documentation")
 						and (($f.severity // "") == "Minor")
 						and (($f.summary // "") | type == "string" and startswith("Decision candidate:"))
-					then "advice" else "" end) as $advice
-				| ($file + "|" + $line + "|" + $cat + "|" + $advice) as $key
+					then "advice"
+					elif ($f | ((.summary | type) == "string") and ((.summary | startswith("Decision candidate:")) | not) and ((.summary | if contains(":") then split(":")[0] else ([splits("\\s+")] | map(select(. != "")) | .[0:2] | join(" ")) end | gsub("[^A-Za-z]"; "") | ascii_downcase) == "decisioncandidate"))
+					then "near" else "" end) as $class
+				| ($file + "|" + $line + "|" + $cat + "|" + $class) as $key
 				| ($f + {_key: $key, _file: $file, _line: $line}) as $row
 				| if any(.[]; ._key == $key)
 					then map(if ._key == $key and (($row | sev_rank) > sev_rank) then $row else . end)

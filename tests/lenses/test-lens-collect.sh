@@ -2095,9 +2095,10 @@ fi
 # review-gauntlet splits advice (exact `Decision candidate:` + Minor +
 # Documentation) before its reconcile. The collector's own dedup ran earlier
 # on (file, line, category) only, so whichever of the pair came first erased
-# the other. Invariant: the advice bit is part of the dedup key, so the pair
-# is two findings in either order, while two non-advice findings, or two
-# advice findings, on the same (file, line, category) still dedup to one.
+# the other. Invariant: the class (advice, near miss or neither) is part of
+# the dedup key, so the pair is two findings in either order, and so is a
+# near miss beside either, while two findings of one class on the same
+# (file, line, category) still dedup to one.
 # ---------------------------------------------------------------------------
 
 adv_excuse='{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"temporary hack"}'
@@ -2137,17 +2138,24 @@ for adv_order in excuse-first near-first; do
 	else
 		adv_near_got="$(adv_case "near-$adv_order" "$adv_near" "$adv_excuse")"
 	fi
-	if [[ "$adv_near_got" == "temporary hack|" ]]; then
-		pass "(ADV-near-miss-$adv_order) a near miss is not advice, so it dedups into the more severe excuse"
+	if [[ "$adv_near_got" == "decision candidate: chose a dict|temporary hack|" ]]; then
+		pass "(ADV-near-miss-$adv_order) a near miss keeps its own row beside a same-line excuse, so the near-miss list can show it"
 	else
-		fail "(ADV-near-miss-$adv_order) expected the excuse to survive the collision, got '$adv_near_got'"
+		fail "(ADV-near-miss-$adv_order) expected the near miss and the excuse, got '$adv_near_got'"
 	fi
 done
+adv_near_pair="$(adv_case near-pair "$adv_candidate" "$adv_near")"
+if [[ "$adv_near_pair" == "$(printf '%s\n' 'Decision candidate: chose a dict' 'decision candidate: chose a dict' | sort | tr '\n' '|')" ]]; then
+	pass "(ADV-near-miss-pair) a near miss and an exact candidate on one line stay apart"
+else
+	fail "(ADV-near-miss-pair) expected the candidate and the near miss, got '$adv_near_pair'"
+fi
 
-# The collector's advice bit and review-gauntlet's documented advice_filter
-# must agree on every row: a row the filter calls advice survives beside a
-# same-line excuse, and any other row dedups into it.
+# The collector's class and review-gauntlet's documented advice_filter and
+# near_miss_filter must agree on every row: a row either filter matches
+# survives beside a same-line excuse, and any other row dedups into it.
 adv_filter="$(sed -n "s/^  advice_filter='\(.*\)'\$/\1/p" "$REPO_ROOT/plugins/skein/skills/review-gauntlet/SKILL.md" | head -1)"
+adv_near_filter="$(sed -n "s/^  near_miss_filter='\(.*\)'\$/\1/p" "$REPO_ROOT/plugins/skein/skills/review-gauntlet/SKILL.md" | head -1)"
 adv_i=0
 for adv_row in \
 	"$adv_candidate" \
@@ -2157,11 +2165,11 @@ for adv_row in \
 	'{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":5}'; do
 	adv_i=$((adv_i + 1))
 	adv_two="$(adv_case "agree-$adv_i" "$adv_excuse" "$adv_row" | tr -cd '|' | wc -c | tr -d ' ')"
-	adv_is_advice="$(jq -r "$adv_filter" <<<"$adv_row" 2>/dev/null || echo error)"
+	adv_is_advice="$(jq -r "($adv_filter) or ($adv_near_filter)" <<<"$adv_row" 2>/dev/null || echo error)"
 	if [[ ("$adv_is_advice" == true && "$adv_two" == 2) || ("$adv_is_advice" == false && "$adv_two" == 1) ]]; then
-		pass "(ADV-agree-$adv_i) collector advice bit agrees with advice_filter ($adv_is_advice)"
+		pass "(ADV-agree-$adv_i) collector class agrees with advice_filter and near_miss_filter ($adv_is_advice)"
 	else
-		fail "(ADV-agree-$adv_i) collector kept $adv_two rows but advice_filter said '$adv_is_advice'"
+		fail "(ADV-agree-$adv_i) collector kept $adv_two rows but the filters said '$adv_is_advice'"
 	fi
 done
 

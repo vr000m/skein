@@ -154,6 +154,25 @@ git add justfile
 git commit -q -m "shebang recipe"
 assert_eq "justfile recipe shebang is excluded" "1" "$("$COUNTER" "$j_base" HEAD)"
 
+# --- a hyphenated heredoc delimiter still closes its body -------------------
+h_base="$(git rev-parse HEAD)"
+printf "cat <<'END-OF-TEXT'\n# heredoc body, not a comment\nEND-OF-TEXT\n# after the heredoc\n" >h.sh
+git add h.sh
+git commit -q -m "hyphenated heredoc"
+assert_eq "a hyphenated heredoc delimiter is honoured" "1" "$("$COUNTER" "$h_base" HEAD)"
+
+# --- a pure rename adds no comments; an edited rename counts only its edit --
+r_base="$(git rev-parse HEAD)"
+git mv e.sh renamed-e.sh
+git commit -q -m "pure rename"
+assert_eq "a pure rename counts no comment" "0" "$("$COUNTER" "$r_base" HEAD)"
+r_base="$(git rev-parse HEAD)"
+git mv renamed-e.sh renamed-again.sh
+printf '# added on rename\n' >>renamed-again.sh
+git add renamed-again.sh
+git commit -q -m "rename with an edit"
+assert_eq "a rename with an added comment counts only that comment" "1" "$("$COUNTER" "$r_base" HEAD)"
+
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
