@@ -20,7 +20,9 @@ STABLE_UNAVAILABLE_REASONS = frozenset(
 MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
 ADVICE_PREFIX = "Decision candidate:"
 _EXCUSE_NOTICE = re.compile(
-    r"(?:^|(?<=[.;!?])[ \t]+)Excuse:[ \t]*(\S+):(\d+)(?=[\s.,;]|$)", re.MULTILINE
+    r"(?:^|(?<=[.;!?])[ \t]+)Excuse:[ \t]*[`'\"(\[<]*([^\s`'\"()\[\]<>]+):(\d+)"
+    r"[`'\")\]>]*(?=[\s.,;]|$)",
+    re.MULTILINE,
 )
 TRANSIENT_REASONS = frozenset(
     {
@@ -151,26 +153,40 @@ def _summary_key(summary: object) -> str:
     return " ".join(str(summary or "").split()).lower()
 
 
+def _notice_path(path: object) -> str:
+    text = str(path)
+    while text.startswith("./"):
+        text = text[2:]
+    return text
+
+
 def excuse_exclusions(
     summary: str, batch: Iterable[Mapping[str, object]]
 ) -> list[dict[str, object]]:
     """Return the batch findings that a fixer's Excuse: notices may exclude.
 
     A notice counts only when it opens a line or a sentence, carries a whole
-    line number, and its ``file:line`` names a Documentation finding in the
-    dispatched batch; any other notice, including an ``Excuse:`` quoted inside
-    other text, is ignored, so untrusted fixer text cannot drop a finding from
-    later batches.
+    line number, and its ``file:line`` names an excuse-class finding (a
+    Documentation finding above Minor) in the dispatched batch; any other
+    notice, including an ``Excuse:`` quoted inside other text, is ignored, so
+    untrusted fixer text cannot drop an ordinary finding from later batches.
+    Backticks, quotes or brackets around the ``file:line`` and a leading
+    ``./`` are ignored.
     """
     cited = {
-        (file, line.lstrip("0") or "0")
+        (_notice_path(file), line.lstrip("0") or "0")
         for file, line in _EXCUSE_NOTICE.findall(summary)
     }
     return [
         dict(finding)
         for finding in batch
         if finding.get("category") == "Documentation"
-        and (finding.get("file"), str(finding.get("line")).lstrip("0") or "0") in cited
+        and finding.get("severity") not in MINOR_SEVERITIES
+        and (
+            _notice_path(finding.get("file")),
+            str(finding.get("line")).lstrip("0") or "0",
+        )
+        in cited
     ]
 
 
@@ -261,7 +277,8 @@ def fixer_request(
             "change (the repair makes it stale) and claim the finding in claimed; "
             "otherwise report it as an Excuse: <file:line> notice in summary. The "
             "main session lists it for the operator and excludes it from later "
-            "fixer batches when it names a Documentation finding in this batch. "
+            "fixer batches when it names a Documentation finding above Minor in "
+            "this batch. "
             "Copy each claimed finding's file, line, category and summary from "
             "the batch. A comment that "
             "records a cross-file or long-lived decision stays in place. List it "

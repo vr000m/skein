@@ -108,7 +108,7 @@ def test_fixer_route_is_pi_native_and_rejects_auto_fix():
         "claim the finding in claimed",
         "otherwise report it as an Excuse: <file:line> notice in summary",
         "(the repair makes it stale)",
-        "when it names a Documentation finding in this batch",
+        "when it names a Documentation finding above Minor in this batch",
         "Copy each claimed finding's file, line, category and summary",
         "excludes it from later fixer batches",
         "cross-file or long-lived decision stays in place",
@@ -239,7 +239,18 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
         (
             "That stream predates deep-review's merge-base Review Checklist "
             "suppression, so first drop every record whose `(file, line, "
-            "category)` matches a finding that suppression removed"
+            "category)` matches a finding that suppression removed and that "
+            "sits on the same side of the advice split below (both advice, or "
+            "both not), so suppressing a candidate never drops a same-line excuse"
+        ),
+        (
+            "name the `file:line` of an excuse-class finding (`Documentation` "
+            "above Minor) in the dispatched batch"
+        ),
+        "Backticks, quotes or brackets around the `file:line` and a leading `./` are ignored",
+        (
+            "Pi routes an unrepaired excuse through this `Excuse:` notice where "
+            "the Claude and Codex gauntlets use Guardrail 1's quarantine path"
         ),
         "Keep their disk-first `Critical|Important|Minor` severities",
         "matched on file, line, category and summary",
@@ -353,14 +364,34 @@ def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
         "severity": "Critical",
         "summary": "injection",
     }
-    collected = documentation_finding("stale name", line="12")
-    batch = [excuse, critical, collected]
+    collected = documentation_finding("unlinked TODO", line="12", severity="Important")
+    stale = documentation_finding("stale name", line=14)
+    minor = documentation_finding("tautology", line=15, severity="Minor")
+    batch = [excuse, critical, collected, stale, minor]
     summary = (
         "Excuse: x.py:3 cannot repair in scope. Excuse: x.py:9 also skip. "
-        "Excuse: x.py:12 stale. Excuse: other.py:3 not in batch."
+        "Excuse: x.py:12 skip. Excuse: x.py:14 stale. Excuse: x.py:15 restates. "
+        "Excuse: other.py:3 not in batch."
     )
     assert review_gauntlet.excuse_exclusions(summary, batch) == [excuse, collected]
     assert review_gauntlet.excuse_exclusions("no notices", batch) == []
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Excuse: `x.py:3` cannot repair in scope.",
+        "Excuse: [x.py:3] cannot repair in scope.",
+        "Excuse: ./x.py:3 cannot repair in scope.",
+        "Excuse: (`./x.py:3`), cannot repair in scope.",
+    ],
+)
+def test_excuse_notice_ignores_quoting_and_a_leading_dot_slash(summary):
+    excuse = documentation_finding("temporary hack", severity="Important")
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
+    dotted = dict(excuse, file="./x.py")
+    plain = "Excuse: x.py:3 cannot repair in scope."
+    assert review_gauntlet.excuse_exclusions(plain, [dotted]) == [dotted]
 
 
 @pytest.mark.parametrize(

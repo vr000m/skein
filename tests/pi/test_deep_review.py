@@ -83,7 +83,12 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         "docstrings, linter and type pragmas, license headers",
         "a full issue URL or `#N`",
         "Do not look up symbols outside the supplied diff",
-        "same-line excuse-plus-candidate produces separate findings",
+        (
+            "One class per comment: when a comment matches more than one class, "
+            "report it once, under the first that matches in the order excuse, "
+            "stale, tautology, decision candidate."
+        ),
+        "Never relabel an excuse as advice",
         "sets exact-prefix Minor candidates aside before reconciliation",
         "after exact-prefix Minor `Decision candidate:` rows are set aside",
     ):

@@ -47,7 +47,9 @@ Before reconciliation, call `project_gate_findings(raw_gate)` from
 raw per-lens findings (the collector's `--findings-jsonl` stream), not its
 structurally reconciled report. That stream predates deep-review's merge-base
 Review Checklist suppression, so first drop every record whose `(file, line,
-category)` matches a finding that suppression removed. Keep their disk-first
+category)` matches a finding that suppression removed and that sits on the same
+side of the advice split below (both advice, or both not), so suppressing a
+candidate never drops a same-line excuse. Keep their disk-first
 `Critical|Important|Minor` severities with the summary prefix unchanged: the
 reconciler ranks only those canonical values. Separate into operator advice
 only `Documentation` findings with the exact `Decision candidate:` summary
@@ -84,9 +86,13 @@ alone is not evidence that a fix landed. Validate summary notices, list unresolv
 `Excuse:` notices for the operator and exclude those findings from later fixer
 batches without claiming they were fixed. Exclude only the findings
 `excuse_exclusions(proposal["summary"], batch)` returns: a notice must open a
-line or sentence, carry a whole line number and name the `file:line` of a
-Documentation finding in the dispatched batch, and any other notice excludes
-nothing. Keep `Decision candidate:` notices as
+line or sentence, carry a whole line number and name the `file:line` of an
+excuse-class finding (`Documentation` above Minor) in the dispatched batch, and
+any other notice excludes nothing. Backticks, quotes or brackets around the
+`file:line` and a leading `./` are ignored. Pi's fixer artifact has no
+quarantine key, so Pi routes an unrepaired excuse through this `Excuse:`
+notice where the Claude and Codex gauntlets use Guardrail 1's quarantine path.
+Keep `Decision candidate:` notices as
 information only: leave the comment in place, never claim it or create a design
 delta. Retain unresolved actionable findings in round evidence; a quarantine is
 not convergence.
