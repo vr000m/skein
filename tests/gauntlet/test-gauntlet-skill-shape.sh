@@ -1033,11 +1033,13 @@ for adv_shared in advice_filter near_miss_filter repair_site_filter; do
 	fi
 done
 for adv_dr_md in "$DEEP_REVIEW_MD" "$CODEX_DEEP_REVIEW_MD"; do
-	if [[ "$(adv_extract_filter "$adv_dr_md" advice_filter)" == "$(adv_extract_filter "$SKILL_MD" advice_filter)" ]]; then
-		pass "${adv_dr_md#"$ROOT_DIR"/}: deep-review sets aside on the gauntlet's advice_filter"
-	else
-		fail "${adv_dr_md#"$ROOT_DIR"/}: deep-review's advice_filter is missing or differs from the gauntlet's"
-	fi
+	for adv_shared in advice_filter near_miss_filter; do
+		if [[ "$(adv_extract_filter "$adv_dr_md" "$adv_shared")" == "$(adv_extract_filter "$SKILL_MD" "$adv_shared")" ]]; then
+			pass "${adv_dr_md#"$ROOT_DIR"/}: deep-review sets aside on the gauntlet's $adv_shared"
+		else
+			fail "${adv_dr_md#"$ROOT_DIR"/}: deep-review's $adv_shared is missing or differs from the gauntlet's"
+		fi
+	done
 done
 if [[ -n "$(adv_extract_status_copy "$SKILL_MD")" &&
 "$(adv_extract_status_copy "$SKILL_MD")" == "$(adv_extract_status_copy "$CODEX_SKILL_MD")" ]]; then
@@ -1082,31 +1084,44 @@ for adv_near_md in "$SKILL_MD" "$CODEX_SKILL_MD"; do
 done
 
 # adv_deep_review_gate <deep-review SKILL.md> <dir> [mutate]: run that
-# mirror's documented set-aside and reconcile commands over <dir>/findings.jsonl,
-# then hand-build the gate-2 envelope from the returned findings, as the
-# conductor does. `mutate` drops the set-aside, as a control.
+# mirror's documented set-aside and reconcile commands over <dir>/findings.jsonl
+# into <dir>/reconciled.json, deep-review's documented output. `mutate` drops
+# the set-aside, as a control.
 adv_deep_review_gate() {
 	local dr_md="$1" dir="$2" mutate="${3:-}" block
 	block="$(adv_extract_block "$dr_md" "$ADV_DEEP_REVIEW_ANCHOR")"
-	if [[ "$block" != *'advice_filter='* ]]; then
+	if [[ "$block" != *'advice_filter='* || "$block" != *'near_miss_filter='* ]]; then
 		fail "${dr_md#"$ROOT_DIR"/}: could not extract deep-review's set-aside commands"
 		return 1
 	fi
 	if [[ -n "$mutate" ]]; then
-		block="${block//select(\$advice_filter | not)/select(true)}"
-		block="${block//select(\$advice_filter)/select(false)}"
+		block="${block//select(((\$advice_filter) or (\$near_miss_filter)) | not)/select(true)}"
+		block="${block//select((\$advice_filter) or (\$near_miss_filter))/select(false)}"
 	fi
 	block="${block//\"\$SKILL_DIR\"/\"${dr_md%/SKILL.md}\"}"
-	(cd "$dir" && eval "$block") >"$dir/reconciled.json" || return 1
-	jq '{gate: "deep-review", status: (if (.findings | length) == 0 then "approve" else "needs-attention" end), findings: .findings}' \
-		"$dir/reconciled.json" >"$dir/deep-review.envelope.json"
+	(cd "$dir" && eval "$block") >"$dir/reconciled.json"
+}
+# adv_gate2_envelope <reconciled.json> <slot> <out>: the gate-2 envelope each
+# mirror's conductor stamps from deep-review's returned findings.
+adv_gate2_envelope() {
+	jq --arg gate "$2" '{gate: $gate, status: (if (.findings | length) == 0 then "approve" else "needs-attention" end), findings: .findings}' \
+		"$1" >"$3"
 }
 
 assert_split_pipeline_for() {
-	local file="$1" label="$2" dr_md="$3" dir rc split_block mut
+	local file="$1" label="$2" dr_md="$3" dir rc split_block mut slot slot_var
 	dir="$ADV_WORK/$label"
 	dir="${dir// /-}"
-	mkdir -p "$dir/repo/.deep-review/lenses/adv" "$dir/dr"
+	mkdir -p "$dir/repo/.deep-review/lenses/adv" "$dir/dr" "$dir/nm"
+	# Gate 2's slot is the envelope file this mirror's paths block declares and
+	# its status table reads, so Codex runs as deep-review-gated.
+	read -r slot_var slot < <(sed -n 's/^\(envelope_deep_review[a-z_]*\)="\$gate_out_dir\/\(.*\)\.envelope\.json"$/\1 \2/p' "$file" | head -1) || true
+	if [[ -n "$slot" ]] && grep -q -F -- "status-row \"\$(gauntlet_status_copy \"\$$slot_var\")\"" "$file"; then
+		pass "$label: gate 2's slot is $slot, and the status table reads it"
+	else
+		fail "$label: could not resolve gate 2's documented slot (var '$slot_var', slot '$slot')"
+		return
+	fi
 	git -C "$dir/repo" init -q
 	{
 		printf '%s\n' '{"type":"start","units":["x.py"]}' '{"type":"progress","unit":"x.py"}'
@@ -1121,7 +1136,7 @@ assert_split_pipeline_for() {
 	# Mutation control: without deep-review's set-aside its own reconcile
 	# merges the candidate into the excuse, so the checks below would fail.
 	adv_deep_review_gate "$dr_md" "$dir/dr" mutate
-	if [[ "$(jq -r '[.findings[] | select(.file == "x.py") | .summary] | join("|")' "$dir/dr/deep-review.envelope.json")" == "temporary hack" ]]; then
+	if [[ "$(jq -r '[.findings[] | select(.file == "x.py") | .summary] | join("|")' "$dir/dr/reconciled.json")" == "temporary hack" ]]; then
 		pass "$label: control: deep-review without the set-aside merges the same-line candidate into the excuse"
 	else
 		fail "$label: control: the fixture no longer makes deep-review's reconcile merge the pair"
@@ -1135,7 +1150,26 @@ assert_split_pipeline_for() {
 	else
 		fail "$label: deep-review's reconcile merged the pair or miscounted: $(jq -c '[.summary, [.findings[].summary]]' "$dir/dr/reconciled.json")"
 	fi
-	cp "$dir/dr/deep-review.envelope.json" "$dir/deep-review.envelope.json"
+	# A same-line near miss also survives deep-review's reconcile, so the
+	# gauntlet's near_miss_filter can still list it.
+	printf '%s\n' '{"lens":"documentation","file":"x.py","line":"3","category":"Documentation","severity":"Minor","summary":"decision candidate: chose a dict","evidence":"e","suggestion":"s"}' \
+		'{"lens":"documentation","file":"x.py","line":"3","category":"Documentation","severity":"Important","summary":"temporary hack","evidence":"e","suggestion":"s"}' \
+		>"$dir/nm/findings.jsonl"
+	adv_deep_review_gate "$dr_md" "$dir/nm" mutate
+	if [[ "$(jq -r '[.findings[].summary] | join("|")' "$dir/nm/reconciled.json")" == "temporary hack" ]]; then
+		pass "$label: control: deep-review without the set-aside merges a same-line near miss into the excuse"
+	else
+		fail "$label: control: the near-miss fixture no longer makes deep-review's reconcile merge the pair"
+	fi
+	adv_deep_review_gate "$dr_md" "$dir/nm" || fail "$label: deep-review's set-aside commands failed on the near-miss fixture"
+	if [[ "$(jq -c "[.findings[] | select($(adv_extract_filter "$file" near_miss_filter))] | length" "$dir/nm/reconciled.json")" == "1" &&
+	"$(jq '.findings | length' "$dir/nm/reconciled.json")" == "2" ]]; then
+		pass "$label: deep-review keeps a same-line near miss for the gauntlet's near_miss_filter"
+	else
+		fail "$label: deep-review's reconcile erased a same-line near miss: $(jq -c '[.findings[].summary]' "$dir/nm/reconciled.json")"
+	fi
+
+	adv_gate2_envelope "$dir/dr/reconciled.json" "$slot" "$dir/$slot.envelope.json"
 	jq -n '{gate: "codex-adversarial", status: "approve", findings: []}' >"$dir/codex-adversarial.envelope.json"
 	jq -n '{gate: "security-review", status: "skipped", findings: [{file: "s.py", line: 1, category: "Documentation", severity: "Minor", summary: "Decision candidate: only advice"}]}' \
 		>"$dir/security-review.envelope.json"
@@ -1149,7 +1183,7 @@ assert_split_pipeline_for() {
 		{file: "x.py", line: 3, category: "Documentation", severity: "Minor", summary: "typo in comment", auto_fix: {kind: "docstring_typo", before: "# temporary hack", after: "", scope: "line"}},
 		{file: "y.py", line: 5, category: "Documentation", severity: "Minor", summary: "Decision candidate: chose y", auto_fix: {kind: "docstring_typo", before: "# chose y", after: "", scope: "line"}}]}' \
 		>"$dir/proposal.envelope.json"
-	for gate_name in deep-review codex-adversarial security-review proposal; do
+	for gate_name in "$slot" codex-adversarial security-review proposal; do
 		rc=0
 		"$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" normalize --gate "$gate_name" \
 			--autofix-cache "$dir/autofix-cache.jsonl" "$dir/$gate_name.envelope.json" \
@@ -1170,7 +1204,7 @@ assert_split_pipeline_for() {
 	else
 		fail "$label: same-line excuse/candidate pair did not survive every merge step"
 	fi
-	if [[ "$(jq -r '.lens' "$dir/findings.jsonl" | sort -u | tr '\n' '|')" == "deep-review|" ]]; then
+	if [[ "$(jq -r '.lens' "$dir/findings.jsonl" | sort -u | tr '\n' '|')" == "$slot|" ]]; then
 		pass "$label: gate 2's envelope feeds the split under its slot name"
 	else
 		fail "$label: gate 2's findings did not reach findings.jsonl"
@@ -1208,18 +1242,34 @@ assert_split_pipeline_for() {
 	# shellcheck source=/dev/null
 	. "$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/state-path-guard.sh"
 	eval "$(adv_extract_status_copy "$file")"
-	for gate_name in deep-review codex-adversarial security-review; do
+	for gate_name in "$slot" codex-adversarial security-review; do
 		copy="$(gauntlet_status_copy "$dir/$gate_name.envelope.json")"
 		row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$copy" | cut -f2,4)"
 		case "$gate_name:$row" in
-		deep-review:"needs-attention"$'\t'2 | codex-adversarial:approve$'\t'0 | security-review:skipped$'\t'0)
+		"$slot":"needs-attention"$'\t'2 | codex-adversarial:approve$'\t'0 | security-review:skipped$'\t'0)
 			pass "$label: $gate_name status row counts only actionable findings ($row)"
 			;;
 		*) fail "$label: $gate_name status row is '$row'" ;;
 		esac
 	done
-	jq -n '{gate: "deep-review", status: "needs-attention", findings: [{summary: "Decision candidate: x"}]}' \
+	# Control: a handoff that stops forwarding deep-review's findings leaves
+	# gate 2's row without them, so the row check above can fail.
+	jq '.findings = []' "$dir/$slot.envelope.json" >"$dir/dropped.envelope.json"
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/dropped.envelope.json")" | cut -f2,4)"
+	if [[ "$row" != "needs-attention"$'\t'2 ]]; then
+		pass "$label: control: a gate-2 envelope without deep-review's findings fails the row check ($row)"
+	else
+		fail "$label: control: the gate-2 row check passes without deep-review's findings"
+	fi
+	jq -n '{gate: "advice-only", status: "needs-attention", findings: [{category: "Documentation", severity: "Minor", summary: "Decision candidate: x"}]}' \
 		>"$dir/advice-only.envelope.json"
+	"$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" normalize --gate advice-only \
+		--autofix-cache "$dir/advice-only-cache.jsonl" "$dir/advice-only.envelope.json" >"$dir/advice-only.normalized.jsonl"
+	if [[ -s "$dir/advice-only.normalized.jsonl" ]] && ! grep -q -F '"advice-only"' "$dir/findings.jsonl"; then
+		pass "$label: the advice-only slot has normalized rows and none reached findings.jsonl"
+	else
+		fail "$label: the advice-only fixture does not show the advice split removing its rows"
+	fi
 	copy="$(gauntlet_status_copy "$dir/advice-only.envelope.json")"
 	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$copy" | cut -f2,4)"
 	if [[ "$row" == "approve"$'\t'0 ]]; then
@@ -1227,6 +1277,23 @@ assert_split_pipeline_for() {
 	else
 		fail "$label: advice-only gate row is '$row'"
 	fi
+	# A findings envelope whose slot was never normalized fails closed.
+	jq -n '{gate: "unnormalized", status: "needs-attention", findings: [{file: "u.py", line: 1, category: "Logic", severity: "Important", summary: "real bug"}]}' \
+		>"$dir/unnormalized.envelope.json"
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/unnormalized.envelope.json")" | cut -f2,4,5)"
+	if [[ "$row" == "error"$'\t'0$'\t'"normalized findings missing" ]]; then
+		pass "$label: a findings envelope without normalized rows shows an error row"
+	else
+		fail "$label: a findings envelope without normalized rows shows '$row'"
+	fi
+	eval "$(adv_extract_status_copy "$file" | sed 's/(\$normalized | length) == 0/false/')"
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/unnormalized.envelope.json")" | cut -f2)"
+	if [[ "$row" == "approve" ]]; then
+		pass "$label: control: without the normalized-rows check the same envelope shows approve"
+	else
+		fail "$label: control: the unnormalized fixture no longer distinguishes the check ($row)"
+	fi
+	eval "$(adv_extract_status_copy "$file")"
 	printf 'not json' >"$dir/broken.envelope.json"
 	if [[ "$(gauntlet_status_copy "$dir/broken.envelope.json")" == "$dir/broken.envelope.json" ]]; then
 		pass "$label: an unreadable envelope falls back to its original path"

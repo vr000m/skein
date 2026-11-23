@@ -354,6 +354,24 @@ run_r --envelope "$FIX/envelope-severities.json" --suppress-keys "$KEYS" --root 
 assert_lacks "$OUT" 'crit-one' "a 4-field key with a matching summary drops an anchored finding"
 assert_has "$OUT" 'imp-one' "a 4-field key with a different summary keeps an anchored finding"
 
+echo "== renderer: a same-line excuse survives its candidate's suppress key =="
+# Deep-review keeps a same-line excuse and decision candidate as two findings
+# with one (file, line, category); a summary-qualified key drops only the one.
+PAIR_ENV="$SANDBOX/envelope-pair.json"
+cat >"$PAIR_ENV" <<'JSON'
+{"schema_version":2,"findings":[
+{"severity":"Important","category":"Documentation","file":"x.py","line":3,"summary":"PAIR-EXCUSE temporary hack"},
+{"severity":"Minor","category":"Documentation","file":"x.py","line":3,"summary":"Decision candidate: PAIR-CANDIDATE"}
+]}
+JSON
+printf 'x.py\t3\tDocumentation\tDecision candidate: PAIR-CANDIDATE\n' >"$KEYS"
+run_r --envelope "$PAIR_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'PAIR-CANDIDATE' "the candidate's summary-qualified key drops the candidate"
+assert_has "$OUT" 'PAIR-EXCUSE' "the same-line excuse stays in the report"
+printf 'x.py\t3\tDocumentation\n' >"$KEYS"
+run_r --envelope "$PAIR_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+assert_lacks "$OUT" 'PAIR-EXCUSE' "control: a 3-field key drops both findings at the signature"
+
 echo "== renderer: unanchored findings of one category are suppressed individually =="
 UNANCH_ENV="$SANDBOX/envelope-unanchored.json"
 cat >"$UNANCH_ENV" <<'JSON'
