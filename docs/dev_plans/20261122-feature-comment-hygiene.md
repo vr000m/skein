@@ -326,12 +326,12 @@ sequenceDiagram
 - [x] Phase 2b: conduct briefs (Claude)
 - [x] Phase 3b: review-gauntlet fixer brief (Claude)
 - [x] Phase 4b: deep-review documentation lens (Claude)
-- [ ] Phase 2a: conduct briefs (Codex session)
-- [ ] Phase 3a: review-gauntlet fixer brief (Codex session)
-- [ ] Phase 4a: deep-review documentation lens (Codex session)
-- [ ] Phase 2c: conduct briefs (Pi session)
-- [ ] Phase 3c: review-gauntlet fixer brief (Pi session)
-- [ ] Phase 4c: deep-review documentation lens (Pi session)
+- [x] Phase 2a: conduct briefs (Codex session)
+- [x] Phase 3a: review-gauntlet fixer brief (Codex session)
+- [x] Phase 4a: deep-review documentation lens (Codex session)
+- [x] Phase 2c: conduct briefs (Pi session)
+- [x] Phase 3c: review-gauntlet fixer brief (Pi session)
+- [x] Phase 4c: deep-review documentation lens (Pi session)
 - [x] Phase 5: Verify, lens sample, docs
 - [ ] After Phase 5: hand-run review-gauntlet, then /update-docs
 

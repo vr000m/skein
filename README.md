@@ -108,6 +108,7 @@ just check-trunk-snippet-parity  # trunk-resolution snippet parity
 just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just reconciliation-tests        # reconciliation parity + fixture + renderer + determinism
 just pi-tests                    # Pi mirror suites (tests/pi)
+just comment-count               # added comment lines on this branch vs main (heuristic record, not a gate)
 just bundle-appliers             # regenerate bundled auto-fix pipeline inside each skill
 ```
 
