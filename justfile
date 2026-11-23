@@ -160,6 +160,7 @@ plugin-tests:
     bash tests/plugin/test-lint-temp-paths.sh
     bash tests/plugin/test-fanout-slug-guard.sh
     bash tests/plugin/test-fanout-slug-guard-codex.sh
+    bash tests/plugin/test-count-added-comments.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but
@@ -175,6 +176,12 @@ plugin-tests:
 lint-python:
     ruff format --check .
     ruff check .
+
+# Added comment lines on the current branch against main (heuristic; see
+# scripts/count-added-comments.sh). Compare by hand with the recorded baseline
+# median; nothing re-measures automatically.
+comment-count:
+    scripts/count-added-comments.sh main
 
 # Every linter: Python (ruff) and shell (shellcheck + shfmt + temp-path guard).
 lint: lint-python lint-scripts

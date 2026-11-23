@@ -322,7 +322,7 @@ sequenceDiagram
 
 ## Progress
 
-- [ ] Phase 1: Policy block, counter and baseline
+- [x] Phase 1: Policy block, counter and baseline
 - [ ] Phase 2b: conduct briefs (Claude)
 - [ ] Phase 3b: review-gauntlet fixer brief (Claude)
 - [ ] Phase 4b: deep-review documentation lens (Claude)
@@ -371,6 +371,9 @@ sequenceDiagram
 - Codex review (2026-11-22): Unverifiable — this source audit cannot establish live codex:rescue availability or Documentation Lens quality on real diffs.
 - Claude review-plan (2026-11-22): addressed all 42 findings in one pass. Grilled: lens scope (#6), prefix rule (#7, #13), Pi projection owner (#8), Claude/Codex advice seam (#9, #20), excuse route (#15), driving model and ordering (#14, #16, #29), baseline method (#4, #10, #11, #21, #32, #39). Applied as standard fixes: sub-phase gates and ownership (#17, #22, #35, #36, #37, #40), testability (#2, #3, #18, #19, #41, #42), Pi validation wording (#27, #31), small corrections (#23, #28, #30, #33, #34, #38), and executor assumptions (#24, #25, #26 dissolve because the user runs Codex and Pi sessions and conduct is not used). Lens sampling moved to Phase 5; `test_codex_agent_api.py` dropped (no stated assertion).
 - Open measurement: the `just ci` duration is recorded in Phase 5 rather than guessed.
+- Phase 1 baseline (2026-11-23), record only. Command: `scripts/count-added-comments.sh M^1 M` for each of the last ten merge commits `M` on first-parent history of `main` (`git log --first-parent --merges -10`). Counts: #64 (`a6d5ed9`) 1604; #63 (`6b513e5`) 34; #62 (`92b557a`) 33; #61 (`cae4f8b`) 14; #60 (`a9f1f64`) 26; #58 (`752694e`) 2; #57 (`ccb3273`) 277; #55 (`b914a8a`) 674; #54 (`c2ce81e`) 11; #53 (`032ea0c`) 0. Median 29.5, mean 267.5, sum 2675. PRs #56 and #59 are absent from first-parent history.
+- Phase 1 heuristic check: sampled #64 and #55. The counted lines are real multi-line prose comments. The spread is dominated by byte-identical bundled copies: one script counted in up to six directories (`report-hook.sh` 63 lines x 4+ copies in #55; `resolve-template-marker.sh` 574 x 2 in #64). Counts are therefore inflated by mirror and bundle copies, so compare later runs by median per PR, not by sum. Heredoc exclusion removed 39 lines from #64 (1643 before, 1604 after). Docstring over-count in `.py` remains a known, unquantified error.
+- Phase 1 pre-existing lint note: `just lint-python` fails on `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261` (SIM102) under local ruff 0.17.6 while AGENTS.md pins 0.16.6; untouched by this plan, `just lint-scripts` passes.
 
 ### Review Waivers
 

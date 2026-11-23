@@ -25,6 +25,7 @@ just site-tests                  # skein.sh site guards: every skill on the site
 just site-build                  # site-tests + `wrangler deploy --dry-run` (validates the bundle, uploads nothing)
 just site-preview [port]         # Local preview of site/ via `wrangler dev` (default port 8787)
 just site-deploy                 # site-tests, then `wrangler deploy` to Cloudflare; refuses uncommitted site files and non-main branches (SITE_DEPLOY_ANY_BRANCH=1 overrides). Needs `npx wrangler login` once
+just comment-count               # Added comment lines on this branch vs main (heuristic; scripts/count-added-comments.sh). Compare by hand with the baseline recorded in the comment-hygiene plan
 just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on non-draft PRs (it also runs on `ready_for_review`, `workflow_dispatch` and pushes to main, installs the Pi CLI for `tests/pi`, and cancels a superseded run only on pull requests: every push-to-main or dispatched run has its own concurrency group, so none is cancelled or replaced while queued); local `just ci` is the gate, so push when a round is done, not per commit
 ```
 
@@ -168,6 +169,14 @@ These rules apply to every contributor and agent working in this repo, independe
 - **Check staged files for secrets before committing** — PII, private keys, credentials, tokens. Never commit them.
 - **Run `ruff format` AND `ruff check` before pushing Python changes**, not just `check`.
 - **Run `just ci` before opening or updating a PR**, and background it (a full run exceeds a 2-minute foreground timeout).
+
+### Comment policy
+
+Comment only a non-obvious why. Never add a comment that restates the code, and never add a comment that excuses a hack: fix the hack, or report it.
+
+- Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`).
+- When you touch code, delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches. No sweeping cleanup; minimal impact still applies.
+- A comment that records a cross-file or long-lived decision stays in place. Report it as a decision candidate so a person can promote it.
 
 ## Skill Workflow
 
