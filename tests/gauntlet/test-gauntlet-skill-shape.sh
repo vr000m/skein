@@ -992,8 +992,137 @@ assert_grep_fixed "$CODEX_SKILL_MD" 'cat "$gate_out_dir"/*.normalized.jsonl > "$
 	"Codex mirror: full rounds pool the normalized gates before the split"
 assert_grep_fixed "$CODEX_SKILL_MD" 'jq -c "select($advice_filter | not)" "$gate_out_dir/findings-pooled.jsonl" > "$gate_out_dir/findings.jsonl"' \
 	"Codex mirror: only actionable findings feed the reconciler input"
-assert_grep_fixed "$CODEX_SKILL_MD" 'Populate `.findings` from `findings.jsonl`, matching the record' \
-	"Codex mirror: gate-status rows count actionable findings per slot"
+
+# ---------------------------------------------------------------------------
+# The advice split must see a same-line excuse and decision candidate as two
+# findings. Both earlier merge steps are exercised for real: the collector's
+# dedup (the gate-2 envelope is built from its raw stream with the documented
+# filter) and the gauntlet's own reconcile. Advice proposals must not reach
+# `route`, and gate-status rows must count only actionable findings. Each
+# check runs the bytes each mirror documents, and the shared bytes must match.
+# ---------------------------------------------------------------------------
+
+ADV_WORK="$(mktemp -d)"
+adv_extract_filter() {
+	sed -n "s/^ *$2='\(.*\)'\$/\1/p" "$1" | head -1
+}
+adv_extract_status_copy() {
+	awk '/^  gauntlet_status_copy\(\) \{$/{f=1} f{sub(/^  /, ""); print} f && /^}$/{exit}' "$1"
+}
+for adv_shared in deep_review_findings_filter advice_filter; do
+	if [[ -n "$(adv_extract_filter "$SKILL_MD" "$adv_shared")" &&
+	"$(adv_extract_filter "$SKILL_MD" "$adv_shared")" == "$(adv_extract_filter "$CODEX_SKILL_MD" "$adv_shared")" ]]; then
+		pass "both mirrors document the same $adv_shared"
+	else
+		fail "$adv_shared is missing or differs between the Claude and Codex mirrors"
+	fi
+done
+if [[ -n "$(adv_extract_status_copy "$SKILL_MD")" &&
+"$(adv_extract_status_copy "$SKILL_MD")" == "$(adv_extract_status_copy "$CODEX_SKILL_MD")" ]]; then
+	pass "both mirrors document the same gauntlet_status_copy"
+else
+	fail "gauntlet_status_copy is missing or differs between the Claude and Codex mirrors"
+fi
+
+assert_split_pipeline_for() {
+	local file="$1" label="$2" dir filter advice_filter rc
+	dir="$ADV_WORK/$label"
+	dir="${dir// /-}"
+	mkdir -p "$dir/repo/.deep-review/lenses/adv"
+	git -C "$dir/repo" init -q
+	{
+		printf '%s\n' '{"type":"start","units":["x.py"]}' '{"type":"progress","unit":"x.py"}'
+		printf '%s\n' '{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":"Decision candidate: chose a dict"}'
+		printf '%s\n' '{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"temporary hack"}'
+		printf '%s\n' '{"type":"done","status":"completed"}'
+	} >"$dir/repo/.deep-review/lenses/adv/documentation.1.jsonl"
+	bash "$ROOT_DIR/scripts/collect-lens-results.sh" --root "$dir/repo" --skill deep-review \
+		--run-id adv --expected "documentation:x.py" --findings-jsonl >"$dir/raw.jsonl"
+
+	filter="$(adv_extract_filter "$file" deep_review_findings_filter)"
+	advice_filter="$(adv_extract_filter "$file" advice_filter)"
+	jq -s "$filter"' as $f | {gate: "deep-review", status: "needs-attention", findings: $f}' \
+		"$dir/raw.jsonl" >"$dir/deep-review.envelope.json"
+	jq -n '{gate: "codex-adversarial", status: "approve", findings: []}' >"$dir/codex-adversarial.envelope.json"
+	jq -n '{gate: "security-review", status: "skipped", findings: [{file: "s.py", line: 1, category: "Documentation", severity: "Minor", summary: "Decision candidate: only advice"}]}' \
+		>"$dir/security-review.envelope.json"
+	# The advice proposal is the only cached auto_fix for x.py:3.
+	jq -n '{gate: "deep-review", status: "needs-attention", findings: [{file: "x.py", line: 3, category: "Documentation", severity: "Minor", summary: "Decision candidate: chose a dict", auto_fix: {kind: "docstring_typo", before: "# chose a dict", after: "", scope: "line"}}]}' \
+		>"$dir/proposal.envelope.json"
+	for gate_name in deep-review codex-adversarial security-review proposal; do
+		rc=0
+		"$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" normalize --gate "$gate_name" \
+			--autofix-cache "$dir/autofix-cache.jsonl" "$dir/$gate_name.envelope.json" \
+			>"$dir/$gate_name.normalized.jsonl" 2>/dev/null || rc=$?
+		[[ "$rc" -eq 0 || "$rc" -eq 4 ]] || fail "$label: normalize $gate_name exited $rc"
+	done
+	rm -f "$dir/proposal.normalized.jsonl"
+	cat "$dir"/*.normalized.jsonl >"$dir/findings-pooled.jsonl"
+	jq -c "select($advice_filter | not)" "$dir/findings-pooled.jsonl" >"$dir/findings.jsonl"
+	jq -c "select($advice_filter)" "$dir/findings-pooled.jsonl" >"$dir/advice.jsonl"
+	jq -c "select($advice_filter | not)" "$dir/autofix-cache.jsonl" >"$dir/autofix-cache-actionable.jsonl"
+	"$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" reconcile \
+		"$dir/findings.jsonl" >"$dir/reconciled.json"
+
+	if [[ "$(jq -r '[.findings[] | .summary] | join("|")' "$dir/reconciled.json")" == "temporary hack" &&
+	"$(jq -r '.summary' "$dir/advice.jsonl" | sort | tr '\n' '|')" == "Decision candidate: chose a dict|Decision candidate: only advice|" ]]; then
+		pass "$label: a same-line excuse stays actionable through collector dedup and reconcile, and the candidate is advice"
+	else
+		fail "$label: same-line excuse/candidate pair did not survive both merge steps"
+	fi
+
+	if grep -q -F -- 'jq -c "select($advice_filter | not)" "$gate_out_dir/autofix-cache.jsonl" > "$gate_out_dir/autofix-cache-actionable.jsonl"' "$file"; then
+		pass "$label: the advice filter strips advice from the auto_fix cache"
+	else
+		fail "$label: no documented advice filter over the auto_fix cache"
+	fi
+	if grep -q -F -- '--autofix-cache "$gate_out_dir/autofix-cache-actionable.jsonl"' "$file"; then
+		pass "$label: route reads the advice-free auto_fix cache"
+	else
+		fail "$label: route does not read autofix-cache-actionable.jsonl"
+	fi
+	"$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" route \
+		--autofix-cache "$dir/autofix-cache-actionable.jsonl" "$dir/reconciled.json" >"$dir/route.json" 2>/dev/null
+	if [[ "$(jq '[.substantive_findings[], .trivial_envelope.findings[] | select(has("auto_fix"))] | length' "$dir/route.json")" == "0" ]]; then
+		pass "$label: an advice auto_fix proposal never attaches to the same-line excuse"
+	else
+		fail "$label: an advice auto_fix proposal reached the routed excuse finding"
+	fi
+
+	# shellcheck disable=SC2034  # read by the eval'd gauntlet_status_copy
+	local gate_out_dir="$dir" copy row
+	eval "$(adv_extract_status_copy "$file")"
+	for gate_name in deep-review codex-adversarial security-review; do
+		copy="$(gauntlet_status_copy "$dir/$gate_name.envelope.json")"
+		row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$copy" | cut -f2,4)"
+		case "$gate_name:$row" in
+		deep-review:"needs-attention"$'\t'1 | codex-adversarial:approve$'\t'0 | security-review:skipped$'\t'0)
+			pass "$label: $gate_name status row counts only actionable findings ($row)"
+			;;
+		*) fail "$label: $gate_name status row is '$row'" ;;
+		esac
+	done
+	jq -n '{gate: "deep-review", status: "needs-attention", findings: [{summary: "Decision candidate: x"}]}' \
+		>"$dir/advice-only.envelope.json"
+	copy="$(gauntlet_status_copy "$dir/advice-only.envelope.json")"
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$copy" | cut -f2,4)"
+	if [[ "$row" == "approve"$'\t'0 ]]; then
+		pass "$label: an advice-only gate shows approve with zero findings"
+	else
+		fail "$label: advice-only gate row is '$row'"
+	fi
+	printf 'not json' >"$dir/broken.envelope.json"
+	if [[ "$(gauntlet_status_copy "$dir/broken.envelope.json")" == "$dir/broken.envelope.json" ]]; then
+		pass "$label: an unreadable envelope falls back to its original path"
+	else
+		fail "$label: an unreadable envelope did not fall back to its original path"
+	fi
+	unset -f gauntlet_status_copy
+}
+export CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/skein"
+assert_split_pipeline_for "$SKILL_MD" "Claude mirror"
+assert_split_pipeline_for "$CODEX_SKILL_MD" "Codex mirror"
+rm -rf "$ADV_WORK"
 
 assert_grep_i "$SKILL_MD" 'seam still moving' \
 	"Claude mirror: documents the conductor-side seam tripwire"
