@@ -324,7 +324,7 @@ sequenceDiagram
 
 - [x] Phase 1: Policy block, counter and baseline
 - [x] Phase 2b: conduct briefs (Claude)
-- [ ] Phase 3b: review-gauntlet fixer brief (Claude)
+- [x] Phase 3b: review-gauntlet fixer brief (Claude)
 - [ ] Phase 4b: deep-review documentation lens (Claude)
 - [ ] Phase 2a: conduct briefs (Codex session)
 - [ ] Phase 3a: review-gauntlet fixer brief (Codex session)
@@ -375,6 +375,7 @@ sequenceDiagram
 - Phase 1 heuristic check: sampled #64 and #55. The counted lines are real multi-line prose comments. The spread is dominated by byte-identical bundled copies: one script counted in up to six directories (`report-hook.sh` 63 lines x 4+ copies in #55; `resolve-template-marker.sh` 574 x 2 in #64). Counts are therefore inflated by mirror and bundle copies, so compare later runs by median per PR, not by sum. Heredoc exclusion removed 39 lines from #64 (1643 before, 1604 after). Docstring over-count in `.py` remains a known, unquantified error.
 - Phase 1 pre-existing lint note: `just lint-python` fails on `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261` (SIM102) under local ruff 0.17.6 while AGENTS.md pins 0.16.6; untouched by this plan, `just lint-scripts` passes.
 - Phase 2b deviation (2026-11-23): `test-comment-policy-briefs.sh` is registered in `gauntlet-tests` as `--mirror claude` so `just gauntlet-tests` stays green for phases 3b and 4b while the Codex half is pending. Phase 5 flips the registration to the default (`both`) after the Codex session lands 2a.
+- Phase 3b note (2026-11-23): the Claude comment rule landed as a new `### Guardrail 9` in `review-gauntlet/SKILL.md` (after Guardrail 8), not as text inside Guardrails 5–8; the Codex session mirrors that section byte-for-byte and adds `assert_guardrail9_for "$CODEX_SKILL_MD" "Codex mirror"` beside the Claude call in `test-gauntlet-skill-shape.sh`.
 
 ### Review Waivers
 

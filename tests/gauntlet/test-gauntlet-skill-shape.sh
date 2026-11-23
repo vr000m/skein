@@ -887,6 +887,57 @@ assert_guardrail8_for() {
 assert_guardrail8_for "$SKILL_MD" "Claude mirror"
 assert_guardrail8_for "$CODEX_SKILL_MD" "Codex mirror"
 
+# ---------------------------------------------------------------------------
+# Guardrail 9: every fixer brief carries the why-only comment rule and the
+# excuse route. Claude-only until the Codex session adds its mirror (the Codex
+# counterpart call is added with the Codex half).
+# ---------------------------------------------------------------------------
+
+assert_guardrail9_for() {
+	local file="$1" label="$2" section phrase
+	assert_grep_i "$file" 'guardrail 9' \
+		"$label: documents Guardrail 9 heading/label"
+
+	section="$(extract_section "$file" 'guardrail 9')"
+	if [[ ! -s "$section" ]]; then
+		fail "$label: could not extract a Guardrail 9 section from $file"
+		rm -f "$section"
+		return
+	fi
+
+	file="$section"
+	for phrase in \
+		'non-obvious why' \
+		'restates the code' \
+		'excuses a hack' \
+		'docstrings' \
+		'linter and type pragmas' \
+		'license headers' \
+		'TODOs that link an issue' \
+		'inside a hunk or function the change already touches'; do
+		assert_grep_i "$file" "$phrase" \
+			"$label: Guardrail 9 carries the shared phrase '$phrase'"
+	done
+	assert_grep_i "$file" 'unconditionally' \
+		"$label: the comment rule rides in every fixer brief unconditionally"
+	assert_grep_i "$file" 'repairs the underlying hack' \
+		"$label: excuse route branch (a) repairs the hack and claims the finding"
+	assert_grep_i "$file" 'design conflict' \
+		"$label: excuse route branch (b) reports a design conflict"
+	assert_grep_i "$file" 'quarantine path' \
+		"$label: excuse route reuses the existing quarantine path"
+	assert_grep_i "$file" 'never deletes an excuse comment silently' \
+		"$label: an excuse comment is never deleted silently"
+	assert_grep_i "$file" 'Decision candidate:' \
+		"$label: decision candidates are listed in the report summary"
+	assert_grep_i "$file" 'does not appear in .claimed.' \
+		"$label: a candidate is never claimed as a fix"
+
+	rm -f "$section"
+}
+
+assert_guardrail9_for "$SKILL_MD" "Claude mirror"
+
 assert_grep_i "$SKILL_MD" 'seam still moving' \
 	"Claude mirror: documents the conductor-side seam tripwire"
 assert_grep_i "$CODEX_SKILL_MD" 'seam still moving' \
