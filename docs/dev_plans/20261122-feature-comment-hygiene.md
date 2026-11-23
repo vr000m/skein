@@ -18,7 +18,7 @@ Agents over-comment. Comments that restate the code, go stale, or excuse a hacky
 
 Scoping decisions taken in the design discussion (2026-11-22):
 
-- **Why-only, not a ban.** skein is mostly bash, jq and markdown, where a comment is often the only place the why lives. Exemptions: docstrings, linter and type pragmas, license headers, TODOs that link an issue.
+- **Why-only, not a ban.** skein is mostly bash, jq and markdown, where a comment is often the only place the why lives. Exemptions: docstrings, linter and type pragmas, license headers, TODOs that link an issue (a full issue URL or `#N`).
 - **New code only.** This plan covers comments an agent writes or touches from now on. A retroactive audit skill (plan C) is deferred and may never be built: untouched code is left alone.
 - **No decisions folder here.** Decision-record comments stay in place and are surfaced as "decision candidates" in handbacks. The `docs/decisions/` folder, its record format, promotion at `/update-docs`, and the active-record checks are plan B (`20261122-feature-decision-records.md`).
 
@@ -31,10 +31,10 @@ Land A before implementing B. A owns the new AGENTS.md policy, conduct worker br
 ## Requirements
 
 - AGENTS.md carries a short comment-policy block: comment only a non-obvious why; no comment that restates the code; no comment that excuses a hack (fix it, or report it); exemptions for docstrings, linter/type pragmas, license headers, and TODOs linking an issue.
-- `conduct` implementer and test-writer briefs and the `review-gauntlet` fixer brief carry the same rule in all three mirrors, as static text. A touched comment may be deleted only if it is a tautology or stale and lies inside a hunk or function the change already touches. No sweeping cleanup. An excuse comment is never deleted silently: it is reported in the handback. A decision-record comment stays and is listed as a "decision candidate" in the handback.
-- `deep-review`'s documentation lens flags comments ADDED by the diff only (never pre-existing ones), classified excuse (Important), tautology / stale / decision-candidate (Minor), in all three mirrors, at the lens's current model tier.
-- A script counts added comment lines from `git diff`, and a baseline is recorded before the new rules take effect.
-- Author the Codex half first through `codex:rescue`, then align the Claude half in the same commit. Preserve Claude's `${CLAUDE_PLUGIN_ROOT}` and Codex's `"$SKILL_DIR"` anchors. Keep Pi and docs in separate commits where their changes are independent. Require `just ci` in every gauntlet fixer brief and retain the conductor's post-commit CI checks.
+- `conduct` implementer and test-writer briefs and the `review-gauntlet` fixer brief carry the same rule in all three mirrors, as static text. A touched comment may be deleted only if it is a tautology or stale and lies inside a hunk or function the change already touches. No sweeping cleanup. An excuse comment is never deleted silently: the fixer either repairs the hack, removes the excuse in the same change and claims the finding, or reports it as a design conflict through the existing quarantine path. A decision-record comment stays and is listed as a "decision candidate" in the handback.
+- `deep-review`'s documentation lens flags comments ADDED by the diff only (never pre-existing ones), classified excuse (Important), tautology / stale / decision-candidate (Minor), in all three mirrors, at the lens's current model tier. The rules are lexical and adjacent-line signals on the added diff alone; stale means a symbol the same diff removes or renames. A decision candidate is advice only with the exact `Decision candidate:` prefix and severity Minor; otherwise it stays actionable.
+- A script counts added comment lines from `git diff <base>...<head>` as a documented heuristic, and a baseline (per-PR counts and their median over the last ten merges) is recorded as a record only before the new rules take effect.
+- Claude lands first and each mirror commits on its own (grilled 2026-11-22; see `### Review Waivers`): independent Codex and Pi sessions align to the committed Claude bytes. Preserve Claude's `${CLAUDE_PLUGIN_ROOT}` and Codex's `"$SKILL_DIR"` anchors. Require `just ci` in every Claude and Codex gauntlet fixer brief and retain the conductor's post-commit CI checks; Pi's fixer brief names the repository's required validation command generically.
 - Keep `{{PHASE_GOAL}}` a zero-byte substitution when the slot is absent or empty (both conduct templates, line 9). The two rendered briefs may change only through the new static policy and handback guidance.
 
 Out of scope: retroactive audit skill (plan C); lint or ratchet tooling; auto-fix deletion kinds in `auto-fix-common.sh`; any `docs/decisions/` folder, record format or promotion (plan B); changing any lens model tier.
@@ -45,149 +45,157 @@ Out of scope: retroactive audit skill (plan C); lint or ratchet tooling; auto-fi
 - `{{PHASE_GOAL}}` empty-string invariant and the SKILL.md substitution table (`conduct/SKILL.md:163,169`; Codex `:184,190`).
 - Model tier: Claude's Documentation Lens uses haiku/low (`deep-review/SKILL.md:567`). Codex inherits the harness model and requests low reasoning when supported (`plugins/skein-codex/skills/deep-review/SKILL.md:104`). Preserve the tier census in `tests/parity/test-spawn-tiers.sh`.
 - Severity vocabulary differs by mirror: Claude and Codex `Critical|Important|Minor`; Pi worker findings use `critical|important|suggestion` (`plugins/skein-pi/skills/deep-review/SKILL.md:22`) and the disk-first adapter maps them to `Critical|Important|Minor` (`:26`, Disk-first records and reconciliation). Pi is not checked by `scripts/check-prompt-parity.sh`; run `just pi-tests` for its contracts.
-- Add policy outside the literal `<!-- BEGIN PROSE RULE BLOCK A -->` / `<!-- END PROSE RULE BLOCK A -->` and corresponding Block B anchors. Preserve those blocks and the shared `GENERIC FINDING SCHEMA AND MERGE` region byte-for-byte.
+- Add policy outside the literal `<!-- BEGIN PROSE RULE BLOCK A -->` / `<!-- END PROSE RULE BLOCK A -->` and corresponding Block B anchors. Preserve those blocks and the shared `GENERIC FINDING SCHEMA AND MERGE` region byte-for-byte. The anchors exist only in the Claude and Codex deep-review files; Pi's `deep-review/SKILL.md` has none.
 - The cleanup allowance must not contradict the repo rule "minimal impact": bounded to hunks and functions already touched.
 
 ## Implementation Checklist
 
-Each mirror-spanning phase is split into `a` (Codex), `b` (Claude) and `c` (Pi) sub-phases, run in that order. Every sub-phase names its executor in its first bullet. `a` and `b` land as one commit (Codex half first, Claude aligned to its bytes); `c` is a separate Pi commit.
+Each mirror-spanning phase is split into `a` (Codex), `b` (Claude) and `c` (Pi) sub-phases, and every sub-phase names its executor in its first bullet.
 
-`conduct` dispatches Claude subagents only. For `a` and `c` phases the main session performs the hand-off itself (`codex:rescue` for Codex, a non-interactive Pi run for Pi) and then runs the phase's declared test command. Whether `conduct` can pause at such a phase for an external executor is unverified; if it cannot, walk the phases in order by hand and use `conduct` only for Claude-owned phases (1, `b`, and the verify phase).
+**Execution protocol (grilled 2026-11-22): Claude lands first, and the letters do not give the run order.** The main Claude session hand-walks Phase 1, then 2b, 3b and 4b, running each phase's test command and committing each phase on its own. `conduct` is not used for this plan: it dispatches Claude subagents only and would send the `a` and `c` phases to the wrong executor. The user then hands this plan to an independent Codex session (phases 2a, 3a, 4a) and an independent Pi session (phases 2c, 3c, 4c). Each external session reads only its own phase blocks, aligns to the Claude bytes already committed on the branch, edits only the files its phase lists, runs its phase's test command and commits its own mirror. Run Phase 5 after both external sessions finish, then `review-gauntlet` by hand (`Review Gates: full`), then `/update-docs`. If an external session is unavailable, a Claude subagent applies that block and the commit message says so. This inverts AGENTS.md's Codex-first rule for these phases; see `### Review Waivers` in `## Findings`.
 
-### Phase 1: Policy block and measurement
+### Phase 1: Policy block, counter and baseline
 
 **Impl files:** `AGENTS.md, scripts/count-added-comments.sh, justfile`
 **Test files:** `tests/plugin/test-count-added-comments.sh`
-**Test command:** `bash tests/plugin/test-count-added-comments.sh`
-**Goal:** The counter measures real added comment lines only; structural markers never count, so the baseline is comparable across runs.
+**Test command:** `bash tests/plugin/test-count-added-comments.sh && just lint`
+**Goal:** The counter is a documented heuristic that counts real added comment lines only; structural markers never count, so the baseline is comparable across runs.
 
-- Add the comment-policy block to AGENTS.md under `Contributing Hygiene`, keep it to a handful of lines, and state the exemptions.
-- Write `scripts/count-added-comments.sh`: reads `git diff <base>...HEAD`, counts added lines whose first non-blank character is `#` in `*.sh`, `*.py`, `*.jq` and `justfile`; excludes shebang lines and linter/type pragmas (`# shellcheck`, `# noqa`, `# type:`); excludes HTML comments in markdown (they are structural `BEGIN`/`END` markers in this repo); prints one integer, per-file with `--verbose`.
-- Test against a fixture repo created in a temp dir: added comment, added shebang, added pragma, added HTML marker, pre-existing comment untouched. Register the fixture in `plugin-tests`.
-
-### Phase 2a: conduct briefs, Codex mirror
-
-**Impl files:** `plugins/skein-codex/skills/conduct/implementer-prompt.md, plugins/skein-codex/skills/conduct/test-writer-prompt.md, plugins/skein-codex/skills/conduct/SKILL.md, justfile`
-**Test files:** `tests/gauntlet/test-comment-policy-briefs.sh`
-**Test command:** `bash tests/gauntlet/test-comment-policy-briefs.sh`
-**Goal:** Static policy and handback guidance are the only changes to the no-goal rendering. Both templates stay byte-identical across Claude and Codex. (Codex mirror.)
-
-- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
-- Ask for labelled excuses and decision candidates in the existing implementer `summary` and test-writer `coverage_summary` strings. Preserve each template's terminal fenced JSON block and role-specific keys (`conduct/SKILL.md` Step 4 and `schema.py`). Add the policy inside the dispatched Template block and outside the warned data blocks.
-- Have the main conduct session surface these notices from validated reports in the ordinary phase handback, or at the phase boundary in autonomous mode. Shared templates alone will not surface them to the operator. Add this guidance to the live SKILL.md handback path without changing state or the successful terminal seam owned by B.
-- Add a short "Comments" paragraph to both templates: the Requirements rule, verbatim wording shared by both templates.
-- Keep Codex lifecycle in `conduct/worker-dispatch.md`: every first spawn and retry uses the full rendered prompt as the structured `spawn_agent` message, a unique task name, `fork_turns="none"` and medium reasoning when supported. Collect the delivered final report and terminal status. Missing delegation support hard-stops conduct. Implementation under conduct requires a sandbox that permits the declared files and the index operations its workers use.
-- Register the new brief test in `gauntlet-tests`. Check both mirrors' Template blocks, existing report fields and handback guidance. Assert the no-goal rendering differs from the baseline template only by the planned additions. The existing `test-goal-injection.sh` statically checks the Claude templates and skill. Retain it and cover Codex directly in the new test.
+- **Executor:** main Claude session, by hand.
+- Add the comment-policy block to AGENTS.md under `Contributing Hygiene`, keep it to a handful of lines, and state the exemptions. Define the issue-link form once: a full issue URL or `#N`. The block carries the shared key phrases listed under Integration Seams.
+- Write `scripts/count-added-comments.sh <base> [<head>]` (head defaults to `HEAD`): reads `git diff <base>...<head>`, counts added lines whose first non-blank character is `#` in `*.sh`, `*.py`, `*.jq` and `justfile`. It excludes shebang lines, linter/type pragmas (`# shellcheck`, `# noqa`, `# type:`), license-header lines (`# Copyright`, `# SPDX-`), TODO lines that carry an issue link, lines inside shell heredoc bodies, and HTML comments in markdown (structural `BEGIN`/`END` markers in this repo). Docstrings and multi-line strings in `.py` remain a known over-count, recorded in the method. Prints one integer, per-file with `--verbose`.
+- Add a `just comment-count` recipe that prints the count for the current branch against `main`. The user compares it with the baseline median by hand at review time; nothing re-measures automatically.
+- Test against a fixture repo created in a temp dir. Cases: added comment in `.sh`, `.py`, `.jq` and `justfile`; shebang; each pragma; HTML marker; license header; TODO with a URL and with `#N` and without a link; `#` line inside a heredoc; removed comment line; diff header lines; pre-existing comment untouched; explicit `<head>` argument over a merge commit; `--verbose` output. Register the fixture in `plugin-tests`.
+- Baseline, before any rule lands: sample the counted lines of two recent merges and classify them to confirm the heuristic. Then run `scripts/count-added-comments.sh M^1 M` for each of the last ten merge commits `M` on first-parent history. Record the PR numbers, merge SHAs, the exact command, the per-PR counts and the median in `## Findings`. The baseline is a record only.
 
 ### Phase 2b: conduct briefs, Claude mirror
 
-**Impl files:** `plugins/skein/skills/conduct/implementer-prompt.md, plugins/skein/skills/conduct/test-writer-prompt.md, plugins/skein/skills/conduct/SKILL.md`
-**Test files:** `tests/gauntlet/test-comment-policy-briefs.sh`
-**Test command:** `just parity-tests && bash tests/gauntlet/test-goal-injection.sh && bash tests/gauntlet/test-comment-policy-briefs.sh`
-**Goal:** Static policy and handback guidance are the only changes to the no-goal rendering. Both templates stay byte-identical across Claude and Codex. (Claude mirror, aligned to the Codex half.)
+**Impl files:** `plugins/skein/skills/conduct/implementer-prompt.md, plugins/skein/skills/conduct/test-writer-prompt.md, plugins/skein/skills/conduct/SKILL.md, justfile`
+**Test files:** `tests/gauntlet/test-comment-policy-briefs.sh, tests/gauntlet/fixtures/conduct-templates/implementer-prompt.md, tests/gauntlet/fixtures/conduct-templates/test-writer-prompt.md`
+**Test command:** `bash tests/gauntlet/test-goal-injection.sh && bash tests/gauntlet/test-comment-policy-briefs.sh --mirror claude`
+**Goal:** Static policy and handback guidance are the only changes to the no-goal rendering of the Claude templates. The Codex half later aligns to them byte-for-byte. (Claude mirror, lands first.)
 
-- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
-- Codex templates first (via `codex:rescue`), then the Claude templates byte-identical to them.
-- Align the Claude mirror to the Codex half from phase 2a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
-- Extend `tests/gauntlet/test-comment-policy-briefs.sh` to cover the Claude templates and the Claude/Codex byte identity; surface the same notices in the live Claude SKILL.md handback path.
+- **Executor:** main Claude session, by hand (not `conduct`). Commit this phase on its own after the test command passes.
+- First step, before any edit: save the current Claude templates verbatim as the pre-change fixtures under `tests/gauntlet/fixtures/conduct-templates/`.
+- Ask for labelled excuses and decision candidates in the existing implementer `summary` and test-writer `coverage_summary` strings. Preserve each template's terminal fenced JSON block and role-specific keys (`conduct/SKILL.md` Step 4 and `schema.py`). Add the policy inside the dispatched Template block and outside the warned data blocks.
+- Add a short "Comments" paragraph to both templates: the Requirements rule, verbatim wording shared by both templates.
+- Notice sink (grilled 2026-11-22): the main conduct session prints notices from validated reports in the ordinary phase handback, and in autonomous mode as one notice block per phase boundary. That block is best-effort transcript text, not persisted, and may be lost on `--resume`. Add this guidance to the live SKILL.md handback path with no `conductor.py` or state change. Notices stay labelled text in the existing summary strings because the terminal JSON fields are pinned. B owns the successful terminal seam.
+- Create `tests/gauntlet/test-comment-policy-briefs.sh` with a `--mirror claude|codex|both` option (default `both`). It asserts the shared key phrases in AGENTS.md and the selected mirror's templates, the existing report fields and the handback guidance. For the no-goal rendering it substitutes an empty string for `{{PHASE_GOAL}}` in each Template block and diffs the result against the pre-change fixtures. The diff may contain only added lines, each belonging to the Comments paragraph or the handback sentence, and no removed lines. Register the test in `gauntlet-tests`. Retain `test-goal-injection.sh`.
+
+### Phase 2a: conduct briefs, Codex mirror
+
+**Impl files:** `plugins/skein-codex/skills/conduct/implementer-prompt.md, plugins/skein-codex/skills/conduct/test-writer-prompt.md, plugins/skein-codex/skills/conduct/SKILL.md`
+**Test files:** `tests/gauntlet/test-comment-policy-briefs.sh`
+**Test command:** `just parity-tests && bash tests/gauntlet/test-goal-injection.sh && bash tests/gauntlet/test-comment-policy-briefs.sh --mirror both`
+**Goal:** Static policy and handback guidance are the only changes to the no-goal rendering. Both templates stay byte-identical across Claude and Codex. (Codex mirror, aligned to the committed Claude half.)
+
+- **Executor:** an independent Codex session started by the user with this plan and this phase block (or `codex:rescue` from a Claude session). It edits only the files listed above, byte-verifies against `git diff`, runs the test command and commits the Codex half on its own.
+- Align to the bytes committed in phase 2b: copy shared wording and both templates verbatim. Codex keeps `"$SKILL_DIR"` path anchors; never collapse them with Claude's `${CLAUDE_PLUGIN_ROOT}`. Surface the same notices in the live Codex SKILL.md handback path.
+- Keep Codex lifecycle in `conduct/worker-dispatch.md`: every first spawn and retry uses the full rendered prompt as the structured `spawn_agent` message, a unique task name, `fork_turns="none"` and medium reasoning when supported. Collect the delivered final report and terminal status. Missing delegation support hard-stops conduct. Implementation under conduct requires a sandbox that permits the declared files and the index operations its workers use.
+- The `--mirror both` run asserts the Codex Template blocks, report fields and handback guidance, and Claude/Codex byte identity of both templates. The existing `test-goal-injection.sh` statically checks the Claude templates and skill; retain it.
 
 ### Phase 2c: conduct briefs, Pi mirror
 
 **Impl files:** `plugins/skein-pi/skills/conduct/SKILL.md`
 **Test files:** `tests/pi/test_orchestration_routes.py`
 **Test command:** `just pi-tests`
-**Goal:** Static policy and handback guidance are the only changes to the no-goal rendering. Both templates stay byte-identical across Claude and Codex. (Pi mirror.)
+**Goal:** The static comment rule reaches both `skein_worker` role prompts and their retries, outside untrusted snapshots, and notices surface in the `Handback contract`. (Pi mirror.)
 
-- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
-- Pi has no templates: add the same rule to the worker-request prose in `plugins/skein-pi/skills/conduct/SKILL.md` (worker boundary at lines 24–30; Phase loop steps 2–3 at 39–46). Both roles use `skein_worker` with only `role` and `prompt`; carry the static rule in `prompt`, outside untrusted snapshots, including retries. Pi has no pinned implementer/test-writer JSON report fields equivalent to `coverage_summary`: keep notices in the existing generic envelope `summary` or proposal/report prose, validate them and surface them in `Handback contract`. No new typed-tool fields or extension schema are needed. Main session alone applies approved patches, runs tests and commits; do not import Claude/Codex worker-write or index operations.
+- **Executor:** an independent Pi session started by the user (interactive, or `pi -p --no-session`) with this plan and this phase block. It edits only the files listed above, and the main session or user verifies against `git diff`, runs the test command and commits the Pi half separately (commit per platform). The plan does not assume an unattended editing run.
+- Pi has no templates: add the same rule to the worker-request prose in `plugins/skein-pi/skills/conduct/SKILL.md` (the worker-boundary paragraph under `Preflight and state`; `Phase loop` steps 2–3). Both roles use `skein_worker` with only `role` and `prompt`; carry the static rule in `prompt`, outside untrusted snapshots, including retries. Pi has no pinned implementer/test-writer JSON report fields equivalent to `coverage_summary`: keep notices in the existing generic envelope `summary` or proposal/report prose, validate them and surface them in `Handback contract`. No new typed-tool fields or extension schema are needed. Main session alone applies approved patches, runs tests and commits; do not import Claude/Codex worker-write or index operations.
 - Extend `tests/pi/test_orchestration_routes.py::test_conduct_is_pi_native_sequential_and_main_owned` for both role requests, retry policy and notice handback. Preserve its no-tools, explicit-approval and main-owned-write assertions.
-- Apply the shared wording from phase 2a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
-
-### Phase 3a: review-gauntlet fixer brief, Codex mirror
-
-**Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md`
-**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh, tests/gauntlet/test_codex_agent_api.py`
-**Test command:** `bash tests/gauntlet/test-gauntlet-skill-shape.sh`
-**Goal:** The comment rule is carried unconditionally into every fixer brief, alongside the existing blast-radius and `just ci` requirements, and never widens a fix beyond its finding. (Codex mirror.)
-
-- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
-- Add the comment constraint to every fixer brief's Constraints, alongside Claude and Codex Guardrails 5–8 (Codex `SKILL.md:1025-1047`) and Pi `fixer_request()` (`lib/review_gauntlet.py:133-170`). In Codex it applies to full, quick-mode, resumed and retry dispatches through `review-gauntlet/worker-dispatch.md`. Quick runs native gate 1 once, can dispatch a substantive fixer and does not run deep-review.
-- Keep deletion within the fix's existing hunk or function and blast radius. Report excuses and candidates in the existing fixer handback prose or summary. Preserve `claimed`, `design_deltas` and the one-report-per-round sink. A candidate is information for the operator and does not claim a fix or create a design delta.
-- Extend shape coverage for the common brief and Codex dispatch routes. Preserve the terminal design-delta sink and report shape guards exercised by `gauntlet-tests`.
+- Apply the shared wording committed in phase 2b inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
 
 ### Phase 3b: review-gauntlet fixer brief, Claude mirror
 
 **Impl files:** `plugins/skein/skills/review-gauntlet/SKILL.md`
-**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh, tests/gauntlet/test_codex_agent_api.py`
+**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh`
 **Test command:** `just gauntlet-tests`
-**Goal:** The comment rule is carried unconditionally into every fixer brief, alongside the existing blast-radius and `just ci` requirements, and never widens a fix beyond its finding. (Claude mirror, aligned to the Codex half.)
+**Goal:** The comment rule is carried unconditionally into every fixer brief, alongside the existing blast-radius and `just ci` requirements, and never widens a fix beyond its finding. (Claude mirror, lands first.)
 
-- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
-- Align the Claude mirror to the Codex half from phase 3a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
-- Add the comment constraint to the Claude fixer Guardrails 5–8 and keep its shape tests green.
+- **Executor:** main Claude session, by hand (not `conduct`). Commit this phase on its own after the test command passes.
+- Add the comment constraint to the Claude fixer Guardrails 5–8, for every fixer dispatch.
+- Keep deletion within the fix's existing hunk or function and blast radius. Excuse route (grilled 2026-11-22): the fixer either repairs the underlying hack, removes the excuse in the same change and claims the finding, or cannot repair it and reports it as a design conflict through the existing quarantine path (no new counter). An excuse is never deleted silently. A decision candidate is information for the operator and does not claim a fix or create a design delta. Preserve `claimed`, `design_deltas` and the one-report-per-round sink.
+- Put the new shape assertions in a Claude-only function so `just gauntlet-tests` stays green until 3a adds the Codex counterpart. Assert both excuse branches and the shared key phrases.
+
+### Phase 3a: review-gauntlet fixer brief, Codex mirror
+
+**Impl files:** `plugins/skein-codex/skills/review-gauntlet/SKILL.md`
+**Test files:** `tests/gauntlet/test-gauntlet-skill-shape.sh`
+**Test command:** `just gauntlet-tests`
+**Goal:** The comment rule is carried unconditionally into every fixer brief, alongside the existing blast-radius and `just ci` requirements, and never widens a fix beyond its finding. (Codex mirror, aligned to the committed Claude half.)
+
+- **Executor:** an independent Codex session started by the user with this plan and this phase block (or `codex:rescue`). It edits only the files listed above, byte-verifies against `git diff`, runs the test command and commits the Codex half on its own.
+- Align to the bytes committed in phase 3b: copy shared wording verbatim. Codex keeps `"$SKILL_DIR"` path anchors; never collapse them with Claude's `${CLAUDE_PLUGIN_ROOT}`.
+- Add the comment constraint to every fixer brief's Constraints, alongside Codex Guardrails 5–8 (`SKILL.md:1025-1047`). It applies to full, quick-mode, resumed and retry dispatches through `review-gauntlet/worker-dispatch.md`. Quick runs native gate 1 once, can dispatch a substantive fixer and does not run deep-review. Include the excuse route from 3b.
+- Extend the shape coverage with the Codex counterpart of the 3b assertions and the common-brief and Codex dispatch-route checks. Preserve the terminal design-delta sink and report shape guards exercised by `gauntlet-tests`.
 
 ### Phase 3c: review-gauntlet fixer brief, Pi mirror
 
 **Impl files:** `plugins/skein-pi/lib/review_gauntlet.py`
 **Test files:** `tests/pi/test_gate_capabilities.py`
 **Test command:** `just pi-tests`
-**Goal:** The comment rule is carried unconditionally into every fixer brief, alongside the existing blast-radius and `just ci` requirements, and never widens a fix beyond its finding. (Pi mirror.)
+**Goal:** Pi's fixer request carries the static comment rule and gains a generic validation instruction, and never widens a fix beyond its finding. (Pi mirror.)
 
-- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
-- Pi-specific boundary: `fixer_request()` is at lines 133–172, but currently has neither a `just ci` instruction nor a design-delta sink. Add the required validation instruction alongside the new static comment rule; the no-tools fixer proposes tests and the main session executes `just ci` after approved edits. Preserve `validate_fixer_result()`'s exact artifact keys (`schema_version`, `status`, `summary`, `claimed`, `patches`, `blast_radius`): put notices in `summary`, never add `design_deltas` or claim candidates as fixes. The design-delta preservation requirement above applies to Claude/Codex only; Pi does not gain that feature.
+- **Executor:** an independent Pi session started by the user (interactive, or `pi -p --no-session`) with this plan and this phase block. It edits only the files listed above, and the main session or user verifies against `git diff`, runs the test command and commits the Pi half separately (commit per platform).
+- Pi-specific boundary: `fixer_request()` is at lines 133–172, but currently has neither a validation instruction nor a design-delta sink. Add one generic instruction, "the repository's required validation command" (never the literal `just ci`, which the Requirements scope to Claude and Codex), alongside the new static comment rule; the no-tools fixer proposes tests and the main session executes the validation after approved edits. Preserve `validate_fixer_result()`'s exact artifact keys (`schema_version`, `status`, `summary`, `claimed`, `patches`, `blast_radius`): put notices in `summary`, never add `design_deltas` or claim candidates as fixes. The design-delta preservation requirement above applies to Claude/Codex only; Pi does not gain that feature.
+- Pi excuse route: the fixer either repairs the hack, removes the excuse and claims the finding, or reports it in `summary`; the main session then lists it for the operator and excludes it from later fixer batches.
 - Extend `tests/pi/test_gate_capabilities.py::test_fixer_route_is_pi_native_and_rejects_auto_fix` to inspect the generated prompt/constraints, and its fixer-result tests to accept summary notices while rejecting extra proposal keys and candidate claims outside the actionable batch. `tests/pi/test_review.py` tests review-plan, not this fixer.
-- Apply the shared wording from phase 3a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
+- Apply the shared wording committed in phase 3b inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
+
+### Phase 4b: deep-review documentation lens, Claude mirror
+
+**Impl files:** `plugins/skein/skills/deep-review/SKILL.md, plugins/skein/skills/review-gauntlet/SKILL.md`
+**Test files:** `tests/lenses/test-lens-skill-shape.sh, tests/gauntlet/test-gauntlet-skill-shape.sh, tests/lenses/fixtures/documentation-lens.diff`
+**Test command:** `just lens-tests && just parity-tests && just gauntlet-tests`
+**Goal:** The Documentation Lens uses lexical and adjacent-line signals on the added diff only, with no whole-file evidence step. Every mirror keeps its current routing tier. (Claude mirror, lands first.)
+
+- **Executor:** main Claude session, by hand (not `conduct`). Commit this phase on its own after the test command passes.
+- Add to the documentation lens "Look for": excuse (Important): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, on or next to the line it excuses; tautology (Minor): an added comment whose words restate the identifiers of the adjacent line; stale (Minor): an added comment naming a symbol that the same diff removes or renames; decision candidate (Minor, informational): an added comment that states a choice with a lexical marker (`because`, `instead of`, `rather than`, `chose`) next to the line implementing it.
+- Use existing category `Documentation`, location at the added line and the existing severity vocabulary. Keep exemptions for pre-existing comments, docstrings, pragmas, license headers and issue-linked TODOs. Keep Claude's existing "Minor typos in comments" ignore line and its haiku/low routing.
+- Edit Claude's Documentation Lens in `SKILL.md` outside the literal Block A/Block B anchors. Give informational decision candidates a stable `Decision candidate:` summary prefix under `Documentation`.
+- Advice seam (grilled 2026-11-22): a finding becomes advice only when it carries the exact `Decision candidate:` prefix and severity Minor. Gauntlet splits advice off BEFORE `reconcile-findings.sh` runs, so the gate status, `--count`, `--present-keys`, the annotated envelope and the fixer batch all see only actionable findings and a same-line excuse is never merged into a candidate. A near-miss prefix stays actionable and is also shown to the operator. Advice is printed once, in the round's terminal message. `render-report.py` and `convergence-ledger.sh` stay unchanged. Leave the native quick route unchanged. The seam is prose-only; assert it with exact-phrase shape assertions that name the malformed-prefix and same-line excuse-plus-candidate cases.
+- Commit the fixture `tests/lenses/fixtures/documentation-lens.diff` with an excuse, a tautology, a candidate and a pre-existing comment, plus the expected findings beside it. Extend `test-lens-skill-shape.sh` to assert the four class names and severities, added-only scope, the exemptions, the `Decision candidate:` prefix and Claude's retained typo line. The sampled model run is Phase 5.
 
 ### Phase 4a: deep-review documentation lens, Codex mirror
 
 **Impl files:** `plugins/skein-codex/skills/deep-review/SKILL.md, plugins/skein-codex/skills/review-gauntlet/SKILL.md`
 **Test files:** `tests/lenses/test-lens-skill-shape.sh, tests/gauntlet/test-gauntlet-skill-shape.sh`
-**Test command:** `just lens-tests`
-**Goal:** The Documentation Lens uses simple lexical and adjacent-line signals on added comments. Every mirror keeps its current routing tier. (Codex mirror.)
-
-- **Executor:** Codex. The main Claude session invokes `codex:rescue` with this phase block as the brief; Codex edits only the files listed above. The main session byte-verifies against `git diff`, runs the test command, and does not commit: the commit is shared with the matching `b` phase.
-- Add to the documentation lens "Look for": excuse (Important): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, next to code that looks like the hack; tautology (Minor): an added comment whose words restate the identifiers of the adjacent line; stale (Minor): an added comment naming a symbol absent from the changed file; decision candidate (Minor, informational): an added comment explaining a cross-file or long-lived choice.
-- Use existing category `Documentation`, location at the added line and the existing severity vocabulary. Keep exemptions for pre-existing comments, docstrings, pragmas, licence headers and issue-linked TODOs. Keep Claude's existing "Minor typos in comments" ignore line. Codex has no such line and its ignore rule concerns code behaviour.
-- Edit Claude's and Codex's Documentation Lens in `SKILL.md` (Codex lines 292–311 before Block A); their identical `rubric.md` files already define the existing finding contract. Pi's `rubric.md` carries the lens scope and its `SKILL.md:22-26` already maps severity. Edit Codex first, then align Claude and Pi.
-- Give informational decision candidates a stable `Decision candidate:` summary prefix under `Documentation`. When gauntlet consumes deep-review findings, surface those candidates as advice and exclude them from fix dispatch and actionable convergence accounting. Exercise that seam where the deep-review slot is supported. Leave the native quick route unchanged.
-- Sample deep-review directly against recent diffs with added and pre-existing comments. Use the existing Codex spawned and sequential lens contracts and keep the disk-first writer, collector and location shape intact. Report noise or missed excuses to the user as a tier question. Keep the tier unchanged.
-
-### Phase 4b: deep-review documentation lens, Claude mirror
-
-**Impl files:** `plugins/skein/skills/deep-review/SKILL.md, plugins/skein/skills/review-gauntlet/SKILL.md`
-**Test files:** `tests/lenses/test-lens-skill-shape.sh, tests/gauntlet/test-gauntlet-skill-shape.sh`
 **Test command:** `just lens-tests && just parity-tests && just gauntlet-tests`
-**Goal:** The Documentation Lens uses simple lexical and adjacent-line signals on added comments. Every mirror keeps its current routing tier. (Claude mirror, aligned to the Codex half.)
+**Goal:** The Documentation Lens uses lexical and adjacent-line signals on the added diff only. Every mirror keeps its current routing tier. (Codex mirror, aligned to the committed Claude half.)
 
-- **Executor:** Claude (a `conduct` subagent or the main session). Align to the bytes landed in the matching `a` phase, run the test command, then commit `a` and `b` together as one logical change (Codex half first, per AGENTS.md).
-- Align the Claude mirror to the Codex half from phase 4a: copy shared wording, template and rubric bytes verbatim. Claude keeps `${CLAUDE_PLUGIN_ROOT}` path anchors; never collapse them with Codex's `"$SKILL_DIR"`.
-- Keep Claude's existing "Minor typos in comments" ignore line and its haiku/low routing; surface `Decision candidate:` findings as gauntlet advice on the Claude route.
+- **Executor:** an independent Codex session started by the user with this plan and this phase block (or `codex:rescue`). It edits only the files listed above, byte-verifies against `git diff`, runs the test command and commits the Codex half on its own.
+- Align to the lens rule, `Decision candidate:` prefix and advice-seam wording committed in phase 4b. Codex keeps `"$SKILL_DIR"` anchors. Edit Codex's Documentation Lens in `SKILL.md` (lines 292–311 before Block A); Codex has no "Minor typos in comments" line and its ignore rule concerns code behaviour. The identical `rubric.md` files already define the finding contract.
+- Use the existing Codex spawned and sequential lens contracts and keep the disk-first writer, collector and location shape intact. Preserve the literal Block A/Block B anchors and the shared `GENERIC FINDING SCHEMA AND MERGE` region byte-for-byte. Keep the tier unchanged.
+- Add the Codex counterpart of the 4b lens and gauntlet shape assertions. Exercise the advice seam where the deep-review slot is supported.
 
 ### Phase 4c: deep-review documentation lens, Pi mirror
 
 **Impl files:** `plugins/skein-pi/skills/deep-review/SKILL.md, plugins/skein-pi/skills/deep-review/rubric.md, plugins/skein-pi/skills/review-gauntlet/SKILL.md, plugins/skein-pi/lib/review_gauntlet.py`
 **Test files:** `tests/pi/test_deep_review.py, tests/pi/test_gate_capabilities.py`
 **Test command:** `just pi-tests`
-**Goal:** The Documentation Lens uses simple lexical and adjacent-line signals on added comments. Every mirror keeps its current routing tier. (Pi mirror.)
+**Goal:** The Documentation Lens uses lexical and adjacent-line signals on the added diff only, and the candidate advice seam projects actionable-only gate state. Every mirror keeps its current routing tier. (Pi mirror.)
 
-- **Executor:** Pi. The main session runs Pi non-interactively (`pi -p --no-session`) with this phase block as the brief, limited to the files listed above; if Pi is unavailable, a Claude subagent applies the same block. The main session verifies against `git diff`, runs the test command, and commits the Pi half separately (commit per platform).
-- Pi evidence and routing: extend deep-review's main-session packet preparation to give the documentation worker added-line coordinates, adjacent code, and a bounded symbol inventory or targeted lookup evidence for the changed file. A partial diff alone cannot establish that a named symbol is absent from the file; report unsupported checks as unverified. Keep the existing plan-target route: without an actual diff, do not invent added-comment findings. Preserve Pi's user-selected model and per-launch approval; haiku/low is Claude's routing, not Pi's.
-- Pi candidate seam: keep raw Documentation findings in deep-review state/report. In gauntlet, separate only `Documentation` findings with the exact `Decision candidate:` prefix into operator advice before constructing the actionable fixer batch and ledger projection. `PiLedger._validate_round()` currently counts every gate finding and rejects `passed` gates containing findings; supply actionable-only projected gate findings/status/counts to the ledger, while retaining the original gate envelope and advice in the report. Advice-only input must not trigger a fixer or another round, and must not erase skipped/degraded coverage or claim that the raw review had no findings. No worker/result schema expansion is needed.
-- Extend `tests/pi/test_deep_review.py` for packet contents, added-only locations, exemptions and missing-symbol evidence limits; extend `tests/pi/test_gate_capabilities.py` for mixed and advice-only batches, projected ledger counts, and skipped/degraded gates with advice. Use bounded synthetic packets/results to test adapter contracts; a live lens quality exercise is separate.
-- Apply the shared wording from phase 4a inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard.
-- `plugins/skein-pi/lib/review_gauntlet.py` is added to this phase's impl files because the candidate seam above edits `PiLedger` handling there.
+- **Executor:** an independent Pi session started by the user (interactive, or `pi -p --no-session`) with this plan and this phase block. It edits only the files listed above, and the main session or user verifies against `git diff`, runs the test command and commits the Pi half separately (commit per platform).
+- Pi evidence and routing: extend deep-review's main-session packet preparation to give the documentation worker added-line coordinates and adjacent code. The stale class needs only symbols the same diff removes or renames, which the diff already shows; no symbol inventory or file lookup is needed. Keep the existing plan-target route: without an actual diff, do not invent added-comment findings. Preserve Pi's user-selected model and per-launch approval; haiku/low is Claude's routing, not Pi's.
+- Pi candidate seam: keep raw Documentation findings in deep-review state/report. In gauntlet, separate into operator advice only `Documentation` findings with the exact `Decision candidate:` prefix and Pi severity `suggestion` (Minor), before constructing the actionable fixer batch and ledger projection. A near-miss prefix stays actionable and is shown to the operator. `PiLedger._validate_round()` currently counts every gate finding and rejects `passed` gates containing findings; supply actionable-only projected gate findings/status/counts to the ledger, while retaining the original gate envelope and advice in the report. Advice-only input must not trigger a fixer or another round, and must not erase skipped/degraded coverage or claim that the raw review had no findings. No worker/result schema expansion is needed.
+- Projection owner (grilled 2026-11-22): `plugins/skein-pi/lib/review_gauntlet.py` gains one pure function that splits advice from actionable findings and returns the projected gate status and counts. `pi_ledger.py` stays unchanged (read-only context: `PiLedger` at `:50`, `_validate_round` at `:117`); the Pi review-gauntlet `SKILL.md` passes the projected outcome to `PiLedger.append`.
+- Extend `tests/pi/test_deep_review.py` for packet contents, added-only locations, exemptions and removed/renamed-symbol staleness from the diff alone; extend `tests/pi/test_gate_capabilities.py` for mixed and advice-only batches, the projection function, projected ledger counts, skipped/degraded gates with advice, the malformed-prefix and same-line excuse-plus-candidate cases, and a severity round trip (an excuse at `important` and a prefixed candidate at `suggestion` map to Important and Minor with the prefix unchanged). Use bounded synthetic packets/results to test adapter contracts.
+- Apply the shared wording committed in phase 4b inside the Pi mirror's own routes. Pi is not covered by `check-prompt-parity.sh`, so the `tests/pi` assertions are its only guard. The Pi `deep-review/SKILL.md` has no Block A/B anchors; Pi's `rubric.md` carries the lens scope.
 
-### Phase 5: Verify, baseline, docs
+### Phase 5: Verify, lens sample, docs
 
 **Impl files:** `CHANGELOG.md, docs/dev_plans/README.md`
 **Test files:** `tests/plugin/test-count-added-comments.sh`
 **Test command:** `just ci`
-**Goal:** The full CI is green on the branch and a baseline comment count is recorded before the new rules are used.
+**Goal:** The full CI is green on the branch and the Documentation Lens sample is reviewed by the user.
 
-- Run `just ci` in a background job and wait for the exit status. Codex conduct runs its declared test command in a bounded subprocess, so use a sufficient `--test-timeout` if it owns this run.
-- Compute the baseline with the counter over the last ten merged PRs; record the number and the method in `## Findings`.
-- Update `CHANGELOG.md` and the `docs/dev_plans/README.md` row; run `/update-docs` after the reviews converge.
+- Run after both external sessions have committed. Run `just ci` in a background job and wait for the exit status; record its duration in `## Findings`.
+- Lens sample (the sampled part of the lens acceptance criterion): run the Documentation Lens on `tests/lenses/fixtures/documentation-lens.diff` three times per mirror. Pass rule: in each of the three runs the excuse is flagged Important, the tautology Minor, and the pre-existing comment not flagged. Also sample a few recent real diffs. Record results in `## Findings`, report noise or missed excuses to the user as a tier question, and keep the tier unchanged. The user reviews the sample.
+- Update `CHANGELOG.md` and the `docs/dev_plans/README.md` row (draft).
 - Record in `## Findings` that even after B lands, a candidate reaches promotion only if a person copies it into the plan's `## Findings` or records it in `### Architecture Decisions`.
+
+After Phase 5, run `review-gauntlet` by hand and let it converge, then run `/update-docs`. Gauntlet fix commits can change what the CHANGELOG entry must say, so this step sits outside the phases.
 
 ## Technical Specifications
 
@@ -198,20 +206,22 @@ All paths verified to exist by Explore (2026-11-22):
 - `AGENTS.md` — add comment-policy block (existing headings: Contributing Hygiene at line 161, Skill Workflow at 172).
 - `plugins/skein/skills/conduct/implementer-prompt.md`, `test-writer-prompt.md` — add Comments paragraph and handback lists.
 - `plugins/skein-codex/skills/conduct/implementer-prompt.md`, `test-writer-prompt.md` — same, byte-identical to Claude.
-- `plugins/{skein,skein-codex}/skills/conduct/SKILL.md` — phase report and handback guidance. B owns the terminal completion nudge.
+- `plugins/{skein,skein-codex}/skills/conduct/SKILL.md` — phase report and handback guidance, including the autonomous-mode notice block. B owns the terminal completion nudge.
 - `plugins/skein-pi/skills/conduct/SKILL.md` — add the rule to the worker-request prose (no templates exist).
 - `plugins/skein/skills/review-gauntlet/SKILL.md`, `plugins/skein-codex/skills/review-gauntlet/SKILL.md` — add fixer constraint.
-- `plugins/skein-pi/lib/review_gauntlet.py` — add to `fixer_request()` constraints (line 133).
+- `plugins/skein-pi/lib/review_gauntlet.py` — add to `fixer_request()` constraints (line 133) and one pure advice-projection function. `plugins/skein-pi/lib/pi_ledger.py` stays unchanged.
 - `plugins/skein/skills/deep-review/SKILL.md`, `plugins/skein-codex/skills/deep-review/SKILL.md`, `plugins/skein-pi/skills/deep-review/{SKILL.md,rubric.md}` — Documentation Lens rule and Pi bounded evidence preparation.
-- `plugins/{skein,skein-codex,skein-pi}/skills/review-gauntlet/SKILL.md` — keep informational candidates out of the fixer queue and ledger.
-- `tests/gauntlet/test-gauntlet-skill-shape.sh`, `tests/gauntlet/test_codex_agent_api.py`, `tests/lenses/test-lens-skill-shape.sh`, `tests/pi/test_gate_capabilities.py`, `tests/pi/test_deep_review.py`, `tests/pi/test_orchestration_routes.py` — extend assertions at the actual Pi fixer, ledger, lens and conduct seams.
-- `justfile` — register the counter and brief tests. `CHANGELOG.md`, `docs/dev_plans/README.md` — A's entries only.
+- `plugins/{skein,skein-codex,skein-pi}/skills/review-gauntlet/SKILL.md` — split advice off before reconcile and keep informational candidates out of the fixer queue, gate counts and ledger. `render-report.py` and `convergence-ledger.sh` stay unchanged.
+- `tests/gauntlet/test-gauntlet-skill-shape.sh`, `tests/lenses/test-lens-skill-shape.sh`, `tests/pi/test_gate_capabilities.py`, `tests/pi/test_deep_review.py`, `tests/pi/test_orchestration_routes.py` — extend assertions at the actual Pi fixer, ledger, lens and conduct seams.
+- `justfile` — register the counter and brief tests; add the `comment-count` recipe. `CHANGELOG.md`, `docs/dev_plans/README.md` — A's entries only.
 
 ### New Files to Create
 
 - `scripts/count-added-comments.sh` — added-comment-line counter.
 - `tests/plugin/test-count-added-comments.sh` — fixture-based counter test.
-- `tests/gauntlet/test-comment-policy-briefs.sh` — asserts rule text, slot isolation, Claude/Codex parity.
+- `tests/gauntlet/test-comment-policy-briefs.sh` — asserts the shared key phrases, slot isolation, the no-goal rendering against the fixtures and Claude/Codex parity (`--mirror claude|codex|both`).
+- `tests/gauntlet/fixtures/conduct-templates/{implementer,test-writer}-prompt.md` — pre-change Claude templates, saved before the Phase 2b edit.
+- `tests/lenses/fixtures/documentation-lens.diff` (plus expected findings) — fixture diff for the lens sample.
 
 ### Architecture Decisions
 
@@ -222,6 +232,13 @@ All paths verified to exist by Explore (2026-11-22):
 - Decision (grilled 2026-11-22, accepted): the deep-review documentation lens stays at haiku/low; the rules are written as lexical and adjacent-line signals. If sampling shows it cannot hold them, surface the tier question to the user.
 - Resolved by lookup (not a judgment call): the counter ignores HTML comments, including the structural markers `<!-- BEGIN GENERIC LENS PROMPT: architecture -->` and `<!-- BEGIN PROSE RULE BLOCK A -->`, as well as shebang and pragma lines.
 - Resolved (user-specified 2026-11-22): non-excuse findings are Minor, excuse is Important; Pi's `suggestion` maps to Minor (`skein-pi/skills/deep-review/SKILL.md:26`).
+- Decision (grilled 2026-11-22, accepted; beside the tier decision above): the lens needs no whole-file evidence. Stale is restricted to symbols the same diff removes or renames, and excuse and decision-candidate cues are lexical and adjacent-line only, so haiku/low and the diff-only `{{DIFF}}` input stay sufficient. Rejected: a whole-file evidence step for Claude and Codex (adds cost and a higher tier question).
+- Decision (grilled 2026-11-22, accepted): `Decision candidate:` is advice only with the exact prefix AND severity Minor, split off before `reconcile-findings.sh` on all three mirrors. A near-miss prefix stays actionable and is also shown to the operator. Rejected: case-insensitive match or treating a near miss as advice (drops real findings).
+- Decision (grilled 2026-11-22, accepted): Pi's advice projection is one pure function in `review_gauntlet.py`; `pi_ledger.py` stays unchanged and the Pi gauntlet `SKILL.md` passes the projected outcome to `PiLedger.append`.
+- Decision (grilled 2026-11-22, accepted): the Claude and Codex advice split is prose-only in the gauntlet `SKILL.md` files, before reconcile. The operator sees advice in the round's terminal message; `render-report.py`, `convergence-ledger.sh` and the report-shape tests are untouched. Rejected: a shared script or a new report section (new byte-identical surface).
+- Decision (grilled 2026-11-22, accepted): an excuse finding is repaired and removed in the same fix, or reported as a design conflict through the existing quarantine path. Rejected: a dedicated excuse quarantine counter.
+- Decision (grilled 2026-11-22): Claude lands first and each mirror commits separately; the user runs independent Codex and Pi sessions afterwards. `conduct` is not used for this plan. Rejected: Codex-first with one shared commit (the AGENTS.md convention), recorded as a waiver.
+- Decision (grilled 2026-11-22, accepted): the counter takes `<base> [<head>]`, excludes heredoc bodies, license headers and issue-linked TODOs, and is a documented heuristic. The baseline is taken in Phase 1 with `git diff M^1 M` per merge for the last ten merges, recorded as per-PR counts and a median, as a record only. `just comment-count` prints the current-branch count; the user compares it by hand.
 
 ### Dependencies
 
@@ -231,9 +248,11 @@ All paths verified to exist by Explore (2026-11-22):
 
 | Seam | Writer (task) | Caller (task) | Contract |
 |------|---------------|---------------|----------|
-| Policy wording | AGENTS.md block (Phase 1) | conduct and gauntlet briefs (Phases 2a–3c), deep-review rule (Phases 4a–4c) | One wording for exemptions and the cleanup bound; tests assert the shared key phrases, not paraphrases. |
-| Decision candidates | Conduct and gauntlet handbacks (Phases 2a–3c), Documentation Lens (Phases 4a–4c) | Operator, then plan B `/update-docs` after manual capture | Existing summary and finding fields carry advice. The operator chooses what to copy into the plan. |
-| Byte parity | Codex conduct templates (Phase 2a) | Claude conduct templates (Phase 2b) | Identical bytes; `check-prompt-parity.sh` fails otherwise. |
+| Policy wording | AGENTS.md block (Phase 1) | conduct and gauntlet briefs (Phases 2b–3c), deep-review rule (Phases 4b–4c) | One wording for exemptions and the cleanup bound; `test-comment-policy-briefs.sh` asserts the shared key phrases below, not paraphrases, and `tests/pi` repeats the same list as a constant. |
+| Decision candidates | Conduct and gauntlet handbacks (Phases 2b–3c), Documentation Lens (Phases 4b–4c) | Operator, then plan B `/update-docs` after manual capture | Existing summary and finding fields carry advice. Exact `Decision candidate:` prefix plus Minor is advice, split before reconcile (Pi: before the ledger projection). The operator chooses what to copy into the plan. |
+| Byte parity | Claude conduct templates (Phase 2b) | Codex conduct templates (Phase 2a, aligned afterwards) | Identical bytes; `check-prompt-parity.sh` fails otherwise, so the parity gate first runs in 2a. |
+
+**Shared key phrases** (defined once; asserted wherever an artifact carries the rule): `non-obvious why`, `restates the code`, `excuses a hack`, `docstrings`, `linter and type pragmas`, `license headers`, `TODOs that link an issue` (a full issue URL or `#N`), `inside a hunk or function the change already touches`, `Decision candidate:`.
 
 ## Architecture & Call Flow
 
@@ -263,15 +282,15 @@ sequenceDiagram
 |------|---------|----------------|-------------------|---------------|
 | 1 | Worker dispatch or retry | Full role brief and bounded untrusted work context | Fresh worker context, existing report on return | Final output and terminal status |
 | 2 | Deep-review dispatch | Diff, checklist and focus | Existing per-attempt lens stream, candidates reported as advice | Collector reconciles completed attempts |
-| 3 | Baseline measurement | Each merged PR's resolved diff | Count and method in Findings | Counter exits |
+| 3 | Baseline (Phase 1) or `just comment-count` | Each merge's `M^1 M` diff, or the branch against `main` | Per-PR counts, median and method in Findings; branch count printed | Counter exits |
 
 ## Testing Notes
 
 ### Test Approach
-- [ ] Counter: fixture repo with added comment, shebang, pragma, HTML marker, pre-existing comment.
-- [ ] Briefs: static rule and handback guidance reach both mirrors' rendered requests. The no-goal substitution adds zero bytes.
-- [ ] Fixer: constraint present in the Claude and Codex SKILL.md and in Pi `fixer_request()` output.
-- [ ] Lens: shape tests, prose-rule parity and tier census pass. Sample real diffs and verify gauntlet reports candidates without dispatching fixes for them.
+- [ ] Counter: fixture repo covering every case in Phase 1, including heredoc, license header, TODO link forms, removed lines and an explicit head.
+- [ ] Briefs: static rule and handback guidance reach both mirrors' rendered requests. The no-goal substitution is diffed against the committed pre-change fixtures and adds only the Comments paragraph and handback sentence.
+- [ ] Fixer: constraint and both excuse-route branches present in the Claude and Codex SKILL.md and in Pi `fixer_request()` output; Pi names the validation command generically.
+- [ ] Lens: shape tests (four classes, severities, added-only scope, exemptions, prefix), prose-rule parity and tier census pass. The sampled run (Phase 5) uses the fixture diff, three runs per mirror, and a user review. Pi tests cover projection, severity round trip and the malformed-prefix and same-line excuse cases.
 - [ ] Reconcile both harnesses' plan reviews before implementation, as required by AGENTS.md.
 - [ ] `just ci` green.
 
@@ -281,8 +300,8 @@ sequenceDiagram
 - [ ] Lens sample reviewed by the user
 
 ### Edge Cases Tested
-- [ ] Comment inside a touched function but outside the touched hunk (cleanup bound).
-- [ ] TODO with and without an issue link.
+- [ ] Wording assertion on the briefs and rubric text: deletion is bounded to a hunk or function the change already touches.
+- [ ] Wording assertion: a TODO is exempt only with a full issue URL or `#N`; the counter fixture covers both forms and the unlinked case.
 - [ ] Docstring and pragma lines never flagged or counted.
 
 ## Acceptance Criteria
@@ -290,29 +309,31 @@ sequenceDiagram
 - AGENTS.md states the policy and exemptions in a short block.
 - Claude and Codex conduct templates carry identical comment text, the empty-goal rendering is otherwise unchanged, and `just parity-tests` passes.
 - The gauntlet fixer constraint is present in all three mirrors and tested.
-- The documentation lens flags an added excuse comment as Important and an added tautology as Minor in a fixture diff, and does not flag a pre-existing comment.
-- The counter returns the expected integer on its fixture, and a baseline from the last ten merged PRs is recorded in Findings.
+- Static part, proved by tests: the lens text carries the four classes, severities, added-only scope, exemptions and prefix in all three mirrors. Sampled part, accepted by the user: on the committed fixture diff, in three of three runs per mirror, the lens flags the excuse as Important and the tautology as Minor and does not flag the pre-existing comment.
+- The counter returns the expected integer on its fixture, and the per-PR baseline counts and median for the last ten merges are recorded in Findings before the rules take effect.
 - No model tier changes; `test-spawn-tiers.sh` passes.
 - Code reviewed and approved
 - Tests passing (`just ci`)
 - Documentation updated
 
-<!-- reviewed: YYYY-MM-DD @ <hash> -->
+<!-- reviewed: 2026-11-23 @ 5d268fb483f65b4e900584dfa45495ec01273189 -->
+
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
 ## Progress
 
-- [ ] Phase 1: Policy block and measurement
-- [ ] Phase 2a: conduct briefs (Codex)
+- [ ] Phase 1: Policy block, counter and baseline
 - [ ] Phase 2b: conduct briefs (Claude)
-- [ ] Phase 2c: conduct briefs (Pi)
-- [ ] Phase 3a: review-gauntlet fixer brief (Codex)
 - [ ] Phase 3b: review-gauntlet fixer brief (Claude)
-- [ ] Phase 3c: review-gauntlet fixer brief (Pi)
-- [ ] Phase 4a: deep-review documentation lens (Codex)
 - [ ] Phase 4b: deep-review documentation lens (Claude)
-- [ ] Phase 4c: deep-review documentation lens (Pi)
-- [ ] Phase 5: Verify, baseline, docs
+- [ ] Phase 2a: conduct briefs (Codex session)
+- [ ] Phase 3a: review-gauntlet fixer brief (Codex session)
+- [ ] Phase 4a: deep-review documentation lens (Codex session)
+- [ ] Phase 2c: conduct briefs (Pi session)
+- [ ] Phase 3c: review-gauntlet fixer brief (Pi session)
+- [ ] Phase 4c: deep-review documentation lens (Pi session)
+- [ ] Phase 5: Verify, lens sample, docs
+- [ ] After Phase 5: hand-run review-gauntlet, then /update-docs
 
 ## Findings
 
@@ -348,6 +369,13 @@ sequenceDiagram
 - Codex review (2026-11-22): Added — assigned CI fixture wiring and Codex template assertions, and kept existing parity and tier checks as guards.
 - Codex review (2026-11-22): Added — separated the plans' ownership and recorded the conditional call flow and both-harness review prerequisite.
 - Codex review (2026-11-22): Unverifiable — this source audit cannot establish live codex:rescue availability or Documentation Lens quality on real diffs.
+- Claude review-plan (2026-11-22): addressed all 42 findings in one pass. Grilled: lens scope (#6), prefix rule (#7, #13), Pi projection owner (#8), Claude/Codex advice seam (#9, #20), excuse route (#15), driving model and ordering (#14, #16, #29), baseline method (#4, #10, #11, #21, #32, #39). Applied as standard fixes: sub-phase gates and ownership (#17, #22, #35, #36, #37, #40), testability (#2, #3, #18, #19, #41, #42), Pi validation wording (#27, #31), small corrections (#23, #28, #30, #33, #34, #38), and executor assumptions (#24, #25, #26 dissolve because the user runs Codex and Pi sessions and conduct is not used). Lens sampling moved to Phase 5; `test_codex_agent_api.py` dropped (no stated assertion).
+- Open measurement: the `just ci` duration is recorded in Phase 5 rather than guessed.
+
+### Review Waivers
+
+- Codex-first ordering (AGENTS.md Mirrors; finding #16): waived by the user on 2026-11-22. Claude lands first and each mirror commits separately; Codex and Pi sessions align to committed Claude bytes. The parity gate first runs in the Codex phases.
+- Optional `notices` array key in conduct reports (finding #14, second half): not adopted. The terminal JSON fields are pinned (Codex review above), so notices stay labelled text in the existing summary strings, printed at the phase boundary and not persisted across `--resume`.
 
 ## Issues & Solutions
 
