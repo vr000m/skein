@@ -546,17 +546,18 @@ Procedure:
    It emits recovered findings from the collected attempt files, including findings from incomplete
    lenses; their non-terminal status remains report metadata. Never hand-assemble this file from lens
    replies. The combined stream is written to `findings.jsonl`.
-2. **Set decision candidates aside, then pipe the rest through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic. It merges by `(file, line, category)` and keeps one summary, so a same-line excuse would absorb a decision candidate. First set aside every row `advice_filter` matches: category `Documentation`, severity `Minor` and a string summary that begins with exactly `Decision candidate:`, the predicate `skein:review-gauntlet` splits advice on. Reconcile the rest, then append the set-aside rows back unmerged, one finding each, so a same-line excuse and candidate stay separate findings in this skill's output. A set-aside row carries no `auto_fix` proposal: a candidate is information, not an edit. Invoke it with the literal commands:
+2. **Set decision candidates aside, then pipe the rest through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic of every row it receives. It merges by `(file, line, category)` and keeps one summary, so a same-line excuse would absorb a decision candidate or a near miss of its prefix. First set aside every row `advice_filter` or `near_miss_filter` matches, the predicates `skein:review-gauntlet` splits advice and lists near misses on: advice is category `Documentation`, severity `Minor` and a string summary that begins with exactly `Decision candidate:`; a near miss is a summary whose head reads as that prefix in another casing, spacing or punctuation. Reconcile the rest, then append the set-aside rows back unmerged, one finding each, so a same-line excuse and candidate stay separate findings in this skill's output and the gauntlet still sees a same-line near miss. The appended rows are the documented exceptions to the reconciler's contract: the `jq` below builds their row fields itself, they follow the reconciled findings in `(file, line, summary)` order rather than the canonical order, and they take no part in `related`. A set-aside row carries no `auto_fix` proposal: a candidate is information, not an edit. Invoke it with the literal commands:
 
    ```
    advice_filter='(.category == "Documentation") and (.severity == "Minor") and ((.summary | type) == "string") and (.summary | startswith("Decision candidate:"))'
-   jq -c "select($advice_filter | not)" findings.jsonl > findings-actionable.jsonl
-   jq -c "select($advice_filter)" findings.jsonl > findings-advice.jsonl
+   near_miss_filter='((.summary | type) == "string") and ((.summary | startswith("Decision candidate:")) | not) and ((.summary | if contains(":") then split(":")[0] else ([splits("\\s+")] | map(select(. != "")) | .[0:2] | join(" ")) end | gsub("[^A-Za-z]"; "") | ascii_downcase) == "decisioncandidate")'
+   jq -c "select((($advice_filter) or ($near_miss_filter)) | not)" findings.jsonl > findings-actionable.jsonl
+   jq -c "select(($advice_filter) or ($near_miss_filter))" findings.jsonl > findings-set-aside.jsonl
    cat findings-actionable.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review \
-     | jq --slurpfile advice findings-advice.jsonl '($advice | map({severity, category, file, line: ((.line // "") | if . == "" then -1 else (tonumber? // -1) end), lenses: [.lens], summary, evidence, suggestion}) | sort_by(.file, .line, .summary)) as $rows | .findings += $rows | .summary.raw += ($rows | length) | .summary.unique += ($rows | length)'
+     | jq --slurpfile aside findings-set-aside.jsonl '($aside | map({severity, category, file, line: ((.line // "") | if . == "" then -1 else (tonumber? // -1) end), lenses: [.lens], summary, evidence, suggestion}) | sort_by(.file, .line, .summary)) as $rows | .findings += $rows | .summary.raw += ($rows | length) | .summary.unique += ($rows | length)'
    ```
 
-   The pipeline emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`, with the set-aside candidates after the reconciled findings. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
+   The pipeline emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`, with the set-aside rows after the reconciled findings. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
 3. **Audit auto-fix eligibility before rendering.** Run the dry-run audit even when `--auto-fix=trivial` was not passed, using the literal command:
 
    ```
@@ -787,8 +788,10 @@ do not create scratch files or call the hook.
 1. Create a scratch suppress-keys file outside `.deep-review/`. For an anchored finding (non-empty
    `file` and line), add `file<TAB>line<TAB>category`. For an unanchored finding (empty `file` or
    line), add `file<TAB>line<TAB>category<TAB>summary`, using the finding's `summary` (else
-   `finding`) with each tab, CR and LF replaced by one space. Use an empty line field for null,
-   absent, or `-1` lines. Do not interpolate finding text into shell code; write keys as file data.
+   `finding`) with each tab, CR and LF replaced by one space. Append the summary the same way for an
+   anchored finding that shares its `(file, line, category)` with another audited finding, such as a
+   set-aside decision candidate beside a same-line excuse, because a 3-field key drops every finding
+   at that signature. Use an empty line field for null, absent, or `-1` lines. Do not interpolate finding text into shell code; write keys as file data.
 2. If Step 4.5 applied trivial fixes, append tuples for those fixes by joining the applier's
    `.deep-review/auto-fix-<unix>-<pid>.json` manifest to the audited envelope. The manifest is an
    array of `{kind, file, line, status, commit_sha, before_sha}` objects and has no category. For
