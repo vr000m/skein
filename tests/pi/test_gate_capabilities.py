@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[2] / "plugins/skein-pi/lib"))
 
 import pi_ledger
+import pytest
 import review_gauntlet
 
 
@@ -88,7 +89,35 @@ def test_fixer_route_is_pi_native_and_rejects_auto_fix():
     request = review_gauntlet.fixer_request(
         [{"file": "x.py", "line": 3, "category": "Logic"}]
     )
+    assert set(request) == {"role", "prompt"}
     assert request["role"] == "mechanical"
+    policy, payload = request["prompt"].split("INPUT=", 1)
+    assert json.loads(payload)["constraints"]["require_regression_test"] is True
+    for phrase in (
+        "Comment only a non-obvious why",
+        "comment that restates the code",
+        "comment that excuses a hack: fix the hack, or report it",
+        "docstrings, linter and type pragmas, license headers",
+        "a full issue URL or `#N`",
+        "tautology or stale",
+        "inside a hunk or function the change already touches",
+        "within the fix's blast radius",
+        "never sweep untouched code or widen a fix beyond its finding",
+        "Never delete an excuse comment silently",
+        "Repair the underlying hack, remove the excuse comment in the same change",
+        "claim the finding in claimed",
+        "otherwise report it as an Excuse: notice in summary",
+        "excludes it from later fixer batches",
+        "cross-file or long-lived decision stays in place",
+        "Decision candidate: <file:line> <why>",
+        "never a claim or a design delta",
+        "the repository's required validation command",
+        "main session executes the validation after approved edits",
+        "every dispatch and retry",
+        "Do not dispatch workers, write files",
+    ):
+        assert phrase in policy, phrase
+    assert "just ci" not in request["prompt"]
     assert '"no_nested_dispatch": true' in request["prompt"]
     assert '"kind": "review-gauntlet-fixer"' in request["prompt"]
     try:
@@ -191,6 +220,46 @@ def test_fixer_result_uses_generic_worker_envelope():
         review_gauntlet.validate_fixer_result(envelope, expected_findings=[])["patches"]
         == []
     )
+
+
+def test_fixer_summary_notices_preserve_closed_proposal_and_batch():
+    proposal = {
+        "schema_version": 1,
+        "status": "ok",
+        "summary": "Excuse: x.py:3 cannot repair in scope. Decision candidate: y.py:5 choice",
+        "claimed": [],
+        "patches": [],
+        "blast_radius": "local",
+    }
+    envelope = {
+        "status": "completed",
+        "result": {
+            "status": "ok",
+            "findings": [],
+            "artifact": {"format": "markdown", "content": json.dumps(proposal)},
+        },
+    }
+    assert review_gauntlet.validate_fixer_result(envelope, []) == proposal
+    proposal["design_deltas"] = []
+    envelope["result"]["artifact"]["content"] = json.dumps(proposal)
+    with pytest.raises(ValueError, match="fixer_proposal_invalid"):
+        review_gauntlet.validate_fixer_result(envelope, [])
+    del proposal["design_deltas"]
+    proposal["claimed"] = [
+        {
+            "file": "y.py",
+            "line": 5,
+            "category": "Documentation",
+            "summary": "Decision candidate: choice",
+            "root_cause": "choice",
+            "regression_test": "none",
+        }
+    ]
+    envelope["result"]["artifact"]["content"] = json.dumps(proposal)
+    with pytest.raises(ValueError, match="fixer_claim_not_in_batch"):
+        review_gauntlet.validate_fixer_result(
+            envelope, [{"file": "x.py", "line": 3, "category": "Documentation"}]
+        )
 
 
 def test_refresh_failure_is_degraded(tmp_path, monkeypatch):
