@@ -854,6 +854,8 @@ for doc_lens_mirror in Claude Codex; do
 	doc_lens_has 'docstrings, linter and type pragmas, license headers, or TODOs that link an issue' "exemptions are listed"
 	doc_lens_has 'exactly .Decision candidate:.' "exact Decision candidate: prefix"
 	doc_lens_has 'category .Documentation.' "uses the existing Documentation category"
+	doc_lens_has 'One class per comment: when a comment matches more than one class, report it once, under the first that matches in the order excuse, stale, tautology, decision candidate' \
+		"one class per comment, by the shared precedence"
 done
 
 if [[ -s "$DOC_LENS_FIXTURE" ]] && grep -q '^+.*hack: workaround' "$DOC_LENS_FIXTURE" &&
