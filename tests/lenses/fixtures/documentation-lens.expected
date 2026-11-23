@@ -1,0 +1,7 @@
+# Expected Documentation Lens findings for documentation-lens.diff (category Documentation).
+# severity | location line text | note
+Important | src/cache.py: "# hack: workaround for the stale entry bug, remove for now" | excuse
+Minor | src/cache.py: "# increment the hit counter" | tautology
+Minor | src/cache.py: "# old_lookup was renamed to lookup; callers of old_lookup must update" | stale (names a symbol the same diff removes or renames)
+Minor | src/cache.py: "# chose a dict instead of a list because lookups dominate writes" | summary begins "Decision candidate:"
+# Never flagged: the pre-existing first-line comment, the docstring, and "# type: ignore".

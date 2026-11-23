@@ -1,0 +1,26 @@
+diff --git a/src/cache.py b/src/cache.py
+index 1111111..2222222 100644
+--- a/src/cache.py
++++ b/src/cache.py
+@@ -1,12 +1,20 @@
+ # Pre-existing comment: this module is a thin wrapper and must stay that way.
+ import time
+ 
+ 
+-def old_lookup(key):
+-    return _store.get(key)
++def lookup(key):
++    # hack: workaround for the stale entry bug, remove for now
++    if key in _stale:
++        return None
++    # increment the hit counter
++    _hits["n"] += 1
++    # chose a dict instead of a list because lookups dominate writes
++    return _store.get(key)
++
++
++# old_lookup was renamed to lookup; callers of old_lookup must update
++def refresh():
++    """Docstring: exempt, never flagged."""
++    # type: ignore
++    pass

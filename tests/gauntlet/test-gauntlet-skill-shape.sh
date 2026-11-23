@@ -938,6 +938,54 @@ assert_guardrail9_for() {
 
 assert_guardrail9_for "$SKILL_MD" "Claude mirror"
 
+# ---------------------------------------------------------------------------
+# Advice seam (decision candidates): Claude mirror. The split runs before the
+# reconciler, only the exact prefix plus severity Minor is advice, a near miss
+# stays actionable, and the documented jq filter really splits that way.
+# ---------------------------------------------------------------------------
+
+assert_advice_seam_for() {
+	local file="$1" label="$2" phrase
+	for phrase in \
+		'Advice split' \
+		'exact `Decision candidate:` summary prefix AND severity Minor' \
+		'BEFORE `run-gate.sh reconcile`' \
+		'never merged with an excuse finding' \
+		'advice never reaches `convergence-ledger.sh`' \
+		'near-miss prefix' \
+		'labelled near miss' \
+		'does not change `render-report.py` or `convergence-ledger.sh`' \
+		'The quick route is unchanged'; do
+		if grep -q -F -- "$phrase" "$file"; then
+			pass "$label: advice seam carries '$phrase'"
+		else
+			fail "$label: advice seam missing '$phrase'"
+		fi
+	done
+
+	local filter sample actionable advice
+	filter="$(sed -n "s/^  advice_filter='\(.*\)'\$/\1/p" "$file" | head -1)"
+	if [[ -z "$filter" ]]; then
+		fail "$label: could not extract the documented advice_filter"
+		return
+	fi
+	sample="$(printf '%s\n' \
+		'{"category":"Documentation","severity":"Minor","summary":"Decision candidate: keep"}' \
+		'{"category":"Documentation","severity":"Important","summary":"excuse comment"}' \
+		'{"category":"Documentation","severity":"Important","summary":"Decision candidate: wrong severity"}' \
+		'{"category":"Documentation","severity":"Minor","summary":"decision candidate: near miss"}' \
+		'{"category":"Logic","severity":"Minor","summary":"Decision candidate: wrong category"}')"
+	advice="$(jq -c "select($filter)" <<<"$sample" | wc -l | tr -d ' ')"
+	actionable="$(jq -c "select($filter | not)" <<<"$sample" | wc -l | tr -d ' ')"
+	if [[ "$advice" == "1" && "$actionable" == "4" ]]; then
+		pass "$label: documented advice filter splits exact-prefix Minor from the malformed, same-line excuse and wrong-category cases"
+	else
+		fail "$label: documented advice filter split $advice advice / $actionable actionable (want 1 / 4)"
+	fi
+}
+
+assert_advice_seam_for "$SKILL_MD" "Claude mirror"
+
 assert_grep_i "$SKILL_MD" 'seam still moving' \
 	"Claude mirror: documents the conductor-side seam tripwire"
 assert_grep_i "$CODEX_SKILL_MD" 'seam still moving' \

@@ -325,7 +325,7 @@ sequenceDiagram
 - [x] Phase 1: Policy block, counter and baseline
 - [x] Phase 2b: conduct briefs (Claude)
 - [x] Phase 3b: review-gauntlet fixer brief (Claude)
-- [ ] Phase 4b: deep-review documentation lens (Claude)
+- [x] Phase 4b: deep-review documentation lens (Claude)
 - [ ] Phase 2a: conduct briefs (Codex session)
 - [ ] Phase 3a: review-gauntlet fixer brief (Codex session)
 - [ ] Phase 4a: deep-review documentation lens (Codex session)
@@ -376,6 +376,7 @@ sequenceDiagram
 - Phase 1 pre-existing lint note: `just lint-python` fails on `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261` (SIM102) under local ruff 0.17.6 while AGENTS.md pins 0.16.6; untouched by this plan, `just lint-scripts` passes.
 - Phase 2b deviation (2026-11-23): `test-comment-policy-briefs.sh` is registered in `gauntlet-tests` as `--mirror claude` so `just gauntlet-tests` stays green for phases 3b and 4b while the Codex half is pending. Phase 5 flips the registration to the default (`both`) after the Codex session lands 2a.
 - Phase 3b note (2026-11-23): the Claude comment rule landed as a new `### Guardrail 9` in `review-gauntlet/SKILL.md` (after Guardrail 8), not as text inside Guardrails 5–8; the Codex session mirrors that section byte-for-byte and adds `assert_guardrail9_for "$CODEX_SKILL_MD" "Codex mirror"` beside the Claude call in `test-gauntlet-skill-shape.sh`.
+- Phase 4b note (2026-11-23): `just lens-tests` and `just gauntlet-tests` pass; `just parity-tests` and `reconciliation-tests` (which runs `check-prompt-parity.sh`) fail only on the two conduct templates, which stay drifted until the Codex session lands 2a. The advice split uses a literal `advice_filter` jq expression in the Claude gauntlet SKILL.md before `run-gate.sh reconcile`; the pooled file is `findings-pooled.jsonl` and `findings.jsonl` now holds only actionable findings. Shape assertions execute the documented filter on exact-prefix, wrong-severity, wrong-category, near-miss and same-line-excuse samples. The Codex session mirrors the lens text, the `advice_filter` block and both assertion groups (`assert_advice_seam_for "$CODEX_SKILL_MD"`, and a Codex Documentation Lens block in `test-lens-skill-shape.sh`).
 
 ### Review Waivers
 
