@@ -236,13 +236,21 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
             "exact `Decision candidate:` summary prefix AND severity Minor "
             "(canonical `Minor` or Pi `suggestion`)"
         ),
-        "keep their disk-first `Critical|Important|Minor` severities",
+        (
+            "That stream predates deep-review's merge-base Review Checklist "
+            "suppression, so first drop every record whose `(file, line, "
+            "category)` matches a finding that suppression removed"
+        ),
+        "Keep their disk-first `Critical|Important|Minor` severities",
         "matched on file, line, category and summary",
         'Exclude only the findings `excuse_exclusions(proposal["summary"], batch)` returns',
         (
-            "near-miss prefix (any casing or spelling of the prefix that fails "
-            "the exact test) stays actionable"
+            "near-miss prefix (the prefix's words in any casing, spacing or "
+            "punctuation that fail the exact test; `_near_miss_prefix` applies "
+            "the same rule as the Claude and Codex `near_miss_filter`) stays "
+            "actionable"
         ),
+        "a notice must open a line or sentence, carry a whole line number",
         "same-line excuse-plus-candidate cannot merge into advice",
         "Retain each original gate envelope",
         "print advice once",
@@ -272,16 +280,16 @@ def test_advice_projection_reads_canonical_disk_first_severity():
     ("summary", "near_miss"),
     [
         ("decision candidate: keep", True),
-        ("Decision candiate: keep", True),
-        ("Decison candidate: keep", True),
         ("Decision-candidate: keep", True),
+        ("DECISION  CANDIDATE - keep", True),
         ("Decision candidate keep the bound", True),
+        ("Decison candidate: keep", False),
         ("Decision: keep", False),
         ("Typo in docstring", False),
         ("temporary hack", False),
     ],
 )
-def test_near_miss_covers_casing_and_spelling(summary, near_miss):
+def test_near_miss_covers_casing_spacing_and_punctuation(summary, near_miss):
     result = review_gauntlet.project_gate_findings(
         {
             "gate": "deep-review",
@@ -353,6 +361,25 @@ def test_excuse_notice_excludes_only_cited_documentation_batch_findings():
     )
     assert review_gauntlet.excuse_exclusions(summary, batch) == [excuse, collected]
     assert review_gauntlet.excuse_exclusions("no notices", batch) == []
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Excuse: x.py:3q not a whole line number",
+        "Decision candidate: y.py:5 kept because Excuse: x.py:3 was quoted",
+        "see Excuse: x.py:3 mid-sentence",
+    ],
+)
+def test_excuse_notice_must_be_anchored_with_a_whole_line(summary):
+    excuse = documentation_finding("temporary hack", severity="Important")
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == []
+
+
+def test_excuse_notice_counts_at_a_line_start():
+    excuse = documentation_finding("temporary hack", severity="Important")
+    summary = "Repaired one hack.\nExcuse: x.py:3 cannot repair in scope."
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
 
 
 def test_refresh_removes_stale_entry_and_reprobes_available(tmp_path):

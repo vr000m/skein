@@ -45,13 +45,16 @@ coverage counts, and the exact stop/terminal reason.
 Before reconciliation, call `project_gate_findings(raw_gate)` from
 `lib/review_gauntlet.py` on each original gate envelope. For deep-review, use
 raw per-lens findings (the collector's `--findings-jsonl` stream), not its
-structurally reconciled report, and keep their disk-first
+structurally reconciled report. That stream predates deep-review's merge-base
+Review Checklist suppression, so first drop every record whose `(file, line,
+category)` matches a finding that suppression removed. Keep their disk-first
 `Critical|Important|Minor` severities with the summary prefix unchanged: the
 reconciler ranks only those canonical values. Separate into operator advice
 only `Documentation` findings with the exact `Decision candidate:` summary
 prefix AND severity Minor (canonical `Minor` or Pi `suggestion`). A near-miss
-prefix (any casing or spelling of the prefix that fails the exact test) stays
-actionable and is also shown to
+prefix (the prefix's words in any casing, spacing or punctuation that fail the
+exact test; `_near_miss_prefix` applies the same rule as the Claude and Codex
+`near_miss_filter`) stays actionable and is also shown to
 the operator, labelled near miss. Split BEFORE reconciliation so a same-line
 excuse-plus-candidate cannot merge into advice: the excuse remains actionable.
 Retain each original gate envelope and the returned `advice` and `near_misses`
@@ -80,9 +83,10 @@ repository's required validation command after approved edits. A worker claim
 alone is not evidence that a fix landed. Validate summary notices, list unresolved
 `Excuse:` notices for the operator and exclude those findings from later fixer
 batches without claiming they were fixed. Exclude only the findings
-`excuse_exclusions(proposal["summary"], batch)` returns: a notice must name the
-`file:line` of a Documentation finding in the dispatched batch, and any other
-notice excludes nothing. Keep `Decision candidate:` notices as
+`excuse_exclusions(proposal["summary"], batch)` returns: a notice must open a
+line or sentence, carry a whole line number and name the `file:line` of a
+Documentation finding in the dispatched batch, and any other notice excludes
+nothing. Keep `Decision candidate:` notices as
 information only: leave the comment in place, never claim it or create a design
 delta. Retain unresolved actionable findings in round evidence; a quarantine is
 not convergence.

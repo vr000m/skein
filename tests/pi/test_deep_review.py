@@ -64,6 +64,8 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         "Require explicit approval for each worker launch",
         "Keep raw Documentation findings",
         "preserve that exact prefix unchanged during severity mapping",
+        "first set aside every `Documentation` row whose severity is `Minor`",
+        "under their own `Decision candidates` heading",
     ):
         assert phrase in text, phrase
     for phrase in (
@@ -82,6 +84,8 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         "a full issue URL or `#N`",
         "Do not look up symbols outside the supplied diff",
         "same-line excuse-plus-candidate produces separate findings",
+        "sets exact-prefix Minor candidates aside before reconciliation",
+        "after exact-prefix Minor `Decision candidate:` rows are set aside",
     ):
         assert phrase in rubric, phrase
 

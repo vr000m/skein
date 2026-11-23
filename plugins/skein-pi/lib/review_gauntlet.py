@@ -7,7 +7,6 @@ must be deterministic and testable without a live provider.
 
 from __future__ import annotations
 
-import difflib
 import json
 import re
 from collections.abc import Callable, Iterable, Mapping
@@ -20,7 +19,9 @@ STABLE_UNAVAILABLE_REASONS = frozenset(
 )
 MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
 ADVICE_PREFIX = "Decision candidate:"
-_EXCUSE_NOTICE = re.compile(r"Excuse:\s*(\S+):(\d+)")
+_EXCUSE_NOTICE = re.compile(
+    r"(?:^|(?<=[.;!?])[ \t]+)Excuse:[ \t]*(\S+):(\d+)(?=[\s.,;]|$)", re.MULTILINE
+)
 TRANSIENT_REASONS = frozenset(
     {
         "timeout",
@@ -136,12 +137,14 @@ def zero_runnable_stop(result: Coverage) -> str | None:
 
 
 def _near_miss_prefix(summary: object) -> bool:
-    """Match any casing or spelling of the advice prefix that is not exact."""
-    if not isinstance(summary, str):
+    """Match the advice prefix in any casing, spacing or punctuation, not exact.
+
+    The same rule as the Claude and Codex gauntlets' ``near_miss_filter``.
+    """
+    if not isinstance(summary, str) or summary.startswith(ADVICE_PREFIX):
         return False
     head = summary.split(":", 1)[0] if ":" in summary else " ".join(summary.split()[:2])
-    letters = "".join(char for char in head.lower() if char.isalpha())
-    return difflib.SequenceMatcher(None, letters, "decisioncandidate").ratio() >= 0.8
+    return re.sub(r"[^A-Za-z]", "", head).lower() == "decisioncandidate"
 
 
 def _summary_key(summary: object) -> str:
@@ -153,9 +156,11 @@ def excuse_exclusions(
 ) -> list[dict[str, object]]:
     """Return the batch findings that a fixer's Excuse: notices may exclude.
 
-    A notice counts only when its ``file:line`` names a Documentation finding
-    in the dispatched batch; any other notice is ignored, so untrusted fixer
-    text cannot drop a finding from later batches.
+    A notice counts only when it opens a line or a sentence, carries a whole
+    line number, and its ``file:line`` names a Documentation finding in the
+    dispatched batch; any other notice, including an ``Excuse:`` quoted inside
+    other text, is ignored, so untrusted fixer text cannot drop a finding from
+    later batches.
     """
     cited = {
         (file, line.lstrip("0") or "0")
@@ -193,7 +198,7 @@ def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
             advice.append(dict(finding))
         else:
             actionable.append(dict(finding))
-            if not exact_prefix and _near_miss_prefix(summary):
+            if _near_miss_prefix(summary):
                 near_misses.append(dict(finding))
     projected = dict(gate, findings=actionable, findings_count=len(actionable))
     if status in {"passed", "findings"}:
