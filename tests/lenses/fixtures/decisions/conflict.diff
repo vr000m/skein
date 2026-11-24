@@ -1,0 +1,15 @@
+diff --git a/src/cache/index.py b/src/cache/index.py
+new file mode 100644
+index 0000000..3b18e51
+--- /dev/null
++++ b/src/cache/index.py
+@@ -0,0 +1,9 @@
++import json
++from pathlib import Path
++
++INDEX_DIR = Path("var/cache/index")
++
++
++def put(key, value):
++    INDEX_DIR.mkdir(parents=True, exist_ok=True)
++    (INDEX_DIR / f"{key}.json").write_text(json.dumps(value))

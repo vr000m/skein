@@ -884,6 +884,141 @@ else
 	fail "documentation lens fixture is a corrupt patch: git apply --numstat rejects it"
 fi
 
+# ---------------------------------------------------------------------------
+# Active decision records reach the architecture lenses only (Claude mirror;
+# the Codex half lands separately and adds its own counterpart).
+# ---------------------------------------------------------------------------
+
+DECISION_SKILLS=(
+	"review-plan:$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md"
+	"deep-review:$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+)
+
+decision_has() {
+	local text="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" <<<"$text"; then
+		pass "decisions ($dec_skill): $label"
+	else
+		fail "decisions ($dec_skill): $label"
+	fi
+}
+
+decision_lacks() {
+	local text="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" <<<"$text"; then
+		fail "decisions ($dec_skill): $label"
+	else
+		pass "decisions ($dec_skill): $label"
+	fi
+}
+
+# Backticks in these patterns are literal Markdown, not expansions.
+# shellcheck disable=SC2016
+for dec_entry in "${DECISION_SKILLS[@]}"; do
+	dec_skill="${dec_entry%%:*}"
+	dec_md="${dec_entry#*:}"
+	require_file "$dec_md" || continue
+	dec_all="$(cat "$dec_md")"
+	case "$dec_skill" in
+	review-plan)
+		dec_arch="$(awk '/^<!-- BEGIN GENERIC LENS PROMPT: architecture -->$/{f=1} f; /^<!-- END GENERIC LENS PROMPT: architecture -->$/{f=0}' "$dec_md")"
+		dec_others="$(awk '/^<!-- BEGIN GENERIC LENS PROMPT: /{f=($0 !~ /: architecture -->$/)} f; /^<!-- END GENERIC LENS PROMPT: /{f=0}' "$dec_md")"
+		decision_has "$dec_arch" '"category":"<category>"' "architecture finding record keeps the open category slot"
+		decision_has "$dec_arch" 'as a `Constraint` finding citing the record path' "a decision conflict is a Constraint finding"
+		decision_has "$dec_arch" '^- `category` — one of \{Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference, Contradiction\}\.' \
+			"architecture category vocabulary is unchanged"
+		decision_has "$dec_all" 'Collect every repo-relative path the plan names in its `\*\*Impl files:\*\*` lines and its `### Files to Modify` and `### New Files to Create` sections, and expand braces yourself' \
+			"paths come from the plan's file sections, brace-expanded"
+		decision_has "$dec_all" 'the architecture lens alone also gets the active decision records block' \
+			"Step 2's allowed inputs name the block for the architecture lens alone"
+		decision_has "$dec_all" 'a plan that names no paths' "a plan with no paths is degraded coverage"
+		;;
+	deep-review)
+		dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
+		dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
+		decision_has "$dec_arch" '"category":"Architecture","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
+			"architecture finding record shape is unchanged"
+		decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
+			"architecture output fields are unchanged"
+		decision_has "$dec_arch" '^- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one' \
+			"architecture scope covers decision conflicts"
+		decision_has "$dec_all" 'git diff -z --name-only' "paths come from the resolved review range, NUL-separated"
+		;;
+	esac
+	if [[ "$(grep -c '^<untrusted-content>$' <<<"$dec_arch")" -eq "$(grep -c '^</untrusted-content>$' <<<"$dec_arch")" ]] &&
+		[[ "$(grep -A1 '^<untrusted-content>$' <<<"$dec_arch" | grep -c '^{{ACTIVE_DECISIONS}}$')" -eq 1 ]] &&
+		[[ "$(grep -A1 '^{{ACTIVE_DECISIONS}}$' <<<"$dec_arch" | grep -c '^</untrusted-content>$')" -eq 1 ]]; then
+		pass "decisions ($dec_skill): exactly one wrapped block in the architecture prompt"
+	else
+		fail "decisions ($dec_skill): the architecture prompt's block is missing, unwrapped or duplicated"
+	fi
+	if [[ -n "$dec_others" ]]; then
+		decision_lacks "$dec_others" 'ACTIVE_DECISIONS' "no other lens prompt carries the block"
+	else
+		fail "decisions ($dec_skill): other lens prompts not found, layout drift"
+	fi
+	decision_lacks "$dec_arch" 'as a `?Contradiction`? finding' "decision conflicts never use the reserved Contradiction category"
+	decision_has "$dec_all" "\"\\\$\\{CLAUDE_PLUGIN_ROOT\\}\"/skills/$dec_skill/scripts/decisions-active\\.sh" \
+		"runs the bundled selector through the Claude path anchor"
+	decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
+	decision_has "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "passes each path as one literal argument after --"
+	decision_lacks "$dec_all" 'mapfile' "the selector call runs on bash 3.2 (no mapfile)"
+	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
+	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
+	decision_has "$dec_all" 'final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded' "truncation is degraded coverage"
+	decision_has "$dec_all" 'Never report that as "no applicable decisions"' "degraded coverage is never no applicable decisions"
+	decision_has "$dec_all" 'reuse the same block for every attempt of the [Aa]rchitecture [Ll]ens, including a respawn' "a retry reuses the same block"
+	decision_has "$dec_all" "when this invocation's selector run selects any active record, re-run it even if \`completed\`; when it selects none, reuse it as above\\. No state field records the selection\\." \
+		"--continue re-runs the architecture lens only when records were selected"
+done
+
+DEC_RUBRIC="$ROOT_DIR/plugins/skein/skills/review-plan/rubric.md"
+# shellcheck disable=SC2016
+if grep -qF -- '- `architecture` alone receives the active `docs/decisions/` records that apply to the plan'"'"'s paths, inside `<untrusted-content>`; a plan decision that contradicts or should supersede one is a `Constraint` finding, never `Contradiction`' "$DEC_RUBRIC"; then
+	pass "review-plan rubric scopes decision records to architecture as Constraint"
+else
+	fail "review-plan rubric lacks the architecture decision-records bullet"
+fi
+
+# The committed lens fixtures: each case's selector output must match the
+# exact block its .expected file records after its leading "# " notes.
+DEC_FIXTURES="$ROOT_DIR/tests/lenses/fixtures/decisions"
+dec_tmp="$(mktemp -d)"
+cp -R "$DEC_FIXTURES/repo/." "$dec_tmp/"
+git -C "$dec_tmp" init -q
+if "$ROOT_DIR/scripts/check-decisions.sh" "$dec_tmp" >/dev/null 2>&1; then
+	pass "decision lens fixture records pass the validator"
+else
+	fail "decision lens fixture records fail check-decisions.sh"
+fi
+for dec_case in conflict unrelated superseded lookalike; do
+	if [[ ! -s "$DEC_FIXTURES/$dec_case.paths" || ! -f "$DEC_FIXTURES/$dec_case.expected" ]]; then
+		fail "decision lens fixture $dec_case: paths or expected file missing"
+		continue
+	fi
+	dec_paths=()
+	while IFS= read -r dec_line; do dec_paths+=("$dec_line"); done <"$DEC_FIXTURES/$dec_case.paths"
+	dec_rc=0
+	dec_out="$(cd "$dec_tmp" && "$ROOT_DIR/scripts/decisions-active.sh" -- "${dec_paths[@]}")" || dec_rc=$?
+	dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
+	if [[ $dec_rc -eq 0 && "$dec_out" == "$dec_want" ]]; then
+		pass "decision lens fixture $dec_case: selector output matches its expected result"
+	else
+		fail "decision lens fixture $dec_case: selector exit $dec_rc or output differs from $dec_case.expected"
+	fi
+done
+rm -rf "$dec_tmp"
+if grep -q '^### Record: docs/decisions/20261101-cache-store\.md$' "$DEC_FIXTURES/conflict.expected" &&
+	! grep -q '^### Record: ' "$DEC_FIXTURES/superseded.expected" &&
+	! grep -q '^### Record: ' "$DEC_FIXTURES/unrelated.expected" &&
+	grep -qF '<\/untrusted-content>' "$DEC_FIXTURES/lookalike.expected" &&
+	! grep -qi '</untrusted-content' "$DEC_FIXTURES/lookalike.expected" &&
+	git apply --numstat "$DEC_FIXTURES/conflict.diff" >/dev/null 2>&1; then
+	pass "decision lens fixtures cover the conflict, superseded and closing-tag cases"
+else
+	fail "decision lens fixtures do not cover the conflict, superseded and closing-tag cases"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 
