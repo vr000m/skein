@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from test_extension import rpc_worker, tool_results
 from test_package import COMMANDS, ROOT, package_fixture, rpc, run
 from test_package import sandbox as sandbox  # noqa: PLC0414 — pytest fixture re-export
@@ -66,6 +67,17 @@ def test_pi_plan_assets_match_canonical_templates():
     target = ROOT / "plugins/skein-pi/skills/dev-plan/references"
     for name in ("template.md", "rubric.md"):
         assert (target / name).read_bytes() == (source / name).read_bytes()
+
+
+def test_pi_promoted_decisions_heading_is_below_marker_after_phase_4a():
+    source = ROOT / "plugins/skein-codex/skills/dev-plan/template.md"
+    target = ROOT / "plugins/skein-pi/skills/dev-plan/references/template.md"
+    assert target.read_bytes() == source.read_bytes()
+    if "## Promoted Decisions" not in source.read_text():
+        pytest.skip("Phase 4a owns both templates and has not landed yet")
+    text = target.read_text()
+    assert text.count("## Promoted Decisions") == 1
+    assert text.index("<!-- reviewed:") < text.index("## Promoted Decisions")
 
 
 def test_dev_plan_create_and_update_require_approval_and_fresh_target():

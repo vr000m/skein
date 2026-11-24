@@ -384,12 +384,15 @@ sequenceDiagram
 - [ ] Phase 4a: update-docs promotion and template (Codex session)
 - [ ] Phase 5a: conduct nudge (Codex session)
 - [x] Phase 3c: Lens checks against active records (Pi session)
-- [ ] Phase 4c: update-docs promotion (Pi session)
+- [x] Phase 4c: update-docs promotion (Pi session)
 - [ ] Phase 5c: conduct nudge (Pi session)
 - [ ] Phase 6: Verify and docs
 - [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
 
 ## Findings
+
+- Phase 4c (Pi): `just pi-tests` passed (221 passed, 1 skipped); `just check-sync` passed. The promotion reference is byte-identical to Claude's committed reference and the repo format. Mocked no-tools audits cover candidate delivery, source-plan locations, rejected new-record locations/extra fields and unchanged input budgets; main-session approval/refusal/staleness contracts and a real marker-prefix fixture are checked separately.
+- Phase 4c deviation: Phase 4a has not landed on this branch, contrary to this block's template precondition. Left both templates untouched (4a owns them). The new Pi heading-position guard explicitly skips while the Codex template lacks `## Promoted Decisions`, then enforces below-marker placement when 4a lands; existing template/rubric byte-parity checks still run. No Claude/Codex files were edited.
 
 - Phase 3c (Pi): `just pi-tests` passed (216 tests); `just check-sync` passed, including the existing Pi update-docs validator bundle. Added architecture-only prompt contracts and executable selector conflict/no-match/superseded/truncation/failure fixtures. No separately approved runtime lens workers were launched: these tests do not prove model detection quality. No implementation deviation; deep-review also selects tracked staged/unstaged paths to match its existing worktree scope.
 
