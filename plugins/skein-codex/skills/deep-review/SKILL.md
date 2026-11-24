@@ -298,7 +298,7 @@ Look for:
 - Missing command or workflow documentation
 - Stale examples or outdated references
 - Comments the diff ADDS (never pre-existing comments). The signals are lexical and adjacent-line, from the diff alone; there is no whole-file evidence step. Classify each as one of:
-  - excuse (Important): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, on or next to the line it excuses
+  - excuse (Important): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, on or next to the line it excuses. Begin its `summary` with exactly `Excuse:`
   - tautology (Minor): an added comment whose words restate the identifiers of the adjacent line
   - stale (Minor): an added comment naming a symbol that the same diff removes or renames
   - decision candidate (Minor, informational): an added comment that states a choice with a lexical marker (`because`, `instead of`, `rather than`, `chose`) next to the line implementing it. Begin its `summary` with exactly `Decision candidate:`
@@ -546,15 +546,12 @@ Procedure:
    It emits recovered findings from the collected attempt files, including findings from incomplete
    lenses; their non-terminal status remains report metadata. Never hand-assemble this file from lens
    replies. The combined stream is written to `findings.jsonl`.
-2. **Set decision candidates aside, then pipe the rest through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic of every row it receives. It merges by `(file, line, category)` and keeps one summary, so a same-line excuse would absorb a decision candidate or a near miss of its prefix. First set aside every row `advice_filter` or `near_miss_filter` matches, the predicates `skein:review-gauntlet` splits advice and lists near misses on: advice is category `Documentation`, severity `Minor` and a string summary that begins with exactly `Decision candidate:`; a near miss is a summary whose head reads as that prefix in another casing, spacing or punctuation. Reconcile the rest, then append the set-aside rows back unmerged, one finding each, so a same-line excuse and candidate stay separate findings in this skill's output and the gauntlet still sees a same-line near miss. The appended rows are the documented exceptions to the reconciler's contract: the `jq` below builds their row fields itself, they follow the reconciled findings in `(file, line, summary)` order rather than the canonical order, and they take no part in `related`. A set-aside row carries no `auto_fix` proposal: a candidate is information, not an edit. Invoke it with the literal commands:
+2. **Set decision candidates aside, then pipe the rest through `scripts/reconcile-findings.sh`.** This script is the single source of truth for the merge rule, the canonical sort order, and the related-findings cross-reference logic of every row it receives. It merges by `(file, line, category)` and keeps one summary, so a same-line excuse would absorb a decision candidate. First set aside every row `advice_filter` matches, the predicate `skein:review-gauntlet` splits advice on: category `Documentation`, severity `Minor` and a string summary that begins with exactly `Decision candidate:`. Any other summary, a misspelled or recased prefix included, is reconciled like every other finding. Reconcile the rest, then append the advice rows back unmerged, one finding each, so a same-line excuse and candidate stay separate findings. The commands read `findings.jsonl` twice and write no other file. **Output uniqueness:** every reconciled finding has a unique `(file, line, category)`; an appended advice row may share that signature with one reconciled finding and differs from it by summary, so any consumer keyed by the signature adds the summary when two findings share one, as Step 5.5's suppress keys do. The appended rows are the one exception to the reconciler's contract: the last `jq` builds their row fields (a non-numeric line becomes `-1`), they follow the reconciled findings in `(file, line, summary)` order, and they take no part in `related`. They carry no `auto_fix` proposal: a candidate is information, not an edit. Invoke it with the literal commands:
 
    ```
    advice_filter='(.category == "Documentation") and (.severity == "Minor") and ((.summary | type) == "string") and (.summary | startswith("Decision candidate:"))'
-   near_miss_filter='((.summary | type) == "string") and ((.summary | startswith("Decision candidate:")) | not) and ((.summary | if contains(":") then split(":")[0] else ([splits("\\s+")] | map(select(. != "")) | .[0:2] | join(" ")) end | gsub("[^A-Za-z]"; "") | ascii_downcase) == "decisioncandidate")'
-   jq -c "select((($advice_filter) or ($near_miss_filter)) | not)" findings.jsonl > findings-actionable.jsonl
-   jq -c "select(($advice_filter) or ($near_miss_filter))" findings.jsonl > findings-set-aside.jsonl
-   cat findings-actionable.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review \
-     | jq --slurpfile aside findings-set-aside.jsonl '($aside | map({severity, category, file, line: ((.line // "") | if . == "" then -1 else (tonumber? // -1) end), lenses: [.lens], summary, evidence, suggestion}) | sort_by(.file, .line, .summary)) as $rows | .findings += $rows | .summary.raw += ($rows | length) | .summary.unique += ($rows | length)'
+   jq -c "select($advice_filter | not)" findings.jsonl | "$SKILL_DIR"/scripts/reconcile-findings.sh --skill deep-review \
+     | jq --slurpfile all findings.jsonl '($all | map(select('"$advice_filter"') | {severity, category, file, line: ((.line // "") | if . == "" then -1 else (tonumber? // -1) end), lenses: [.lens], summary, evidence, suggestion}) | sort_by(.file, .line, .summary)) as $rows | .findings += $rows | .summary.raw += ($rows | length) | .summary.unique += ($rows | length)'
    ```
 
    The pipeline emits canonical reconciled JSON on stdout: `{schema_version: 2, summary: {raw, merged, unique, related, dropped}, findings: [...], related: [...]}`, with the set-aside rows after the reconciled findings. Identical input under shuffled lens-arrival order MUST produce byte-identical output (the canonical sort order is the GENERIC block's invariant).
@@ -789,9 +786,10 @@ do not create scratch files or call the hook.
    `file` and line), add `file<TAB>line<TAB>category`. For an unanchored finding (empty `file` or
    line), add `file<TAB>line<TAB>category<TAB>summary`, using the finding's `summary` (else
    `finding`) with each tab, CR and LF replaced by one space. Append the summary the same way for an
-   anchored finding that shares its `(file, line, category)` with another audited finding, such as a
-   set-aside decision candidate beside a same-line excuse, because a 3-field key drops every finding
-   at that signature. Use an empty line field for null, absent, or `-1` lines. Do not interpolate finding text into shell code; write keys as file data.
+   anchored finding that shares its `(file, line, category)` with another audited finding (Step 3.5
+   item 2's output uniqueness rule), such as a set-aside decision candidate beside a same-line excuse, because
+   a 3-field key drops every finding at that signature; the applied-fix keys in step 2 follow the
+   same rule. Use an empty line field for null, absent, or `-1` lines. Do not interpolate finding text into shell code; write keys as file data.
 2. If Step 4.5 applied trivial fixes, append tuples for those fixes by joining the applier's
    `.deep-review/auto-fix-<unix>-<pid>.json` manifest to the audited envelope. The manifest is an
    array of `{kind, file, line, status, commit_sha, before_sha}` objects and has no category. For
@@ -808,9 +806,11 @@ do not create scratch files or call the hook.
      | [$env[0].findings[] | select(has("auto_fix") and .auto_fix.kind == $m.kind and .file == $m.file and (.line | tostring) == ($m.line | tostring))] as $matches
      | select($matches | length == 1)
      | $matches[]
+     | . as $f
      | (if .line == null or .line == -1 then "" else (.line | tostring) end) as $ln
+     | ([$env[0].findings[] | select(.file == $f.file and (.line | tostring) == ($f.line | tostring) and .category == $f.category)] | length > 1) as $shared
      | [(.file // ""), $ln, .category]
-       + (if (.file // "") == "" or $ln == "" then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
+       + (if (.file // "") == "" or $ln == "" or $shared then [((.summary // .finding // "") | gsub("[\t\r\n]"; " "))] else [] end)
      | join("\t")
    ' "<manifest path>" >> "$report_keys"
    ```
