@@ -374,7 +374,7 @@ sequenceDiagram
 
 ## Progress
 
-- [ ] Phase 0: Gate on plan A
+- [x] Phase 0: Gate on plan A
 - [ ] Phase 1: Folder, record format, validator and shared parser
 - [ ] Phase 2: Selector, validator bundling and bundle map
 - [ ] Phase 3b: Lens checks against active records (Claude)
@@ -425,6 +425,7 @@ sequenceDiagram
 - Codex review (2026-11-22): Added — documented the conditional call-flow section and the dual-harness plan review prerequisite.
 - Codex review (2026-11-22): Unverifiable — live Codex gate availability and end-to-end approval behaviour require execution in the implementation environment.
 - Claude review-plan (2026-11-22): addressed all 36 findings in one pass. Grilled: cross-repo contract (#12), execution model and Phase 0 gate (#9, #10, #11, #13, #15, #24), glob dialect and path extraction (#2, #4, #6, #7), selector cap (#5, #22), escaping and shared parser (#20, #27, #29, #33), `--continue` (#3), Decision 4 premise (#28). Standard fixes: Pi template byte copy moved into 4a (#1, Critical), per-mirror gate scoping (#14, #25, #26), cross-executor bullets removed (#15, #21, #24), validator fixtures and test paths (#17, #18, #19, #30, #31, #32, #35, #36), BUNDLE_LENS registration (#8), pointer form made unconditional (#34), Pi file-scope wording (#23), lens fixture exercise defined as manual (#16).
+- Phase 0 (2026-11-24): gate passed. Plan A merged to `main` as PR #65 (`286549e`), so "A's final commit on the shared branch" is satisfied by that merge; plan B runs on `feature/decision-records`, branched from it (the `Branch` header above the marker still names the old branch and stays, since editing it would void the marker). The gate command exits 0, and the gap remains: no `docs/decisions/`, no `check-decisions.sh`, and no mention of `docs/decisions` in `plugins/`, `scripts/` or `justfile`.
 - Open verification: Phase 2 adds `update-docs` as a bundled skill; whether the generator, `check-sync` and Pi staging handle that unchanged is unverified and is checked first in Phase 2, with any script change recorded here.
 
 ### Review Waivers
