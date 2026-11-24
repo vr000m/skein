@@ -57,7 +57,10 @@ paths=("$@")
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 dir="$root/docs/decisions"
 
-mapfile -t records < <(dec_record_files "$dir")
+records=()
+while IFS= read -r record_path; do
+	records+=("$record_path")
+done < <(dec_record_files "$dir")
 [[ ${#records[@]} -gt 0 ]] || exit 0
 
 # applies <glob-list>: succeeds when any glob matches any path.
@@ -97,7 +100,7 @@ block() {
 
 matched=()
 malformed=0
-for path in "${records[@]}"; do
+for path in "${records[@]+"${records[@]}"}"; do
 	name="$(basename "$path")"
 	status="$(dec_header "$path" Status || true)"
 	case "$status" in

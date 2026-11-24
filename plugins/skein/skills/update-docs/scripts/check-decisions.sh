@@ -39,7 +39,10 @@ complain() {
 	problems=$((problems + 1))
 }
 
-mapfile -t records < <(dec_record_files "$dir")
+records=()
+while IFS= read -r record_path; do
+	records+=("$record_path")
+done < <(dec_record_files "$dir")
 if [[ ${#records[@]} -eq 0 ]]; then
 	exit 0
 fi
@@ -49,7 +52,7 @@ header() {
 	dec_header "$dir/$1" "$2" || true
 }
 
-for path in "${records[@]}"; do
+for path in "${records[@]+"${records[@]}"}"; do
 	name="$(basename "$path")"
 
 	complete=1
