@@ -50,7 +50,7 @@ EXPECTED_DIR="$REPO_ROOT/tests/reconciliation/expected"
 # under bash 3.2, which macOS ships as /bin/bash.
 is_verbose_fixture() {
 	case "$1" in
-	auto-fix-v2-docstring-typo | auto-fix-v2-pass-through | auto-fix-v2-reject-statuses | same-category-different-line | auto-fix-v2-empty-fields | deep-review-compact-minor-verbose | review-plan-compact-minor-verbose)
+	auto-fix-v2-docstring-typo | auto-fix-v2-pass-through | auto-fix-v2-reject-statuses | same-category-different-line | auto-fix-v2-empty-fields | deep-review-compact-minor-verbose | review-plan-compact-minor-verbose | decision-candidate-same-line-verbose)
 		return 0
 		;;
 	*)

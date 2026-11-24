@@ -467,16 +467,24 @@ emit_section() {
 		# category's severity is looked up against the findings table. Both
 		# rendering modes need this lookup, in different output shapes, so
 		# it's computed once here.
+		# A deep-review advice row (the `Decision candidate:` predicate) is
+		# appended unmerged after the reconciled findings and takes no part in
+		# `related`, yet it shares (file, line, category) with a same-line
+		# reconciled row; it gets no related lines, and the severity lookup
+		# keeps the severest row per signature so the advice row cannot
+		# override the reconciled one.
 		related_lines=""
-		if [[ -s "$related_file" ]]; then
+		if [[ -s "$related_file" ]] && ! [[ "$r_cat" == "Documentation" && "$_r_sev" == "Minor" && "$d_summary" == "Decision candidate:"* ]]; then
 			related_lines="$(awk -F $'\037' \
 				-v rfile="$r_file" -v rline="$r_line" -v rcat="$r_cat" \
 				-v ffile="$findings_file" '
 				BEGIN {
+					rank["Critical"] = 3; rank["Important"] = 2; rank["Minor"] = 1
 					while ((getline ln < ffile) > 0) {
 						if (ln == "") continue
 						split(ln, f, "\037")
-						sev_of[f[2] SUBSEP f[3] SUBSEP f[4]] = f[1]
+						k = f[2] SUBSEP f[3] SUBSEP f[4]
+						if (!(k in sev_of) || rank[f[1]] > rank[sev_of[k]]) sev_of[k] = f[1]
 					}
 					close(ffile)
 				}
