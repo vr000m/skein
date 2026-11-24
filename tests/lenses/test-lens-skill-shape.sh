@@ -859,6 +859,17 @@ for doc_lens_mirror in Claude Codex; do
 		"one class per comment, by the shared precedence"
 done
 
+# Step 5.5 appends the summary to a suppress key whose (file, line, category)
+# is shared or unanchored, so Codex's suppression step must keep the summary of
+# each finding it drops, not only the tuple.
+# shellcheck disable=SC2016
+if grep -q -F 'retain every finding suppressed here with its `summary`' \
+	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"; then
+	pass "Codex deep-review suppression keeps each dropped finding's summary for Step 5.5 keys"
+else
+	fail "Codex deep-review suppression keeps only the (file, line, category) tuple; Step 5.5 cannot key a shared tuple"
+fi
+
 if [[ -s "$DOC_LENS_FIXTURE" ]] && grep -q '^+.*hack: workaround' "$DOC_LENS_FIXTURE" &&
 	grep -q '^+.*increment the hit counter' "$DOC_LENS_FIXTURE" &&
 	grep -q '^ # Pre-existing comment' "$DOC_LENS_FIXTURE" &&

@@ -130,10 +130,10 @@ has "$DEEP" 'join("\t")' 'applied and suppressed keys serialize as tab-separated
 has "$DEEP" 'report_envelope' 'applied keys are joined against captured envelope'
 has "$DEEP" 'If any command after the envelope capture fails before the hook runs' 'pre-hook failures trigger immediate scratch cleanup'
 # shellcheck disable=SC2016
-has "$DEEP" 'retain the `(file, line, category)` tuple for every finding suppressed here' 'suppressed findings retain exact tuple keys'
+has "$DEEP" 'retain every finding suppressed here with its `summary`' 'suppressed findings retain their summary for shared or unanchored keys'
 # shellcheck disable=SC2016
 has "$DEEP" 'Use an empty line field for null,' 'suppression tuples normalize absent line values'
-has "$DEEP" 'Step 5.5 writes these tuples alongside applied auto-fix tuples to the scratch suppress-keys file.' 'suppressed keys are written beside applied keys'
+has "$DEEP" 'Step 5.5 writes their keys alongside applied auto-fix keys to the' 'suppressed keys are written beside applied keys'
 has "$DEEP" 'if .line == null or .line == -1 then ""' 'applied key tuples normalize null and sentinel lines'
 has "$DEEP" 'gsub("[\t\r\n]"; " ")' 'summary keys flatten tabs and line breaks'
 # shellcheck disable=SC2016

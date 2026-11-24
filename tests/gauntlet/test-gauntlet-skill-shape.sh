@@ -1183,6 +1183,21 @@ assert_split_pipeline_for() {
 	else
 		fail "$label: deep-review's reconcile merged the pair or miscounted: $(jq -c '[.summary, [.findings[].summary]]' "$dir/dr/reconciled.json")"
 	fi
+	# A failing reconciler fails the documented pipeline; the control without
+	# pipefail shows the trailing jq would otherwise exit 0.
+	local stub="$dir/failing-reconciler.sh" fail_block rc_with rc_without
+	printf '#!/bin/sh\ncat >/dev/null\nexit 2\n' >"$stub"
+	chmod +x "$stub"
+	fail_block="$(adv_extract_block "$dr_md" "$ADV_DEEP_REVIEW_ANCHOR" | sed -E "s#\"\\\$(SKILL_DIR|\\{CLAUDE_PLUGIN_ROOT\\})\"[^ ]*/reconcile-findings\.sh#$stub#")"
+	rc_with=0 rc_without=0
+	# This script runs with pipefail; clear it so only the documented block sets it.
+	(cd "$dir/dr" && set +o pipefail && eval "$fail_block") >/dev/null 2>&1 || rc_with=$?
+	(cd "$dir/dr" && set +o pipefail && eval "$(sed '/^ *set -o pipefail$/d' <<<"$fail_block")") >/dev/null 2>&1 || rc_without=$?
+	if [[ "$fail_block" == *"$stub"* && "$rc_with" == 2 && "$rc_without" == 0 ]]; then
+		pass "$label: deep-review's documented pipeline exits 2 when the reconciler fails (0 without pipefail)"
+	else
+		fail "$label: a reconciler failure did not fail deep-review's pipeline (rc $rc_with, without pipefail $rc_without)"
+	fi
 	if [[ "$(adv_extract_block "$dr_md" "$ADV_DEEP_REVIEW_ANCHOR" | grep -c -E '> *[^ &|]+\.jsonl')" == 0 ]]; then
 		pass "$label: deep-review's set-aside writes no split file into the checkout"
 	else
@@ -1326,12 +1341,37 @@ assert_split_pipeline_for() {
 	else
 		fail "$label: an advice-only gate with an incomplete lens shows '$row'"
 	fi
-	eval "$(adv_extract_status_copy "$file" | sed 's/ and .degraded_reason == null//')"
-	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/advice-degraded.envelope.json")" | cut -f2)"
-	if [[ "$row" == "approve" ]]; then
-		pass "$label: control: without the degraded_reason check the same envelope shows approve"
+	# An incomplete lens fails the row whatever the gate returned: no findings,
+	# or actionable findings that did reach findings.jsonl.
+	jq -n '{gate: "zero-degraded", status: "approve", findings: [], degraded_reason: "incomplete lens: logic"}' \
+		>"$dir/zero-degraded.envelope.json"
+	jq -n '{gate: "zero-clean", status: "approve", findings: [], degraded_reason: null}' >"$dir/zero-clean.envelope.json"
+	local degraded="$dir-actionable-degraded"
+	mkdir -p "$degraded"
+	cp "$dir/findings.jsonl" "$degraded/"
+	jq '.degraded_reason = "incomplete lens: logic"' "$dir/$slot.envelope.json" >"$degraded/$slot.envelope.json"
+	local rows_ok=1
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/zero-degraded.envelope.json")" | cut -f2,4)"
+	[[ "$row" == "error"$'\t'0 ]] || rows_ok=0
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$dir/zero-clean.envelope.json")" | cut -f2,4)"
+	[[ "$row" == "approve"$'\t'0 ]] || rows_ok=0
+	# shellcheck disable=SC2034  # read by the eval'd gauntlet_status_copy
+	row="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gate_out_dir="$degraded" && gauntlet_status_copy "$degraded/$slot.envelope.json")" | cut -f2,4)"
+	[[ "$row" == "error"$'\t'2 ]] || rows_ok=0
+	if ((rows_ok)); then
+		pass "$label: an incomplete lens shows an error row with zero or actionable findings; a clean zero-finding gate shows approve"
 	else
-		fail "$label: control: the incomplete-lens fixture no longer distinguishes the check ($row)"
+		fail "$label: an incomplete lens did not fail its row, or a clean zero-finding gate did not approve (last row '$row')"
+	fi
+	eval "$(adv_extract_status_copy "$file" | sed 's/\.degraded_reason != null and/false and/')"
+	local mutant_rows=""
+	for copy in "$dir/advice-degraded.envelope.json" "$dir/zero-degraded.envelope.json"; do
+		mutant_rows+="$("$ROOT_DIR/plugins/skein/skills/review-gauntlet/lib/run-gate.sh" status-row "$(gauntlet_status_copy "$copy")" | cut -f2) "
+	done
+	if [[ "$mutant_rows" == "approve approve " ]]; then
+		pass "$label: control: without the degraded_reason check the incomplete-lens envelopes show approve"
+	else
+		fail "$label: control: the incomplete-lens fixtures no longer distinguish the check ($mutant_rows)"
 	fi
 	eval "$(adv_extract_status_copy "$file")"
 	# A findings envelope whose slot was never normalized fails closed.
