@@ -385,11 +385,13 @@ sequenceDiagram
 - [ ] Phase 5a: conduct nudge (Codex session)
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
-- [ ] Phase 5c: conduct nudge (Pi session)
+- [x] Phase 5c: conduct nudge (Pi session)
 - [ ] Phase 6: Verify and docs
 - [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
 
 ## Findings
+
+- Phase 5c (Pi): `just pi-tests` passed (226 passed, 1 skipped for the pending 4a template heading); `just check-sync` passed. Healthy-terminal conduct gets the text-only update-docs pointer after existing comment notices; separate guards cover intermediate, blocked, declined and degraded omission routes. No implementation deviation, automatic chain or new execution mode. Full CI and push intentionally left to Phase 6/the user.
 
 - Phase 4c (Pi): `just pi-tests` passed (221 passed, 1 skipped); `just check-sync` passed. The promotion reference is byte-identical to Claude's committed reference and the repo format. Mocked no-tools audits cover candidate delivery, source-plan locations, rejected new-record locations/extra fields and unchanged input budgets; main-session approval/refusal/staleness contracts and a real marker-prefix fixture are checked separately.
 - Phase 4c deviation: Phase 4a has not landed on this branch, contrary to this block's template precondition. Left both templates untouched (4a owns them). The new Pi heading-position guard explicitly skips while the Codex template lacks `## Promoted Decisions`, then enforces below-marker placement when 4a lands; existing template/rubric byte-parity checks still run. No Claude/Codex files were edited.
