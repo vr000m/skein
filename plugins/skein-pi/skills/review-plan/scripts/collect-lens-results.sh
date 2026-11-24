@@ -235,7 +235,8 @@
 # cross-attempt instead (R4: "deduped by the reconciler's (file, line,
 # category) signature"), plus one class. The class is `advice` for an exact
 # `Decision candidate:` summary at severity Minor under category
-# Documentation (the predicate review-gauntlet splits advice on), and empty
+# Documentation (deep-review's advice predicate, which review-gauntlet
+# reuses), and empty
 # otherwise. Without it a same-line excuse and decision candidate collapse
 # here into one row before the advice split sees them. This is intentionally
 # NOT the R5 regression key (scripts/finding-key.sh, Phase 3) — a different

@@ -1035,9 +1035,9 @@ for adv_shared in advice_filter repair_site_filter; do
 done
 for adv_dr_md in "$DEEP_REVIEW_MD" "$CODEX_DEEP_REVIEW_MD"; do
 	if [[ "$(adv_extract_filter "$adv_dr_md" advice_filter)" == "$(adv_extract_filter "$SKILL_MD" advice_filter)" ]]; then
-		pass "${adv_dr_md#"$ROOT_DIR"/}: deep-review sets aside on the gauntlet's advice_filter"
+		pass "${adv_dr_md#"$ROOT_DIR"/}: the gauntlet reuses deep-review's advice_filter"
 	else
-		fail "${adv_dr_md#"$ROOT_DIR"/}: deep-review's advice_filter is missing or differs from the gauntlet's"
+		fail "${adv_dr_md#"$ROOT_DIR"/}: the gauntlet's advice_filter is missing or differs from deep-review's"
 	fi
 done
 if [[ -n "$(adv_extract_status_copy "$SKILL_MD")" &&

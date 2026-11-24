@@ -67,7 +67,7 @@ AWK
 # Counts comment lines of one file at <head> whose line numbers are in `added`.
 # kind is "shell", "justfile" (heredoc tracking on) or "other".
 IFS= read -r -d '' count_prog <<'AWK' || true
-function heredoc_opener(s,   i, n, c, q, j, tok) {
+function heredoc_opener(s,   i, n, c, q, j, tok, dash, start, e) {
 	n = length(s)
 	q = ""
 	ndelim = 0
@@ -89,13 +89,42 @@ function heredoc_opener(s,   i, n, c, q, j, tok) {
 		}
 		if (substr(s, i, 3) == "<<<") { i += 2; continue }
 		if (substr(s, i, 2) == "<<") {
-			if (!match(substr(s, i), /^<<-?[ \t]*("[^"]+"|'[^']+'|[^ \t;&|<>()"'`]+)/)) break
-			tok = substr(s, i, RLENGTH)
-			i += RLENGTH - 1
+			# The delimiter is one shell word after quote removal, so
+			# \EOF, 'E'OF and '' (an empty-line terminator) are all valid.
+			j = i + 2
+			dash = (substr(s, j, 1) == "-")
+			j += dash
+			while (substr(s, j, 1) ~ /[ \t]/) j++
+			start = j
+			tok = ""
+			while (j <= n) {
+				c = substr(s, j, 1)
+				if (c ~ /[ \t;&|<>()`]/) break
+				if (c == "\\") {
+					tok = tok substr(s, j + 1, 1)
+					j += 2
+				} else if (c == "'") {
+					e = index(substr(s, j + 1), "'")
+					if (e == 0) return ndelim
+					tok = tok substr(s, j + 1, e - 1)
+					j += e + 1
+				} else if (c == "\"") {
+					for (j++; j <= n && substr(s, j, 1) != "\""; j++) {
+						c = substr(s, j, 1)
+						if (c == "\\" && substr(s, j + 1, 1) ~ /[\\"$`]/) c = substr(s, ++j, 1)
+						tok = tok c
+					}
+					if (j > n) return ndelim
+					j++
+				} else {
+					tok = tok c
+					j++
+				}
+			}
+			if (j == start) break
+			i = j - 1
 			ndelim++
-			dashes[ndelim] = (tok ~ /^<<-/)
-			sub(/^<<-?[ \t]*["']?/, "", tok)
-			sub(/["']$/, "", tok)
+			dashes[ndelim] = dash
 			delims[ndelim] = tok
 		}
 	}

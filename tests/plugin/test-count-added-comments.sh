@@ -199,6 +199,22 @@ git add p.sh
 git commit -q -m "dotted heredoc"
 assert_eq "a heredoc delimiter with a period is honoured" "1" "$("$COUNTER" "$p_base" HEAD)"
 
+# --- every shell quoting form of a heredoc delimiter closes its body -------
+q_base="$(git rev-parse HEAD)"
+{
+	printf 'cat <<\\EOF\n# body\nEOF\n'
+	printf "cat <<'E'OF\n# body\nEOF\n"
+	printf "cat <<''\n# body\n\n"
+	printf 'cat <<"E"\x27N\x27D\n# body\nEND\n'
+	printf 'cat <<-"EOF"\n# body\n\tEOF\n'
+	printf 'cat <<E\\OF\n# body\nEOF\n'
+	printf '# after the heredocs\n'
+} >q.sh
+assert_eq "Bash closes every quoted delimiter in the fixture" "6" "$(bash q.sh 2>&1 | grep -c '^# body$')"
+git add q.sh
+git commit -q -m "quoted heredoc delimiters"
+assert_eq "backslash, mixed, empty and dash-quoted delimiters are honoured" "1" "$("$COUNTER" "$q_base" HEAD)"
+
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
