@@ -26,6 +26,7 @@ just site-build                  # site-tests + `wrangler deploy --dry-run` (val
 just site-preview [port]         # Local preview of site/ via `wrangler dev` (default port 8787)
 just site-deploy                 # site-tests, then `wrangler deploy` to Cloudflare; refuses uncommitted site files and non-main branches (SITE_DEPLOY_ANY_BRANCH=1 overrides). Needs `npx wrangler login` once
 just comment-count               # Added comment lines on this branch vs main (heuristic; scripts/count-added-comments.sh). To get a baseline, run `scripts/count-added-comments.sh M^1 M` for each of the last ten `git log --first-parent --merges -10` commits `M` on main, and compare the median per PR, not the sum (bundled copies inflate sums)
+just check-decisions             # Validate docs/decisions records (headers, status, reciprocal supersession links, `Applies to` globs; scripts/check-decisions.sh). Passes when the folder is absent. Part of `just ci`
 just ci                          # Full gate: lint + every check/test recipe above. Discovered by conduct's CI-parity gate; run by .github/workflows/ci.yml on non-draft PRs (it also runs on `ready_for_review`, `workflow_dispatch` and pushes to main, installs the Pi CLI for `tests/pi`, and cancels a superseded run only on pull requests: every push-to-main or dispatched run has its own concurrency group, so none is cancelled or replaced while queued); local `just ci` is the gate, so push when a round is done, not per commit
 ```
 
@@ -41,10 +42,11 @@ plugins/skein-codex/skills/  Codex CLI skills (mirrored structure; same generate
 plugins/skein/.claude-plugin/plugin.json       Claude plugin manifest
 plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle, plus render-report.py and report-hook.sh (opt-in `--report` HTML report; bundled into review-gauntlet and deep-review on both mirrors, never into Pi)
-scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh) and by the two persist-*.sh state-file scripts (persist-common.sh)
+scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh), by the two persist-*.sh state-file scripts (persist-common.sh) and by the decisions scripts (decisions-common.sh)
 plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
 tests/                       Reconciliation, parity, and auto-fix test harnesses; `tests/site/` guards the skein.sh site
 docs/dev_plans/              Development plans
+docs/decisions/             Decision records promoted from dev plans (format and promotion criteria in its README; validated by `just check-decisions`)
 docs/skills_architecture/    Skills architecture design docs (source; rendered via /plan-view --rich)
 justfile                     Task runner config
 site/                        skein.sh static site (hand-written HTML/CSS/JS; `graph.json` is the skill map's single source); no build step
@@ -177,7 +179,7 @@ Comment only a non-obvious why. Never add a comment that restates the code, and 
 - Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`).
 - When you touch code, delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches. No sweeping cleanup; minimal impact still applies.
 - The Documentation Lens reports an added excuse comment (hack, workaround, temporary, "for now", or a TODO without an issue link) as an Important finding whose summary begins with exactly `Excuse:`. It reports a tautology or a stale comment as Minor.
-- A comment that records a cross-file or long-lived decision stays in place. Report it as `Decision candidate: <file:line> <why>` so a person can promote it.
+- A comment that records a cross-file or long-lived decision stays in place. Report it as `Decision candidate: <file:line> <why>` so a person can promote it. Where a comment would explain a design choice a record covers, point at the record instead: `see docs/decisions/<file>` (the form is defined in `docs/decisions/README.md`).
 
 ## Skill Workflow
 

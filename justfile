@@ -162,6 +162,7 @@ plugin-tests:
     bash tests/plugin/test-fanout-slug-guard.sh
     bash tests/plugin/test-fanout-slug-guard-codex.sh
     bash tests/plugin/test-count-added-comments.sh
+    bash tests/plugin/test-check-decisions.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but
@@ -183,6 +184,11 @@ lint-python:
 # median; nothing re-measures automatically.
 comment-count:
     scripts/count-added-comments.sh main
+
+# Validate docs/decisions records (headers, status, supersession links, globs).
+# Passes when the folder is absent. See docs/decisions/README.md.
+check-decisions:
+    scripts/check-decisions.sh
 
 # Every linter: Python (ruff) and shell (shellcheck + shfmt + temp-path guard).
 lint: lint-python lint-scripts
@@ -234,7 +240,7 @@ site-deploy: site-tests
 # Full gate. This is the recipe conduct's end-of-plan CI-parity gate discovers
 # (`just ci` has priority in ci_parity.py) and the one .github/workflows/ci.yml
 # runs on every pull request.
-ci: lint check-sync check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests pi-tests site-tests
+ci: lint check-sync check-decisions check-trunk-snippet-parity release-baseline-check parity-tests gauntlet-tests lens-tests reconciliation-tests plugin-tests pytest-tests pi-tests site-tests
 
 # Golden comparisons, negative cases and exit-code contract for the release
 # skill's extracted lib/ scripts (Phase 2 of the release-skill restructure).
