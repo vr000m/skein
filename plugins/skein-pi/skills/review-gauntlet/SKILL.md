@@ -93,7 +93,10 @@ excuse-class finding (`Documentation` above Minor with an `Excuse:` summary
 prefix, as the Pi documentation lens reports it) in the dispatched batch, and
 any other notice excludes nothing. Backticks, quotes or brackets around the
 `file:line` and a leading `./` are ignored, a backticked `file:line` may
-contain spaces, and indentation or one list marker may precede the notice. Pi's fixer artifact has no
+contain spaces, and indentation or one list marker may precede the notice. A
+notice in quoted prose (after an unclosed backtick or double quote on its
+line, on a `>` blockquote line or in a fenced block) excludes nothing, and the
+scan reads only the first 64 KiB and skips any line over 4096 characters. Pi's fixer artifact has no
 quarantine key, so Pi routes an unrepaired excuse through this `Excuse:`
 notice where the Claude and Codex gauntlets use Guardrail 1's quarantine path.
 Keep `Decision candidate:` notices as

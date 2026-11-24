@@ -21,11 +21,13 @@ MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
 ADVICE_PREFIX = "Decision candidate:"
 EXCUSE_PREFIX = "Excuse:"
 _EXCUSE_NOTICE = re.compile(
-    r"(?:^[ \t]*(?:[-*+]|\d+[.)])?[ \t]*|(?<=[.;!?])[ \t]+)Excuse:[ \t]*"
-    r"(?:`([^`\n]+):(\d+)`|[`'\"(\[<]*([^\s`'\"()\[\]<>]+):(\d+)[`'\")\]>]*)"
-    r"(?=[\s.,;]|$)",
-    re.MULTILINE,
+    r"(?:^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)?|(?<=[.;!?])[ \t]+)Excuse:[ \t]*"
+    r"(?:`([^`\n]{1,512}):(\d{1,9})`"
+    r"|[`'\"(\[<]{0,4}([^\s`'\"()\[\]<>]{1,512}):(\d{1,9})[`'\")\]>]{0,4})"
+    r"(?=[\s.,;]|$)"
 )
+_EXCUSE_SCAN_LIMIT = 65536
+_EXCUSE_LINE_LIMIT = 4096
 TRANSIENT_REASONS = frozenset(
     {
         "timeout",
@@ -159,6 +161,35 @@ def _notice_path(path: object) -> str:
     return text
 
 
+def _inside_quote(prefix: str) -> bool:
+    return (
+        prefix.count("`") % 2 == 1
+        or prefix.count('"') % 2 == 1
+        or prefix.count("\u201c") > prefix.count("\u201d")
+    )
+
+
+def _excuse_citations(summary: str) -> set[tuple[str, str | None]]:
+    cited: set[tuple[str, str | None]] = set()
+    in_fence = False
+    for raw in summary[:_EXCUSE_SCAN_LIMIT].split("\n"):
+        line = raw.removesuffix("\r")
+        stripped = line.lstrip(" \t")
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            continue
+        if in_fence or stripped.startswith(">") or len(line) > _EXCUSE_LINE_LIMIT:
+            continue
+        for match in _EXCUSE_NOTICE.finditer(line):
+            if _inside_quote(line[: match.start()]):
+                continue
+            quoted, quoted_line, bare, bare_line = match.groups()
+            cited.add(
+                (_notice_path(quoted or bare), _line_key(quoted_line or bare_line))
+            )
+    return cited
+
+
 def excuse_exclusions(
     summary: str, batch: Iterable[Mapping[str, object]]
 ) -> list[dict[str, object]]:
@@ -171,13 +202,14 @@ def excuse_exclusions(
     as the documentation lens reports it) in the dispatched batch; any other
     notice, including an ``Excuse:`` quoted inside other text, is ignored, so
     untrusted fixer text cannot drop an ordinary finding from later batches.
+    A notice inside quoted prose (after an unclosed backtick or double quote
+    on its line, on a ``>`` blockquote line or in a fenced block) is ignored.
+    Only the first 64 KiB are scanned and a line over 4096 characters is
+    skipped, so the scan stays linear; a skipped notice excludes nothing.
     Backticks, quotes or brackets around the ``file:line`` and a leading
     ``./`` are ignored; a backticked ``file:line`` may contain spaces.
     """
-    cited = {
-        (_notice_path(quoted or bare), _line_key(quoted_line or bare_line))
-        for quoted, quoted_line, bare, bare_line in _EXCUSE_NOTICE.findall(summary)
-    }
+    cited = _excuse_citations(summary)
     return [
         dict(finding)
         for finding in batch

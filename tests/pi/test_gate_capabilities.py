@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[2] / "plugins/skein-pi/lib"))
@@ -276,6 +277,10 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
         "matched on file, line, category and summary",
         'Exclude only the findings `excuse_exclusions(proposal["summary"], batch)` returns',
         "a notice must open a line or sentence, carry a whole line number",
+        (
+            "notice in quoted prose (after an unclosed backtick or double quote "
+            "on its line, on a `>` blockquote line or in a fenced block) excludes nothing"
+        ),
         "same-line excuse-plus-candidate cannot merge into advice",
         "Retain each original gate envelope",
         "print advice once",
@@ -458,6 +463,54 @@ def test_excuse_notice_counts_at_a_line_start():
     excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     summary = "Repaired one hack.\nExcuse: x.py:3 cannot repair in scope."
     assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        'The reviewer wrote "Kept the hack. Excuse: x.py:3 later." in the log.',
+        "Quoted `Kept the hack. Excuse: x.py:3 later.` here.",
+        "> Kept the hack. Excuse: x.py:3 later.",
+        "> Excuse: x.py:3 later.",
+        "```\nExcuse: x.py:3 later.\n```",
+        "The note \u201cKept it. Excuse: x.py:3 later.\u201d stays.",
+    ],
+)
+def test_excuse_notice_inside_quoted_prose_is_ignored(summary):
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == []
+
+
+def test_excuse_notice_after_closed_quotes_still_counts():
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
+    summary = 'Fixed `foo` and "bar". Excuse: x.py:3 cannot repair in scope.'
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
+
+
+def test_excuse_scan_is_bounded_on_long_whitespace_and_open_backticks():
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
+    hostile = [
+        " " * 90_000,
+        "\t" * 90_000 + "x",
+        "- " + " \t" * 45_000,
+        ". Excuse: `" * 9_000,
+        ("a. " + " " * 60) * 1_000,
+    ]
+    start = time.perf_counter()
+    for text in hostile:
+        assert review_gauntlet.excuse_exclusions(text, [excuse]) == []
+        notice = text[:3000] + "\nExcuse: x.py:3 cannot repair in scope."
+        assert review_gauntlet.excuse_exclusions(notice, [excuse]) == [excuse]
+    assert time.perf_counter() - start < 1.0
+
+
+def test_excuse_notice_beyond_the_scan_limits_excludes_nothing():
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
+    notice = "Excuse: x.py:3 cannot repair in scope."
+    long_line = "x" * 5000 + ". " + notice
+    assert review_gauntlet.excuse_exclusions(long_line, [excuse]) == []
+    past_cap = ("filler\n" * 10_000) + notice
+    assert review_gauntlet.excuse_exclusions(past_cap, [excuse]) == []
 
 
 def test_refresh_removes_stale_entry_and_reprobes_available(tmp_path):
