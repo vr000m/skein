@@ -379,7 +379,7 @@ sequenceDiagram
 - [x] Phase 2: Selector, validator bundling and bundle map
 - [x] Phase 3b: Lens checks against active records (Claude)
 - [x] Phase 4b: update-docs promotion and template (Claude)
-- [ ] Phase 5b: conduct nudge (Claude)
+- [x] Phase 5b: conduct nudge (Claude)
 - [ ] Phase 3a: Lens checks against active records (Codex session)
 - [ ] Phase 4a: update-docs promotion and template (Codex session)
 - [ ] Phase 5a: conduct nudge (Codex session)
