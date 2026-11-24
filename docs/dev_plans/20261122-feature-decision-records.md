@@ -375,7 +375,7 @@ sequenceDiagram
 ## Progress
 
 - [x] Phase 0: Gate on plan A
-- [ ] Phase 1: Folder, record format, validator and shared parser
+- [x] Phase 1: Folder, record format, validator and shared parser
 - [ ] Phase 2: Selector, validator bundling and bundle map
 - [ ] Phase 3b: Lens checks against active records (Claude)
 - [ ] Phase 4b: update-docs promotion and template (Claude)
