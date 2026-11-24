@@ -36,9 +36,11 @@ BUNDLE_SHARED=(
 # -- the two-arm duplication is exactly how a lens file would come to ship
 # into one skill and not the other. lib/lens-common.sh (R11/F3) is the first
 # file to arrive through that single edit; lib/persist-common.sh stays in the
-# group because lens-common.sh sources it.
+# group because lens-common.sh sources it. decisions-active.sh is the selector
+# whose output both architecture lenses receive, and lib/decisions-common.sh is
+# the header parser it sources; they ride this group so each is added once.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
-BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh)
+BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh decisions-active.sh lib/decisions-common.sh)
 
 # The opt-in HTML report pair, bundled into exactly the two skills whose
 # SKILL.md invokes the report hook (review-gauntlet and deep-review). It is a
@@ -60,6 +62,29 @@ BUNDLE_PI_EXCLUDE=("${BUNDLE_REPORT[@]}")
 # Skills that receive a bundled pipeline.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
 BUNDLE_SKILLS=(deep-review review-plan review-gauntlet)
+
+# Skills that bundle scripts but NOT the auto-fix pipeline. BUNDLE_SKILLS is the
+# pipeline group: every entry receives BUNDLE_SHARED plus an applier, so a skill
+# with neither (update-docs) cannot be listed there without shipping files it
+# never invokes. Each skill here gets only what bundle_docs_extra_for names, in
+# all three mirrors (Pi included).
+# shellcheck disable=SC2034  # consumed by sourcing scripts
+BUNDLE_DOCS_SKILLS=(update-docs)
+
+# Extras for a BUNDLE_DOCS_SKILLS skill (one path per line, relative to
+# scripts/). update-docs validates the decision graph after a promotion writes.
+bundle_docs_extra_for() {
+	case "$1" in
+	update-docs)
+		printf 'check-decisions.sh\n'
+		printf 'lib/decisions-common.sh\n'
+		;;
+	*)
+		printf 'bundle-map: unknown docs skill %s\n' "$1" >&2
+		return 1
+		;;
+	esac
+}
 
 # Skill-specific applier basename. Returns non-zero for an unknown skill.
 bundle_applier_for() {

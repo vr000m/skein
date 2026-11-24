@@ -89,4 +89,23 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	done
 done
 
+# Docs skills bundle only their own extras (no auto-fix pipeline) and reach all
+# three mirrors; Pi needs no exclusion because none of the files is a report.
+for skill in "${BUNDLE_DOCS_SKILLS[@]}"; do
+	stage="$stage_root/$skill/scripts"
+	mkdir -p "$stage/lib"
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] || continue
+		cp "$SRC/$extra" "$stage/$extra"
+	done < <(bundle_docs_extra_for "$skill")
+	chmod +x "$stage"/*.sh "$stage"/lib/*.sh
+	for mirror in "${MIRRORS[@]}"; do
+		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
+		mkdir -p "$dest"
+		rsync -a --delete "$stage/" "$dest/"
+		count=$((count + 1))
+		printf 'bundled %s -> %s/skills/%s/scripts\n' "$skill" "$mirror" "$skill"
+	done
+done
+
 printf 'bundle-appliers: wrote %d skill/mirror subtrees\n' "$count"

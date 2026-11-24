@@ -134,6 +134,36 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	done < <(find "$pi_dest" -type f -not -path '*/__pycache__/*' 2>/dev/null)
 done
 
+# --- 2c. Docs skills: only their own extras, byte-identical in all three mirrors
+# BUNDLE_DOCS_SKILLS bundles no auto-fix pipeline, so none of BUNDLE_SHARED may
+# appear there; Pi is held to the same set because no docs extra is a report.
+for skill in "${BUNDLE_DOCS_SKILLS[@]}"; do
+	docs_files=()
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] && docs_files+=("$extra")
+	done < <(bundle_docs_extra_for "$skill")
+	for mirror in plugins/skein plugins/skein-codex plugins/skein-pi; do
+		dest="$ROOT_DIR/$mirror/skills/$skill/scripts"
+		for f in "${docs_files[@]}"; do
+			if [[ ! -f "$dest/$f" ]]; then
+				fail "docs bundle: missing $mirror/skills/$skill/scripts/$f"
+			elif ! cmp -s "$SRC/$f" "$dest/$f"; then
+				fail "docs bundle: drift $mirror/skills/$skill/scripts/$f != canonical scripts/$f"
+			else
+				pass "docs bundle: byte-identical $mirror/skills/$skill/scripts/$f"
+			fi
+		done
+		while IFS= read -r found; do
+			rel="${found#"$dest"/}"
+			declared=0
+			for f in "${docs_files[@]}"; do
+				[[ "$rel" == "$f" ]] && declared=1 && break
+			done
+			[[ "$declared" -eq 0 ]] && fail "docs bundle: unexpected file $mirror/skills/$skill/scripts/$rel"
+		done < <(find "$dest" -type f -not -path '*/__pycache__/*' 2>/dev/null)
+	done
+done
+
 # --- 3. Drift-injection: prove the comparison detects a mutated copy --------
 drift_tmp="$(mktemp -d)"
 trap 'rm -rf "$drift_tmp"' EXIT

@@ -163,6 +163,7 @@ plugin-tests:
     bash tests/plugin/test-fanout-slug-guard-codex.sh
     bash tests/plugin/test-count-added-comments.sh
     bash tests/plugin/test-check-decisions.sh
+    bash tests/plugin/test-decisions-active.sh
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but
