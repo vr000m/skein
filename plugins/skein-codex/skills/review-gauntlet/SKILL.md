@@ -330,7 +330,7 @@ native_target_args=()
        --expected "$round_fingerprint" "${native_target_args[@]}"
    ```
    Only the adapter's locally validated final JSON reaches `gate_run_bounded`. Native app-server notifications stay inside the adapter; never send event streams or prose directly to the bounded helper. Do not add `-o` or `--json` to its public invocation.
-3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. Never pass `--report`: this gauntlet owns its report and renders from the pooled round envelopes. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
+3. **`skein:deep-review` gate (`skein-deep-review-gated`).** This slot exists on Codex, but running it from beneath another Codex worker is gated until nested `spawn_agent` topology and child tier evidence are confirmed. If this gauntlet is running at the top level and delegation availability/tier evidence is confirmed, run `skein:deep-review --verbose` at conductor top level. Never pass `--report`: this gauntlet owns its report and renders from the pooled round envelopes. `--verbose` is required, not optional: the normalization step below needs an `evidence` field for every finding, but deep-review's compact default omits Evidence/Suggestion for Minor findings unless `--verbose` is passed. When it runs, stamp `status` (`approve` if zero findings else `needs-attention`) and `degraded_reason` (`incomplete lens: <lens>, ...` when deep-review's report header names an errored, timed-out or partial lens, else `null`). Otherwise emit `status: "deferred"` with notes explaining that this is a permanent capability gap for the current topology evidence, not a transient unresolved gate.
 4. **Security-review gate (`deferred`).** No Codex security-review primitive or `plugins/skein-codex` security-review skill exists in v1. Emit `status: "deferred"` with notes explaining that this is a permanent capability gap (or `skipped` when explicitly configured off); never pretend this gate ran.
 
 Slots 3 and 4 do not use `gate_run_bounded`. The conductor constructs their
@@ -405,7 +405,7 @@ After the fixer batch returns:
 - Any `structural` fix restarts at gate 1 with a full pass.
 - Only `local` fixes run one confirming pass tagged `pass_type: confirm`.
 - A clean `pass_type: confirm` pass is not terminal; it returns to the loop for a fresh full pass.
-- A clean `pass_type: full` pass is terminal success when the supported/native gates produced no findings and there are no transient unresolved gate outcomes. Tally only truly unresolved gates and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: `error` always counts; an unexpected `skipped` or transient `deferred` status counts; known permanent capability gaps do not count. Today the permanent deferred slots are gate 4 (`security-review`, always, because Codex has no security-review primitive) and gate 3 (`skein:deep-review`) while nested-spawn topology/tier evidence remains unconfirmed. A full pass at count 0 with `--unresolved 0` may resolve to success even when those permanent gaps are present, but a full pass at count 0 with any transient unresolved gate is **not** success — the ledger falls through to `continue` so the errored/transient gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
+- A clean `pass_type: full` pass is terminal success when the supported/native gates produced no findings and there are no transient unresolved gate outcomes. Tally only truly unresolved gates and pass that count to `convergence-ledger.sh` as `--unresolved <N>`: `error` always counts, including a slot whose status copy reads `error`; an unexpected `skipped` or transient `deferred` status counts; known permanent capability gaps do not count. Today the permanent deferred slots are gate 4 (`security-review`, always, because Codex has no security-review primitive) and gate 3 (`skein:deep-review`) while nested-spawn topology/tier evidence remains unconfirmed. A full pass at count 0 with `--unresolved 0` may resolve to success even when those permanent gaps are present, but a full pass at count 0 with any transient unresolved gate is **not** success — the ledger falls through to `continue` so the errored/transient gate re-runs. Success is `success_with_quarantine` when the quarantine queue is non-empty, else plain `success`.
 - A single monotonic counter increments every round, including structural restarts, and caps at 10.
 - Non-convergence is a running-minimum stall, K=2, **scoped to the current epoch** (the rounds since the last structural restart, if any): the reconciled count must fail to reach a new running minimum for K consecutive rounds before the loop bails and reports `non-converge`. Track the lowest count seen so far *within the current epoch*; a round that beats it resets the stall streak, a round that does not increments it, and a streak of 2 bails. This catches a plateau (`3,3,3`) and a sustained oscillation (`5,3,5,3`), but deliberately does not bail on a genuinely converging run with a transient blip like `5,4,5,3,2,1` — the running minimum keeps improving there. A structural restart opens a fresh epoch with a fresh running minimum: a pre-restart count is not commensurate with post-restart counts (the diff a fresh gate-1 corpus reviews has changed), so it must not anchor the stall streak, and each new epoch needs its own K+1 recorded rounds before non-convergence can fire again. `convergence-ledger.sh` owns the deterministic decision.
 - **Stop condition 5: `regression`.** A finding the ledger previously confirmed fixed has reappeared. Every round, compute each reconciled finding's regression key via the bundled `scripts/finding-key.sh` (`sha1(file|category|normalised summary)`, lowercase + whitespace-collapse only, no digit-stripping, deliberately distinct from the reconciler's line-anchored `(file, line, category)` dedup key — a finding that shifts line across rounds must still match) and pass the full list to `convergence-ledger.sh --present-keys <file>`. When the fixer claims a fix, its report uses the literal `{claimed:[...]}` shape with finding objects; the orchestrator derives their keys with `finding-key.sh` and passes those keys via `--claimed-keys <file>`. **The ledger itself owns claimed->fixed promotion** — the conductor passes only what it observed this round (`--present-keys`) and what the fixer claimed this round (`--claimed-keys`); it never computes or asserts a `fixed_keys` set of its own. A claim is recorded as pending and is evaluated only against the **NEXT** complete full pass (`pass_type: full`, `--unresolved 0`, and a supplied `--present-keys` file): a pending key is promoted only when absent from that next pass's present keys, while a still-present claim is dropped without promotion. `regression` slots in the decision priority **after `success`/`success_with_quarantine`, before `cap`**, and fires on **both** pass types (a previously-fixed bug reappearing during a `pass_type: confirm` round is exactly as much a regression as one reappearing on a full pass). `regression` is terminal — halt and hand the reappeared finding(s) back to the operator with the round history.
@@ -1062,6 +1062,18 @@ Guardrails 3, 6, and 7 do not cover this contract. A test for the reported case 
 
 When the plan is silent on a new design consideration, check its scope. If it is inside the contract already being fixed, decide it in this phase. Record a design delta. Use Guardrail 1 only when the delta contradicts or expands the plan's stated intent. Never put a design delta in `claimed`.
 
+### Guardrail 9 — keep comments why-only in every fix
+
+Every fixer brief's Constraints section must carry this rule unconditionally, for every fixer dispatch, whether or not a finding mentions comments. Comment only a non-obvious why. Do not add a comment that restates the code, and do not add a comment that excuses a hack: fix the hack, or report it. Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`).
+
+The fixer may delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches, within the fix's blast radius. An excuse comment whose hack the same change repairs is stale by that repair, so the excuse route below deletes it under this rule. It never sweeps comments elsewhere in the file; Guardrails 6 and 7 still bound the fix to its finding.
+
+**Excuse route.** When a finding flags an added excuse comment, the fixer takes exactly one of two paths. (a) It repairs the underlying hack, removes the now-stale excuse comment in the same change and claims the finding in `claimed`. (b) It cannot repair the hack without leaving the fix's scope or contradicting the design intent, so it reports the finding as a design conflict through Guardrail 1's existing quarantine path; it adds no new counter. The fixer never deletes an excuse comment silently, and never claims an excuse finding it did not repair.
+
+**Decision candidates.** A comment that records a cross-file or long-lived decision stays in place. The fixer lists it in its report `summary` as `Decision candidate: <file:line> <why>`. A candidate is information for the operator: it does not appear in `claimed` and it creates no design delta. The report keys stay exactly as Guardrail 2's fixer output schema defines them.
+
+This is a fixer-prompt requirement, not a mechanical gate. Like Guardrails 3, 4, 6 and 7, there is no deterministic backstop, only the instruction and the shape assertions that pin its key phrases.
+
 ## Reuse: bundled scripts only, never relative-path into deep-review
 
 This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`, placed by `scripts/bundle-appliers.sh` and byte-identical to the repo canonical. The authored operative helpers live under `"$SKILL_DIR"/lib/`. If `"$SKILL_DIR"/scripts/` is absent, abort with a clear error; never fall back to hand-applying fixes or to `../../deep-review/scripts`.
@@ -1076,18 +1088,31 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
     --gate <name> --autofix-cache "$gate_out_dir/autofix-cache.jsonl" \
     "$gate_out_dir/<name>.envelope.json" > "$gate_out_dir/<name>.normalized.jsonl"
   ```
-- **Cross-gate dedup**: pool every gate's normalized findings, then reconcile them. Pass the pooled file as a **positional path**, not on stdin — the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
+- **Cross-gate dedup**: in a full round, pool every gate's normalized findings, split advice, and reconcile the actionable stream. In quick mode, keep pooling the single native gate stream directly into `findings.jsonl` for reconciliation.
   ```
-  cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings.jsonl"
+  . "$SKILL_DIR"/lib/state-path-guard.sh
+  for split_out in findings-pooled.tool-out.json findings.jsonl advice.tool-out.json autofix-cache-actionable.tool-out.json autofix-cache.jsonl; do
+    gauntlet_assert_no_symlink "$gate_out_dir/$split_out" advice-split || exit 1
+  done
+  cat "$gate_out_dir"/*.normalized.jsonl > "$gate_out_dir/findings-pooled.tool-out.json"
+  advice_filter='(.category == "Documentation") and (.severity == "Minor") and ((.summary | type) == "string") and (.summary | startswith("Decision candidate:"))'
+  repair_site_filter='[.file, (.line | tostring), .category] as $s | any($actionable[] | select(.category == "Documentation" and .severity != "Minor" and ((.summary | type) == "string") and (.summary | startswith("Excuse:"))); [.file, (.line | tostring), .category] == $s) | not'
+  jq -c "select($advice_filter | not)" "$gate_out_dir/findings-pooled.tool-out.json" > "$gate_out_dir/findings.jsonl"
+  jq -c "select($advice_filter)" "$gate_out_dir/findings-pooled.tool-out.json" > "$gate_out_dir/advice.tool-out.json"
+  jq -c --slurpfile actionable "$gate_out_dir/findings.jsonl" "select(($advice_filter | not) and ($repair_site_filter))" \
+    "$gate_out_dir/autofix-cache.jsonl" > "$gate_out_dir/autofix-cache-actionable.tool-out.json"
   "$SKILL_DIR"/lib/run-gate.sh reconcile \
     "$gate_out_dir/findings.jsonl" > "$gate_out_dir/reconciled.json"
   ```
+  **Advice split (decision candidates).** A finding is advice only when it carries the exact `Decision candidate:` summary prefix AND severity Minor under category `Documentation`. The split runs BEFORE `run-gate.sh reconcile`, so a decision candidate is never merged with an excuse finding that shares its `(file, line, category)`. Deep-review's own reconcile sets the same rows aside and appends them unmerged, so gate 2's returned findings already keep that pair apart. `findings.jsonl` holds only actionable findings, and everything downstream reads only it: `reconciled.json`, `run-gate.sh route`, the gate status, `--count`, `--present-keys`, the annotated envelope and the fixer batch. The same filter drops advice from the `auto_fix` cache into `autofix-cache-actionable.tool-out.json`, the only cache `route` reads: `route` re-attaches proposals by `(file, line, category)` alone, so an advice proposal left in the cache would attach to a same-line excuse and could remove its comment without repairing the hack. `repair_site_filter` also drops every proposal at the `(file, line, category)` of an excuse-class finding, so that finding reaches the fixer and Guardrail 9's excuse route instead of the trivial applier. The excuse class is one definition in all three mirrors: an actionable `Documentation` finding above Minor whose summary begins with exactly `Excuse:`, the prefix the Documentation Lens gives every excuse; any other `Documentation` finding above Minor, such as dev-plan drift, keeps its proposals. A gate whose findings are all advice counts as having no findings for convergence, and advice never reaches `convergence-ledger.sh`. Any other summary, a misspelled or recased prefix included, is an ordinary actionable finding. The split's outputs, and the `autofix-cache.jsonl` it reads, pass the same `gauntlet_assert_no_symlink` guard as every other state path first, and their `.tool-out.json` names are ones `convergence-ledger.sh` already treats as runtime-owned when it clears a round. Print the advice once, in the round's terminal message, with its `file:line` and summary; this skill adds no report section and does not change `render-report.py` or `convergence-ledger.sh`. The quick route is unchanged.
+  Pool every gate's `.normalized.jsonl` into `findings-pooled.tool-out.json` first — the split `findings.jsonl` that `reconcile` reads is the concatenation across **all** gates minus advice, which is what makes cross-gate corroboration possible at all. Pass it as a **positional path**, not on stdin: the positional path is carried through `read_input`'s `.gauntlet/` symlink guard, and stdin is not.
 - **Route trivial vs substantive findings**:
   ```
   "$SKILL_DIR"/lib/run-gate.sh route \
-    --autofix-cache "$gate_out_dir/autofix-cache.jsonl" \
+    --autofix-cache "$gate_out_dir/autofix-cache-actionable.tool-out.json" \
     "$gate_out_dir/reconciled.json" > route_output.json
   ```
+  In quick mode, which splits no advice, pass `"$gate_out_dir/autofix-cache.jsonl"` instead.
   `route` already delegates eligibility to the bundled `audit-auto-fix-eligibility.sh` internally and emits `{"trivial_envelope": {...annotated v2 envelope, findings limited to auto_fix_status=="would_apply"}, "substantive_findings": [...]}` on stdout — do not run a separate eligibility audit before applying. Extract `.trivial_envelope` and feed it to the applier; **never pipe `route`'s raw stdout directly into `apply-auto-fix-code.sh`** — the applier reads a top-level `.findings[]`, which does not exist on route's raw output (it's nested under `.trivial_envelope.findings`), so doing so silently applies zero fixes every round:
   ```
   jq -c '.trivial_envelope' route_output.json > annotated-envelope.json
@@ -1098,11 +1123,42 @@ This skill carries its own bundled shared pipeline under `"$SKILL_DIR"/scripts/`
   `(kind, file, line, status, ...)`, so it must be joined back to
   `annotated-envelope.json` to recover each finding's `category` and `summary`.
 - **Gate-status rows (print BEFORE the convergence decision)**: for each of this round's gate envelopes, run `run-gate.sh status-row` and print the row it emits — the ONLY gate-status table this skill shows, script-emitted, never hand-authored:
+  Each row reads a status-only copy of its envelope, never the original, so the row counts only actionable findings. `gauntlet_status_copy` sets the copy's `.findings` to the slot's records in `findings.jsonl`, matched by `lens`, which `normalize` sets to the `<name>` in `<name>.envelope.json`. An `approve` or `needs-attention` envelope whose `degraded_reason` is non-null (an incomplete deep-review lens) becomes `error` whatever its findings, because a lens that never completed is not a clean review. Otherwise, when the original envelope has findings and none of them reached `findings.jsonl`, the slot's `<name>.normalized.jsonl` decides: if it holds rows, the advice split removed them all and a `needs-attention` status becomes `approve`; if it holds none or is missing, normalization never ran for the slot, so the copy's status becomes `error` with `degraded_reason` `normalized findings missing`, and a missing normalization never reads as approval. Every other status is kept. An unreadable envelope falls back to its original path, so `status-row` still emits its `error` row. The copy path passes `gauntlet_assert_no_symlink` before anything is written to it, and the original envelope passes it before it is read; a refusal leaves the copy unwritten and prints the refused path, so `status-row`'s own read guard refuses it too and emits an `error` row. The original envelopes stay unchanged, and their gate outcomes classify unresolved slots; a slot whose status copy reads `error` also counts toward `--unresolved`, so neither a missing normalization nor an incomplete lens lets the round converge.
   ```
-  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_review"
-  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_codex_adversarial"
-  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_deep_review_gated"
-  "$SKILL_DIR"/lib/run-gate.sh status-row "$envelope_security_review"
+  . "$SKILL_DIR"/lib/state-path-guard.sh
+  gauntlet_status_copy() {
+    local envelope="$1" name copy normalized
+    name="$(basename "$envelope" .envelope.json)"
+    copy="$gate_out_dir/$name.status.tool-out.json"
+    normalized="$gate_out_dir/$name.normalized.jsonl"
+    [[ -f "$normalized" ]] || normalized=/dev/null
+    gauntlet_assert_no_symlink "$copy" status-copy || {
+      printf '%s\n' "$copy"
+      return 1
+    }
+    gauntlet_assert_no_symlink "$envelope" status-copy || {
+      printf '%s\n' "$envelope"
+      return 1
+    }
+    if jq --arg lens "$name" --slurpfile actionable "$gate_out_dir/findings.jsonl" \
+        --slurpfile normalized "$normalized" '
+        [$actionable[] | select(.lens == $lens)] as $kept
+        | (if .degraded_reason != null and (.status == "approve" or .status == "needs-attention") then .status = "error"
+           elif ((.findings // []) | length) > 0 and ($kept | length) == 0 then
+             (if ($normalized | length) == 0 then .status = "error" | .degraded_reason = "normalized findings missing"
+              elif .status == "needs-attention" then .status = "approve" else . end)
+           else . end)
+        | .findings = $kept
+      ' "$envelope" > "$copy" 2>/dev/null; then
+      printf '%s\n' "$copy"
+    else
+      printf '%s\n' "$envelope"
+    fi
+  }
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$(gauntlet_status_copy "$envelope_codex_review")"
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$(gauntlet_status_copy "$envelope_codex_adversarial")"
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$(gauntlet_status_copy "$envelope_deep_review_gated")"
+  "$SKILL_DIR"/lib/run-gate.sh status-row "$(gauntlet_status_copy "$envelope_security_review")"
   ```
   Emit one row per gate slot, every round, including slots that are skipped,
   deferred, or errored; the table's row count always equals the four-slot count.

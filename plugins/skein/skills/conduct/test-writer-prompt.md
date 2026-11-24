@@ -40,6 +40,10 @@ The phase heading is included in the warned phase metadata block above.
 4. Match the repo's existing test conventions: framework, helper patterns, fixture style, naming. Read neighbouring tests before inventing new patterns.
 5. Do not modify the plan file.
 
+## Comments
+
+Comment only a non-obvious why. Do not add a comment that restates the code, and do not add a comment that excuses a hack: fix the hack, or report it. Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`). Delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches; never sweep untouched code. Never delete an excuse comment silently. A comment that records a cross-file or long-lived decision stays in place.
+
 ## Git Discipline
 
 Stage your changes with `git add`. Do NOT run `git commit`, `git commit --amend`, `git push`, `git rebase`, `git reset`, `git stash`, or any command that advances HEAD. The conductor creates the phase-boundary commit after tests pass.
@@ -76,6 +80,7 @@ Output discipline: your reply must contain **exactly one** fenced ```json block,
 ```
 
 - `test_files_added` lists every staged path (new and modified test files).
+- If you leave an excuse comment in place or keep a decision-record comment, end `coverage_summary` with one labelled entry each: `Excuse: <file:line> <why>` and `Decision candidate: <file:line> <why>`. Add no new report keys.
 - `test_commands` lists commands the conductor may run to execute just these tests; these are advisory — the conductor decides the canonical test command separately.
 - Set `blocked: true` only if tests cannot be written as specified; put the reason in `needs_impl_clarification`.
 

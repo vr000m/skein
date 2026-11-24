@@ -227,13 +227,20 @@
 # `unreviewed` := assigned - reviewed, in assigned order.
 #
 # `findings` are the union, across every attempt, of `finding` lines,
-# deduplicated by a (file, line, category) signature (case-insensitive on
-# file/category), first occurrence wins — the SAME (file, line, category)
-# signature the reconciler uses for cross-lens merging, applied here
+# deduplicated by a (file, line, category, class) signature (case-insensitive
+# on category only), the more severe row winning a collision and the first
+# occurrence winning a tie (the reconciler also keeps the highest severity,
+# so a lower-severity row that arrives first cannot hide a severer one) --
+# the reconciler's (file, line, category) cross-lens signature, applied here
 # cross-attempt instead (R4: "deduped by the reconciler's (file, line,
-# category) signature"). This is intentionally NOT the R5 regression key
-# (scripts/finding-key.sh, Phase 3) — a different signature for a
-# different purpose. A finding line may carry `file`/`line` directly, or a
+# category) signature"), plus one class. The class is `advice` for an exact
+# `Decision candidate:` summary at severity Minor under category
+# Documentation (deep-review's advice predicate, which review-gauntlet
+# reuses), and empty
+# otherwise. Without it a same-line excuse and decision candidate collapse
+# here into one row before the advice split sees them. This is intentionally
+# NOT the R5 regression key (scripts/finding-key.sh, Phase 3) — a different
+# signature for a different purpose. A finding line may carry `file`/`line` directly, or a
 # combined `location` field ("file:line") as persist-lens-result.sh writes
 # it — the key is derived from whichever is present.
 #
@@ -836,6 +843,11 @@ while [[ "$i" -lt "$n" ]]; do
 		# file/line for the dedup key: prefer explicit .file/.line, else
 		# split a combined "file:line" .location (persist-lens-result.sh
 		# own wire format) on the last ":".
+		# A key collision keeps the more severe row, as the reconciler
+		# does, so a lower-severity row arriving first never hides it.
+		def sev_rank:
+			((.severity // "") | if type == "string" then ascii_downcase else "" end) as $s
+			| if $s == "critical" then 3 elif $s == "important" then 2 elif $s == "minor" then 1 else 0 end;
 		def key_file:
 			if has("file") then (.file // "")
 			else (
@@ -875,8 +887,15 @@ while [[ "$i" -lt "$n" ]]; do
 				# Folding the path here made this collector a third,
 				# contradictory identity policy that silently dropped a
 				# Foo.md:10 / foo.md:10 pair down to one finding.
-				| ($file + "|" + $line + "|" + $cat) as $key
-				| if any(.[]; ._key == $key) then . else . + [$f + {_key: $key, _file: $file, _line: $line}] end
+				| (if (($f.category // "") == "Documentation")
+						and (($f.severity // "") == "Minor")
+						and (($f.summary // "") | type == "string" and startswith("Decision candidate:"))
+					then "advice" else "" end) as $class
+				| ($file + "|" + $line + "|" + $cat + "|" + $class) as $key
+				| ($f + {_key: $key, _file: $file, _line: $line}) as $row
+				| if any(.[]; ._key == $key)
+					then map(if ._key == $key and (($row | sev_rank) > sev_rank) then $row else . end)
+					else . + [$row] end
 			)
 		) as $dedup_raw
 		| ($dedup_raw | map(del(._key, ._file, ._line))) as $dedup_findings

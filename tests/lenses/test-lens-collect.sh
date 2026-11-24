@@ -2089,4 +2089,68 @@ else
 	fail "(R11-F19d/control) expected '0 7 ', got '$f19b_lines'"
 fi
 
+# ---------------------------------------------------------------------------
+# (ADV) a same-line excuse and decision candidate survive collection.
+#
+# review-gauntlet splits advice (exact `Decision candidate:` + Minor +
+# Documentation) before its reconcile. The collector's own dedup ran earlier
+# on (file, line, category) only, so whichever of the pair came first erased
+# the other. Invariant: the class (advice or not) is part of the dedup key,
+# so the pair is two findings in either order, while two findings of one
+# class on the same (file, line, category) still dedup to one, including a
+# misspelled candidate beside an excuse.
+# ---------------------------------------------------------------------------
+
+adv_excuse='{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"temporary hack"}'
+adv_candidate='{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":"Decision candidate: chose a dict"}'
+adv_case() {
+	local tag="$1" first="$2" second="$3"
+	local dir="$TMPDIR_ROOT/case-adv-$tag"
+	make_scratch_repo "$dir"
+	{
+		printf '%s\n' '{"type":"start","units":["u1"]}' "$first" "$second"
+		printf '%s\n' '{"type":"progress","unit":"u1"}' '{"type":"done","status":"completed"}'
+	} | write_lens_file "$(lens_file "$dir" deep-review "adv-$tag" documentation 1)"
+	run_collect_jsonl "$dir" deep-review "adv-$tag" "documentation:u1" | jq -r '.summary' | sort | tr '\n' '|'
+}
+for adv_order in excuse-first candidate-first; do
+	if [[ "$adv_order" == excuse-first ]]; then
+		adv_got="$(adv_case "$adv_order" "$adv_excuse" "$adv_candidate")"
+	else
+		adv_got="$(adv_case "$adv_order" "$adv_candidate" "$adv_excuse")"
+	fi
+	if [[ "$adv_got" == "Decision candidate: chose a dict|temporary hack|" ]]; then
+		pass "(ADV-$adv_order) same-line excuse and decision candidate are two findings"
+	else
+		fail "(ADV-$adv_order) expected both findings, got '$adv_got'"
+	fi
+done
+adv_dup_got="$(adv_case dup "$adv_excuse" "${adv_excuse/temporary hack/second excuse}")"
+if [[ "$adv_dup_got" == "temporary hack|" ]]; then
+	pass "(ADV-control) two non-advice findings on one (file, line, category) still dedup, first wins"
+else
+	fail "(ADV-control) expected one non-advice finding, got '$adv_dup_got'"
+fi
+
+# The collector's class and review-gauntlet's documented advice_filter must
+# agree on every row: a row the filter matches survives beside a same-line
+# excuse, and any other row, a misspelled prefix included, dedups into it.
+adv_filter="$(sed -n "s/^  advice_filter='\(.*\)'\$/\1/p" "$REPO_ROOT/plugins/skein/skills/review-gauntlet/SKILL.md" | head -1)"
+adv_i=0
+for adv_row in \
+	"$adv_candidate" \
+	"${adv_candidate/Decision candidate:/decision candidate:}" \
+	'{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Important","summary":"Decision candidate: wrong severity"}' \
+	'{"type":"finding","file":"x.py","line":3,"category":"documentation","severity":"Minor","summary":"Decision candidate: wrong category case"}' \
+	'{"type":"finding","file":"x.py","line":3,"category":"Documentation","severity":"Minor","summary":5}'; do
+	adv_i=$((adv_i + 1))
+	adv_two="$(adv_case "agree-$adv_i" "$adv_excuse" "$adv_row" | tr -cd '|' | wc -c | tr -d ' ')"
+	adv_is_advice="$(jq -r "$adv_filter" <<<"$adv_row" 2>/dev/null || echo error)"
+	if [[ ("$adv_is_advice" == true && "$adv_two" == 2) || ("$adv_is_advice" == false && "$adv_two" == 1) ]]; then
+		pass "(ADV-agree-$adv_i) collector class agrees with advice_filter ($adv_is_advice)"
+	else
+		fail "(ADV-agree-$adv_i) collector kept $adv_two rows but the filters said '$adv_is_advice'"
+	fi
+done
+
 finish

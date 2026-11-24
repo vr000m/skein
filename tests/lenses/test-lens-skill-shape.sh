@@ -815,6 +815,75 @@ else
 	fail "(R11-F10/guard) only $f10_total blocks found across four mirrors — layout drift, not a passing test"
 fi
 
+# ---------------------------------------------------------------------------
+# Documentation Lens comment classes and each mirror's ignore line. A model
+# run on tests/lenses/fixtures/documentation-lens.diff is the sampled check.
+# ---------------------------------------------------------------------------
+
+DOC_LENS_MD="$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+CODEX_DOC_LENS_MD="$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
+DOC_LENS_FIXTURE="$ROOT_DIR/tests/lenses/fixtures/documentation-lens.diff"
+
+doc_lens_has() {
+	local pattern="$1" label="$2"
+	if grep -Eq -- "$pattern" <<<"$doc_lens"; then
+		pass "Documentation Lens ($doc_lens_mirror): $label"
+	else
+		fail "Documentation Lens ($doc_lens_mirror): $label"
+	fi
+}
+
+for doc_lens_mirror in Claude Codex; do
+	case "$doc_lens_mirror" in
+	Claude)
+		doc_lens="$(awk '/^#### Documentation Lens/{f=1; next} /^#### /{f=0} f' "$DOC_LENS_MD")"
+		doc_lens_has 'Minor typos in comments within the diff' "retains the typo ignore line"
+		;;
+	Codex)
+		doc_lens="$(awk '/^### Documentation Lens$/{f=1; next} /^<!-- BEGIN PROSE RULE BLOCK A -->$/{f=0} f' "$CODEX_DOC_LENS_MD")"
+		doc_lens_has 'Code behavior unless the docs misstate it' "retains the code behavior ignore line"
+		;;
+	esac
+	doc_lens_has 'excuse \(Important\)' "excuse class is Important"
+	doc_lens_has 'tautology \(Minor\)' "tautology class is Minor"
+	doc_lens_has 'stale \(Minor\)' "stale class is Minor"
+	doc_lens_has 'decision candidate \(Minor, informational\)' "decision candidate class is Minor and informational"
+	doc_lens_has 'Comments the diff ADDS \(never pre-existing comments\)' "scope is added comments only"
+	doc_lens_has 'no whole-file evidence step' "no whole-file evidence step"
+	doc_lens_has 'symbol that the same diff removes or renames' "stale is limited to symbols the same diff removes or renames"
+	doc_lens_has 'docstrings, linter and type pragmas, license headers, or TODOs that link an issue' "exemptions are listed"
+	doc_lens_has 'exactly .Decision candidate:.' "exact Decision candidate: prefix"
+	doc_lens_has 'excuses\. Begin its .summary. with exactly .Excuse:.' "exact Excuse: prefix on the excuse class"
+	doc_lens_has 'category .Documentation.' "uses the existing Documentation category"
+	doc_lens_has 'One class per comment: when a comment matches more than one class, report it once, under the first that matches in the order excuse, stale, tautology, decision candidate' \
+		"one class per comment, by the shared precedence"
+done
+
+# Step 5.5 appends the summary to a suppress key whose (file, line, category)
+# is shared or unanchored, so Codex's suppression step must keep the summary of
+# each finding it drops, not only the tuple.
+# shellcheck disable=SC2016
+if grep -q -F 'retain every finding suppressed here with its `summary`' \
+	"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"; then
+	pass "Codex deep-review suppression keeps each dropped finding's summary for Step 5.5 keys"
+else
+	fail "Codex deep-review suppression keeps only the (file, line, category) tuple; Step 5.5 cannot key a shared tuple"
+fi
+
+if [[ -s "$DOC_LENS_FIXTURE" ]] && grep -q '^+.*hack: workaround' "$DOC_LENS_FIXTURE" &&
+	grep -q '^+.*increment the hit counter' "$DOC_LENS_FIXTURE" &&
+	grep -q '^ # Pre-existing comment' "$DOC_LENS_FIXTURE" &&
+	[[ -s "$ROOT_DIR/tests/lenses/fixtures/documentation-lens.expected" ]]; then
+	pass "documentation lens fixture diff and expected findings are committed"
+else
+	fail "documentation lens fixture diff or expected findings missing or incomplete"
+fi
+if git apply --numstat "$DOC_LENS_FIXTURE" >/dev/null 2>&1; then
+	pass "documentation lens fixture is a well-formed patch (hunk counts match its lines)"
+else
+	fail "documentation lens fixture is a corrupt patch: git apply --numstat rejects it"
+fi
+
 echo ""
 echo "Summary: $pass_count passed, $fail_count failed"
 

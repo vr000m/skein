@@ -15,9 +15,35 @@
 - Do not invent verification beyond supplied evidence. No finding is manufactured to fill a lens slot.
 - Unanchored findings remain distinct through collection and reconciliation.
 
+## Documentation comments
+
+Comments the diff ADDS (never pre-existing comments). The signals are lexical
+and adjacent-line, from the diff alone; there is no whole-file evidence step.
+Classify each as one of:
+
+- excuse (Important; worker `important`): an added comment containing hack, workaround, temporary, "for now", or a TODO without an issue link, on or next to the line it excuses. Begin its `summary` with exactly `Excuse:`
+- tautology (Minor; worker `suggestion`): an added comment whose words restate the identifiers of the adjacent line
+- stale (Minor; worker `suggestion`): an added comment naming a symbol that the same diff removes or renames
+- decision candidate (Minor, informational; worker `suggestion`): an added comment that states a choice with a lexical marker (`because`, `instead of`, `rather than`, `chose`) next to the line implementing it. Begin its `summary` with exactly `Decision candidate:`
+
+One class per comment: when a comment matches more than one class, report it once, under the first that matches in the order excuse, stale, tautology, decision candidate.
+
+Use category `Documentation` and location at the added line. Exempt pre-existing
+comments, docstrings, linter and type pragmas, license headers, and TODOs that
+link an issue (a full issue URL or `#N`). Without an actual diff, do not invent
+added-comment findings. Do not look up symbols outside the supplied diff to
+establish staleness. Keep decision candidates informational and leave the
+comment in place. Never relabel an excuse as advice. When a same-line excuse
+and candidate still arrive as separate findings, they stay separate in the
+collector stream, and deep-review sets exact-prefix candidates aside
+before reconciliation and appends them unmerged, so the grouping below never
+merges a candidate into an excuse. Raw
+Documentation findings remain in the deep-review state and report with the
+prefix unchanged.
+
 ## Reconciliation and reporting
 
-- Reconciliation groups by `(file, line, category)`, combines lens provenance, preserves related different-category findings at one location, and uses canonical severity/category/file/line order.
+- Reconciliation groups by `(file, line, category)` after exact-prefix Minor `Decision candidate:` advice rows are set aside and appended back unmerged, combines lens provenance, preserves related different-category findings at one location, and uses canonical severity/category/file/line order.
 - The report gives a one-line overall assessment, reconciler counts, severity-grouped findings, and residual coverage status.
 - Critical/Important findings include evidence and a concrete suggestion. Minor findings may be compact unless verbose rendering was requested.
 - The report always names `.deep-review/latest-pi.json`; a clean result requires no findings and complete required lens coverage.

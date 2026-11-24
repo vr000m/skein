@@ -42,25 +42,77 @@ every gate, including cached skips. Keep gate envelopes separate and retain
 or degraded envelope into an approval. The final report must list every gate,
 coverage counts, and the exact stop/terminal reason.
 
+Before reconciliation, call `project_gate_findings(raw_gate)` from
+`lib/review_gauntlet.py` on each original gate envelope. For deep-review, use
+raw per-lens findings (the collector's `--findings-jsonl` stream), not its
+structurally reconciled report. That stream predates deep-review's merge-base
+Review Checklist suppression, so first drop every record whose `(file, line,
+category)` matches a finding that suppression removed and that is in the same
+class: advice (the split below), excuse (a `Documentation` finding above Minor
+whose summary begins with exactly `Excuse:`, the excuse class all three mirrors
+share) or neither. Suppressing a candidate or any other finding then never drops
+a same-line excuse. Keep their disk-first
+`Critical|Important|Minor` severities with the summary prefix unchanged: the
+reconciler ranks only those canonical values. Separate into operator advice
+only `Documentation` findings with the exact `Decision candidate:` summary
+prefix AND severity Minor (canonical `Minor` or Pi `suggestion`). Any other
+summary, a misspelled or recased prefix included, stays actionable. A `passed`
+gate that carries findings is contradictory: the projection rejects it with
+`passed gate has findings`, so treat that gate as degraded, never as a pass.
+Split BEFORE reconciliation so a same-line
+excuse-plus-candidate cannot merge into advice: the excuse remains actionable.
+Retain each original gate envelope and the returned `advice` in the report;
+print advice once in the round's terminal message with file/line
+and summary. Do not claim that the raw review had no findings.
+
+Use only the returned projected `gate` findings/status/counts for reconciliation,
+coverage decisions, fixer batches and ledger evidence. Advice-only input must
+not trigger a fixer or another round. The projection preserves skipped/degraded
+status and reason even with advice; never erase residual coverage or upgrade it
+to a pass. A successful advice-only round means no actionable findings with full
+coverage, not no raw findings.
+
 Reconcile findings mechanically using the installed Pi review scripts. Do not
 accept `auto_fix` blocks in this port. For substantive findings, construct a
 `fixer_request()`; pass its returned `prompt` and `role` fields to the Pi
 extension's `skein_worker` (the tool accepts only those two fields). The child
 returns a generic worker envelope and never writes files. The main session must
 call `validate_fixer_result(envelope, expected_findings=batch)`; reject any
-claim outside that batch or any malformed patch. Only then may it inspect the
+claim outside that batch, matched on file, line, category and summary, or any
+malformed patch. Only then may it inspect the
 proposal, apply approved edits, re-read the targets, and verify the live diff
 before recording a round. Do not invoke a Claude `Agent`,
 Codex `spawn_agent`, `codex`, `gh`, or a nested review skill. Run the
 repository's required validation command after approved edits. A worker claim
-alone is not evidence that a fix landed.
+alone is not evidence that a fix landed. Validate summary notices, list unresolved
+`Excuse:` notices for the operator and exclude those findings from later fixer
+batches without claiming they were fixed. Exclude only the findings
+`excuse_exclusions(proposal["summary"], batch)` returns: a notice must open a
+line or sentence, carry a whole line number and name the `file:line` of an
+excuse-class finding (`Documentation` above Minor with an `Excuse:` summary
+prefix, as the Pi documentation lens reports it) in the dispatched batch, and
+any other notice excludes nothing. Backticks, quotes or brackets around the
+`file:line` and a leading `./` are ignored, a backticked `file:line` may
+contain spaces, and indentation or one list marker may precede the notice. A
+notice in quoted prose (after an unclosed backtick or double quote on its
+line, on a `>` blockquote line or in a fenced block) excludes nothing, and the
+scan reads only the first 64 KiB and skips any line over 4096 characters. Pi's fixer artifact has no
+quarantine key, so Pi routes an unrepaired excuse through this `Excuse:`
+notice where the Claude and Codex gauntlets use Guardrail 1's quarantine path.
+Keep `Decision candidate:` notices as
+information only: leave the comment in place, never claim it or create a design
+delta. Retain unresolved actionable findings in round evidence; a quarantine is
+not convergence.
 
 Record convergence state with `lib/pi_ledger.py` using a repo-local,
 mode-0700 guarded ledger. Initialize once per target; resume reads the same
 validated target-keyed file, and never overwrites it without an explicit fresh
 operation. Append one validated outcome per round, enforce the ten-round cap,
 and stop on `zero_runnable`, `degraded`, `partial`, or other terminal states.
-The ledger is state only: it does not replace gate reconciliation.
+Pass an outcome with only projected gates to `PiLedger.append`: sum their
+`findings_count` for the round count, never count advice. Preserve skipped and
+degraded gates in that outcome. The ledger is state only: it does not replace
+gate reconciliation.
 
 The fixer response must identify each claimed finding, its root cause, the
 regression test (or a one-line reason no test applies), and classify the blast
@@ -73,5 +125,6 @@ non-success and never turn it into approval.
 Report target/range, selected gates, cached skips, fresh skips, degraded
 failures, runnable count, findings, fixer claims, and terminal decision. Use
 `clean full coverage` only when every required gate ran successfully and the
-full pass has no findings. Otherwise say `partial coverage` or `degraded`.
+full pass has no actionable findings; disclose raw findings and advice separately.
+Otherwise say `partial coverage` or `degraded`.
 Never expose credentials or raw worker event streams.

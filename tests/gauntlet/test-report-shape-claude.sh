@@ -179,6 +179,8 @@ has "$DEEP" 'substitute the literal paths for `$report_envelope` and `$report_ke
 has "$DEEP" 'report_keys="<literal keys path from step 1>"' "the hook fence binds its own variables (shell state does not span Bash calls)"
 has "$DEEP" 'file<TAB>line<TAB>category<TAB>summary' "unanchored findings get a 4-field suppress key with the summary"
 # shellcheck disable=SC2016
+has "$DEEP" 'Append the summary the same way for an anchored finding that shares its `(file, line, category)` with another audited finding' "a finding sharing its signature gets a summary-qualified key"
+# shellcheck disable=SC2016
 has "$DEEP" '.auto_fix.kind == $m.kind' "applied entries join by proposed fix kind"
 # shellcheck disable=SC2016
 has "$DEEP" 'select($matches | length == 1)' "ambiguous category matches remain visible"
