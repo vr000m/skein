@@ -176,7 +176,7 @@ Comment only a non-obvious why. Never add a comment that restates the code, and 
 
 - Exempt: docstrings, linter and type pragmas, license headers, and TODOs that link an issue (a full issue URL or `#N`).
 - When you touch code, delete a touched comment only if it is a tautology or stale and lies inside a hunk or function the change already touches. No sweeping cleanup; minimal impact still applies.
-- The Documentation Lens reports an added excuse comment (hack, workaround, temporary, "for now", or a TODO without an issue link) as an Important finding whose summary begins with exactly `Excuse:`.
+- The Documentation Lens reports an added excuse comment (hack, workaround, temporary, "for now", or a TODO without an issue link) as an Important finding whose summary begins with exactly `Excuse:`. It reports a tautology or a stale comment as Minor.
 - A comment that records a cross-file or long-lived decision stays in place. Report it as `Decision candidate: <file:line> <why>` so a person can promote it.
 
 ## Skill Workflow
