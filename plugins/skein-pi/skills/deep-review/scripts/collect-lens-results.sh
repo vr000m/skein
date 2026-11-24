@@ -235,13 +235,11 @@
 # cross-attempt instead (R4: "deduped by the reconciler's (file, line,
 # category) signature"), plus one class. The class is `advice` for an exact
 # `Decision candidate:` summary at severity Minor under category
-# Documentation (the predicate review-gauntlet splits advice on), `near` for
-# a summary review-gauntlet's near_miss_filter lists as a near miss, and
-# empty otherwise. Without it a same-line excuse, decision candidate and
-# near miss collapse here into one row before the advice split or near-miss
-# list sees them. This is intentionally NOT the R5 regression key
-# (scripts/finding-key.sh, Phase 3) — a different signature for a
-# different purpose. A finding line may carry `file`/`line` directly, or a
+# Documentation (the predicate review-gauntlet splits advice on), and empty
+# otherwise. Without it a same-line excuse and decision candidate collapse
+# here into one row before the advice split sees them. This is intentionally
+# NOT the R5 regression key (scripts/finding-key.sh, Phase 3) — a different
+# signature for a different purpose. A finding line may carry `file`/`line` directly, or a
 # combined `location` field ("file:line") as persist-lens-result.sh writes
 # it — the key is derived from whichever is present.
 #
@@ -891,9 +889,7 @@ while [[ "$i" -lt "$n" ]]; do
 				| (if (($f.category // "") == "Documentation")
 						and (($f.severity // "") == "Minor")
 						and (($f.summary // "") | type == "string" and startswith("Decision candidate:"))
-					then "advice"
-					elif ($f | ((.summary | type) == "string") and ((.summary | startswith("Decision candidate:")) | not) and ((.summary | if contains(":") then split(":")[0] else ([splits("\\s+")] | map(select(. != "")) | .[0:2] | join(" ")) end | gsub("[^A-Za-z]"; "") | ascii_downcase) == "decisioncandidate"))
-					then "near" else "" end) as $class
+					then "advice" else "" end) as $class
 				| ($file + "|" + $line + "|" + $cat + "|" + $class) as $key
 				| ($f + {_key: $key, _file: $file, _line: $line}) as $row
 				| if any(.[]; ._key == $key)

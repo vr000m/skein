@@ -139,7 +139,7 @@ has "$DEEP" 'gsub("[\t\r\n]"; " ")' 'summary keys flatten tabs and line breaks'
 # shellcheck disable=SC2016
 has "$DEEP" 'A 3-field key suppresses only an anchored finding.' 'legacy keys cannot suppress every unanchored finding'
 # shellcheck disable=SC2016
-has "$DEEP" 'anchored finding that shares its `(file, line, category)` with another audited finding, such as a' 'a finding sharing its signature gets a summary-qualified key'
+has "$DEEP" 'anchored finding that shares its `(file, line, category)` with another audited finding (Step 3.5' 'a finding sharing its signature gets a summary-qualified key'
 has "$DEEP" 'This report omits suppressed and applied-auto-fixed findings after review.' 'report documents suppressed and applied findings'
 # shellcheck disable=SC2016
 has "$DEEP" '--envelope "$report_envelope" --suppress-keys "$report_keys"' 'hook receives envelope and suppress keys'

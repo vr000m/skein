@@ -89,7 +89,7 @@ function heredoc_opener(s,   i, n, c, q, j, tok) {
 		}
 		if (substr(s, i, 3) == "<<<") { i += 2; continue }
 		if (substr(s, i, 2) == "<<") {
-			if (!match(substr(s, i), /^<<-?[ \t]*["']?[A-Za-z0-9_][A-Za-z0-9_-]*["']?/)) break
+			if (!match(substr(s, i), /^<<-?[ \t]*("[^"]+"|'[^']+'|[^ \t;&|<>()"'`]+)/)) break
 			tok = substr(s, i, RLENGTH)
 			i += RLENGTH - 1
 			ndelim++

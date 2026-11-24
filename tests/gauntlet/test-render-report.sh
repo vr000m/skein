@@ -372,6 +372,36 @@ printf 'x.py\t3\tDocumentation\n' >"$KEYS"
 run_r --envelope "$PAIR_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
 assert_lacks "$OUT" 'PAIR-EXCUSE' "control: a 3-field key drops both findings at the signature"
 
+echo "== deep-review: an applied fix's key keeps a same-line candidate =="
+# Step 5.5's applied-fix jq gives an anchored finding that shares its
+# (file, line, category) with another finding a summary-qualified key, so
+# suppressing the fixed finding leaves the same-line candidate in the report.
+APPLIED_ENV="$SANDBOX/envelope-applied.json"
+cat >"$APPLIED_ENV" <<'JSON'
+{"schema_version":2,"findings":[
+{"severity":"Minor","category":"Documentation","file":"x.py","line":3,"summary":"APPLIED-TYPO in docstring","auto_fix":{"kind":"docstring_typo","before":"teh","after":"the","scope":"line"}},
+{"severity":"Minor","category":"Documentation","file":"x.py","line":3,"summary":"Decision candidate: APPLIED-CANDIDATE"}
+]}
+JSON
+APPLIED_MANIFEST="$SANDBOX/auto-fix-manifest.json"
+printf '%s\n' '[{"kind":"docstring_typo","file":"x.py","line":3,"status":"applied","commit_sha":"c","before_sha":"b"}]' >"$APPLIED_MANIFEST"
+for applied_md in "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" "$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"; do
+	applied_prog="$(awk '
+		index($0, "jq -r --slurpfile env \"$report_envelope\" '\''") { f = 1; next }
+		f && index($0, "'\'' \"<manifest path>\" >> \"$report_keys\"") { exit }
+		f { print }
+	' "$applied_md")"
+	applied_label="${applied_md#"$ROOT_DIR"/}"
+	if [[ -z "$applied_prog" ]]; then
+		fail "$applied_label: could not extract the applied-fix key jq"
+		continue
+	fi
+	jq -r --slurpfile env "$APPLIED_ENV" "$applied_prog" "$APPLIED_MANIFEST" >"$KEYS"
+	run_r --envelope "$APPLIED_ENV" --suppress-keys "$KEYS" --root "$R" --out "$OUT"
+	assert_lacks "$OUT" 'APPLIED-TYPO' "$applied_label: the applied fix is suppressed"
+	assert_has "$OUT" 'APPLIED-CANDIDATE' "$applied_label: the same-line candidate stays in the report"
+done
+
 echo "== renderer: unanchored findings of one category are suppressed individually =="
 UNANCH_ENV="$SANDBOX/envelope-unanchored.json"
 cat >"$UNANCH_ENV" <<'JSON'

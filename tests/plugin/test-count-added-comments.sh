@@ -191,6 +191,14 @@ git add n.sh
 git commit -q -m "numeric heredoc"
 assert_eq "a numeric heredoc delimiter is honoured" "1" "$("$COUNTER" "$n_base" HEAD)"
 
+# --- a heredoc delimiter with a period still closes its body ----------------
+p_base="$(git rev-parse HEAD)"
+printf "cat <<'END.TEXT'\n# heredoc body, not a comment\nEND.TEXT\n# after the heredoc\n" >p.sh
+printf 'cat <<END.TEXT\n# heredoc body, not a comment\nEND.TEXT\n' >>p.sh
+git add p.sh
+git commit -q -m "dotted heredoc"
+assert_eq "a heredoc delimiter with a period is honoured" "1" "$("$COUNTER" "$p_base" HEAD)"
+
 # --- argument handling ------------------------------------------------------
 if "$COUNTER" >/dev/null 2>&1; then
 	fail "missing base argument must fail"
