@@ -195,6 +195,10 @@ Durable notes that survive after the run: diagnostic query results (with explici
 
 - (append findings here as work proceeds)
 
+## Promoted Decisions
+
+Links to the `docs/decisions/` records `/update-docs` promoted from this plan, one line per approved record. This section sits below the marker, so adding a link does not invalidate the review.
+
 ## Issues & Solutions
 
 ### Issue 1: [Brief description]

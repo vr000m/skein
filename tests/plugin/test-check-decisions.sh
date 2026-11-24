@@ -180,6 +180,21 @@ else
 	fail "this repository's docs/decisions validates"
 fi
 
+# Each mirror's shipped format reference must equal the canonical README. The
+# Codex and Pi copies land in their own phases, so only theirs may be absent.
+for mirror in skein skein-codex skein-pi; do
+	ref="$REPO_ROOT/plugins/$mirror/skills/update-docs/references/decision-records.md"
+	if [[ ! -f "$ref" ]]; then
+		[[ "$mirror" == skein ]] && fail "skein update-docs/references/decision-records.md is missing"
+		continue
+	fi
+	if cmp -s "$REPO_ROOT/docs/decisions/README.md" "$ref"; then
+		pass "$mirror update-docs/references/decision-records.md is byte-identical to docs/decisions/README.md"
+	else
+		fail "$mirror update-docs/references/decision-records.md differs from docs/decisions/README.md"
+	fi
+done
+
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
 [[ $FAIL_COUNT -eq 0 ]]

@@ -164,6 +164,8 @@ plugin-tests:
     bash tests/plugin/test-count-added-comments.sh
     bash tests/plugin/test-check-decisions.sh
     bash tests/plugin/test-decisions-active.sh
+    # Phase 4a switches this to --mirror both once the Codex wording lands.
+    bash tests/plugin/test-promotion-marker.sh --mirror claude
 
 # Diagnostic, NOT a suite member. noqa-probe.sh asserts that
 # ~/.claude/hooks/format-on-edit.sh does not strip `# noqa` comments -- but
