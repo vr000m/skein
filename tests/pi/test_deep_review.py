@@ -20,6 +20,7 @@ SKILL = ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md"
 sys.path.insert(0, str(ROOT / "plugins/skein-pi/lib"))
 
 import review_gauntlet
+from test_review import assert_decision_packet_contract, exercise_decision_selection
 
 
 def test_deep_review_is_registered_after_readiness_review():
@@ -235,6 +236,7 @@ def test_deep_review_bundles_canonical_required_scripts():
     names = {
         "audit-auto-fix-eligibility.sh",
         "collect-lens-results.sh",
+        "decisions-active.sh",
         "lens-budget.sh",
         "persist-deep-review-state.sh",
         "persist-lens-result.sh",
@@ -243,10 +245,28 @@ def test_deep_review_bundles_canonical_required_scripts():
     assert names <= {path.name for path in bundled.iterdir() if path.is_file()}
     for name in names:
         assert (bundled / name).read_bytes() == (ROOT / "scripts" / name).read_bytes()
-    for name in ("auto-fix-common.sh", "lens-common.sh", "persist-common.sh"):
+    for name in (
+        "auto-fix-common.sh",
+        "lens-common.sh",
+        "persist-common.sh",
+        "decisions-common.sh",
+    ):
         assert (bundled / "lib" / name).read_bytes() == (
             ROOT / "scripts/lib" / name
         ).read_bytes()
+
+
+def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
+    assert_decision_packet_contract(SKILL, "Architecture")
+    text = SKILL.read_text()
+    for phrase in (
+        "tracked staged/unstaged paths",
+        "Do not substitute unrelated current-diff paths for a plan target",
+        "Check each path-source command succeeds",
+        "`--continue` remains unsupported",
+    ):
+        assert phrase in text
+    exercise_decision_selection(SKILL, tmp_path)
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

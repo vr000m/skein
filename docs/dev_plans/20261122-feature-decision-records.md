@@ -383,13 +383,15 @@ sequenceDiagram
 - [ ] Phase 3a: Lens checks against active records (Codex session)
 - [ ] Phase 4a: update-docs promotion and template (Codex session)
 - [ ] Phase 5a: conduct nudge (Codex session)
-- [ ] Phase 3c: Lens checks against active records (Pi session)
+- [x] Phase 3c: Lens checks against active records (Pi session)
 - [ ] Phase 4c: update-docs promotion (Pi session)
 - [ ] Phase 5c: conduct nudge (Pi session)
 - [ ] Phase 6: Verify and docs
 - [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
 
 ## Findings
+
+- Phase 3c (Pi): `just pi-tests` passed (216 tests); `just check-sync` passed, including the existing Pi update-docs validator bundle. Added architecture-only prompt contracts and executable selector conflict/no-match/superseded/truncation/failure fixtures. No separately approved runtime lens workers were launched: these tests do not prove model detection quality. No implementation deviation; deep-review also selects tracked staged/unstaged paths to match its existing worktree scope.
 
 - Pi review (2026-11-22): Confirmed — extension.ts:406 registers skein_update_docs_audit with nine bounded keys and additionalProperties:false; validateDocAudit limits findings to supplied document locations and exact five-field findings; added source-plan-anchored promotion offers without schema expansion.
 - Pi review (2026-11-22): Corrected — no-tools lens inputs are not uniformly evidence packets: review-plan currently limits lookup evidence to codebase-claims; added explicit architecture-only allowed input, installed-rubric scope, deep-review packet preparation and unchanged role/prompt/result contracts.
