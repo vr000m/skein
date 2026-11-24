@@ -513,6 +513,31 @@ def test_excuse_notice_beyond_the_scan_limits_excludes_nothing():
     assert review_gauntlet.excuse_exclusions(past_cap, [excuse]) == []
 
 
+def test_excuse_notice_cut_by_the_scan_cap_cannot_cite_a_shorter_line():
+    short = documentation_finding(
+        "Excuse: temporary hack", severity="Important", line=12
+    )
+    cap = review_gauntlet._EXCUSE_SCAN_LIMIT
+    cut = "\n" * (cap - len("Excuse: x.py:12")) + "Excuse: x.py:123"
+    assert cut[:cap].endswith("Excuse: x.py:12")
+    assert review_gauntlet.excuse_exclusions(cut, [short]) == []
+    whole = cut[:cap] + "\nrest"
+    assert review_gauntlet.excuse_exclusions(whole, [short]) == [short]
+
+
+@pytest.mark.parametrize("severity", [["Minor"], {"level": "Minor"}])
+def test_unhashable_severity_stays_actionable_instead_of_raising(severity):
+    advice = documentation_finding(severity=severity)
+    projected = review_gauntlet.project_gate_findings(
+        {"gate": "deep-review", "status": "findings", "findings": [advice]}
+    )
+    assert projected["advice"] == []
+    assert projected["gate"]["findings"] == [advice]
+    excuse = documentation_finding("Excuse: temporary hack", severity=severity)
+    notice = "Excuse: x.py:3 cannot repair in scope."
+    assert review_gauntlet.excuse_exclusions(notice, [excuse]) == [excuse]
+
+
 def test_refresh_removes_stale_entry_and_reprobes_available(tmp_path):
     cache = tmp_path / "capabilities.json"
     review_gauntlet.probe(

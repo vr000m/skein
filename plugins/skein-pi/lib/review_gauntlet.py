@@ -161,6 +161,15 @@ def _notice_path(path: object) -> str:
     return text
 
 
+def _is_minor(severity: object) -> bool:
+    """Whether ``severity`` is a Minor label; a non-string is never one.
+
+    Worker output is untrusted, and ``in`` on a frozenset raises ``TypeError``
+    for an unhashable value such as a list.
+    """
+    return isinstance(severity, str) and severity in MINOR_SEVERITIES
+
+
 def _inside_quote(prefix: str) -> bool:
     return (
         prefix.count("`") % 2 == 1
@@ -172,7 +181,11 @@ def _inside_quote(prefix: str) -> bool:
 def _excuse_citations(summary: str) -> set[tuple[str, str | None]]:
     cited: set[tuple[str, str | None]] = set()
     in_fence = False
-    for raw in summary[:_EXCUSE_SCAN_LIMIT].split("\n"):
+    scanned = summary[:_EXCUSE_SCAN_LIMIT]
+    if len(summary) > _EXCUSE_SCAN_LIMIT and summary[_EXCUSE_SCAN_LIMIT] != "\n":
+        # A line cut by the cap could end mid-number and cite a shorter line.
+        scanned = scanned[: scanned.rfind("\n") + 1]
+    for raw in scanned.split("\n"):
         line = raw.removesuffix("\r")
         stripped = line.lstrip(" \t")
         if stripped.startswith(("```", "~~~")):
@@ -204,8 +217,9 @@ def excuse_exclusions(
     untrusted fixer text cannot drop an ordinary finding from later batches.
     A notice inside quoted prose (after an unclosed backtick or double quote
     on its line, on a ``>`` blockquote line or in a fenced block) is ignored.
-    Only the first 64 KiB are scanned and a line over 4096 characters is
-    skipped, so the scan stays linear; a skipped notice excludes nothing.
+    Only the first 64 KiB are scanned (a line the cap cuts is dropped whole)
+    and a line over 4096 characters is skipped, so the scan stays linear; a
+    skipped notice excludes nothing.
     Backticks, quotes or brackets around the ``file:line`` and a leading
     ``./`` are ignored; a backticked ``file:line`` may contain spaces.
     """
@@ -214,7 +228,7 @@ def excuse_exclusions(
         dict(finding)
         for finding in batch
         if finding.get("category") == "Documentation"
-        and finding.get("severity") not in MINOR_SEVERITIES
+        and not _is_minor(finding.get("severity"))
         and str(finding.get("summary", "")).startswith(EXCUSE_PREFIX)
         and (_notice_path(finding.get("file")), _line_key(finding.get("line"))) in cited
     ]
@@ -238,7 +252,7 @@ def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
         summary = finding.get("summary", "")
         if (
             finding.get("category") == "Documentation"
-            and finding.get("severity") in MINOR_SEVERITIES
+            and _is_minor(finding.get("severity"))
             and isinstance(summary, str)
             and summary.startswith(ADVICE_PREFIX)
         ):
