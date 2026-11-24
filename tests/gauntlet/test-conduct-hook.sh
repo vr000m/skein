@@ -128,6 +128,86 @@ assert_grep "$SKILL_MD" '(not|without).*rewrit(e|ing).*commit_sha|commit_sha.*(n
 assert_grep "$SKILL_MD" 'review-gauntlet' \
 	"SKILL.md's handback/terminal prose references \`review-gauntlet\` (automated path)"
 
+# --- /update-docs pointer: healthy terminal handback only ---------------
+
+# section FILE HEADING — the exact heading line through the line before the
+# next heading of the same or a higher level.
+section() {
+	awk -v h="$2" '
+		$0 == h { on = 1; split(h, p, " "); level = length(p[1]); print; next }
+		on && /^#+ / { split($0, q, " "); if (length(q[1]) <= level) exit }
+		on
+	' "$1"
+}
+
+# assert_section_lacks HEADING LABEL — the section exists and has no pointer.
+assert_section_lacks() {
+	local text
+	text="$(section "$SKILL_MD" "$1")"
+	if [[ -z "$text" ]]; then
+		fail "$2 (section not found: $1)"
+	elif grep -q '/update-docs' <<<"$text"; then
+		fail "$2 (/update-docs found in: $1)"
+	else
+		pass "$2"
+	fi
+}
+
+completion="$(section "$SKILL_MD" '## Completion Handback')"
+pointer='Next: run /update-docs to sync the docs and offer decision-record promotion.'
+if grep -qxF "$pointer" <<<"$completion"; then
+	pass "healthy terminal path: the completion handback carries the /update-docs pointer"
+else
+	fail "healthy terminal path: the completion handback lacks the line: $pointer"
+fi
+if grep -q 'status = complete' <<<"$completion" && grep -q 'review-gauntlet` auto-chain has returned clean' <<<"$completion"; then
+	pass "healthy terminal path: the pointer is gated on status = complete after a clean gauntlet"
+else
+	fail "healthy terminal path: the pointer is not gated on status = complete after a clean gauntlet"
+fi
+if grep -q 'conduct never invokes the update-docs skill itself' <<<"$completion"; then
+	pass "the pointer is text only, never an invocation"
+else
+	fail "the completion handback does not say the pointer is text only"
+fi
+
+# Placement: the pointer appears nowhere outside the completion section, and
+# that section follows the auto-chain, so it comes after any gauntlet run.
+outside="$(awk '$0 == "## Completion Handback" { skip = 1; next } skip && /^## / { skip = 0 } !skip' "$SKILL_MD" | grep -c '/update-docs' || true)"
+if [[ "$outside" -eq 0 ]]; then
+	pass "/update-docs appears only in the completion handback"
+else
+	fail "/update-docs appears $outside time(s) outside the completion handback"
+fi
+chain_line="$(grep -n '^## Review Gauntlet Auto-Chain$' "$SKILL_MD" | cut -d: -f1)"
+done_line="$(grep -n '^## Completion Handback$' "$SKILL_MD" | cut -d: -f1)"
+if [[ -n "$chain_line" && -n "$done_line" && "$done_line" -gt "$chain_line" ]]; then
+	pass "the completion handback follows the review-gauntlet auto-chain"
+else
+	fail "the completion handback does not follow the review-gauntlet auto-chain"
+fi
+
+assert_section_lacks '#### Step 9a — Phase success transition (autonomous-aware)' \
+	"intermediate route: the Step 9a phase summary has no /update-docs pointer"
+assert_section_lacks '#### Step 9b — Hard-stop handback' \
+	"blocked route: the Step 9b hard-stop handback has no /update-docs pointer"
+assert_section_lacks '## CI Parity Gate' \
+	"CI-failed route: the ci_failed handback has no /update-docs pointer"
+assert_section_lacks '## Review Gauntlet Auto-Chain' \
+	"non-clean gauntlet route: the non-clean gauntlet handback has no /update-docs pointer"
+# shellcheck disable=SC2016  # backticks are literal skill text
+for route in 'Step 9a intermediate phase summary' 'Step 9b hard-stop handback' '`ci_failed` handback' 'non-clean `review-gauntlet` handback'; do
+	if grep -qF "$route" <<<"$completion"; then
+		pass "the completion handback excludes the route: $route"
+	else
+		fail "the completion handback does not exclude the route: $route"
+	fi
+done
+
+# Plan A's comment-notice handback stays intact.
+assert_grep "$SKILL_MD" '^\*\*Comment notices\.\*\* The implementer' \
+	"Step 9a keeps the comment-notice handback"
+
 # Sanity: guard against a gross truncation of the file passing the above
 # greps vacuously.
 if [[ -s "$SKILL_MD" ]]; then
