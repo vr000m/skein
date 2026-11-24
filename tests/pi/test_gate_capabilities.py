@@ -158,7 +158,7 @@ def test_advice_projection_splits_before_same_line_reconciliation():
     result = review_gauntlet.project_gate_findings(raw)
     assert raw == original
     assert result["advice"] == [candidate]
-    assert result["near_misses"] == [malformed]
+    assert "near_misses" not in result
     assert result["advice_count"] == 1
     assert result["findings_count"] == 4
     assert result["gate"] == {
@@ -255,9 +255,13 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
             "That stream predates deep-review's merge-base Review Checklist "
             "suppression, so first drop every record whose `(file, line, "
             "category)` matches a finding that suppression removed and that "
-            "sits on the same side of the advice split below (both advice, or "
-            "both not), so suppressing a candidate never drops a same-line excuse"
+            "is in the same class: advice (the split below), excuse (a "
+            "`Documentation` finding above Minor whose summary begins with exactly "
+            "`Excuse:`, the excuse class all three mirrors share) or neither"
         ),
+        "Suppressing a candidate or any other finding then never drops a same-line excuse",
+        "a misspelled or recased prefix included, stays actionable",
+        "the projection rejects it with `passed gate has findings`",
         (
             "name the `file:line` of an excuse-class finding (`Documentation` "
             "above Minor with an `Excuse:` summary prefix, as the Pi documentation "
@@ -271,12 +275,6 @@ def test_gauntlet_routes_projection_to_actionable_only_ledger_and_report():
         "Keep their disk-first `Critical|Important|Minor` severities",
         "matched on file, line, category and summary",
         'Exclude only the findings `excuse_exclusions(proposal["summary"], batch)` returns',
-        (
-            "near-miss prefix (the prefix's words in any casing, spacing or "
-            "punctuation that fail the exact test; `_near_miss_prefix` applies "
-            "the same rule as the Claude and Codex `near_miss_filter`) stays "
-            "actionable"
-        ),
         "a notice must open a line or sentence, carry a whole line number",
         "same-line excuse-plus-candidate cannot merge into advice",
         "Retain each original gate envelope",
@@ -303,29 +301,18 @@ def test_advice_projection_reads_canonical_disk_first_severity():
     assert result["gate"]["findings"][0]["severity"] == "Important"
 
 
-@pytest.mark.parametrize(
-    ("summary", "near_miss"),
-    [
-        ("decision candidate: keep", True),
-        ("Decision-candidate: keep", True),
-        ("DECISION  CANDIDATE - keep", True),
-        ("Decision candidate keep the bound", True),
-        ("Decison candidate: keep", False),
-        ("Decision: keep", False),
-        ("Typo in docstring", False),
-        ("temporary hack", False),
-    ],
-)
-def test_near_miss_covers_casing_spacing_and_punctuation(summary, near_miss):
-    result = review_gauntlet.project_gate_findings(
-        {
-            "gate": "deep-review",
-            "status": "findings",
-            "findings": [documentation_finding(summary)],
-        }
-    )
-    assert result["advice"] == []
-    assert bool(result["near_misses"]) is near_miss
+def test_passed_gate_with_findings_is_rejected_not_projected():
+    raw = {
+        "gate": "deep-review",
+        "status": "passed",
+        "findings": [documentation_finding()],
+    }
+    with pytest.raises(ValueError, match="passed gate has findings"):
+        review_gauntlet.project_gate_findings(raw)
+    with pytest.raises(ValueError, match="passed gate has findings"):
+        pi_ledger.PiLedger._validate_round(
+            {"status": "success", "gates": [raw], "findings_count": 0}
+        )
 
 
 def fixer_envelope(claimed, summary="done"):
@@ -437,6 +424,34 @@ def test_excuse_notice_ignores_quoting_and_a_leading_dot_slash(summary):
 def test_excuse_notice_must_be_anchored_with_a_whole_line(summary):
     excuse = documentation_finding("Excuse: temporary hack", severity="Important")
     assert review_gauntlet.excuse_exclusions(summary, [excuse]) == []
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "Repaired one hack.\n- Excuse: x.py:3 cannot repair in scope.",
+        "Repaired one hack.\n* Excuse: `x.py:3` cannot repair in scope.",
+        "Repaired one hack.\n  Excuse: x.py:3 cannot repair in scope.",
+        "Repaired one hack.\n1. Excuse: x.py:3 cannot repair in scope.",
+    ],
+)
+def test_excuse_notice_accepts_indentation_and_a_list_marker(summary):
+    excuse = documentation_finding("Excuse: temporary hack", severity="Important")
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
+
+
+def test_excuse_notice_accepts_a_backticked_path_with_spaces():
+    excuse = documentation_finding(
+        "Excuse: temporary hack", file="src/my module.py", line=17, severity="Important"
+    )
+    summary = "Excuse: `src/my module.py:17` cannot repair in scope."
+    assert review_gauntlet.excuse_exclusions(summary, [excuse]) == [excuse]
+    assert (
+        review_gauntlet.excuse_exclusions(
+            "Excuse: src/my module.py:17 unquoted", [excuse]
+        )
+        == []
+    )
 
 
 def test_excuse_notice_counts_at_a_line_start():

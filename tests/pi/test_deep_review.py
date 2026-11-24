@@ -65,7 +65,7 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         "Keep raw Documentation findings",
         "preserve that exact prefix unchanged during severity mapping",
         "first set aside every row that is advice (category `Documentation`, severity `Minor`",
-        "or a near miss of that prefix",
+        "a misspelled or recased prefix included, is reconciled like every other finding",
         "append the set-aside rows to its `findings` unmerged, one finding each",
         "add their count to `summary.raw` and `summary.unique`",
         "a review whose only findings are set-aside rows is not clean",
@@ -94,8 +94,8 @@ def test_documentation_packet_and_lens_are_added_diff_only():
         ),
         "Never relabel an excuse as advice",
         "Begin its `summary` with exactly `Excuse:`",
-        "sets candidates and near misses aside before reconciliation and appends them unmerged",
-        "(exact-prefix Minor advice and near misses) are set aside and appended back unmerged",
+        "sets exact-prefix candidates aside before reconciliation and appends them unmerged",
+        "after exact-prefix Minor `Decision candidate:` advice rows are set aside",
     ):
         assert phrase in rubric, phrase
 

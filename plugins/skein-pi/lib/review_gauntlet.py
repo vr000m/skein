@@ -21,8 +21,9 @@ MINOR_SEVERITIES = frozenset({"Minor", "suggestion"})
 ADVICE_PREFIX = "Decision candidate:"
 EXCUSE_PREFIX = "Excuse:"
 _EXCUSE_NOTICE = re.compile(
-    r"(?:^|(?<=[.;!?])[ \t]+)Excuse:[ \t]*[`'\"(\[<]*([^\s`'\"()\[\]<>]+):(\d+)"
-    r"[`'\")\]>]*(?=[\s.,;]|$)",
+    r"(?:^[ \t]*(?:[-*+]|\d+[.)])?[ \t]*|(?<=[.;!?])[ \t]+)Excuse:[ \t]*"
+    r"(?:`([^`\n]+):(\d+)`|[`'\"(\[<]*([^\s`'\"()\[\]<>]+):(\d+)[`'\")\]>]*)"
+    r"(?=[\s.,;]|$)",
     re.MULTILINE,
 )
 TRANSIENT_REASONS = frozenset(
@@ -139,17 +140,6 @@ def zero_runnable_stop(result: Coverage) -> str | None:
     return None
 
 
-def _near_miss_prefix(summary: object) -> bool:
-    """Match the advice prefix in any casing, spacing or punctuation, not exact.
-
-    The same rule as the Claude and Codex gauntlets' ``near_miss_filter``.
-    """
-    if not isinstance(summary, str) or summary.startswith(ADVICE_PREFIX):
-        return False
-    head = summary.split(":", 1)[0] if ":" in summary else " ".join(summary.split()[:2])
-    return re.sub(r"[^A-Za-z]", "", head).lower() == "decisioncandidate"
-
-
 def _summary_key(summary: object) -> str:
     return " ".join(str(summary or "").split()).lower()
 
@@ -174,18 +164,19 @@ def excuse_exclusions(
 ) -> list[dict[str, object]]:
     """Return the batch findings that a fixer's Excuse: notices may exclude.
 
-    A notice counts only when it opens a line or a sentence, carries a whole
-    line number, and its ``file:line`` names an excuse-class finding (a
+    A notice counts only when it opens a line or a sentence (after optional
+    indentation and one list marker), carries a whole line number, and its
+    ``file:line`` names an excuse-class finding (a
     Documentation finding above Minor whose summary begins with ``Excuse:``,
     as the documentation lens reports it) in the dispatched batch; any other
     notice, including an ``Excuse:`` quoted inside other text, is ignored, so
     untrusted fixer text cannot drop an ordinary finding from later batches.
     Backticks, quotes or brackets around the ``file:line`` and a leading
-    ``./`` are ignored.
+    ``./`` are ignored; a backticked ``file:line`` may contain spaces.
     """
     cited = {
-        (_notice_path(file), _line_key(line))
-        for file, line in _EXCUSE_NOTICE.findall(summary)
+        (_notice_path(quoted or bare), _line_key(quoted_line or bare_line))
+        for quoted, quoted_line, bare, bare_line in _EXCUSE_NOTICE.findall(summary)
     }
     return [
         dict(finding)
@@ -207,31 +198,27 @@ def project_gate_findings(gate: Mapping[str, object]) -> dict[str, object]:
         not isinstance(finding, dict) for finding in findings
     ):
         raise ValueError("invalid gate findings")
+    if status == "passed" and findings:
+        raise ValueError("passed gate has findings")
     actionable = []
     advice = []
-    near_misses = []
     for finding in findings:
         summary = finding.get("summary", "")
-        exact_prefix = isinstance(summary, str) and summary.startswith(ADVICE_PREFIX)
         if (
             finding.get("category") == "Documentation"
             and finding.get("severity") in MINOR_SEVERITIES
-            and exact_prefix
+            and isinstance(summary, str)
+            and summary.startswith(ADVICE_PREFIX)
         ):
             advice.append(dict(finding))
         else:
             actionable.append(dict(finding))
-            if _near_miss_prefix(summary):
-                near_misses.append(dict(finding))
     projected = dict(gate, findings=actionable, findings_count=len(actionable))
-    if status in {"passed", "findings"} and actionable:
-        projected["status"] = "findings"
-    elif status == "findings" and advice:
+    if status == "findings" and advice and not actionable:
         projected["status"] = "passed"
     return {
         "gate": projected,
         "advice": advice,
-        "near_misses": near_misses,
         "findings_count": len(actionable),
         "advice_count": len(advice),
     }

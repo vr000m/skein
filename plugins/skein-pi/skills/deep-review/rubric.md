@@ -35,7 +35,7 @@ added-comment findings. Do not look up symbols outside the supplied diff to
 establish staleness. Keep decision candidates informational and leave the
 comment in place. Never relabel an excuse as advice. When a same-line excuse
 and candidate still arrive as separate findings, they stay separate in the
-collector stream, and deep-review sets candidates and near misses aside
+collector stream, and deep-review sets exact-prefix candidates aside
 before reconciliation and appends them unmerged, so the grouping below never
 merges a candidate into an excuse. Raw
 Documentation findings remain in the deep-review state and report with the
@@ -43,7 +43,7 @@ prefix unchanged.
 
 ## Reconciliation and reporting
 
-- Reconciliation groups by `(file, line, category)` after `Decision candidate:` rows (exact-prefix Minor advice and near misses) are set aside and appended back unmerged, combines lens provenance, preserves related different-category findings at one location, and uses canonical severity/category/file/line order.
+- Reconciliation groups by `(file, line, category)` after exact-prefix Minor `Decision candidate:` advice rows are set aside and appended back unmerged, combines lens provenance, preserves related different-category findings at one location, and uses canonical severity/category/file/line order.
 - The report gives a one-line overall assessment, reconciler counts, severity-grouped findings, and residual coverage status.
 - Critical/Important findings include evidence and a concrete suggestion. Minor findings may be compact unless verbose rendering was requested.
 - The report always names `.deep-review/latest-pi.json`; a clean result requires no findings and complete required lens coverage.
