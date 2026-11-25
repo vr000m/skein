@@ -156,7 +156,9 @@ def assert_decision_packet_contract(skill, category):
         "Expand braces" if category == "Constraint" else "expanding braces",
         "Exit `0` with empty output means no record applies",
         "Exit `3`, any other non-zero exit",
-        "DECISIONS-TRUNCATED:",
+        "decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown",
+        "Judge coverage by `selector-exit=` alone",
+        "`selector-output=` names the selection file only when `selector-exit=` is `0` or `3`",
         "Decision records: degraded (<reason>)",
         "before dispatch and in the final report",
         "retries reuse the exact selected snapshot",
@@ -233,6 +235,7 @@ def exercise_plan_path_command(skill, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert selector_status(result) == 0
+    assert f"selector-output={lens / 'decision-records.txt'}" in result.stdout
     assert (lens / "decision-paths.txt").read_text() == "".join(f"{p}\n" for p in paths)
     assert (lens / "decision-records.txt").read_text() == ""
     assert not (repo / "injected").exists()
@@ -245,6 +248,7 @@ def exercise_plan_path_command(skill, tmp_path):
         check=False,
     )
     assert selector_status(unprefixed) == 4
+    assert "selector-output=\n" in unprefixed.stdout, "exit 4 names no file"
     outside = tmp_path / "outside"
     outside.mkdir()
     state = repo / f".{skill.parent.name}"
@@ -259,6 +263,7 @@ def exercise_plan_path_command(skill, tmp_path):
         check=False,
     )
     assert selector_status(linked) == 5
+    assert "selector-output=\n" in linked.stdout, "exit 5 names no file"
     assert list(outside.iterdir()) == [], (
         "a symlinked state directory must receive nothing"
     )
@@ -310,8 +315,11 @@ def exercise_decision_selection(skill, tmp_path):
     for index in range(9):
         record(f"20261122-extra-{index}.md")
     truncated = select("src/two-writers.py")
-    assert truncated.returncode == 0
-    assert "DECISIONS-TRUNCATED:" in truncated.stdout
+    assert truncated.returncode == 3, "a capped selection is degraded"
+    assert "decisions-active.sh: DECISIONS-TRUNCATED: 8 of 10 records shown" in (
+        truncated.stderr
+    )
+    assert "DECISIONS-TRUNCATED" not in truncated.stdout, "stdout is record text only"
     (records / active).write_text("# Malformed\n")
     failure = select("src/two-writers.py")
     assert failure.returncode == 3

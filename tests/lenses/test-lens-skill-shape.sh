@@ -999,7 +999,10 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 	decision_lacks "$dec_all" 'mapfile|readarray|\$\{[^}]*,,' "the selector call runs on bash 3.2"
 	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
 	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
-	decision_has "$dec_all" 'final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded' "truncation is degraded coverage"
+	decision_has "$dec_all" 'which the selector reports on stderr as `decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown`' "truncation is exit 3, reported on stderr"
+	decision_has "$dec_all" 'Judge coverage by `selector-exit=` alone, never by the file'"'"'s text, which is record text' "coverage comes from the exit status, never record text"
+	decision_has "$dec_all" '`selector-output=` names the file only when `selector-exit=` is `0` or `3`' "the output file is read only after exit 0 or 3"
+	decision_lacks "$dec_all" 'final `DECISIONS-TRUNCATED:` line' "no rule reads a truncation line out of the record text"
 	decision_has "$dec_all" 'Never report that as "no applicable decisions"' "degraded coverage is never no applicable decisions"
 	decision_has "$dec_all" 'reuse the same block for every attempt of the [Aa]rchitecture [Ll]ens, including a respawn' "a retry reuses the same block"
 	# Both mirrors refresh architecture on every same-scope resume and fence off
@@ -1056,9 +1059,13 @@ done
 # Executable selector snippets, each mirror's own fence run as written (the
 # Claude anchor resolved through the environment). Contract: the snippet's
 # stdout is exactly two status lines, `selector-exit=` and `selector-output=`;
-# the named file holds the selector's stdout and nothing else; deep-review
-# hands the selector both sides of a rename, runs no selector for an empty
-# range, and reports a failed diff as exit 4 with no record text.
+# `selector-output=` names the file exactly when `selector-exit=` is 0 or 3
+# (the statuses after which the selector wrote one), so a refused or missing
+# selector never sends a linked or stale file to the lens; the named file
+# holds the selector's stdout and nothing else; deep-review hands the
+# selector both sides of a rename, runs no selector for an empty range,
+# reports a failed diff as exit 4 with no record text, and reads its range
+# from quoted here-documents, so a hostile ref name runs nothing.
 # dec_fence <SKILL.md> <section opener regex>: the first fence after the opener.
 dec_fence() {
 	DEC_OPENER="$2" awk '
@@ -1069,7 +1076,10 @@ dec_fence() {
 	' "$1"
 }
 # dec_run_snippet <mirror> <snippet>: runs it in $dec_tmp; sets dec_status,
-# dec_text (the output file's content) and dec_lines (stdout line count).
+# dec_file (the `selector-output=` value), dec_text (that file's content, read
+# as the orchestrator would: only a named, regular, non-symlink file) and
+# dec_lines (stdout line count). dec_output_ok is 1 when the file is named
+# exactly for exit 0 or 3.
 # The Bash tool may run zsh, where `path`, `status` and `argv` are special
 # parameters (assigning `path` rewrites PATH), so each snippet also runs under
 # zsh when it is installed: dec_shell is bash or zsh.
@@ -1080,8 +1090,17 @@ dec_run_snippet() {
 	dec_lines="$(grep -c '' <<<"$out" || true)"
 	dec_status="$(sed -n 's/^selector-exit=//p' <<<"$out")"
 	file="$(sed -n 's/^selector-output=//p' <<<"$out")"
+	dec_file="$file"
+	dec_output_ok=0
+	case "$dec_status" in
+	0 | 3) [[ -n "$file" ]] && dec_output_ok=1 ;;
+	*) [[ -z "$file" ]] && dec_output_ok=1 ;;
+	esac
 	dec_text=""
-	[[ -n "$file" && -f "$file" ]] && dec_text="$(cat "$file")" && rm -f -- "$file"
+	if [[ -n "$file" && -f "$file" && ! -L "$file" ]]; then
+		dec_text="$(cat "$file")"
+		rm -f -- "$file"
+	fi
 	return 0
 }
 mkdir -p "$dec_tmp/src/cache" "$dec_tmp/archive"
@@ -1113,11 +1132,17 @@ dec_heredoc() {
 		fi
 	done <<<"${1//<run_id>/decisions-shape}"
 }
-# dec_range <snippet> <base> <head>: the deep-review snippet for that range.
+# dec_range <snippet> <base> <head>: the deep-review snippet for that range,
+# each value written on its own here-document line as the skill says.
 dec_range() {
-	local snippet="${1//<run_id>/decisions-shape}"
-	snippet="${snippet/BASE=\"<base>\"/BASE=\"$2\"}"
-	printf '%s\n' "${snippet/TIP=\"<head>\"/TIP=\"$3\"}"
+	local line
+	while IFS= read -r line; do
+		case "$line" in
+		'<base>') printf '%s\n' "$2" ;;
+		'<head>') printf '%s\n' "$3" ;;
+		*) printf '%s\n' "$line" ;;
+		esac
+	done <<<"${1//<run_id>/decisions-shape}"
 }
 dec_exec_skill=deep-review
 for dec_mirror in skein skein-codex; do
@@ -1249,8 +1274,8 @@ for dec_exec_skill in deep-review review-plan; do
 					else
 						fail "[$dec_shell] $dec_mirror $dec_exec_skill: exit 3 lost the status lines or the block (exit '$dec_status', $dec_lines lines)"
 					fi
-				elif [[ "$dec_status" == 5 && "$dec_lines" == 2 && $dec_victim_ok -eq 1 ]] && grep -q 'is a symlink' "$dec_tmp.stderr"; then
-					pass "[$dec_shell] $dec_mirror $dec_exec_skill: a $dec_cell is refused (exit 5), status lines printed, nothing written outside"
+				elif [[ "$dec_status" == 5 && "$dec_lines" == 2 && $dec_victim_ok -eq 1 && -z "$dec_file" && -z "$dec_text" ]] && grep -q 'is a symlink' "$dec_tmp.stderr"; then
+					pass "[$dec_shell] $dec_mirror $dec_exec_skill: a $dec_cell is refused (exit 5), selector-output empty, nothing written or read outside"
 				else
 					fail "[$dec_shell] $dec_mirror $dec_exec_skill: $dec_cell: exit '$dec_status', $dec_lines lines, outside untouched $dec_victim_ok"
 				fi
@@ -1272,6 +1297,96 @@ for dec_mirror in skein skein-codex; do
 	fi
 done
 rm -f "$dec_tmp.stderr" "$dec_tmp.rp-paths"
+# Round 4, the output gate and the range transport as one table. Contract:
+# `selector-output=` names the file exactly when `selector-exit=` is 0 or 3,
+# so neither a refused nor a missing selector hands the orchestrator a file
+# (a stale one included); a deep-review range value travels through a quoted
+# here-document, so a hostile ref name runs nothing and is refused with exit
+# 2, while an ordinary ref name still reaches the selector. Cells: mirror x
+# skill x shell x {0, 2, 3, 4, 5, 127 with a stale file at the output path},
+# plus deep-review x {three hostile names, one ordinary missing ref}.
+dec_gate_failures=0
+dec_gate_cells=0
+printf 'src/cache/index.py\n' >"$dec_tmp.rp-paths"
+: >"$dec_tmp.rp-none"
+for dec_exec_skill in deep-review review-plan; do
+	dec_state=".$dec_exec_skill"
+	dec_out_path="$dec_tmp/$dec_state/lenses/decisions-shape/decision-records.txt"
+	for dec_mirror in skein skein-codex; do
+		if [[ "$dec_exec_skill" == deep-review ]]; then
+			dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+		else
+			dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
+		fi
+		for dec_shell in "${dec_shells[@]}"; do
+			for dec_cell in 0 2 3 4 5 127; do
+				rm -rf "${dec_tmp:?}/$dec_state" "$dec_tmp/docs/decisions/20261199-broken.md"
+				dec_run_mirror="$dec_mirror"
+				if [[ "$dec_exec_skill" == deep-review ]]; then
+					case "$dec_cell" in
+					2) selector_snippet="$(dec_range "$dec_fenced" '' HEAD)" ;;
+					4) selector_snippet="$(dec_range "$dec_fenced" missing HEAD)" ;;
+					*) selector_snippet="$(dec_range "$dec_fenced" 'HEAD^' HEAD)" ;;
+					esac
+				else
+					case "$dec_cell" in
+					2) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-none")" ;;
+					4) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-paths")" && selector_snippet="${selector_snippet/p src\/cache\/index.py/src\/cache\/index.py}" ;;
+					*) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-paths")" ;;
+					esac
+				fi
+				case "$dec_cell" in
+				3) printf '# Broken record\n' >"$dec_tmp/docs/decisions/20261199-broken.md" ;;
+				5)
+					mkdir -p "${dec_out_path%/*}" "$dec_tmp.outside"
+					printf 'victim\n' >"$dec_tmp.outside/victim"
+					ln -s "$dec_tmp.outside/victim" "$dec_out_path"
+					;;
+				127)
+					mkdir -p "${dec_out_path%/*}"
+					printf 'STALE RECORD TEXT\n' >"$dec_out_path"
+					dec_run_mirror="no-such-mirror"
+					;;
+				esac
+				dec_run_snippet "$dec_run_mirror" "$selector_snippet"
+				dec_gate_cells=$((dec_gate_cells + 1))
+				if [[ "$dec_status" != "$dec_cell" || $dec_output_ok -ne 1 || "$dec_lines" != 2 ]] ||
+					[[ "$dec_cell" != 0 && "$dec_cell" != 3 && -n "$dec_text" ]]; then
+					dec_gate_failures=$((dec_gate_failures + 1))
+					fail "[$dec_shell] $dec_mirror $dec_exec_skill: cell $dec_cell gave exit '$dec_status', selector-output '$dec_file', $dec_lines lines"
+				fi
+				rm -rf "$dec_tmp.outside"
+			done
+		done
+	done
+done
+rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
+[[ $dec_gate_failures -eq 0 ]] && pass "selector-output names a file exactly for exit 0 or 3 ($dec_gate_cells cells: mirror x skill x shell x {0,2,3,4,5,127})"
+dec_exec_skill=deep-review
+dec_hostile_failures=0
+for dec_mirror in skein skein-codex; do
+	dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+	for dec_shell in "${dec_shells[@]}"; do
+		# shellcheck disable=SC2016  # the metacharacters are the test data
+		for dec_hostile in 'origin/main$(touch PWNED1)' 'a`touch PWNED2`"b' "x'\$(touch PWNED3)'" 'origin/no-such-branch'; do
+			rm -rf "${dec_tmp:?}/.deep-review" "$dec_tmp"/PWNED*
+			dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" "$dec_hostile" HEAD)"
+			dec_want=2
+			[[ "$dec_hostile" == origin/no-such-branch ]] && dec_want=4
+			if [[ "$dec_status" != "$dec_want" ]] || compgen -G "$dec_tmp/PWNED*" >/dev/null; then
+				dec_hostile_failures=$((dec_hostile_failures + 1))
+				fail "[$dec_shell] $dec_mirror deep-review: base '$dec_hostile' gave exit '$dec_status' (want $dec_want) or ran code"
+			fi
+			dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" HEAD "$dec_hostile")"
+			if [[ "$dec_status" != "$dec_want" ]] || compgen -G "$dec_tmp/PWNED*" >/dev/null; then
+				dec_hostile_failures=$((dec_hostile_failures + 1))
+				fail "[$dec_shell] $dec_mirror deep-review: head '$dec_hostile' gave exit '$dec_status' (want $dec_want) or ran code"
+			fi
+		done
+	done
+done
+[[ $dec_hostile_failures -eq 0 ]] && pass "deep-review range values are data: hostile ref names run nothing and exit 2, an ordinary missing ref reaches the selector (exit 4), bash and zsh"
+rm -rf "${dec_tmp:?}/.deep-review" "${dec_tmp:?}/.review-plan" "$dec_tmp.rp-none" "$dec_tmp.rp-paths" "$dec_tmp.stderr"
 # The decision-records paragraph and snippet are the same text in both
 # deep-review mirrors, apart from the selector anchor and the banner link.
 # shellcheck disable=SC2016  # the sed and grep patterns are literal skill text

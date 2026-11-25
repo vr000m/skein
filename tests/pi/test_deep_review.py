@@ -284,17 +284,24 @@ def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
 def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_path):
     """The selector runs the three diffs itself (range, staged, unstaged),
     keeps hostile names as data, reports a failed source as exit 4 on the
-    status line, and records the list it used in decision-paths.z."""
+    status line, and records the list it used in decision-paths.z. The range
+    arrives on quoted here-document lines, so a hostile ref name runs nothing,
+    and `selector-output=` names the file only for exit 0 or 3."""
     repo, env, commands = decision_command_fixture(SKILL, tmp_path)
     command = next(command for command in commands if "decision-paths.z" in command)
     paths_file = repo / ".deep-review/lenses/fixture/decision-paths.z"
+    output_file = repo / ".deep-review/lenses/fixture/decision-records.txt"
 
     def git(*args):
         return subprocess.check_output(["git", "-C", str(repo), *args])
 
-    def select(**extra):
+    def select(BASE, TIP, shell="/bin/bash", **extra):
+        assert "\n<base>\n" in command and "\n<head>\n" in command
+        ranged = command.replace("\n<base>\n", f"\n{BASE}\n").replace(
+            "\n<head>\n", f"\n{TIP}\n"
+        )
         result = subprocess.run(
-            ["/bin/bash", "-e", "-c", command],
+            [shell, "-e", "-c", ranged],
             cwd=repo,
             env={**env, **extra},
             capture_output=True,
@@ -302,7 +309,17 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
             check=False,
         )
         assert result.returncode == 0, result.stderr
-        return selector_status(result)
+        status = selector_status(result)
+        named = [
+            line.split("=", 1)[1]
+            for line in result.stdout.splitlines()
+            if line.startswith("selector-output=")
+        ]
+        assert named == ([str(output_file)] if status in (0, 3) else [""]), (
+            status,
+            named,
+        )
+        return status
 
     ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
     git(*ident, "commit", "--allow-empty", "-m", "base")
@@ -331,6 +348,13 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
     assert select(BASE="HEAD", TIP="HEAD") == 0
     assert paths_file.read_bytes() == b"", "no changed path is an empty selection"
     assert select(BASE="invalid-ref", TIP="HEAD") == 4
+    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
+    hostile = ["main$(touch pwned1)", 'a`touch pwned2`"b', "x'$(touch pwned3)'", ""]
+    for shell in shells:
+        for name in hostile:
+            assert select(BASE=name, TIP="HEAD", shell=shell) == 2, (shell, name)
+            assert select(BASE="HEAD^", TIP=name, shell=shell) == 2, (shell, name)
+        assert not list(repo.glob("pwned*")), "a ref name must never run"
     shim = tmp_path / "bin"
     shim.mkdir()
     wrapper = shim / "git"
