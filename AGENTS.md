@@ -46,7 +46,7 @@ scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-c
 plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
 tests/                       Reconciliation, parity, and auto-fix test harnesses; `tests/site/` guards the skein.sh site
 docs/dev_plans/              Development plans
-docs/decisions/             Decision records promoted from dev plans (format and promotion criteria in its README; validated by `just check-decisions`)
+docs/decisions/              Decision records promoted from dev plans (format and promotion criteria in its README; validated by `just check-decisions`)
 docs/skills_architecture/    Skills architecture design docs (source; rendered via /plan-view --rich)
 justfile                     Task runner config
 site/                        skein.sh static site (hand-written HTML/CSS/JS; `graph.json` is the skill map's single source); no build step
