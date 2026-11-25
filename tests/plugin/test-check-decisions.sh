@@ -86,6 +86,9 @@ record "$root" 20260201-new.md active 'src/*, docs/*.md' 20260101-old.md none "$
 record "$root" 20260301-other.md active 'scripts/*' none none "$PLAN"
 printf '# Decisions\n' >"$root/docs/decisions/README.md"
 expect_ok "good graph passes (README.md is not parsed as a record)" "$root"
+record "$root" 20260201-new.md superseded 'src/*' 20260101-old.md 20260401-latest.md "$PLAN"
+record "$root" 20260401-latest.md active 'src/*' 20260201-new.md none "$PLAN"
+expect_ok "a longer chain ending in an active record passes" "$root"
 
 root="$(fresh readme-only)"
 mkdir -p "$root/docs/decisions"
@@ -152,6 +155,38 @@ mkdir -p "$root/docs/decisions"
 printf '# Decisions\n' >"$root/docs/decisions/README.md"
 record "$root" 20260101-a.md active 'src/*' README.md none "$PLAN"
 expect_fail "README.md is not a link target" "$root" "does not resolve"
+
+root="$(fresh link-to-non-record)"
+record "$root" 20260101-old.md superseded 'src/*' none successor.txt "$PLAN"
+record "$root" successor.txt active 'src/*' 20260101-old.md none "$PLAN"
+expect_fail "a reciprocal successor must be in the record inventory" "$root" "Superseded by 'successor.txt' does not resolve"
+
+root="$(fresh cyclic)"
+record "$root" 20260101-a.md superseded 'src/*' 20260102-b.md 20260102-b.md "$PLAN"
+record "$root" 20260102-b.md superseded 'src/*' 20260101-a.md 20260101-a.md "$PLAN"
+expect_fail "reciprocal links may not form a cycle" "$root" "20260101-a.md: supersession cycle"
+
+root="$(fresh self-link)"
+record "$root" 20260101-a.md superseded 'src/*' 20260101-a.md 20260101-a.md "$PLAN"
+expect_fail "a record cannot supersede itself" "$root" "supersession cycle"
+
+root="$(fresh outside-plan)"
+touch "$tmp/outside-plan.md"
+record "$root" 20260101-a.md active 'src/*' none none ../outside-plan.md
+expect_fail "a source plan cannot traverse outside the repo" "$root" "inside the repository"
+ln -s "$tmp/outside-plan.md" "$root/docs/dev_plans/outside.md"
+record "$root" 20260101-a.md active 'src/*' none none docs/dev_plans/outside.md
+expect_fail "a source plan symlink cannot resolve outside the repo" "$root" "inside the repository"
+ln -s plan.md "$root/docs/dev_plans/local.md"
+record "$root" 20260101-a.md active 'src/*' none none docs/dev_plans/local.md
+expect_ok "an in-repo source plan symlink still resolves" "$root"
+
+root="$(fresh symlink-record)"
+outside="$(fresh record-target)"
+record "$outside" 20260101-outside.md active 'src/*' none none "$PLAN"
+mkdir -p "$root/docs/decisions"
+ln -s "$outside/docs/decisions/20260101-outside.md" "$root/docs/decisions/20260101-link.md"
+expect_fail "the validator rejects a symlinked record" "$root" "expected a regular, non-symlink file"
 
 # Every problem in a folder is reported in one run, not just the first.
 root="$(fresh multi)"

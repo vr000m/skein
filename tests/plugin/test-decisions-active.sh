@@ -204,6 +204,22 @@ else
 	fail "stderr names each malformed file ($(cat "$tmp/stderr"))"
 fi
 
+root="$tmp/local-records"
+outside="$tmp/outside-records"
+record "$root" 20260101-local.md active 'src/*'
+record "$outside" 20260102-outside.md active 'src/*' 'EXTERNAL-RECORD'
+ln -s "$outside/docs/decisions/20260102-outside.md" "$root/docs/decisions/20260102-link.md"
+ln -s "$outside/missing.md" "$root/docs/decisions/20260103-dangling.md"
+run "$root" src/x
+assert_eq "record symlinks degrade selection" 3 "$RC"
+assert_eq "only the local regular record is printed" "20260101-local.md" "$(names "$OUT")"
+root="$tmp/symlink-directory"
+mkdir -p "$root"
+ln -s "$outside/docs" "$root/docs"
+run "$root" src/x
+assert_eq "a linked docs directory degrades selection" 3 "$RC"
+assert_eq "a symlinked directory contributes no record text" "" "$OUT"
+
 # Paths with spaces and shell metacharacters are data.
 root="$tmp/meta"
 record "$root" 20260101-meta.md active 'src/*'

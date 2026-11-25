@@ -56,9 +56,10 @@ paths=("$@")
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 dir="$root/docs/decisions"
+dec_check_directory "$root" || exit 3
 
 records=()
-while IFS= read -r record_path; do
+while IFS= read -r -d '' record_path; do
 	records+=("$record_path")
 done < <(dec_record_files "$dir")
 [[ ${#records[@]} -gt 0 ]] || exit 0
@@ -101,7 +102,12 @@ block() {
 matched=()
 malformed=0
 for path in "${records[@]+"${records[@]}"}"; do
-	name="$(basename "$path")"
+	name="${path##*/}"
+	if ! dec_regular_record "$path"; then
+		echo "decisions-active.sh: malformed record $name: expected a regular, non-symlink file" >&2
+		malformed=1
+		continue
+	fi
 	status="$(dec_header "$path" Status || true)"
 	case "$status" in
 	active) ;;
@@ -134,7 +140,7 @@ shown=0
 used=0
 for path in "${matched[@]+"${matched[@]}"}"; do
 	text="$(
-		printf '### Record: docs/decisions/%s\n' "$(basename "$path")"
+		printf '### Record: docs/decisions/%s\n' "${path##*/}"
 		block "$path"
 	)"
 	text="$(printf '%s\n' "$text" | escape)"

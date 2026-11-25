@@ -13,7 +13,7 @@
 #     Superseded by, Source plan
 #   - Status is `active` or `superseded`
 #   - Supersedes and Superseded by are `none` or the filename of an existing
-#     record, and the link is reciprocal
+#     record, the link is reciprocal, and the chain has no cycles
 #   - no active record is superseded
 #   - Source plan resolves to a file under <repo-root>
 #   - Applies to is comma-separated globs without `**` or braces
@@ -31,7 +31,9 @@ if [[ $# -gt 1 || "${1:-}" == -* ]]; then
 fi
 
 root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+root="$(cd -P -- "$root" && pwd -P)" || exit 2
 dir="$root/docs/decisions"
+dec_check_directory "$root" || exit 1
 problems=0
 
 complain() {
@@ -40,7 +42,7 @@ complain() {
 }
 
 records=()
-while IFS= read -r record_path; do
+while IFS= read -r -d '' record_path; do
 	records+=("$record_path")
 done < <(dec_record_files "$dir")
 if [[ ${#records[@]} -eq 0 ]]; then
@@ -52,8 +54,27 @@ header() {
 	dec_header "$dir/$1" "$2" || true
 }
 
+record_member() {
+	local path="$dir/$1" index
+	for ((index = 0; index < ${#records[@]}; index++)); do
+		if [[ "${records[$index]}" == "$path" ]] && dec_regular_record "$path"; then
+			record_target_index="$index"
+			return 0
+		fi
+	done
+	return 1
+}
+
+successors=()
+record_index=-1
 for path in "${records[@]+"${records[@]}"}"; do
-	name="$(basename "$path")"
+	record_index=$((record_index + 1))
+	successors[record_index]=-1
+	name="${path##*/}"
+	if ! dec_regular_record "$path"; then
+		complain "$name" "expected a regular, non-symlink file"
+		continue
+	fi
 
 	complete=1
 	for field in Status Date "Applies to" Supersedes "Superseded by" "Source plan"; do
@@ -73,7 +94,7 @@ for path in "${records[@]+"${records[@]}"}"; do
 	fi
 
 	if [[ "$supersedes" != none ]]; then
-		if [[ "$supersedes" == */* || "$supersedes" == README.md || ! -f "$dir/$supersedes" ]]; then
+		if ! record_member "$supersedes"; then
 			complain "$name" "Supersedes '$supersedes' does not resolve to a record"
 		elif [[ "$(header "$supersedes" "Superseded by")" != "$name" ]]; then
 			complain "$name" "Supersedes '$supersedes' is not reciprocal: it must name $name in Superseded by"
@@ -81,10 +102,12 @@ for path in "${records[@]+"${records[@]}"}"; do
 	fi
 
 	if [[ "$superseded_by" != none ]]; then
-		if [[ "$superseded_by" == */* || "$superseded_by" == README.md || ! -f "$dir/$superseded_by" ]]; then
+		if ! record_member "$superseded_by"; then
 			complain "$name" "Superseded by '$superseded_by' does not resolve to a record"
 		elif [[ "$(header "$superseded_by" Supersedes)" != "$name" ]]; then
 			complain "$name" "Superseded by '$superseded_by' is not reciprocal: it must name $name in Supersedes"
+		else
+			successors[record_index]="$record_target_index"
 		fi
 		if [[ "$status" == active ]]; then
 			complain "$name" "active record is superseded by '$superseded_by'"
@@ -92,8 +115,8 @@ for path in "${records[@]+"${records[@]}"}"; do
 	fi
 
 	source_plan="$(header "$name" "Source plan")"
-	if [[ ! -f "$root/$source_plan" ]]; then
-		complain "$name" "Source plan '$source_plan' does not resolve to a file"
+	if ! dec_source_plan_exists "$root" "$source_plan"; then
+		complain "$name" "Source plan '$source_plan' does not resolve to a file inside the repository"
 	fi
 
 	while IFS= read -r glob; do
@@ -101,6 +124,23 @@ for path in "${records[@]+"${records[@]}"}"; do
 			complain "$name" "Applies to: $reason"
 		fi
 	done < <(dec_split_globs "$(header "$name" "Applies to")")
+done
+
+# Follow verified edges once. A node visited from the current start is a cycle.
+visited=()
+for ((start = 0; start < ${#records[@]}; start++)); do
+	current="$start"
+	while ((current >= 0)); do
+		if [[ -n "${visited[$current]:-}" ]]; then
+			if [[ "${visited[$current]}" == "$start" ]]; then
+				path="${records[$current]}"
+				complain "${path##*/}" "supersession cycle"
+			fi
+			break
+		fi
+		visited[current]="$start"
+		current="${successors[$current]}"
+	done
 done
 
 [[ $problems -eq 0 ]] || exit 1

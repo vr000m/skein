@@ -45,6 +45,8 @@ One file per decision, named `yyyymmdd-slug.md` (the date is the day the record 
 | `Superseded by` | The record that replaces this one, or `none`. |
 | `Source plan` | The dev plan the decision came from, as a repo-relative path that exists. |
 
+Store each record as a regular Markdown file inside this directory. The source plan may be a symlink if it resolves inside the same repository.
+
 The body sections are short: one paragraph for the decision, the reasons, the options that were weighed and dropped, and what now follows from it.
 
 ## `Applies to` globs
@@ -59,7 +61,7 @@ A record whose globs match none of the paths under review is not shown to the re
 
 ## Superseding a record
 
-To replace a record, write the new one with `Supersedes: <old filename>`, then set the old record to `Status: superseded` and `Superseded by: <new filename>`. The links must agree in both directions, and an active record must not name a successor. Amend a record only to fix a mistake; a changed decision is a new record.
+To replace a record, write the new one with `Supersedes: <old filename>`, then set the old record to `Status: superseded` and `Superseded by: <new filename>`. Each link must point to another record in this directory and agree in both directions. A succession chain cannot revisit a record, and an active record must have no successor. Amend an existing record only to fix a mistake. Write a new record when the decision changes.
 
 ## Pointing at a record from code
 
@@ -67,4 +69,4 @@ Where a comment would otherwise explain a design choice, point at the record ins
 
 ## Validation
 
-`scripts/check-decisions.sh [<repo-root>]` checks the folder: required headers, a valid `Status`, resolving and reciprocal supersession links, no active record that is superseded, a resolving `Source plan`, and supported `Applies to` globs. `just ci` runs it.
+`scripts/check-decisions.sh [<repo-root>]` checks file types, required headers, record status, reciprocal links, cycles, source plan containment, and supported `Applies to` globs. `just ci` runs it.
