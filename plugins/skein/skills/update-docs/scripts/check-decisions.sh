@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-decisions.sh — validate the docs/decisions record graph.
 #
-# Usage: check-decisions.sh [<repo-root>]
+# Usage: check-decisions.sh [<repo-root>] [--targets [--] <path>...]
 #
 # <repo-root> defaults to the git top level (or the current directory outside a
 # repository). Records are <repo-root>/docs/decisions/*.md, README.md excluded;
@@ -16,7 +16,15 @@
 #     record, the link is reciprocal, and the chain has no cycles
 #   - no active record is superseded
 #   - Source plan resolves to a file under <repo-root>
-#   - Applies to is comma-separated globs without `**` or braces
+#   - Applies to is comma-separated globs without `**`, braces or extended
+#     patterns (`?( *( +( @( !(`)
+#
+# --targets is the write preflight for a promotion: each <path> is a
+# repo-relative file the promotion is about to create or edit (the new record,
+# a superseded record, a first-promotion README, the source plan). Each must
+# stay inside <repo-root> with no `..` component, and neither it nor any
+# ancestor below <repo-root> (`docs`, `docs/decisions`, ...) may be a symlink;
+# an existing path must be a regular file. Reported as `<path>: <message>`.
 #
 # Exit codes: 0 valid, 1 at least one problem, 2 usage error.
 set -euo pipefail
@@ -25,122 +33,37 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
-if [[ $# -gt 1 || "${1:-}" == -* ]]; then
-	echo "usage: check-decisions.sh [<repo-root>]" >&2
+usage() {
+	echo "usage: check-decisions.sh [<repo-root>] [--targets [--] <path>...]" >&2
 	exit 2
+}
+root=""
+if [[ $# -gt 0 && "$1" != -* ]]; then
+	root="$1"
+	shift
+fi
+targets=()
+if [[ $# -gt 0 ]]; then
+	[[ "$1" == --targets ]] || usage
+	shift
+	[[ "${1:-}" == -- ]] && shift
+	[[ $# -gt 0 ]] || usage
+	targets=("$@")
 fi
 
-root="${1:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+[[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$root" && pwd -P)" || exit 2
-dir="$root/docs/decisions"
 dec_check_directory "$root" || exit 1
-problems=0
-
-complain() {
-	printf '%s: %s\n' "$1" "$2" >&2
-	problems=$((problems + 1))
-}
-
-records=()
-while IFS= read -r -d '' record_path; do
-	records+=("$record_path")
-done < <(dec_record_files "$dir")
-if [[ ${#records[@]} -eq 0 ]]; then
-	exit 0
-fi
-
-# header <name> <Field>: the value, or an empty string when absent.
-header() {
-	dec_header "$dir/$1" "$2" || true
-}
-
-record_member() {
-	local path="$dir/$1" index
-	for ((index = 0; index < ${#records[@]}; index++)); do
-		if [[ "${records[$index]}" == "$path" ]] && dec_regular_record "$path"; then
-			record_target_index="$index"
-			return 0
-		fi
-	done
-	return 1
-}
-
-successors=()
-record_index=-1
-for path in "${records[@]+"${records[@]}"}"; do
-	record_index=$((record_index + 1))
-	successors[record_index]=-1
-	name="${path##*/}"
-	if ! dec_regular_record "$path"; then
-		complain "$name" "expected a regular, non-symlink file"
-		continue
-	fi
-
-	complete=1
-	for field in Status Date "Applies to" Supersedes "Superseded by" "Source plan"; do
-		if [[ -z "$(header "$name" "$field")" ]]; then
-			complain "$name" "missing header $field"
-			complete=0
-		fi
-	done
-	[[ $complete -eq 1 ]] || continue
-
-	status="$(header "$name" Status)"
-	supersedes="$(header "$name" Supersedes)"
-	superseded_by="$(header "$name" "Superseded by")"
-
-	if [[ "$status" != active && "$status" != superseded ]]; then
-		complain "$name" "invalid Status '$status' (expected active or superseded)"
-	fi
-
-	if [[ "$supersedes" != none ]]; then
-		if ! record_member "$supersedes"; then
-			complain "$name" "Supersedes '$supersedes' does not resolve to a record"
-		elif [[ "$(header "$supersedes" "Superseded by")" != "$name" ]]; then
-			complain "$name" "Supersedes '$supersedes' is not reciprocal: it must name $name in Superseded by"
-		fi
-	fi
-
-	if [[ "$superseded_by" != none ]]; then
-		if ! record_member "$superseded_by"; then
-			complain "$name" "Superseded by '$superseded_by' does not resolve to a record"
-		elif [[ "$(header "$superseded_by" Supersedes)" != "$name" ]]; then
-			complain "$name" "Superseded by '$superseded_by' is not reciprocal: it must name $name in Supersedes"
-		else
-			successors[record_index]="$record_target_index"
-		fi
-		if [[ "$status" == active ]]; then
-			complain "$name" "active record is superseded by '$superseded_by'"
-		fi
-	fi
-
-	source_plan="$(header "$name" "Source plan")"
-	if ! dec_source_plan_exists "$root" "$source_plan"; then
-		complain "$name" "Source plan '$source_plan' does not resolve to a file inside the repository"
-	fi
-
-	while IFS= read -r glob; do
-		if reason="$(dec_glob_problem "$glob")"; then
-			complain "$name" "Applies to: $reason"
-		fi
-	done < <(dec_split_globs "$(header "$name" "Applies to")")
+# The per-record rules live in dec_validate_tree, which the selector shares.
+rc=0
+dec_validate_tree "$root" || rc=1
+for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
+	printf '%s\n' "$problem" >&2
 done
-
-# Follow verified edges once. A node visited from the current start is a cycle.
-visited=()
-for ((start = 0; start < ${#records[@]}; start++)); do
-	current="$start"
-	while ((current >= 0)); do
-		if [[ -n "${visited[$current]:-}" ]]; then
-			if [[ "${visited[$current]}" == "$start" ]]; then
-				path="${records[$current]}"
-				complain "${path##*/}" "supersession cycle"
-			fi
-			break
-		fi
-		visited[current]="$start"
-		current="${successors[$current]}"
-	done
+for target in "${targets[@]+"${targets[@]}"}"; do
+	if reason="$(dec_target_problem "$root" "$target")"; then
+		printf '%s: %s\n' "$target" "$reason" >&2
+		rc=1
+	fi
 done
-
-[[ $problems -eq 0 ]] || exit 1
+exit "$rc"

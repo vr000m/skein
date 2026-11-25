@@ -16,9 +16,12 @@
 #   ### Record: docs/decisions/<name>
 #   <title and header lines>
 #   ## Decision ... and ## Why ... (those two sections only)
-# Record text is escaped: any case-insensitive `</untrusted-content ...>`
-# lookalike becomes `<\/untrusted-content>`, so the orchestrator can wrap the
-# whole output in `<untrusted-content>` without a record closing it early.
+# Record text is escaped: the opening of any case-insensitive closing-tag
+# lookalike, `<`, `/` and the tag name with any whitespace between them and a
+# non-word character or end of text after, becomes `<\/untrusted-content`; the
+# rest of the text is kept. Escaping the whole output again changes nothing, so
+# the orchestrator can wrap it in `<untrusted-content>` without a record
+# closing it early.
 #
 # Cap: at most 8 records and 24 KiB of record text. When more records match,
 # the last line is `DECISIONS-TRUNCATED: N of M records shown`.
@@ -26,18 +29,21 @@
 # Exit codes:
 #   0  success: no match, no docs/decisions directory, or a truncated block
 #   2  usage error (no path, or an option)
-#   3  a record is malformed (Status missing or not active/superseded, or an
-#      active record with a missing or unsupported `Applies to`); stderr names
-#      each such file. Well-formed matches are still printed, so the caller
-#      reports degraded coverage rather than "no applicable decisions".
+#   3  a record is malformed: check-decisions.sh would reject it (both call
+#      dec_validate_tree). stderr names each problem. Only records the
+#      validator accepts are selected, and those matches are still printed, so
+#      the caller reports degraded coverage rather than "no applicable
+#      decisions".
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
-# A glob from a record is matched with these defaults, whatever the caller set.
-shopt -u extglob nocasematch nocaseglob
+# A glob from a record is matched case-sensitively, whatever the caller set.
+# Extended patterns are rejected by dec_glob_problem instead: `[[ == ]]` honours
+# them whatever `extglob` says.
+shopt -u nocasematch nocaseglob
 
 MAX_RECORDS=8
 MAX_BYTES=24576
@@ -55,14 +61,8 @@ fi
 paths=("$@")
 
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-dir="$root/docs/decisions"
+root="$(cd -P -- "$root" && pwd -P)"
 dec_check_directory "$root" || exit 3
-
-records=()
-while IFS= read -r -d '' record_path; do
-	records+=("$record_path")
-done < <(dec_record_files "$dir")
-[[ ${#records[@]} -gt 0 ]] || exit 0
 
 # applies <glob-list>: succeeds when any glob matches any path.
 applies() {
@@ -76,11 +76,22 @@ applies() {
 	return 1
 }
 
-# escape: neutralise a closing-tag lookalike anywhere in stdin, including one
-# split across lines. The boundary after the tag name is a non-word character,
-# matching the rule the skills apply to untrusted input.
+# Whitespace inside a lookalike: ASCII whitespace plus the UTF-8 encoding of
+# every other character a Unicode `\s` matches (U+001C-001F, U+0085, U+00A0,
+# U+1680, U+2000-200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF). sed runs
+# under LC_ALL=C and matches these bytes, so the result does not depend on the
+# caller's locale. The name's `s` also matches U+017F, which folds to `s`.
+WS="$(printf '([[:space:]\034\035\036\037]|\302[\205\240]|\341\232\200|\342\200[\200\201\202\203\204\205\206\207\210\211\212\250\251\257]|\342\201\237|\343\200\200|\357\273\277)')"
+S="$(printf '([sS]|\305\277)')"
+NAME="[uU][nN][tT][rR][uU]${S}[tT][eE][dD]-[cC][oO][nN][tT][eE][nN][tT]"
+
+# escape: replace the opening of every closing-tag lookalike in stdin, including
+# one split across lines, and nothing else. A match consumes its boundary
+# character, so the loop catches a lookalike that starts at that character. A
+# replacement cannot start a new match (`<\/` is not `<`, whitespace, `/`).
 escape() {
-	sed -E -e ':a' -e 'N' -e '$!ba' -e 's#<[[:space:]]*/[[:space:]]*[uU][nN][tT][rR][uU][sS][tT][eE][dD]-[cC][oO][nN][tT][eE][nN][tT]([^A-Za-z0-9_>][^>]*)?>#<\\/untrusted-content>#g'
+	LC_ALL=C sed -E -e ':a' -e '$!{' -e 'N' -e 'ba' -e '}' \
+		-e ':b' -e "s#<${WS}*/${WS}*${NAME}([^A-Za-z0-9_]|\$)#<\\\\/untrusted-content\\4#g" -e 'tb'
 }
 
 # block <record path>: the header, then the Decision and Why sections.
@@ -99,39 +110,18 @@ block() {
 	done <"$1"
 }
 
-matched=()
 malformed=0
-for path in "${records[@]+"${records[@]}"}"; do
-	name="${path##*/}"
-	if ! dec_regular_record "$path"; then
-		echo "decisions-active.sh: malformed record $name: expected a regular, non-symlink file" >&2
-		malformed=1
-		continue
-	fi
-	status="$(dec_header "$path" Status || true)"
-	case "$status" in
-	active) ;;
-	superseded) continue ;;
-	*)
-		echo "decisions-active.sh: malformed record $name: Status must be active or superseded" >&2
-		malformed=1
-		continue
-		;;
-	esac
-	applies_to="$(dec_header "$path" "Applies to" || true)"
-	bad=""
-	while IFS= read -r glob; do
-		if reason="$(dec_glob_problem "$glob")"; then
-			bad="$reason"
-			break
-		fi
-	done < <(dec_split_globs "$applies_to")
-	if [[ -n "$bad" ]]; then
-		echo "decisions-active.sh: malformed record $name: Applies to: $bad" >&2
-		malformed=1
-		continue
-	fi
-	if applies "$applies_to"; then
+dec_validate_tree "$root" || malformed=1
+for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
+	echo "decisions-active.sh: malformed record $problem" >&2
+done
+
+matched=()
+for ((index = 0; index < ${#DEC_RECORDS[@]}; index++)); do
+	path="${DEC_RECORDS[$index]}"
+	[[ "${DEC_VALID[$index]}" == 1 ]] || continue
+	[[ "$(dec_header "$path" Status || true)" == active ]] || continue
+	if applies "$(dec_header "$path" "Applies to" || true)"; then
 		matched+=("$path")
 	fi
 done
