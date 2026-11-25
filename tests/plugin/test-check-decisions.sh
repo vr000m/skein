@@ -247,6 +247,10 @@ ln -s plan.md "$root/docs/dev_plans/linked.md"
 targets_case "a symlinked source plan is refused as a write target" 1 "docs/dev_plans/linked.md is a symlink" "$root" docs/dev_plans/linked.md
 root="$(fresh targets-dotdot)"
 targets_case "a '..' component is refused" 1 "may leave the repository" "$root" docs/../../escape.md
+targets_case "a '..' after a missing directory is refused" 1 "may leave the repository" "$root" docs/missing/../../../escape.md
+targets_case "a '..' after a missing docs/decisions is refused" 1 "may leave the repository" "$root" docs/decisions/../../../escape.md
+targets_case "a trailing '..' is refused" 1 "may leave the repository" "$root" docs/missing/..
+targets_case "a name that only contains dots is allowed" 0 "" "$root" docs/decisions/a..b.md
 targets_case "an absolute path is refused" 1 "expected a repo-relative path" "$root" "$outside_dir/escape.md"
 mkdir -p "$root/docs/decisions/sub.md"
 targets_case "a directory at a record path is refused" 1 "expected a regular file" "$root" docs/decisions/sub.md

@@ -63,11 +63,17 @@ dec_source_plan_exists() {
 # returns 1 when the path is safe to create or edit. Every existing component
 # below <root> must be a real directory (the leaf a regular file), so the write
 # resolves physically inside <root>. A missing component ends the walk: what
-# is created under a verified directory stays inside it.
+# is created under a verified directory stays inside it. A `..` component is
+# refused up front, wherever it sits, because the walk can end before reaching
+# one that follows a missing directory.
 dec_target_problem() {
 	local root="$1" rest="$2" part path="$1"
 	if [[ -z "$rest" || "$rest" == /* ]]; then
 		printf 'expected a repo-relative path\n'
+		return 0
+	fi
+	if [[ "/$rest/" == */../* ]]; then
+		printf "a '..' component may leave the repository\n"
 		return 0
 	fi
 	while [[ -n "$rest" ]]; do
@@ -78,10 +84,6 @@ dec_target_problem() {
 			rest=""
 		fi
 		[[ -n "$part" && "$part" != . ]] || continue
-		if [[ "$part" == .. ]]; then
-			printf "a '..' component may leave the repository\n"
-			return 0
-		fi
 		path="$path/$part"
 		if [[ -L "$path" ]]; then
 			printf '%s is a symlink\n' "${path#"$root"/}"
