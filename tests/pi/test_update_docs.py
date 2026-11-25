@@ -1,6 +1,7 @@
 """Read-only update-docs route and bounded-evidence contract tests."""
 
 import json
+import re
 import subprocess
 import sys
 
@@ -208,16 +209,24 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "not a generic plan edit",
         "Before applying any approved ordinary edit to the source plan, classify its review marker",
         "with a valid marker, apply only edits below it and report any above-marker edit as deferred",
-        "run the installed bundled `scripts/check-decisions.sh --targets -- <source plan> <each offered path>`",
+        "run the installed bundled `scripts/check-decisions.sh --targets-file -` with the targets in a quoted `<<'SKEIN_TARGETS'` here-document",
+        "never on the command line",
+        "against `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` before it reaches any shell",
+        "`broken partial promotion: <link>`",
+        "report it as `already exists, link missing`, never draft a second record for it",
+        "Only the audit worker is read-only",
+        "The main session gathers the evidence, applies only the edits the user approves, and runs Decision Promotion",
+        "`marker.signed_prefix_sha256(plan)` must equal the digest kept before the first write",
         "On any non-zero exit, show its output, say which of the two it is, and offer nothing for that record",
         "requires each path to be `docs/dev_plans/<name>` or `docs/decisions/<name>`, where `<name>` is one path component matching `[A-Za-z0-9][A-Za-z0-9._-]*[.]md` (no further `/`, no `.git` component, no leading `-` or `.`)",
         "Exit `3` means a listed path is unsafe; exit `1` means the existing records already fail validation, and a valid record set is a precondition of every promotion",
-        "re-run the step 3 `--targets` preflight over the same paths and write nothing unless it exits `0`",
+        "re-run the step 3 `--targets-file` preflight over the same paths and write nothing unless it exits `0`",
         "this installed skill's own bundled `scripts/marker.py` authority",
         "`marker.classify_marker(plan)` must return `valid`",
         "the same four-state classification the Claude and Codex mirrors run",
         "Before the first write, save the exact bytes of every existing file the offer changes",
-        "and the new record last",
+        "so no interruption can leave the plan naming a record that does not exist",
+        "step 1 reports the new record as `already exists, link missing`",
         "restore every saved file to its saved bytes, delete every path this promotion created",
         "offer nothing further in this invocation",
         "the next step 3 preflight exits `1` and offers nothing until the records are repaired",
@@ -233,7 +242,8 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
     ref = SKILL.parent / "references/decision-records.md"
     assert ref.read_bytes() == (ROOT / "docs/decisions/README.md").read_bytes()
     assert "review-plan/scripts" not in text and "installed review-plan" not in text
-    preflight = text.index("--targets -- <source plan>")
+    assert "--targets -- " not in text, "no target may reach the preflight's argv"
+    preflight = text.index("--targets-file -")
     assert preflight < text.index("Then show the exact new path", preflight)
     for relative in ("check-decisions.sh", "lib/decisions-common.sh", "marker.py"):
         assert (SKILL.parent / "scripts" / relative).read_bytes() == (
@@ -360,3 +370,44 @@ def test_doc_audit_rejects_combined_snapshot_over_prompt_budget(sandbox, tmp_pat
     assert len(result) == 1 and result[0]["isError"]
     assert "input_too_large" in result[0]["result"]["content"][0]["text"]
     assert not (sandbox[2] / ".skein-pi-attempts").exists()
+
+
+def test_promotion_signed_prefix_digest_catches_a_rewritten_marker_date(tmp_path):
+    """Step 6's acceptance rule: `valid` alone accepts a rewritten marker date
+    (the hash still matches); the signed-prefix digest refuses it, while a
+    below-marker link keeps the digest."""
+    scripts = ROOT / "plugins/skein-pi/skills/update-docs/scripts"
+    writer = ROOT / "plugins/skein-pi/skills/review-plan/scripts/write-review-marker.py"
+    plan = tmp_path / "source.md"
+    plan.write_text(
+        "# Source\n### Architecture Decisions\nSingle writer.\n\n"
+        "<!-- reviewed: YYYY-MM-DD @ <hash> -->\n\n## Findings\nNone.\n"
+    )
+    subprocess.run(
+        [sys.executable, str(writer), str(plan)], check=True, capture_output=True
+    )
+    probe = [
+        sys.executable,
+        "-I",
+        "-B",
+        "-S",
+        "-c",
+        (
+            "import sys; sys.path.insert(0, sys.argv[1]); import marker; "
+            "print(marker.classify_marker(sys.argv[2])); "
+            "print(marker.signed_prefix_sha256(sys.argv[2]))"
+        ),
+        str(scripts),
+        str(plan),
+    ]
+    state, before = subprocess.check_output(probe, text=True).split()
+    assert state == "valid"
+    plan.write_bytes(
+        plan.read_bytes() + b"\n## Promoted Decisions\n- `docs/decisions/x.md`: X\n"
+    )
+    assert subprocess.check_output(probe, text=True).split() == ["valid", before]
+    plan.write_text(
+        re.sub(r"reviewed: \d{4}-\d{2}-\d{2}", "reviewed: 1999-01-01", plan.read_text())
+    )
+    state, after = subprocess.check_output(probe, text=True).split()
+    assert state == "valid" and after != before

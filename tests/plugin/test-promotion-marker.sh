@@ -321,12 +321,21 @@ check_mirror() {
 	expect_text "$name: promotion follows ordinary edits" "$section" \
 		'after the Phase 3 report and any ordinary Phase 4 edits'
 	# Write preflight: before the offer and again immediately before the write.
-	expect_text "$name: preflights every target before offering" "$section" \
-		"${check_path} --targets -- \"\$PLAN\" docs/decisions/<new file>"
+	expect_text "$name: preflights every target before offering, targets on stdin" "$section" \
+		"${check_path} --targets-file - <<'SKEIN_TARGETS'"
+	expect_text "$name: checks every file name before any shell use" "$section" \
+		"check each file name (the source plan's, the new record's and a superseded record's) against \`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md\$\`"
+	expect_text "$name: reports a plan link to a missing record" "$section" '`broken partial promotion: <link>`'
+	expect_text "$name: reports an orphan record and offers only its link" "$section" \
+		'report it as `already exists, link missing`, never draft a second record for it, and offer only its missing link line'
+	expect_text "$name: step 7 compares the signed-prefix digest" "$section" \
+		'the same `signed-prefix-sha256=` line it printed before the first write'
+	expect_text "$name: the classifier prints the signed-prefix digest" "$section" \
+		'print("signed-prefix-sha256=%s" % marker.signed_prefix_sha256(sys.argv[1]))'
 	expect_text "$name: re-runs the preflight immediately before the first write" "$section" \
 		'Immediately before the first write, re-run the step 3 preflight over the same paths and write nothing unless it exits `0`.'
 	local pre_at offer_at recheck_at write_at
-	pre_at="$(grep -n -- '--targets -- ' <<<"$section" | head -1 | cut -d: -f1 || true)"
+	pre_at="$(grep -n -- '--targets-file - ' <<<"$section" | head -1 | cut -d: -f1 || true)"
 	offer_at="$(grep -n -- 'Then show the exact offer:' <<<"$section" | head -1 | cut -d: -f1 || true)"
 	recheck_at="$(grep -n -- 're-run the step 3 preflight' <<<"$section" | head -1 | cut -d: -f1 || true)"
 	write_at="$(grep -n -- 'Write exactly the approved offer' <<<"$section" | head -1 | cut -d: -f1 || true)"
@@ -362,7 +371,7 @@ check_mirror() {
 	write_step="$(grep -F -- '6. **Write exactly the approved offer' <<<"$section" || true)"
 	expect_text "$name: saves every changed file's bytes before the first write" "$write_step" \
 		'Before the first write, save the exact bytes of every existing file the offer changes'
-	expect_text "$name: writes the new record last" "$write_step" 'and the new record last'
+	expect_text "$name: writes the plan link last" "$write_step" 'The plan link is always the final write'
 	save_at="$(grep -bo 'save the exact bytes' <<<"$write_step" | head -1 | cut -d: -f1 || true)"
 	first_at="$(grep -bo 'Then write in this order' <<<"$write_step" | head -1 | cut -d: -f1 || true)"
 	if [[ -n "$save_at" && -n "$first_at" && "$save_at" -lt "$first_at" ]]; then
@@ -370,11 +379,13 @@ check_mirror() {
 	else
 		fail "$name: the snapshot does not precede the first write ($save_at, $first_at)"
 	fi
-	expect_text "$name: rolls back on a failed or partial write or validation" "$validate_step" \
-		'If a write fails or stops part-way, the validator exits non-zero, or the step 5 check prints anything but `valid`, restore every saved file to its saved bytes, delete every path this promotion created'
+	expect_text "$name: rolls back on a failed or partial write, validation or digest change" "$validate_step" \
+		'If a write fails or stops part-way, the validator exits non-zero, the step 5 check prints anything but `valid`, or the digest differs, restore every saved file to its saved bytes, delete every path this promotion created'
 	expect_text "$name: offers nothing further after a rollback" "$validate_step" 'offer nothing further in this invocation'
-	expect_text "$name: an interrupted promotion blocks the next preflight" "$validate_step" \
+	expect_text "$name: an interrupted supersession blocks the next preflight" "$validate_step" \
 		'the next step 3 preflight exits `1` and offers nothing until the records are repaired'
+	expect_text "$name: an interruption before the link is an orphan step 1 reports" "$validate_step" \
+		'step 1 reports the new record as `already exists, link missing`'
 
 	if [[ "$name" == codex ]]; then
 		expect_text "codex: Phase 4 excludes decisions from the allowlist" "$apply_phase" \
@@ -419,7 +430,7 @@ run_marker_classifier() {
 	done
 	for state in missing placeholder stale valid; do
 		if got="$(cd "$shadow" && PLAN="$tmp/$state.md" SKILL_DIR="$skill_dir" bash -e <<<"$script" 2>&1)" &&
-			[[ "$got" == "$state" ]]; then
+			[[ "${got%%$'\n'*}" == "$state" && "${got#*$'\n'}" =~ ^signed-prefix-sha256=([0-9a-f]{64}|None)$ ]]; then
 			pass "$name: update-docs marker classifier prints $state"
 		else
 			fail "$name: update-docs marker classifier on the $state fixture printed '$got'"
@@ -437,17 +448,42 @@ run_marker_classifier() {
 	fi
 }
 
-# run_preflight <name> <plugin>: the mirror's own preflight line, run as
-# written over a promotion's targets, refuses a linked docs/decisions and a
-# linked source plan and accepts a real tree.
+# preflight_fence <plugin>: the mirror's own step 3 preflight fence, unindented.
+preflight_fence() {
+	awk '
+		/^## Decision Promotion$/ { promotion = 1; next }
+		promotion && /^## / { exit }
+		promotion && /^   ```$/ && !code { code = 1; next }
+		code && /^   ```$/ { exit }
+		code { print substr($0, 4) }
+	' "$REPO_ROOT/plugins/$1/skills/update-docs/SKILL.md" | sed "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/$1#g"
+}
+# preflight_run <plugin> <root> <target line>...: runs the fence in <root>
+# with its four template target lines replaced by the given lines; sets rc.
+preflight_run() {
+	local plugin="$1" root="$2" fence line script=""
+	shift 2
+	fence="$(preflight_fence "$plugin")"
+	while IFS= read -r line; do
+		case "$line" in
+		docs/dev_plans/'<plan file>') printf -v script '%s%s\n' "$script" "$(printf '%s\n' "$@")" ;;
+		docs/decisions/'<'*) ;;
+		*) printf -v script '%s%s\n' "$script" "$line" ;;
+		esac
+	done <<<"$fence"
+	rc=0
+	(cd "$root" && SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" bash -e <<<"$script" >/dev/null 2>&1) || rc=$?
+}
+
+# run_preflight <name> <plugin>: the mirror's own preflight fence, run as
+# written over a promotion's targets: exit 3 (a target refused, not merely a
+# bad graph) for a linked docs/decisions and a linked source plan, 0 for a
+# real tree, and a hostile name in the here-document runs nothing.
 run_preflight() {
-	local name="$1" plugin="$2" skill_dir line root rc
-	skill_dir="$REPO_ROOT/plugins/$plugin/skills/update-docs"
-	line="$(grep -E '^   .*check-decisions\.sh"? --targets -- ' "$skill_dir/SKILL.md" | head -1 | sed 's/^   //')"
-	line="${line//\$\{CLAUDE_PLUGIN_ROOT\}/$REPO_ROOT/plugins/$plugin}"
-	line="${line/ docs\/decisions\/<new file> \[docs\/decisions\/<superseded file>\] \[docs\/decisions\/README.md\]/ docs/decisions/20261125-new.md docs/decisions/README.md}"
-	if [[ -z "$line" || "$line" == *'<'* ]]; then
-		fail "$name: no runnable preflight line ($line)"
+	local name="$1" plugin="$2" root rc fence want
+	fence="$(preflight_fence "$plugin")"
+	if [[ "$fence" != *"--targets-file - <<'SKEIN_TARGETS'"* || "$fence" != *$'\nSKEIN_TARGETS'* ]]; then
+		fail "$name: no runnable here-document preflight ($fence)"
 		return
 	fi
 	for shape in real linked-decisions linked-plan; do
@@ -463,14 +499,23 @@ run_preflight() {
 			ln -s real.md "$root/docs/dev_plans/linked.md"
 			plan=docs/dev_plans/linked.md
 		fi
-		rc=0
-		(cd "$root" && PLAN="$plan" SKILL_DIR="$skill_dir" bash -e <<<"$line" >/dev/null 2>&1) || rc=$?
-		if [[ "$shape" == real && $rc -eq 0 ]] || [[ "$shape" != real && $rc -ne 0 ]]; then
+		preflight_run "$plugin" "$root" "$plan" docs/decisions/20261125-new.md docs/decisions/README.md
+		want=3
+		[[ "$shape" == real ]] && want=0
+		if [[ $rc -eq $want ]]; then
 			pass "$name: the preflight verdict on a $shape tree is exit $rc"
 		else
-			fail "$name: the preflight verdict on a $shape tree is exit $rc"
+			fail "$name: the preflight verdict on a $shape tree is exit $rc (want $want)"
 		fi
 	done
+	root="$tmp/preflight-$name-real"
+	# shellcheck disable=SC2016  # the metacharacters are the test data
+	preflight_run "$plugin" "$root" docs/dev_plans/real.md 'docs/decisions/x$(touch pwned).md'
+	if [[ $rc -eq 3 && ! -e "$root/pwned" ]]; then
+		pass "$name: a hostile record name in the preflight here-document is refused (exit 3) and runs nothing"
+	else
+		fail "$name: hostile here-document name: exit $rc, pwned $([[ -e "$root/pwned" ]] && echo yes || echo no)"
+	fi
 }
 
 # The shared promotion text is byte-identical across Claude and Codex except
@@ -494,15 +539,207 @@ if [[ "$mirror" == both ]]; then
 	fi
 fi
 
+# ---------------------------------------------------------------------------
+# Seam 2: the promotion write flow as a state space, driven by each mirror's
+# own text. Invariants: (2) no interruption leaves a plan link to a missing
+# record; every partial state is either blocked by the real validator (exit 1)
+# or an orphan record step 1 reports as `already exists, link missing`;
+# (3) a write is accepted only when the plan is still `valid` AND its
+# signed-prefix digest (line 1 through the marker line) is unchanged; (1) the
+# skill's file-name rule is the validator's DEC_TARGET_NAME.
+
+# write_order <SKILL.md> <step opener>: the write kinds (readme, record,
+# supersede, link) in the order the step lists them after "Then write".
+write_order() {
+	awk -v opener="$2" 'index($0, opener) == 1 { print; exit }' "$1" | python3 -c '
+import re, sys
+step = sys.stdin.read()
+step = step[step.find("Then write"):]
+kinds = {"readme": "folder and", "record": "the new record", "supersede": "supers", "link": "link"}
+found = sorted((step.find(p), k) for k, p in kinds.items() if step.find(p) >= 0)
+print(" ".join(k for _, k in found))'
+}
+
+# promo_fixture <root> <first|existing>: a plan with a Promoted Decisions
+# section and, unless first, one active record from the same plan.
+promo_fixture() {
+	local root="$1"
+	rm -rf "$root"
+	mkdir -p "$root/docs/dev_plans"
+	printf '# Plan\n\n## Promoted Decisions\n' >"$root/docs/dev_plans/plan.md"
+	if [[ "$2" == existing ]]; then
+		mkdir -p "$root/docs/decisions"
+		cp "$REPO_ROOT/docs/decisions/README.md" "$root/docs/decisions/README.md"
+		sup_record "$root" 20260101-old.md active none none
+	fi
+}
+
+# promo_write <root> <kind> <supersede yes|no>: one write of the offer.
+promo_write() {
+	local root="$1"
+	case "$2" in
+	readme)
+		mkdir -p "$root/docs/decisions"
+		cp "$REPO_ROOT/docs/decisions/README.md" "$root/docs/decisions/README.md"
+		;;
+	record)
+		mkdir -p "$root/docs/decisions"
+		if [[ "$3" == yes ]]; then
+			sup_record "$root" 20261125-new.md active 20260101-old.md none
+		else
+			sup_record "$root" 20261125-new.md active none none
+		fi
+		;;
+	supersede) sup_record "$root" 20260101-old.md superseded none 20261125-new.md ;;
+	link) printf -- '- `docs/decisions/20261125-new.md`: New\n' >>"$root/docs/dev_plans/plan.md" ;;
+	esac
+}
+
+# promo_state <root>: dangling | blocked | orphan | linked | none.
+promo_state() {
+	local root="$1" link=0 record=0 rc=0
+	grep -qF '`docs/decisions/20261125-new.md`' "$root/docs/dev_plans/plan.md" && link=1
+	[[ -f "$root/docs/decisions/20261125-new.md" ]] && record=1
+	if [[ $link -eq 1 && $record -eq 0 ]]; then
+		echo dangling
+		return
+	fi
+	"$CHECK" "$root" >/dev/null 2>&1 || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo blocked
+	elif [[ $record -eq 1 && $link -eq 0 ]] &&
+		grep -qx '\*\*Source plan\*\*: docs/dev_plans/plan.md' "$root/docs/decisions/20261125-new.md"; then
+		echo orphan
+	elif [[ $record -eq 1 ]]; then
+		echo linked
+	else
+		echo none
+	fi
+}
+
+# run_write_order <name> <SKILL.md> <step opener>: every cell of
+# {first promotion, plain, superseding} x {interrupted after 0..n writes}.
+run_write_order() {
+	local name="$1" order cell base sup kinds kind k n done_ok=1 seen="" st root
+	order="$(write_order "$2" "$3")"
+	if [[ "$order" != *record* || "$order" != *link* ]]; then
+		fail "$name: cannot read the write order from step '$3' ($order)"
+		return
+	fi
+	for cell in first:no:readme,record,link existing:no:record,link existing:yes:record,supersede,link; do
+		base="${cell%%:*}"
+		sup="${cell#*:}"
+		sup="${sup%%:*}"
+		kinds=()
+		for kind in $order; do
+			[[ ",${cell##*:}," == *",$kind,"* ]] && kinds+=("$kind")
+		done
+		n=${#kinds[@]}
+		for ((k = 0; k <= n; k++)); do
+			root="$tmp/order-$name-$base-$sup-$k"
+			promo_fixture "$root" "$base"
+			for ((i = 0; i < k; i++)); do
+				promo_write "$root" "${kinds[$i]}" "$sup"
+			done
+			st="$(promo_state "$root")"
+			seen+=" $st"
+			if [[ "$st" == dangling || ($k -eq $n && "$st" != linked) ]]; then
+				done_ok=0
+				fail "$name: $base promotion, supersede=$sup, interrupted after $k of $n writes (${kinds[*]}): $st"
+			fi
+		done
+	done
+	if [[ $done_ok -eq 1 ]]; then
+		pass "$name: no interruption of '$order' leaves a dangling plan link (states:$seen)"
+	fi
+	if [[ "$seen" == *orphan* && "$seen" == *blocked* ]]; then
+		pass "$name: the table reaches both recoverable partial states (orphan, blocked)"
+	else
+		fail "$name: the write-order table missed a partial state (states:$seen)"
+	fi
+}
+
+# classifier_script <plugin>: the mirror's own step 5 marker snippet.
+classifier_script() {
+	awk '
+		/^## Decision Promotion$/ { promotion = 1; next }
+		promotion && /^## / { exit }
+		promotion && /^   python3 .*- "\$PLAN" / { on = 1 }
+		on { print substr($0, 4) }
+		on && /^   PY$/ { exit }
+	' "$REPO_ROOT/plugins/$1/skills/update-docs/SKILL.md" | sed "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/$1#g"
+}
+
+# run_marker_integrity <name> <plugin>: step 7's rule (accept only `valid`
+# with the pre-write digest) over {below-marker link, marker date rewritten,
+# above-marker edit}. The rewritten date keeps the hash and classifies
+# `valid`, so it is the cell the digest alone refuses.
+run_marker_integrity() {
+	local name="$1" plugin="$2" script plan out before state digest verdict cell want
+	script="$(classifier_script "$plugin")"
+	for cell in below-link:accept date-changed:refuse above-edit:refuse; do
+		want="${cell#*:}"
+		cell="${cell%%:*}"
+		plan="$tmp/integrity-$name-$cell.md"
+		cp "$TEMPLATE" "$plan"
+		python3 "$WRITER" "$plan" >/dev/null
+		before="$(PLAN="$plan" SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" bash -e <<<"$script")"
+		case "$cell" in
+		below-link) printf -- '- `docs/decisions/20261125-new.md`: New\n' >>"$plan" ;;
+		date-changed) sed -i.bak -E 's/^(<!-- reviewed: )[0-9]{4}-[0-9]{2}-[0-9]{2}( @ [0-9a-f]{40} -->)$/\11999-01-01\2/' "$plan" ;;
+		above-edit) sed -i.bak 's/^## Objective$/## Objective (edited)/' "$plan" ;;
+		esac
+		out="$(PLAN="$plan" SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" bash -e <<<"$script")"
+		state="${out%%$'\n'*}"
+		digest="${out#*$'\n'}"
+		verdict=refuse
+		[[ "$state" == valid && "$digest" == "${before#*$'\n'}" ]] && verdict=accept
+		if [[ "${before%%$'\n'*}" == valid && "$verdict" == "$want" ]] &&
+			{ [[ "$cell" != date-changed ]] || [[ "$state" == valid ]]; }; then
+			pass "$name: marker integrity, $cell: $state, digest $([[ "$digest" == "${before#*$'\n'}" ]] && echo same || echo changed) -> $verdict"
+		else
+			fail "$name: marker integrity, $cell: before '${before%%$'\n'*}', after '$state', verdict $verdict (want $want)"
+		fi
+	done
+}
+
+# run_name_rule <name> <SKILL.md>: the skill's file-name regex is the
+# validator's DEC_TARGET_NAME, and it refuses every hostile name.
+run_name_rule() {
+	local name="$1" rule hostile ok=1
+	rule="$(grep -o 'against `\^[^`]*`' "$2" | head -1 | sed -e 's/^against `//' -e 's/`$//')"
+	if [[ "$rule" != "^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$" ]]; then
+		fail "$name: the skill's name rule '$rule' is not the validator's DEC_TARGET_NAME"
+		return
+	fi
+	[[ "20261125-new.md" =~ $rule ]] || ok=0
+	# shellcheck disable=SC2016  # the metacharacters are the test data
+	for hostile in 'x$(touch p).md' 'x`id`.md' 'a b.md' '-x.md' '.x.md' 'x.md;rm' 'x.md'$'\n''y.md' 'x".md' "x'.md" 'SKEIN_TARGETS'; do
+		if [[ "$hostile" =~ $rule ]]; then
+			ok=0
+			fail "$name: the name rule accepts hostile '$hostile'"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "$name: the name rule is DEC_TARGET_NAME and refuses every hostile name"
+}
+
 if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	check_mirror claude skein '"${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"'
 	run_marker_classifier claude skein
 	run_preflight claude skein
+	run_write_order claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
+	run_marker_integrity claude skein
+	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
+	run_write_order pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '5. Write exactly the individually approved offer'
+	run_name_rule pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
 fi
 if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	check_mirror codex skein-codex '"$SKILL_DIR"/scripts/check-decisions.sh'
 	run_marker_classifier codex skein-codex
 	run_preflight codex skein-codex
+	run_write_order codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
+	run_marker_integrity codex skein-codex
+	run_name_rule codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
 fi
 
 echo "---"
