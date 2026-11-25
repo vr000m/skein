@@ -197,7 +197,7 @@ outside="$(fresh record-target)"
 record "$outside" 20260101-outside.md active 'src/*' none none "$PLAN"
 mkdir -p "$root/docs/decisions"
 ln -s "$outside/docs/decisions/20260101-outside.md" "$root/docs/decisions/20260101-link.md"
-expect_fail "the validator rejects a symlinked record" "$root" "expected a regular, non-symlink file"
+expect_fail "the validator rejects a symlinked record" "$root" "expected a readable, regular, non-symlink file"
 
 # Every problem in a folder is reported in one run, not just the first.
 root="$(fresh multi)"
@@ -212,7 +212,9 @@ fi
 
 # --targets: the promotion write preflight. Each row is a root shape and the
 # targets a promotion would write; the verdict must be 0 only when every target
-# and each ancestor below the root is a real, in-repo path.
+# is `docs/dev_plans/<name>` or `docs/decisions/<name>` (one component matching
+# the record name grammar) and each ancestor below the root is a real, in-repo
+# directory. An unsafe target exits 3; a broken graph with safe targets exits 1.
 # targets_case <label> <want exit> <message fragment> <root> <target>...
 targets_case() {
 	local label="$1" want="$2" frag="$3" root="$4" out rc=0
@@ -224,6 +226,7 @@ targets_case() {
 		fail "targets: $label (want exit $want naming '$frag'; got exit $rc, output: $out)"
 	fi
 }
+SHAPE="expected docs/dev_plans/<name>.md or docs/decisions/<name>.md"
 outside_dir="$tmp/targets-outside"
 mkdir -p "$outside_dir/decisions"
 root="$(fresh targets-first)"
@@ -233,34 +236,45 @@ record "$root" 20260101-old.md active 'src/*' none none "$PLAN"
 targets_case "existing real records and plan pass" 0 "" "$root" docs/decisions/20261125-x.md docs/decisions/20260101-old.md "$PLAN"
 root="$(fresh targets-linked-decisions)"
 ln -s "$outside_dir/decisions" "$root/docs/decisions"
-targets_case "a symlinked docs/decisions is refused" 1 "expected a local decisions directory" "$root" docs/decisions/20261125-x.md "$PLAN"
+targets_case "a symlinked docs/decisions is refused" 3 "docs/decisions is a symlink" "$root" docs/decisions/20261125-x.md "$PLAN"
 root="$tmp/targets-linked-docs"
 mkdir -p "$root"
 ln -s "$outside_dir" "$root/docs"
-targets_case "a symlinked docs is refused" 1 "expected a local decisions directory" "$root" docs/decisions/20261125-x.md
+targets_case "a symlinked docs is refused" 3 "docs is a symlink" "$root" docs/decisions/20261125-x.md
 root="$(fresh targets-linked-record)"
 record "$root" 20260101-real.md active 'src/*' none none "$PLAN"
 ln -s "$outside_dir/decisions/x.md" "$root/docs/decisions/20261125-x.md"
-targets_case "a symlink at the new record path is refused" 1 "docs/decisions/20261125-x.md is a symlink" "$root" docs/decisions/20261125-x.md
+targets_case "a symlink at the new record path is refused" 3 "docs/decisions/20261125-x.md is a symlink" "$root" docs/decisions/20261125-x.md
 root="$(fresh targets-linked-plan)"
 ln -s plan.md "$root/docs/dev_plans/linked.md"
-targets_case "a symlinked source plan is refused as a write target" 1 "docs/dev_plans/linked.md is a symlink" "$root" docs/dev_plans/linked.md
+targets_case "a symlinked source plan is refused as a write target" 3 "docs/dev_plans/linked.md is a symlink" "$root" docs/dev_plans/linked.md
 root="$(fresh targets-dotdot)"
-targets_case "a '..' component is refused" 1 "may leave the repository" "$root" docs/../../escape.md
-targets_case "a '..' after a missing directory is refused" 1 "may leave the repository" "$root" docs/missing/../../../escape.md
-targets_case "a '..' after a missing docs/decisions is refused" 1 "may leave the repository" "$root" docs/decisions/../../../escape.md
-targets_case "a trailing '..' is refused" 1 "may leave the repository" "$root" docs/missing/..
+targets_case "a '..' component is refused" 3 "may leave the repository" "$root" docs/../../escape.md
+targets_case "a '..' after a missing directory is refused" 3 "may leave the repository" "$root" docs/missing/../../../escape.md
+targets_case "a '..' after a missing docs/decisions is refused" 3 "may leave the repository" "$root" docs/decisions/../../../escape.md
+targets_case "a trailing '..' is refused" 3 "may leave the repository" "$root" docs/missing/..
 targets_case "a name that only contains dots is allowed" 0 "" "$root" docs/decisions/a..b.md
-targets_case "an absolute path is refused" 1 "expected a repo-relative path" "$root" "$outside_dir/escape.md"
+targets_case "an absolute path is refused" 3 "expected a repo-relative path" "$root" "$outside_dir/escape.md"
 mkdir -p "$root/docs/decisions/sub.md"
-targets_case "a directory at a record path is refused" 1 "expected a regular file" "$root" docs/decisions/sub.md
+targets_case "a directory at a record path is refused" 3 "expected a regular file" "$root" docs/decisions/sub.md
 root="$(fresh targets-file-parent)"
+mkdir -p "$root/docs"
+: >"$root/docs/decisions"
+targets_case "a file where docs/decisions should be is refused" 3 "docs/decisions is not a directory" "$root" docs/decisions/x.md
+# Scope: only the two promotion directories, one name component each.
+root="$(fresh targets-scope)"
 mkdir -p "$root/docs/decisions"
-: >"$root/docs/decisions/file"
-targets_case "a file where a directory is needed is refused" 1 "is not a directory" "$root" docs/decisions/file/x.md
+for bad in .git/hooks/pre-commit -x.md README.md docs/decisions/-x.md docs/decisions/.x.md \
+	docs/decisions/.git docs/decisions/x.txt docs/decisions/sub/x.md docs/dev_plans/sub/p.md \
+	docs/other/x.md ./docs/decisions/x.md docs//decisions/x.md "docs/decisions/a b.md" \
+	docs/dev_plans/.git/x.md docs/decisions/.md; do
+	targets_case "a target outside the promotion scope is refused: $bad" 3 "$SHAPE" "$root" "$bad"
+done
+targets_case "one unsafe target fails a list of safe ones" 3 "-x.md: $SHAPE" "$root" docs/decisions/20261125-x.md -x.md "$PLAN"
 root="$(fresh targets-bad-graph)"
 record "$root" 20260101-a.md draft 'src/*' none none "$PLAN"
-targets_case "an invalid record graph fails the preflight" 1 "invalid Status" "$root" docs/decisions/20261125-x.md
+targets_case "an invalid record graph with safe targets exits 1" 1 "invalid Status" "$root" docs/decisions/20261125-x.md
+targets_case "an unsafe target exits 3 even when the graph is also invalid" 3 "$SHAPE" "$root" .git/hooks/pre-commit
 rc=0
 "$CHECK" "$root" --targets >/dev/null 2>&1 || rc=$?
 if [[ $rc -eq 2 ]]; then
