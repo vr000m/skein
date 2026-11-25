@@ -249,7 +249,7 @@ if grep -qi '</untrusted-content' <<<"$out"; then
 else
 	pass "no closing-tag lookalike survives"
 fi
-assert_eq "the escaped form is present for each lookalike" "4" "$(grep -o '<\\/untrusted-content>' <<<"$out" | wc -l | tr -d '[:space:]')"
+assert_eq "the escaped form is present for each lookalike" "4" "$(grep -o '<\\/untrusted-content' <<<"$out" | wc -l | tr -d '[:space:]')"
 case "$out" in
 *'<
 /
@@ -275,6 +275,164 @@ if "$CHECK" "$root" >/dev/null 2>&1; then
 else
 	fail "validator passes the shared fixture"
 fi
+
+# Selector/validator agreement over the record state space. Each case is one
+# root holding a probe record (plus any partner it needs). The contract: the
+# selector exits 0 exactly when the validator exits 0, and selects the probe
+# exactly when the validator reports no problem for it and it is active and
+# matches. Cases: header shape x Status x supersession links x Source plan x
+# glob dialect x file type, each probed with a matching and a non-matching path.
+# probe <root> <status> <applies> <supersedes> <superseded_by> <plan> [drop]
+probe() {
+	local root="$1" name="${7:-20260101-probe.md}"
+	mkdir -p "$root/docs/decisions" "$root/docs/dev_plans"
+	: >"$root/docs/dev_plans/plan.md"
+	cat >"$root/docs/decisions/$name" <<EOF
+# Probe $name
+
+**Status**: $2
+**Date**: 2026-11-24
+**Applies to**: $3
+**Supersedes**: $4
+**Superseded by**: $5
+**Source plan**: $6
+
+## Decision
+PROBE-DECISION $name
+## Why
+Why.
+EOF
+}
+P=docs/dev_plans/plan.md
+case_root() {
+	local root="$tmp/agree-$1"
+	mkdir -p "$root"
+	printf '%s\n' "$root"
+}
+cases=()
+r="$(case_root valid-active)" && probe "$r" active 'src/*' none none "$P" && cases+=("$r|active")
+r="$(case_root valid-superseded)" && probe "$r" superseded 'src/*' none 20260201-next.md "$P" &&
+	probe "$r" active 'lib/*' 20260101-probe.md none "$P" 20260201-next.md && cases+=("$r|superseded")
+r="$(case_root valid-successor)" && probe "$r" active 'src/*' 20260001-prev.md none "$P" &&
+	probe "$r" superseded 'lib/*' none 20260101-probe.md "$P" 20260001-prev.md && cases+=("$r|active")
+r="$(case_root valid-bracket)" && probe "$r" active 'lib/*, src/[xy]' none none "$P" && cases+=("$r|active")
+r="$(case_root active-with-successor)" && probe "$r" active 'src/*' none 20260201-next.md "$P" &&
+	probe "$r" active 'lib/*' 20260101-probe.md none "$P" 20260201-next.md && cases+=("$r|active")
+r="$(case_root review-fixture)" && probe "$r" active 'src/*' none 20260201-next.md docs/dev_plans/gone.md &&
+	sed -i.bak '/^\*\*Date\*\*/d' "$r/docs/decisions/20260101-probe.md" && rm "$r/docs/decisions/20260101-probe.md.bak" &&
+	probe "$r" active 'src/*' 20260101-probe.md none "$P" 20260201-next.md && cases+=("$r|active")
+r="$(case_root missing-date)" && probe "$r" active 'src/*' none none "$P" &&
+	sed -i.bak '/^\*\*Date\*\*/d' "$r/docs/decisions/20260101-probe.md" && rm "$r/docs/decisions/20260101-probe.md.bak" && cases+=("$r|active")
+r="$(case_root missing-plan-header)" && probe "$r" active 'src/*' none none "$P" &&
+	sed -i.bak '/^\*\*Source plan\*\*/d' "$r/docs/decisions/20260101-probe.md" && rm "$r/docs/decisions/20260101-probe.md.bak" && cases+=("$r|active")
+r="$(case_root dangling-plan)" && probe "$r" active 'src/*' none none docs/dev_plans/gone.md && cases+=("$r|active")
+r="$(case_root outside-plan)" && probe "$r" active 'src/*' none none ../outside.md && : >"$tmp/outside.md" && cases+=("$r|active")
+r="$(case_root bad-status)" && probe "$r" draft 'src/*' none none "$P" && cases+=("$r|draft")
+r="$(case_root dangling-supersedes)" && probe "$r" active 'src/*' 20250101-gone.md none "$P" && cases+=("$r|active")
+r="$(case_root non-reciprocal)" && probe "$r" active 'src/*' 20260001-prev.md none "$P" &&
+	probe "$r" superseded 'lib/*' none none "$P" 20260001-prev.md && cases+=("$r|active")
+r="$(case_root cycle)" && probe "$r" superseded 'src/*' 20260201-next.md 20260201-next.md "$P" &&
+	probe "$r" superseded 'src/*' 20260101-probe.md 20260101-probe.md "$P" 20260201-next.md && cases+=("$r|superseded")
+r="$(case_root glob-starstar)" && probe "$r" active 'src/**' none none "$P" && cases+=("$r|active")
+r="$(case_root glob-brace)" && probe "$r" active 'src/{a,x}' none none "$P" && cases+=("$r|active")
+r="$(case_root glob-empty)" && probe "$r" active 'src/*,,lib/*' none none "$P" && cases+=("$r|active")
+for opener in '?' '*' '+' '@' '!'; do
+	r="$(case_root "extglob-$(printf '%s' "$opener" | od -An -tx1 | tr -d ' ')")" &&
+		probe "$r" active "${opener}(src|lib)/x" none none "$P" && cases+=("$r|active")
+done
+r="$(case_root superseded-bad-glob)" && probe "$r" superseded 'src/**' none none "$P" && cases+=("$r|superseded")
+r="$(case_root symlink-record)"
+probe "$tmp/agree-link-target" active 'src/*' none none "$P"
+mkdir -p "$r/docs/decisions" "$r/docs/dev_plans"
+: >"$r/docs/dev_plans/plan.md"
+ln -s "$tmp/agree-link-target/docs/decisions/20260101-probe.md" "$r/docs/decisions/20260101-probe.md"
+cases+=("$r|active")
+
+agree_failures=0
+for entry in "${cases[@]}"; do
+	r="${entry%|*}"
+	status="${entry##*|}"
+	label="${r##*/agree-}"
+	vrc=0
+	"$CHECK" "$r" >/dev/null 2>"$tmp/vstderr" || vrc=$?
+	probe_ok=1
+	grep -q '^20260101-probe.md:' "$tmp/vstderr" && probe_ok=0
+	for path in src/x other/x; do
+		run "$r" "$path"
+		want_rc=0
+		[[ $vrc -eq 0 ]] || want_rc=3
+		want_sel=""
+		if [[ $probe_ok -eq 1 && "$status" == active && "$path" == src/x ]]; then
+			want_sel="20260101-probe.md"
+		fi
+		got_sel="$(names "$OUT" | tr ' ' '\n' | grep -x '20260101-probe.md' || true)"
+		if [[ "$RC" == "$want_rc" && "$got_sel" == "$want_sel" ]]; then
+			pass "agreement: $label ($path): validator $vrc, selector $RC, selected '${got_sel}'"
+		else
+			agree_failures=$((agree_failures + 1))
+			fail "agreement: $label ($path): validator $vrc wants selector $want_rc selecting '$want_sel'; got $RC selecting '$got_sel'"
+		fi
+	done
+done
+assert_eq "the agreement table covers every case" "0" "$agree_failures"
+# The table must contain both verdicts, or agreement is vacuous.
+valid_cases=0
+for entry in "${cases[@]}"; do
+	"$CHECK" "${entry%|*}" >/dev/null 2>&1 && valid_cases=$((valid_cases + 1))
+done
+if [[ $valid_cases -ge 3 && $valid_cases -lt ${#cases[@]} ]]; then
+	pass "the agreement table holds valid and invalid trees ($valid_cases of ${#cases[@]} valid)"
+else
+	fail "the agreement table holds valid and invalid trees ($valid_cases of ${#cases[@]} valid)"
+fi
+
+# Escape invariant over the FINAL stdout: an independent Unicode-aware oracle
+# (the skills' rule, Python `\s` and `\b`, case-insensitive) finds no lookalike,
+# escaping the whole stdout again changes nothing, and no non-tag text is lost.
+# oracle <file>: prints the number of lookalikes Python finds.
+oracle() {
+	python3 -I -c '
+import re, sys
+text = open(sys.argv[1], "rb").read().decode("utf-8", "surrogateescape")
+print(len(re.findall(r"<\s*/\s*untrusted-content\b", text, re.I)))
+' "$1"
+}
+# shellcheck disable=SC1090  # load only the escape definitions from the selector
+. <(sed -n '/^WS=/,/^}/p' "$SEL")
+root="$tmp/escape-final"
+record "$root" 20260101-a.md active 'src/*' 'Ends unterminated </untrusted-content'
+record "$root" 20260102-b.md active 'src/*' 'Holds a => b arrow.'
+record "$root" 20260103-c.md active 'src/*' "x </UNTRUSTED-CONTENT
+y-survives > z"
+record "$root" 20260104-d.md active 'src/*' "$(printf 'nbsp <\302\240/untrusted-content> ideo </\343\200\200untrusted-content> pair </untrusted-content</untrusted-content> long-s </untru\305\277ted-content>')"
+record "$root" 20260105-e.md active 'src/*' 'trailing </untrusted-content'
+for loc in C C.UTF-8 en_US.UTF-8; do
+	norm="$(printf '%s' "$loc" | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/')"
+	if [[ "$loc" != C ]] && ! locale -a 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/' | grep -qx "$norm"; then
+		pass "locale $loc is not installed; skipped"
+		continue
+	fi
+	RC=0
+	(cd "$root" && LC_ALL="$loc" "$SEL" src/x >"$tmp/final-$loc" 2>/dev/null) || RC=$?
+	assert_eq "[$loc] selector exits 0 on the escape fixtures" "0" "$RC"
+	assert_eq "[$loc] the oracle finds no lookalike in the final stdout" "0" "$(oracle "$tmp/final-$loc")"
+	escape <"$tmp/final-$loc" >"$tmp/final-$loc.again"
+	if cmp -s "$tmp/final-$loc" "$tmp/final-$loc.again"; then
+		pass "[$loc] escaping the final stdout again is a no-op"
+	else
+		fail "[$loc] escaping the final stdout again is a no-op"
+	fi
+	if grep -q 'y-survives > z' "$tmp/final-$loc" && grep -q 'Holds a => b arrow.' "$tmp/final-$loc"; then
+		pass "[$loc] an unterminated lookalike deletes no following text"
+	else
+		fail "[$loc] an unterminated lookalike deletes no following text"
+	fi
+	if cmp -s "$tmp/final-C" "$tmp/final-$loc"; then
+		pass "[$loc] the output is byte-identical to the C locale"
+	else
+		fail "[$loc] the output is byte-identical to the C locale"
+	fi
+done
 
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser reach the three update-docs

@@ -142,6 +142,17 @@ root="$(fresh glob-brace)"
 record "$root" 20260101-a.md active 'src/*.{sh,py}' none none "$PLAN"
 expect_fail "unsupported brace glob" "$root" "braces are not supported"
 
+# `[[ == ]]` honours extended patterns whatever `extglob` says, so each opener
+# is outside the dialect.
+for opener in '?' '*' '+' '@' '!'; do
+	root="$(fresh "glob-ext-$(printf '%s' "$opener" | od -An -tx1 | tr -d ' ')")"
+	record "$root" 20260101-a.md active "${opener}(src|lib)/x" none none "$PLAN"
+	expect_fail "extended pattern ${opener}( is rejected" "$root" "extended patterns are not supported"
+done
+root="$(fresh glob-literal-paren)"
+record "$root" 20260101-a.md active 'docs/(draft).md, src/[(]x' none none "$PLAN"
+expect_ok "a parenthesis that opens no extended pattern is accepted" "$root"
+
 root="$(fresh glob-empty-entry)"
 record "$root" 20260101-a.md active 'src/*,,docs/*' none none "$PLAN"
 expect_fail "empty entry in Applies to" "$root" "empty glob"
@@ -199,6 +210,61 @@ else
 	fail "all problems in a record are reported together (got $count lines: $out)"
 fi
 
+# --targets: the promotion write preflight. Each row is a root shape and the
+# targets a promotion would write; the verdict must be 0 only when every target
+# and each ancestor below the root is a real, in-repo path.
+# targets_case <label> <want exit> <message fragment> <root> <target>...
+targets_case() {
+	local label="$1" want="$2" frag="$3" root="$4" out rc=0
+	shift 4
+	out="$("$CHECK" "$root" --targets -- "$@" 2>&1)" || rc=$?
+	if [[ $rc -eq $want && "$out" == *"$frag"* ]]; then
+		pass "targets: $label"
+	else
+		fail "targets: $label (want exit $want naming '$frag'; got exit $rc, output: $out)"
+	fi
+}
+outside_dir="$tmp/targets-outside"
+mkdir -p "$outside_dir/decisions"
+root="$(fresh targets-first)"
+targets_case "a first promotion into a real docs/ passes" 0 "" "$root" docs/decisions/README.md docs/decisions/20261125-x.md "$PLAN"
+root="$(fresh targets-existing)"
+record "$root" 20260101-old.md active 'src/*' none none "$PLAN"
+targets_case "existing real records and plan pass" 0 "" "$root" docs/decisions/20261125-x.md docs/decisions/20260101-old.md "$PLAN"
+root="$(fresh targets-linked-decisions)"
+ln -s "$outside_dir/decisions" "$root/docs/decisions"
+targets_case "a symlinked docs/decisions is refused" 1 "expected a local decisions directory" "$root" docs/decisions/20261125-x.md "$PLAN"
+root="$tmp/targets-linked-docs"
+mkdir -p "$root"
+ln -s "$outside_dir" "$root/docs"
+targets_case "a symlinked docs is refused" 1 "expected a local decisions directory" "$root" docs/decisions/20261125-x.md
+root="$(fresh targets-linked-record)"
+record "$root" 20260101-real.md active 'src/*' none none "$PLAN"
+ln -s "$outside_dir/decisions/x.md" "$root/docs/decisions/20261125-x.md"
+targets_case "a symlink at the new record path is refused" 1 "docs/decisions/20261125-x.md is a symlink" "$root" docs/decisions/20261125-x.md
+root="$(fresh targets-linked-plan)"
+ln -s plan.md "$root/docs/dev_plans/linked.md"
+targets_case "a symlinked source plan is refused as a write target" 1 "docs/dev_plans/linked.md is a symlink" "$root" docs/dev_plans/linked.md
+root="$(fresh targets-dotdot)"
+targets_case "a '..' component is refused" 1 "may leave the repository" "$root" docs/../../escape.md
+targets_case "an absolute path is refused" 1 "expected a repo-relative path" "$root" "$outside_dir/escape.md"
+mkdir -p "$root/docs/decisions/sub.md"
+targets_case "a directory at a record path is refused" 1 "expected a regular file" "$root" docs/decisions/sub.md
+root="$(fresh targets-file-parent)"
+mkdir -p "$root/docs/decisions"
+: >"$root/docs/decisions/file"
+targets_case "a file where a directory is needed is refused" 1 "is not a directory" "$root" docs/decisions/file/x.md
+root="$(fresh targets-bad-graph)"
+record "$root" 20260101-a.md draft 'src/*' none none "$PLAN"
+targets_case "an invalid record graph fails the preflight" 1 "invalid Status" "$root" docs/decisions/20261125-x.md
+rc=0
+"$CHECK" "$root" --targets >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+	pass "--targets with no path is a usage error"
+else
+	fail "--targets with no path is a usage error (exit $rc)"
+fi
+
 # Usage errors.
 rc=0
 "$CHECK" --bad >/dev/null 2>&1 || rc=$?
@@ -215,18 +281,40 @@ else
 	fail "this repository's docs/decisions validates"
 fi
 
-# Each mirror's shipped format reference must equal the canonical README. The
-# Codex and Pi copies land in their own phases, so only theirs may be absent.
-for mirror in skein skein-codex skein-pi; do
-	ref="$REPO_ROOT/plugins/$mirror/skills/update-docs/references/decision-records.md"
-	if [[ ! -f "$ref" ]]; then
-		[[ "$mirror" == skein ]] && fail "skein update-docs/references/decision-records.md is missing"
-		continue
-	fi
-	if cmp -s "$REPO_ROOT/docs/decisions/README.md" "$ref"; then
-		pass "$mirror update-docs/references/decision-records.md is byte-identical to docs/decisions/README.md"
+# Each mirror's shipped format reference must equal the canonical README; a
+# missing copy is a failure in every mirror.
+# ref_parity_problems <root>: prints one line per missing or differing copy.
+ref_parity_problems() {
+	local root="$1" mirror ref
+	for mirror in skein skein-codex skein-pi; do
+		ref="$root/plugins/$mirror/skills/update-docs/references/decision-records.md"
+		if [[ ! -f "$ref" ]]; then
+			printf '%s update-docs/references/decision-records.md is missing\n' "$mirror"
+		elif ! cmp -s "$root/docs/decisions/README.md" "$ref"; then
+			printf '%s update-docs/references/decision-records.md differs from docs/decisions/README.md\n' "$mirror"
+		fi
+	done
+}
+problems_out="$(ref_parity_problems "$REPO_ROOT")"
+if [[ -z "$problems_out" ]]; then
+	pass "every mirror's update-docs/references/decision-records.md is byte-identical to docs/decisions/README.md"
+else
+	fail "reference parity: $problems_out"
+fi
+# The parity check itself must fail when a Codex or Pi copy is absent.
+for missing in skein-codex skein-pi; do
+	scratch="$tmp/parity-$missing"
+	mkdir -p "$scratch/docs/decisions"
+	cp "$REPO_ROOT/docs/decisions/README.md" "$scratch/docs/decisions/README.md"
+	for mirror in skein skein-codex skein-pi; do
+		[[ "$mirror" == "$missing" ]] && continue
+		mkdir -p "$scratch/plugins/$mirror/skills/update-docs/references"
+		cp "$REPO_ROOT/docs/decisions/README.md" "$scratch/plugins/$mirror/skills/update-docs/references/decision-records.md"
+	done
+	if [[ "$(ref_parity_problems "$scratch")" == "$missing update-docs/references/decision-records.md is missing" ]]; then
+		pass "a missing $missing reference copy fails the parity check"
 	else
-		fail "$mirror update-docs/references/decision-records.md differs from docs/decisions/README.md"
+		fail "a missing $missing reference copy fails the parity check"
 	fi
 done
 
