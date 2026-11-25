@@ -23,6 +23,7 @@ marker. Collision resistance is not part of the threat model.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from datetime import UTC, date, datetime
@@ -270,6 +271,23 @@ def marker_is_stale(plan_path: str | Path) -> bool | None:
     _, recorded_sha = marker
     current_sha = compute_plan_hash(plan_path)
     return current_sha != recorded_sha
+
+
+def signed_prefix_sha256(plan_path: str | Path) -> str | None:
+    """Return the sha256 hex digest of the plan's bytes from its first byte
+    through the end of its marker line (the last unfenced marker or
+    placeholder line, terminator included), or ``None`` without one.
+
+    `/update-docs` compares this digest before and after a promotion's writes.
+    ``classify_marker`` alone cannot catch every above-the-workspace edit: a
+    rewritten marker date keeps the same hash and still classifies ``valid``.
+    The file is read as bytes, so line endings are compared exactly.
+    """
+    text = Path(plan_path).read_bytes().decode("utf-8")
+    span = _marker_line_span(text)
+    if span is None:
+        return None
+    return hashlib.sha256(text[: span[1]].encode("utf-8")).hexdigest()
 
 
 def classify_marker(plan_path: str | Path) -> str:
