@@ -292,7 +292,17 @@ check_mirror() {
 		're-read the live plan and require a valid real review marker'
 	expect_text "$name: below-marker link goes in ## Promoted Decisions" "$section" \
 		'under the plan'"'"'s existing `## Promoted Decisions` section below the marker'
-	expect_text "$name: runs the bundled validator after writes" "$section" "$check_path"
+	# Anchored to step 7 itself: the step 3 preflight names the same script, so
+	# a section-wide search would pass with the post-write check removed.
+	local validate_step
+	validate_step="$(grep -F -- '7. **Validate after writing.**' <<<"$section" || true)"
+	expect_text "$name: runs the bundled validator after writes" "$validate_step" "From the repo root, run \`$check_path\`"
+	# The --targets scope rule and its exit codes, word for word.
+	expect_text "$name: confines targets to the two promotion directories" "$section" \
+		'requires each listed path to be `docs/dev_plans/<name>` or `docs/decisions/<name>`, where `<name>` is one path component matching `[A-Za-z0-9][A-Za-z0-9._-]*[.]md` (no further `/`, no `.git` component, no leading `-` or `.`)'
+	expect_text "$name: exit 3 is an unsafe target" "$section" 'Exit `3` means a listed path is unsafe'
+	expect_text "$name: exit 1 is an invalid record set, a promotion precondition" "$section" \
+		'Exit `1` means the existing records already fail validation; a valid record set is a precondition of every promotion.'
 
 	# Marker integrity is one invariant with two writers: ordinary Phase 4 plan
 	# edits and promotion. Both mirrors guard both writers.
