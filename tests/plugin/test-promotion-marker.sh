@@ -301,6 +301,10 @@ check_mirror() {
 			'`docs/decisions/` path from this apply-target allowlist'
 		expect_text "codex: Phase 4 shows the report before applying" "$apply_phase" \
 			'**Always show the report (Phase 3) first**'
+		expect_text "codex: ordinary apply defers edits to the signed source-plan prefix" "$apply_phase" \
+			'If the plan has a valid marker, apply only edits below it. Report any proposed above-marker edits as deferred'
+		expect_text "codex: promotion follows ordinary edits" "$section" \
+			'after the Phase 3 report and any ordinary Phase 4 edits'
 		expect_text "codex: changed inputs require a fresh offer before writing" "$section" \
 			'If an input changed, report it and make a fresh offer before writing.'
 		expect_text "codex: reports an unwritable target before the first write" "$section" \
