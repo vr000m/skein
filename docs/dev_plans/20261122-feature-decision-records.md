@@ -391,6 +391,8 @@ sequenceDiagram
 
 ## Findings
 
+- Pi completion follow-up: copied the now-landed Codex template's `none | full` header and below-marker `## Promoted Decisions` section into Pi, restoring template byte identity. Removed the temporary Phase 4a skip; all 9 composition tests pass. Full Pi rerun: 228 passed, 2 bundle-identity failures while another session edits canonical decision scripts; `check-sync` likewise reports pending regeneration. Shared-script edits and regenerated mirrors remain owned by that session. Independent Pi review remains degraded (`model_api_unsupported`), not a full-coverage pass.
+
 - Phase 5c (Pi): `just pi-tests` passed (226 passed, 1 skipped for the pending 4a template heading); `just check-sync` passed. Healthy-terminal conduct gets the text-only update-docs pointer after existing comment notices; separate guards cover intermediate, blocked, declined and degraded omission routes. No implementation deviation, automatic chain or new execution mode. Full CI and push intentionally left to Phase 6/the user.
 
 - Phase 4c (Pi): `just pi-tests` passed (221 passed, 1 skipped); `just check-sync` passed. The promotion reference is byte-identical to Claude's committed reference and the repo format. Mocked no-tools audits cover candidate delivery, source-plan locations, rejected new-record locations/extra fields and unchanged input budgets; main-session approval/refusal/staleness contracts and a real marker-prefix fixture are checked separately.
