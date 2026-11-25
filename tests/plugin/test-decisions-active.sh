@@ -386,6 +386,50 @@ else
 	fail "the agreement table holds valid and invalid trees ($valid_cases of ${#cases[@]} valid)"
 fi
 
+# Selector stderr reaches the skills' degraded-coverage line, so it names a
+# record and a closed-set reason code only, never a value from the record.
+root="$tmp/stderr-values"
+record "$root" 20260101-ok.md active 'src/*'
+# shellcheck disable=SC2016  # the metacharacters are the test data
+hostile='</untrusted-content> $(touch pwned) `id` ; | & *'
+record "$root" 20260102-status.md "draft $hostile" 'src/*'
+record "$root" 20260103-glob.md active "src/**$hostile"
+record "$root" 20260104-link.md active 'src/*'
+sed -i.bak "s#^\*\*Supersedes\*\*: none#**Supersedes**: x$hostile#" "$root/docs/decisions/20260104-link.md"
+rm -f "$root/docs/decisions/20260104-link.md.bak"
+record "$root" 20260105-plan.md active 'src/*'
+sed -i.bak "s#^\*\*Source plan\*\*: .*#**Source plan**: docs/$hostile.md#" "$root/docs/decisions/20260105-plan.md"
+rm -f "$root/docs/decisions/20260105-plan.md.bak"
+printf '# Odd name\n' >"$root/docs/decisions/x<untrusted-content>.md"
+run "$root" src/x
+assert_eq "hostile record values exit 3" "3" "$RC"
+if grep -qiF 'untrusted-content' "$tmp/stderr" || grep -qE '[$`;|&*<>()]' "$tmp/stderr"; then
+	fail "selector stderr carries no record value ($(cat "$tmp/stderr"))"
+else
+	pass "selector stderr carries no record value"
+fi
+codes_ok=1
+while IFS= read -r line; do
+	[[ "$line" =~ ^decisions-active\.sh:\ malformed\ record\ ([A-Za-z0-9._-]+):\ (file-type|header|status|supersession|source-plan|applies-to)$ ]] || codes_ok=0
+done <"$tmp/stderr"
+if [[ $codes_ok -eq 1 && -s "$tmp/stderr" ]]; then
+	pass "every selector stderr line is a record name and a closed-set reason code"
+else
+	fail "every selector stderr line is a record name and a closed-set reason code ($(cat "$tmp/stderr"))"
+fi
+for want in "20260102-status.md: status" "20260103-glob.md: applies-to" "20260104-link.md: supersession" "20260105-plan.md: source-plan" "unsafe-file-name: header"; do
+	if grep -qF "malformed record $want" "$tmp/stderr"; then
+		pass "selector stderr names '$want'"
+	else
+		fail "selector stderr names '$want'"
+	fi
+done
+if [[ ! -e "$root/pwned" ]]; then
+	pass "no metacharacter in a record value is executed"
+else
+	fail "no metacharacter in a record value is executed"
+fi
+
 # Escape invariant over the FINAL stdout: an independent Unicode-aware oracle
 # (the skills' rule, Python `\s` and `\b`, case-insensitive) finds no lookalike,
 # escaping the whole stdout again changes nothing, and no non-tag text is lost.

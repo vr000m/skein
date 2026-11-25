@@ -142,7 +142,12 @@ dec_glob_problem() {
 # the validator accepts it. Run dec_check_directory first. Sets:
 #   DEC_RECORDS[i]  record paths in byte order (dec_record_files)
 #   DEC_VALID[i]    1 when record i has no problem, else 0
-#   DEC_PROBLEMS[k] `<record name>: <message>`, in report order
+#   DEC_PROBLEMS[k] `<record name>: <message>`, in report order; the message
+#                   quotes record values, so it is for a maintainer's terminal
+#   DEC_CODES[k]    problem k's reason code, from a closed set that carries no
+#                   record value: file-type, header, status, supersession,
+#                   source-plan, applies-to
+#   DEC_PROBLEM_INDEX[k]  the index into DEC_RECORDS of problem k's record
 # Returns 0 when no record has a problem.
 # shellcheck disable=SC2034  # DEC_VALID is read by the sourcing script
 dec_validate_tree() {
@@ -152,12 +157,17 @@ dec_validate_tree() {
 	DEC_RECORDS=()
 	DEC_VALID=()
 	DEC_PROBLEMS=()
+	DEC_CODES=()
+	DEC_PROBLEM_INDEX=()
 	while IFS= read -r -d '' path; do
 		DEC_RECORDS+=("$path")
 	done < <(dec_record_files "$dir")
 
+	# _dec_problem <record index> <reason code> <message>
 	_dec_problem() {
-		DEC_PROBLEMS+=("${DEC_RECORDS[$1]##*/}: $2")
+		DEC_PROBLEMS+=("${DEC_RECORDS[$1]##*/}: $3")
+		DEC_CODES+=("$2")
+		DEC_PROBLEM_INDEX+=("$1")
 		DEC_VALID[$1]=0
 	}
 	_dec_field() {
@@ -181,14 +191,14 @@ dec_validate_tree() {
 		successors[index]=-1
 		DEC_VALID[index]=1
 		if ! dec_regular_record "$path"; then
-			_dec_problem "$index" "expected a regular, non-symlink file"
+			_dec_problem "$index" file-type "expected a regular, non-symlink file"
 			continue
 		fi
 
 		complete=1
 		for field in Status Date "Applies to" Supersedes "Superseded by" "Source plan"; do
 			if [[ -z "$(_dec_field "$name" "$field")" ]]; then
-				_dec_problem "$index" "missing header $field"
+				_dec_problem "$index" header "missing header $field"
 				complete=0
 			fi
 		done
@@ -199,37 +209,37 @@ dec_validate_tree() {
 		superseded_by="$(_dec_field "$name" "Superseded by")"
 
 		if [[ "$status" != active && "$status" != superseded ]]; then
-			_dec_problem "$index" "invalid Status '$status' (expected active or superseded)"
+			_dec_problem "$index" status "invalid Status '$status' (expected active or superseded)"
 		fi
 
 		if [[ "$supersedes" != none ]]; then
 			if ! _dec_member "$supersedes"; then
-				_dec_problem "$index" "Supersedes '$supersedes' does not resolve to a record"
+				_dec_problem "$index" supersession "Supersedes '$supersedes' does not resolve to a record"
 			elif [[ "$(_dec_field "$supersedes" "Superseded by")" != "$name" ]]; then
-				_dec_problem "$index" "Supersedes '$supersedes' is not reciprocal: it must name $name in Superseded by"
+				_dec_problem "$index" supersession "Supersedes '$supersedes' is not reciprocal: it must name $name in Superseded by"
 			fi
 		fi
 
 		if [[ "$superseded_by" != none ]]; then
 			if ! _dec_member "$superseded_by"; then
-				_dec_problem "$index" "Superseded by '$superseded_by' does not resolve to a record"
+				_dec_problem "$index" supersession "Superseded by '$superseded_by' does not resolve to a record"
 			elif [[ "$(_dec_field "$superseded_by" Supersedes)" != "$name" ]]; then
-				_dec_problem "$index" "Superseded by '$superseded_by' is not reciprocal: it must name $name in Supersedes"
+				_dec_problem "$index" supersession "Superseded by '$superseded_by' is not reciprocal: it must name $name in Supersedes"
 			else
 				successors[index]="$target"
 			fi
 			if [[ "$status" == active ]]; then
-				_dec_problem "$index" "active record is superseded by '$superseded_by'"
+				_dec_problem "$index" supersession "active record is superseded by '$superseded_by'"
 			fi
 		fi
 
 		if ! dec_source_plan_exists "$root" "$(_dec_field "$name" "Source plan")"; then
-			_dec_problem "$index" "Source plan '$(_dec_field "$name" "Source plan")' does not resolve to a file inside the repository"
+			_dec_problem "$index" source-plan "Source plan '$(_dec_field "$name" "Source plan")' does not resolve to a file inside the repository"
 		fi
 
 		while IFS= read -r glob; do
 			if reason="$(dec_glob_problem "$glob")"; then
-				_dec_problem "$index" "Applies to: $reason"
+				_dec_problem "$index" applies-to "Applies to: $reason"
 			fi
 		done < <(dec_split_globs "$(_dec_field "$name" "Applies to")")
 	done
@@ -240,7 +250,7 @@ dec_validate_tree() {
 		while ((current >= 0)); do
 			if [[ -n "${visited[$current]:-}" ]]; then
 				if [[ "${visited[$current]}" == "$start" ]]; then
-					_dec_problem "$current" "supersession cycle"
+					_dec_problem "$current" supersession "supersession cycle"
 				fi
 				break
 			fi

@@ -30,7 +30,9 @@
 #   0  success: no match, no docs/decisions directory, or a truncated block
 #   2  usage error (no path, or an option)
 #   3  a record is malformed: check-decisions.sh would reject it (both call
-#      dec_validate_tree). stderr names each problem. Only records the
+#      dec_validate_tree). stderr names each problem as the record's file name
+#      and a reason code (file-type, header, status, supersession, source-plan,
+#      applies-to), never a value from the record. Only records the
 #      validator accepts are selected, and those matches are still printed, so
 #      the caller reports degraded coverage rather than "no applicable
 #      decisions".
@@ -112,8 +114,12 @@ block() {
 
 malformed=0
 dec_validate_tree "$root" || malformed=1
-for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
-	echo "decisions-active.sh: malformed record $problem" >&2
+# stderr reaches the skills' degraded-coverage line, so it names the record
+# and a fixed reason code only, never a record value.
+for ((k = 0; k < ${#DEC_CODES[@]}; k++)); do
+	name="${DEC_RECORDS[${DEC_PROBLEM_INDEX[$k]}]##*/}"
+	[[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || name="unsafe-file-name"
+	echo "decisions-active.sh: malformed record $name: ${DEC_CODES[$k]}" >&2
 done
 
 matched=()
