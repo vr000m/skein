@@ -206,6 +206,13 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "All edits under `docs/decisions/`, including existing records and supersession updates",
         "never apply them as generic documentation fixes",
         "not a generic plan edit",
+        "Before applying any approved ordinary edit to the source plan, classify its review marker",
+        "with a valid marker, apply only edits below it and report any above-marker edit as deferred",
+        "run the installed bundled `scripts/check-decisions.sh --targets -- <source plan> <each offered path>`",
+        "On any non-zero exit, show its output and offer nothing for that record",
+        "re-run the step 3 `--targets` preflight over the same paths and write nothing unless it exits `0`",
+        "this installed skill's own bundled `scripts/marker.py` authority",
+        "run with `python3 -I -B -S`",
     ):
         assert phrase in text, phrase
     offer = text.index("3. Offer each record on its own")
@@ -216,21 +223,25 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
     assert offer < approve < recheck < write < validate
     ref = SKILL.parent / "references/decision-records.md"
     assert ref.read_bytes() == (ROOT / "docs/decisions/README.md").read_bytes()
-    for relative in ("check-decisions.sh", "lib/decisions-common.sh"):
+    assert "review-plan/scripts" not in text and "installed review-plan" not in text
+    preflight = text.index("--targets -- <source plan>")
+    assert preflight < text.index("Then show the exact new path", preflight)
+    for relative in ("check-decisions.sh", "lib/decisions-common.sh", "marker.py"):
         assert (SKILL.parent / "scripts" / relative).read_bytes() == (
             ROOT / "scripts" / relative
         ).read_bytes()
 
 
 def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):
-    scripts = ROOT / "plugins/skein-pi/skills/review-plan/scripts"
+    scripts = ROOT / "plugins/skein-pi/skills/update-docs/scripts"
+    writer = ROOT / "plugins/skein-pi/skills/review-plan/scripts/write-review-marker.py"
     plan = tmp_path / "source.md"
     plan.write_text(
         "# Source\n### Architecture Decisions\nSingle writer.\n\n"
         "<!-- reviewed: YYYY-MM-DD @ <hash> -->\n\n## Findings\nNone.\n"
     )
     subprocess.run(
-        [sys.executable, str(scripts / "write-review-marker.py"), str(plan)],
+        [sys.executable, str(writer), str(plan)],
         check=True,
         capture_output=True,
     )
@@ -242,6 +253,9 @@ def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):
     )
     check = [
         sys.executable,
+        "-I",
+        "-B",
+        "-S",
         "-c",
         (
             "import sys; sys.path.insert(0, sys.argv[1]); import marker; "

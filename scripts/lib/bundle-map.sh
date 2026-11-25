@@ -72,12 +72,15 @@ BUNDLE_SKILLS=(deep-review review-plan review-gauntlet)
 BUNDLE_DOCS_SKILLS=(update-docs)
 
 # Extras for a BUNDLE_DOCS_SKILLS skill (one path per line, relative to
-# scripts/). update-docs validates the decision graph after a promotion writes.
+# scripts/). update-docs validates the decision graph after a promotion writes,
+# and classifies the source plan's review marker with its own marker.py copy
+# (a skill ships what it runs; it never imports review-plan's scripts/).
 bundle_docs_extra_for() {
 	case "$1" in
 	update-docs)
 		printf 'check-decisions.sh\n'
 		printf 'lib/decisions-common.sh\n'
+		printf 'marker.py\n'
 		;;
 	*)
 		printf 'bundle-map: unknown docs skill %s\n' "$1" >&2

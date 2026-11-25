@@ -46,6 +46,9 @@ COPIES=(
 	"$ROOT_DIR/plugins/skein-codex/skills/conduct/marker.py"
 	"$ROOT_DIR/plugins/skein/skills/review-plan/scripts/marker.py"
 	"$ROOT_DIR/plugins/skein-codex/skills/review-plan/scripts/marker.py"
+	"$ROOT_DIR/plugins/skein/skills/update-docs/scripts/marker.py"
+	"$ROOT_DIR/plugins/skein-codex/skills/update-docs/scripts/marker.py"
+	"$ROOT_DIR/plugins/skein-pi/skills/update-docs/scripts/marker.py"
 )
 
 pass_count=0

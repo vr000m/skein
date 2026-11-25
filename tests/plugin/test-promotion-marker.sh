@@ -294,17 +294,52 @@ check_mirror() {
 		'under the plan'"'"'s existing `## Promoted Decisions` section below the marker'
 	expect_text "$name: runs the bundled validator after writes" "$section" "$check_path"
 
+	# Marker integrity is one invariant with two writers: ordinary Phase 4 plan
+	# edits and promotion. Both mirrors guard both writers.
+	local apply_phase
+	apply_phase="$(awk '/^## Phase 4: Apply Updates$/{on=1; next} on && /^## /{exit} on' "$skill")"
+	expect_text "$name: Phase 4 shows the report before applying" "$apply_phase" \
+		'**Always show the report (Phase 3) first**'
+	expect_text "$name: ordinary apply classifies the source plan's marker first" "$apply_phase" \
+		'Before applying any changes to the source plan selected for Decision Promotion, use the marker classifier below.'
+	expect_text "$name: ordinary apply defers edits to the signed source-plan prefix" "$apply_phase" \
+		'If the plan has a valid marker, apply only edits below it. Report any proposed above-marker edits as deferred'
+	expect_text "$name: ordinary apply preserves the signed prefix even when no record is approved" "$apply_phase" \
+		'Preserve the marker and signed prefix for the rest of this invocation, including when no record is approved.'
+	expect_text "$name: promotion follows ordinary edits" "$section" \
+		'after the Phase 3 report and any ordinary Phase 4 edits'
+	# Write preflight: before the offer and again immediately before the write.
+	expect_text "$name: preflights every target before offering" "$section" \
+		"${check_path} --targets -- \"\$PLAN\" docs/decisions/<new file>"
+	expect_text "$name: re-runs the preflight immediately before the first write" "$section" \
+		'Immediately before the first write, re-run the step 3 preflight over the same paths and write nothing unless it exits `0`.'
+	local pre_at offer_at recheck_at write_at
+	pre_at="$(grep -n -- '--targets -- ' <<<"$section" | head -1 | cut -d: -f1 || true)"
+	offer_at="$(grep -n -- 'Then show the exact offer:' <<<"$section" | head -1 | cut -d: -f1 || true)"
+	recheck_at="$(grep -n -- 're-run the step 3 preflight' <<<"$section" | head -1 | cut -d: -f1 || true)"
+	write_at="$(grep -n -- 'Write exactly the approved offer' <<<"$section" | head -1 | cut -d: -f1 || true)"
+	if [[ -n "$pre_at" && -n "$offer_at" && -n "$recheck_at" && -n "$write_at" ]] &&
+		((pre_at < offer_at && offer_at < recheck_at && recheck_at < write_at)); then
+		pass "$name: preflight precedes the offer and its re-run precedes the write"
+	else
+		fail "$name: preflight/offer/write order is wrong ($pre_at, $offer_at, $recheck_at, $write_at)"
+	fi
+	# A skill ships what it runs: no python3 without isolation, and no reach
+	# into review-plan's scripts/.
+	if grep -nE 'python3( |$)' "$skill" | grep -v 'python3 -I -B -S ' | grep -q .; then
+		fail "$name: update-docs runs python3 without -I -B -S"
+	else
+		pass "$name: every python3 call in update-docs is isolated"
+	fi
+	if grep -q 'review-plan/scripts' "$skill"; then
+		fail "$name: update-docs imports from review-plan/scripts"
+	else
+		pass "$name: update-docs imports only its own bundled scripts"
+	fi
+
 	if [[ "$name" == codex ]]; then
-		local apply_phase
-		apply_phase="$(awk '/^## Phase 4: Apply Updates$/{on=1; next} on && /^## /{exit} on' "$skill")"
 		expect_text "codex: Phase 4 excludes decisions from the allowlist" "$apply_phase" \
 			'`docs/decisions/` path from this apply-target allowlist'
-		expect_text "codex: Phase 4 shows the report before applying" "$apply_phase" \
-			'**Always show the report (Phase 3) first**'
-		expect_text "codex: ordinary apply defers edits to the signed source-plan prefix" "$apply_phase" \
-			'If the plan has a valid marker, apply only edits below it. Report any proposed above-marker edits as deferred'
-		expect_text "codex: promotion follows ordinary edits" "$section" \
-			'after the Phase 3 report and any ordinary Phase 4 edits'
 		expect_text "codex: changed inputs require a fresh offer before writing" "$section" \
 			'If an input changed, report it and make a fresh offer before writing.'
 		expect_text "codex: reports an unwritable target before the first write" "$section" \
@@ -329,7 +364,7 @@ run_marker_classifier() {
 	script="$(awk '
 		/^## Decision Promotion$/ { promotion = 1; next }
 		promotion && /^## / { exit }
-		promotion && /^   python3 - "\$PLAN" / { on = 1 }
+		promotion && /^   python3 .*- "\$PLAN" / { on = 1 }
 		on { print substr($0, 4) }
 		on && /^   PY$/ { exit }
 	' "$skill_dir/SKILL.md" | sed "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/$plugin#g")"
@@ -337,12 +372,66 @@ run_marker_classifier() {
 		fail "$name: no marker classifier block in update-docs"
 		return
 	fi
+	# Run from a hostile checkout: every stdlib module marker.py imports is
+	# planted in the current directory. Isolation must keep them all off
+	# sys.path, in every marker state.
+	local shadow="$tmp/shadow-$name" module
+	mkdir -p "$shadow"
+	for module in re subprocess datetime pathlib hashlib os; do
+		printf 'open(%s, "w").write("ran")\nraise SystemExit("SHADOWED %s")\n' "'$shadow/canary-$module'" "$module" >"$shadow/$module.py"
+	done
 	for state in missing placeholder stale valid; do
-		if got="$(PLAN="$tmp/$state.md" SKILL_DIR="$skill_dir" bash -e <<<"$script" 2>&1)" &&
+		if got="$(cd "$shadow" && PLAN="$tmp/$state.md" SKILL_DIR="$skill_dir" bash -e <<<"$script" 2>&1)" &&
 			[[ "$got" == "$state" ]]; then
 			pass "$name: update-docs marker classifier prints $state"
 		else
 			fail "$name: update-docs marker classifier on the $state fixture printed '$got'"
+		fi
+	done
+	if compgen -G "$shadow/canary-*" >/dev/null; then
+		fail "$name: a repo-root module shadowed a marker.py import ($(ls "$shadow"))"
+	else
+		pass "$name: no repo-root module runs when the classifier imports marker.py"
+	fi
+	if [[ ! -d "$skill_dir/scripts/__pycache__" ]]; then
+		pass "$name: the classifier writes no bytecode into the bundled scripts"
+	else
+		fail "$name: the classifier wrote $skill_dir/scripts/__pycache__"
+	fi
+}
+
+# run_preflight <name> <plugin>: the mirror's own preflight line, run as
+# written over a promotion's targets, refuses a linked docs/decisions and a
+# linked source plan and accepts a real tree.
+run_preflight() {
+	local name="$1" plugin="$2" skill_dir line root rc
+	skill_dir="$REPO_ROOT/plugins/$plugin/skills/update-docs"
+	line="$(grep -E '^   .*check-decisions\.sh"? --targets -- ' "$skill_dir/SKILL.md" | head -1 | sed 's/^   //')"
+	line="${line//\$\{CLAUDE_PLUGIN_ROOT\}/$REPO_ROOT/plugins/$plugin}"
+	line="${line/ docs\/decisions\/<new file> \[docs\/decisions\/<superseded file>\] \[docs\/decisions\/README.md\]/ docs/decisions/20261125-new.md docs/decisions/README.md}"
+	if [[ -z "$line" || "$line" == *'<'* ]]; then
+		fail "$name: no runnable preflight line ($line)"
+		return
+	fi
+	for shape in real linked-decisions linked-plan; do
+		root="$tmp/preflight-$name-$shape"
+		mkdir -p "$root/docs/dev_plans" "$tmp/preflight-outside/decisions"
+		: >"$root/docs/dev_plans/real.md"
+		case "$shape" in
+		real | linked-plan) mkdir -p "$root/docs/decisions" ;;
+		linked-decisions) ln -s "$tmp/preflight-outside/decisions" "$root/docs/decisions" ;;
+		esac
+		plan=docs/dev_plans/real.md
+		if [[ "$shape" == linked-plan ]]; then
+			ln -s real.md "$root/docs/dev_plans/linked.md"
+			plan=docs/dev_plans/linked.md
+		fi
+		rc=0
+		(cd "$root" && PLAN="$plan" SKILL_DIR="$skill_dir" bash -e <<<"$line" >/dev/null 2>&1) || rc=$?
+		if [[ "$shape" == real && $rc -eq 0 ]] || [[ "$shape" != real && $rc -ne 0 ]]; then
+			pass "$name: the preflight verdict on a $shape tree is exit $rc"
+		else
+			fail "$name: the preflight verdict on a $shape tree is exit $rc"
 		fi
 	done
 }
@@ -350,10 +439,12 @@ run_marker_classifier() {
 if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	check_mirror claude skein '"${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"'
 	run_marker_classifier claude skein
+	run_preflight claude skein
 fi
 if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	check_mirror codex skein-codex '"$SKILL_DIR"/scripts/check-decisions.sh'
 	run_marker_classifier codex skein-codex
+	run_preflight codex skein-codex
 fi
 
 echo "---"
