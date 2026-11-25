@@ -169,8 +169,9 @@ done
 run "$root" src/x
 out="$OUT"
 assert_eq "the record cap shows 8" "20260101-r.md 20260102-r.md 20260103-r.md 20260104-r.md 20260105-r.md 20260106-r.md 20260107-r.md 20260108-r.md" "$(names "$out")"
-assert_eq "the record cap ends with the marker" "DECISIONS-TRUNCATED: 8 of 10 records shown" "$(tail -n 1 <<<"$out")"
-assert_eq "a truncated block exits 0" "0" "$RC"
+assert_eq "the record cap reports on stderr" "decisions-active.sh: DECISIONS-TRUNCATED: 8 of 10 records shown" "$(cat "$tmp/stderr")"
+assert_eq "a truncated selection is degraded: exit 3" "3" "$RC"
+assert_eq "no truncation line reaches stdout" "" "$(grep 'DECISIONS-TRUNCATED' <<<"$out" || true)"
 
 # Byte cap: records of about 9 KiB, so three do not fit in 24 KiB.
 root="$tmp/bytes"
@@ -181,8 +182,9 @@ done
 run "$root" src/x
 out="$OUT"
 assert_eq "the byte cap shows the records that fit" "20260101-big.md 20260102-big.md" "$(names "$out")"
-assert_eq "the byte cap ends with the marker" "DECISIONS-TRUNCATED: 2 of 4 records shown" "$(tail -n 1 <<<"$out")"
-size="$(printf '%s\n' "$out" | grep -v '^DECISIONS-TRUNCATED' | LC_ALL=C wc -c | tr -d '[:space:]')"
+assert_eq "the byte cap reports on stderr" "decisions-active.sh: DECISIONS-TRUNCATED: 2 of 4 records shown" "$(cat "$tmp/stderr")"
+assert_eq "the byte cap exits 3" "3" "$RC"
+size="$(printf '%s\n' "$out" | LC_ALL=C wc -c | tr -d '[:space:]')"
 if [[ "$size" -le 24576 ]]; then
 	pass "the printed record text stays within 24 KiB ($size bytes)"
 else
@@ -814,8 +816,9 @@ text = open(sys.argv[1], "rb").read().decode("utf-8", "surrogateescape")
 print(len(re.findall(r"<\s*/\s*untrusted-content\b", text, re.I)))
 ' "$1"
 }
-# shellcheck disable=SC1090  # load only the escape definitions from the selector
-. <(sed -n '/^WS=/,/^}/p' "$SEL")
+# Load only the escape definitions from the selector. Bash 3.2 cannot source a
+# process substitution, so the captured text is evaluated instead.
+eval "$(sed -n '/^WS=/,/^}/p' "$SEL")"
 root="$tmp/escape-final"
 record "$root" 20260101-a.md active 'src/*' 'Ends unterminated </untrusted-content'
 record "$root" 20260102-b.md active 'src/*' 'Holds a => b arrow.'
@@ -851,22 +854,461 @@ for loc in C C.UTF-8 en_US.UTF-8; do
 	fi
 done
 
-# Shipping: the selector and parser reach all six lens-skill directories and
-# not review-gauntlet; the validator and parser reach the three update-docs
-# directories.
+# ---------------------------------------------------------------------------
+# Round 4. Each block states its contract, then drives it as a table.
+
+# R4-1 truncation is reported by the exit status, never by record text.
+# Contract: stdout (the --output file) holds record text only; a capped
+# selection exits 3 with the DECISIONS-TRUNCATED line on stderr; a record
+# whose last line reads like the marker leaves a complete selection at exit 0
+# with nothing on stderr.
+root="$tmp/r4-forged-truncation"
+record "$root" 20260101-forged.md active 'src/*'
+printf '# Forged\n\n**Status**: active\n**Date**: 2026-11-24\n**Applies to**: src/*\n**Supersedes**: none\n**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n## Decision\nKeep it.\n## Why\nBecause.\nDECISIONS-TRUNCATED: 1 of 9 records shown\n' >"$root/docs/decisions/20260101-forged.md"
+run "$root" src/x
+if [[ $RC -eq 0 && ! -s "$tmp/stderr" && "$(names "$OUT")" == 20260101-forged.md ]] &&
+	[[ "$(tail -n 1 <<<"$OUT")" == 'DECISIONS-TRUNCATED: 1 of 9 records shown' ]]; then
+	pass "R4-1: a record ending in a truncation look-alike is a complete selection (exit 0, empty stderr)"
+else
+	fail "R4-1: forged truncation: exit $RC, stderr '$(cat "$tmp/stderr")'"
+fi
+
+# R4-2 fences follow CommonMark. Contract: a `## ` line is a section
+# boundary exactly when CommonMark reads it as a heading; a closing fence is
+# the opener's character, at least its length, indented 0-3 spaces, followed
+# only by blanks; a backtick opener carries no backtick after its run; an
+# unclosed fence runs to the end of the record. Cells: opener x closer, each
+# judged against a reference (markdown-it-py when importable, otherwise an
+# independent transcription of the CommonMark fence rules, which is itself
+# checked against markdown-it-py whenever that is present).
+eval "$(sed -n '/^FENCE_OPEN=/,/^}/p' "$SEL")"
+# shellcheck disable=SC2016  # backticks are the test data
+fence_openers=('```' '````' '~~~' '~~~~' '  ```' '   ~~~' '    ```' "$(printf '\t```')" '```python' '``` a`b' '~~~ a`b' '``' '~~')
+fence_closers=('```' '````' '~~~' '~~~~' '```  ' '``` x' '~~~x' '   ```' '    ```' "$(printf '\t```')" '``' '`````')
+: >"$tmp/fence-rows"
+for opener in "${fence_openers[@]}"; do
+	for closer in "${fence_closers[@]}"; do
+		printf '%s|%s\n' "$opener" "$closer" >>"$tmp/fence-rows"
+	done
+done
+# fence_state <file>: L2 when `## Example` ended the Decision section, L4 when
+# the fence closed and `## Alternatives rejected` did, none when neither did.
+fence_state() {
+	local text
+	text="$(block "$1")"
+	if ! grep -qx '## Example' <<<"$text"; then
+		echo L2
+	elif grep -qx 'HIDDEN-MARKER' <<<"$text"; then
+		echo none
+	else
+		echo L4
+	fi
+}
+python3 -I - "$tmp/fence-rows" >"$tmp/fence-ref" <<'PY'
+import re, sys
+
+def doc(opener, closer):
+    return "# T\n\n## Decision\n%s\n## Example\n%s\n## Alternatives rejected\nHIDDEN-MARKER\n" % (opener, closer)
+
+def indent(line):
+    col = 0
+    for ch in line:
+        if ch == " ":
+            col += 1
+        elif ch == "\t":
+            col += 4 - col % 4
+        else:
+            break
+    return col, line.lstrip(" \t")
+
+def transcription(opener, closer):
+    # CommonMark 0.31 section 4.5, fenced code blocks: written from the spec,
+    # independently of the selector's regexes.
+    lines = doc(opener, closer).split("\n")
+    fence = None
+    for number, line in enumerate(lines):
+        col, rest = indent(line)
+        if fence:
+            run = re.match(r"(`+|~+)", rest)
+            if col <= 3 and run and run.group(1)[0] == fence[0] and len(run.group(1)) >= len(fence) and rest[len(run.group(1)):].strip(" \t") == "":
+                fence = None
+            continue
+        run = re.match(r"(`{3,}|~{3,})", rest)
+        if col <= 3 and run and not (run.group(1)[0] == "`" and "`" in rest[len(run.group(1)):]):
+            fence = run.group(1)
+            continue
+        if col <= 3 and rest.startswith("## "):
+            if number == 4:
+                return "L2"
+            if number == 6:
+                return "L4"
+    return "none"
+
+try:
+    from markdown_it import MarkdownIt
+except ImportError:
+    MarkdownIt = None
+
+def reference(opener, closer):
+    tokens = MarkdownIt("commonmark").parse(doc(opener, closer))
+    starts = [t.map[0] for t in tokens if t.type == "heading_open" and t.tag == "h2"]
+    return "L2" if 4 in starts else "L4" if 6 in starts else "none"
+
+disagree = 0
+for row in open(sys.argv[1]).read().split("\n")[:-1]:
+    opener, closer = row.split("|")
+    want = transcription(opener, closer)
+    if MarkdownIt is not None and reference(opener, closer) != want:
+        disagree += 1
+    print(want)
+print("reference=%s disagreements=%d" % ("markdown-it-py" if MarkdownIt else "transcription", disagree))
+PY
+fence_ref_line="$(tail -n 1 "$tmp/fence-ref")"
+if [[ "$fence_ref_line" == *"disagreements=0" ]]; then
+	pass "R4-2: the fence reference is consistent ($fence_ref_line)"
+else
+	fail "R4-2: the CommonMark transcription disagrees with markdown-it-py ($fence_ref_line)"
+fi
+fence_failures=0
+fence_rows=0
+fence_i=0
+while IFS='|' read -r opener closer; do
+	fence_i=$((fence_i + 1))
+	want="$(sed -n "${fence_i}p" "$tmp/fence-ref")"
+	printf '# T\n\n## Decision\n%s\n## Example\n%s\n## Alternatives rejected\nHIDDEN-MARKER\n' "$opener" "$closer" >"$tmp/fence-record.md"
+	got="$(fence_state "$tmp/fence-record.md")"
+	fence_rows=$((fence_rows + 1))
+	if [[ "$got" != "$want" ]]; then
+		fence_failures=$((fence_failures + 1))
+		fail "R4-2: opener '$opener' closer '$closer': selector $got, CommonMark $want"
+	fi
+done <"$tmp/fence-rows"
+if [[ $fence_failures -eq 0 ]]; then
+	pass "R4-2: all $fence_rows opener x closer cells match CommonMark"
+fi
+# The reported case end to end: a backtick fence holding a tilde line keeps
+# the rest of the Decision and the whole Why section.
+root="$tmp/r4-fence-e2e"
+record "$root" 20260101-fence.md active 'src/*' 'Before.
+```markdown
+~~~
+## Example
+~~~
+```
+DECISION-TAIL
+## Why
+WHY-BODY'
+run "$root" src/x
+if [[ $RC -eq 0 ]] && grep -qx 'DECISION-TAIL' <<<"$OUT" && grep -qx 'WHY-BODY' <<<"$OUT"; then
+	pass "R4-2: a tilde line inside a backtick fence keeps the Decision tail and the Why section"
+else
+	fail "R4-2: the backtick fence lost text (exit $RC)"
+fi
+
+# R4-3 an uncommitted docs/decisions in a committed-range review is noticed.
+# Contract: in --base/--head mode without --uncommitted, stderr carries the
+# working-tree notice exactly when git status lists any entry under
+# docs/decisions (or fails); with --uncommitted the working tree is the
+# reviewed scope and no notice is printed. Cells: tree state x flag.
+DIRTY_LINE='decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions'
+root="$tmp/r4-dirty"
+record "$root" 20260101-a.md active 'src/*'
+mkdir -p "$root/src"
+printf 'x\n' >"$root/src/x"
+git -C "$root" init -q
+printf 'ignored.md\n' >"$root/.gitignore"
+git -C "$root" add -- .gitignore docs src
+git -C "$root" -c user.name=T -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm base
+printf 'y\n' >>"$root/src/x"
+git -C "$root" add -- src/x
+git -C "$root" -c user.name=T -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm change
+dirty_failures=0
+for cell in clean modified staged untracked ignored deleted status-fails; do
+	git -C "$root" reset -q --hard
+	git -C "$root" clean -qfdx -- docs
+	shim_path="$PATH"
+	case "$cell" in
+	modified) printf 'edit\n' >>"$root/docs/decisions/20260101-a.md" ;;
+	staged)
+		printf 'edit\n' >>"$root/docs/decisions/20260101-a.md"
+		git -C "$root" add -- docs/decisions/20260101-a.md
+		;;
+	untracked) record "$root" 20260102-new.md active 'other/*' ;;
+	ignored) printf 'x\n' >"$root/docs/decisions/ignored.md" ;;
+	deleted) rm "$root/docs/decisions/20260101-a.md" ;;
+	status-fails)
+		mkdir -p "$tmp/r4-shim"
+		# shellcheck disable=SC2016  # the shim's own "$@" is literal
+		printf '#!/bin/bash\nfor a in "$@"; do [ "$a" = status ] && exit 7; done\nexec %s "$@"\n' "$(command -v git)" >"$tmp/r4-shim/git"
+		chmod +x "$tmp/r4-shim/git"
+		shim_path="$tmp/r4-shim:$PATH"
+		;;
+	esac
+	for flag in committed uncommitted; do
+		want=0
+		[[ "$cell" != clean && "$flag" == committed ]] && want=1
+		extra=()
+		[[ "$flag" == uncommitted ]] && extra=(--uncommitted)
+		(cd "$root" && PATH="$shim_path" "$SEL" --base HEAD^ --head HEAD ${extra[@]+"${extra[@]}"} >/dev/null 2>"$tmp/stderr") || true
+		got=0
+		grep -qxF "$DIRTY_LINE" "$tmp/stderr" && got=1
+		if [[ $got -ne $want ]]; then
+			dirty_failures=$((dirty_failures + 1))
+			fail "R4-3: $cell/$flag: notice $got, want $want ($(cat "$tmp/stderr"))"
+		fi
+	done
+done
+[[ $dirty_failures -eq 0 ]] && pass "R4-3: the uncommitted-records notice fires exactly for a dirty docs/decisions in a committed-range review (7 states x 2 flags)"
+
+# R4-4 a glob has at most four stars, and matching never backtracks.
+# Contract (validator and selector together): a glob with a fifth `*`
+# outside brackets and escapes is an applies-to problem; glob_match agrees
+# with bash `[[ $path == $glob ]]` on every supported glob; a four-star glob
+# against a 1000-byte path is matched in bounded time.
+root="$tmp/r4-stars"
+record "$root" 20260101-nine.md active '*a*a*a*a*a*a*a*a*b'
+record "$root" 20260102-four.md active 'src/*.py, x*y*z*w*v'
+record "$root" 20260103-literal.md active 'x[*]\*[**]y*z*w*v*u'
+star_start=$SECONDS
+vrc=0
+"$CHECK" "$root" >"$tmp/vout" 2>&1 || vrc=$?
+run "$root" "$(printf 'a%.0s' $(seq 1 40))"
+star_elapsed=$((SECONDS - star_start))
+if [[ $vrc -eq 1 && $RC -eq 3 && -z "$(names "$OUT")" && $star_elapsed -le 5 ]] &&
+	grep -q "20260101-nine.md: Applies to: more than 4 '\*'" "$tmp/vout" &&
+	grep -q 'malformed record 20260101-nine.md: applies-to' "$tmp/stderr" &&
+	! grep -q '20260102-four.md\|20260103-literal.md' "$tmp/vout"; then
+	pass "R4-4: a nine-star glob is refused by both scripts in ${star_elapsed}s; four stars and bracketed or escaped stars pass"
+else
+	fail "R4-4: star cap: validator $vrc, selector $RC, ${star_elapsed}s ($(cat "$tmp/vout"))"
+fi
+root="$tmp/r4-four-star-time"
+record "$root" 20260101-four.md active '*a*a*a*b'
+long="$(printf 'a%.0s' $(seq 1 1000))"
+star_start=$SECONDS
+run "$root" "$long"
+star_elapsed=$((SECONDS - star_start))
+if [[ $RC -eq 0 && -z "$(names "$OUT")" && $star_elapsed -le 5 ]]; then
+	pass "R4-4: a four-star glob against a 1000-byte path is decided in ${star_elapsed}s"
+else
+	fail "R4-4: four-star match took ${star_elapsed}s (exit $RC)"
+fi
+run "$root" "${long}b"
+assert_eq "R4-4: the same glob still matches when it should" "20260101-four.md" "$(names "$OUT")"
+# Differential: glob_match against bash's own matcher over generated globs
+# of up to four stars and generated paths, under LC_ALL=C.
+# shellcheck source=scripts/lib/decisions-common.sh
+. "$REPO_ROOT/scripts/lib/decisions-common.sh"
+eval "$(sed -n '/^glob_segments()/,/^}/p;/^glob_match()/,/^}/p' "$SEL")"
+# diff_one <glob> <path>: compares the two matchers once, byte-wise.
+diff_failures=0
+diff_cases=0
+diff_one() {
+	local want=1 got=1
+	local LC_ALL=C
+	# shellcheck disable=SC2053  # the glob is the pattern on purpose
+	[[ "$2" == $1 ]] && want=0
+	glob_match "$2" "$1" && got=0
+	diff_cases=$((diff_cases + 1))
+	if [[ $got -ne $want ]]; then
+		diff_failures=$((diff_failures + 1))
+		[[ $diff_failures -le 5 ]] && fail "R4-4: glob '$1' path '$2': glob_match $got, bash $want"
+	fi
+	return 0
+}
+# Exhaustive: every glob of up to five atoms over {a, b, *, ?} (no `**`)
+# against every path of up to five bytes over {a, b}.
+small_globs=("")
+small_paths=("")
+for ((len = 1; len <= 5; len++)); do
+	next=()
+	for g in "${small_globs[@]}"; do
+		[[ ${#g} -eq $((len - 1)) ]] || continue
+		for atom in a b '*' '?'; do
+			[[ "$atom" == '*' && "$g" == *'*' ]] && continue
+			next+=("$g$atom")
+		done
+	done
+	small_globs+=("${next[@]}")
+	next=()
+	for p in "${small_paths[@]}"; do
+		[[ ${#p} -eq $((len - 1)) ]] || continue
+		next+=("${p}a" "${p}b")
+	done
+	small_paths+=("${next[@]}")
+done
+for g in "${small_globs[@]}"; do
+	[[ -n "$g" ]] || continue
+	for p in "${small_paths[@]}"; do
+		diff_one "$g" "$p"
+	done
+done
+# Middle segments must not overlap: each row is a near miss where they would.
+for row in '*ab*ba*|aba' '*aa*aa*|aaa' 'a*ab*ba*b|abab' '*ab*b*ab*|abab' '*a?*?a*|aa'; do
+	diff_one "${row%%|*}" "${row#*|}"
+done
+# Generated: richer atoms (escapes, brackets, literal metacharacters) in
+# globs of up to four stars, against paths built from the same bytes.
+RANDOM=4242
+# shellcheck disable=SC1003  # backslashes are the test data
+glob_atoms=('a' 'b' 'ab' 'ba' 'aa' '/' '?' '*' '[ab]' '[!a]' '\*' '\?' '[*]' '[' ']' '\\' '.' '[]a]')
+# shellcheck disable=SC1003  # backslashes are the test data
+path_atoms=('a' 'b' '/' '*' '?' '[' ']' '\' '.')
+for ((gi = 0; gi < 600; gi++)); do
+	glob=""
+	stars=0
+	for ((k = 0; k < 1 + RANDOM % 7; k++)); do
+		atom="${glob_atoms[RANDOM % ${#glob_atoms[@]}]}"
+		if [[ "$atom" == '*' ]]; then
+			[[ $stars -lt 4 && "$glob" != *'*' ]] || continue
+			stars=$((stars + 1))
+		fi
+		glob+="$atom"
+	done
+	[[ -n "$glob" ]] || continue
+	dec_glob_problem "$glob" >/dev/null && continue
+	for ((pi = 0; pi < 10; pi++)); do
+		p=""
+		for ((k = 0; k < RANDOM % 9; k++)); do
+			p+="${path_atoms[RANDOM % ${#path_atoms[@]}]}"
+		done
+		diff_one "$glob" "$p"
+	done
+done
+[[ $diff_failures -eq 0 ]] && pass "R4-4: glob_match equals bash [[ == ]] on $diff_cases generated glob/path pairs"
+
+# R4-5 header parsing is byte-wise and keeps an escaped trailing space.
+# Contract: validator and selector give the same verdict for the same record
+# in every locale. Cells: {Status + U+00A0, Applies to holding byte \377,
+# final glob `docs/foo\ `} x {C, en_US.UTF-8}.
+nbsp="$(printf '\302\240')"
+ff="$(printf '\377')"
+for loc in C en_US.UTF-8; do
+	norm="$(printf '%s' "$loc" | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/')"
+	if [[ "$loc" != C ]] && ! locale -a 2>/dev/null | tr '[:upper:]' '[:lower:]' | sed 's/utf-8/utf8/' | grep -qx "$norm"; then
+		pass "R4-5: locale $loc is not installed; skipped"
+		continue
+	fi
+	for cell in nbsp-status ff-glob escaped-space; do
+		root="$tmp/r4-locale-$loc-$cell"
+		case "$cell" in
+		nbsp-status)
+			record "$root" 20260101-r.md "active$nbsp" 'src/*'
+			want_v=1 want_s=3 want_names="" probe=src/x
+			;;
+		ff-glob)
+			record "$root" 20260101-r.md active "src/$ff*"
+			want_v=0 want_s=0 want_names=20260101-r.md probe="src/${ff}x"
+			;;
+		escaped-space)
+			record "$root" 20260101-r.md active 'docs/bar.md, docs/foo\ '
+			want_v=0 want_s=0 want_names=20260101-r.md probe="docs/foo "
+			;;
+		esac
+		vrc=0
+		LC_ALL="$loc" "$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
+		RC=0
+		OUT="$(cd "$root" && LC_ALL="$loc" "$SEL" -- "$probe" 2>/dev/null)" || RC=$?
+		got_names="$(names "$OUT")"
+		if [[ $vrc -eq $want_v && $RC -eq $want_s && "$got_names" == "$want_names" ]]; then
+			pass "R4-5: [$loc] $cell: validator $vrc, selector $RC"
+		else
+			fail "R4-5: [$loc] $cell: validator $vrc (want $want_v), selector $RC (want $want_s), selected '$got_names'"
+		fi
+		if [[ "$cell" == escaped-space ]]; then
+			RC=0
+			OUT="$(cd "$root" && LC_ALL="$loc" "$SEL" -- "docs/foo" 2>/dev/null)" || RC=$?
+			assert_eq "R4-5: [$loc] the escaped trailing space is kept, so docs/foo does not match" "" "$(names "$OUT")"
+		fi
+	done
+done
+
+# R4-6 a linked docs/ without a decisions folder passes; with one it fails.
+# Contract: dec_check_directory refuses a symlinked docs/ only when
+# docs/decisions exists through it. Cells: {linked docs without decisions,
+# linked docs with decisions, dangling docs link} x {validator, selector}.
+for cell in no-decisions with-decisions dangling; do
+	root="$tmp/r4-linked-docs-$cell"
+	target="$tmp/r4-linked-docs-$cell-target"
+	mkdir -p "$root" "$target/dev_plans"
+	case "$cell" in
+	with-decisions) record "$tmp/r4-linked-docs-$cell-src" 20260101-r.md active 'src/*' && cp -R "$tmp/r4-linked-docs-$cell-src/docs/decisions" "$target/decisions" && want=fail ;;
+	dangling) target="$tmp/r4-missing-target" && want=ok ;;
+	*) want=ok ;;
+	esac
+	ln -s "$target" "$root/docs"
+	vrc=0
+	"$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
+	run "$root" src/x
+	if { [[ "$want" == ok && $vrc -eq 0 && $RC -eq 0 ]] || [[ "$want" == fail && $vrc -eq 1 && $RC -eq 3 && -z "$OUT" ]]; }; then
+		pass "R4-6: linked docs, $cell: validator $vrc, selector $RC"
+	else
+		fail "R4-6: linked docs, $cell: validator $vrc, selector $RC (want $want)"
+	fi
+done
+
+# R4-7 the scratch guard's containment rule is persist_path_is_inside_root.
+# Contract: dec_scratch_prepare refuses a path as `not inside the repository`
+# exactly when persist_path_is_inside_root says it is outside both the
+# physical and the logical root. Cells: absolute, relative from the root and
+# from a subdirectory, the root itself, a sibling sharing the root's prefix,
+# an outside path, `..` spellings, an alias spelled through a symlink above
+# the root, and a relative path from outside the root.
+root="$(cd "$tmp" && pwd -P)/r4-scratch"
+mkdir -p "$root/sub" "$tmp/r4-scratch-x"
+ln -s "$root" "$tmp/r4-scratch-alias"
+boundary_failures=0
+boundary_cases=0
+while IFS='|' read -r cwd spelling; do
+	cwd="${cwd//@ROOT@/$root}"
+	cwd="${cwd//@TMP@/$tmp}"
+	spelling="${spelling//@ROOT@/$root}"
+	spelling="${spelling//@TMP@/$tmp}"
+	verdicts="$(cd "$cwd" && bash -c '
+		set -euo pipefail
+		. "$1/lib/decisions-scratch.sh"
+		r=1; persist_path_is_inside_root "$4" "$2" && r=0
+		d=0; dec_scratch_prepare "$2" "$3" "$4" >/dev/null 2>&1 || { [[ "$DEC_SCRATCH_REASON" == "not inside the repository" ]] && d=1; }
+		printf "%s %s\n" "$r" "$d"
+	' _ "$REPO_ROOT/scripts" "$root" "$root" "$spelling")"
+	boundary_cases=$((boundary_cases + 1))
+	if [[ "$verdicts" != "0 0" && "$verdicts" != "1 1" ]]; then
+		boundary_failures=$((boundary_failures + 1))
+		fail "R4-7: cwd $cwd, path $spelling: persist/dec verdicts $verdicts"
+	fi
+done <<'ROWS'
+@ROOT@|@ROOT@/.deep-review/lenses/r/out.txt
+@ROOT@|.deep-review/lenses/r/out.txt
+@ROOT@/sub|out.txt
+@ROOT@|@ROOT@
+@ROOT@|@ROOT@-x/out.txt
+@ROOT@|/etc/out.txt
+@ROOT@|../out.txt
+@ROOT@|@ROOT@/../out.txt
+@ROOT@|@TMP@/r4-scratch-alias/out.txt
+@TMP@|out.txt
+@TMP@|r4-scratch/out.txt
+ROWS
+[[ $boundary_failures -eq 0 ]] && pass "R4-7: dec_scratch_prepare's containment verdict equals persist_path_is_inside_root on $boundary_cases spellings"
+rm -rf "$root/.deep-review"
+
+# Shipping: the selector, parser and scratch guard reach all six lens-skill
+# directories and not review-gauntlet; the validator and parser, but not the
+# scratch guard, reach the three update-docs directories.
 for mirror in skein skein-codex skein-pi; do
 	for skill in review-plan deep-review; do
 		d="$REPO_ROOT/plugins/$mirror/skills/$skill/scripts"
-		if [[ -f "$d/decisions-active.sh" && -f "$d/lib/decisions-common.sh" ]] &&
+		if [[ -f "$d/decisions-active.sh" && -f "$d/lib/decisions-common.sh" && -f "$d/lib/decisions-scratch.sh" ]] &&
 			cmp -s "$SEL" "$d/decisions-active.sh" &&
-			cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$d/lib/decisions-common.sh"; then
-			pass "selector and parser are bundled byte-identically in $mirror/$skill"
+			cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$d/lib/decisions-common.sh" &&
+			cmp -s "$REPO_ROOT/scripts/lib/decisions-scratch.sh" "$d/lib/decisions-scratch.sh"; then
+			pass "selector, parser and scratch guard are bundled byte-identically in $mirror/$skill"
 		else
-			fail "selector and parser are bundled byte-identically in $mirror/$skill"
+			fail "selector, parser and scratch guard are bundled byte-identically in $mirror/$skill"
 		fi
 	done
 	g="$REPO_ROOT/plugins/$mirror/skills/review-gauntlet/scripts"
-	if [[ ! -e "$g/decisions-active.sh" && ! -e "$g/lib/decisions-common.sh" ]]; then
+	if [[ ! -e "$g/decisions-active.sh" && ! -e "$g/lib/decisions-common.sh" && ! -e "$g/lib/decisions-scratch.sh" ]]; then
 		pass "the selector is absent from $mirror/review-gauntlet"
 	else
 		fail "the selector is absent from $mirror/review-gauntlet"
@@ -879,10 +1321,10 @@ for mirror in skein skein-codex skein-pi; do
 	else
 		fail "validator and parser are bundled byte-identically in $mirror/update-docs"
 	fi
-	if [[ ! -e "$u/decisions-active.sh" ]]; then
-		pass "the selector is not bundled into $mirror/update-docs"
+	if [[ ! -e "$u/decisions-active.sh" && ! -e "$u/lib/decisions-scratch.sh" ]]; then
+		pass "the selector and its scratch guard are not bundled into $mirror/update-docs"
 	else
-		fail "the selector is not bundled into $mirror/update-docs"
+		fail "the selector and its scratch guard are not bundled into $mirror/update-docs"
 	fi
 done
 

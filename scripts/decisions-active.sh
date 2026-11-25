@@ -18,11 +18,17 @@
 #                  --name-only -z <base>...<head>` itself (both rename paths;
 #                  the merge base, as `gh pr diff`), plus the staged and
 #                  unstaged diffs with --uncommitted. No changed path is an
-#                  empty, successful selection. When <head> is not the
-#                  checked-out HEAD, stderr carries `decisions-active.sh:
-#                  notice: decision records read from the checked-out tree,
-#                  not the reviewed head`: records are always read from the
-#                  working tree.
+#                  empty, successful selection. Records are always read from
+#                  the working tree, and two stderr notices say when that is
+#                  not the reviewed snapshot: `decisions-active.sh: notice:
+#                  decision records read from the checked-out tree, not the
+#                  reviewed head` when <head> is not the checked-out HEAD,
+#                  and, without --uncommitted, `decisions-active.sh: notice:
+#                  working tree has uncommitted changes under docs/decisions`
+#                  when git status shows a staged, unstaged, untracked or
+#                  ignored entry there (or cannot tell). With --uncommitted
+#                  the review covers the working tree, whose records are then
+#                  the reviewed ones, so that second notice is not printed.
 #   <path>...      literal arguments, for direct use.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
@@ -33,7 +39,9 @@
 # instead of stdout. The script is the only writer of both: each must lie
 # inside the repository, with no symlink, `..` or `.git` component below the
 # repo root, no non-directory ancestor and no non-regular leaf
-# (dec_scratch_prepare). Missing directories are created; the file is written
+# (dec_scratch_prepare in lib/decisions-scratch.sh, which asks
+# persist_path_is_inside_root whether the path is inside the repository).
+# Missing directories are created; the file is written
 # to a temp file and renamed into place. --output is written whatever the exit
 # status, once its path is accepted.
 #
@@ -42,14 +50,23 @@
 # record is selected when its Status is `active` and any of its `Applies to`
 # globs matches any path, with bash `[[ $path == $glob ]]` semantics (`*`
 # crosses `/`). Matching runs under LC_ALL=C, so a range such as `[a-c]` and
-# `?` match bytes, case-sensitively, in every locale and bash version.
+# `?` match bytes, case-sensitively, in every locale and bash version. A glob
+# has at most four `*` (dec_glob_problem), and the match never hands bash a
+# pattern holding one: the glob is split at its stars and each star-free
+# segment is matched at its leftmost position, so the time is linear in the
+# path's length per segment rather than its length raised to the star count.
 # Superseded records are never printed.
 #
 # Output, in path-sorted record order, one block per selected record:
 #   ### Record: docs/decisions/<name>
 #   <title and header lines>
 #   ## Decision ... and ## Why ... (those two sections only; a `## ` line
-#   inside a ``` or ~~~ fence is text, not a section boundary)
+#   inside a fenced code block is text, not a section boundary). Fences follow
+#   CommonMark: an opener is up to three spaces, then at least three backticks
+#   (with no backtick in the rest of the line) or at least three tildes; only
+#   a line of the same character, at least as long, indented up to three
+#   spaces and followed by nothing but spaces or tabs, closes it. An unclosed
+#   fence runs to the end of the record.
 # Record text is escaped: the opening of any case-insensitive closing-tag
 # lookalike, `<`, `/` and the tag name with any whitespace between them and a
 # non-word character or end of text after, becomes `<\/untrusted-content`; the
@@ -58,26 +75,35 @@
 # closing it early.
 #
 # Cap: at most 8 records and 24 KiB of record text. When more records match,
-# the last line is `DECISIONS-TRUNCATED: N of M records shown`.
+# stderr carries `decisions-active.sh: DECISIONS-TRUNCATED: N of M records
+# shown` and the exit status is 3. Nothing but record text reaches stdout (or
+# --output), so a record cannot forge the truncation report: callers judge
+# coverage by the exit status alone.
 #
 # Exit codes:
-#   0  success: no match, no docs/decisions directory, or a truncated block
+#   0  complete: no match, no docs/decisions directory, or every match printed
 #   2  usage error (an unknown option, or no path)
-#   3  a record is malformed (check-decisions.sh would reject it: both call
-#      dec_validate_tree), or docs/decisions is not a readable local
-#      directory. stderr names each problem as the record's file name and a
-#      reason code (file-type, header, status, supersession, source-plan,
-#      applies-to), never a value from the record. Only records the validator
-#      accepts are selected, and those matches are still printed, so the
-#      caller reports degraded coverage rather than "no applicable decisions".
+#   3  degraded: a record is malformed (check-decisions.sh would reject it:
+#      both call dec_validate_tree), docs/decisions is not a readable local
+#      directory, or more records matched than the cap shows. stderr names
+#      each problem as the record's file name and a reason code (file-type,
+#      header, status, supersession, source-plan, applies-to), never a value
+#      from the record, plus the DECISIONS-TRUNCATED line when capped. Only
+#      records the validator accepts are selected, and those matches are
+#      still printed, so the caller reports degraded coverage rather than
+#      "no applicable decisions".
 #   4  the path list is unavailable: a git diff failed, or a --paths-stdin line
 #      lacks its `p ` prefix
 #   5  --output or --paths-file was refused or could not be written
+# --output holds a selection exactly when the status is 0 or 3; on 2, 4 or 5
+# it is empty or absent, and callers read it only on 0 or 3.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
+# shellcheck source=scripts/lib/decisions-scratch.sh disable=SC1091
+. "$SCRIPT_DIR/lib/decisions-scratch.sh"
 
 # A glob from a record is matched case-sensitively: the shared lib clears
 # nocasematch. Extended patterns are rejected by dec_glob_problem instead:
@@ -86,6 +112,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAX_RECORDS=8
 MAX_BYTES=24576
 NOTICE="decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head"
+DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions"
 
 usage() {
 	echo "usage: decisions-active.sh [--output <file>] [--paths-file <file>] (--paths-stdin | --base <rev> --head <rev> [--uncommitted] | [--] <path>...)" >&2
@@ -239,6 +266,10 @@ range)
 	reviewed="$(git -C "$root" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null || true)"
 	current="$(git -C "$root" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
 	[[ "$reviewed" == "$current" ]] || echo "$NOTICE" >&2
+	if [[ $uncommitted -eq 0 ]]; then
+		dirty="$(git -C "$root" --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions 2>/dev/null)" || dirty=unknown
+		[[ -z "$dirty" ]] || echo "$DIRTY_NOTICE" >&2
+	fi
 	;;
 esac
 if [[ -n "$paths_final" ]]; then
@@ -255,6 +286,70 @@ fi
 
 dec_check_directory "$root" || exit 3
 
+# glob_segments <glob>: splits a glob at each `*` that bash reads as a star
+# (not escaped, not inside a bracket expression) into SEG[i], with SEG_LEN[i]
+# the number of characters segment i matches: every literal, escaped
+# character, `?` and bracket expression matches exactly one.
+glob_segments() {
+	local glob="$1" seg="" len=0 i=0 n=${#1} c
+	SEG=()
+	SEG_LEN=()
+	while ((i < n)); do
+		c="${glob:i:1}"
+		if [[ "$c" == "\\" ]]; then
+			seg+="${glob:i:2}"
+			i=$((i + 2))
+		elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$i"; then
+			seg+="${glob:i:_dec_end-i+1}"
+			i=$((_dec_end + 1))
+		elif [[ "$c" == '*' ]]; then
+			SEG+=("$seg")
+			SEG_LEN+=("$len")
+			seg=""
+			len=0
+			i=$((i + 1))
+			continue
+		else
+			seg+="$c"
+			i=$((i + 1))
+		fi
+		len=$((len + 1))
+	done
+	SEG+=("$seg")
+	SEG_LEN+=("$len")
+}
+
+# glob_match <path> <glob>: `[[ $path == $glob ]]` for the supported dialect,
+# where `*` matches any string. The first segment must match the path's start
+# and the last its end; each middle segment is taken at its leftmost match
+# after the one before, which finds a match whenever one exists. Bash only
+# ever sees star-free patterns of fixed length, so nothing backtracks.
+glob_match() {
+	local p="$1" k last pos end
+	glob_segments "$2"
+	last=$((${#SEG[@]} - 1))
+	if [[ $last -eq 0 ]]; then
+		# shellcheck disable=SC2053  # the segment is the pattern on purpose
+		[[ "$p" == ${SEG[0]} ]]
+		return
+	fi
+	end=$((${#p} - SEG_LEN[last]))
+	[[ $end -ge ${SEG_LEN[0]} ]] || return 1
+	# shellcheck disable=SC2053
+	[[ "${p:0:SEG_LEN[0]}" == ${SEG[0]} && "${p:end}" == ${SEG[last]} ]] || return 1
+	pos=${SEG_LEN[0]}
+	for ((k = 1; k < last; k++)); do
+		while :; do
+			[[ $((pos + SEG_LEN[k])) -le $end ]] || return 1
+			# shellcheck disable=SC2053
+			[[ "${p:pos:SEG_LEN[k]}" == ${SEG[k]} ]] && break
+			pos=$((pos + 1))
+		done
+		pos=$((pos + SEG_LEN[k]))
+	done
+	return 0
+}
+
 # applies <glob-list>: succeeds when any glob matches any path. LC_ALL=C makes
 # a range or `?` match bytes: bash 3.2 otherwise collates by locale, so
 # `src/[a-c]*.py` would match `src/Bar.py` under en_US.UTF-8.
@@ -263,8 +358,7 @@ applies() {
 	local LC_ALL=C
 	while IFS= read -r glob; do
 		for p in "${paths[@]}"; do
-			# shellcheck disable=SC2053  # the glob is the pattern on purpose
-			[[ "$p" == $glob ]] && return 0
+			glob_match "$p" "$glob" && return 0
 		done
 	done < <(dec_split_globs "$1")
 	return 1
@@ -288,18 +382,26 @@ escape() {
 		-e ':b' -e "s#<${WS}*/${WS}*${NAME}([^A-Za-z0-9_]|\$)#<\\\\/untrusted-content\\4#g" -e 'tb'
 }
 
-# The fence rule is scripts/marker.py's: a line starting (after whitespace)
-# with ``` or ~~~ opens or closes a fence.
-FENCE_RE='^[[:space:]]*(```|~~~)'
+# Fences follow CommonMark (the header above): FENCE_OPEN captures the run
+# and the rest of the line, FENCE_CLOSE a run followed only by blanks. A
+# trailing CR is a line ending, not content.
+FENCE_OPEN='^ {0,3}(`{3,}|~{3,})(.*)$'
+FENCE_CLOSE='^ {0,3}(`{3,}|~{3,})[[:blank:]]*$'
 
 # block <record path>: the header, then the Decision and Why sections. A
 # `## ` line inside a fence belongs to the section around it.
 block() {
-	local line keep=1 fenced=0
+	local line text keep=1 fence=""
+	local LC_ALL=C
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if [[ "$line" =~ $FENCE_RE ]]; then
-			fenced=$((1 - fenced))
-		elif [[ $fenced -eq 0 && "$line" == "## "* ]]; then
+		text="${line%$'\r'}"
+		if [[ -n "$fence" ]]; then
+			if [[ "$text" =~ $FENCE_CLOSE ]] && [[ "${BASH_REMATCH[1]:0:1}" == "${fence:0:1}" && ${#BASH_REMATCH[1]} -ge ${#fence} ]]; then
+				fence=""
+			fi
+		elif [[ "$text" =~ $FENCE_OPEN ]] && [[ "${BASH_REMATCH[1]:0:1}" == '~' || "${BASH_REMATCH[2]}" != *'`'* ]]; then
+			fence="${BASH_REMATCH[1]}"
+		elif [[ "$line" == "## "* ]]; then
 			case "${line%"${line##*[![:space:]]}"}" in
 			"## Decision" | "## Why") keep=1 ;;
 			*) keep=0 ;;
@@ -350,7 +452,8 @@ done
 
 total=${#matched[@]}
 if [[ $shown -lt $total ]]; then
-	printf 'DECISIONS-TRUNCATED: %d of %d records shown\n' "$shown" "$total"
+	printf 'decisions-active.sh: DECISIONS-TRUNCATED: %d of %d records shown\n' "$shown" "$total" >&2
+	exit 3
 fi
 
 [[ $malformed -eq 0 ]] || exit 3
