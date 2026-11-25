@@ -213,6 +213,8 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "never on the command line",
         "against `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` before it reaches any shell",
         "`broken partial promotion: <link>`",
+        "each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$`",
+        "only with your file-read and file-search (glob) tools, never with a shell command",
         "report it as `already exists, link missing`, never draft a second record for it",
         "Only the audit worker is read-only",
         "The main session gathers the evidence, applies only the edits the user approves, and runs Decision Promotion",

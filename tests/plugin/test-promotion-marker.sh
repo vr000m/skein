@@ -326,6 +326,7 @@ check_mirror() {
 	expect_text "$name: checks every file name before any shell use" "$section" \
 		"check each file name (the source plan's, the new record's and a superseded record's) against \`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md\$\`"
 	expect_text "$name: reports a plan link to a missing record" "$section" '`broken partial promotion: <link>`'
+	run_step1_guard "$name" "$section"
 	expect_text "$name: reports an orphan record and offers only its link" "$section" \
 		'report it as `already exists, link missing`, never draft a second record for it, and offer only its missing link line'
 	expect_text "$name: step 7 compares the signed-prefix digest" "$section" \
@@ -622,8 +623,8 @@ promo_state() {
 run_write_order() {
 	local name="$1" order cell base sup kinds kind k n done_ok=1 seen="" st root
 	order="$(write_order "$2" "$3")"
-	if [[ "$order" != *record* || "$order" != *link* ]]; then
-		fail "$name: cannot read the write order from step '$3' ($order)"
+	if [[ "$order" != *readme* || "$order" != *record* || "$order" != *link* ]]; then
+		fail "$name: cannot read the write order from step '$3', or it lacks the first-promotion README write ($order)"
 		return
 	fi
 	for cell in first:no:readme,record,link existing:no:record,link existing:yes:record,supersede,link; do
@@ -646,6 +647,11 @@ run_write_order() {
 			if [[ "$st" == dangling || ($k -eq $n && "$st" != linked) ]]; then
 				done_ok=0
 				fail "$name: $base promotion, supersede=$sup, interrupted after $k of $n writes (${kinds[*]}): $st"
+			fi
+			# A completed first promotion installs the folder's README too.
+			if [[ "$base" == first && $k -eq $n ]] && ! cmp -s "$root/docs/decisions/README.md" "$REPO_ROOT/docs/decisions/README.md"; then
+				done_ok=0
+				fail "$name: a completed first promotion left no docs/decisions/README.md"
 			fi
 		done
 	done
@@ -703,6 +709,23 @@ run_marker_integrity() {
 	done
 }
 
+# run_step1_guard <name> <section>: step 1 checks every link target and record
+# name against DEC_TARGET_NAME before it uses one, and checks existence with
+# file tools only, never a shell. Contract: the guard sentence precedes the
+# first use (`a link whose record file does not exist`), and its regex is the
+# validator's.
+run_step1_guard() {
+	local name="$1" section="$2" guard rule
+	guard='each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `'
+	rule="^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$"
+	# shellcheck disable=SC2016  # literal skill text
+	if [[ "$section" == *"$guard$rule\`"*"only with your file-read and file-search (glob) tools, never with a shell command"*"a link whose record file does not exist"* ]]; then
+		pass "$name: step 1 checks link targets and record names (DEC_TARGET_NAME) before any use, existence via file tools only"
+	else
+		fail "$name: step 1 uses a link target or record name before the DEC_TARGET_NAME check, or allows a shell existence check"
+	fi
+}
+
 # run_name_rule <name> <SKILL.md>: the skill's file-name regex is the
 # validator's DEC_TARGET_NAME, and it refuses every hostile name.
 run_name_rule() {
@@ -732,6 +755,7 @@ if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
 	run_write_order pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '5. Write exactly the individually approved offer'
 	run_name_rule pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
+	run_step1_guard pi "$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")"
 fi
 if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	check_mirror codex skein-codex '"$SKILL_DIR"/scripts/check-decisions.sh'
