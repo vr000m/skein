@@ -382,7 +382,7 @@ sequenceDiagram
 - [x] Phase 5b: conduct nudge (Claude)
 - [x] Phase 3a: Lens checks against active records (Codex session)
 - [x] Phase 4a: update-docs promotion and template (Codex session)
-- [ ] Phase 5a: conduct nudge (Codex session)
+- [x] Phase 5a: conduct nudge (Codex session)
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
 - [x] Phase 5c: conduct nudge (Pi session)
@@ -440,6 +440,8 @@ sequenceDiagram
 - Phase 3a (2026-11-24): The standalone Codex CLI could not start its app-server under the sandbox. Exercised the rendered Codex Architecture Lens prompts directly in two clean-context workers. Both found the cache-store conflict (Constraint and Architecture respectively), and neither reported a decision conflict for the unrelated, superseded, or closing-tag lookalike cases. Verified both selector snippets on Bash 3.2. Stored the four cases under `/private/tmp/skein-3a-architecture-q2ec3l1s/.review-plan/lenses/fixture-*/architecture.1.jsonl` and `/private/tmp/skein-3a-architecture-q2ec3l1s/.deep-review/lenses/fixture-*/architecture.2.jsonl`.
 - Phase 3a (2026-11-24): Ran the test suites with scratch Git signing disabled and used a writable, offline uv cache for parity. The repository signing configuration is unchanged.
 - Phase 4a (2026-11-24): The session requested whole-file Claude byte parity for the Codex template and excluded Pi edits. This supersedes the phase block’s instructions to keep the Codex-only quick header example and copy the new template into Pi. The Codex template now lists `none | full`. The Pi composition suite ran with loopback access and returned 7 passed, 2 failed. Both failures enforce Codex–Pi template byte equality. Codex promotion checks passed 29/29, both mirrors passed 46/46, and `just parity-tests` passed.
+- Phase 5a (2026-11-24): The conduct test passed all 38 textual assertions. Live conduct was outside this phase’s scripted check.
+- Phase 5a (2026-11-24): Before 5a, repaired a shared-index race that included four Pi lens files in the initial 4a commit (`dd58550`). Scoped 4a to the six intended files in `92bb0c1`, replayed the separate Pi promotion fix with the same patch and message (`ec579fa` to `f39a2ca`), and restored the four Pi lens files to the shared index without changing their working files.
 
 ### Review Waivers
 
