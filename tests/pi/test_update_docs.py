@@ -203,6 +203,9 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "verify the unchanged signed prefix byte-for-byte",
         "No other new documentation files are allowed",
         "No automatic writes, staging, or commits",
+        "All edits under `docs/decisions/`, including existing records and supersession updates",
+        "never apply them as generic documentation fixes",
+        "not a generic plan edit",
     ):
         assert phrase in text, phrase
     offer = text.index("3. Offer each record on its own")
