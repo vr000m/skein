@@ -42,10 +42,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
-# A glob from a record is matched case-sensitively, whatever the caller set.
-# Extended patterns are rejected by dec_glob_problem instead: `[[ == ]]` honours
-# them whatever `extglob` says.
-shopt -u nocasematch nocaseglob
+# A glob from a record is matched case-sensitively: the shared lib clears
+# nocasematch. Extended patterns are rejected by dec_glob_problem instead:
+# `[[ == ]]` honours them whatever `extglob` says.
 
 MAX_RECORDS=8
 MAX_BYTES=24576
@@ -109,7 +108,7 @@ block() {
 		if [[ $keep -eq 1 ]]; then
 			printf '%s\n' "$line"
 		fi
-	done <"$1"
+	done 2>/dev/null <"$1"
 }
 
 malformed=0

@@ -2,11 +2,17 @@
 # decisions-common.sh — the one header parser and record validator for
 # docs/decisions records. Sourced by scripts/check-decisions.sh (validator) and
 # scripts/decisions-active.sh (selector), so the two cannot disagree about what
-# a record says or whether it is valid. Defines functions only; the sourcing
-# script owns `set -euo pipefail`.
+# a record says or whether it is valid. The sourcing script owns
+# `set -euo pipefail`.
 #
 # A record's header is the run of inline `**Field**: value` lines before its
 # first `## ` heading. The first occurrence of a field wins.
+
+# Status, glob and name matches are case-sensitive in every script that sources
+# this file. Bash takes options from an exported BASHOPTS, so a caller's
+# `nocasematch` or `nocaseglob` would otherwise reach one script and not
+# another.
+shopt -u nocasematch nocaseglob
 
 # Reject non-local directories even when the link target is missing.
 dec_check_directory() {
@@ -29,8 +35,9 @@ dec_record_files() {
 	done
 }
 
+# An unreadable record is a file-type problem, so no read of it reaches stderr.
 dec_regular_record() {
-	[[ ! -L "$1" && -f "$1" ]]
+	[[ ! -L "$1" && -f "$1" && -r "$1" ]]
 }
 
 # Resolve symlinked plans and parent directories before testing containment.
@@ -60,12 +67,16 @@ dec_source_plan_exists() {
 
 # dec_target_problem <physical root> <repo-relative path>: prints why a write
 # to the path could land outside <root> or through a link, and returns 0;
-# returns 1 when the path is safe to create or edit. Every existing component
+# returns 1 when the path is safe to create or edit. A promotion writes only
+# `docs/dev_plans/<name>` (its source plan) and `docs/decisions/<name>`, where
+# <name> is one component matching DEC_TARGET_NAME (so no `.git` component and
+# no leading `-`); any other path is refused. Every existing component
 # below <root> must be a real directory (the leaf a regular file), so the write
 # resolves physically inside <root>. A missing component ends the walk: what
 # is created under a verified directory stays inside it. A `..` component is
 # refused up front, wherever it sits, because the walk can end before reaching
 # one that follows a missing directory.
+DEC_TARGET_NAME='[A-Za-z0-9][A-Za-z0-9._-]*[.]md'
 dec_target_problem() {
 	local root="$1" rest="$2" part path="$1"
 	if [[ -z "$rest" || "$rest" == /* ]]; then
@@ -74,6 +85,10 @@ dec_target_problem() {
 	fi
 	if [[ "/$rest/" == */../* ]]; then
 		printf "a '..' component may leave the repository\n"
+		return 0
+	fi
+	if [[ ! "$rest" =~ ^docs/(dev_plans|decisions)/$DEC_TARGET_NAME$ ]]; then
+		printf 'expected docs/dev_plans/<name>.md or docs/decisions/<name>.md\n'
 		return 0
 	fi
 	while [[ -n "$rest" ]]; do
@@ -115,7 +130,7 @@ dec_header() {
 			printf '%s\n' "$value"
 			return 0
 		fi
-	done <"$file"
+	done 2>/dev/null <"$file"
 	return 1
 }
 
@@ -193,7 +208,7 @@ dec_validate_tree() {
 		successors[index]=-1
 		DEC_VALID[index]=1
 		if ! dec_regular_record "$path"; then
-			_dec_problem "$index" file-type "expected a regular, non-symlink file"
+			_dec_problem "$index" file-type "expected a readable, regular, non-symlink file"
 			continue
 		fi
 
@@ -265,15 +280,74 @@ dec_validate_tree() {
 }
 
 # dec_split_globs <Applies to value>: one trimmed glob per line, empty entries
-# kept so the validator can name them.
+# kept so the validator can name them. A comma separates globs only where bash
+# would read it as a literal comma between them: one inside a bracket
+# expression (`src/file[_,].py`) or after a backslash belongs to its glob, so
+# the selector matches what `[[ $path == $glob ]]` would for the whole glob.
 dec_split_globs() {
-	local rest="$1" part
-	while :; do
-		part="${rest%%,*}"
-		part="${part#"${part%%[![:space:]]*}"}"
-		part="${part%"${part##*[![:space:]]}"}"
-		printf '%s\n' "$part"
-		[[ "$rest" == *,* ]] || break
-		rest="${rest#*,}"
+	local value="$1" part="" c i=0 n
+	local LC_ALL=C
+	n=${#value}
+	while ((i < n)); do
+		c="${value:i:1}"
+		if [[ "$c" == ',' ]]; then
+			_dec_emit_glob "$part"
+			part=""
+			i=$((i + 1))
+		elif [[ "$c" == "\\" ]]; then
+			part+="${value:i:2}"
+			i=$((i + 2))
+		elif [[ "$c" == '[' ]] && _dec_bracket_end "$value" "$i"; then
+			part+="${value:i:_dec_end-i+1}"
+			i=$((_dec_end + 1))
+		else
+			part+="$c"
+			i=$((i + 1))
+		fi
 	done
+	_dec_emit_glob "$part"
+}
+
+_dec_emit_glob() {
+	local part="$1"
+	part="${part#"${part%%[![:space:]]*}"}"
+	part="${part%"${part##*[![:space:]]}"}"
+	printf '%s\n' "$part"
+}
+
+# _dec_bracket_end <text> <index of a [>: sets _dec_end to the index of the `]`
+# that closes the bracket expression bash reads there, and returns 0. A `]`
+# right after `[`, `[!` or `[^` is a member, a backslash quotes the next
+# character, and `[:class:]`, `[=c=]` and `[.c.]` are one member each. Returns 1
+# for an unclosed `[`, which bash matches literally.
+_dec_bracket_end() {
+	local text="$1" j=$(($2 + 1)) n=${#1} c rest
+	c="${text:j:1}"
+	if [[ "$c" == '!' || "$c" == '^' ]]; then
+		j=$((j + 1))
+	fi
+	if [[ "${text:j:1}" == ']' ]]; then
+		j=$((j + 1))
+	fi
+	while ((j < n)); do
+		c="${text:j:1}"
+		if [[ "$c" == ']' ]]; then
+			_dec_end=$j
+			return 0
+		elif [[ "$c" == "\\" ]]; then
+			j=$((j + 2))
+		elif [[ "$c" == '[' && ("${text:j+1:1}" == ':' || "${text:j+1:1}" == '=' || "${text:j+1:1}" == '.') ]]; then
+			c="${text:j+1:1}"
+			rest="${text:j+2}"
+			if [[ "$rest" == *"$c]"* ]]; then
+				rest="${rest%%"$c]"*}"
+				j=$((j + 2 + ${#rest} + 2))
+			else
+				j=$((j + 1))
+			fi
+		else
+			j=$((j + 1))
+		fi
+	done
+	return 1
 }

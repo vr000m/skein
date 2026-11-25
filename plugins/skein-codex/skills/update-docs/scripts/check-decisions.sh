@@ -17,16 +17,21 @@
 #   - no active record is superseded
 #   - Source plan resolves to a file under <repo-root>
 #   - Applies to is comma-separated globs without `**`, braces or extended
-#     patterns (`?( *( +( @( !(`)
+#     patterns (`?( *( +( @( !(`); a comma inside a bracket expression or
+#     after a backslash belongs to its glob
 #
 # --targets is the write preflight for a promotion: each <path> is a
 # repo-relative file the promotion is about to create or edit (the new record,
-# a superseded record, a first-promotion README, the source plan). Each must
-# stay inside <repo-root> with no `..` component, and neither it nor any
-# ancestor below <repo-root> (`docs`, `docs/decisions`, ...) may be a symlink;
-# an existing path must be a regular file. Reported as `<path>: <message>`.
+# a superseded record, a first-promotion README, the source plan). Each must be
+# `docs/dev_plans/<name>` or `docs/decisions/<name>`, where <name> is one path
+# component matching `[A-Za-z0-9][A-Za-z0-9._-]*[.]md` (no further `/`, no
+# `.git` component, no leading `-` or `.`). Neither the path nor any ancestor
+# below <repo-root> may be a symlink, and an existing path must be a regular
+# file. Reported as `<path>: <message>`. The record graph is still validated
+# in full, so the exit status tells the two failures apart.
 #
-# Exit codes: 0 valid, 1 at least one problem, 2 usage error.
+# Exit codes: 0 valid, 1 the record graph has a problem (every target is safe),
+# 2 usage error, 3 at least one --targets path is unsafe (whatever the graph).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,17 +58,20 @@ fi
 
 [[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$root" && pwd -P)" || exit 2
-dec_check_directory "$root" || exit 1
-# The per-record rules live in dec_validate_tree, which the selector shares.
 rc=0
-dec_validate_tree "$root" || rc=1
-for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
-	printf '%s\n' "$problem" >&2
-done
+# The per-record rules live in dec_validate_tree, which the selector shares.
+if dec_check_directory "$root"; then
+	dec_validate_tree "$root" || rc=1
+	for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
+		printf '%s\n' "$problem" >&2
+	done
+else
+	rc=1
+fi
 for target in "${targets[@]+"${targets[@]}"}"; do
 	if reason="$(dec_target_problem "$root" "$target")"; then
 		printf '%s: %s\n' "$target" "$reason" >&2
-		rc=1
+		rc=3
 	fi
 done
 exit "$rc"
