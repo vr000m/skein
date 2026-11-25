@@ -386,7 +386,7 @@ sequenceDiagram
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
 - [x] Phase 5c: conduct nudge (Pi session)
-- [x] Phase 6: Verify and docs (manual lens and promotion runs still open, see Findings)
+- [ ] Phase 6: Verify and docs (docs and CI done; manual lens and promotion runs still open, see Findings)
 - [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
 
 ## Findings
