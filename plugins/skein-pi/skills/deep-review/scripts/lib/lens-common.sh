@@ -2,12 +2,13 @@
 # lens-common.sh — Phase 2 lens-persistence helpers: the path, id/unit and
 # append primitives the two LENS scripts share.
 #
-# TWO callers. Keep this list exact: it is the only place that records which
+# THREE callers. Keep this list exact: it is the only place that records which
 # helpers exist for whom, and `grep -rn 'lens-common.sh' scripts/ plugins/`
-# must return exactly these sourcing sites (plus the bundled copies of the
-# same two scripts).
+# must return exactly these sourcing sites (plus their bundled copies).
 #   scripts/persist-lens-result.sh      (writer)
 #   scripts/collect-lens-results.sh     (reader/merge)
+#   scripts/lib/decisions-scratch.sh    (persist_path_is_inside_root only:
+#                                        the decision selector's containment)
 #
 # WHY THIS IS A SEPARATE FILE (R11/F3). These helpers were the back half of
 # scripts/lib/persist-common.sh, which is sourced by FOUR scripts — the two

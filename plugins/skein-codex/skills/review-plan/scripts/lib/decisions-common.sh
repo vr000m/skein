@@ -2,8 +2,14 @@
 # decisions-common.sh — the one header parser and record validator for
 # docs/decisions records. Sourced by scripts/check-decisions.sh (validator) and
 # scripts/decisions-active.sh (selector), so the two cannot disagree about what
-# a record says or whether it is valid. The sourcing script owns
-# `set -euo pipefail`.
+# a record says or whether it is valid. It reads records only; the selector's
+# scratch-file writes live in decisions-scratch.sh, which ships with the lens
+# skills alone. The sourcing script owns `set -euo pipefail`.
+#
+# Every function that parses record text runs under `local LC_ALL=C`, so a
+# header, glob or status is parsed byte for byte and the validator and
+# selector reach the same verdict in every locale (a U+00A0 is not trimmed as
+# whitespace, and a non-UTF-8 byte does not stop a regex match).
 #
 # A record's header is the run of inline `**Field**: value` lines before its
 # first `## ` heading. The first occurrence of a field wins.
@@ -14,12 +20,14 @@
 # another.
 shopt -u nocasematch nocaseglob
 
-# Reject non-local directories even when the link target is missing. An
-# unlistable directory fails too: bash 3.2 leaves its glob unexpanded, so it
-# would otherwise read as an empty, valid record set.
+# Reject non-local directories even when the link target is missing. A linked
+# docs/ is refused only when a decisions entry exists through it: a repository
+# without docs/decisions passes, however its docs/ is stored. An unlistable
+# directory fails too: bash 3.2 leaves its glob unexpanded, so it would
+# otherwise read as an empty, valid record set.
 dec_check_directory() {
 	local root="$1" dir="$1/docs/decisions"
-	if [[ -L "$root/docs" || -L "$dir" || (-e "$dir" && ! -d "$dir") ]]; then
+	if [[ -L "$dir" || (-L "$root/docs" && -e "$dir") || (-e "$dir" && ! -d "$dir") ]]; then
 		printf '%s: expected a local decisions directory\n' "$dir" >&2
 		return 1
 	fi
@@ -27,85 +35,6 @@ dec_check_directory() {
 		printf '%s: file-type: the decisions directory is not readable\n' "$dir" >&2
 		return 1
 	fi
-}
-
-# dec_scratch_prepare <physical root> <logical root> <file>: the one guard for
-# every file a decisions script writes outside docs/ (the selector's path list
-# and output). <file> is absolute or relative to the physical cwd and must lie
-# under <root> (either spelling). No component below <root> may be `..`, `.`,
-# empty, `.git` or a symlink; every existing ancestor must be a directory and
-# an existing leaf a regular file. Missing directories are created one at a
-# time, each re-checked. On success sets DEC_SCRATCH_PATH (physical) and
-# returns 0; otherwise sets DEC_SCRATCH_REASON and returns 1. The write itself
-# goes through dec_scratch_tmp and dec_scratch_commit (temp file, then rename).
-# shellcheck disable=SC2034  # DEC_SCRATCH_* are read by the sourcing script
-dec_scratch_prepare() {
-	local root="$1" logical="$2" file="$3" rest part path
-	DEC_SCRATCH_PATH=""
-	DEC_SCRATCH_REASON=""
-	case "$file" in
-	"")
-		DEC_SCRATCH_REASON="empty path"
-		return 1
-		;;
-	/*) ;;
-	*) file="$(pwd -P)/$file" ;;
-	esac
-	if [[ "$file" == "$root"/* ]]; then
-		rest="${file#"$root"/}"
-	elif [[ -n "$logical" && "$file" == "$logical"/* ]]; then
-		rest="${file#"$logical"/}"
-	else
-		DEC_SCRATCH_REASON="not inside the repository"
-		return 1
-	fi
-	if [[ "/$rest/" == */../* || "/$rest/" == */./* || "/$rest/" == *//* || "/$rest/" == */.git/* ]]; then
-		DEC_SCRATCH_REASON="a '..', '.', empty or .git component"
-		return 1
-	fi
-	path="$root"
-	while [[ -n "$rest" ]]; do
-		part="${rest%%/*}"
-		if [[ "$rest" == */* ]]; then
-			rest="${rest#*/}"
-		else
-			rest=""
-		fi
-		path="$path/$part"
-		if [[ -L "$path" ]]; then
-			DEC_SCRATCH_REASON="${path#"$root"/} is a symlink"
-			return 1
-		fi
-		if [[ -n "$rest" ]]; then
-			if [[ ! -e "$path" ]]; then
-				mkdir -- "$path" 2>/dev/null || true
-			fi
-			if [[ -L "$path" || ! -d "$path" ]]; then
-				DEC_SCRATCH_REASON="${path#"$root"/} is not a directory"
-				return 1
-			fi
-		elif [[ -e "$path" && ! -f "$path" ]]; then
-			DEC_SCRATCH_REASON="${path#"$root"/} is not a regular file"
-			return 1
-		fi
-	done
-	DEC_SCRATCH_PATH="$path"
-}
-
-# dec_scratch_tmp <prepared path>: prints a fresh temp file beside it.
-dec_scratch_tmp() {
-	mktemp "${1%/*}/.${1##*/}.XXXXXX"
-}
-
-# dec_scratch_commit <temp file> <prepared path>: renames the temp file over
-# the path after re-checking the leaf, so the write never follows a link.
-# shellcheck disable=SC2034  # DEC_SCRATCH_REASON is read by the sourcing script
-dec_scratch_commit() {
-	if [[ -L "$2" || (-e "$2" && ! -f "$2") ]]; then
-		DEC_SCRATCH_REASON="${2##*/} is no longer a regular file"
-		return 1
-	fi
-	mv -f -- "$1" "$2"
 }
 
 # dec_read_list <file>: one entry per line on stdout, NUL-terminated, read
@@ -236,14 +165,26 @@ dec_target_problem() {
 
 # dec_header <file> <Field>: the trimmed value of the first `**Field**:` line in
 # the header, or nothing when absent. Exit status is 0 only when found, so an
-# empty value is distinguishable from a missing header.
+# empty value is distinguishable from a missing header. Trailing whitespace is
+# trimmed up to an escaped character, as dec_split_globs trims a glob, so a
+# final `Applies to` glob `docs/foo\ ` keeps its space.
 dec_header() {
-	local file="$1" field="$2" line value
+	local file="$1" field="$2" line value trimmed slashes
+	local LC_ALL=C
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		[[ "$line" == "## "* ]] && return 1
 		if [[ "$line" =~ ^\*\*([^*]+)\*\*:[[:space:]]*(.*)$ ]] && [[ "${BASH_REMATCH[1]}" == "$field" ]]; then
 			value="${BASH_REMATCH[2]}"
-			value="${value%"${value##*[![:space:]]}"}"
+			trimmed="${value%"${value##*[![:space:]]}"}"
+			slashes=0
+			while [[ $slashes -lt ${#trimmed} && "${trimmed:${#trimmed}-slashes-1:1}" == "\\" ]]; do
+				slashes=$((slashes + 1))
+			done
+			# An odd run of trailing backslashes escapes the first trimmed byte.
+			if [[ $((slashes % 2)) -eq 1 && ${#trimmed} -lt ${#value} ]]; then
+				trimmed="${value:0:${#trimmed}+1}"
+			fi
+			value="$trimmed"
 			printf '%s\n' "$value"
 			return 0
 		fi
@@ -252,14 +193,19 @@ dec_header() {
 }
 
 # dec_glob_problem <glob>: prints why a single `Applies to` glob is outside the
-# supported dialect (bash pattern, `*` crosses `/`, no `**`, no braces, no
-# extended patterns) and returns 0; returns 1 when the glob is supported.
+# supported dialect (bash pattern, `*` crosses `/`, no `**`, at most
+# DEC_MAX_STARS `*`, no braces, no extended patterns) and returns 0; returns 1
+# when the glob is supported. The star cap bounds matching cost: bash's
+# matcher backtracks, so its time grows with a path's length raised to the
+# number of stars, and the validator and the selector refuse such a record
+# together.
 # `[[ == ]]` honours `?( *( +( @( !(` even with `shopt -u extglob`, so the
 # dialect rejects them rather than trusting the shell option. The scan is the
 # splitter's: a character after a backslash or inside a bracket expression
 # (`file[?(].txt`, `x[**]y`) is a literal member, never an operator.
+DEC_MAX_STARS=4
 dec_glob_problem() {
-	local glob="$1" i=0 n c next
+	local glob="$1" i=0 n c next stars=0
 	local LC_ALL=C
 	if [[ -z "$glob" ]]; then
 		printf 'empty glob\n'
@@ -277,6 +223,9 @@ dec_glob_problem() {
 			continue
 		elif [[ "$c" == '*' && "$next" == '*' ]]; then
 			printf "'**' is not supported in '%s'\n" "$glob"
+			return 0
+		elif [[ "$c" == '*' && "$next" != '(' ]] && ((++stars > DEC_MAX_STARS)); then
+			printf "more than %d '*' in '%s'\n" "$DEC_MAX_STARS" "$glob"
 			return 0
 		elif [[ "$c" == '{' || "$c" == '}' ]]; then
 			printf "braces are not supported in '%s'\n" "$glob"
