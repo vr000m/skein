@@ -949,8 +949,8 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"shared finding record shape is unchanged"
 			decision_has "$dec_all" '^below\. Only the Architecture Lens also takes active decision records' \
 				"the lens prompt input is optional and architecture-only"
-			decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh -- "\$\{p\[@\]\}"' \
-				"passes each path as one literal argument after --"
+			decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh --base "\$BASE" --head "\$TIP" --paths-file "\$LENS_DIR/decision-paths\.z" --output "\$DECISIONS" \|\| selector_exit=\$\?$' \
+				"the selector runs the diff and owns both scratch files, status captured"
 		else
 			dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
 			dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
@@ -958,11 +958,13 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"architecture finding record shape is unchanged"
 			decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
 				"architecture output fields are unchanged"
-			decision_has "$dec_all" '"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/decisions-active\.sh -- "\$\{p\[@\]\}"' \
-				"passes each path as one literal argument after --"
+			decision_has "$dec_all" '"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/decisions-active\.sh --base "\$BASE" --head "\$TIP" --paths-file "\$LENS_DIR/decision-paths\.z" --output "\$DECISIONS" \|\| selector_exit=\$\?$' \
+				"the selector runs the diff and owns both scratch files, status captured"
 		fi
-		decision_has "$dec_all" 'git diff --no-ext-diff --no-renames --name-only -z' \
+		decision_has "$dec_all" 'The selector diffs `"\$BASE\.\.\.\$TIP"` with rename detection disabled' \
 			"the resolved diff contributes both rename paths"
+		decision_has "$dec_all" 'print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch' \
+			"a reviewed head off the checked-out HEAD is reported"
 		decision_has "$dec_arch" '^- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one' \
 			"architecture scope covers decision conflicts"
 		;;
@@ -989,8 +991,11 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 		decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
 	fi
 	if [[ "$dec_skill" != deep-review ]]; then
-		decision_has "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "passes each path as one literal argument after --"
+		decision_has "$dec_all" "decisions-active\\.sh --paths-stdin --paths-file \"\\\$LENS_DIR/decision-paths\\.txt\" --output \"\\\$DECISIONS\" <<'SKEIN_PATHS' \\|\\| selector_exit=\\\$\\?\$" \
+			"paths travel as a quoted here-document, status captured"
+		decision_lacks "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "no path reaches the selector's command line"
 	fi
+	decision_lacks "$dec_all" 'mkdir -p "\$LENS_DIR"' "the snippet never creates the lens directory itself"
 	decision_lacks "$dec_all" 'mapfile|readarray|\$\{[^}]*,,' "the selector call runs on bash 3.2"
 	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
 	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
@@ -1071,7 +1076,7 @@ dec_fence() {
 dec_shell=bash
 dec_run_snippet() {
 	local out file
-	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/$dec_exec_skill" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$2")" || true
+	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/$dec_exec_skill" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$2" 2>"$dec_tmp.stderr")" || true
 	dec_lines="$(grep -c '' <<<"$out" || true)"
 	dec_status="$(sed -n 's/^selector-exit=//p' <<<"$out")"
 	file="$(sed -n 's/^selector-output=//p' <<<"$out")"
@@ -1096,6 +1101,18 @@ if command -v zsh >/dev/null 2>&1; then
 else
 	pass "zsh is not installed; the selector snippets run under bash only"
 fi
+# dec_heredoc <snippet> <paths file>: the review-plan snippet with its
+# `p <path>` template line replaced by one `p ` line per listed path.
+dec_heredoc() {
+	local line
+	while IFS= read -r line; do
+		if [[ "$line" == 'p <path>' ]]; then
+			sed 's/^/p /' "$2"
+		else
+			printf '%s\n' "$line"
+		fi
+	done <<<"${1//<run_id>/decisions-shape}"
+}
 # dec_range <snippet> <base> <head>: the deep-review snippet for that range.
 dec_range() {
 	local snippet="${1//<run_id>/decisions-shape}"
@@ -1167,7 +1184,8 @@ dec_exec_skill=review-plan
 for dec_mirror in skein skein-codex; do
 	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
 	# shellcheck disable=SC2016  # the snippet text is literal
-	if [[ "$selector_snippet" == *mktemp* || "$selector_snippet" != *'DECISIONS="$REPO_ROOT/.review-plan/lenses/$RUN_ID/decision-records.txt"'* ]]; then
+	if [[ "$selector_snippet" == *mktemp* || "$selector_snippet" != *'LENS_DIR="$REPO_ROOT/.review-plan/lenses/$RUN_ID"'* ||
+		"$selector_snippet" != *'DECISIONS="$LENS_DIR/decision-records.txt"'* || "$selector_snippet" != *'"$LENS_DIR/decision-paths.txt"'* ]]; then
 		fail "$dec_mirror review-plan keeps the selector output outside the run's lens directory"
 	else
 		pass "$dec_mirror review-plan writes decision-records.txt in the run's lens directory"
@@ -1176,8 +1194,7 @@ for dec_mirror in skein skein-codex; do
 	mkdir -p "$dec_tmp/.review-plan/lenses/decisions-shape"
 	for dec_shell in "${dec_shells[@]}"; do
 		for dec_case in conflict unrelated; do
-			cp "$DEC_FIXTURES/$dec_case.paths" "$dec_tmp/.review-plan/lenses/decisions-shape/decision-paths.txt"
-			dec_run_snippet "$dec_mirror" "$selector_snippet"
+			dec_run_snippet "$dec_mirror" "$(dec_heredoc "$selector_snippet" "$DEC_FIXTURES/$dec_case.paths")"
 			dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
 			if [[ "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_text" == "$dec_want" ]]; then
 				pass "[$dec_shell] $dec_mirror review-plan keeps the selector status out of the $dec_case block"
@@ -1187,6 +1204,74 @@ for dec_mirror in skein skein-codex; do
 		done
 	done
 done
+# Seam 1, the snippet side. Contract: whatever the selector exits with, each
+# snippet prints both status lines under `-e` in bash and zsh, and the
+# selector, not the shell, writes the scratch files. Cells: mirror x skill x
+# shell x {exit 3 with a valid match kept, symlinked state dir, symlinked
+# lenses dir, symlinked output file} plus, for deep-review, a reviewed head
+# that is not the checked-out HEAD.
+dec_outside="$dec_tmp.outside"
+printf '# Broken record\n' >"$dec_tmp/docs/decisions/20261199-broken.md"
+for dec_exec_skill in deep-review review-plan; do
+	dec_state=".$dec_exec_skill"
+	for dec_mirror in skein skein-codex; do
+		if [[ "$dec_exec_skill" == deep-review ]]; then
+			selector_snippet="$(dec_range "$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')" "$(git -C "$dec_tmp" rev-parse 'HEAD^')" "$(git -C "$dec_tmp" rev-parse HEAD)")"
+		else
+			printf 'src/cache/index.py\n' >"$dec_tmp.rp-paths"
+			selector_snippet="$(dec_heredoc "$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')" "$dec_tmp.rp-paths")"
+		fi
+		for dec_shell in "${dec_shells[@]}"; do
+			for dec_cell in exit3 state-link lenses-link output-link; do
+				rm -rf "$dec_outside" "${dec_tmp:?}/$dec_state"
+				mkdir -p "$dec_outside"
+				printf 'victim\n' >"$dec_outside/victim"
+				case "$dec_cell" in
+				state-link) ln -s "$dec_outside" "$dec_tmp/$dec_state" ;;
+				lenses-link)
+					mkdir -p "$dec_tmp/$dec_state"
+					ln -s "$dec_outside" "$dec_tmp/$dec_state/lenses"
+					;;
+				output-link)
+					mkdir -p "$dec_tmp/$dec_state/lenses/decisions-shape"
+					ln -s "$dec_outside/victim" "$dec_tmp/$dec_state/lenses/decisions-shape/decision-records.txt"
+					;;
+				esac
+				dec_run_snippet "$dec_mirror" "$selector_snippet"
+				dec_victim_ok=0
+				if [[ "$(cat "$dec_outside/victim")" == victim && "$(find "$dec_outside" -mindepth 1 | wc -l | tr -d ' ')" == 1 ]]; then
+					dec_victim_ok=1
+				fi
+				if [[ "$dec_cell" == exit3 ]]; then
+					if [[ "$dec_status" == 3 && "$dec_lines" == 2 ]] &&
+						grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_text"; then
+						pass "[$dec_shell] $dec_mirror $dec_exec_skill: selector exit 3 still prints both status lines and keeps the valid match"
+					else
+						fail "[$dec_shell] $dec_mirror $dec_exec_skill: exit 3 lost the status lines or the block (exit '$dec_status', $dec_lines lines)"
+					fi
+				elif [[ "$dec_status" == 5 && "$dec_lines" == 2 && $dec_victim_ok -eq 1 ]] && grep -q 'is a symlink' "$dec_tmp.stderr"; then
+					pass "[$dec_shell] $dec_mirror $dec_exec_skill: a $dec_cell is refused (exit 5), status lines printed, nothing written outside"
+				else
+					fail "[$dec_shell] $dec_mirror $dec_exec_skill: $dec_cell: exit '$dec_status', $dec_lines lines, outside untouched $dec_victim_ok"
+				fi
+			done
+		done
+	done
+done
+rm -rf "$dec_outside" "${dec_tmp:?}/.deep-review" "${dec_tmp:?}/.review-plan"
+rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
+dec_exec_skill=deep-review
+for dec_mirror in skein skein-codex; do
+	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+	# base-tip is checked out; the reviewed head is pr-head.
+	dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" base-tip pr-head)"
+	if grep -qxF 'decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head' "$dec_tmp.stderr"; then
+		pass "$dec_mirror deep-review: a reviewed head off the checked-out HEAD carries the checked-out-tree notice"
+	else
+		fail "$dec_mirror deep-review: no checked-out-tree notice for a reviewed head off HEAD"
+	fi
+done
+rm -f "$dec_tmp.stderr" "$dec_tmp.rp-paths"
 # The decision-records paragraph and snippet are the same text in both
 # deep-review mirrors, apart from the selector anchor and the banner link.
 # shellcheck disable=SC2016  # the sed and grep patterns are literal skill text

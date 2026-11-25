@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 
 from test_package import ALLOWLIST, COMMANDS, ROOT
@@ -170,53 +171,97 @@ def assert_decision_packet_contract(skill, category):
         "reviewed_units or persistence schemas or model tiers",
     ):
         assert phrase in section, phrase
-    assert 'exec "$1" -- "${p[@]}"' in section
+    assert "--paths-stdin" in section
+    assert "<<'SKEIN_PATHS' || selector_exit=$?" in section
+    assert 'exec "$1"' not in section, "no path may reach the selector's argv"
+    assert "Never write the path list yourself" in section
     for forbidden in ("mapfile", "readarray", "${var,,}"):
         assert forbidden not in section
 
 
 def decision_command_fixture(skill, tmp_path):
+    """The real bundled selector, a scratch git repo, and the skill's commands."""
     repo = tmp_path / "repo"
     repo.mkdir()
-    capture = tmp_path / "selector-argv"
-    selector = tmp_path / "selector"
-    selector.write_text('#!/bin/bash\nprintf "%s\\0" "$@" >"$CAPTURE"\n')
-    selector.chmod(0o700)
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     env = {
         **os.environ,
         "REPO_ROOT": str(repo),
         "RUN_ID": "fixture",
-        "SELECTOR": str(selector),
-        "CAPTURE": str(capture),
+        "SELECTOR": str(skill.parent / "scripts/decisions-active.sh"),
     }
     commands = re.findall(r"```bash\n(.*?)\n```", skill.read_text(), re.DOTALL)
     assert commands
-    return repo, capture, env, commands
+    return repo, env, commands
+
+
+def selector_status(result):
+    lines = [
+        line for line in result.stdout.splitlines() if line.startswith("selector-exit=")
+    ]
+    assert len(lines) == 1, result.stdout
+    return int(lines[0].split("=", 1)[1])
+
+
+def with_paths(command, lines):
+    assert "\np <path>\n" in command
+    return command.replace(
+        "\np <path>\n", "\n" + "".join(f"{line}\n" for line in lines)
+    )
 
 
 def exercise_plan_path_command(skill, tmp_path):
-    repo, capture, env, commands = decision_command_fixture(skill, tmp_path)
+    """Seam 1: paths reach the selector only as `p `-prefixed here-document
+    lines; the selector, not the shell, writes the lens files and refuses a
+    symlinked state directory; the status line prints for every exit."""
+    repo, env, commands = decision_command_fixture(skill, tmp_path)
     command = next(command for command in commands if "decision-paths.txt" in command)
-    skill_name = skill.parent.name
-    paths_file = repo / f".{skill_name}/lenses/fixture/decision-paths.txt"
-    paths_file.parent.mkdir(parents=True)
-    paths = ["src/a b.py", "src/$(touch injected).py", "src/semi;quote'file.py"]
-    paths_file.write_text("\n".join(paths))
+    lens = repo / f".{skill.parent.name}/lenses/fixture"
+    paths = [
+        "src/a b.py",
+        "src/$(touch injected).py",
+        "src/semi;quote'file.py",
+        "SKEIN_PATHS",
+    ]
     result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
+        ["/bin/bash", "-e", "-c", with_paths(command, [f"p {p}" for p in paths])],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert capture.read_bytes().split(b"\0")[:-1] == [
-        item.encode() for item in ["--", *paths]
-    ]
+    assert selector_status(result) == 0
+    assert (lens / "decision-paths.txt").read_text() == "".join(f"{p}\n" for p in paths)
+    assert (lens / "decision-records.txt").read_text() == ""
     assert not (repo / "injected").exists()
-    capture.unlink()
-    paths_file.unlink()
-    failed = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
+    unprefixed = subprocess.run(
+        ["/bin/bash", "-e", "-c", with_paths(command, ["src/a.py"])],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert failed.returncode != 0
-    assert not capture.exists(), "failed path read must never invoke the selector"
+    assert selector_status(unprefixed) == 4
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    state = repo / f".{skill.parent.name}"
+    shutil.rmtree(state)
+    state.symlink_to(outside)
+    linked = subprocess.run(
+        ["/bin/bash", "-e", "-c", with_paths(command, ["p src/a.py"])],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert selector_status(linked) == 5
+    assert list(outside.iterdir()) == [], (
+        "a symlinked state directory must receive nothing"
+    )
 
 
 def test_review_plan_executes_documented_path_command_fail_closed(tmp_path):

@@ -149,28 +149,19 @@ lens the resolved command prefix `{{PERSIST_CMD}}` (the resolved absolute `persi
 
   This on-disk record is authoritative — the lens's own returned reply is a fallback only.
 
-**Active decision records (Architecture Lens only).** Before dispatch, select the `docs/decisions/` records that apply to the reviewed paths: run the bundled selector from the repo root over the file list of the already resolved review range (the [pre-dispatch banner](#pre-dispatch-banner)'s `<base>..<head>`, or the stored range on a resume). Each path reaches it as one literal argument, whatever spaces or shell metacharacters it holds:
+**Active decision records (Architecture Lens only).** Before dispatch, select the `docs/decisions/` records that apply to the reviewed paths: run the bundled selector over the already resolved review range (the [pre-dispatch banner](#pre-dispatch-banner)'s `<base>..<head>`, or the stored range on a resume). The selector runs the diff and writes both scratch files itself, so no reviewed path reaches a command line and no shell redirection writes into the lens directory:
 ```bash
 BASE="<base>"   # the resolved review range: its base
 TIP="<head>"    # and its head
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 LENS_DIR="$REPO_ROOT/.deep-review/lenses/<run_id>"
 DECISIONS="$LENS_DIR/decision-records.txt"
-mkdir -p "$LENS_DIR"
 selector_exit=0
-(
-    cd "$REPO_ROOT" || exit 4
-    git diff --no-ext-diff --no-renames --name-only -z "$BASE...$TIP" -- >"$LENS_DIR/decision-paths.z" || exit 4
-    p=()
-    while IFS= read -r -d '' rel; do p+=("$rel"); done <"$LENS_DIR/decision-paths.z"
-    if [[ ${#p[@]} -gt 0 ]]; then
-        "$SKILL_DIR"/scripts/decisions-active.sh -- "${p[@]}"
-    fi
-) >"$DECISIONS" || selector_exit=$?
+"$SKILL_DIR"/scripts/decisions-active.sh --base "$BASE" --head "$TIP" --paths-file "$LENS_DIR/decision-paths.z" --output "$DECISIONS" || selector_exit=$?
 printf 'selector-exit=%s\nselector-output=%s\n' "$selector_exit" "$DECISIONS"
 ```
 
-The three-dot `"$BASE...$TIP"` diffs the merge base of `<base>` and `<head>` against `<head>`, the comparison `gh pr diff` shows, so in `--pr` mode a change that landed only on the advanced base branch never selects a record and a PR change is never hidden by it; in every other mode `<base>` is already an ancestor of `<head>` and the range is the banner's unchanged. The path list (`decision-paths.z`) and the selector output (`decision-records.txt`) live in the run's own gitignored lens directory, beside `expected.json`, under those names in every mirror. The snippet runs in zsh as well as bash: its variable names avoid zsh's special parameters (`path`, `status`, `argv` and the like), because a loop variable named `path` would rewrite zsh's `PATH`. Disabling rename detection gives the selector both the removed path and the added path. A range with no changed path runs no selector and is an empty, successful selection. A failed diff leaves no record text and reports exit `4`.
+The selector diffs `"$BASE...$TIP"` with rename detection disabled: the merge base of `<base>` and `<head>` against `<head>`, the comparison `gh pr diff` shows, so in `--pr` mode a change that landed only on the advanced base branch never selects a record and a PR change is never hidden by it; in every other mode `<base>` is already an ancestor of `<head>` and the range is the banner's unchanged. Disabling rename detection gives it both the removed path and the added path. It records the path list in `decision-paths.z` and the selection in `decision-records.txt`, in the run's own gitignored lens directory beside `expected.json`, under those names in every mirror. It is the only writer of both: it refuses, with exit `5` and nothing written, a symlinked or non-directory `.deep-review`, `lenses` or run directory and a symlinked or non-regular file, creates missing directories itself, and writes each file through a temp file and a rename, so a link a checkout plants there cannot redirect the write. The snippet is one selector call whose status `|| selector_exit=$?` captures, so the two status lines print whatever it exits with, under `bash -e` and `zsh -e` alike; its variable names avoid zsh's special parameters (`path`, `status`, `argv` and the like), because a variable named `path` would rewrite zsh's `PATH`. A range with no changed path is an empty, successful selection. A failed diff leaves no record text and reports exit `4`. Records are read from the checked-out working tree: when `<head>` is not the checked-out `HEAD`, the selector's stderr carries `decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head`, and you print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch and again in the Step 5 report.
 The snippet's stdout is only the `selector-exit=` and `selector-output=` status lines; neither is ever part of the block. `{{ACTIVE_DECISIONS}}` is the whole content of the `selector-output=` file, read with your file-read tool, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Exit `0` with empty output means no record applies, a genuine result: substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or a final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded: pass whatever records were printed, and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
 
 ### Logic Lens

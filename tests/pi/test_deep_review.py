@@ -26,6 +26,7 @@ from test_review import (
     decision_command_fixture,
     exercise_decision_selection,
     exercise_plan_path_command,
+    selector_status,
 )
 
 
@@ -268,7 +269,8 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
     for phrase in (
         "tracked staged/unstaged paths",
         "Do not substitute unrelated current-diff paths for a plan target",
-        "Check each path-source command succeeds",
+        "checks each path-source command succeeds",
+        "Decision records: read from the checked-out tree, not the reviewed head",
         "`--continue` remains unsupported",
     ):
         assert phrase in text
@@ -280,111 +282,78 @@ def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
 
 
 def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_path):
-    repo, capture, env, commands = decision_command_fixture(SKILL, tmp_path)
+    """The selector runs the three diffs itself (range, staged, unstaged),
+    keeps hostile names as data, reports a failed source as exit 4 on the
+    status line, and records the list it used in decision-paths.z."""
+    repo, env, commands = decision_command_fixture(SKILL, tmp_path)
     command = next(command for command in commands if "decision-paths.z" in command)
-    (repo / ".deep-review/lenses/fixture").mkdir(parents=True)
+    paths_file = repo / ".deep-review/lenses/fixture/decision-paths.z"
 
     def git(*args):
         return subprocess.check_output(["git", "-C", str(repo), *args])
 
-    git("init")
-    git(
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "base",
-    )
+    def select(**extra):
+        result = subprocess.run(
+            ["/bin/bash", "-e", "-c", command],
+            cwd=repo,
+            env={**env, **extra},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        return selector_status(result)
+
+    ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
+    git(*ident, "commit", "--allow-empty", "-m", "base")
     base = git("rev-parse", "HEAD").decode().strip()
     committed = "committed\n$(touch injected).py"
     (repo / committed).write_text("original\n")
     git("add", "--", committed)
-    git(
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "-m",
-        "changed",
-    )
+    git(*ident, "commit", "-m", "changed")
     staged = "staged space.py"
     (repo / staged).write_text("staged\n")
     git("add", "--", staged)
     (repo / committed).write_text("unstaged\n")
-    env["RANGE"] = f"{base}..HEAD"
-    result = subprocess.run(
-        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
-    )
-    assert result.returncode == 0, result.stderr
-    assert capture.read_bytes().split(b"\0")[:-1] == [
-        item.encode() for item in ["--", committed, staged, committed]
+    assert select(BASE=base, TIP="HEAD") == 0
+    assert paths_file.read_bytes().split(b"\0")[:-1] == [
+        item.encode() for item in [committed, staged, committed]
     ]
     assert not (repo / "injected").exists()
-    capture.unlink()
     git("reset", "-q")
     git("checkout", "--", committed)
     git("mv", "--", committed, "moved.py")
-    git(
-        "-c",
-        "user.name=Fixture",
-        "-c",
-        "user.email=fixture@example.invalid",
-        "commit",
-        "-m",
-        "move",
-    )
-    renamed = subprocess.run(
-        ["/bin/bash", "-c", command],
-        env={**env, "RANGE": "HEAD^..HEAD"},
-        capture_output=True,
-        check=False,
-    )
-    assert renamed.returncode == 0, renamed.stderr
-    assert sorted(capture.read_bytes().split(b"\0")[1:-1]) == sorted(
+    git(*ident, "commit", "-m", "move")
+    assert select(BASE="HEAD^", TIP="HEAD") == 0
+    assert sorted(paths_file.read_bytes().split(b"\0")[:-1]) == sorted(
         [committed.encode(), b"moved.py"]
     ), "a rename must give the selector both its source and destination"
-    capture.unlink()
-    empty = subprocess.run(
-        ["/bin/bash", "-c", command],
-        env={**env, "RANGE": "HEAD..HEAD"},
-        capture_output=True,
-        check=False,
-    )
-    assert empty.returncode == 0 and not capture.exists(), (
-        "no changed path must run no selector"
-    )
-    bad_range = {**env, "RANGE": "invalid-ref..HEAD"}
-    failed = subprocess.run(
-        ["/bin/bash", "-c", command], env=bad_range, capture_output=True, check=False
-    )
-    assert failed.returncode == 4 and not capture.exists()
+    assert select(BASE="HEAD", TIP="HEAD") == 0
+    assert paths_file.read_bytes() == b"", "no changed path is an empty selection"
+    assert select(BASE="invalid-ref", TIP="HEAD") == 4
     shim = tmp_path / "bin"
     shim.mkdir()
     wrapper = shim / "git"
     wrapper.write_text(
-        '#!/bin/bash\ncase " $* " in *" --cached "*) [ "$FAIL_SOURCE" = cached ] && exit 23;; esac\n'
-        'if [ "$FAIL_SOURCE" = unstaged ] && [ "$#" = 6 ]; then exit 24; fi\n'
-        'exec "$REAL_GIT" "$@"\n'
+        '#!/bin/bash\ncase " $* " in\n'
+        '*" diff "*" --cached "*) [ "$FAIL_SOURCE" = cached ] && exit 23 ;;\n'
+        '*" diff "*"..."*) ;;\n'
+        '*" diff "*) [ "$FAIL_SOURCE" = unstaged ] && exit 24 ;;\n'
+        'esac\nexec "$REAL_GIT" "$@"\n'
     )
     wrapper.chmod(0o700)
-    for source, code in (("cached", 4), ("unstaged", 4)):
-        failed = subprocess.run(
-            ["/bin/bash", "-c", command],
-            env={
-                **env,
-                "PATH": str(shim) + os.pathsep + env["PATH"],
-                "REAL_GIT": shutil.which("git"),
-                "FAIL_SOURCE": source,
-            },
-            capture_output=True,
-            check=False,
+    for source in ("cached", "unstaged"):
+        status = select(
+            BASE="HEAD^",
+            TIP="HEAD",
+            PATH=str(shim) + os.pathsep + env["PATH"],
+            REAL_GIT=shutil.which("git"),
+            FAIL_SOURCE=source,
         )
-        assert failed.returncode == code, failed.stderr
-        assert not capture.exists(), "failed Git source must never invoke the selector"
+        assert status == 4, f"a failed {source} diff must be exit 4"
+        assert (
+            repo / ".deep-review/lenses/fixture/decision-records.txt"
+        ).read_text() == ""
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):
