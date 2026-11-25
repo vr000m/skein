@@ -152,6 +152,7 @@ lens the resolved command prefix `{{PERSIST_CMD}}` (the resolved absolute `persi
 **Active decision records (Architecture Lens only).** Before dispatch, select the `docs/decisions/` records that apply to the reviewed paths: run the bundled selector from the repo root over the file list of the already resolved review range (the [pre-dispatch banner](#pre-dispatch-banner)'s `<base>..<head>`, or the stored range on a resume). Each path reaches it as one literal argument, whatever spaces or shell metacharacters it holds:
 ```bash
 RANGE="<base>..<head>"   # the resolved review range
+DECISIONS="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX")"
 selector_exit=0
 (
     REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 4
@@ -164,12 +165,12 @@ selector_exit=0
     if [[ ${#p[@]} -gt 0 ]]; then
         "$SKILL_DIR"/scripts/decisions-active.sh -- "${p[@]}"
     fi
-) || selector_exit=$?
-printf 'selector-exit=%s\n' "$selector_exit"
+) >"$DECISIONS" || selector_exit=$?
+printf 'selector-exit=%s\nselector-output=%s\n' "$selector_exit" "$DECISIONS"
 ```
 
-Disabling rename detection gives the selector both the removed path and the added path. A failed diff leaves no record text and reports exit `4`. Strip the final `selector-exit=` status line before using the selector output.
-Its stdout is `{{ACTIVE_DECISIONS}}`, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Exit `0` with empty output means no record applies, a genuine result: substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or a final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded: pass whatever records were printed, and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
+Disabling rename detection gives the selector both the removed path and the added path. A range with no changed path runs no selector and is an empty, successful selection. A failed diff leaves no record text and reports exit `4`.
+The snippet's stdout is only the `selector-exit=` and `selector-output=` status lines; neither is ever part of the block. `{{ACTIVE_DECISIONS}}` is the whole content of the `selector-output=` file, read with your file-read tool, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Exit `0` with empty output means no record applies, a genuine result: substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or a final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded: pass whatever records were printed, and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
 
 ### Logic Lens
 

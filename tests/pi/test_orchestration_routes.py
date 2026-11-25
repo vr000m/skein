@@ -76,6 +76,40 @@ def test_conduct_completion_pointer_is_terminal_text_after_comment_notices():
     )
 
 
+POINTER = "Next: run /skill:skein-update-docs"
+
+
+def pointer_routes():
+    """Each route-table row of the Pi conduct completion pointer, as (route, rule)."""
+    section = read_skill("conduct").split("### Completion pointer", 1)[1]
+    rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for line in section.splitlines()
+        if line.startswith("| ") and not line.startswith("| Handback route")
+    ]
+    return {route.split(":", 1)[0]: rule for route, rule in rows}
+
+
+def test_conduct_pointer_is_emitted_only_by_the_healthy_terminal_route():
+    text = read_skill("conduct")
+    before, section = text.split("### Completion pointer", 1)
+    # One pointer line, inside the completion-pointer section, and no other
+    # handback instruction names the update-docs skill.
+    assert text.count(POINTER) == 1
+    assert POINTER in section
+    assert "skein-update-docs" not in before
+    routes = pointer_routes()
+    assert set(routes) == {
+        "Healthy terminal",
+        "Intermediate phase summary",
+        "Blocked",
+        "Declined",
+        "Degraded",
+    }
+    assert routes.pop("Healthy terminal") == "Print after comment notices"
+    assert set(routes.values()) == {"Omit"}, routes
+
+
 def test_conduct_intermediate_handback_omits_completion_pointer():
     assert "| Intermediate phase summary: more phases remain | Omit |" in read_skill(
         "conduct"

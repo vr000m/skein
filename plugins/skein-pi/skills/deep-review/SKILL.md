@@ -31,10 +31,10 @@ Before architecture dispatch, resolve `SELECTOR` to this installed skill's `scri
 For a diff, use Bash 3.2 arrays with literal arguments. Prepare the run's `.deep-review/lenses/<run-id>/` directory first, then capture all three NUL-delimited path sources before calling the selector:
 
 ```bash
-cd "$REPO_ROOT" && bash -c 'git diff -z --name-only "$2" >"$3" && git diff -z --name-only --cached >>"$3" && git diff -z --name-only >>"$3" || exit $?; p=(); while IFS= read -r -d "" f; do p+=("$f"); done <"$3" || exit $?; exec "$1" -- "${p[@]}"' _ "$SELECTOR" "$RANGE" "$REPO_ROOT/.deep-review/lenses/$RUN_ID/decision-paths.z"
+cd "$REPO_ROOT" && bash -c 'git diff --no-ext-diff --no-renames -z --name-only "$2" -- >"$3" && git diff --no-ext-diff --no-renames -z --name-only --cached -- >>"$3" && git diff --no-ext-diff --no-renames -z --name-only -- >>"$3" || exit 4; p=(); while IFS= read -r -d "" f; do p+=("$f"); done <"$3" || exit 4; [ "${#p[@]}" -gt 0 ] || exit 0; exec "$1" -- "${p[@]}"' _ "$SELECTOR" "$RANGE" "$REPO_ROOT/.deep-review/lenses/$RUN_ID/decision-paths.z"
 ```
 
-Check each path-source command succeeds before selecting; this command propagates Git and path-file failures without process substitution. For a plan, write literal paths one per line to `.deep-review/lenses/<run-id>/decision-paths.txt` and use:
+Check each path-source command succeeds before selecting; this command reports a failed diff or path-file read as exit `4` with no record text, without process substitution. Disabling rename detection gives the selector both the removed path and the added path. No changed path runs no selector and is an empty, successful selection. For a plan, write literal paths one per line to `.deep-review/lenses/<run-id>/decision-paths.txt` and use:
 
 ```bash
 cd "$REPO_ROOT" && bash -c 'p=(); while IFS= read -r l || [ -n "$l" ]; do p+=("$l"); done <"$2" || exit $?; exec "$1" -- "${p[@]}"' _ "$SELECTOR" "$REPO_ROOT/.deep-review/lenses/$RUN_ID/decision-paths.txt"

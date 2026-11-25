@@ -325,21 +325,53 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
     ]
     assert not (repo / "injected").exists()
     capture.unlink()
+    git("reset", "-q")
+    git("checkout", "--", committed)
+    git("mv", "--", committed, "moved.py")
+    git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "move",
+    )
+    renamed = subprocess.run(
+        ["/bin/bash", "-c", command],
+        env={**env, "RANGE": "HEAD^..HEAD"},
+        capture_output=True,
+        check=False,
+    )
+    assert renamed.returncode == 0, renamed.stderr
+    assert sorted(capture.read_bytes().split(b"\0")[1:-1]) == sorted(
+        [committed.encode(), b"moved.py"]
+    ), "a rename must give the selector both its source and destination"
+    capture.unlink()
+    empty = subprocess.run(
+        ["/bin/bash", "-c", command],
+        env={**env, "RANGE": "HEAD..HEAD"},
+        capture_output=True,
+        check=False,
+    )
+    assert empty.returncode == 0 and not capture.exists(), (
+        "no changed path must run no selector"
+    )
     bad_range = {**env, "RANGE": "invalid-ref..HEAD"}
     failed = subprocess.run(
         ["/bin/bash", "-c", command], env=bad_range, capture_output=True, check=False
     )
-    assert failed.returncode != 0 and not capture.exists()
+    assert failed.returncode == 4 and not capture.exists()
     shim = tmp_path / "bin"
     shim.mkdir()
     wrapper = shim / "git"
     wrapper.write_text(
-        '#!/bin/bash\nif [ "$FAIL_SOURCE" = cached ] && [ "${4-}" = --cached ]; then exit 23; fi\n'
-        'if [ "$FAIL_SOURCE" = unstaged ] && [ "$#" = 3 ]; then exit 24; fi\n'
+        '#!/bin/bash\ncase " $* " in *" --cached "*) [ "$FAIL_SOURCE" = cached ] && exit 23;; esac\n'
+        'if [ "$FAIL_SOURCE" = unstaged ] && [ "$#" = 6 ]; then exit 24; fi\n'
         'exec "$REAL_GIT" "$@"\n'
     )
     wrapper.chmod(0o700)
-    for source, code in (("cached", 23), ("unstaged", 24)):
+    for source, code in (("cached", 4), ("unstaged", 4)):
         failed = subprocess.run(
             ["/bin/bash", "-c", command],
             env={
