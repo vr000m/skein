@@ -23,6 +23,8 @@ parser can pick up the slug.
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
 
+_(none)_
+
 ## Shipped
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
