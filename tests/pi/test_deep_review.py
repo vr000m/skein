@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -20,7 +21,12 @@ SKILL = ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md"
 sys.path.insert(0, str(ROOT / "plugins/skein-pi/lib"))
 
 import review_gauntlet
-from test_review import assert_decision_packet_contract, exercise_decision_selection
+from test_review import (
+    assert_decision_packet_contract,
+    decision_command_fixture,
+    exercise_decision_selection,
+    exercise_plan_path_command,
+)
 
 
 def test_deep_review_is_registered_after_readiness_review():
@@ -267,6 +273,86 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
     ):
         assert phrase in text
     exercise_decision_selection(SKILL, tmp_path)
+
+
+def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
+    exercise_plan_path_command(SKILL, tmp_path)
+
+
+def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_path):
+    repo, capture, env, commands = decision_command_fixture(SKILL, tmp_path)
+    command = next(command for command in commands if "decision-paths.z" in command)
+    (repo / ".deep-review/lenses/fixture").mkdir(parents=True)
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(repo), *args])
+
+    git("init")
+    git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "base",
+    )
+    base = git("rev-parse", "HEAD").decode().strip()
+    committed = "committed\n$(touch injected).py"
+    (repo / committed).write_text("original\n")
+    git("add", "--", committed)
+    git(
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-m",
+        "changed",
+    )
+    staged = "staged space.py"
+    (repo / staged).write_text("staged\n")
+    git("add", "--", staged)
+    (repo / committed).write_text("unstaged\n")
+    env["RANGE"] = f"{base}..HEAD"
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert capture.read_bytes().split(b"\0")[:-1] == [
+        item.encode() for item in ["--", committed, staged, committed]
+    ]
+    assert not (repo / "injected").exists()
+    capture.unlink()
+    bad_range = {**env, "RANGE": "invalid-ref..HEAD"}
+    failed = subprocess.run(
+        ["/bin/bash", "-c", command], env=bad_range, capture_output=True, check=False
+    )
+    assert failed.returncode != 0 and not capture.exists()
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    wrapper = shim / "git"
+    wrapper.write_text(
+        '#!/bin/bash\nif [ "$FAIL_SOURCE" = cached ] && [ "${4-}" = --cached ]; then exit 23; fi\n'
+        'if [ "$FAIL_SOURCE" = unstaged ] && [ "$#" = 3 ]; then exit 24; fi\n'
+        'exec "$REAL_GIT" "$@"\n'
+    )
+    wrapper.chmod(0o700)
+    for source, code in (("cached", 23), ("unstaged", 24)):
+        failed = subprocess.run(
+            ["/bin/bash", "-c", command],
+            env={
+                **env,
+                "PATH": str(shim) + os.pathsep + env["PATH"],
+                "REAL_GIT": shutil.which("git"),
+                "FAIL_SOURCE": source,
+            },
+            capture_output=True,
+            check=False,
+        )
+        assert failed.returncode == code, failed.stderr
+        assert not capture.exists(), "failed Git source must never invoke the selector"
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

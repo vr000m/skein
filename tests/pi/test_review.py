@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 
 from test_package import ALLOWLIST, COMMANDS, ROOT
@@ -172,6 +173,54 @@ def assert_decision_packet_contract(skill, category):
     assert 'exec "$1" -- "${p[@]}"' in section
     for forbidden in ("mapfile", "readarray", "${var,,}"):
         assert forbidden not in section
+
+
+def decision_command_fixture(skill, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    capture = tmp_path / "selector-argv"
+    selector = tmp_path / "selector"
+    selector.write_text('#!/bin/bash\nprintf "%s\\0" "$@" >"$CAPTURE"\n')
+    selector.chmod(0o700)
+    env = {
+        **os.environ,
+        "REPO_ROOT": str(repo),
+        "RUN_ID": "fixture",
+        "SELECTOR": str(selector),
+        "CAPTURE": str(capture),
+    }
+    commands = re.findall(r"```bash\n(.*?)\n```", skill.read_text(), re.DOTALL)
+    assert commands
+    return repo, capture, env, commands
+
+
+def exercise_plan_path_command(skill, tmp_path):
+    repo, capture, env, commands = decision_command_fixture(skill, tmp_path)
+    command = next(command for command in commands if "decision-paths.txt" in command)
+    skill_name = skill.parent.name
+    paths_file = repo / f".{skill_name}/lenses/fixture/decision-paths.txt"
+    paths_file.parent.mkdir(parents=True)
+    paths = ["src/a b.py", "src/$(touch injected).py", "src/semi;quote'file.py"]
+    paths_file.write_text("\n".join(paths))
+    result = subprocess.run(
+        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert capture.read_bytes().split(b"\0")[:-1] == [
+        item.encode() for item in ["--", *paths]
+    ]
+    assert not (repo / "injected").exists()
+    capture.unlink()
+    paths_file.unlink()
+    failed = subprocess.run(
+        ["/bin/bash", "-c", command], env=env, capture_output=True, check=False
+    )
+    assert failed.returncode != 0
+    assert not capture.exists(), "failed path read must never invoke the selector"
+
+
+def test_review_plan_executes_documented_path_command_fail_closed(tmp_path):
+    exercise_plan_path_command(SKILL, tmp_path)
 
 
 def exercise_decision_selection(skill, tmp_path):
