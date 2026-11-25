@@ -55,7 +55,7 @@ A comma-separated list of globs, each matched against a repo-relative path with 
 
 - `*` matches any characters, including `/`, so `plugins/skein/*` matches every file under that directory.
 - `?` and `[...]` behave as in bash.
-- `**` and braces (`{a,b}`) are not supported, and the validator rejects them.
+- `**`, braces (`{a,b}`) and the extended patterns `?(...)`, `*(...)`, `+(...)`, `@(...)` and `!(...)` are not supported, and the validator rejects them. Bash honours the extended patterns inside `[[ == ]]` whatever the `extglob` option says, so a literal such as `docs/*(draft).md` would silently change meaning.
 
 A record whose globs match none of the paths under review is not shown to the reviewers.
 
@@ -69,4 +69,4 @@ Where a comment would otherwise explain a design choice, point at the record ins
 
 ## Validation
 
-`scripts/check-decisions.sh [<repo-root>]` checks file types, required headers, record status, reciprocal links, cycles, source plan containment, and supported `Applies to` globs. `just ci` runs it.
+`scripts/check-decisions.sh [<repo-root>]` checks file types, required headers, record status, reciprocal links, cycles, source plan containment, and supported `Applies to` globs. `just ci` runs it. `scripts/decisions-active.sh` applies the same checks and selects only records the validator accepts. Before a promotion offers or writes a record, `/update-docs` runs `check-decisions.sh --targets -- <path>...` over every path it would write, which also refuses a path that leaves the repository or passes through a symlink.
