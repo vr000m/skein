@@ -380,7 +380,7 @@ sequenceDiagram
 - [x] Phase 3b: Lens checks against active records (Claude)
 - [x] Phase 4b: update-docs promotion and template (Claude)
 - [x] Phase 5b: conduct nudge (Claude)
-- [ ] Phase 3a: Lens checks against active records (Codex session)
+- [x] Phase 3a: Lens checks against active records (Codex session)
 - [ ] Phase 4a: update-docs promotion and template (Codex session)
 - [ ] Phase 5a: conduct nudge (Codex session)
 - [x] Phase 3c: Lens checks against active records (Pi session)
@@ -437,6 +437,8 @@ sequenceDiagram
 - Phase 3b (2026-11-24): `just lens-tests` and every `reconciliation-tests` script except `check-prompt-parity.sh` pass. The parity check fails by design until Phase 3a aligns Codex's `rubric.md` to the Claude edit, so 3b's test command cannot exit 0 on its own; the check runs first in 3a. Also fixed a Phase 2 defect the lens-collect test caught: `decisions-active.sh` and `check-decisions.sh` used `mapfile`, outside the bash 3.2 floor (`cae7e9b`).
 - Phase 4b (2026-11-24): Claude `update-docs` has no explicit apply-target allowlist (Codex's Phase 4 does), so the narrowing lives in a new Phase 4 list item (records are never written from that list, even with `--apply`) plus a one-sentence `docs/decisions/` exception to the no-new-files rule; the step itself is a new `## Decision Promotion` section. The marker check reuses `review-plan/scripts/marker.py` via `${CLAUDE_PLUGIN_ROOT}`, since `update-docs` bundles only the validator; `test-promotion-marker.sh` runs that exact classifier block against missing, placeholder, stale and valid fixtures. `--mirror codex` part 2 fails with a clear "no Decision Promotion section" message until 4a. Codex 4a can insert the template section verbatim: the anchor (`- (append findings here as work proceeds)` then `## Issues & Solutions`) is identical in both templates.
 - Open verification (resolved above): Phase 2 adds `update-docs` as a bundled skill; whether the generator, `check-sync` and Pi staging handle that unchanged is unverified and is checked first in Phase 2, with any script change recorded here.
+- Phase 3a (2026-11-24): The standalone Codex CLI could not start its app-server under the sandbox. Exercised the rendered Codex Architecture Lens prompts directly in two clean-context workers. Both found the cache-store conflict (Constraint and Architecture respectively), and neither reported a decision conflict for the unrelated, superseded, or closing-tag lookalike cases. Verified both selector snippets on Bash 3.2. Stored the four cases under `/private/tmp/skein-3a-architecture-q2ec3l1s/.review-plan/lenses/fixture-*/architecture.1.jsonl` and `/private/tmp/skein-3a-architecture-q2ec3l1s/.deep-review/lenses/fixture-*/architecture.2.jsonl`.
+- Phase 3a (2026-11-24): Ran the test suites with scratch Git signing disabled and used a writable, offline uv cache for parity. The repository signing configuration is unchanged.
 
 ### Review Waivers
 

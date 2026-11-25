@@ -885,30 +885,31 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Active decision records reach the architecture lenses only (Claude mirror;
-# the Codex half lands separately and adds its own counterpart).
+# Active decision records reach the architecture lenses only.
 # ---------------------------------------------------------------------------
 
 DECISION_SKILLS=(
 	"review-plan:$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md"
 	"deep-review:$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+	"review-plan:$ROOT_DIR/plugins/skein-codex/skills/review-plan/SKILL.md"
+	"deep-review:$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
 )
 
 decision_has() {
 	local text="$1" pattern="$2" label="$3"
 	if grep -Eq -- "$pattern" <<<"$text"; then
-		pass "decisions ($dec_skill): $label"
+		pass "decisions ($dec_mirror/$dec_skill): $label"
 	else
-		fail "decisions ($dec_skill): $label"
+		fail "decisions ($dec_mirror/$dec_skill): $label"
 	fi
 }
 
 decision_lacks() {
 	local text="$1" pattern="$2" label="$3"
 	if grep -Eq -- "$pattern" <<<"$text"; then
-		fail "decisions ($dec_skill): $label"
+		fail "decisions ($dec_mirror/$dec_skill): $label"
 	else
-		pass "decisions ($dec_skill): $label"
+		pass "decisions ($dec_mirror/$dec_skill): $label"
 	fi
 }
 
@@ -917,6 +918,8 @@ decision_lacks() {
 for dec_entry in "${DECISION_SKILLS[@]}"; do
 	dec_skill="${dec_entry%%:*}"
 	dec_md="${dec_entry#*:}"
+	dec_mirror="${dec_md#"$ROOT_DIR/plugins/"}"
+	dec_mirror="${dec_mirror%%/*}"
 	require_file "$dec_md" || continue
 	dec_all="$(cat "$dec_md")"
 	case "$dec_skill" in
@@ -931,15 +934,29 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 			"paths come from the plan's file sections, brace-expanded"
 		decision_has "$dec_all" 'the architecture lens alone also gets the active decision records block' \
 			"Step 2's allowed inputs name the block for the architecture lens alone"
+		if [[ "$dec_mirror" == skein-codex ]]; then
+			decision_has "$dec_all" 'run the same lens prompts sequentially.*same allowed inputs, active decision records block' \
+				"the sequential fallback receives the same architecture input"
+		fi
 		decision_has "$dec_all" 'a plan that names no paths' "a plan with no paths is degraded coverage"
 		;;
 	deep-review)
-		dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
-		dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
-		decision_has "$dec_arch" '"category":"Architecture","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
-			"architecture finding record shape is unchanged"
-		decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
-			"architecture output fields are unchanged"
+		if [[ "$dec_mirror" == skein-codex ]]; then
+			dec_arch="$(awk '/^### Architecture Lens$/{f=1; next} /^### /{f=0} f' "$dec_md")"
+			dec_others="$(awk '/^### /{f=($0 ~ /Lens$/ && $0 !~ /Architecture Lens$/)} /^## /{f=0} f' "$dec_md")"
+			decision_has "$dec_arch" '^- `category`: `Architecture`$' "architecture category is unchanged"
+			decision_has "$dec_all" '"category":"<category>","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
+				"shared finding record shape is unchanged"
+			decision_has "$dec_all" '^below\. Only the Architecture Lens also takes active decision records' \
+				"the lens prompt input is optional and architecture-only"
+		else
+			dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
+			dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
+			decision_has "$dec_arch" '"category":"Architecture","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
+				"architecture finding record shape is unchanged"
+			decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
+				"architecture output fields are unchanged"
+		fi
 		decision_has "$dec_arch" '^- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one' \
 			"architecture scope covers decision conflicts"
 		decision_has "$dec_all" 'git diff -z --name-only' "paths come from the resolved review range, NUL-separated"
@@ -948,21 +965,26 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 	if [[ "$(grep -c '^<untrusted-content>$' <<<"$dec_arch")" -eq "$(grep -c '^</untrusted-content>$' <<<"$dec_arch")" ]] &&
 		[[ "$(grep -A1 '^<untrusted-content>$' <<<"$dec_arch" | grep -c '^{{ACTIVE_DECISIONS}}$')" -eq 1 ]] &&
 		[[ "$(grep -A1 '^{{ACTIVE_DECISIONS}}$' <<<"$dec_arch" | grep -c '^</untrusted-content>$')" -eq 1 ]]; then
-		pass "decisions ($dec_skill): exactly one wrapped block in the architecture prompt"
+		pass "decisions ($dec_mirror/$dec_skill): exactly one wrapped block in the architecture prompt"
 	else
-		fail "decisions ($dec_skill): the architecture prompt's block is missing, unwrapped or duplicated"
+		fail "decisions ($dec_mirror/$dec_skill): the architecture prompt's block is missing, unwrapped or duplicated"
 	fi
 	if [[ -n "$dec_others" ]]; then
 		decision_lacks "$dec_others" 'ACTIVE_DECISIONS' "no other lens prompt carries the block"
 	else
-		fail "decisions ($dec_skill): other lens prompts not found, layout drift"
+		fail "decisions ($dec_mirror/$dec_skill): other lens prompts not found, layout drift"
 	fi
 	decision_lacks "$dec_arch" 'as a `?Contradiction`? finding' "decision conflicts never use the reserved Contradiction category"
-	decision_has "$dec_all" "\"\\\$\\{CLAUDE_PLUGIN_ROOT\\}\"/skills/$dec_skill/scripts/decisions-active\\.sh" \
-		"runs the bundled selector through the Claude path anchor"
-	decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
+	if [[ "$dec_mirror" == skein-codex ]]; then
+		decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh' "runs the bundled selector through the Codex path anchor"
+		decision_lacks "$dec_all" 'CLAUDE_PLUGIN_ROOT.*decisions-active' "never uses the Claude selector anchor"
+	else
+		decision_has "$dec_all" "\"\\\$\\{CLAUDE_PLUGIN_ROOT\\}\"/skills/$dec_skill/scripts/decisions-active\\.sh" \
+			"runs the bundled selector through the Claude path anchor"
+		decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
+	fi
 	decision_has "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "passes each path as one literal argument after --"
-	decision_lacks "$dec_all" 'mapfile' "the selector call runs on bash 3.2 (no mapfile)"
+	decision_lacks "$dec_all" 'mapfile|readarray|\$\{[^}]*,,' "the selector call runs on bash 3.2"
 	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
 	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
 	decision_has "$dec_all" 'final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded' "truncation is degraded coverage"
