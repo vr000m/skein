@@ -153,6 +153,33 @@ root="$(fresh glob-literal-paren)"
 record "$root" 20260101-a.md active 'docs/(draft).md, src/[(]x' none none "$PLAN"
 expect_ok "a parenthesis that opens no extended pattern is accepted" "$root"
 
+# The dialect scan is the splitter's bracket scan: an operator character inside
+# a bracket expression or after a backslash is a literal member, so these are
+# accepted, while the same characters outside one are still rejected.
+glob_scan_rows=(
+	"ok|file[?(].txt"
+	"ok|a[*(]b, c[+(]d, e[@(]f, g[!(]h"
+	"ok|x[**]y"
+	"ok|src/\\*\\(x).py"
+	"ok|docs/[{]a[}].md"
+	"fail|a[?(b|extended patterns are not supported"
+	"fail|[ab]?(x)|extended patterns are not supported"
+	"fail|x[*]**|'**' is not supported"
+	"fail|[{]{a,b}|braces are not supported"
+)
+for row in "${glob_scan_rows[@]}"; do
+	verdict="${row%%|*}"
+	rest="${row#*|}"
+	glob="${rest%%|*}"
+	root="$(fresh "glob-scan-$RANDOM")"
+	record "$root" 20260101-a.md active "$glob" none none "$PLAN"
+	if [[ "$verdict" == ok ]]; then
+		expect_ok "bracket-aware dialect scan accepts '$glob'" "$root"
+	else
+		expect_fail "bracket-aware dialect scan rejects '$glob'" "$root" "${rest#*|}"
+	fi
+done
+
 root="$(fresh glob-empty-entry)"
 record "$root" 20260101-a.md active 'src/*,,docs/*' none none "$PLAN"
 expect_fail "empty entry in Applies to" "$root" "empty glob"
@@ -281,6 +308,56 @@ if [[ $rc -eq 2 ]]; then
 	pass "--targets with no path is a usage error"
 else
 	fail "--targets with no path is a usage error (exit $rc)"
+fi
+
+# --targets-file: the same preflight with the targets read from a file or
+# stdin, never the command line. A quoted here-document carries a hostile name
+# as data: it is refused (exit 3) and nothing in it runs.
+# targets_file_case <label> <want exit> <message fragment> <root> <file>
+targets_file_case() {
+	local label="$1" want="$2" frag="$3" root="$4" file="$5" rc=0 out
+	out="$("$CHECK" "$root" --targets-file "$file" 2>&1 <"${6:-/dev/null}")" || rc=$?
+	if [[ $rc -eq $want && "$out" == *"$frag"* ]]; then
+		pass "targets-file: $label"
+	else
+		fail "targets-file: $label (want exit $want naming '$frag'; got exit $rc, output: $out)"
+	fi
+}
+root="$(fresh targets-file)"
+mkdir -p "$root/docs/decisions"
+printf '%s\n' docs/decisions/20261125-x.md docs/decisions/README.md "$PLAN" >"$tmp/targets.txt"
+targets_file_case "a newline-delimited file of safe targets passes" 0 "" "$root" "$tmp/targets.txt"
+printf '%s\0' docs/decisions/20261125-x.md "$PLAN" >"$tmp/targets.z"
+targets_file_case "a NUL-delimited file of safe targets passes" 0 "" "$root" "$tmp/targets.z"
+printf '%s\n\n%s\n' docs/decisions/20261125-x.md -x.md >"$tmp/targets-bad.txt"
+targets_file_case "an unsafe target in the file exits 3" 3 "-x.md: $SHAPE" "$root" "$tmp/targets-bad.txt"
+: >"$tmp/targets-empty.txt"
+targets_file_case "an empty targets file is a usage error" 2 "" "$root" "$tmp/targets-empty.txt"
+ln -s "$tmp/targets.txt" "$tmp/targets-link.txt"
+targets_file_case "a symlinked targets file is refused" 2 "cannot read" "$root" "$tmp/targets-link.txt"
+targets_file_case "a missing targets file is refused" 2 "cannot read" "$root" "$tmp/no-such-file"
+printf '%s\n' docs/decisions/20261125-x.md "$PLAN" >"$tmp/targets-stdin.txt"
+targets_file_case "stdin (-) is read" 0 "" "$root" - "$tmp/targets-stdin.txt"
+rc=0
+# shellcheck disable=SC2016  # the metacharacters are the test data
+out="$(
+	cd "$root" && "$CHECK" --targets-file - 2>&1 <<'EOF'
+docs/decisions/x$(touch pwned).md
+docs/decisions/20261125-x.md
+EOF
+)" || rc=$?
+# shellcheck disable=SC2016  # literal expected text
+if [[ $rc -eq 3 && ! -e "$root/pwned" && "$out" == *'docs/decisions/x$(touch pwned).md: '"$SHAPE"* ]]; then
+	pass "targets-file: a hostile name in a quoted here-document is refused as data and never runs"
+else
+	fail "targets-file: hostile here-document name: exit $rc, pwned $([[ -e "$root/pwned" ]] && echo yes || echo no), output $out"
+fi
+rc=0
+"$CHECK" "$root" --targets-file >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+	pass "--targets-file with no file is a usage error"
+else
+	fail "--targets-file with no file is a usage error (exit $rc)"
 fi
 
 # Usage errors.

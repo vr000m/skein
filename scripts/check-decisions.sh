@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-decisions.sh — validate the docs/decisions record graph.
 #
-# Usage: check-decisions.sh [<repo-root>] [--targets [--] <path>...]
+# Usage: check-decisions.sh [<repo-root>] [--targets [--] <path>... | --targets-file <file>]
 #
 # <repo-root> defaults to the git top level (or the current directory outside a
 # repository). Records are <repo-root>/docs/decisions/*.md, README.md excluded;
@@ -30,6 +30,13 @@
 # file. Reported as `<path>: <message>`. The record graph is still validated
 # in full, so the exit status tells the two failures apart.
 #
+# --targets-file takes the same paths from <file> instead of the command line,
+# one per line (or NUL-delimited when the file holds a NUL), empty lines
+# skipped; `-` reads stdin, normally a quoted here-document. A promotion uses
+# it so no record or plan file name ever becomes a shell word. Every valid
+# target starts with `docs/`, so none can end a here-document early. A
+# <file> other than `-` must be a regular, non-symlink file.
+#
 # Exit codes: 0 valid, 1 the record graph has a problem (every target is safe),
 # 2 usage error, 3 at least one --targets path is unsafe (whatever the graph).
 set -euo pipefail
@@ -39,7 +46,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
 usage() {
-	echo "usage: check-decisions.sh [<repo-root>] [--targets [--] <path>...]" >&2
+	echo "usage: check-decisions.sh [<repo-root>] [--targets [--] <path>... | --targets-file <file>]" >&2
 	exit 2
 }
 root=""
@@ -49,11 +56,29 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
 fi
 targets=()
 if [[ $# -gt 0 ]]; then
-	[[ "$1" == --targets ]] || usage
-	shift
-	[[ "${1:-}" == -- ]] && shift
-	[[ $# -gt 0 ]] || usage
-	targets=("$@")
+	case "$1" in
+	--targets)
+		shift
+		[[ "${1:-}" == -- ]] && shift
+		[[ $# -gt 0 ]] || usage
+		targets=("$@")
+		;;
+	--targets-file)
+		[[ $# -eq 2 && -n "$2" ]] || usage
+		list="$(mktemp)"
+		if ! dec_read_list "$2" >"$list"; then
+			rm -f -- "$list"
+			echo "check-decisions.sh: cannot read the targets file" >&2
+			exit 2
+		fi
+		while IFS= read -r -d '' target; do
+			targets+=("$target")
+		done <"$list"
+		rm -f -- "$list"
+		[[ ${#targets[@]} -gt 0 ]] || usage
+		;;
+	*) usage ;;
+	esac
 fi
 
 [[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"

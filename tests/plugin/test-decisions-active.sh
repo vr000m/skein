@@ -453,6 +453,18 @@ split_rows=(
 	"lit[x, src/*|lit[x${TAB}src/*|src/a"
 	"q[\\],]r, s|q[\\],]r${TAB}s|q,r"
 	"q[\\],]r, s|q[\\],]r${TAB}s|q]r"
+	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/foo "
+	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/foo"
+	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/bar.md"
+	"file[?(].txt|file[?(].txt|file(.txt"
+	"file[?(].txt|file[?(].txt|file?.txt"
+	"file[?(].txt|file[?(].txt|filex.txt"
+	"a[*(]b, c|a[*(]b${TAB}c|a(b"
+	"a[+@!(]b|a[+@!(]b|a@b"
+	"x[**]y|x[**]y|x*y"
+	"x[**]y|x[**]y|xay"
+	"src/[a-c]*.py|src/[a-c]*.py|src/Bar.py"
+	"src/[a-c]*.py|src/[a-c]*.py|src/bar.py"
 )
 split_failures=0
 split_selected=0
@@ -462,9 +474,12 @@ for row in "${split_rows[@]}"; do
 	globs="${rest%|*}"
 	path="${rest##*|}"
 	want=""
+	# The oracle matches bytes, as the selector does (LC_ALL=C).
 	while IFS= read -r g; do
 		# shellcheck disable=SC2053  # the glob is the pattern on purpose
-		[[ "$path" == $g ]] && want=20260101-split.md
+		if LC_ALL=C bash -c '[[ "$1" == $2 ]]' _ "$path" "$g"; then
+			want=20260101-split.md
+		fi
 	done <<<"${globs//$TAB/$'\n'}"
 	root="$tmp/split-$split_failures-$split_selected-$RANDOM"
 	record "$root" 20260101-split.md active "$value"
@@ -486,6 +501,253 @@ if [[ $split_selected -gt 0 && $split_selected -lt ${#split_rows[@]} ]]; then
 else
 	fail "the splitting table holds matching and non-matching rows ($split_selected of ${#split_rows[@]})"
 fi
+
+# Ranges and `?` match bytes in every locale: bash 3.2 collates `[a-c]` by
+# locale, so without LC_ALL=C `src/[a-c]*.py` would select for `src/Bar.py`
+# under en_US.UTF-8. Run under every bash on the machine, including /bin/bash.
+root="$tmp/locale"
+record "$root" 20260101-range.md active 'src/[a-c]*.py'
+locale_bashes=(bash)
+[[ -x /bin/bash ]] && locale_bashes+=(/bin/bash)
+if locale -a 2>/dev/null | grep -iE '^en_US\.(UTF-8|utf8)$' >/dev/null; then
+	for lb in "${locale_bashes[@]}"; do
+		got_upper="$(cd "$root" && LC_ALL=en_US.UTF-8 "$lb" "$SEL" -- src/Bar.py 2>/dev/null || true)"
+		got_lower="$(cd "$root" && LC_ALL=en_US.UTF-8 "$lb" "$SEL" -- src/bar.py 2>/dev/null || true)"
+		if [[ -z "$(names "$got_upper")" && "$(names "$got_lower")" == 20260101-range.md ]]; then
+			pass "[$lb] a range matches bytes under en_US.UTF-8: src/[a-c]*.py skips src/Bar.py, selects src/bar.py"
+		else
+			fail "[$lb] a range matched by locale: Bar '$(names "$got_upper")', bar '$(names "$got_lower")'"
+		fi
+	done
+else
+	pass "en_US.UTF-8 is not installed; the locale range case is covered by the C-locale split table"
+fi
+
+# A `## ` line inside a ``` or ~~~ fence is text, not a section boundary: a
+# fenced heading under Decision keeps the rest of Decision, and a fenced
+# `## Decision` under Alternatives rejected does not emit rejected material.
+root="$tmp/fence"
+# shellcheck disable=SC2016  # the backticks are fence text
+record "$root" 20260101-fence.md active 'src/*' "$(printf 'Before.\n```\n## Example\nFENCED-BODY\n```\nAFTER-FENCE\n~~~\n## Why\n~~~\nSTILL-DECISION')"
+cat >>"$root/docs/decisions/20260101-fence.md" <<'EOF'
+~~~
+## Decision
+~~~
+REJECTED-FENCED
+EOF
+run "$root" src/x
+if [[ $RC -eq 0 ]] && grep -qx 'FENCED-BODY' <<<"$OUT" && grep -qx 'AFTER-FENCE' <<<"$OUT" &&
+	grep -qx 'STILL-DECISION' <<<"$OUT" && ! grep -q 'REJECTED' <<<"$OUT" && ! grep -q 'CONSEQUENCES-MARKER' <<<"$OUT"; then
+	pass "fenced headings neither end the Decision section nor reopen it under Alternatives rejected"
+else
+	fail "fenced headings changed the emitted sections: $OUT"
+fi
+
+# An unlistable docs/decisions is a file-type failure, not an empty record set
+# (bash 3.2 leaves the glob unexpanded). Root can list any directory: skip.
+root="$tmp/unreadable-dir"
+record "$root" 20260101-hidden.md active 'src/*'
+if [[ "$(id -u)" -eq 0 ]]; then
+	pass "running as root: the unreadable-directory case cannot be exercised"
+else
+	for mode in 000 300 600; do
+		chmod "$mode" "$root/docs/decisions"
+		run "$root" src/x
+		vrc=0
+		"$CHECK" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+		chmod 755 "$root/docs/decisions"
+		if [[ $RC -eq 3 && -z "$OUT" && $vrc -eq 1 ]] && grep -q 'file-type' "$tmp/stderr" && grep -q 'file-type' "$tmp/check-err"; then
+			pass "docs/decisions mode $mode: selector exits 3 and validator 1, both naming file-type"
+		else
+			fail "docs/decisions mode $mode: selector $RC ('$OUT'), validator $vrc"
+		fi
+	done
+fi
+
+# Scratch I/O (seam 1). Contract: the selector is the only writer of
+# --paths-file and --output; each must sit inside the repo with no symlink,
+# `..` or `.git` component below the root, no non-directory ancestor and no
+# non-regular leaf; a refusal exits 5, names the component and writes nothing
+# anywhere; an accepted --output is written whatever the exit status.
+scratch_repo() {
+	local root="$1"
+	rm -rf "$root"
+	mkdir -p "$root"
+	git -C "$root" init -q
+	record "$root" 20260101-scratch.md active 'src/*'
+}
+outside="$tmp/outside"
+# cells: shape -> the component the refusal names ("" for accepted)
+scratch_cells=(
+	"fresh|"
+	"existing-regular|"
+	"state-link|.deep-review is a symlink"
+	"lenses-link|.deep-review/lenses is a symlink"
+	"run-link|.deep-review/lenses/r is a symlink"
+	"output-link|.deep-review/lenses/r/out.txt is a symlink"
+	"paths-link|.deep-review/lenses/r/paths.txt is a symlink"
+	"output-dir|.deep-review/lenses/r/out.txt is not a regular file"
+	"state-file|.deep-review is not a directory"
+	"outside|not inside the repository"
+	"dotdot|a '..', '.', empty or .git component"
+	"dotgit|a '..', '.', empty or .git component"
+)
+for cell in "${scratch_cells[@]}"; do
+	shape="${cell%%|*}"
+	want="${cell#*|}"
+	root="$tmp/scratch-$shape"
+	scratch_repo "$root"
+	rm -rf "$outside"
+	mkdir -p "$outside"
+	printf 'victim\n' >"$outside/victim"
+	out_arg=".deep-review/lenses/r/out.txt"
+	case "$shape" in
+	existing-regular)
+		mkdir -p "$root/.deep-review/lenses/r"
+		printf 'stale\n' >"$root/.deep-review/lenses/r/out.txt"
+		;;
+	state-link) ln -s "$outside" "$root/.deep-review" ;;
+	lenses-link)
+		mkdir -p "$root/.deep-review"
+		ln -s "$outside" "$root/.deep-review/lenses"
+		;;
+	run-link)
+		mkdir -p "$root/.deep-review/lenses"
+		ln -s "$outside" "$root/.deep-review/lenses/r"
+		;;
+	output-link)
+		mkdir -p "$root/.deep-review/lenses/r"
+		ln -s "$outside/victim" "$root/.deep-review/lenses/r/out.txt"
+		;;
+	paths-link)
+		mkdir -p "$root/.deep-review/lenses/r"
+		ln -s "$outside/victim" "$root/.deep-review/lenses/r/paths.txt"
+		;;
+	output-dir) mkdir -p "$root/.deep-review/lenses/r/out.txt" ;;
+	state-file) printf 'x\n' >"$root/.deep-review" ;;
+	outside) out_arg="$outside/out.txt" ;;
+	dotdot) out_arg=".deep-review/../../outside/out.txt" ;;
+	dotgit) out_arg=".git/out.txt" ;;
+	esac
+	rc=0
+	err="$(
+		cd "$root" && "$SEL" --output "$out_arg" --paths-file .deep-review/lenses/r/paths.txt --paths-stdin 2>&1 >/dev/null <<'EOF'
+p src/a.py
+EOF
+	)" || rc=$?
+	untouched=0
+	if [[ "$(cat "$outside/victim")" == victim && "$(find "$outside" -mindepth 1 | wc -l | tr -d ' ')" == 1 ]]; then
+		untouched=1
+	fi
+	if [[ -z "$want" ]]; then
+		if [[ $rc -eq 0 && $untouched -eq 1 ]] &&
+			grep -qx '### Record: docs/decisions/20260101-scratch.md' "$root/.deep-review/lenses/r/out.txt" &&
+			[[ "$(cat "$root/.deep-review/lenses/r/paths.txt")" == src/a.py ]] &&
+			[[ -z "$(find "$root/.deep-review" -name '.*.??????')" ]]; then
+			pass "scratch $shape: both files written by the selector, no temp file left"
+		else
+			fail "scratch $shape: exit $rc, err '$err'"
+		fi
+	elif [[ $rc -eq 5 && $untouched -eq 1 && "$err" == *"$want"* ]]; then
+		pass "scratch $shape: refused with exit 5 ($want), nothing written outside"
+	else
+		fail "scratch $shape: exit $rc, untouched $untouched, err '$err' (want '$want')"
+	fi
+done
+
+# Every exit status still writes an accepted --output, so the snippet's
+# selector-output= file is never stale: exit 3 keeps the valid matches, exit 2
+# (no path) and exit 4 (an unprefixed line) leave it empty.
+root="$tmp/scratch-exits"
+scratch_repo "$root"
+record "$root" 20260102-broken.md active 'src/*'
+printf '# Broken\n' >"$root/docs/decisions/20260102-broken.md"
+mkdir -p "$root/.deep-review/lenses/r"
+for cell in "3|p src/a.py|20260101-scratch.md" "2||" "4|src/a.py|"; do
+	want_rc="${cell%%|*}"
+	rest="${cell#*|}"
+	line="${rest%|*}"
+	want_names="${rest#*|}"
+	printf 'stale\n' >"$root/.deep-review/lenses/r/out.txt"
+	rc=0
+	(cd "$root" && printf '%s\n' "$line" | "$SEL" --output .deep-review/lenses/r/out.txt --paths-stdin >/dev/null 2>&1) || rc=$?
+	got="$(names "$(cat "$root/.deep-review/lenses/r/out.txt")")"
+	if [[ $rc -eq "$want_rc" && "$got" == "$want_names" ]] && ! grep -q stale "$root/.deep-review/lenses/r/out.txt"; then
+		pass "exit $want_rc rewrites --output ('$want_names')"
+	else
+		fail "exit $want_rc: got exit $rc, output names '$got'"
+	fi
+done
+
+# --paths-stdin: a path is data after its `p ` prefix; a line equal to a
+# here-document delimiter cannot occur because every line carries the prefix.
+root="$tmp/scratch-stdin"
+scratch_repo "$root"
+# shellcheck disable=SC2016  # the metacharacters are the test data
+record "$root" 20260102-meta.md active 'src/$(touch*'
+rc=0
+# shellcheck disable=SC2016  # the metacharacters are the test data
+(cd "$root" && "$SEL" --output out.txt --paths-file paths.txt --paths-stdin >/dev/null 2>&1 <<'EOF') || rc=$?
+p src/$(touch injected).py
+p   src/lead space.py
+
+p SKEIN_PATHS
+EOF
+# shellcheck disable=SC2016  # literal expected text
+if [[ $rc -eq 0 && ! -e "$root/injected" && "$(names "$(cat "$root/out.txt")")" == "20260101-scratch.md 20260102-meta.md" ]] &&
+	[[ "$(cat "$root/paths.txt")" == 'src/$(touch injected).py'$'\n''  src/lead space.py'$'\n''SKEIN_PATHS' ]]; then
+	pass "--paths-stdin keeps each path literal after its prefix and runs nothing"
+else
+	fail "--paths-stdin: exit $rc, paths '$(cat "$root/paths.txt" 2>/dev/null)'"
+fi
+
+# --base/--head: the script runs the diff (both rename paths, the merge base),
+# --uncommitted adds staged and unstaged paths, an empty range is an empty
+# success, a bad range is exit 4, and a reviewed head that is not the
+# checked-out HEAD prints the notice.
+root="$tmp/scratch-diff"
+scratch_repo "$root"
+gitc() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
+mkdir -p "$root/src" "$root/archive"
+printf 'one\n' >"$root/src/moved.py"
+gitc add -- docs src
+gitc commit -qm base
+gitc mv -- src/moved.py archive/moved.py
+gitc commit -qm move
+diff_run() {
+	RC=0
+	(cd "$root" && "$SEL" --output .deep-review/lenses/d/out.txt --paths-file .deep-review/lenses/d/paths.z "$@" 2>"$tmp/stderr" >/dev/null) || RC=$?
+	OUT="$(cat "$root/.deep-review/lenses/d/out.txt")"
+}
+diff_run --base 'HEAD^' --head HEAD
+paths_list="$(tr '\0' '\n' <"$root/.deep-review/lenses/d/paths.z" | sort | tr '\n' ' ')"
+if [[ $RC -eq 0 && "$paths_list" == "archive/moved.py src/moved.py " && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q notice "$tmp/stderr"; then
+	pass "--base/--head selects over both rename paths, no notice at the checked-out HEAD"
+else
+	fail "--base/--head rename: exit $RC, paths '$paths_list', names '$(names "$OUT")'"
+fi
+diff_run --base HEAD --head HEAD
+assert_eq "--base/--head on an empty range is an empty success" "0:" "$RC:$OUT"
+diff_run --base missing-rev --head HEAD
+assert_eq "--base/--head on a bad range is exit 4 with no record text" "4:" "$RC:$OUT"
+printf 'staged\n' >"$root/src/staged.py"
+gitc add -- src/staged.py
+printf 'two\n' >"$root/archive/moved.py"
+diff_run --base HEAD --head HEAD --uncommitted
+paths_list="$(tr '\0' '\n' <"$root/.deep-review/lenses/d/paths.z" | tr '\n' ' ')"
+assert_eq "--uncommitted adds the staged and unstaged paths" "0:src/staged.py archive/moved.py " "$RC:$paths_list"
+gitc stash -q
+reviewed_head="$(git -C "$root" rev-parse HEAD)"
+gitc checkout -q 'HEAD^'
+diff_run --base "$reviewed_head^" --head "$reviewed_head"
+if grep -qxF 'decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head' "$tmp/stderr"; then
+	pass "a reviewed head other than the checked-out HEAD prints the checked-out-tree notice"
+else
+	fail "no checked-out-tree notice for a reviewed head off HEAD: $(cat "$tmp/stderr")"
+fi
+RC=0
+(cd "$root" && "$SEL" --base -x --head HEAD >/dev/null 2>&1) || RC=$?
+assert_eq "a revision that starts with - is a usage error" "2" "$RC"
 
 # An exported BASHOPTS reaches every bash child. The validator and the selector
 # must still agree: Status, glob and record-name matches stay case-sensitive.
