@@ -381,7 +381,7 @@ sequenceDiagram
 - [x] Phase 4b: update-docs promotion and template (Claude)
 - [x] Phase 5b: conduct nudge (Claude)
 - [x] Phase 3a: Lens checks against active records (Codex session)
-- [ ] Phase 4a: update-docs promotion and template (Codex session)
+- [x] Phase 4a: update-docs promotion and template (Codex session)
 - [ ] Phase 5a: conduct nudge (Codex session)
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
@@ -439,6 +439,7 @@ sequenceDiagram
 - Open verification (resolved above): Phase 2 adds `update-docs` as a bundled skill; whether the generator, `check-sync` and Pi staging handle that unchanged is unverified and is checked first in Phase 2, with any script change recorded here.
 - Phase 3a (2026-11-24): The standalone Codex CLI could not start its app-server under the sandbox. Exercised the rendered Codex Architecture Lens prompts directly in two clean-context workers. Both found the cache-store conflict (Constraint and Architecture respectively), and neither reported a decision conflict for the unrelated, superseded, or closing-tag lookalike cases. Verified both selector snippets on Bash 3.2. Stored the four cases under `/private/tmp/skein-3a-architecture-q2ec3l1s/.review-plan/lenses/fixture-*/architecture.1.jsonl` and `/private/tmp/skein-3a-architecture-q2ec3l1s/.deep-review/lenses/fixture-*/architecture.2.jsonl`.
 - Phase 3a (2026-11-24): Ran the test suites with scratch Git signing disabled and used a writable, offline uv cache for parity. The repository signing configuration is unchanged.
+- Phase 4a (2026-11-24): The session requested whole-file Claude byte parity for the Codex template and excluded Pi edits. This supersedes the phase block’s instructions to keep the Codex-only quick header example and copy the new template into Pi. The Codex template now lists `none | full`. The Pi composition suite ran with loopback access and returned 7 passed, 2 failed. Both failures enforce Codex–Pi template byte equality. Codex promotion checks passed 29/29, both mirrors passed 46/46, and `just parity-tests` passed.
 
 ### Review Waivers
 

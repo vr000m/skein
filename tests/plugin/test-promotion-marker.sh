@@ -294,6 +294,19 @@ check_mirror() {
 		'under the plan'"'"'s existing `## Promoted Decisions` section below the marker'
 	expect_text "$name: runs the bundled validator after writes" "$section" "$check_path"
 
+	if [[ "$name" == codex ]]; then
+		local apply_phase
+		apply_phase="$(awk '/^## Phase 4: Apply Updates$/{on=1; next} on && /^## /{exit} on' "$skill")"
+		expect_text "codex: Phase 4 excludes decisions from the allowlist" "$apply_phase" \
+			'`docs/decisions/` path from this apply-target allowlist'
+		expect_text "codex: Phase 4 shows the report before applying" "$apply_phase" \
+			'**Always show the report (Phase 3) first**'
+		expect_text "codex: changed inputs require a fresh offer before writing" "$section" \
+			'If an input changed, report it and make a fresh offer before writing.'
+		expect_text "codex: reports an unwritable target before the first write" "$section" \
+			'If a required target is outside that boundary or is otherwise unwritable, report the blocker before the first write.'
+	fi
+
 	local refusal
 	refusal="$(grep -F 'Refuse the promotion and write nothing when it prints' <<<"$section" || true)"
 	if [[ -z "$refusal" ]]; then
@@ -306,33 +319,37 @@ check_mirror() {
 	fi
 }
 
-run_claude_classifier() {
-	local skill="$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
-	local script
-	script="$(awk '/^   python3 - "\$PLAN" <<'"'"'PY'"'"'$/{on=1; next} on && /^   PY$/{exit} on' "$skill" |
-		sed -e 's/^   //' -e "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/skein#g")"
+run_marker_classifier() {
+	local name="$1" plugin="$2" skill_dir script state got
+	skill_dir="$REPO_ROOT/plugins/$plugin/skills/update-docs"
+	script="$(awk '
+		/^## Decision Promotion$/ { promotion = 1; next }
+		promotion && /^## / { exit }
+		promotion && /^   python3 - "\$PLAN" / { on = 1 }
+		on { print substr($0, 4) }
+		on && /^   PY$/ { exit }
+	' "$skill_dir/SKILL.md" | sed "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/$plugin#g")"
 	if [[ -z "$script" ]]; then
-		fail "claude: no marker classifier block in update-docs"
+		fail "$name: no marker classifier block in update-docs"
 		return
 	fi
-	local name want got
-	for name in missing placeholder stale valid; do
-		want="$name"
-		got="$(python3 - "$tmp/$name.md" <<<"$script" 2>&1 || true)"
-		if [[ "$got" == "$want" ]]; then
-			pass "claude: update-docs marker classifier prints $want"
+	for state in missing placeholder stale valid; do
+		if got="$(PLAN="$tmp/$state.md" SKILL_DIR="$skill_dir" bash -e <<<"$script" 2>&1)" &&
+			[[ "$got" == "$state" ]]; then
+			pass "$name: update-docs marker classifier prints $state"
 		else
-			fail "claude: update-docs marker classifier on the $name fixture printed '$got'"
+			fail "$name: update-docs marker classifier on the $state fixture printed '$got'"
 		fi
 	done
 }
 
 if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	check_mirror claude skein '"${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"'
-	run_claude_classifier
+	run_marker_classifier claude skein
 fi
 if [[ "$mirror" == codex || "$mirror" == both ]]; then
-	check_mirror codex skein-codex 'check-decisions.sh'
+	check_mirror codex skein-codex '"$SKILL_DIR"/scripts/check-decisions.sh'
+	run_marker_classifier codex skein-codex
 fi
 
 echo "---"
