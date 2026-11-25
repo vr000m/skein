@@ -386,7 +386,7 @@ sequenceDiagram
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
 - [x] Phase 5c: conduct nudge (Pi session)
-- [ ] Phase 6: Verify and docs
+- [x] Phase 6: Verify and docs (manual lens and promotion runs still open, see Findings)
 - [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
 
 ## Findings
@@ -445,6 +445,9 @@ sequenceDiagram
 - Phase 5a (2026-11-24): The conduct test passed all 38 textual assertions. Live conduct was outside this phase’s scripted check.
 - Phase 5a (2026-11-24): Before 5a, repaired a shared-index race that included four Pi lens files in the initial 4a commit (`dd58550`). Scoped 4a to the six intended files in `92bb0c1`, replayed the separate Pi promotion fix with the same patch and message (`ec579fa` to `f39a2ca`), and restored the four Pi lens files to the shared index without changing their working files.
 - Codex review follow-up (2026-11-24): Use a fresh architecture attempt range on resume, including when no active records remain, so the collector excludes older findings and progress. Select both paths of a rename and report failed path acquisition. Preserve the signed source-plan prefix through ordinary apply and promotion. The shared validator rejects symlinked records, out-of-repo source plans, supersession links outside the record inventory, and cycles. The generated bundles and format references carry the same shared changes.
+- Phase 6 (2026-11-24, at `6245b94`): `just ci` stops at `lint-python` on the SIM102 already in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261` (local ruff 0.17.6 against the pinned 0.16.6), which skips every later recipe. The remaining ci recipes (`check-sync`, `check-decisions`, `check-trunk-snippet-parity`, `release-baseline-check`, `parity-tests`, `gauntlet-tests`, `lens-tests`, `reconciliation-tests`, `plugin-tests`, `pytest-tests`, `pi-tests`, `site-tests`, `lint-scripts`) ran as one job and exited 0 (Pi 230 passed). The split run was not timed, so no single `just ci` duration is recorded. Docs: the AGENTS.md pointer form was already in place from Phase 1; this phase added the CHANGELOG entry and moved the plans index row to In Progress under `feature/decision-records`.
+- Phase 6 manual checks, not done yet: the Claude lens fixture exercise, the Pi lens exercise (3c ran no workers), and the approve/decline promotion run on a real plan, which the user reviews. Codex 3a recorded its own fixture runs above. The `### Test Results` and `**Status**` lines sit above the marker, so they cannot be ticked here; the evidence lives in Findings.
+- Phase 6 note: the external sessions changed shared scripts after the Claude phases (validator integrity checks, collector attempt range on resume). Claude's `review-plan` and `deep-review` SKILL.md were not changed to say the same about `--continue`; the plan's own gauntlet should check whether they need to.
 
 ### Review Waivers
 
