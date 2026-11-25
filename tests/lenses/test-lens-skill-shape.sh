@@ -1058,16 +1058,20 @@ done
 dec_fence() {
 	DEC_OPENER="$2" awk '
 		$0 ~ ENVIRON["DEC_OPENER"] { section = 1; next }
-		section && /^```(bash)?$/ { code = 1; next }
 		code && /^```$/ { exit }
+		section && /^```(bash)?$/ { code = 1; next }
 		code { print }
 	' "$1"
 }
 # dec_run_snippet <mirror> <snippet>: runs it in $dec_tmp; sets dec_status,
 # dec_text (the output file's content) and dec_lines (stdout line count).
+# The Bash tool may run zsh, where `path`, `status` and `argv` are special
+# parameters (assigning `path` rewrites PATH), so each snippet also runs under
+# zsh when it is installed: dec_shell is bash or zsh.
+dec_shell=bash
 dec_run_snippet() {
 	local out file
-	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/$dec_exec_skill" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" bash -e <<<"$2")" || true
+	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/$dec_exec_skill" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$2")" || true
 	dec_lines="$(grep -c '' <<<"$out" || true)"
 	dec_status="$(sed -n 's/^selector-exit=//p' <<<"$out")"
 	file="$(sed -n 's/^selector-output=//p' <<<"$out")"
@@ -1086,45 +1090,101 @@ if [[ "$(git -C "$dec_tmp" diff --name-only --find-renames HEAD^ HEAD)" == archi
 else
 	fail "the rename fixture does not exercise rename detection"
 fi
+dec_shells=(bash)
+if command -v zsh >/dev/null 2>&1; then
+	dec_shells+=(zsh)
+else
+	pass "zsh is not installed; the selector snippets run under bash only"
+fi
+# dec_range <snippet> <base> <head>: the deep-review snippet for that range.
+dec_range() {
+	local snippet="${1//<run_id>/decisions-shape}"
+	snippet="${snippet/BASE=\"<base>\"/BASE=\"$2\"}"
+	printf '%s\n' "${snippet/TIP=\"<head>\"/TIP=\"$3\"}"
+}
 dec_exec_skill=deep-review
 for dec_mirror in skein skein-codex; do
 	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
-	# cells: rename range, empty range, failed range
-	dec_run_snippet "$dec_mirror" "${selector_snippet/<base>..<head>/HEAD^..HEAD}"
-	if [[ "$dec_status" == 0 && "$dec_lines" == 2 ]] &&
-		grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_text" &&
-		[[ "$dec_text" != *selector-exit* ]]; then
-		pass "$dec_mirror deep-review selects a record that applies only to a rename source, status kept out of the block"
+	# shellcheck disable=SC2016  # the snippet text is literal
+	if [[ "$selector_snippet" == *mktemp* || "$selector_snippet" != *'LENS_DIR="$REPO_ROOT/.deep-review/lenses/<run_id>"'* ||
+		"$selector_snippet" != *'DECISIONS="$LENS_DIR/decision-records.txt"'* || "$selector_snippet" != *'"$LENS_DIR/decision-paths.z"'* ]]; then
+		fail "$dec_mirror deep-review keeps the selector output and path list outside the run's lens directory"
 	else
-		fail "$dec_mirror deep-review lost the rename-source record or mixed the status into the block (exit '$dec_status', $dec_lines lines)"
+		pass "$dec_mirror deep-review writes decision-paths.z and decision-records.txt in the run's lens directory"
 	fi
-	dec_run_snippet "$dec_mirror" "${selector_snippet/<base>..<head>/HEAD..HEAD}"
-	if [[ "$dec_status" == 0 && -z "$dec_text" ]]; then
-		pass "$dec_mirror deep-review runs no selector for a range with no changed path"
+	for dec_shell in "${dec_shells[@]}"; do
+		# cells: rename range, empty range, failed range
+		dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" 'HEAD^' HEAD)"
+		if [[ "$dec_status" == 0 && "$dec_lines" == 2 ]] &&
+			grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_text" &&
+			[[ "$dec_text" != *selector-exit* ]]; then
+			pass "[$dec_shell] $dec_mirror deep-review selects a record that applies only to a rename source, status kept out of the block"
+		else
+			fail "[$dec_shell] $dec_mirror deep-review lost the rename-source record or mixed the status into the block (exit '$dec_status', $dec_lines lines)"
+		fi
+		dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" HEAD HEAD)"
+		if [[ "$dec_status" == 0 && -z "$dec_text" ]]; then
+			pass "[$dec_shell] $dec_mirror deep-review runs no selector for a range with no changed path"
+		else
+			fail "[$dec_shell] $dec_mirror deep-review on an empty range: exit '$dec_status', block '$dec_text'"
+		fi
+		dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" missing HEAD)"
+		if [[ "$dec_status" == 4 && -z "$dec_text" ]]; then
+			pass "[$dec_shell] $dec_mirror deep-review exposes path acquisition failure without record text"
+		else
+			fail "[$dec_shell] $dec_mirror deep-review did not report a failed diff (exit '$dec_status')"
+		fi
+	done
+done
+# A --pr review whose base branch advanced after the fork: the selection uses
+# the merge base, as `gh pr diff` does, so a base-only change to src/cache/
+# selects no record for a PR that touched only notes.txt.
+dec_fork="$(git -C "$dec_tmp" rev-parse HEAD)"
+git -C "$dec_tmp" checkout -q -b pr-head
+printf 'notes\n' >"$dec_tmp/notes.txt"
+git -C "$dec_tmp" add -- notes.txt
+git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false commit -qm 'PR change'
+git -C "$dec_tmp" checkout -q -b base-tip "$dec_fork"
+printf 'advanced\n' >"$dec_tmp/src/cache/advanced.py"
+git -C "$dec_tmp" add -- src/cache/advanced.py
+git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false commit -qm 'Base advances'
+if git -C "$dec_tmp" diff --name-only base-tip..pr-head | grep -qx src/cache/advanced.py; then
+	pass "the advanced-base fixture puts a base-only change in the two-dot range"
+else
+	fail "the advanced-base fixture does not exercise an advanced base"
+fi
+for dec_mirror in skein skein-codex; do
+	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+	dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" base-tip pr-head)"
+	if [[ "$dec_status" == 0 && -z "$dec_text" ]] &&
+		[[ "$(tr '\0' '\n' <"$dec_tmp/.deep-review/lenses/decisions-shape/decision-paths.z")" == notes.txt ]]; then
+		pass "$dec_mirror deep-review selects over the merge base, not the advanced base tip"
 	else
-		fail "$dec_mirror deep-review on an empty range: exit '$dec_status', block '$dec_text'"
-	fi
-	dec_run_snippet "$dec_mirror" "${selector_snippet/<base>..<head>/missing..HEAD}"
-	if [[ "$dec_status" == 4 && -z "$dec_text" ]]; then
-		pass "$dec_mirror deep-review exposes path acquisition failure without record text"
-	else
-		fail "$dec_mirror deep-review did not report a failed diff (exit '$dec_status')"
+		fail "$dec_mirror deep-review selected over the advanced base tip (exit '$dec_status', block '$dec_text')"
 	fi
 done
 dec_exec_skill=review-plan
 for dec_mirror in skein skein-codex; do
 	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
+	# shellcheck disable=SC2016  # the snippet text is literal
+	if [[ "$selector_snippet" == *mktemp* || "$selector_snippet" != *'DECISIONS="$REPO_ROOT/.review-plan/lenses/$RUN_ID/decision-records.txt"'* ]]; then
+		fail "$dec_mirror review-plan keeps the selector output outside the run's lens directory"
+	else
+		pass "$dec_mirror review-plan writes decision-records.txt in the run's lens directory"
+	fi
 	selector_snippet="${selector_snippet//<run_id>/decisions-shape}"
 	mkdir -p "$dec_tmp/.review-plan/lenses/decisions-shape"
-	for dec_case in conflict unrelated; do
-		cp "$DEC_FIXTURES/$dec_case.paths" "$dec_tmp/.review-plan/lenses/decisions-shape/decision-paths.txt"
-		dec_run_snippet "$dec_mirror" "$selector_snippet"
-		dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
-		if [[ "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_text" == "$dec_want" ]]; then
-			pass "$dec_mirror review-plan keeps the selector status out of the $dec_case block"
-		else
-			fail "$dec_mirror review-plan $dec_case: exit '$dec_status', $dec_lines status lines, or the block differs from $dec_case.expected"
-		fi
+	for dec_shell in "${dec_shells[@]}"; do
+		for dec_case in conflict unrelated; do
+			cp "$DEC_FIXTURES/$dec_case.paths" "$dec_tmp/.review-plan/lenses/decisions-shape/decision-paths.txt"
+			dec_run_snippet "$dec_mirror" "$selector_snippet"
+			dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
+			if [[ "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_text" == "$dec_want" ]]; then
+				pass "[$dec_shell] $dec_mirror review-plan keeps the selector status out of the $dec_case block"
+			else
+				fail "[$dec_shell] $dec_mirror review-plan $dec_case: exit '$dec_status', $dec_lines status lines, or the block differs from $dec_case.expected"
+			fi
+		done
 	done
 done
 rm -rf "$dec_tmp"
