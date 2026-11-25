@@ -270,3 +270,25 @@ def marker_is_stale(plan_path: str | Path) -> bool | None:
     _, recorded_sha = marker
     current_sha = compute_plan_hash(plan_path)
     return current_sha != recorded_sha
+
+
+def classify_marker(plan_path: str | Path) -> str:
+    """Return the plan's review-marker state, one of:
+
+    - ``"valid"``: a real marker whose hash matches the signed prefix.
+    - ``"stale"``: a real marker whose hash no longer matches.
+    - ``"placeholder"``: no real marker, only the template's
+      ``<!-- reviewed: YYYY-MM-DD @ <hash> -->`` divider.
+    - ``"missing"``: no marker line of either kind (outside code fences).
+
+    The one four-state classification `/update-docs` acts on in every mirror,
+    so no SKILL.md reaches into marker internals to rebuild it.
+    """
+    state = marker_is_stale(plan_path)
+    if state is False:
+        return "valid"
+    if state is True:
+        return "stale"
+    lines = Path(plan_path).read_text(encoding="utf-8").splitlines()
+    found = last_marker_index(lines, include_placeholder=True)
+    return "missing" if found is None else "placeholder"
