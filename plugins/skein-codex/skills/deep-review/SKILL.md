@@ -150,11 +150,25 @@ lens the resolved command prefix `{{PERSIST_CMD}}` (the resolved absolute `persi
   This on-disk record is authoritative — the lens's own returned reply is a fallback only.
 
 **Active decision records (Architecture Lens only).** Before dispatch, select the `docs/decisions/` records that apply to the reviewed paths: run the bundled selector from the repo root over the file list of the already resolved review range (the [pre-dispatch banner](#pre-dispatch-banner)'s `<base>..<head>`, or the stored range on a resume). Each path reaches it as one literal argument, whatever spaces or shell metacharacters it holds:
-```
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+```bash
 RANGE="<base>..<head>"   # the resolved review range
-cd "$REPO_ROOT" && bash -c 'p=(); while IFS= read -r -d "" f; do p+=("$f"); done < <(git diff -z --name-only "$2"); exec "$1" -- "${p[@]}"' _ "$SKILL_DIR"/scripts/decisions-active.sh "$RANGE"; echo "selector-exit=$?"
+selector_exit=0
+(
+    REPO_ROOT="$(git rev-parse --show-toplevel)" || exit 4
+    cd "$REPO_ROOT" || exit 4
+    paths="$(mktemp)" || exit 4
+    trap 'rm -f -- "$paths"' EXIT
+    git diff --no-ext-diff --no-renames --name-only -z "$RANGE" -- >"$paths" || exit 4
+    p=()
+    while IFS= read -r -d '' path; do p+=("$path"); done <"$paths"
+    if [[ ${#p[@]} -gt 0 ]]; then
+        "$SKILL_DIR"/scripts/decisions-active.sh -- "${p[@]}"
+    fi
+) || selector_exit=$?
+printf 'selector-exit=%s\n' "$selector_exit"
 ```
+
+Disabling rename detection gives the selector both the removed path and the added path. A failed diff leaves no record text and reports exit `4`. Strip the final `selector-exit=` status line before using the selector output.
 Its stdout is `{{ACTIVE_DECISIONS}}`, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Exit `0` with empty output means no record applies, a genuine result: substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or a final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded: pass whatever records were printed, and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
 
 ### Logic Lens
@@ -381,7 +395,7 @@ Otherwise the collector reports it as `missing`, `.lenses` records it as unresol
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 RUN_ID="<run_id>"   # the run id resolved before dispatch; a --continue reuses the prior one
-"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...]
+"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...] [--from-attempt "architecture:<N>"]
 ```
 Pass the highest attempt number you spawned for each lens (`<lens>:2` after a respawn) so a spawned-but-silent attempt is reported `timed_out` rather than `partial`. **While a respawned attempt 2 is in flight, every collect must carry BOTH `--attempts <lens>:2 --running <lens>:2`** — not `--attempts` alone. `--attempts` on its own declares the retry *exhausted*: with attempt 1 holding a `start` and `progress` but no `done`, `--attempts <lens>:2` alone collects as `timed_out`, and adding `--running <lens>:2` collects as `partial`. Drop `--running` only once that attempt returns or its own deadline passes. Also pass `--running "<lens>:<n>"` for every lens whose attempt `<n>` is still in flight (each lens you have just respawned on a `--continue`): `--running` is a status FLOOR, not an override: the collector reports `partial` instead of the terminal `timed_out`, so a healthy attempt 3 is not misread as exhausted and does not stop the wait — **unless a `done` line has been recorded by attempt `<n>` itself (or by a later attempt)**, in which case that terminal status (`completed`/`errored`/`skipped`) wins, because a `done` record written by the attempt still declared in flight is evidence it actually finished. A `done` line from an *earlier* attempt is stale — it says nothing about the retry still in flight — so the `partial` floor still applies. Collecting all expected lenses is always safe, but respawn **only** a lens whose *own* deadline has passed and whose collected status is non-terminal (`partial`/`missing`; `completed`/`skipped`/`errored`/`timed_out` are terminal). Never respawn a lens before its own deadline, however long another lens has overrun. After each collection, IMMEDIATELY persist the merged result — pipe the collector's stdout into `"$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id ... --from-collector` (same flags as the [Output](#output) persistence paragraph, plus `--from-collector`). Do not wait for all remaining lenses to resolve before this first checkpoint — repeat collect→persist after every subsequent deadline wake or batch of returns, so the persisted state is never more than one collection cycle stale. Branch on the persist script's exit code exactly as the [Output](#output) persistence paragraph documents (a non-zero exit surfaces the diagnostic and forces full-verbose rendering for the eventual report). This is why the invocation immediately before `## Output` is not a special first write — it is simply the final incremental checkpoint (collect → persist --from-collector), taken once all lenses (and reconciliation/auto-fix) have completed.
 
@@ -389,12 +403,14 @@ For each lens, branch on the collector's reported status: a parseable return wit
 **`--continue` re-run clause.** If a later invocation asks to continue a prior run, re-run **every
 lens whose last collector-derived status is not `completed` and not `skipped`, plus every lens
 absent from the prior run's record**; reuse the completed/skipped lenses' findings as-is, sourced
-from their disk attempt files. The one exception is the architecture lens: when this invocation's selector run selects any active record, re-run it even if `completed`; when it selects none, reuse it as above. No state field records the selection.
+from their disk attempt files. The architecture lens always starts fresh on a same-scope resume. Active records can change or disappear without a new commit. Re-run architecture over all its assigned units, even if it completed and the fresh selection is empty. No state field records the selection.
 This is a **complement** rule on purpose, not a list of non-terminal
 statuses: an allowlist is not total. The collector also emits `missing`, and any status added to
 the enum later is covered without editing this rule — which an enumerated list would not. An absent
 key and the `missing` status are
 **different things** and both resume.
+
+Before dispatching that fresh architecture attempt, derive its next on-disk attempt number `N` as described below. Pass `--from-attempt architecture:N` on every collector call for this invocation, including checkpoint, final summary and findings JSONL calls. Use the same `N` through any retry. Start collection for the new attempt at `N`; its one retry uses `N + 1` with the usual absolute `--attempts` and `--running` values. Older architecture attempts stay on disk but contribute no findings, progress or status. Other lenses continue to merge their attempts as before.
 
 **`--continue` re-run attempts.** A `--continue` invocation reuses the prior run's `run_id`. The
 next attempt number is **derived, never guessed**: it is **1 + the highest on-disk attempt index**
@@ -508,7 +524,7 @@ Suggested schema. The per-lens entries are the collector's shape; concrete model
   status is not `completed` and not `skipped`, plus every lens whose key is entirely absent from
   the persisted `.lenses` object (never resolved before the prior run terminated); reuse completed
   and skipped lens findings, and keep the range `base_commit..head_commit`. Include the
-  architecture lens when the current selection contains any active record, even if it completed.
+  architecture lens on every same-HEAD resume, using the fresh attempt boundary above.
 - If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review: rerun all
   lenses over only `<stored.head_commit>..HEAD`, and list prior findings separately for reference
 - If stored `head_commit` is not an ancestor of current `HEAD`, warn and fall back to `--full`
@@ -558,7 +574,7 @@ After every lens subagent has returned and before the consolidated report is emi
 
 Procedure:
 
-1. **Collect lens output as JSON-Lines.** Produce the stream from disk: `"$SKILL_DIR"/scripts/collect-lens-results.sh --root "<repo-root>" --skill deep-review --run-id "<run_id>" --expected-file "<repo-root>/.deep-review/lenses/<run_id>/expected.json" [--attempts "<lens>:<n>" ...] --findings-jsonl > findings.jsonl` — The collector emits exactly the GENERIC block's `{lens, severity, category, file, line, summary,
+1. **Collect lens output as JSON-Lines.** Produce the stream from disk: `"$SKILL_DIR"/scripts/collect-lens-results.sh --root "<repo-root>" --skill deep-review --run-id "<run_id>" --expected-file "<repo-root>/.deep-review/lenses/<run_id>/expected.json" [--attempts "<lens>:<n>" ...] [--from-attempt "architecture:<N>"] --findings-jsonl > findings.jsonl` — The collector emits exactly the GENERIC block's `{lens, severity, category, file, line, summary,
    evidence, suggestion}` shape, restoring the `lens` key and splitting `location` into `file`/`line`.
    It emits recovered findings from the collected attempt files, including findings from incomplete
    lenses; their non-terminal status remains report metadata. Never hand-assemble this file from lens
@@ -695,7 +711,7 @@ BASE_COMMIT="<base-commit>"              # resolved in Step 0 (Resolve Identity 
 HEAD_COMMIT="<head-commit>"              # resolved in Step 0 (Resolve Identity and Check Scope)
 DIFF_HASH="<sha256:…>"                   # resolved in Step 0 (Resolve Identity and Check Scope)
 REVIEW_FOCUS_HASH="<sha256:… or empty>"  # resolved in Step 1a (Pre-dispatch Banner)
-"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...] \
+"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...] [--from-attempt "architecture:<N>"] \
   | "$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id "$RUN_ID" --base-commit "$BASE_COMMIT" --head-commit "$HEAD_COMMIT" --diff-hash "$DIFF_HASH" --review-focus-hash "$REVIEW_FOCUS_HASH" --from-collector
 ```
 
@@ -882,8 +898,7 @@ then remove any scratch file created. Never fail the review because of a report 
   [Persisted Run State](#persisted-run-state): when `HEAD` has not advanced, resume **every lens
   whose status is not `completed` and not `skipped`, plus every lens whose key is absent** from the
   persisted `.lenses` object — the same complement rule stated there, never a re-listed subset
-  (this enumeration once omitted `partial` outright). Apply the active-record exception for the
-  architecture lens described there;
+  (this enumeration once omitted `partial` outright). Refresh the architecture lens as described there;
   otherwise re-review the new commit range and list prior findings separately for reference.
 - If `--full` is requested, ignore prior run state and start fresh.
 - Findings must include severity, category, file:line, evidence, and a concrete suggestion.

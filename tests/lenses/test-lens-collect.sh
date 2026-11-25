@@ -2153,4 +2153,62 @@ for adv_row in \
 	fi
 done
 
+resume_dir="$TMPDIR_ROOT/resume-evidence"
+make_scratch_repo "$resume_dir"
+write_lens_file "$(lens_file "$resume_dir" deep-review resume architecture 1)" <<'JSONL'
+{"type":"start","units":["cache.py"]}
+{"type":"progress","unit":"cache.py"}
+{"type":"finding","file":"cache.py","line":1,"category":"Architecture","summary":"old decision conflict"}
+{"type":"done","status":"completed"}
+JSONL
+write_lens_file "$(lens_file "$resume_dir" deep-review resume logic 1)" <<'JSONL'
+{"type":"start","units":["cache.py"]}
+{"type":"progress","unit":"cache.py"}
+{"type":"finding","file":"cache.py","line":2,"category":"Logic","summary":"independent finding"}
+{"type":"done","status":"completed"}
+JSONL
+resume_args=(--root "$resume_dir" --skill deep-review --run-id resume
+	--expected architecture:cache.py --expected logic:cache.py --from-attempt architecture:2)
+out="$(bash "$SCRIPT" "${resume_args[@]}" --attempts architecture:2 --running architecture:2)"
+if jq -e '.architecture | .status == "partial" and .reviewed == 0 and .findings == []' <<<"$out" >/dev/null; then
+	pass "a fresh running attempt starts without prior progress, findings or status"
+else
+	fail "a fresh running attempt reused old evidence: $out"
+fi
+write_lens_file "$(lens_file "$resume_dir" deep-review resume architecture 2)" <<'JSONL'
+{"type":"start","units":["cache.py"]}
+{"type":"progress","unit":"cache.py"}
+{"type":"done","status":"completed"}
+JSONL
+out="$(bash "$SCRIPT" "${resume_args[@]}")"
+if jq -e '.architecture.status == "completed" and .architecture.findings == [] and
+	.logic.findings[0].summary == "independent finding"' <<<"$out" >/dev/null; then
+	pass "a completed refresh replaces stale findings only for the named lens"
+else
+	fail "a completed refresh returned incorrect findings: $out"
+fi
+out="$(bash "$SCRIPT" "${resume_args[@]}" --findings-jsonl)"
+if jq -se 'length == 1 and .[0].summary == "independent finding"' <<<"$out" >/dev/null; then
+	pass "the final JSONL stream excludes stale architecture findings"
+else
+	fail "the final JSONL stream returned stale findings: $out"
+fi
+write_lens_file "$(lens_file "$resume_dir" deep-review resume architecture 2)" <<'JSONL'
+{"type":"start","units":["cache.py"]}
+{"type":"finding","file":"cache.py","line":3,"category":"Architecture","summary":"current decision conflict"}
+JSONL
+out="$(bash "$SCRIPT" "${resume_args[@]}" --attempts architecture:2)"
+if jq -e '.architecture.status == "partial"' <<<"$out" >/dev/null; then
+	pass "a silent first attempt in a fresh scope still has its retry"
+else
+	fail "the old attempt exhausted the fresh scope's retry: $out"
+fi
+out="$(bash "$SCRIPT" "${resume_args[@]}" --attempts architecture:3)"
+if jq -e '.architecture | .status == "timed_out" and
+	([.findings[].summary] == ["current decision conflict"])' <<<"$out" >/dev/null; then
+	pass "a silent retry keeps only findings from the fresh scope"
+else
+	fail "the retry reported incorrect status or findings: $out"
+fi
+
 finish

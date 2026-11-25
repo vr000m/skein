@@ -13,7 +13,7 @@
 #   scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
 #       --run-id <id> [--expected-file <path> | --expected <lens>:<unit1>,<unit2>,... ...] \
 #       [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
-#       [--running ...] [--findings-jsonl]
+#       [--running ...] [--from-attempt <lens>:<n>] [--findings-jsonl]
 #
 # --attempts <lens>:<n> (repeatable, at most one *effective* entry per lens
 # -- duplicates for the same lens: last wins) records the highest attempt
@@ -42,6 +42,10 @@
 # healthy in-flight attempt 3 on --continue report the terminal `timed_out`
 # and stop the orchestrator waiting. --continue passes
 # `--running <lens>:<next-attempt>` for each lens it has just respawned.
+#
+# --from-attempt <lens>:<n> starts that lens's evidence at attempt n. Older
+# attempts supply no findings, progress or status. Attempts n and later still
+# merge, and the retry budget starts at n. Repeatable, last wins per lens.
 #
 # DUPLICATES ARE NOT SYMMETRIC ACROSS THESE FLAGS, deliberately (round 6/F6).
 # --attempts and --running are last-wins, as stated above: they are
@@ -308,7 +312,7 @@ usage() {
 usage: scripts/collect-lens-results.sh [--root <repo-root>] --skill deep-review|review-plan \
     --run-id <id> [--expected-file <path> | --expected <lens>:<unit1>,<unit2>,... ...] \
     [--attempts <lens>:<n>] [--attempts ...] [--running <lens>:<n>] \
-    [--running ...] [--findings-jsonl]
+    [--running ...] [--from-attempt <lens>:<n>] [--findings-jsonl]
 
 --expected-file is the DOCUMENTED form for diff-derived unit lists (file
 paths): the orchestrator writes the JSON with its file-write tool, so no
@@ -333,6 +337,8 @@ declare -a ATTEMPTS_LENSES=()
 declare -a ATTEMPTS_N=()
 declare -a RUNNING_LENSES=()
 declare -a RUNNING_N=()
+declare -a FROM_LENSES=()
+declare -a FROM_N=()
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -433,25 +439,24 @@ while [[ $# -gt 0 ]]; do
 		ATTEMPTS_LENSES+=("$attempts_lens_name")
 		ATTEMPTS_N+=("$((10#$attempts_n_raw))")
 		;;
-	--running)
+	--running | --from-attempt)
+		flag="$1"
 		shift
 		persist_require_value "$@"
-		entry="$1"
-		if [[ "$entry" != *:* ]]; then
-			echo "collect-lens-results: --running entries must be <lens>:<n> (got '$entry')" >&2
+		entry="$1" lens_name="${1%%:*}" attempt="${1#*:}"
+		if [[ "$entry" != *:* || ! "$attempt" =~ ^[0-9]+$ ]] || ((10#$attempt < 1)); then
+			echo "collect-lens-results: $flag entries must be <lens>:<n> (got '$entry')" >&2
 			usage
 			exit 2
 		fi
-		running_lens_name="${entry%%:*}"
-		running_n_raw="${entry#*:}"
-		persist_validate_id "$running_lens_name" collect-lens-results name || exit 2
-		if [[ ! "$running_n_raw" =~ ^[0-9]+$ ]] || ((10#$running_n_raw < 1)); then
-			echo "collect-lens-results: --running entries must be <lens>:<n> (got '$entry')" >&2
-			usage
-			exit 2
+		persist_validate_id "$lens_name" collect-lens-results name || exit 2
+		if [[ "$flag" == --running ]]; then
+			RUNNING_LENSES+=("$lens_name")
+			RUNNING_N+=("$((10#$attempt))")
+		else
+			FROM_LENSES+=("$lens_name")
+			FROM_N+=("$((10#$attempt))")
 		fi
-		RUNNING_LENSES+=("$running_lens_name")
-		RUNNING_N+=("$((10#$running_n_raw))")
 		;;
 	--findings-jsonl)
 		FINDINGS_JSONL=1
@@ -680,6 +685,16 @@ running_attempt_for() {
 	printf '%s' "$result"
 }
 
+first_attempt_for() {
+	local want="$1" result=1 index
+	for ((index = 0; index < ${#FROM_LENSES[@]}; index++)); do
+		if [[ "${FROM_LENSES[$index]}" == "$want" ]]; then
+			result="${FROM_N[$index]}"
+		fi
+	done
+	printf '%s' "$result"
+}
+
 # has_attempts_entry_for <lens> -- 1 iff --attempts named this lens.
 # `effective` is the orchestrator's attempt count when it declared one
 # (R4: the orchestrator OWNS the attempt count) and the on-disk file count
@@ -709,6 +724,7 @@ while [[ "$i" -lt "$n" ]]; do
 	lens="${EXPECTED_LENSES[$i]}"
 	assigned_json="$(units_json_for "${EXPECTED_UNITS_JSON[$i]}")"
 	spawned="$(spawned_attempts_for "$lens")"
+	first_attempt="$(first_attempt_for "$lens")"
 	i=$((i + 1))
 
 	# Collect this lens's attempt files, sorted by attempt number ascending.
@@ -730,6 +746,7 @@ while [[ "$i" -lt "$n" ]]; do
 				name="${rest%.*}"
 				[[ "$name" == "$lens" ]] || continue # exact string equality
 				[[ "$attempt_num" =~ ^[0-9]+$ ]] || continue
+				((10#$attempt_num >= first_attempt)) || continue
 				printf '%s %s\n' "$((10#$attempt_num))" "$fpath"
 			done | sort -n -k1,1 | cut -d' ' -f2-
 	)
@@ -758,6 +775,14 @@ while [[ "$i" -lt "$n" ]]; do
 		effective="$max_on_disk"
 	fi
 	running="$(running_attempt_for "$lens")"
+	if ((running < first_attempt)); then
+		running=0
+	fi
+	if ((effective >= first_attempt)); then
+		effective=$((effective - first_attempt + 1))
+	else
+		effective=0
+	fi
 
 	# Decision table (D2): no done line found (checked below via
 	# .done_status) AND files==0 AND effective<=1 -> ZERO-COVERAGE result.

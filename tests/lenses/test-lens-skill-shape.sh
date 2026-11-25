@@ -949,6 +949,10 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"shared finding record shape is unchanged"
 			decision_has "$dec_all" '^below\. Only the Architecture Lens also takes active decision records' \
 				"the lens prompt input is optional and architecture-only"
+			decision_has "$dec_all" 'git diff --no-ext-diff --no-renames --name-only -z' \
+				"the resolved diff contributes both rename paths"
+			decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh -- "\$\{p\[@\]\}"' \
+				"passes each path as one literal argument after --"
 		else
 			dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
 			dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
@@ -956,10 +960,10 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"architecture finding record shape is unchanged"
 			decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
 				"architecture output fields are unchanged"
+			decision_has "$dec_all" 'git diff -z --name-only' "paths come from the resolved review range, NUL-separated"
 		fi
 		decision_has "$dec_arch" '^- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one' \
 			"architecture scope covers decision conflicts"
-		decision_has "$dec_all" 'git diff -z --name-only' "paths come from the resolved review range, NUL-separated"
 		;;
 	esac
 	if [[ "$(grep -c '^<untrusted-content>$' <<<"$dec_arch")" -eq "$(grep -c '^</untrusted-content>$' <<<"$dec_arch")" ]] &&
@@ -978,20 +982,28 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 	if [[ "$dec_mirror" == skein-codex ]]; then
 		decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh' "runs the bundled selector through the Codex path anchor"
 		decision_lacks "$dec_all" 'CLAUDE_PLUGIN_ROOT.*decisions-active' "never uses the Claude selector anchor"
+		decision_has "$dec_all" 'Re-run architecture over all its assigned units, even if it completed and the fresh selection is empty' \
+			"resume refreshes architecture even after the last applicable record disappears"
+		decision_has "$dec_all" '--from-attempt architecture:N. on every collector call' \
+			"every collector call excludes earlier architecture attempts"
 	else
 		decision_has "$dec_all" "\"\\\$\\{CLAUDE_PLUGIN_ROOT\\}\"/skills/$dec_skill/scripts/decisions-active\\.sh" \
 			"runs the bundled selector through the Claude path anchor"
 		decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
 	fi
-	decision_has "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "passes each path as one literal argument after --"
+	if [[ "$dec_mirror/$dec_skill" != skein-codex/deep-review ]]; then
+		decision_has "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "passes each path as one literal argument after --"
+	fi
 	decision_lacks "$dec_all" 'mapfile|readarray|\$\{[^}]*,,' "the selector call runs on bash 3.2"
 	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
 	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
 	decision_has "$dec_all" 'final `DECISIONS-TRUNCATED:` line means coverage is missing or degraded' "truncation is degraded coverage"
 	decision_has "$dec_all" 'Never report that as "no applicable decisions"' "degraded coverage is never no applicable decisions"
 	decision_has "$dec_all" 'reuse the same block for every attempt of the [Aa]rchitecture [Ll]ens, including a respawn' "a retry reuses the same block"
-	decision_has "$dec_all" "when this invocation's selector run selects any active record, re-run it even if \`completed\`; when it selects none, reuse it as above\\. No state field records the selection\\." \
-		"--continue re-runs the architecture lens only when records were selected"
+	if [[ "$dec_mirror" == skein ]]; then
+		decision_has "$dec_all" "when this invocation's selector run selects any active record, re-run it even if \`completed\`; when it selects none, reuse it as above\\. No state field records the selection\\." \
+			"--continue re-runs the architecture lens only when records were selected"
+	fi
 done
 
 DEC_RUBRIC="$ROOT_DIR/plugins/skein/skills/review-plan/rubric.md"
@@ -1029,6 +1041,33 @@ for dec_case in conflict unrelated superseded lookalike; do
 		fail "decision lens fixture $dec_case: selector exit $dec_rc or output differs from $dec_case.expected"
 	fi
 done
+codex_deep="$ROOT_DIR/plugins/skein-codex/skills/deep-review"
+selector_snippet="$(awk '
+	/^\*\*Active decision records \(Architecture Lens only\)\./ { section = 1; next }
+	section && /^```bash$/ { code = 1; next }
+	code && /^```$/ { exit }
+	code { print }
+' "$codex_deep/SKILL.md")"
+mkdir -p "$dec_tmp/src/cache" "$dec_tmp/archive"
+printf 'unchanged file\n' >"$dec_tmp/src/cache/index.py"
+git -C "$dec_tmp" add -- src/cache/index.py
+git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false commit -qm 'Add cache file'
+git -C "$dec_tmp" mv -- src/cache/index.py archive/index.py
+git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false commit -qm 'Move cache file'
+if [[ "$(git -C "$dec_tmp" diff --name-only --find-renames HEAD^ HEAD)" == archive/index.py ]] &&
+	dec_out="$(cd "$dec_tmp" && SKILL_DIR="$codex_deep" bash -e <<<"${selector_snippet/<base>..<head>/HEAD^..HEAD}")" &&
+	grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_out" &&
+	[[ "$dec_out" == *$'\nselector-exit=0' ]]; then
+	pass "Codex deep-review selects a record that applies only to a rename source"
+else
+	fail "Codex deep-review lost the decision record for the rename source"
+fi
+if dec_out="$(cd "$dec_tmp" && SKILL_DIR="$codex_deep" bash -e <<<"${selector_snippet/<base>..<head>/missing..HEAD}" 2>/dev/null)" &&
+	[[ "$dec_out" == 'selector-exit=4' ]]; then
+	pass "Codex deep-review exposes path acquisition failure without record text"
+else
+	fail "Codex deep-review did not report a failed diff"
+fi
 rm -rf "$dec_tmp"
 if grep -q '^### Record: docs/decisions/20261101-cache-store\.md$' "$DEC_FIXTURES/conflict.expected" &&
 	! grep -q '^### Record: ' "$DEC_FIXTURES/superseded.expected" &&

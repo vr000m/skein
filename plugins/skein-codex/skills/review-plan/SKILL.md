@@ -96,7 +96,7 @@ wake, run the collector over **all** expected lenses:
 ```
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 RUN_ID="<run_id>"   # the run id resolved before dispatch; a --continue reuses the prior one
-"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill review-plan --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.review-plan/lenses/$RUN_ID/expected.json" --attempts "<lens>:<n>" ... [--running "<lens>:<n>" ...]
+"$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill review-plan --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.review-plan/lenses/$RUN_ID/expected.json" --attempts "<lens>:<n>" ... [--running "<lens>:<n>" ...] [--from-attempt "architecture:<N>"]
 ```
 Pass the highest attempt number you spawned for each lens (`<lens>:2` after a respawn) so a
 spawned-but-silent attempt is reported `timed_out` rather than `partial`. **While a respawned attempt 2 is in flight, every collect must carry BOTH `--attempts <lens>:2 --running <lens>:2`** — not `--attempts` alone. `--attempts` on its own declares the retry *exhausted*: with attempt 1 holding a `start` and `progress` but no `done`, `--attempts <lens>:2` alone collects as `timed_out`, and adding `--running <lens>:2` collects as `partial`. Drop `--running` only once that attempt returns or its own deadline passes. Also pass `--running "<lens>:<n>"` for every lens whose attempt `<n>` is still in flight (each lens you have just respawned on a `--continue`) — `--running` is a status floor, not an override: the collector reports `partial` instead of the terminal `timed_out`, **unless a `done` line has been recorded by attempt `<n>` itself (or by a later attempt)**, in which case that terminal status (`completed`/`errored`/`skipped`) wins; a `done` line from an *earlier* attempt is stale and the `partial` floor still applies. Collecting all expected
@@ -113,12 +113,14 @@ For each lens, branch on the collector's reported status:
 **`--continue` re-run clause.** If a later invocation asks to continue a prior run, re-run **every
 lens whose last collector-derived status is not `completed` and not `skipped`, plus every lens
 absent from the prior run's record**; reuse the completed/skipped lenses' findings as-is, sourced
-from their disk attempt files. The one exception is the architecture lens: when this invocation's selector run selects any active record, re-run it even if `completed`; when it selects none, reuse it as above. No state field records the selection.
+from their disk attempt files. The architecture lens always starts fresh on a same-scope resume. Active records can change or disappear without a new commit. Re-run architecture over all its assigned units, even if it completed and the fresh selection is empty. No state field records the selection.
 This is a **complement** rule on purpose, not a list of non-terminal
 statuses: an allowlist is not total. The collector also emits `missing`, and any status added to
 the enum later is covered without editing this rule — which an enumerated list would not. An absent
 key and the `missing` status are
 **different things** and both resume.
+
+Before dispatching that fresh architecture attempt, derive its next on-disk attempt number `N` as described below. Pass `--from-attempt architecture:N` on every collector call for this invocation, including checkpoint, final summary and findings JSONL calls. Use the same `N` through any retry. Start collection for the new attempt at `N`; its one retry uses `N + 1` with the usual absolute `--attempts` and `--running` values. Older architecture attempts stay on disk but contribute no findings, progress or status. Other lenses continue to merge their attempts as before.
 
 **`--continue` re-run attempts.** A `--continue` invocation reuses the prior run's `run_id`. The
 next attempt number is **derived, never guessed**: it is **1 + the highest on-disk attempt index**
@@ -721,7 +723,7 @@ The merge logic — schema, signature, severity policy, canonical sort, and rela
 
 Procedure:
 
-1. **Collect lens output as JSON-Lines.** Produce the stream from disk: `"$SKILL_DIR"/scripts/collect-lens-results.sh --root "<repo-root>" --skill review-plan --run-id "<run_id>" --expected-file "<repo-root>/.review-plan/lenses/<run_id>/expected.json" [--attempts "<lens>:<n>" ...] --findings-jsonl > findings-lenses.jsonl` — The collector emits exactly the GENERIC block's `{lens, severity, category, file, line, summary,
+1. **Collect lens output as JSON-Lines.** Produce the stream from disk: `"$SKILL_DIR"/scripts/collect-lens-results.sh --root "<repo-root>" --skill review-plan --run-id "<run_id>" --expected-file "<repo-root>/.review-plan/lenses/<run_id>/expected.json" [--attempts "<lens>:<n>" ...] [--from-attempt "architecture:<N>"] --findings-jsonl > findings-lenses.jsonl` — The collector emits exactly the GENERIC block's `{lens, severity, category, file, line, summary,
    evidence, suggestion}` shape, restoring the `lens` key and splitting `location` into `file`/`line`.
    Never hand-assemble this file from lens replies. The combined stream is written to the **immutable**
    `findings-lenses.jsonl`, except Step 3 sub-step 2.5 (the Contradiction Pass): sub-step 2 (pass A)
