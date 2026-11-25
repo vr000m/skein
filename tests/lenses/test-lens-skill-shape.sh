@@ -1187,6 +1187,25 @@ for dec_mirror in skein skein-codex; do
 		done
 	done
 done
+# The decision-records paragraph and snippet are the same text in both
+# deep-review mirrors, apart from the selector anchor and the banner link.
+# shellcheck disable=SC2016  # the sed and grep patterns are literal skill text
+dec_shared() {
+	awk '/^\*\*Active decision records \(Architecture Lens only\)\./{on=1} on{print} on && /^Select once per invocation|Select once per invocation and reuse/{exit}' "$1" |
+		sed -e 's#"\${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/decisions-active.sh#<selector>#' \
+			-e 's#"\$SKILL_DIR"/scripts/decisions-active.sh#<selector>#' \
+			-e 's#(the §1a banner'"'"'s#(the <banner>'"'"'s#' \
+			-e 's#(the \[pre-dispatch banner\](\#pre-dispatch-banner)'"'"'s#(the <banner>'"'"'s#'
+}
+# shellcheck disable=SC2016  # literal skill text
+if diff <(dec_shared "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md") \
+	<(dec_shared "$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md") >/dev/null &&
+	grep -qF 'substituted only inside the Architecture Lens prompt'"'"'s `<untrusted-content>` block for active decision records' \
+		"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"; then
+	pass "deep-review decision-records text matches across Claude and Codex except anchors"
+else
+	fail "deep-review decision-records text drifts between Claude and Codex"
+fi
 rm -rf "$dec_tmp"
 if grep -q '^### Record: docs/decisions/20261101-cache-store\.md$' "$DEC_FIXTURES/conflict.expected" &&
 	! grep -q '^### Record: ' "$DEC_FIXTURES/superseded.expected" &&

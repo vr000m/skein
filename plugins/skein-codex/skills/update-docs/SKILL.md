@@ -313,21 +313,12 @@ Runs in the main context after the Phase 3 report and any ordinary Phase 4 edits
    import sys
    sys.path.insert(0, sys.argv[2])
    import marker
-   state = marker.marker_is_stale(sys.argv[1])
-   if state is False:
-       print("valid")
-   elif state is True:
-       print("stale")
-   else:
-       with open(sys.argv[1], encoding="utf-8") as f:
-           lines = f.read().splitlines()
-       found = marker.last_marker_index(lines, include_placeholder=True)
-       print("missing" if found is None else "placeholder")
+   print(marker.classify_marker(sys.argv[1]))
    PY
    ```
-   Only `valid` proceeds. Immediately before the first write, re-run the step 3 preflight over the same paths and write nothing unless it exits `0`. Refuse the promotion and write nothing when it prints `missing` (no review marker: the plan was never signed off), `placeholder` (only the template's `<!-- reviewed: YYYY-MM-DD @ <hash> -->` line) or `stale` (the text above the marker changed after sign-off; re-run `/review-plan` first). Also confirm the candidate and offered link location still match the live plan, any record being superseded is unchanged, and the offered new paths are still unused. If an input changed, report it and make a fresh offer before writing. Check that every offered target is writable within the current sandbox. If a required target is outside that boundary or is otherwise unwritable, report the blocker before the first write.
-6. **Write exactly the approved offer.** Create the record (and, on a first promotion, the folder and its README). When superseding, set the old record's `Status` to `superseded` and its `Superseded by` to the new filename in the same pass. Add the link line `` - `docs/decisions/<file>`: <title> `` under the plan's existing `## Promoted Decisions` section below the marker; if the plan has no such section, create that heading once at the end of the workspace. Never edit above the marker: that text is the sign-off snapshot.
-7. **Validate after writing.** From the repo root, run `"$SKILL_DIR"/scripts/check-decisions.sh` and re-run the step 5 check, which must still print `valid`. If the validator fails, show its output and stop; do not edit records the approved offer did not list.
+   `classify_marker` is the one four-state classification, shared by every mirror. Only `valid` proceeds. Immediately before the first write, re-run the step 3 preflight over the same paths and write nothing unless it exits `0`. Refuse the promotion and write nothing when it prints `missing` (no review marker: the plan was never signed off), `placeholder` (only the template's `<!-- reviewed: YYYY-MM-DD @ <hash> -->` line) or `stale` (the text above the marker changed after sign-off; re-run `/review-plan` first). Also confirm the candidate and offered link location still match the live plan, any record being superseded is unchanged since the offer, and the offered new paths (the new record, and `docs/decisions/README.md` on a first promotion) are still unused, so the write never replaces a record that already exists. If an input changed, report it and make a fresh offer before writing. Check that every offered target is writable within the current sandbox. If a required target is outside that boundary or is otherwise unwritable, report the blocker before the first write.
+6. **Write exactly the approved offer, in a recoverable order.** Before the first write, save the exact bytes of every existing file the offer changes (the record being superseded and the source plan) and note each offered path that does not exist yet. Then write in this order: the old record's `Status` set to `superseded` and its `Superseded by` to the new filename, when superseding; the link line `` - `docs/decisions/<file>`: <title> `` under the plan's existing `## Promoted Decisions` section below the marker (if the plan has no such section, create that heading once at the end of the workspace); on a first promotion, the folder and its README; and the new record last, so a record that other files point at is the final file to appear. Never edit above the marker: that text is the sign-off snapshot.
+7. **Validate after writing, and roll back on any failure.** From the repo root, run `"$SKILL_DIR"/scripts/check-decisions.sh` and re-run the step 5 check, which must still print `valid`. If a write fails or stops part-way, the validator exits non-zero, or the step 5 check prints anything but `valid`, restore every saved file to its saved bytes, delete every path this promotion created (the new record and, on a first promotion, the README and then the folder if it is empty), re-run the validator to confirm the record set is back to its state before the offer, show what failed, and offer nothing further in this invocation. Do not edit records the approved offer did not list. A promotion interrupted before it could roll back leaves an invalid record set, so the next step 3 preflight exits `1` and offers nothing until the records are repaired.
 
 ## Phase 5: Offer Next Steps
 

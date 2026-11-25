@@ -214,6 +214,13 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "Exit `3` means a listed path is unsafe; exit `1` means the existing records already fail validation, and a valid record set is a precondition of every promotion",
         "re-run the step 3 `--targets` preflight over the same paths and write nothing unless it exits `0`",
         "this installed skill's own bundled `scripts/marker.py` authority",
+        "`marker.classify_marker(plan)` must return `valid`",
+        "the same four-state classification the Claude and Codex mirrors run",
+        "Before the first write, save the exact bytes of every existing file the offer changes",
+        "and the new record last",
+        "restore every saved file to its saved bytes, delete every path this promotion created",
+        "offer nothing further in this invocation",
+        "the next step 3 preflight exits `1` and offers nothing until the records are repaired",
         "run with `python3 -I -B -S`",
     ):
         assert phrase in text, phrase
@@ -270,6 +277,50 @@ def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):
     assert subprocess.check_output(check, text=True).strip() == "False"
     plan.write_bytes(plan.read_bytes().replace(b"Single writer.", b"Shared writers."))
     assert subprocess.check_output(check, text=True).strip() == "True"
+
+
+def test_promotion_marker_classifier_tells_the_four_states_apart(tmp_path):
+    scripts = ROOT / "plugins/skein-pi/skills/update-docs/scripts"
+    writer = ROOT / "plugins/skein-pi/skills/review-plan/scripts/write-review-marker.py"
+    body = "# Source\n### Architecture Decisions\nSingle writer.\n\n"
+    workspace = "\n## Findings\nNone.\n"
+    placeholder = "<!-- reviewed: YYYY-MM-DD @ <hash> -->\n"
+    plans = {
+        "missing": body + workspace,
+        "placeholder": body + placeholder + workspace,
+        "stale": body + placeholder + workspace,
+        "valid": body + placeholder + workspace,
+    }
+    for name, text in plans.items():
+        plan = tmp_path / f"{name}.md"
+        plan.write_text(text)
+        if name in ("stale", "valid"):
+            subprocess.run(
+                [sys.executable, str(writer), str(plan)],
+                check=True,
+                capture_output=True,
+            )
+        if name == "stale":
+            plan.write_text(plan.read_text().replace("Single", "Shared"))
+    classify = (
+        "import sys; sys.path.insert(0, sys.argv[1]); import marker; "
+        "print(marker.classify_marker(sys.argv[2]))"
+    )
+    for name in plans:
+        got = subprocess.check_output(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-S",
+                "-c",
+                classify,
+                str(scripts),
+                str(tmp_path / f"{name}.md"),
+            ],
+            text=True,
+        ).strip()
+        assert got == name
 
 
 def test_doc_audit_keeps_closed_nine_key_input_and_existing_budgets():

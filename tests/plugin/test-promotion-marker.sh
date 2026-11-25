@@ -149,7 +149,9 @@ PY
 	fi
 done
 
-# The refusal states the skill names are distinguishable with the same module.
+# classify_marker is the one four-state classification every update-docs
+# mirror runs. Table: fixture -> expected state; the fixtures are reused by
+# run_marker_classifier below, which runs each mirror's own snippet.
 states_rc=0
 python3 - "$MARKER_LIB" "$TEMPLATE" "$tmp" <<'PY' || states_rc=$?
 import sys
@@ -160,7 +162,7 @@ import marker
 template = open(sys.argv[2], encoding="utf-8").read()
 tmp = sys.argv[3]
 
-def state(name, text, sign=False, tamper=False):
+def fixture(name, text, sign=False, tamper=False):
     path = f"{tmp}/{name}.md"
     open(path, "w", encoding="utf-8").write(text)
     if sign:
@@ -168,25 +170,25 @@ def state(name, text, sign=False, tamper=False):
     if tamper:
         body = open(path, encoding="utf-8").read()
         open(path, "w", encoding="utf-8").write(body.replace("## Objective", "## Objective (edited)", 1))
-    s = marker.marker_is_stale(path)
-    if s is None:
-        lines = open(path, encoding="utf-8").read().splitlines()
-        return "missing" if marker.last_marker_index(lines, include_placeholder=True) is None else "placeholder"
-    return "stale" if s else "valid"
+    return path
 
 no_marker = "\n".join(l for l in template.splitlines() if not l.startswith("<!-- reviewed:")) + "\n"
-got = (
-    state("missing", no_marker),
-    state("placeholder", template),
-    state("stale", template, sign=True, tamper=True),
-    state("valid", template, sign=True),
-)
-assert got == ("missing", "placeholder", "stale", "valid"), got
+fenced = no_marker + "\n```\n<!-- reviewed: 2026-11-24 @ " + "0" * 40 + " -->\n```\n"
+table = [
+    ("missing", fixture("missing", no_marker)),
+    ("placeholder", fixture("placeholder", template)),
+    ("stale", fixture("stale", template, sign=True, tamper=True)),
+    ("valid", fixture("valid", template, sign=True)),
+    ("missing", fixture("fenced", fenced)),
+]
+bad = [(want, path, marker.classify_marker(path)) for want, path in table if marker.classify_marker(path) != want]
+assert not bad, bad
+assert {want for want, _ in table} == {"missing", "placeholder", "stale", "valid"}
 PY
 if [[ $states_rc -eq 0 ]]; then
-	pass "canonical marker module tells missing, placeholder, stale and valid apart"
+	pass "classify_marker returns missing, placeholder, stale and valid for its table, and missing for a fenced marker"
 else
-	fail "canonical marker module does not tell the marker states apart"
+	fail "classify_marker disagrees with its four-state table"
 fi
 
 # Supersession: an old active record replaced by a new one.
@@ -295,7 +297,7 @@ check_mirror() {
 	# Anchored to step 7 itself: the step 3 preflight names the same script, so
 	# a section-wide search would pass with the post-write check removed.
 	local validate_step
-	validate_step="$(grep -F -- '7. **Validate after writing.**' <<<"$section" || true)"
+	validate_step="$(grep -F -- '7. **Validate after writing' <<<"$section" || true)"
 	expect_text "$name: runs the bundled validator after writes" "$validate_step" "From the repo root, run \`$check_path\`"
 	# The --targets scope rule and its exit codes, word for word.
 	expect_text "$name: confines targets to the two promotion directories" "$section" \
@@ -347,11 +349,36 @@ check_mirror() {
 		pass "$name: update-docs imports only its own bundled scripts"
 	fi
 
+	expect_text "$name: changed inputs require a fresh offer before writing" "$section" \
+		'If an input changed, report it and make a fresh offer before writing.'
+	expect_text "$name: re-confirms the candidate and the offered link location" "$section" \
+		'Also confirm the candidate and offered link location still match the live plan'
+	expect_text "$name: the write never replaces an existing record" "$section" \
+		'so the write never replaces a record that already exists.'
+	expect_text "$name: classifies the marker with the shared classify_marker" "$section" \
+		'print(marker.classify_marker(sys.argv[1]))'
+	# Recovery: snapshot first, the new record last, full rollback on failure.
+	local write_step save_at first_at
+	write_step="$(grep -F -- '6. **Write exactly the approved offer' <<<"$section" || true)"
+	expect_text "$name: saves every changed file's bytes before the first write" "$write_step" \
+		'Before the first write, save the exact bytes of every existing file the offer changes'
+	expect_text "$name: writes the new record last" "$write_step" 'and the new record last'
+	save_at="$(grep -bo 'save the exact bytes' <<<"$write_step" | head -1 | cut -d: -f1 || true)"
+	first_at="$(grep -bo 'Then write in this order' <<<"$write_step" | head -1 | cut -d: -f1 || true)"
+	if [[ -n "$save_at" && -n "$first_at" && "$save_at" -lt "$first_at" ]]; then
+		pass "$name: the snapshot precedes the first write"
+	else
+		fail "$name: the snapshot does not precede the first write ($save_at, $first_at)"
+	fi
+	expect_text "$name: rolls back on a failed or partial write or validation" "$validate_step" \
+		'If a write fails or stops part-way, the validator exits non-zero, or the step 5 check prints anything but `valid`, restore every saved file to its saved bytes, delete every path this promotion created'
+	expect_text "$name: offers nothing further after a rollback" "$validate_step" 'offer nothing further in this invocation'
+	expect_text "$name: an interrupted promotion blocks the next preflight" "$validate_step" \
+		'the next step 3 preflight exits `1` and offers nothing until the records are repaired'
+
 	if [[ "$name" == codex ]]; then
 		expect_text "codex: Phase 4 excludes decisions from the allowlist" "$apply_phase" \
 			'`docs/decisions/` path from this apply-target allowlist'
-		expect_text "codex: changed inputs require a fresh offer before writing" "$section" \
-			'If an input changed, report it and make a fresh offer before writing.'
 		expect_text "codex: reports an unwritable target before the first write" "$section" \
 			'If a required target is outside that boundary or is otherwise unwritable, report the blocker before the first write.'
 	fi
@@ -445,6 +472,27 @@ run_preflight() {
 		fi
 	done
 }
+
+# The shared promotion text is byte-identical across Claude and Codex except
+# the deliberate harness differences: the path anchor and Codex's sandbox
+# writability sentence.
+promotion_text() {
+	awk '/^## Decision Promotion$/{on=1} on && /^## Phase 5/{exit} on' "$REPO_ROOT/plugins/$1/skills/update-docs/SKILL.md" |
+		sed -e 's#"\${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"#<check>#g' \
+			-e 's#"\$SKILL_DIR"/scripts/check-decisions.sh#<check>#g' \
+			-e 's#"\${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts"#<scripts>#g' \
+			-e 's#"\$SKILL_DIR"/scripts#<scripts>#g' \
+			-e 's#`\${CLAUDE_PLUGIN_ROOT}/skills/update-docs/references/decision-records.md`#<reference>#g' \
+			-e 's#`"\$SKILL_DIR"/references/decision-records.md`#<reference>#g' \
+			-e 's# Check that every offered target is writable within the current sandbox. If a required target is outside that boundary or is otherwise unwritable, report the blocker before the first write.##'
+}
+if [[ "$mirror" == both ]]; then
+	if diff <(promotion_text skein) <(promotion_text skein-codex) >"$tmp/promotion.diff"; then
+		pass "the Claude and Codex promotion sections match except anchors and the Codex sandbox sentence"
+	else
+		fail "the Claude and Codex promotion sections drift: $(cat "$tmp/promotion.diff")"
+	fi
+fi
 
 if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	check_mirror claude skein '"${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"'
