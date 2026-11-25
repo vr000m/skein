@@ -84,7 +84,7 @@ This is best-effort transcript text, not persisted, and may be lost on `--resume
 Never expose credentials or raw worker event streams. The command never
 publishes, pushes, creates worktrees, or invokes release operations.
 
-### Completion pointer
+## Completion Handback
 
 Only when all declared phases, tests/validation and approval/verification
 requirements are complete, end the healthy terminal handback with this line,

@@ -208,15 +208,29 @@ done
 CODEX_SKILL_MD="$ROOT_DIR/plugins/skein-codex/skills/conduct/SKILL.md"
 require_file "$CODEX_SKILL_MD" || exit 1
 codex_chain="$(section "$CODEX_SKILL_MD" '## Review Gauntlet Auto-Chain')"
-codex_completion="$(section "$CODEX_SKILL_MD" '### Completion Handback')"
+codex_completion="$(section "$CODEX_SKILL_MD" '## Completion Handback')"
 
-if grep -qxF '### Completion Handback' <<<"$codex_chain" &&
+# One section name and level in every mirror: a top-level `## Completion
+# Handback` after the auto-chain, not nested in it (it also fires on the
+# no-gauntlet route).
+codex_chain_line="$(grep -n '^## Review Gauntlet Auto-Chain$' "$CODEX_SKILL_MD" | cut -d: -f1)"
+codex_done_line="$(grep -n '^## Completion Handback$' "$CODEX_SKILL_MD" | cut -d: -f1 || true)"
+if [[ -n "$codex_chain_line" && -n "$codex_done_line" && "$codex_done_line" -gt "$codex_chain_line" ]] &&
+	! grep -qE '^#+ Completion (Handback|pointer)$' <<<"$codex_chain" &&
 	[[ "$(grep -cF '/update-docs' "$CODEX_SKILL_MD")" -eq 1 ]] &&
 	grep -qxF "$pointer" <<<"$codex_completion"; then
-	pass "Codex: the pointer appears only in the auto-chain's terminal completion"
+	pass "Codex: the pointer appears only in a top-level completion handback after the auto-chain"
 else
-	fail "Codex: the pointer must appear once inside the auto-chain's completion handback"
+	fail "Codex: the pointer must appear once, in a top-level ## Completion Handback after the auto-chain"
 fi
+for mirror_md in "$SKILL_MD" "$CODEX_SKILL_MD" "$ROOT_DIR/plugins/skein-pi/skills/conduct/SKILL.md"; do
+	if [[ "$(grep -cxF '## Completion Handback' "$mirror_md")" -eq 1 ]] &&
+		! grep -qE '^#+ Completion pointer$|^#{3,} Completion Handback$' "$mirror_md"; then
+		pass "$(basename "$(dirname "$(dirname "$(dirname "$mirror_md")")")"): one top-level ## Completion Handback heading"
+	else
+		fail "$mirror_md: the completion section is not exactly one top-level ## Completion Handback"
+	fi
+done
 
 # shellcheck disable=SC2016  # backticks are literal skill text
 for route in \

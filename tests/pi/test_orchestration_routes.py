@@ -56,7 +56,7 @@ def test_conduct_is_pi_native_sequential_and_main_owned():
 
 def test_conduct_completion_pointer_is_terminal_text_after_comment_notices():
     text = read_skill("conduct")
-    pointer = text.split("### Completion pointer", 1)[1]
+    pointer = text.split("## Completion Handback", 1)[1]
     normalized = " ".join(pointer.split())
     assert (
         "Only when all declared phases, tests/validation and approval/verification "
@@ -81,7 +81,7 @@ POINTER = "Next: run /skill:skein-update-docs"
 
 def pointer_routes():
     """Each route-table row of the Pi conduct completion pointer, as (route, rule)."""
-    section = read_skill("conduct").split("### Completion pointer", 1)[1]
+    section = read_skill("conduct").split("## Completion Handback", 1)[1]
     rows = [
         [cell.strip() for cell in line.strip().strip("|").split("|")]
         for line in section.splitlines()
@@ -92,7 +92,7 @@ def pointer_routes():
 
 def test_conduct_pointer_is_emitted_only_by_the_healthy_terminal_route():
     text = read_skill("conduct")
-    before, section = text.split("### Completion pointer", 1)
+    before, section = text.split("## Completion Handback", 1)
     # One pointer line, inside the completion-pointer section, and no other
     # handback instruction names the update-docs skill.
     assert text.count(POINTER) == 1

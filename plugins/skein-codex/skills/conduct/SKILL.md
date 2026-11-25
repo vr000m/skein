@@ -371,7 +371,7 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 - conduct treats those commits exactly as any other follow-up commits landed during handback: the next `--resume` preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
 - conduct does not rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does not treat the gauntlet's commits as rogue. The rogue-commit check only fires on HEAD movement observed during a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window.
 
-### Completion Handback
+## Completion Handback
 
 Only on the healthy terminal path, where conduct sets `status = complete` after the CI-parity gate and after any selected `review-gauntlet` auto-chain has returned clean, end the final handback with this line:
 
