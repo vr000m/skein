@@ -14,13 +14,130 @@
 # another.
 shopt -u nocasematch nocaseglob
 
-# Reject non-local directories even when the link target is missing.
+# Reject non-local directories even when the link target is missing. An
+# unlistable directory fails too: bash 3.2 leaves its glob unexpanded, so it
+# would otherwise read as an empty, valid record set.
 dec_check_directory() {
 	local root="$1" dir="$1/docs/decisions"
 	if [[ -L "$root/docs" || -L "$dir" || (-e "$dir" && ! -d "$dir") ]]; then
 		printf '%s: expected a local decisions directory\n' "$dir" >&2
 		return 1
 	fi
+	if [[ -d "$dir" && (! -r "$dir" || ! -x "$dir") ]]; then
+		printf '%s: file-type: the decisions directory is not readable\n' "$dir" >&2
+		return 1
+	fi
+}
+
+# dec_scratch_prepare <physical root> <logical root> <file>: the one guard for
+# every file a decisions script writes outside docs/ (the selector's path list
+# and output). <file> is absolute or relative to the physical cwd and must lie
+# under <root> (either spelling). No component below <root> may be `..`, `.`,
+# empty, `.git` or a symlink; every existing ancestor must be a directory and
+# an existing leaf a regular file. Missing directories are created one at a
+# time, each re-checked. On success sets DEC_SCRATCH_PATH (physical) and
+# returns 0; otherwise sets DEC_SCRATCH_REASON and returns 1. The write itself
+# goes through dec_scratch_tmp and dec_scratch_commit (temp file, then rename).
+# shellcheck disable=SC2034  # DEC_SCRATCH_* are read by the sourcing script
+dec_scratch_prepare() {
+	local root="$1" logical="$2" file="$3" rest part path
+	DEC_SCRATCH_PATH=""
+	DEC_SCRATCH_REASON=""
+	case "$file" in
+	"")
+		DEC_SCRATCH_REASON="empty path"
+		return 1
+		;;
+	/*) ;;
+	*) file="$(pwd -P)/$file" ;;
+	esac
+	if [[ "$file" == "$root"/* ]]; then
+		rest="${file#"$root"/}"
+	elif [[ -n "$logical" && "$file" == "$logical"/* ]]; then
+		rest="${file#"$logical"/}"
+	else
+		DEC_SCRATCH_REASON="not inside the repository"
+		return 1
+	fi
+	if [[ "/$rest/" == */../* || "/$rest/" == */./* || "/$rest/" == *//* || "/$rest/" == */.git/* ]]; then
+		DEC_SCRATCH_REASON="a '..', '.', empty or .git component"
+		return 1
+	fi
+	path="$root"
+	while [[ -n "$rest" ]]; do
+		part="${rest%%/*}"
+		if [[ "$rest" == */* ]]; then
+			rest="${rest#*/}"
+		else
+			rest=""
+		fi
+		path="$path/$part"
+		if [[ -L "$path" ]]; then
+			DEC_SCRATCH_REASON="${path#"$root"/} is a symlink"
+			return 1
+		fi
+		if [[ -n "$rest" ]]; then
+			if [[ ! -e "$path" ]]; then
+				mkdir -- "$path" 2>/dev/null || true
+			fi
+			if [[ -L "$path" || ! -d "$path" ]]; then
+				DEC_SCRATCH_REASON="${path#"$root"/} is not a directory"
+				return 1
+			fi
+		elif [[ -e "$path" && ! -f "$path" ]]; then
+			DEC_SCRATCH_REASON="${path#"$root"/} is not a regular file"
+			return 1
+		fi
+	done
+	DEC_SCRATCH_PATH="$path"
+}
+
+# dec_scratch_tmp <prepared path>: prints a fresh temp file beside it.
+dec_scratch_tmp() {
+	mktemp "${1%/*}/.${1##*/}.XXXXXX"
+}
+
+# dec_scratch_commit <temp file> <prepared path>: renames the temp file over
+# the path after re-checking the leaf, so the write never follows a link.
+# shellcheck disable=SC2034  # DEC_SCRATCH_REASON is read by the sourcing script
+dec_scratch_commit() {
+	if [[ -L "$2" || (-e "$2" && ! -f "$2") ]]; then
+		DEC_SCRATCH_REASON="${2##*/} is no longer a regular file"
+		return 1
+	fi
+	mv -f -- "$1" "$2"
+}
+
+# dec_read_list <file>: one entry per line on stdout, NUL-terminated, read
+# from <file> (`-` is stdin). A list holding a NUL byte is NUL-delimited,
+# otherwise newline-delimited; empty entries are dropped. A file other than
+# `-` must be a regular, non-symlink file. Returns 1 when it cannot be read.
+dec_read_list() {
+	local file="$1" entry nul
+	local LC_ALL=C
+	if [[ "$file" != - ]]; then
+		[[ ! -L "$file" && -f "$file" && -r "$file" ]] || return 1
+	fi
+	# A here-document cannot carry a NUL, so stdin is copied once to test for one.
+	nul="$(mktemp)" || return 1
+	if ! cat -- "$file" >"$nul"; then
+		rm -f -- "$nul"
+		return 1
+	fi
+	if [[ "$(tr -cd '\000' <"$nul" | wc -c | tr -d '[:space:]')" -gt 0 ]]; then
+		while IFS= read -r -d '' entry || [[ -n "$entry" ]]; do
+			if [[ -n "$entry" ]]; then
+				printf '%s\0' "$entry"
+			fi
+		done <"$nul"
+	else
+		while IFS= read -r entry || [[ -n "$entry" ]]; do
+			if [[ -n "$entry" ]]; then
+				printf '%s\0' "$entry"
+			fi
+		done <"$nul"
+	fi
+	rm -f -- "$nul"
 }
 
 # NUL-delimited entries in byte order, including invalid file types to diagnose.
@@ -138,20 +255,39 @@ dec_header() {
 # supported dialect (bash pattern, `*` crosses `/`, no `**`, no braces, no
 # extended patterns) and returns 0; returns 1 when the glob is supported.
 # `[[ == ]]` honours `?( *( +( @( !(` even with `shopt -u extglob`, so the
-# dialect rejects them rather than trusting the shell option.
+# dialect rejects them rather than trusting the shell option. The scan is the
+# splitter's: a character after a backslash or inside a bracket expression
+# (`file[?(].txt`, `x[**]y`) is a literal member, never an operator.
 dec_glob_problem() {
-	local glob="$1"
+	local glob="$1" i=0 n c next
+	local LC_ALL=C
 	if [[ -z "$glob" ]]; then
 		printf 'empty glob\n'
-	elif [[ "$glob" == *'**'* ]]; then
-		printf "'**' is not supported in '%s'\n" "$glob"
-	elif [[ "$glob" == *'{'* || "$glob" == *'}'* ]]; then
-		printf "braces are not supported in '%s'\n" "$glob"
-	elif [[ "$glob" == *[?*+@!]'('* ]]; then
-		printf "extended patterns are not supported in '%s'\n" "$glob"
-	else
-		return 1
+		return 0
 	fi
+	n=${#glob}
+	while ((i < n)); do
+		c="${glob:i:1}"
+		next="${glob:i+1:1}"
+		if [[ "$c" == "\\" ]]; then
+			i=$((i + 2))
+			continue
+		elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$i"; then
+			i=$((_dec_end + 1))
+			continue
+		elif [[ "$c" == '*' && "$next" == '*' ]]; then
+			printf "'**' is not supported in '%s'\n" "$glob"
+			return 0
+		elif [[ "$c" == '{' || "$c" == '}' ]]; then
+			printf "braces are not supported in '%s'\n" "$glob"
+			return 0
+		elif [[ "$next" == '(' && ("$c" == '?' || "$c" == '*' || "$c" == '+' || "$c" == '@' || "$c" == '!') ]]; then
+			printf "extended patterns are not supported in '%s'\n" "$glob"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	return 1
 }
 
 # dec_validate_tree <physical repo root>: the one definition of a valid record,
@@ -284,34 +420,41 @@ dec_validate_tree() {
 # would read it as a literal comma between them: one inside a bracket
 # expression (`src/file[_,].py`) or after a backslash belongs to its glob, so
 # the selector matches what `[[ $path == $glob ]]` would for the whole glob.
+# Trimming stops at an escaped character, so `docs/foo\ ` keeps its space.
 dec_split_globs() {
-	local value="$1" part="" c i=0 n
+	local value="$1" part="" c i=0 n kept=0
 	local LC_ALL=C
 	n=${#value}
 	while ((i < n)); do
 		c="${value:i:1}"
 		if [[ "$c" == ',' ]]; then
-			_dec_emit_glob "$part"
+			_dec_emit_glob "$part" "$kept"
 			part=""
+			kept=0
 			i=$((i + 1))
 		elif [[ "$c" == "\\" ]]; then
 			part+="${value:i:2}"
+			kept=${#part}
 			i=$((i + 2))
 		elif [[ "$c" == '[' ]] && _dec_bracket_end "$value" "$i"; then
 			part+="${value:i:_dec_end-i+1}"
+			kept=${#part}
 			i=$((_dec_end + 1))
 		else
 			part+="$c"
 			i=$((i + 1))
 		fi
 	done
-	_dec_emit_glob "$part"
+	_dec_emit_glob "$part" "$kept"
 }
 
+# _dec_emit_glob <glob> <length of its escaped prefix>: trailing whitespace is
+# trimmed only after that prefix; leading whitespace never precedes an escape.
 _dec_emit_glob() {
-	local part="$1"
+	local head="${1:0:$2}" tail="${1:$2}" part
+	tail="${tail%"${tail##*[![:space:]]}"}"
+	part="$head$tail"
 	part="${part#"${part%%[![:space:]]*}"}"
-	part="${part%"${part##*[![:space:]]}"}"
 	printf '%s\n' "$part"
 }
 
