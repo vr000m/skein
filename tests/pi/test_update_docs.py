@@ -214,7 +214,14 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "against `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` before it reaches any shell",
         "`broken partial promotion: <link>`",
         "each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$`",
-        "only with your file-read and file-search (glob) tools, never with a shell command",
+        "list the record file names with exactly `ls -1A -- docs/decisions` from the repo root, a fixed command that carries no text from the plan or a record",
+        "Read files only with your read tool, never with a shell command, so no name from the plan or a record reaches a shell",
+        "a link target exists only when the listing names it",
+        "a link-only offer lists its existing record in place of the new record",
+        "Before showing a link-only offer, read its record with your read tool and offer nothing unless it still exists",
+        "For a link-only offer, immediately before the write, read the linked record again with your read tool",
+        "after a link-only write also read the linked record once more: it must still exist",
+        "or a link-only promotion's record is gone, restore",
         "report it as `already exists, link missing`, never draft a second record for it",
         "Only the audit worker is read-only",
         "The main session gathers the evidence, applies only the edits the user approves, and runs Decision Promotion",
@@ -235,6 +242,18 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "run with `python3 -I -B -S`",
     ):
         assert phrase in text, phrase
+    assert "file-search (glob)" not in text, "Pi has no glob tool"
+    step1 = text.index("1. Verify the live source path")
+    listing = text.index("`ls -1A -- docs/decisions`", step1)
+    containment = text.index(
+        "before reading the plan or any record, run the step 3 preflight", listing
+    )
+    first_read = text.index("Then read the plan.", containment)
+    assert step1 < listing < containment < first_read
+    assert (
+        "exit `3` means a listed path is a symlink or sits under one, so read none of the listed files"
+        in text
+    )
     offer = text.index("3. Offer each record on its own")
     approve = text.index("Ask for explicit per-record approval", offer)
     recheck = text.index("4. After approval, re-read", approve)
