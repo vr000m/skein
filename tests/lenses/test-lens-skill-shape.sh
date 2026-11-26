@@ -1411,6 +1411,19 @@ else
 fi
 
 echo ""
+# Round 7: a range value that is exactly the delimiter would end the
+# SKEIN_RANGE here-document, so every deep-review mirror writes it as its
+# commit SHA; no mirror claims a ref cannot end the here-document.
+for f in "$ROOT_DIR"/plugins/skein{,-codex,-pi}/skills/deep-review/SKILL.md; do
+	# shellcheck disable=SC2016  # literal skill text
+	if grep -qF 'a value that is exactly `SKEIN_RANGE`, the one line that would end it, is written as the 40-hex commit SHA' "$f" &&
+		! grep -qF 'so it cannot end the here-document early' "$f"; then
+		pass "deep-review SKEIN_RANGE delimiter-named ref is written as a SHA: ${f#"$ROOT_DIR"/}"
+	else
+		fail "deep-review SKEIN_RANGE delimiter-named ref can end the here-document: ${f#"$ROOT_DIR"/}"
+	fi
+done
+
 echo "Summary: $pass_count passed, $fail_count failed"
 
 if [[ $fail_count -ne 0 ]]; then
