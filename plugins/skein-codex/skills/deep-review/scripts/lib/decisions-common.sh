@@ -11,7 +11,8 @@
 # whitespace, and a non-UTF-8 byte does not stop a regex match).
 #
 # A record's header is the run of inline `**Field**: value` lines before its
-# first `## ` heading. The first occurrence of a field wins.
+# first level-two heading, as dec_heading reads one. The first occurrence of a
+# field wins.
 
 # Status, glob and name matches are case-sensitive, and the record glob skips
 # hidden files, in every script that sources this file. Bash takes options
@@ -19,6 +20,13 @@
 # `nocaseglob` or `dotglob` (which would make docs/decisions/.hidden.md a
 # record), or `noglob` (which would leave the record glob unexpanded, an
 # empty record set) would otherwise reach one script and not another.
+#
+# Ambient variables are reset for the same reason: an inherited CDPATH makes
+# `cd` print the directory it found, so `$(cd dir && pwd -P)` returns two
+# lines; GLOBIGNORE filters the record glob (and turns on dotglob); a
+# non-default IFS changes word splitting.
+unset CDPATH GLOBIGNORE
+IFS=$' \t\n'
 set +f
 shopt -u nocasematch nocaseglob dotglob
 
@@ -96,7 +104,7 @@ dec_source_plan_exists() {
 	[[ -n "$relative" && "$relative" != /* ]] || return 1
 	path="${root%/}/$relative"
 	while ((hops <= 40)); do
-		parent="$(cd -P -- "${path%/*}/" 2>/dev/null && pwd -P)" || return 1
+		parent="$(cd -P -- "${path%/*}/" >/dev/null 2>&1 && pwd -P)" || return 1
 		[[ "$parent" == "$root" || "$parent" == "${root%/}/"* ]] || return 1
 		path="${parent%/}/${path##*/}"
 		if [[ ! -L "$path" ]]; then
@@ -167,6 +175,22 @@ dec_target_problem() {
 	return 1
 }
 
+# dec_heading <line>: the one heading rule, shared by dec_header and the
+# selector's body parser so they agree on where a record's header ends. A
+# CommonMark ATX heading: up to three spaces, one to six `#`, then a space, a
+# tab or the end of the line (a trailing CR is a line ending). On a match sets
+# DEC_HEADING_LEVEL (1-6) and DEC_HEADING_TEXT (the rest of the line) and
+# returns 0; returns 1 otherwise.
+DEC_ATX_HEADING=$'^ {0,3}(#{1,6})([ \t](.*))?$'
+# shellcheck disable=SC2034  # DEC_HEADING_TEXT is read by the selector
+dec_heading() {
+	local text="${1%$'\r'}"
+	local LC_ALL=C
+	[[ "$text" =~ $DEC_ATX_HEADING ]] || return 1
+	DEC_HEADING_LEVEL=${#BASH_REMATCH[1]}
+	DEC_HEADING_TEXT="${BASH_REMATCH[3]}"
+}
+
 # dec_header <file> <Field>: the trimmed value of the first `**Field**:` line in
 # the header, or nothing when absent. Exit status is 0 only when found, so an
 # empty value is distinguishable from a missing header.
@@ -174,7 +198,9 @@ dec_header() {
 	local file="$1" field="$2" line value
 	local LC_ALL=C
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		[[ "$line" == "## "* ]] && return 1
+		if dec_heading "$line" && [[ $DEC_HEADING_LEVEL -eq 2 ]]; then
+			return 1
+		fi
 		if [[ "$line" =~ ^\*\*([^*]+)\*\*:[[:space:]]*(.*)$ ]] && [[ "${BASH_REMATCH[1]}" == "$field" ]]; then
 			value="${BASH_REMATCH[2]}"
 			printf '%s\n' "${value%"${value##*[![:space:]]}"}"
@@ -230,6 +256,18 @@ dec_validate_tree() {
 	while IFS= read -r -d '' path; do
 		DEC_RECORDS+=("$path")
 	done < <(dec_record_files "$dir")
+	# One NUL pass before any header is read for any purpose: bash 3.2 command
+	# substitution drops a NUL and bash 5 keeps the bytes after it, so a value
+	# read from such a file differs per bash. A flagged file is a `header`
+	# problem below, and _dec_member never resolves to it, so no reciprocal
+	# check reads it either.
+	DEC_NUL=()
+	for ((index = 0; index < ${#DEC_RECORDS[@]}; index++)); do
+		DEC_NUL[index]=0
+		if dec_regular_record "${DEC_RECORDS[$index]}" && dec_has_nul "${DEC_RECORDS[$index]}"; then
+			DEC_NUL[index]=1
+		fi
+	done
 
 	# _dec_problem <record index> <reason code> <message>
 	_dec_problem() {
@@ -241,11 +279,12 @@ dec_validate_tree() {
 	_dec_field() {
 		dec_header "$dir/$1" "$2" || true
 	}
-	# _dec_member <name>: sets target to the index of a regular record so named.
+	# _dec_member <name>: sets target to the index of a regular, NUL-free
+	# record so named.
 	_dec_member() {
 		local i
 		for ((i = 0; i < ${#DEC_RECORDS[@]}; i++)); do
-			if [[ "${DEC_RECORDS[$i]}" == "$dir/$1" ]] && dec_regular_record "$dir/$1"; then
+			if [[ "${DEC_RECORDS[$i]}" == "$dir/$1" && "${DEC_NUL[$i]}" == 0 ]] && dec_regular_record "$dir/$1"; then
 				target="$i"
 				return 0
 			fi
@@ -262,10 +301,7 @@ dec_validate_tree() {
 			_dec_problem "$index" file-type "expected a readable, regular, non-symlink file"
 			continue
 		fi
-		# A NUL byte is refused before any value is read: bash 3.2 command
-		# substitution drops it and bash 5 keeps the bytes after it, so the
-		# same header would validate differently per bash.
-		if dec_has_nul "$path"; then
+		if [[ "${DEC_NUL[$index]}" == 1 ]]; then
 			_dec_problem "$index" header "contains a NUL byte"
 			continue
 		fi

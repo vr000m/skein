@@ -42,8 +42,11 @@
 # Exit codes: 0 valid, 1 the record graph has a problem (every target is safe),
 # 2 usage error, 3 at least one --targets path is unsafe (whatever the graph).
 set -euo pipefail
+# An inherited CDPATH makes `cd` print the directory, which would corrupt
+# SCRIPT_DIR before the shared lib resets the environment.
+unset CDPATH
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
@@ -84,7 +87,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 [[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-root="$(cd -P -- "$root" && pwd -P)" || exit 2
+root="$(cd -P -- "$root" >/dev/null && pwd -P)" || exit 2
 rc=0
 # Containment first: dec_target_problem inspects path metadata only, so an
 # unsafe target exits 3 before any record or plan is read.

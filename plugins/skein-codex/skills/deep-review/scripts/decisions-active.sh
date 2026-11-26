@@ -108,8 +108,11 @@
 #      `decisions-active.sh: DECISIONS-ESCAPE-FAILED` and stdout carries no
 #      selection (with --temp-output, the status line `selector-output=`)
 set -euo pipefail
+# An inherited CDPATH makes `cd` print the directory, which would corrupt
+# SCRIPT_DIR before the shared lib resets the environment.
+unset CDPATH
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
@@ -187,7 +190,7 @@ elif [[ $from_stdin -eq 1 ]]; then
 fi
 [[ $uncommitted -eq 0 || "$mode" == range ]] || usage
 
-root="$(cd -P -- "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && pwd -P)"
+root="$(cd -P -- "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" >/dev/null && pwd -P)"
 
 # resolve_revision <option> <value>: prints the commit that <value> names. The
 # one place a --base or --head value is judged, so the skills' snippets carry
@@ -394,13 +397,12 @@ escape() {
 # trailing CR is a line ending, not content.
 FENCE_OPEN='^ {0,3}(`{3,}|~{3,})(.*)$'
 FENCE_CLOSE='^ {0,3}(`{3,}|~{3,})[[:blank:]]*$'
-# Headings follow CommonMark too. ATX_HEADING: up to three spaces, one or two
-# `#`, then a space, a tab or the end of the line (deeper levels are text
-# within a section). SETEXT_LINE: up to three spaces, a run of `=` (level 1)
-# or `-` (level 2), then only blanks; it makes the paragraph above it a
-# heading. CODE_INDENT: a line that cannot start a paragraph (four columns of
-# indentation make an indented code block).
-ATX_HEADING=$'^ {0,3}(#{1,2})([ \t](.*))?$'
+# Headings follow CommonMark too. An ATX heading is the shared lib's
+# dec_heading, the rule dec_header also uses to end the header; levels three
+# to six end a paragraph but are text within a section. SETEXT_LINE: up to
+# three spaces, a run of `=` (level 1) or `-` (level 2), then only blanks; it
+# makes the paragraph above it a heading. CODE_INDENT: a line that cannot
+# start a paragraph (four columns of indentation make an indented code block).
 SETEXT_LINE='^ {0,3}(=+|-+)[[:blank:]]*$'
 CODE_INDENT=$'^(    | {0,3}\t)'
 
@@ -459,9 +461,11 @@ block() {
 			_block_flush
 			fence="${BASH_REMATCH[1]}"
 			_block_emit "$line"
-		elif [[ "$text" =~ $ATX_HEADING ]]; then
+		elif dec_heading "$text"; then
 			_block_flush
-			_block_heading "${#BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+			if [[ $DEC_HEADING_LEVEL -le 2 ]]; then
+				_block_heading "$DEC_HEADING_LEVEL" "$DEC_HEADING_TEXT"
+			fi
 			_block_emit "$line"
 		elif [[ ${#para[@]} -gt 0 && "$text" =~ $SETEXT_LINE ]]; then
 			level=2

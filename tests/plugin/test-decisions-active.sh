@@ -866,6 +866,8 @@ fi
 # judged against a reference (markdown-it-py when importable, otherwise an
 # independent transcription of the CommonMark fence rules, which is itself
 # checked against markdown-it-py whenever that is present).
+# shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
+. "$REPO_ROOT/scripts/lib/decisions-common.sh"
 eval "$(sed -n '/^FENCE_OPEN=/,/^}/p' "$SEL")"
 # shellcheck disable=SC2016  # backticks are the test data
 fence_openers=('```' '````' '~~~' '~~~~' '  ```' '   ~~~' '    ```' "$(printf '\t```')" '```python' '``` a`b' '~~~ a`b' '``' '~~')
@@ -1072,7 +1074,8 @@ else
 	fail "R5-3: markers disagree with CommonMark: $(cat "$tmp/heading-ref")"
 fi
 # shellcheck disable=SC2016  # the child bash expands these
-heading_runner='eval "$(sed -n "/^FENCE_OPEN=/,/^}/p" "$1")"
+heading_runner='. "${1%/*}/lib/decisions-common.sh"
+eval "$(sed -n "/^FENCE_OPEN=/,/^}/p" "$1")"
 block "$2"'
 heading_failures=0
 for lb in "${locale_bashes[@]}"; do
@@ -1395,6 +1398,120 @@ for b in "${locale_bashes[@]}"; do
 		fi
 	done
 done
+
+# Round 8 B (I4): an inherited CDPATH changes neither verdict. With CDPATH
+# set, `cd` to a relative directory prints it, so `$(cd dir && pwd -P)` held
+# two lines: the validator walked a path that does not exist and passed
+# (exit 0) where the selector degraded (exit 3), and a relative script path
+# broke SCRIPT_DIR. Cells: CDPATH {., a decoy holding a valid tree and a
+# tools/ of the same names} x root {relative, absolute} x script path
+# {absolute, relative} x every bash. Contract: validator 1, selector 3 with
+# the valid record still selected.
+r8b="$tmp/r8b"
+record "$r8b/tree" 20260101-ok.md active 'src/*'
+record "$r8b/tree" 20260102-bad.md bogus 'src/*'
+record "$tmp/r8b-decoy/tree" 20260101-ok.md active 'src/*'
+mkdir -p "$r8b/tools/lib" "$r8b/tree/tools/lib" "$tmp/r8b-decoy/tools"
+cp "$CHECK" "$r8b/tools/"
+cp "$REPO_ROOT/scripts/lib/decisions-common.sh" "$r8b/tools/lib/"
+cp "$SEL" "$r8b/tree/tools/"
+cp "$REPO_ROOT/scripts/lib/decisions-common.sh" "$r8b/tree/tools/lib/"
+for b in "${locale_bashes[@]}"; do
+	for cdp in . "$tmp/r8b-decoy"; do
+		for form in abs-abs rel-abs abs-rel rel-rel; do
+			vroot="$r8b/tree"
+			[[ "${form%-*}" == rel ]] && vroot=tree
+			vscript="$CHECK" sscript="$SEL"
+			if [[ "${form#*-}" == rel ]]; then
+				vscript=tools/check-decisions.sh sscript=tools/decisions-active.sh
+			fi
+			vrc=0
+			(cd "$r8b" && CDPATH="$cdp" "$b" "$vscript" "$vroot" >/dev/null 2>&1) || vrc=$?
+			RC=0
+			OUT="$(cd "$r8b/tree" && CDPATH="$cdp" "$b" "$sscript" src/x 2>/dev/null)" || RC=$?
+			if [[ $vrc -eq 1 && $RC -eq 3 && "$(names "$OUT")" == 20260101-ok.md ]]; then
+				pass "R8-B: CDPATH=$cdp, root-script $form on $b: validator 1, selector 3"
+			else
+				fail "R8-B: CDPATH=$cdp, root-script $form on $b: validator $vrc, selector $RC, selected '$(names "$OUT")'"
+			fi
+		done
+	done
+done
+
+# Round 8 C (I4): a NUL-bearing record is excluded from every later read, not
+# only from its own validation. old names `<new><NUL>suffix` in Superseded by;
+# bash 3.2 read that as `<new>` (reciprocal, so new validated and was
+# selected) and bash 5 as `<new>suffix` (not reciprocal). Contract on every
+# bash: validator 1, selector 3, new is not selected, and both report the
+# same problems.
+root="$tmp/r8c"
+record "$root" 20260101-old.md superseded 'src/*'
+printf '# Old\n\n**Status**: superseded\n**Date**: 2026-11-24\n**Applies to**: src/*\n**Supersedes**: none\n**Superseded by**: 20260102-new.md\000suffix\n**Source plan**: docs/dev_plans/plan.md\n\n## Decision\nX\n## Why\nY\n' >"$root/docs/decisions/20260101-old.md"
+printf '# New\n\n**Status**: active\n**Date**: 2026-11-24\n**Applies to**: src/*\n**Supersedes**: 20260101-old.md\n**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n## Decision\nX\n## Why\nY\n' >"$root/docs/decisions/20260102-new.md"
+r8c_ref=""
+for b in "${locale_bashes[@]}"; do
+	vrc=0
+	"$b" "$CHECK" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+	RC=0
+	OUT="$(cd "$root" && "$b" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+	got="$(cat "$tmp/check-err")|$(cat "$tmp/stderr")"
+	if [[ $vrc -eq 1 && $RC -eq 3 && -z "$OUT" ]] &&
+		grep -qx 'decisions-active.sh: malformed record 20260101-old.md: header' "$tmp/stderr" &&
+		grep -qx 'decisions-active.sh: malformed record 20260102-new.md: supersession' "$tmp/stderr" &&
+		{ [[ -z "$r8c_ref" ]] || [[ "$got" == "$r8c_ref" ]]; }; then
+		pass "R8-C: NUL in a supersession target on $b: validator 1, selector 3, the successor is rejected"
+	else
+		fail "R8-C: NUL in a supersession target on $b: validator $vrc, selector $RC, out '$(names "$OUT")', reports '$got'"
+	fi
+	[[ -n "$r8c_ref" ]] || r8c_ref="$got"
+done
+
+# Round 8 D (I4): one heading rule. dec_header ended the header only at `## `
+# while the selector's body parser also took `##<TAB>`, `##<CR>`, a bare `##`
+# and a heading indented up to three spaces, so an `Applies to` line under
+# such a heading was a header to the validator and section text to the
+# selector. Contract on every bash: under each of those the record lacks
+# `Applies to` (validator 1, selector 3 `header`, nothing selected); under a
+# four-space indent (code, not a heading) it is a valid header and selected.
+for cell in tab cr bare indent3 code4; do
+	root="$tmp/r8d-$cell"
+	record "$root" 20260101-h.md active 'src/*'
+	case "$cell" in
+	tab) heading=$'##\tDecision' ;;
+	cr) heading=$'##\r' ;;
+	bare) heading='##' ;;
+	indent3) heading='   ## Decision' ;;
+	code4) heading='    ## Decision' ;;
+	esac
+	printf '# T\n\n**Status**: active\n**Date**: 2026-11-24\n**Supersedes**: none\n**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n%s\n**Applies to**: src/*\nX\n## Why\nY\n' "$heading" >"$root/docs/decisions/20260101-h.md"
+	for b in "${locale_bashes[@]}"; do
+		vrc=0
+		"$b" "$CHECK" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+		RC=0
+		OUT="$(cd "$root" && "$b" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+		if [[ "$cell" == code4 ]]; then
+			ok=0
+			[[ $vrc -eq 0 && $RC -eq 0 && "$(names "$OUT")" == 20260101-h.md ]] && ok=1
+		else
+			ok=0
+			[[ $vrc -eq 1 && $RC -eq 3 && -z "$OUT" ]] && grep -q 'missing header Applies to' "$tmp/check-err" &&
+				[[ "$(cat "$tmp/stderr")" == 'decisions-active.sh: malformed record 20260101-h.md: header' ]] && ok=1
+		fi
+		if [[ $ok -eq 1 ]]; then
+			pass "R8-D: Applies to under a $cell heading line on $b: validator $vrc, selector $RC"
+		else
+			fail "R8-D: Applies to under a $cell heading line on $b: validator $vrc, selector $RC, out '$(names "$OUT")', stderr '$(cat "$tmp/stderr")'"
+		fi
+	done
+done
+# The heading rule is defined once, in the shared lib, and no record parser
+# keeps a second copy (a `## ` prefix test or its own ATX pattern).
+heading_rules="$(grep -nE '#\{1,|"## "|ATX_HEADING=' "$SEL" "$CHECK" "$REPO_ROOT/scripts/lib/decisions-common.sh" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+if [[ "$(wc -l <<<"$heading_rules" | tr -d '[:space:]')" -eq 1 && "$heading_rules" == "$REPO_ROOT/scripts/lib/decisions-common.sh:"*"DEC_ATX_HEADING="* ]]; then
+	pass "R8-D: the ATX heading rule is defined once, in decisions-common.sh"
+else
+	fail "R8-D: heading rules in the record parsers: $heading_rules"
+fi
 
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
