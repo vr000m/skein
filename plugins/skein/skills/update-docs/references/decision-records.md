@@ -59,6 +59,7 @@ A comma-separated list of globs, each matched against a repo-relative path with 
 - `**`, braces (`{a,b}`) and the extended patterns `?(...)`, `*(...)`, `+(...)`, `@(...)` and `!(...)` are not supported, and the validator rejects them. Bash honours the extended patterns inside `[[ == ]]` whatever the `extglob` option says, so a literal such as `docs/*(draft).md` would silently change meaning. Inside a bracket expression or after a backslash these characters are literal, so `file[?(].txt` and `x[**]y` are accepted.
 - Surrounding spaces are trimmed, except an escaped one: `docs/foo\ ` ends in a space.
 - A glob holds at most four `*` (a `*` inside a bracket expression or after a backslash is literal and does not count), and the validator rejects a fifth. The cap bounds matching time.
+- The validator also rejects the shapes bash 3.2 and bash 5 read differently, so a glob means the same on every bash: an unclosed `[` (write `\[` for a literal one), a glob ending in an unpaired backslash (write `\\` for a literal one), an equivalence class or collating symbol (`[=` or `[.`) inside a bracket expression, and a `[:` inside one that is not one of the twelve POSIX classes (`[:alnum:]`, `[:alpha:]`, `[:blank:]`, `[:cntrl:]`, `[:digit:]`, `[:graph:]`, `[:lower:]`, `[:print:]`, `[:punct:]`, `[:space:]`, `[:upper:]`, `[:xdigit:]`) or that ends a range, as in `[a-[:digit:]]`.
 
 A record whose globs match none of the paths under review is not shown to the reviewers.
 
