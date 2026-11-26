@@ -15,9 +15,11 @@
 
 # Status, glob and name matches are case-sensitive, and the record glob skips
 # hidden files, in every script that sources this file. Bash takes options
-# from an exported BASHOPTS, so a caller's `nocasematch`, `nocaseglob` or
-# `dotglob` (which would make docs/decisions/.hidden.md a record) would
-# otherwise reach one script and not another.
+# from an exported BASHOPTS or SHELLOPTS, so a caller's `nocasematch`,
+# `nocaseglob` or `dotglob` (which would make docs/decisions/.hidden.md a
+# record), or `noglob` (which would leave the record glob unexpanded, an
+# empty record set) would otherwise reach one script and not another.
+set +f
 shopt -u nocasematch nocaseglob dotglob
 
 # Reject non-local directories even when the link target is missing. A linked

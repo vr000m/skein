@@ -688,6 +688,32 @@ for lb in "${locale_bashes[@]}"; do
 done
 [[ $dotglob_bashes -gt 0 ]] || pass "R5-4: no bash here honours BASHOPTS; the dotglob cell is skipped"
 
+# R6-3 an exported noglob does not empty the record set. Contract: with
+# SHELLOPTS=noglob, the selector picks the same records for the cache fixture
+# as without it, and the validator still sees (and rejects) a broken record,
+# under every bash on the machine that honours SHELLOPTS.
+root="$tmp/r6-noglob"
+cp -R "$REPO_ROOT/tests/lenses/fixtures/decisions/repo" "$root"
+noglob_bashes=0
+for lb in "${locale_bashes[@]}"; do
+	env SHELLOPTS=noglob "$lb" -c '[[ $- == *f* ]]' 2>/dev/null || continue
+	noglob_bashes=$((noglob_bashes + 1))
+	want="$(cd "$root" && "$lb" "$SEL" src/cache/store.py 2>/dev/null)" || true
+	RC=0
+	OUT="$(cd "$root" && env SHELLOPTS=noglob "$lb" "$SEL" src/cache/store.py 2>"$tmp/stderr")" || RC=$?
+	printf '# Broken\n' >"$root/docs/decisions/20261201-broken.md"
+	vrc=0
+	env SHELLOPTS=noglob "$lb" "$CHECK" "$root" >/dev/null 2>"$tmp/vstderr" || vrc=$?
+	rm -f -- "$root/docs/decisions/20261201-broken.md"
+	if [[ $RC -eq 0 && -n "$want" && "$OUT" == "$want" && "$(names "$OUT")" == *20261101-cache-store.md* && $vrc -eq 1 ]] &&
+		grep -q '^20261201-broken.md: ' "$tmp/vstderr"; then
+		pass "[$lb] R6-3: SHELLOPTS=noglob keeps the selection and the validator's record set"
+	else
+		fail "[$lb] R6-3: noglob: selector $RC selected '$(names "$OUT")', validator $vrc ($(cat "$tmp/vstderr"))"
+	fi
+done
+[[ $noglob_bashes -gt 0 ]] || pass "R6-3: no bash here honours SHELLOPTS; the noglob cell is skipped"
+
 # An unreadable record is a file-type problem: no read error, which would quote
 # the raw file name, reaches stderr from either script.
 if [[ "$(id -u)" -eq 0 ]]; then
