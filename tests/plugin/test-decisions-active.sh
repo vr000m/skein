@@ -1134,7 +1134,8 @@ assert_eq "dialect: a glob using every accepted character is valid and matches" 
 # /bin/bash and on the default bash, over a few thousand generated pairs from
 # a fixed seed (awk, so both bashes read the same pairs). Globs come from the
 # dialect alphabet's metacharacters and a few literals, without `**`; paths
-# are random or instantiated from their glob, so both verdicts occur.
+# are random or instantiated from their glob, so both verdicts occur, plus
+# fixed near misses where middle segments would overlap.
 diff_pairs="$tmp/diff-pairs"
 awk 'BEGIN {
 	srand(4242)
@@ -1161,6 +1162,8 @@ awk 'BEGIN {
 		printf "%s\t%s\n", g, p
 	}
 }' >"$diff_pairs"
+# Near misses where middle segments would overlap if the matcher let them.
+printf '%s\t%s\n' '*ab*ba*' aba '*aa*aa*' aaa 'a*ab*ba*b' abab '*ab*b*ab*' abab '*a?*?a*' aa >>"$diff_pairs"
 # shellcheck disable=SC2016  # the runner is evaluated by each bash
 diff_runner='eval "$(sed -n "/^glob_match()/,/^}/p" "$1")"
 export LC_ALL=C
@@ -1179,7 +1182,7 @@ for lb in "${diff_bashes[@]}"; do
 	diff_bad="$(grep -c -v -E '^(0 0|1 1)$' <<<"$diff_out" || true)"
 	diff_hits="$(grep -c '^0 0$' <<<"$diff_out" || true)"
 	diff_rows="$(wc -l <<<"$diff_out" | tr -d '[:space:]')"
-	if [[ "$diff_bad" -eq 0 && "$diff_rows" -eq 3000 && "$diff_hits" -gt 300 && "$diff_hits" -lt 2700 ]]; then
+	if [[ "$diff_bad" -eq 0 && "$diff_rows" -eq 3005 && "$diff_hits" -gt 300 && "$diff_hits" -lt 2700 ]]; then
 		# shellcheck disable=SC2016  # $BASH_VERSION belongs to the child bash
 		pass "[$lb $("$lb" -c 'echo $BASH_VERSION')] glob_match equals [[ == ]] on $diff_rows pairs ($diff_hits matches)"
 	else
