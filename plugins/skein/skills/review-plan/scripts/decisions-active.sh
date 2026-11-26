@@ -14,8 +14,14 @@
 #                  prefix means no path can end the here-document early; a
 #                  line without it is refused (exit 4). Blank lines are
 #                  skipped.
-#   --base/--head  the script runs `git diff --no-ext-diff --no-renames
-#                  --name-only -z <base>...<head>` itself (both rename paths;
+#   --base/--head  each value must name a commit: an empty value, one
+#                  starting with `-` or one `git rev-parse --verify
+#                  --end-of-options <rev>^{commit}` cannot resolve is refused
+#                  with exit 2 and `decisions-active.sh: --base refused:
+#                  <code>` (empty, option-like, not-a-commit) on stderr,
+#                  never the value. The script then runs `git diff
+#                  --no-ext-diff --no-renames --name-only -z
+#                  <base commit>...<head commit>` itself (both rename paths;
 #                  the merge base, as `gh pr diff`), plus the staged and
 #                  unstaged diffs with --uncommitted. No changed path is an
 #                  empty, successful selection. Records are always read from
@@ -41,9 +47,12 @@
 # repo root, no non-directory ancestor and no non-regular leaf
 # (dec_scratch_prepare in lib/decisions-scratch.sh, which asks
 # persist_path_is_inside_root whether the path is inside the repository).
-# Missing directories are created; the file is written
-# to a temp file and renamed into place. --output is written whatever the exit
-# status, once its path is accepted.
+# Missing directories are created. The selector writes each file to a private
+# temp file first; dec_scratch_write then walks from the physical root again,
+# one verified component at a time, and renames a fresh temp file into place
+# by its leaf name, so no pathname checked earlier is resolved again for the
+# write. `.git` is refused in any letter case. --output is written whatever
+# the exit status, once its path is accepted.
 #
 # Records are <repo-root>/docs/decisions/*.md (README.md excluded); <repo-root>
 # is the git top level, or the current directory outside a repository. A
@@ -51,8 +60,10 @@
 # globs matches any path, with bash `[[ $path == $glob ]]` semantics (`*`
 # crosses `/`). Matching runs under LC_ALL=C, so a range such as `[a-c]` and
 # `?` match bytes, case-sensitively, in every locale and bash version. A glob
-# has at most four `*` (dec_glob_problem), and the match never hands bash a
-# pattern holding one: the glob is split at its stars and each star-free
+# has at most four `*`, and no unclosed `[`, trailing lone backslash, `[=`,
+# `[.` or non-POSIX `[:` in a bracket expression (dec_glob_problem refuses the
+# shapes bash 3.2 and bash 5 read differently). The match never hands bash a
+# pattern holding a star: the glob is split at its stars and each star-free
 # segment is matched at its leftmost position, so the time is linear in the
 # path's length per segment rather than its length raised to the star count.
 # Superseded records are never printed.
@@ -60,8 +71,10 @@
 # Output, in path-sorted record order, one block per selected record:
 #   ### Record: docs/decisions/<name>
 #   <title and header lines>
-#   ## Decision ... and ## Why ... (those two sections only; a `## ` line
-#   inside a fenced code block is text, not a section boundary). Fences follow
+#   ## Decision ... and ## Why ... (those two sections only). A section ends
+#   at the next level-one or level-two heading as CommonMark reads one: ATX
+#   indented up to three spaces, or setext (a paragraph underlined with `=`
+#   or `-`); a heading inside a fenced code block is text. Fences follow
 #   CommonMark: an opener is up to three spaces, then at least three backticks
 #   (with no backtick in the rest of the line) or at least three tildes; only
 #   a line of the same character, at least as long, indented up to three
@@ -82,7 +95,8 @@
 #
 # Exit codes:
 #   0  complete: no match, no docs/decisions directory, or every match printed
-#   2  usage error (an unknown option, or no path)
+#   2  usage error (an unknown option, or no path), or a --base/--head value
+#      refused with its reason code on stderr
 #   3  degraded: a record is malformed (check-decisions.sh would reject it:
 #      both call dec_validate_tree), docs/decisions is not a readable local
 #      directory, or more records matched than the cap shows. stderr names
@@ -92,8 +106,8 @@
 #      records the validator accepts are selected, and those matches are
 #      still printed, so the caller reports degraded coverage rather than
 #      "no applicable decisions".
-#   4  the path list is unavailable: a git diff failed, or a --paths-stdin line
-#      lacks its `p ` prefix
+#   4  the path list is unavailable: a git diff of the resolved commits
+#      failed, or a --paths-stdin line lacks its `p ` prefix
 #   5  --output or --paths-file was refused or could not be written
 # --output holds a selection exactly when the status is 0 or 3; on 2, 4 or 5
 # it is empty or absent, and callers read it only on 0 or 3.
@@ -123,17 +137,32 @@ output=""
 paths_file=""
 base=""
 head=""
+have_base=0
+have_head=0
 from_stdin=0
 uncommitted=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--output | --paths-file | --base | --head)
+	--output | --paths-file)
 		[[ $# -ge 2 && -n "$2" ]] || usage
 		case "$1" in
 		--output) output="$2" ;;
 		--paths-file) paths_file="$2" ;;
-		--base) base="$2" ;;
-		--head) head="$2" ;;
+		esac
+		shift 2
+		;;
+	--base | --head)
+		# An empty or option-like value is refused below with a reason code.
+		[[ $# -ge 2 ]] || usage
+		case "$1" in
+		--base)
+			base="$2"
+			have_base=1
+			;;
+		--head)
+			head="$2"
+			have_head=1
+			;;
 		esac
 		shift 2
 		;;
@@ -154,11 +183,9 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 mode=argv
-if [[ -n "$base" || -n "$head" ]]; then
+if [[ $have_base -eq 1 || $have_head -eq 1 ]]; then
 	mode=range
-	[[ -n "$base" && -n "$head" && $from_stdin -eq 0 && $# -eq 0 ]] || usage
-	# A revision starting with `-` would reach git as an option.
-	[[ "$base" != -* && "$head" != -* ]] || usage
+	[[ $have_base -eq 1 && $have_head -eq 1 && $from_stdin -eq 0 && $# -eq 0 ]] || usage
 elif [[ $from_stdin -eq 1 ]]; then
 	mode=stdin
 	[[ $# -eq 0 ]] || usage
@@ -168,16 +195,43 @@ fi
 logical_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$logical_root" && pwd -P)"
 
-# Temp files this run created; removed on any exit.
+# resolve_revision <option> <value>: prints the commit that <value> names. The
+# one place a --base or --head value is judged, so the skills' snippets carry
+# no allowlist of their own: any revision git resolves to a commit is accepted
+# (a SHA, `HEAD~2`, a branch such as `fix#12` or `feat=x`). Otherwise prints
+# `decisions-active.sh: <option> refused: <code>` on stderr, never the value,
+# and exits 2. Codes: empty; option-like (a leading `-`, which git would read
+# as an option); not-a-commit (`git rev-parse --verify --end-of-options
+# <value>^{commit}` fails).
+resolve_revision() {
+	local code="" sha=""
+	if [[ -z "$2" ]]; then
+		code=empty
+	elif [[ "$2" == -* ]]; then
+		code=option-like
+	elif ! sha="$(git -C "$root" rev-parse --verify --quiet --end-of-options "$2^{commit}" 2>/dev/null)" || [[ -z "$sha" ]]; then
+		code=not-a-commit
+	fi
+	if [[ -n "$code" ]]; then
+		echo "decisions-active.sh: $1 refused: $code" >&2
+		exit 2
+	fi
+	printf '%s\n' "$sha"
+}
+
+# Private temp files (mktemp, outside the repository); removed on any exit.
+# Nothing reaches the repository except through dec_scratch_write.
 list_tmp=""
 out_tmp=""
-out_final=""
+out_dir=""
+out_leaf=""
 on_exit() {
 	local rc=$?
 	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
 	[[ -n "$out_tmp" ]] || exit "$rc"
 	exec 1>&3 3>&-
-	if dec_scratch_commit "$out_tmp" "$out_final"; then
+	if dec_scratch_write "$root" "$out_dir" "$out_leaf" "$out_tmp"; then
+		rm -f -- "$out_tmp"
 		exit "$rc"
 	fi
 	rm -f -- "$out_tmp"
@@ -192,8 +246,9 @@ if [[ -n "$output" ]]; then
 		echo "decisions-active.sh: --output refused: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	out_final="$DEC_SCRATCH_PATH"
-	out_tmp="$(dec_scratch_tmp "$out_final")" || {
+	out_dir="$DEC_SCRATCH_DIR"
+	out_leaf="$DEC_SCRATCH_LEAF"
+	out_tmp="$(mktemp)" || {
 		out_tmp=""
 		echo "decisions-active.sh: --output refused: cannot create a temp file" >&2
 		exit 5
@@ -201,20 +256,24 @@ if [[ -n "$output" ]]; then
 	exec 3>&1 1>"$out_tmp"
 fi
 
-paths_final=""
+paths_dir=""
+paths_leaf=""
 if [[ -n "$paths_file" ]]; then
 	if ! dec_scratch_prepare "$root" "$logical_root" "$paths_file"; then
 		echo "decisions-active.sh: --paths-file refused: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	paths_final="$DEC_SCRATCH_PATH"
-	list_tmp="$(dec_scratch_tmp "$paths_final")" || {
-		list_tmp=""
-		echo "decisions-active.sh: --paths-file refused: cannot create a temp file" >&2
-		exit 5
-	}
-elif [[ "$mode" != argv ]]; then
+	paths_dir="$DEC_SCRATCH_DIR"
+	paths_leaf="$DEC_SCRATCH_LEAF"
+fi
+if [[ -n "$paths_file" || "$mode" != argv ]]; then
 	list_tmp="$(mktemp)"
+fi
+
+# A refused revision exits 2 after the trap is set, so --output is emptied.
+if [[ "$mode" == range ]]; then
+	base_commit="$(resolve_revision --base "$base")" || exit 2
+	head_commit="$(resolve_revision --head "$head")" || exit 2
 fi
 
 paths=()
@@ -251,7 +310,7 @@ stdin)
 	;;
 range)
 	if ! {
-		git -C "$root" diff --no-ext-diff --no-renames --name-only -z "$base...$head" -- &&
+		git -C "$root" diff --no-ext-diff --no-renames --name-only -z "$base_commit...$head_commit" -- &&
 			if [[ $uncommitted -eq 1 ]]; then
 				git -C "$root" diff --no-ext-diff --no-renames --name-only -z --cached -- &&
 					git -C "$root" diff --no-ext-diff --no-renames --name-only -z --
@@ -263,21 +322,19 @@ range)
 	while IFS= read -r -d '' entry; do
 		paths+=("$entry")
 	done <"$list_tmp"
-	reviewed="$(git -C "$root" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null || true)"
 	current="$(git -C "$root" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
-	[[ "$reviewed" == "$current" ]] || echo "$NOTICE" >&2
+	[[ "$head_commit" == "$current" ]] || echo "$NOTICE" >&2
 	if [[ $uncommitted -eq 0 ]]; then
 		dirty="$(git -C "$root" --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions 2>/dev/null)" || dirty=unknown
 		[[ -z "$dirty" ]] || echo "$DIRTY_NOTICE" >&2
 	fi
 	;;
 esac
-if [[ -n "$paths_final" ]]; then
-	if ! dec_scratch_commit "$list_tmp" "$paths_final"; then
+if [[ -n "$paths_leaf" ]]; then
+	if ! dec_scratch_write "$root" "$paths_dir" "$paths_leaf" "$list_tmp"; then
 		echo "decisions-active.sh: --paths-file not written: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	list_tmp=""
 fi
 if [[ ${#paths[@]} -eq 0 ]]; then
 	[[ "$mode" == range ]] && exit 0
@@ -387,30 +444,93 @@ escape() {
 # trailing CR is a line ending, not content.
 FENCE_OPEN='^ {0,3}(`{3,}|~{3,})(.*)$'
 FENCE_CLOSE='^ {0,3}(`{3,}|~{3,})[[:blank:]]*$'
+# Headings follow CommonMark too. ATX_HEADING: up to three spaces, one or two
+# `#`, then a space, a tab or the end of the line (deeper levels are text
+# within a section). SETEXT_LINE: up to three spaces, a run of `=` (level 1)
+# or `-` (level 2), then only blanks; it makes the paragraph above it a
+# heading. CODE_INDENT: a line that cannot start a paragraph (four columns of
+# indentation make an indented code block).
+ATX_HEADING=$'^ {0,3}(#{1,2})([ \t](.*))?$'
+SETEXT_LINE='^ {0,3}(=+|-+)[[:blank:]]*$'
+CODE_INDENT=$'^(    | {0,3}\t)'
 
 # block <record path>: the header, then the Decision and Why sections. A
-# `## ` line inside a fence belongs to the section around it.
+# section is what follows a level-one or level-two heading, ATX (indented up
+# to three spaces, an optional closing `#` run) or setext, up to the next one;
+# Decision and Why are the level-two headings with exactly that text. Lines
+# before the first level-two heading (the title and the header) are kept, and
+# so is a level-one heading among them. A heading inside a fence is text. A
+# paragraph is held back until it ends, because a setext underline decides
+# after the fact that it was a heading.
 block() {
-	local line text keep=1 fence=""
+	local line text keep=1 fence="" seen=0 title level k
+	local -a para=()
 	local LC_ALL=C
+	# _block_emit <line>: prints the line when the current section is kept.
+	_block_emit() {
+		if [[ $keep -eq 1 ]]; then
+			printf '%s\n' "$1"
+		fi
+	}
+	# _block_flush: emits the held paragraph as body text.
+	_block_flush() {
+		for ((k = 0; k < ${#para[@]}; k++)); do
+			_block_emit "${para[$k]}"
+		done
+		para=()
+	}
+	# _block_heading <level> <text>: starts a section.
+	_block_heading() {
+		local t="$2"
+		t="${t#"${t%%[![:blank:]]*}"}"
+		t="${t%"${t##*[![:blank:]]}"}"
+		if [[ "$t" =~ (^|[[:blank:]])#+$ ]]; then
+			t="${t%"${BASH_REMATCH[0]}"}"
+			t="${t%"${t##*[![:blank:]]}"}"
+		fi
+		if [[ $1 -eq 2 ]]; then
+			seen=1
+			case "$t" in
+			Decision | Why) keep=1 ;;
+			*) keep=0 ;;
+			esac
+		elif [[ $seen -eq 1 ]]; then
+			keep=0
+		fi
+	}
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		text="${line%$'\r'}"
 		if [[ -n "$fence" ]]; then
 			if [[ "$text" =~ $FENCE_CLOSE ]] && [[ "${BASH_REMATCH[1]:0:1}" == "${fence:0:1}" && ${#BASH_REMATCH[1]} -ge ${#fence} ]]; then
 				fence=""
 			fi
+			_block_emit "$line"
 		elif [[ "$text" =~ $FENCE_OPEN ]] && [[ "${BASH_REMATCH[1]:0:1}" == '~' || "${BASH_REMATCH[2]}" != *'`'* ]]; then
+			_block_flush
 			fence="${BASH_REMATCH[1]}"
-		elif [[ "$line" == "## "* ]]; then
-			case "${line%"${line##*[![:space:]]}"}" in
-			"## Decision" | "## Why") keep=1 ;;
-			*) keep=0 ;;
-			esac
-		fi
-		if [[ $keep -eq 1 ]]; then
-			printf '%s\n' "$line"
+			_block_emit "$line"
+		elif [[ "$text" =~ $ATX_HEADING ]]; then
+			_block_flush
+			_block_heading "${#BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+			_block_emit "$line"
+		elif [[ ${#para[@]} -gt 0 && "$text" =~ $SETEXT_LINE ]]; then
+			level=2
+			[[ "${BASH_REMATCH[1]:0:1}" == '=' ]] && level=1
+			title=""
+			for ((k = 0; k < ${#para[@]}; k++)); do
+				title+="${title:+ }${para[$k]%$'\r'}"
+			done
+			_block_heading "$level" "$title"
+			_block_flush
+			_block_emit "$line"
+		elif [[ "$text" =~ ^[[:blank:]]*$ ]] || [[ ${#para[@]} -eq 0 && "$text" =~ $CODE_INDENT ]]; then
+			_block_flush
+			_block_emit "$line"
+		else
+			para+=("$line")
 		fi
 	done 2>/dev/null <"$1"
+	_block_flush
 }
 
 malformed=0
