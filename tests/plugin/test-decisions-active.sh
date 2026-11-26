@@ -530,6 +530,31 @@ for cell in "0|p src/a.py|20260101-scratch.md" "3|p src/a.py|20260101-scratch.md
 	fi
 done
 
+# R6-5 a path-list temp file that cannot be created is exit 5 with a fixed
+# reason. Contract: with TMPDIR=/dev/null and no --temp-output, both the
+# --paths-stdin and the range (--range-stdin) modes exit 5, print nothing on
+# stdout and exactly `decisions-active.sh: cannot create a private temp file`
+# on stderr (no mktemp diagnostic, no random path). macOS mktemp falls back
+# from an unusable TMPDIR, so a failing mktemp first on PATH (GNU's message,
+# with a random path) stands in for it on every platform.
+root="$tmp/r6-mktemp"
+scratch_repo "$root"
+git -C "$root" add -A
+git -C "$root" -c user.name=t -c user.email=t@t commit -qm init
+mkdir -p "$tmp/failing-mktemp"
+printf '#!/bin/sh\necho "mktemp: failed to create file via template /dev/null/tmp.$$: Not a directory" >&2\nexit 1\n' >"$tmp/failing-mktemp/mktemp"
+chmod +x "$tmp/failing-mktemp/mktemp"
+for cell in "--paths-stdin|p src/a.py" "--range-stdin|HEAD"; do
+	opt="${cell%%|*}"
+	rc=0
+	out="$(cd "$root" && printf '%s\n%s\n' "${cell#*|}" HEAD | PATH="$tmp/failing-mktemp:$PATH" TMPDIR=/dev/null "$SEL" "$opt" 2>"$tmp/stderr")" || rc=$?
+	if [[ $rc -eq 5 && -z "$out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: cannot create a private temp file' ]]; then
+		pass "R6-5: $opt with TMPDIR=/dev/null exits 5 with the fixed reason"
+	else
+		fail "R6-5: $opt with TMPDIR=/dev/null: exit $rc, stdout '$out', stderr '$(cat "$tmp/stderr")'"
+	fi
+done
+
 # --paths-stdin: a path is data after its `p ` prefix; a line equal to a
 # here-document delimiter cannot occur because every line carries the prefix.
 root="$tmp/scratch-stdin"
