@@ -41,9 +41,12 @@
 # repo root, no non-directory ancestor and no non-regular leaf
 # (dec_scratch_prepare in lib/decisions-scratch.sh, which asks
 # persist_path_is_inside_root whether the path is inside the repository).
-# Missing directories are created; the file is written
-# to a temp file and renamed into place. --output is written whatever the exit
-# status, once its path is accepted.
+# Missing directories are created. The selector writes each file to a private
+# temp file first; dec_scratch_write then walks from the physical root again,
+# one verified component at a time, and renames a fresh temp file into place
+# by its leaf name, so no pathname checked earlier is resolved again for the
+# write. `.git` is refused in any letter case. --output is written whatever
+# the exit status, once its path is accepted.
 #
 # Records are <repo-root>/docs/decisions/*.md (README.md excluded); <repo-root>
 # is the git top level, or the current directory outside a repository. A
@@ -170,16 +173,19 @@ fi
 logical_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$logical_root" && pwd -P)"
 
-# Temp files this run created; removed on any exit.
+# Private temp files (mktemp, outside the repository); removed on any exit.
+# Nothing reaches the repository except through dec_scratch_write.
 list_tmp=""
 out_tmp=""
-out_final=""
+out_dir=""
+out_leaf=""
 on_exit() {
 	local rc=$?
 	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
 	[[ -n "$out_tmp" ]] || exit "$rc"
 	exec 1>&3 3>&-
-	if dec_scratch_commit "$out_tmp" "$out_final"; then
+	if dec_scratch_write "$root" "$out_dir" "$out_leaf" "$out_tmp"; then
+		rm -f -- "$out_tmp"
 		exit "$rc"
 	fi
 	rm -f -- "$out_tmp"
@@ -194,8 +200,9 @@ if [[ -n "$output" ]]; then
 		echo "decisions-active.sh: --output refused: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	out_final="$DEC_SCRATCH_PATH"
-	out_tmp="$(dec_scratch_tmp "$out_final")" || {
+	out_dir="$DEC_SCRATCH_DIR"
+	out_leaf="$DEC_SCRATCH_LEAF"
+	out_tmp="$(mktemp)" || {
 		out_tmp=""
 		echo "decisions-active.sh: --output refused: cannot create a temp file" >&2
 		exit 5
@@ -203,19 +210,17 @@ if [[ -n "$output" ]]; then
 	exec 3>&1 1>"$out_tmp"
 fi
 
-paths_final=""
+paths_dir=""
+paths_leaf=""
 if [[ -n "$paths_file" ]]; then
 	if ! dec_scratch_prepare "$root" "$logical_root" "$paths_file"; then
 		echo "decisions-active.sh: --paths-file refused: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	paths_final="$DEC_SCRATCH_PATH"
-	list_tmp="$(dec_scratch_tmp "$paths_final")" || {
-		list_tmp=""
-		echo "decisions-active.sh: --paths-file refused: cannot create a temp file" >&2
-		exit 5
-	}
-elif [[ "$mode" != argv ]]; then
+	paths_dir="$DEC_SCRATCH_DIR"
+	paths_leaf="$DEC_SCRATCH_LEAF"
+fi
+if [[ -n "$paths_file" || "$mode" != argv ]]; then
 	list_tmp="$(mktemp)"
 fi
 
@@ -274,12 +279,11 @@ range)
 	fi
 	;;
 esac
-if [[ -n "$paths_final" ]]; then
-	if ! dec_scratch_commit "$list_tmp" "$paths_final"; then
+if [[ -n "$paths_leaf" ]]; then
+	if ! dec_scratch_write "$root" "$paths_dir" "$paths_leaf" "$list_tmp"; then
 		echo "decisions-active.sh: --paths-file not written: $DEC_SCRATCH_REASON" >&2
 		exit 5
 	fi
-	list_tmp=""
 fi
 if [[ ${#paths[@]} -eq 0 ]]; then
 	[[ "$mode" == range ]] && exit 0

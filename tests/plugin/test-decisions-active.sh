@@ -1405,6 +1405,115 @@ ROWS
 [[ $boundary_failures -eq 0 ]] && pass "R4-7: dec_scratch_prepare's containment verdict equals persist_path_is_inside_root on $boundary_cases spellings"
 rm -rf "$root/.deep-review"
 
+# R5-2 the scratch write re-resolves no checked pathname.
+# Contract: no component below the root may equal `.git` in any letter case;
+# dec_scratch_write reaches the target directory by its own verified walk
+# (each component's kernel name must equal its spelling) and writes by leaf
+# name from there, so an ancestor swapped for a symlink or moved after
+# dec_scratch_prepare, or swapped between the walk's check and its `cd`,
+# makes the write fail with nothing written outside the root or into .git.
+# Cells: `.git` spellings x (selector end to end); swap after prepare, swap
+# during the walk, move before the rename x every bash on the machine.
+root="$tmp/r5-scratch"
+for spelling in .GIT/out.txt .Git/out.txt .gIT/x/out.txt sub/.GiT/out.txt .GIT; do
+	scratch_repo "$root"
+	head_before="$(cat "$root/.git/HEAD")"
+	rc=0
+	err="$(cd "$root" && "$SEL" --output "$spelling" -- src/a.py 2>&1 >/dev/null)" || rc=$?
+	if [[ $rc -eq 5 && "$err" == *"a '..', '.', empty or .git component"* && "$(cat "$root/.git/HEAD")" == "$head_before" ]] &&
+		[[ -z "$(find "$root/.git" -newer "$root/docs/decisions/20260101-scratch.md" -name 'out.txt')" ]]; then
+		pass "R5-2: --output $spelling is refused as a .git component (exit 5)"
+	else
+		fail "R5-2: --output $spelling: exit $rc, err '$err'"
+	fi
+done
+# On a case-insensitive volume a case alias of an existing directory is
+# refused by the walk itself, not only for .git.
+scratch_repo "$root"
+mkdir -p "$root/.deep-review/lenses"
+if [[ -d "$root/.DEEP-REVIEW" ]]; then
+	rc=0
+	err="$(cd "$root" && "$SEL" --output .DEEP-REVIEW/lenses/out.txt -- src/a.py 2>&1 >/dev/null)" || rc=$?
+	if [[ $rc -eq 5 && "$err" == *".DEEP-REVIEW is a link, an alias or was moved"* && ! -e "$root/.deep-review/lenses/out.txt" ]]; then
+		pass "R5-2: a case alias of an existing directory is refused by the walk"
+	else
+		fail "R5-2: case alias: exit $rc, err '$err'"
+	fi
+else
+	pass "R5-2: this volume is case-sensitive; the case-alias walk cell does not apply"
+fi
+# Function-level races, run in each bash. The child sources the guard, prepares
+# .deep-review/lenses/r/out.txt, then the cell's override (of `cd` or `cat`,
+# both of which the guard calls during the write) swaps or moves an ancestor
+# at the worst moment, and the write must fail.
+# shellcheck disable=SC2016  # the race script is evaluated by the child bash
+race_script='
+set -euo pipefail
+. "$1/lib/decisions-scratch.sh"
+root="$2" outside="$3" cell="$4"
+src="$(mktemp)"
+printf "payload\n" >"$src"
+mkdir -p "$root/.deep-review/lenses/r"
+dec_scratch_prepare "$root" "$root" "$root/.deep-review/lenses/r/out.txt" || { echo "prepare: $DEC_SCRATCH_REASON"; exit 9; }
+case "$cell" in
+after-prepare)
+	mv "$root/.deep-review/lenses" "$root/.deep-review/lenses.real"
+	ln -s "$outside" "$root/.deep-review/lenses"
+	mkdir -p "$outside/r"
+	;;
+during-walk)
+	cd() {
+		if [[ "${3:-}" == ./lenses && ! -L "$root/.deep-review/lenses" ]]; then
+			mv "$root/.deep-review/lenses" "$root/.deep-review/lenses.real"
+			ln -s "$outside" "$root/.deep-review/lenses"
+			mkdir -p "$outside/r"
+		fi
+		builtin cd "$@"
+	}
+	;;
+before-rename)
+	cat() {
+		command cat "$@"
+		mv "$root/.deep-review/lenses" "$outside/moved"
+	}
+	;;
+esac
+if dec_scratch_write "$root" "$DEC_SCRATCH_DIR" "$DEC_SCRATCH_LEAF" "$src"; then
+	echo "written"
+else
+	echo "refused: $DEC_SCRATCH_REASON"
+fi
+rm -f "$src"
+'
+for lb in "${locale_bashes[@]}"; do
+	for cell in after-prepare during-walk before-rename; do
+		scratch_repo "$root"
+		rm -rf "$outside"
+		mkdir -p "$outside"
+		got="$("$lb" -c "$race_script" _ "$REPO_ROOT/scripts" "$(cd "$root" && pwd -P)" "$(cd "$outside" && pwd -P)" "$cell" 2>&1 || true)"
+		leaked="$(find "$outside" -type f | wc -l | tr -d ' ')"
+		if [[ "$got" == refused:* && "$leaked" == 0 ]]; then
+			pass "[$lb] R5-2: an ancestor swapped or moved ($cell) refuses the write (${got#refused: }), nothing outside"
+		else
+			fail "[$lb] R5-2: $cell: '$got', $leaked file(s) outside"
+		fi
+	done
+done
+# The same child with no race writes the file, so the cells above are not
+# refusing for an unrelated reason.
+for lb in "${locale_bashes[@]}"; do
+	scratch_repo "$root"
+	rm -rf "$outside"
+	mkdir -p "$outside"
+	got="$("$lb" -c "$race_script" _ "$REPO_ROOT/scripts" "$(cd "$root" && pwd -P)" "$(cd "$outside" && pwd -P)" none 2>&1 || true)"
+	if [[ "$got" == written && "$(cat "$root/.deep-review/lenses/r/out.txt")" == payload ]] &&
+		[[ -z "$(find "$root/.deep-review" -name '.out.txt.*')" ]]; then
+		pass "[$lb] R5-2: without a race the write lands, with no temp file left"
+	else
+		fail "[$lb] R5-2: control: '$got'"
+	fi
+done
+
 # Shipping: the selector, parser and scratch guard reach all six lens-skill
 # directories and not review-gauntlet; the validator and parser, but not the
 # scratch guard, reach the three update-docs directories.
