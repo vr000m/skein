@@ -26,8 +26,11 @@
 # component matching `[A-Za-z0-9][A-Za-z0-9._-]*[.]md` (no further `/`, no
 # `.git` component, no leading `-` or `.`). Neither the path nor any ancestor
 # below <repo-root> may be a symlink, and an existing path must be a regular
-# file. Reported as `<path>: <message>`. The record graph is still validated
-# in full, so the exit status tells the two failures apart.
+# file. Reported as `<path>: <message>`. Every target is checked first, from
+# path metadata alone (lstat, never file contents): when one is unsafe the
+# script exits 3 before it reads any record or plan, so a candidate is never
+# read through a link. Only when every target is safe is the record graph
+# validated, so the exit status tells the two failures apart.
 #
 # --targets-file takes the same paths from <file> instead of the command line,
 # one per line (or NUL-delimited when the file holds a NUL), empty lines
@@ -83,6 +86,15 @@ fi
 [[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$root" && pwd -P)" || exit 2
 rc=0
+# Containment first: dec_target_problem inspects path metadata only, so an
+# unsafe target exits 3 before any record or plan is read.
+for target in "${targets[@]+"${targets[@]}"}"; do
+	if reason="$(dec_target_problem "$root" "$target")"; then
+		printf '%s: %s\n' "$target" "$reason" >&2
+		rc=3
+	fi
+done
+[[ $rc -eq 0 ]] || exit "$rc"
 # The per-record rules live in dec_validate_tree, which the selector shares.
 if dec_check_directory "$root"; then
 	dec_validate_tree "$root" || rc=1
@@ -92,10 +104,4 @@ if dec_check_directory "$root"; then
 else
 	rc=1
 fi
-for target in "${targets[@]+"${targets[@]}"}"; do
-	if reason="$(dec_target_problem "$root" "$target")"; then
-		printf '%s: %s\n' "$target" "$reason" >&2
-		rc=3
-	fi
-done
 exit "$rc"

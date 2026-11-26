@@ -302,6 +302,33 @@ root="$(fresh targets-bad-graph)"
 record "$root" 20260101-a.md draft 'src/*' none none "$PLAN"
 targets_case "an invalid record graph with safe targets exits 1" 1 "invalid Status" "$root" docs/decisions/20261125-x.md
 targets_case "an unsafe target exits 3 even when the graph is also invalid" 3 "$SHAPE" "$root" .git/hooks/pre-commit
+# Round 7 (I1): containment runs before any record is read. Every record read
+# the validator makes outside bash builtins goes through `wc` or `tr`
+# (dec_has_nul), so PATH shims that log each call observe it. The safe-target
+# run proves the probe sees record reads; the unsafe-target run must log none.
+shim="$tmp/read-shim"
+mkdir -p "$shim"
+for tool in wc tr; do
+	printf '#!/bin/sh\necho %s >>"%s/reads.log"\nexec %s "$@"\n' "$tool" "$shim" "$(command -v "$tool")" >"$shim/$tool"
+	chmod +x "$shim/$tool"
+done
+root="$(fresh targets-read-order)"
+record "$root" 20260101-sentinel.md active 'src/*' none none "$PLAN"
+for cell in safe:0:docs/decisions/20261125-x.md unsafe:3:.git/hooks/pre-commit; do
+	label="${cell%%:*}"
+	want="${cell#*:}"
+	want="${want%%:*}"
+	rm -f "$shim/reads.log"
+	rc=0
+	PATH="$shim:$PATH" "$CHECK" "$root" --targets -- "${cell##*:}" >/dev/null 2>&1 || rc=$?
+	reads=0
+	[[ -f "$shim/reads.log" ]] && reads="$(wc -l <"$shim/reads.log" | tr -d '[:space:]')"
+	if [[ "$label" == safe && $rc -eq 0 && $reads -gt 0 ]] || [[ "$label" == unsafe && $rc -eq 3 && $reads -eq 0 ]]; then
+		pass "targets: read order, $label target: exit $rc after $reads record reads"
+	else
+		fail "targets: read order, $label target: exit $rc (want $want) after $reads record reads"
+	fi
+done
 rc=0
 "$CHECK" "$root" --targets >/dev/null 2>&1 || rc=$?
 if [[ $rc -eq 2 ]]; then
