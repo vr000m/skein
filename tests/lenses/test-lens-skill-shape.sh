@@ -939,6 +939,9 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"the sequential fallback receives the same architecture input"
 		fi
 		decision_has "$dec_all" 'a plan that names no paths' "a plan with no paths is degraded coverage"
+		decision_has "$dec_all" 'a path that holds a newline cannot be one `p ` line, and its continuation line could equal `SKEIN_PATHS`' \
+			"a plan path holding a newline is never written into the here-document"
+		decision_has "$dec_all" 'treat the selection as `selector-exit=4` with `selector-output=` empty' "that path is refused with a stated exit"
 		;;
 	deep-review)
 		if [[ "$dec_mirror" == skein-codex ]]; then
@@ -961,6 +964,10 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 			decision_has "$dec_all" '"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/decisions-active\.sh --base "\$BASE" --head "\$TIP" --paths-file "\$LENS_DIR/decision-paths\.z" --output "\$DECISIONS" \|\| selector_exit=\$\?$' \
 				"the selector runs the diff and owns both scratch files, status captured"
 		fi
+		decision_lacks "$dec_all" 'case "\$(BASE|TIP)" in' "the snippet carries no ref-name allowlist of its own"
+		decision_has "$dec_all" 'The selector itself judges each value, so the snippet carries no allowlist' "the selector judges --base/--head"
+		decision_has "$dec_all" '`decisions-active.sh: --base refused: <code>`.*`empty`, `option-like` or `not-a-commit`, never the value' \
+			"a refused revision is named by a closed reason code"
 		decision_has "$dec_all" 'The selector diffs `"\$BASE\.\.\.\$TIP"` with rename detection disabled' \
 			"the resolved diff contributes both rename paths"
 		decision_has "$dec_all" 'print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch' \
@@ -1065,7 +1072,8 @@ done
 # holds the selector's stdout and nothing else; deep-review hands the
 # selector both sides of a rename, runs no selector for an empty range,
 # reports a failed diff as exit 4 with no record text, and reads its range
-# from quoted here-documents, so a hostile ref name runs nothing.
+# from quoted here-documents, so a hostile ref name runs nothing and the
+# selector (not a snippet allowlist) refuses it with exit 2.
 # dec_fence <SKILL.md> <section opener regex>: the first fence after the opener.
 dec_fence() {
 	DEC_OPENER="$2" awk '
@@ -1144,6 +1152,9 @@ dec_range() {
 		esac
 	done <<<"${1//<run_id>/decisions-shape}"
 }
+# An unrelated root commit: both revisions resolve, but `<base>...<head>` has
+# no merge base, so the selector's diff itself fails (exit 4).
+dec_orphan="$(git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid commit-tree -m orphan "$(git -C "$dec_tmp" hash-object -t tree /dev/null)")"
 dec_exec_skill=deep-review
 for dec_mirror in skein skein-codex; do
 	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
@@ -1171,6 +1182,12 @@ for dec_mirror in skein skein-codex; do
 			fail "[$dec_shell] $dec_mirror deep-review on an empty range: exit '$dec_status', block '$dec_text'"
 		fi
 		dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" missing HEAD)"
+		if [[ "$dec_status" == 2 && -z "$dec_text" ]] && grep -qxF 'decisions-active.sh: --base refused: not-a-commit' "$dec_tmp.stderr"; then
+			pass "[$dec_shell] $dec_mirror deep-review: the selector refuses a revision that names no commit (exit 2, reason on stderr)"
+		else
+			fail "[$dec_shell] $dec_mirror deep-review did not refuse an unresolvable revision (exit '$dec_status')"
+		fi
+		dec_run_snippet "$dec_mirror" "$(dec_range "$selector_snippet" "$dec_orphan" HEAD)"
 		if [[ "$dec_status" == 4 && -z "$dec_text" ]]; then
 			pass "[$dec_shell] $dec_mirror deep-review exposes path acquisition failure without record text"
 		else
@@ -1325,7 +1342,7 @@ for dec_exec_skill in deep-review review-plan; do
 				if [[ "$dec_exec_skill" == deep-review ]]; then
 					case "$dec_cell" in
 					2) selector_snippet="$(dec_range "$dec_fenced" '' HEAD)" ;;
-					4) selector_snippet="$(dec_range "$dec_fenced" missing HEAD)" ;;
+					4) selector_snippet="$(dec_range "$dec_fenced" "$dec_orphan" HEAD)" ;;
 					*) selector_snippet="$(dec_range "$dec_fenced" 'HEAD^' HEAD)" ;;
 					esac
 				else
@@ -1364,28 +1381,39 @@ rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
 [[ $dec_gate_failures -eq 0 ]] && pass "selector-output names a file exactly for exit 0 or 3 ($dec_gate_cells cells: mirror x skill x shell x {0,2,3,4,5,127})"
 dec_exec_skill=deep-review
 dec_hostile_failures=0
+# Branches the snippets' old character allowlist refused; git accepts them.
+git -C "$dec_tmp" branch -f -- 'fix#12' HEAD
+git -C "$dec_tmp" branch -f -- 'feat=x' HEAD
 for dec_mirror in skein skein-codex; do
 	dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
 	for dec_shell in "${dec_shells[@]}"; do
 		# shellcheck disable=SC2016  # the metacharacters are the test data
-		for dec_hostile in 'origin/main$(touch PWNED1)' 'a`touch PWNED2`"b' "x'\$(touch PWNED3)'" 'origin/no-such-branch'; do
-			rm -rf "${dec_tmp:?}/.deep-review" "$dec_tmp"/PWNED*
-			dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" "$dec_hostile" HEAD)"
-			dec_want=2
-			[[ "$dec_hostile" == origin/no-such-branch ]] && dec_want=4
-			if [[ "$dec_status" != "$dec_want" ]] || compgen -G "$dec_tmp/PWNED*" >/dev/null; then
-				dec_hostile_failures=$((dec_hostile_failures + 1))
-				fail "[$dec_shell] $dec_mirror deep-review: base '$dec_hostile' gave exit '$dec_status' (want $dec_want) or ran code"
-			fi
-			dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" HEAD "$dec_hostile")"
-			if [[ "$dec_status" != "$dec_want" ]] || compgen -G "$dec_tmp/PWNED*" >/dev/null; then
-				dec_hostile_failures=$((dec_hostile_failures + 1))
-				fail "[$dec_shell] $dec_mirror deep-review: head '$dec_hostile' gave exit '$dec_status' (want $dec_want) or ran code"
-			fi
+		for dec_hostile in 'origin/main$(touch PWNED1)' 'a`touch PWNED2`"b' "x'\$(touch PWNED3)'" 'origin/no-such-branch' 'fix#12' 'feat=x'; do
+			for dec_side in base head; do
+				rm -rf "${dec_tmp:?}/.deep-review" "$dec_tmp"/PWNED*
+				if [[ "$dec_side" == base ]]; then
+					dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" "$dec_hostile" HEAD)"
+				else
+					dec_run_snippet "$dec_mirror" "$(dec_range "$dec_fenced" HEAD "$dec_hostile")"
+				fi
+				dec_ok=1
+				compgen -G "$dec_tmp/PWNED*" >/dev/null && dec_ok=0
+				case "$dec_hostile" in
+				'fix#12' | 'feat=x') [[ "$dec_status" == 0 ]] || dec_ok=0 ;;
+				*)
+					[[ "$dec_status" == 2 ]] || dec_ok=0
+					grep -qxF "decisions-active.sh: --$dec_side refused: not-a-commit" "$dec_tmp.stderr" || dec_ok=0
+					;;
+				esac
+				if [[ $dec_ok -ne 1 ]]; then
+					dec_hostile_failures=$((dec_hostile_failures + 1))
+					fail "[$dec_shell] $dec_mirror deep-review: $dec_side '$dec_hostile' gave exit '$dec_status' ($(cat "$dec_tmp.stderr")) or ran code"
+				fi
+			done
 		done
 	done
 done
-[[ $dec_hostile_failures -eq 0 ]] && pass "deep-review range values are data: hostile ref names run nothing and exit 2, an ordinary missing ref reaches the selector (exit 4), bash and zsh"
+[[ $dec_hostile_failures -eq 0 ]] && pass "deep-review range values are data: hostile and missing ref names run nothing and the selector refuses them (exit 2, not-a-commit); fix#12 and feat=x reach it and select, bash and zsh"
 rm -rf "${dec_tmp:?}/.deep-review" "${dec_tmp:?}/.review-plan" "$dec_tmp.rp-none" "$dec_tmp.rp-paths" "$dec_tmp.stderr"
 # The decision-records paragraph and snippet are the same text in both
 # deep-review mirrors, apart from the selector anchor and the banner link.
