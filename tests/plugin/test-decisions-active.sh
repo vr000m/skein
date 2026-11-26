@@ -451,8 +451,8 @@ split_rows=(
 	"k[[:digit:],]z, m|k[[:digit:],]z${TAB}m|kaz"
 	"k[[:digit:],]z, m|k[[:digit:],]z${TAB}m|m"
 	"docs/x\\,y.md|docs/x\\,y.md|docs/x,y.md"
-	"lit[x, src/*|lit[x${TAB}src/*|lit[x"
-	"lit[x, src/*|lit[x${TAB}src/*|src/a"
+	"lit\\[x, src/*|lit\\[x${TAB}src/*|lit[x"
+	"lit\\[x, src/*|lit\\[x${TAB}src/*|src/a"
 	"q[\\],]r, s|q[\\],]r${TAB}s|q,r"
 	"q[\\],]r, s|q[\\],]r${TAB}s|q]r"
 	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/foo "
@@ -1176,6 +1176,119 @@ for ((gi = 0; gi < 600; gi++)); do
 	done
 done
 [[ $diff_failures -eq 0 ]] && pass "R4-4: glob_match equals bash [[ == ]] on $diff_cases generated glob/path pairs"
+
+# R5-1 glob_match equals `[[ $path == $glob ]]` on bash 3.2 and on bash 5.
+# Contract: for every glob dec_glob_problem accepts and every path, glob_match
+# and bash's own matcher give the same verdict under the default bash and
+# /bin/bash, and the two bashes give the same verdict as each other. The
+# dialect drops the shapes they read differently: each finding's glob below
+# must be refused by the validator under both bashes. Cells: generated globs
+# over every bracket shape the dialect keeps (classes, `!`/`^` negation, `]`
+# first, ranges, escapes inside and outside brackets) x random paths and paths
+# instantiated from the glob, so both verdicts occur.
+# shellcheck disable=SC1003  # backslashes are the test data
+r5_atoms=('a' 'b' '/' '.' '-' '!' '^' ':' '=' ']' '\\' '*' '?' '[ab]' '[!a]' '[^a]' '[]a]' '[!]a]' '[^]a]' '[a-c]' '[c-a]' '[-a]' '[a-]' '[]-a]' '[[:alpha:]]' '[[:digit:]a]' '[![:alpha:]]' '[[:upper:][:lower:]]' '[[:alpha:]-z]' '[\]]' '[a\]' '[\a]' '[\-]' '[a\-c]' '\*' '\?' '\[' '\]' '\a' '[*]' '[?]' '[[]' '[[a]' '[a[]' '[!-]' '[]]' '[a:]' '[:]' '[=]' '[.]' '[' '\' '[[:' '[[=' '[[.a.]]' '-[:digit:]]')
+# shellcheck disable=SC1003  # backslashes are the test data
+r5_path_atoms=('a' 'b' 'c' '/' '.' '-' '!' '^' ':' '=' ']' '[' '\' '*' '?' '1' 'A' 'x')
+r5_pairs="$tmp/r5-pairs"
+: >"$r5_pairs"
+RANDOM=5150
+r5_globs=0
+for ((gi = 0; gi < 500; gi++)); do
+	glob=""
+	stars=0
+	for ((k = 0; k < 1 + RANDOM % 6; k++)); do
+		atom="${r5_atoms[RANDOM % ${#r5_atoms[@]}]}"
+		if [[ "$atom" == '*' ]]; then
+			[[ $stars -lt 4 && "$glob" != *'*' ]] || continue
+			stars=$((stars + 1))
+		fi
+		glob+="$atom"
+	done
+	[[ -n "$glob" ]] || continue
+	dec_glob_problem "$glob" >/dev/null && continue
+	r5_globs=$((r5_globs + 1))
+	for ((pi = 0; pi < 12; pi++)); do
+		p=""
+		if ((pi % 2)); then
+			for ((k = 0; k < RANDOM % 9; k++)); do
+				p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
+			done
+		else
+			# Instantiate: each atom of the glob becomes a byte it may match.
+			k=0
+			while ((k < ${#glob})); do
+				c="${glob:k:1}"
+				if [[ "$c" == "\\" ]]; then
+					p+="${glob:k+1:1}"
+					k=$((k + 2))
+				elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$k"; then
+					inner="${glob:k+1:_dec_end-k-1}aA1:"
+					p+="${inner:RANDOM%${#inner}:1}"
+					k=$((_dec_end + 1))
+				elif [[ "$c" == '*' ]]; then
+					for ((j = 0; j < RANDOM % 3; j++)); do
+						p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
+					done
+					k=$((k + 1))
+				elif [[ "$c" == '?' ]]; then
+					p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
+					k=$((k + 1))
+				else
+					p+="$c"
+					k=$((k + 1))
+				fi
+			done
+		fi
+		printf '%s\0%s\0' "$glob" "$p" >>"$r5_pairs"
+	done
+done
+# The runner prints, per pair, bash's verdict then glob_match's.
+# shellcheck disable=SC2016  # the runner is evaluated by each bash
+r5_runner='. "$1/scripts/lib/decisions-common.sh"
+eval "$(sed -n "/^glob_segments()/,/^}/p;/^glob_match()/,/^}/p" "$1/scripts/decisions-active.sh")"
+export LC_ALL=C
+while IFS= read -r -d "" g && IFS= read -r -d "" p; do
+	w=1
+	m=1
+	[[ "$p" == $g ]] && w=0
+	glob_match "$p" "$g" && m=0
+	printf "%s %s\n" "$w" "$m"
+done <"$2"'
+r5_ref=""
+r5_failures=0
+for lb in "${locale_bashes[@]}"; do
+	r5_out="$("$lb" -c "$r5_runner" _ "$REPO_ROOT" "$r5_pairs")"
+	r5_self="$(grep -c -v -E '^(0 0|1 1)$' <<<"$r5_out" || true)"
+	r5_hits="$(grep -c '^0 0$' <<<"$r5_out" || true)"
+	r5_rows="$(wc -l <<<"$r5_out" | tr -d '[:space:]')"
+	if [[ "$r5_self" -eq 0 && "$r5_hits" -gt 0 && "$r5_hits" -lt "$r5_rows" ]]; then
+		pass "[$lb] R5-1: glob_match equals [[ == ]] on $r5_rows pairs over $r5_globs accepted globs ($r5_hits matches)"
+	else
+		r5_failures=$((r5_failures + 1))
+		fail "[$lb] R5-1: $r5_self of $r5_rows pairs differ (matches: $r5_hits)"
+	fi
+	if [[ -z "$r5_ref" ]]; then
+		r5_ref="$r5_out"
+	elif [[ "$r5_out" != "$r5_ref" ]]; then
+		r5_failures=$((r5_failures + 1))
+		fail "[$lb] R5-1: the verdicts differ from ${locale_bashes[0]}'s on the same pairs"
+	fi
+done
+[[ ${#locale_bashes[@]} -lt 2 || $r5_failures -gt 0 ]] || pass "R5-1: ${locale_bashes[*]} give the same verdict on every pair"
+# The reported cells: each glob is refused under both bashes, so the
+# matcher never sees it.
+# shellcheck disable=SC1003  # backslashes are the test data
+for g in 'src/*[[=a=]]' '[[=a=]]\[*]' '[[=a=]][]a]*' '-][:*-' ':/[a-*b' '*\' 'x\' '[[.a.]]' '[a[:b]' '[[:alpha:][[:]' '[a-[:digit:]]'; do
+	for lb in "${locale_bashes[@]}"; do
+		# shellcheck disable=SC2016  # $1 and $2 belong to the child bash
+		if "$lb" -c '. "$1/scripts/lib/decisions-common.sh"; dec_glob_problem "$2" >/dev/null' _ "$REPO_ROOT" "$g"; then
+			pass "[$lb] R5-1: '$g' is outside the dialect"
+		else
+			fail "[$lb] R5-1: '$g' is accepted"
+		fi
+	done
+done
 
 # R4-5 header parsing is byte-wise and keeps an escaped trailing space.
 # Contract: validator and selector give the same verdict for the same record

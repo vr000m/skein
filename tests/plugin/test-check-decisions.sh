@@ -162,11 +162,32 @@ glob_scan_rows=(
 	"ok|x[**]y"
 	"ok|src/\\*\\(x).py"
 	"ok|docs/[{]a[}].md"
-	"fail|a[?(b|extended patterns are not supported"
+	"fail|a\\[?(b|extended patterns are not supported"
 	"fail|[ab]?(x)|extended patterns are not supported"
 	"fail|x[*]**|'**' is not supported"
 	"fail|[{]{a,b}|braces are not supported"
+	"ok|lit\\[x, docs/x\\\\"
+	"ok|[[:alpha:]]x, [[:upper:][:lower:]]y, [[:alpha:]-z]"
+	"ok|q[\\]]r, q[a\\]r, [!]a]b, [^]a]c"
+	"fail|src/*[[=a=]]|an equivalence class or collating symbol"
+	"fail|x[[.a.]]|an equivalence class or collating symbol"
+	"fail|x[a[=]y|an equivalence class or collating symbol"
+	"fail|src/[a|an unclosed '['"
+	"fail|-][:*-|an unclosed '['"
+	"fail|:/[a-*b|an unclosed '['"
+	"fail|[[:alpha:]|an unclosed '['"
+	"fail|*\\|a trailing unpaired backslash"
+	"fail|x\\\\\\|a trailing unpaired backslash"
+	"fail|[[:foo:]]|is not a POSIX character class outside a range"
+	"fail|[a[:b]|is not a POSIX character class outside a range"
+	"fail|[a-[:digit:]]|is not a POSIX character class outside a range"
 )
+# Round 5: the dialect drops the shapes bash 3.2, bash 5 and the selector's
+# star-splitting matcher read differently (unclosed `[`, a trailing lone
+# backslash, `[=` / `[.`, a `[:` that is not a POSIX class or ends a range).
+# Each row is judged by the validator under the default bash and /bin/bash.
+glob_bashes=(bash)
+[[ -x /bin/bash ]] && glob_bashes+=(/bin/bash)
 for row in "${glob_scan_rows[@]}"; do
 	verdict="${row%%|*}"
 	rest="${row#*|}"
@@ -178,6 +199,15 @@ for row in "${glob_scan_rows[@]}"; do
 	else
 		expect_fail "bracket-aware dialect scan rejects '$glob'" "$root" "${rest#*|}"
 	fi
+	want=0
+	[[ "$verdict" == ok ]] || want=1
+	for gb in "${glob_bashes[@]}"; do
+		grc=0
+		"$gb" "$CHECK" "$root" >/dev/null 2>&1 || grc=$?
+		if [[ $grc -ne $want ]]; then
+			fail "[$gb] dialect verdict for '$glob': exit $grc, want $want"
+		fi
+	done
 done
 
 root="$(fresh glob-empty-entry)"

@@ -51,8 +51,10 @@
 # globs matches any path, with bash `[[ $path == $glob ]]` semantics (`*`
 # crosses `/`). Matching runs under LC_ALL=C, so a range such as `[a-c]` and
 # `?` match bytes, case-sensitively, in every locale and bash version. A glob
-# has at most four `*` (dec_glob_problem), and the match never hands bash a
-# pattern holding one: the glob is split at its stars and each star-free
+# has at most four `*`, and no unclosed `[`, trailing lone backslash, `[=`,
+# `[.` or non-POSIX `[:` in a bracket expression (dec_glob_problem refuses the
+# shapes bash 3.2 and bash 5 read differently). The match never hands bash a
+# pattern holding a star: the glob is split at its stars and each star-free
 # segment is matched at its leftmost position, so the time is linear in the
 # path's length per segment rather than its length raised to the star count.
 # Superseded records are never printed.

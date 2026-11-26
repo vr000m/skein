@@ -194,15 +194,24 @@ dec_header() {
 
 # dec_glob_problem <glob>: prints why a single `Applies to` glob is outside the
 # supported dialect (bash pattern, `*` crosses `/`, no `**`, at most
-# DEC_MAX_STARS `*`, no braces, no extended patterns) and returns 0; returns 1
-# when the glob is supported. The star cap bounds matching cost: bash's
-# matcher backtracks, so its time grows with a path's length raised to the
-# number of stars, and the validator and the selector refuse such a record
-# together.
+# DEC_MAX_STARS `*`, no braces, no extended patterns, every `[` closed, no
+# `[=c=]`, `[.c.]` or `[:` other than a POSIX class `[:name:]` that does not
+# follow a `-` inside a bracket expression, no trailing unpaired backslash)
+# and returns 0; returns 1 when the glob is supported. The star cap
+# bounds matching cost: bash's matcher backtracks, so its time grows with a
+# path's length raised to the number of stars, and the validator and the
+# selector refuse such a record together.
 # `[[ == ]]` honours `?( *( +( @( !(` even with `shopt -u extglob`, so the
 # dialect rejects them rather than trusting the shell option. The scan is the
 # splitter's: a character after a backslash or inside a bracket expression
 # (`file[?(].txt`, `x[**]y`) is a literal member, never an operator.
+# The last four rules keep the dialect to shapes every bash reads the same
+# way, so the selector's star-splitting matcher (glob_match) can equal
+# `[[ $path == $glob ]]` on bash 3.2 and on bash 5: an unclosed `[`, a
+# trailing lone backslash, an equivalence class or collating symbol and a
+# `[:` that opens no POSIX class are each read differently by bash 3.2, bash 5
+# or a matcher that splits at stars.
+# Write `\[` for a literal `[` and `\\` for a literal backslash.
 DEC_MAX_STARS=4
 dec_glob_problem() {
 	local glob="$1" i=0 n c next stars=0
@@ -216,9 +225,23 @@ dec_glob_problem() {
 		c="${glob:i:1}"
 		next="${glob:i+1:1}"
 		if [[ "$c" == "\\" ]]; then
+			if ((i + 1 >= n)); then
+				printf "a trailing unpaired backslash in '%s'\n" "$glob"
+				return 0
+			fi
 			i=$((i + 2))
 			continue
-		elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$i"; then
+		elif [[ "$c" == '[' ]]; then
+			if ! _dec_bracket_end "$glob" "$i"; then
+				printf "an unclosed '[' in '%s' (write '\\[' for a literal one)\n" "$glob"
+				return 0
+			elif [[ $_dec_collating -eq 1 ]]; then
+				printf "an equivalence class or collating symbol ('[=' or '[.') in '%s'\n" "$glob"
+				return 0
+			elif [[ $_dec_badclass -eq 1 ]]; then
+				printf "a '[:' that is not a POSIX character class outside a range in '%s'\n" "$glob"
+				return 0
+			fi
 			i=$((_dec_end + 1))
 			continue
 		elif [[ "$c" == '*' && "$next" == '*' ]]; then
@@ -411,9 +434,16 @@ _dec_emit_glob() {
 # that closes the bracket expression bash reads there, and returns 0. A `]`
 # right after `[`, `[!` or `[^` is a member, a backslash quotes the next
 # character, and `[:class:]`, `[=c=]` and `[.c.]` are one member each. Returns 1
-# for an unclosed `[`, which bash matches literally.
+# for an unclosed `[`, which bash matches literally. For dec_glob_problem, it
+# sets _dec_collating to 1 when an unescaped `[=` or `[.` opens inside the
+# expression (closed or not), and _dec_badclass to 1 when an unescaped `[:`
+# does not open one of the twelve POSIX classes `[:name:]` or follows a `-`
+# (bash reads `[a-[:digit:]]` as a range ending at `[`); each is 0 otherwise.
+DEC_GLOB_CLASSES='alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit'
 _dec_bracket_end() {
 	local text="$1" j=$(($2 + 1)) n=${#1} c rest
+	_dec_collating=0
+	_dec_badclass=0
 	c="${text:j:1}"
 	if [[ "$c" == '!' || "$c" == '^' ]]; then
 		j=$((j + 1))
@@ -430,6 +460,11 @@ _dec_bracket_end() {
 			j=$((j + 2))
 		elif [[ "$c" == '[' && ("${text:j+1:1}" == ':' || "${text:j+1:1}" == '=' || "${text:j+1:1}" == '.') ]]; then
 			c="${text:j+1:1}"
+			if [[ "$c" != ':' ]]; then
+				_dec_collating=1
+			elif [[ "${text:j-1:1}" == - || ! "${text:j+2}" =~ ^($DEC_GLOB_CLASSES):\] ]]; then
+				_dec_badclass=1
+			fi
 			rest="${text:j+2}"
 			if [[ "$rest" == *"$c]"* ]]; then
 				rest="${rest%%"$c]"*}"
