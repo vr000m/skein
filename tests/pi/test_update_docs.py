@@ -295,6 +295,38 @@ def test_plan_name_checked_before_any_preflight():
     assert step1 < check < containment
 
 
+def test_plan_contained_before_any_read_for_the_audit():
+    """Round 6: containment precedes every read of the plan, audit included.
+
+    The plan-name check and a `--targets-file` preflight over the plan path
+    come before section 1 gathers the plan or fills `relevant_plan`, and
+    before section 2 sends it; a refusal sends no plan.
+    """
+    text = SKILL.read_text()
+    section1 = text.index("## 1. Gather bounded evidence")
+    check = text.index(PLAN_NAME_CHECK, section1)
+    preflight = text.index(
+        "run the installed bundled `scripts/check-decisions.sh --targets-file -` "
+        "with `docs/dev_plans/<plan file>` as the only line of a quoted "
+        "`<<'SKEIN_TARGETS'` here-document, never on the command line",
+        check,
+    )
+    gather = text.index(
+        "Gather the diff and, only once that preflight clears it, at most the "
+        "relevant active development plan",
+        preflight,
+    )
+    candidates = text.index("include both the plan's `### Architecture Decisions`")
+    audit = text.index("## 2. Request one read-only audit")
+    assert section1 < check < preflight < gather < candidates < audit
+    assert text.index("relevant_plan") > preflight
+    assert (
+        "On any other exit (`3`: the plan is a symlink or sits under one) read nothing from it"
+        in text
+    )
+    assert "send no plan: leave `relevant_plan_path` and `relevant_plan` empty" in text
+
+
 def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):
     scripts = ROOT / "plugins/skein-pi/skills/update-docs/scripts"
     writer = ROOT / "plugins/skein-pi/skills/review-plan/scripts/write-review-marker.py"
