@@ -272,8 +272,14 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
         "checks each path-source command succeeds",
         "Decision records: read from the checked-out tree, not the reviewed head",
         "`--continue` remains unsupported",
+        "The selector itself judges each value, so the snippet carries no allowlist",
+        "untracked and ignored files are not, and the selector still reads records from them",
+        "`decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope`",
+        "Decision records: untracked or ignored records under docs/decisions are outside the reviewed scope",
     ):
         assert phrase in text
+    assert 'case "$BASE" in' not in text and 'case "$TIP" in' not in text
+    assert "does not fire here" not in text
     exercise_decision_selection(SKILL, tmp_path)
 
 
@@ -347,7 +353,9 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
     ), "a rename must give the selector both its source and destination"
     assert select(BASE="HEAD", TIP="HEAD") == 0
     assert paths_file.read_bytes() == b"", "no changed path is an empty selection"
-    assert select(BASE="invalid-ref", TIP="HEAD") == 4
+    assert select(BASE="invalid-ref", TIP="HEAD") == 2, "the selector refuses it"
+    git("branch", "-f", "--", "fix#12", "HEAD^")
+    assert select(BASE="fix#12", TIP="HEAD") == 0, "a ref the old allowlist refused"
     shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
     hostile = ["main$(touch pwned1)", 'a`touch pwned2`"b', "x'$(touch pwned3)'", ""]
     for shell in shells:

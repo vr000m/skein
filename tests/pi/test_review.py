@@ -177,6 +177,16 @@ def assert_decision_packet_contract(skill, category):
     assert "<<'SKEIN_PATHS' || selector_exit=$?" in section
     assert 'exec "$1"' not in section, "no path may reach the selector's argv"
     assert "Never write the path list yourself" in section
+    # Round 5: a newline in a plan path could end the here-document, so the
+    # path is never written and the selection is a stated exit 4.
+    assert (
+        "a path that holds a newline cannot be one `p ` line, and its continuation line could equal `SKEIN_PATHS`"
+        in section
+    )
+    assert (
+        "treat the selection as `selector-exit=4` with `selector-output=` empty"
+        in section
+    )
     for forbidden in ("mapfile", "readarray", "${var,,}"):
         assert forbidden not in section
 
