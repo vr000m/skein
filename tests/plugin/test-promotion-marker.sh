@@ -327,6 +327,7 @@ check_mirror() {
 		"check each file name (the source plan's, the new record's and a superseded record's) against \`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md\$\`"
 	expect_text "$name: reports a plan link to a missing record" "$section" '`broken partial promotion: <link>`'
 	run_step1_guard "$name" "$section"
+	run_step1_containment "$name" "$section" 'only with your file-read and file-search (glob) tools'
 	expect_text "$name: reports an orphan record and offers only its link" "$section" \
 		'report it as `already exists, link missing`, never draft a second record for it, and offer only its missing link line'
 	expect_text "$name: step 7 compares the signed-prefix digest" "$section" \
@@ -381,7 +382,8 @@ check_mirror() {
 		fail "$name: the snapshot does not precede the first write ($save_at, $first_at)"
 	fi
 	expect_text "$name: rolls back on a failed or partial write, validation or digest change" "$validate_step" \
-		'If a write fails or stops part-way, the validator exits non-zero, the step 5 check prints anything but `valid`, or the digest differs, restore every saved file to its saved bytes, delete every path this promotion created'
+		'If a write fails or stops part-way, the validator exits non-zero, the step 5 check prints anything but `valid`, the digest differs, or a link-only promotion'"'"'s record is gone, restore every saved file to its saved bytes, delete every path this promotion created'
+	run_link_only_guard "$name" "$section"
 	expect_text "$name: offers nothing further after a rollback" "$validate_step" 'offer nothing further in this invocation'
 	expect_text "$name: an interrupted supersession blocks the next preflight" "$validate_step" \
 		'the next step 3 preflight exits `1` and offers nothing until the records are repaired'
@@ -715,15 +717,71 @@ run_marker_integrity() {
 # first use (`a link whose record file does not exist`), and its regex is the
 # validator's.
 run_step1_guard() {
-	local name="$1" section="$2" guard rule
+	local name="$1" section="$2" shell_rule="${3:-only with your file-read and file-search (glob) tools, never with a shell command}" guard rule
 	guard='each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `'
 	rule="^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$"
 	# shellcheck disable=SC2016  # literal skill text
-	if [[ "$section" == *"$guard$rule\`"*"only with your file-read and file-search (glob) tools, never with a shell command"*"a link whose record file does not exist"* ]]; then
+	if [[ "$section" == *"$guard$rule\`"*"$shell_rule"*"a link whose record file does not exist"* ]]; then
 		pass "$name: step 1 checks link targets and record names (DEC_TARGET_NAME) before any use, existence via file tools only"
 	else
 		fail "$name: step 1 uses a link target or record name before the DEC_TARGET_NAME check, or allows a shell existence check"
 	fi
+}
+
+# run_step1_containment <name> <section> <listing phrase> [<read phrase>]:
+# round 5. Contract:
+# step 1 lists record names without reading them (the listing phrase), runs
+# the containment preflight over the plan and those records, and only then
+# reads the plan or a record; an exit 3 reads nothing. Order: listing <
+# preflight < first read of the plan.
+run_step1_containment() {
+	local name="$1" section="$2" listing="$3" reading="${4:-read the plan file itself}" step1 list_at pre_at read_at
+	step1="$(grep -F -- '1. ' <<<"$section" | grep -F -- 'Gather candidates' | head -1 || true)"
+	list_at="$(grep -bo -F -- "$listing" <<<"$step1" | head -1 | cut -d: -f1 || true)"
+	pre_at="$(grep -bo -F -- 'before reading the plan or any record, run the step 3 preflight' <<<"$step1" | head -1 | cut -d: -f1 || true)"
+	read_at="$(grep -bo -F -- "$reading" <<<"$step1" | head -1 | cut -d: -f1 || true)"
+	if [[ -n "$list_at" && -n "$pre_at" && -n "$read_at" ]] && ((list_at < pre_at && pre_at < read_at)) &&
+		[[ "$step1" == *'exit `3` means a listed path is a symlink or sits under one, so read none of the listed files'* ]]; then
+		pass "$name: step 1 lists names, runs the containment preflight, then reads the plan and records"
+	else
+		fail "$name: step 1 reads a candidate before the containment preflight ($list_at, $pre_at, $read_at)"
+	fi
+}
+
+# run_link_only_guard <name> <section>: round 5. Contract: a link-only offer
+# preflights its existing record, and confirms the record still exists (and
+# names this plan) before the offer, immediately before the write and after
+# it, rolling back when it is gone, so approval cannot add a dangling link.
+run_link_only_guard() {
+	local name="$1" section="$2" ok=1 needle
+	for needle in \
+		'A link-only offer lists its existing record in place of `<new file>`' \
+		'offer nothing unless it still exists and its `Source plan` is still this plan' \
+		'For a link-only offer, immediately before the write, read the linked record again' \
+		'after a link-only write also read the linked record once more: it must still exist'; do
+		if [[ "$section" != *"$needle"* ]]; then
+			ok=0
+			fail "$name: link-only guard missing: $needle"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "$name: a link-only offer re-checks its record before the offer, before the write and after it"
+}
+
+# run_link_only_guard_pi: Pi's wording of the same link-only contract.
+run_link_only_guard_pi() {
+	local text ok=1 needle
+	text="$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")"
+	for needle in \
+		'a link-only offer lists its existing record in place of the new record' \
+		'offer nothing unless it still exists and its `Source plan` is still this plan' \
+		'For a link-only offer, immediately before the write, read the linked record again' \
+		'after a link-only write also read the linked record once more: it must still exist'; do
+		if [[ "$text" != *"$needle"* ]]; then
+			ok=0
+			fail "pi: link-only guard missing: $needle"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "pi: a link-only offer re-checks its record before the offer, before the write and after it"
 }
 
 # run_name_rule <name> <SKILL.md>: the skill's file-name regex is the
@@ -755,7 +813,9 @@ if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
 	run_write_order pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '5. Write exactly the individually approved offer'
 	run_name_rule pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
-	run_step1_guard pi "$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")"
+	run_step1_guard pi "$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")" 'Read files only with your read tool, never with a shell command'
+	run_step1_containment pi "$(awk '/^## 4\. Decision Promotion/{on=1} on' "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" | sed 's/^1\. Verify the live source path/1. Gather candidates: verify the live source path/')" '`ls -1A -- docs/decisions`' 'Then read the plan.'
+	run_link_only_guard_pi
 fi
 if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	check_mirror codex skein-codex '"$SKILL_DIR"/scripts/check-decisions.sh'
