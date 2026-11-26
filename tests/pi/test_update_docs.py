@@ -340,37 +340,54 @@ def test_containment_is_the_first_action_after_approval():
 
 
 def test_plan_contained_before_any_read_for_the_audit():
-    """Round 6: containment precedes every read of the plan, audit included.
+    """Rounds 6 and 8: containment precedes every read of the plan.
 
-    The plan-name check and a `--targets-file` preflight over the plan path
-    come before section 1 gathers the plan or fills `relevant_plan`, and
-    before section 2 sends it; a refusal sends no plan.
+    Round 8 made the `--targets-file` preflight over the plan path the Plan
+    Name Gate's last step, so it precedes section 1's snapshot, the audit's
+    `relevant_plan` and section 4's promotion reads; a refusal (`unsafe plan`)
+    sends no plan and reads nothing from it.
     """
     text = SKILL.read_text()
-    section1 = text.index("## 1. Gather bounded evidence")
     gate = text.index(PLAN_NAME_GATE)
-    check = text.index("The plan has passed the Plan Name Gate above.", section1)
-    preflight = text.index(
-        "run the installed bundled `scripts/check-decisions.sh --targets-file -` "
-        "with `docs/dev_plans/<plan file>` as the only line of a quoted "
-        "`<<'SKEIN_TARGETS'` here-document, never on the command line",
-        check,
+    containment = text.index(
+        "The gate's last step contains the plan, before anything reads it: once "
+        "the name passes, from the repo root, run the installed bundled "
+        "`scripts/check-decisions.sh --targets-file -` with "
+        "`docs/dev_plans/<plan file>` as the only line of a quoted "
+        "`<<'SKEIN_TARGETS'` here-document, never on the command line.",
+        gate,
+    )
+    section1 = text.index("## 1. Gather bounded evidence")
+    pointer = text.index(
+        "The relevant plan has passed the Plan Name Gate above, its containment "
+        "check included; a plan that failed it is never read",
+        section1,
     )
     gather = text.index(
-        "Gather the diff and, only once that preflight clears it, at most the "
+        "Gather the diff and, only for a plan that passed the gate, at most the "
         "relevant active development plan",
-        preflight,
+        pointer,
     )
     candidates = text.index("include both the plan's `### Architecture Decisions`")
     audit = text.index("## 2. Request one read-only audit")
-    assert gate < section1 < check < preflight < gather < candidates < audit
-    # The gate above section 1 names `relevant_plan` only to leave it empty.
-    assert text.index("relevant_plan", section1) > preflight
+    promotion = text.index("## 4. Decision Promotion")
+    assert gate < containment < section1 < pointer < gather < candidates < audit
+    assert containment < promotion
+    gate_text = text[containment:section1]
     assert (
-        "On any other exit (`3`: the plan is a symlink or sits under one) read nothing from it"
-        in text
+        "On any other exit (`3`: the plan is a symlink or sits under one) the plan "
+        "is unsafe: report it as `unsafe plan`, read nothing from it" in gate_text
     )
-    assert "send no plan: leave `relevant_plan_path` and `relevant_plan` empty" in text
+    assert (
+        "send no plan to the audit (leave `relevant_plan_path` and `relevant_plan` empty)"
+        in gate_text
+    )
+    # Every read after the gate names it; no second containment copy remains.
+    assert "Contain the relevant plan before reading any of it" not in text
+    assert (
+        "The plan has already passed the Plan Name Gate, its containment check "
+        "included" in text[promotion:]
+    )
 
 
 def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):

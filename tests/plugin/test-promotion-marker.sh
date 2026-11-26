@@ -786,6 +786,70 @@ run_gate_first() {
 	[[ $ok -eq 1 ]] && pass "$name: the Plan Name Gate precedes every shell use of a plan name ($#)"
 }
 
+# gate_fence <plugin>: the first fence in the mirror's Plan Name Gate.
+gate_fence() {
+	awk '
+		/^## Plan Name Gate$/ { gate = 1; next }
+		gate && /^## / { exit }
+		gate && /^```/ && !code { code = 1; next }
+		code && /^```$/ { exit }
+		code { print }
+	' "$REPO_ROOT/plugins/$1/skills/update-docs/SKILL.md" | sed "s#\${CLAUDE_PLUGIN_ROOT}#$REPO_ROOT/plugins/$1#g"
+}
+
+# run_gate_containment <name> <plugin>: round 8 (I1). Contract: the Plan Name
+# Gate's last step is the containment preflight over the plan path, so it
+# precedes every read of the plan (Phase 4's marker classifier, Decision
+# Promotion); a plan it refuses is `unsafe plan` and is never read. Executed:
+# the gate's own fence over a `feature.md` symlink to a signed plan outside
+# the tree exits 3, so the classifier never runs and the marker stays unread;
+# over a real plan it exits 0 and the classifier runs.
+run_gate_containment() {
+	local name="$1" plugin="$2" skill whole gate_end check_at fence_at at needle ok=1 fence root shape rc out
+	skill="$REPO_ROOT/plugins/$plugin/skills/update-docs/SKILL.md"
+	whole="$(cat "$skill")"
+	check_at="$(offset_of "$whole" "Check the plan's own file name against")"
+	fence_at="$(offset_of "$whole" "--targets-file - <<'SKEIN_TARGETS'")"
+	gate_end="$(offset_of "$whole" '## Phases 1')"
+	if [[ -z "$check_at" || -z "$fence_at" || -z "$gate_end" ]] || ((fence_at < check_at || fence_at > gate_end)) ||
+		[[ "$whole" != *"The gate's last step contains the plan, before anything reads it"* ]] ||
+		[[ "$whole" != *'report it as `unsafe plan`, read nothing from it (no marker classification, no snapshot, no candidate)'* ]] ||
+		[[ "$whole" != *'A plan passes the gate only when its name and this containment check both pass'* ]]; then
+		fail "$name: the Plan Name Gate does not end with the containment preflight ($check_at, $fence_at, $gate_end)"
+		return
+	fi
+	for needle in 'use the marker classifier below' 'python3 -I -B -S' '## Decision Promotion' 'Read no candidate file before this preflight clears it'; do
+		at="$(offset_of "$whole" "$needle")"
+		if [[ -z "$at" ]] || ((at < fence_at)); then
+			ok=0
+			fail "$name: '$needle' (at ${at:-absent}) precedes the gate's containment (at $fence_at)"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "$name: the gate's containment precedes the classifier and every promotion read"
+	fence="$(gate_fence "$plugin")"
+	fence="${fence//<plan file>/feature.md}"
+	for shape in linked real; do
+		root="$tmp/gate-$name-$shape"
+		mkdir -p "$root/docs/dev_plans"
+		if [[ "$shape" == linked ]]; then
+			ln -s "$tmp/valid.md" "$root/docs/dev_plans/feature.md"
+		else
+			cp "$tmp/valid.md" "$root/docs/dev_plans/feature.md"
+		fi
+		rc=0
+		(cd "$root" && SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" bash -e <<<"$fence" >/dev/null 2>&1) || rc=$?
+		out=""
+		if [[ $rc -eq 0 || $rc -eq 1 ]]; then
+			out="$(cd "$root" && PLAN=docs/dev_plans/feature.md SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" bash -e <<<"$(classifier_script "$plugin")" 2>&1 | head -1)"
+		fi
+		if { [[ "$shape" == linked && $rc -eq 3 && -z "$out" ]] || [[ "$shape" == real && $rc -eq 0 && "$out" == valid ]]; }; then
+			pass "$name: the gate over a $shape feature.md exits $rc and the classifier ${out:-never runs}"
+		else
+			fail "$name: the gate over a $shape feature.md exits $rc, classifier printed '$out'"
+		fi
+	done
+}
+
 # run_contain_after_approval <name> <SKILL.md> <step opener> <next step opener>
 # <first action> <read>...: round 7. Contract: after approval the repeated
 # containment preflight is the first action of the step, before every read of
@@ -886,6 +950,7 @@ if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
 	run_gate_first claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" '"$PLAN"' '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'use the marker classifier below' '## Decision Promotion'
 	run_contain_after_approval claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" "${CC_STEP5[@]}"
+	run_gate_containment claude skein
 	run_gate_first pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'run the step 3 preflight' '## 1. Gather bounded evidence' '## 4. Decision Promotion'
 	run_contain_after_approval pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '4. After approval' '5. Write exactly' \
 		'first re-run the step 3 `--targets-file` preflight over the same paths, before re-reading the live source plan or any offered target' \
@@ -905,6 +970,7 @@ if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	run_name_rule codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
 	run_gate_first codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" '"$PLAN"' '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'use the marker classifier below' '## Decision Promotion'
 	run_contain_after_approval codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" "${CC_STEP5[@]}"
+	run_gate_containment codex skein-codex
 fi
 
 echo "---"
