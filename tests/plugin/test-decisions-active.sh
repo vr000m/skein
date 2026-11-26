@@ -741,6 +741,30 @@ else
 	chmod 644 "$unreadable"
 fi
 
+# R6-4 an unsearchable docs/ is not an absent decisions folder. Contract: with
+# docs/ at mode 000, the selector exits 3 and the validator 1, both naming the
+# unreadable decisions directory, never exit 0 with an empty selection.
+if [[ "$(id -u)" -eq 0 ]]; then
+	pass "running as root, every directory is searchable; the R6-4 cell is skipped"
+else
+	root="$tmp/r6-unsearchable"
+	record "$root" 20260101-ok.md active 'src/*'
+	chmod 000 "$root/docs"
+	trap 'chmod 755 "$tmp/r6-unsearchable/docs" 2>/dev/null; rm -rf "$tmp"' EXIT
+	run "$root" src/x
+	vrc=0
+	"$CHECK" "$root" >/dev/null 2>"$tmp/vstderr" || vrc=$?
+	chmod 755 "$root/docs"
+	trap 'rm -rf "$tmp"' EXIT
+	if [[ $RC -eq 3 && -z "$OUT" && $vrc -eq 1 ]] &&
+		grep -q 'file-type: the decisions directory is not readable$' "$tmp/stderr" &&
+		grep -q 'file-type: the decisions directory is not readable$' "$tmp/vstderr"; then
+		pass "R6-4: an unsearchable docs/ degrades the selector (exit 3) and fails the validator (exit 1)"
+	else
+		fail "R6-4: unsearchable docs/: selector $RC ($(cat "$tmp/stderr")), validator $vrc ($(cat "$tmp/vstderr"))"
+	fi
+fi
+
 # Escape invariant over the FINAL stdout: an independent Unicode-aware oracle
 # (the skills' rule, Python `\s` and `\b`, case-insensitive) finds no lookalike,
 # escaping the whole stdout again changes nothing, and no non-tag text is lost.
