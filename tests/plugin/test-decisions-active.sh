@@ -317,7 +317,9 @@ r="$(case_root valid-superseded)" && probe "$r" superseded 'src/*' none 20260201
 	probe "$r" active 'lib/*' 20260101-probe.md none "$P" 20260201-next.md && cases+=("$r|superseded")
 r="$(case_root valid-successor)" && probe "$r" active 'src/*' 20260001-prev.md none "$P" &&
 	probe "$r" superseded 'lib/*' none 20260101-probe.md "$P" 20260001-prev.md && cases+=("$r|active")
-r="$(case_root valid-bracket)" && probe "$r" active 'lib/*, src/[xy]' none none "$P" && cases+=("$r|active")
+r="$(case_root valid-question)" && probe "$r" active 'lib/*, src/?' none none "$P" && cases+=("$r|active")
+r="$(case_root glob-bracket)" && probe "$r" active 'lib/*, src/[xy]' none none "$P" && cases+=("$r|active")
+r="$(case_root glob-backslash)" && probe "$r" active 'src/\x' none none "$P" && cases+=("$r|active")
 r="$(case_root active-with-successor)" && probe "$r" active 'src/*' none 20260201-next.md "$P" &&
 	probe "$r" active 'lib/*' 20260101-probe.md none "$P" 20260201-next.md && cases+=("$r|active")
 r="$(case_root review-fixture)" && probe "$r" active 'src/*' none 20260201-next.md docs/dev_plans/gone.md &&
@@ -432,98 +434,9 @@ else
 	fail "no metacharacter in a record value is executed"
 fi
 
-# Glob splitting agrees with bash matching. Each row is an `Applies to` value,
-# the globs its author wrote (TAB-separated), and a path; the selector picks the
-# record exactly when bash `[[ $path == $glob ]]` matches one of those globs,
-# and the validator accepts every value.
-TAB=$'\t'
-split_rows=(
-	"src/file[_,].py|src/file[_,].py|src/file,.py"
-	"src/file[_,].py|src/file[_,].py|src/file_.py"
-	"src/file[_,].py|src/file[_,].py|src/file[_"
-	"src/file[_,].py|src/file[_,].py|src/filex.py"
-	"a[]_,]b, c|a[]_,]b${TAB}c|a]b"
-	"a[]_,]b, c|a[]_,]b${TAB}c|a,b"
-	"a[]_,]b, c|a[]_,]b${TAB}c|c"
-	"a[!,]b,c|a[!,]b${TAB}c|a,b"
-	"a[!,]b,c|a[!,]b${TAB}c|axb"
-	"k[[:digit:],]z, m|k[[:digit:],]z${TAB}m|k,z"
-	"k[[:digit:],]z, m|k[[:digit:],]z${TAB}m|kaz"
-	"k[[:digit:],]z, m|k[[:digit:],]z${TAB}m|m"
-	"docs/x\\,y.md|docs/x\\,y.md|docs/x,y.md"
-	"lit\\[x, src/*|lit\\[x${TAB}src/*|lit[x"
-	"lit\\[x, src/*|lit\\[x${TAB}src/*|src/a"
-	"q[\\],]r, s|q[\\],]r${TAB}s|q,r"
-	"q[\\],]r, s|q[\\],]r${TAB}s|q]r"
-	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/foo "
-	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/foo"
-	"docs/foo\\ ,docs/bar.md|docs/foo\\ ${TAB}docs/bar.md|docs/bar.md"
-	"file[?(].txt|file[?(].txt|file(.txt"
-	"file[?(].txt|file[?(].txt|file?.txt"
-	"file[?(].txt|file[?(].txt|filex.txt"
-	"a[*(]b, c|a[*(]b${TAB}c|a(b"
-	"a[+@!(]b|a[+@!(]b|a@b"
-	"x[**]y|x[**]y|x*y"
-	"x[**]y|x[**]y|xay"
-	"src/[a-c]*.py|src/[a-c]*.py|src/Bar.py"
-	"src/[a-c]*.py|src/[a-c]*.py|src/bar.py"
-)
-split_failures=0
-split_selected=0
-for row in "${split_rows[@]}"; do
-	value="${row%%|*}"
-	rest="${row#*|}"
-	globs="${rest%|*}"
-	path="${rest##*|}"
-	want=""
-	# The oracle matches bytes, as the selector does (LC_ALL=C).
-	while IFS= read -r g; do
-		# shellcheck disable=SC2053  # the glob is the pattern on purpose
-		if LC_ALL=C bash -c '[[ "$1" == $2 ]]' _ "$path" "$g"; then
-			want=20260101-split.md
-		fi
-	done <<<"${globs//$TAB/$'\n'}"
-	root="$tmp/split-$split_failures-$split_selected-$RANDOM"
-	record "$root" 20260101-split.md active "$value"
-	vrc=0
-	"$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
-	run "$root" "$path"
-	got="$(names "$OUT")"
-	if [[ $vrc -eq 0 && $RC -eq 0 && "$got" == "$want" ]]; then
-		pass "split: '$value' on '$path' selects '${want}' as bash matches it"
-	else
-		split_failures=$((split_failures + 1))
-		fail "split: '$value' on '$path': validator $vrc, selector $RC selected '$got', bash wants '$want'"
-	fi
-	[[ -n "$want" ]] && split_selected=$((split_selected + 1))
-done
-assert_eq "every glob-splitting row agrees with bash" "0" "$split_failures"
-if [[ $split_selected -gt 0 && $split_selected -lt ${#split_rows[@]} ]]; then
-	pass "the splitting table holds matching and non-matching rows"
-else
-	fail "the splitting table holds matching and non-matching rows ($split_selected of ${#split_rows[@]})"
-fi
-
-# Ranges and `?` match bytes in every locale: bash 3.2 collates `[a-c]` by
-# locale, so without LC_ALL=C `src/[a-c]*.py` would select for `src/Bar.py`
-# under en_US.UTF-8. Run under every bash on the machine, including /bin/bash.
-root="$tmp/locale"
-record "$root" 20260101-range.md active 'src/[a-c]*.py'
+# Every bash on the machine, including /bin/bash, for the per-bash cases.
 locale_bashes=(bash)
 [[ -x /bin/bash ]] && locale_bashes+=(/bin/bash)
-if locale -a 2>/dev/null | grep -iE '^en_US\.(UTF-8|utf8)$' >/dev/null; then
-	for lb in "${locale_bashes[@]}"; do
-		got_upper="$(cd "$root" && LC_ALL=en_US.UTF-8 "$lb" "$SEL" -- src/Bar.py 2>/dev/null || true)"
-		got_lower="$(cd "$root" && LC_ALL=en_US.UTF-8 "$lb" "$SEL" -- src/bar.py 2>/dev/null || true)"
-		if [[ -z "$(names "$got_upper")" && "$(names "$got_lower")" == 20260101-range.md ]]; then
-			pass "[$lb] a range matches bytes under en_US.UTF-8: src/[a-c]*.py skips src/Bar.py, selects src/bar.py"
-		else
-			fail "[$lb] a range matched by locale: Bar '$(names "$got_upper")', bar '$(names "$got_lower")'"
-		fi
-	done
-else
-	pass "en_US.UTF-8 is not installed; the locale range case is covered by the C-locale split table"
-fi
 
 # A `## ` line inside a ``` or ~~~ fence is text, not a section boundary: a
 # fenced heading under Decision keeps the rest of Decision, and a fenced
@@ -621,8 +534,7 @@ done
 # here-document delimiter cannot occur because every line carries the prefix.
 root="$tmp/scratch-stdin"
 scratch_repo "$root"
-# shellcheck disable=SC2016  # the metacharacters are the test data
-record "$root" 20260102-meta.md active 'src/$(touch*'
+record "$root" 20260102-meta.md active 'src/??touch injected?.py'
 record "$root" 20260103-lead.md active '  src/lead space.py'
 record "$root" 20260104-delim.md active 'SKEIN_PATHS'
 rc=0
@@ -1174,240 +1086,117 @@ for cell in clean modified staged untracked ignored deleted status-fails; do
 done
 [[ $dirty_failures -eq 0 ]] && pass "R4-3/R5: the dirty notice fires exactly for a dirty docs/decisions in a committed-range review, the outside-scope notice exactly for untracked or ignored records under --uncommitted (7 states x 2 flags)"
 
-# R4-4 a glob has at most four stars, and matching never backtracks.
-# Contract (validator and selector together): a glob with a fifth `*`
-# outside brackets and escapes is an applies-to problem; glob_match agrees
-# with bash `[[ $path == $glob ]]` on every supported glob; a four-star glob
-# against a 1000-byte path is matched in bounded time.
+# R4-4 matching never backtracks. Contract: a many-star glob against a long
+# path is decided in bounded time, by validator and selector alike, and still
+# matches when it should.
 root="$tmp/r4-stars"
 record "$root" 20260101-nine.md active '*a*a*a*a*a*a*a*a*b'
-record "$root" 20260102-four.md active 'src/*.py, x*y*z*w*v'
-record "$root" 20260103-literal.md active 'x[*]\*[**]y*z*w*v*u'
-star_start=$SECONDS
-vrc=0
-"$CHECK" "$root" >"$tmp/vout" 2>&1 || vrc=$?
-run "$root" "$(printf 'a%.0s' $(seq 1 40))"
-star_elapsed=$((SECONDS - star_start))
-if [[ $vrc -eq 1 && $RC -eq 3 && -z "$(names "$OUT")" && $star_elapsed -le 5 ]] &&
-	grep -q "20260101-nine.md: Applies to: more than 4 '\*'" "$tmp/vout" &&
-	grep -q 'malformed record 20260101-nine.md: applies-to' "$tmp/stderr" &&
-	! grep -q '20260102-four.md\|20260103-literal.md' "$tmp/vout"; then
-	pass "R4-4: a nine-star glob is refused by both scripts in ${star_elapsed}s; four stars and bracketed or escaped stars pass"
-else
-	fail "R4-4: star cap: validator $vrc, selector $RC, ${star_elapsed}s ($(cat "$tmp/vout"))"
-fi
-root="$tmp/r4-four-star-time"
-record "$root" 20260101-four.md active '*a*a*a*b'
 long="$(printf 'a%.0s' $(seq 1 1000))"
 star_start=$SECONDS
+vrc=0
+"$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
 run "$root" "$long"
 star_elapsed=$((SECONDS - star_start))
-if [[ $RC -eq 0 && -z "$(names "$OUT")" && $star_elapsed -le 5 ]]; then
-	pass "R4-4: a four-star glob against a 1000-byte path is decided in ${star_elapsed}s"
+if [[ $vrc -eq 0 && $RC -eq 0 && -z "$(names "$OUT")" && $star_elapsed -le 5 ]]; then
+	pass "R4-4: a nine-star glob against a 1000-byte path is decided in ${star_elapsed}s"
 else
-	fail "R4-4: four-star match took ${star_elapsed}s (exit $RC)"
+	fail "R4-4: nine-star match: validator $vrc, selector $RC, ${star_elapsed}s"
 fi
 run "$root" "${long}b"
-assert_eq "R4-4: the same glob still matches when it should" "20260101-four.md" "$(names "$OUT")"
-# Differential: glob_match against bash's own matcher over generated globs
-# of up to four stars and generated paths, under LC_ALL=C.
-# shellcheck source=scripts/lib/decisions-common.sh
-. "$REPO_ROOT/scripts/lib/decisions-common.sh"
-eval "$(sed -n '/^glob_segments()/,/^}/p;/^glob_match()/,/^}/p' "$SEL")"
-# diff_one <glob> <path>: compares the two matchers once, byte-wise.
-diff_failures=0
-diff_cases=0
-diff_one() {
-	local want=1 got=1
-	local LC_ALL=C
-	# shellcheck disable=SC2053  # the glob is the pattern on purpose
-	[[ "$2" == $1 ]] && want=0
-	glob_match "$2" "$1" && got=0
-	diff_cases=$((diff_cases + 1))
-	if [[ $got -ne $want ]]; then
-		diff_failures=$((diff_failures + 1))
-		[[ $diff_failures -le 5 ]] && fail "R4-4: glob '$1' path '$2': glob_match $got, bash $want"
-	fi
-	return 0
-}
-# Exhaustive: every glob of up to five atoms over {a, b, *, ?} (no `**`)
-# against every path of up to five bytes over {a, b}.
-small_globs=("")
-small_paths=("")
-for ((len = 1; len <= 5; len++)); do
-	next=()
-	for g in "${small_globs[@]}"; do
-		[[ ${#g} -eq $((len - 1)) ]] || continue
-		for atom in a b '*' '?'; do
-			[[ "$atom" == '*' && "$g" == *'*' ]] && continue
-			next+=("$g$atom")
-		done
-	done
-	small_globs+=("${next[@]}")
-	next=()
-	for p in "${small_paths[@]}"; do
-		[[ ${#p} -eq $((len - 1)) ]] || continue
-		next+=("${p}a" "${p}b")
-	done
-	small_paths+=("${next[@]}")
-done
-for g in "${small_globs[@]}"; do
-	[[ -n "$g" ]] || continue
-	for p in "${small_paths[@]}"; do
-		diff_one "$g" "$p"
-	done
-done
-# Middle segments must not overlap: each row is a near miss where they would.
-for row in '*ab*ba*|aba' '*aa*aa*|aaa' 'a*ab*ba*b|abab' '*ab*b*ab*|abab' '*a?*?a*|aa'; do
-	diff_one "${row%%|*}" "${row#*|}"
-done
-# Generated: richer atoms (escapes, brackets, literal metacharacters) in
-# globs of up to four stars, against paths built from the same bytes.
-RANDOM=4242
-# shellcheck disable=SC1003  # backslashes are the test data
-glob_atoms=('a' 'b' 'ab' 'ba' 'aa' '/' '?' '*' '[ab]' '[!a]' '\*' '\?' '[*]' '[' ']' '\\' '.' '[]a]')
-# shellcheck disable=SC1003  # backslashes are the test data
-path_atoms=('a' 'b' '/' '*' '?' '[' ']' '\' '.')
-for ((gi = 0; gi < 600; gi++)); do
-	glob=""
-	stars=0
-	for ((k = 0; k < 1 + RANDOM % 7; k++)); do
-		atom="${glob_atoms[RANDOM % ${#glob_atoms[@]}]}"
-		if [[ "$atom" == '*' ]]; then
-			[[ $stars -lt 4 && "$glob" != *'*' ]] || continue
-			stars=$((stars + 1))
-		fi
-		glob+="$atom"
-	done
-	[[ -n "$glob" ]] || continue
-	dec_glob_problem "$glob" >/dev/null && continue
-	for ((pi = 0; pi < 10; pi++)); do
-		p=""
-		for ((k = 0; k < RANDOM % 9; k++)); do
-			p+="${path_atoms[RANDOM % ${#path_atoms[@]}]}"
-		done
-		diff_one "$glob" "$p"
-	done
-done
-[[ $diff_failures -eq 0 ]] && pass "R4-4: glob_match equals bash [[ == ]] on $diff_cases generated glob/path pairs"
+assert_eq "R4-4: the same glob still matches when it should" "20260101-nine.md" "$(names "$OUT")"
 
-# R5-1 glob_match equals `[[ $path == $glob ]]` on bash 3.2 and on bash 5.
-# Contract: for every glob dec_glob_problem accepts and every path, glob_match
-# and bash's own matcher give the same verdict under the default bash and
-# /bin/bash, and the two bashes give the same verdict as each other. The
-# dialect drops the shapes they read differently: each finding's glob below
-# must be refused by the validator under both bashes. Cells: generated globs
-# over every bracket shape the dialect keeps (classes, `!`/`^` negation, `]`
-# first, ranges, escapes inside and outside brackets) x random paths and paths
-# instantiated from the glob, so both verdicts occur.
-# shellcheck disable=SC1003  # backslashes are the test data
-r5_atoms=('a' 'b' '/' '.' '-' '!' '^' ':' '=' ']' '\\' '*' '?' '[ab]' '[!a]' '[^a]' '[]a]' '[!]a]' '[^]a]' '[a-c]' '[c-a]' '[-a]' '[a-]' '[]-a]' '[[:alpha:]]' '[[:digit:]a]' '[![:alpha:]]' '[[:upper:][:lower:]]' '[[:alpha:]-z]' '[\]]' '[a\]' '[\a]' '[\-]' '[a\-c]' '\*' '\?' '\[' '\]' '\a' '[*]' '[?]' '[[]' '[[a]' '[a[]' '[!-]' '[]]' '[a:]' '[:]' '[=]' '[.]' '[' '\' '[[:' '[[=' '[[.a.]]' '-[:digit:]]')
-# shellcheck disable=SC1003  # backslashes are the test data
-r5_path_atoms=('a' 'b' 'c' '/' '.' '-' '!' '^' ':' '=' ']' '[' '\' '*' '?' '1' 'A' 'x')
-r5_pairs="$tmp/r5-pairs"
-: >"$r5_pairs"
-RANDOM=5150
-r5_globs=0
-for ((gi = 0; gi < 500; gi++)); do
-	glob=""
-	stars=0
-	for ((k = 0; k < 1 + RANDOM % 6; k++)); do
-		atom="${r5_atoms[RANDOM % ${#r5_atoms[@]}]}"
-		if [[ "$atom" == '*' ]]; then
-			[[ $stars -lt 4 && "$glob" != *'*' ]] || continue
-			stars=$((stars + 1))
-		fi
-		glob+="$atom"
-	done
-	[[ -n "$glob" ]] || continue
-	dec_glob_problem "$glob" >/dev/null && continue
-	r5_globs=$((r5_globs + 1))
-	for ((pi = 0; pi < 12; pi++)); do
-		p=""
-		if ((pi % 2)); then
-			for ((k = 0; k < RANDOM % 9; k++)); do
-				p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
-			done
-		else
-			# Instantiate: each atom of the glob becomes a byte it may match.
-			k=0
-			while ((k < ${#glob})); do
-				c="${glob:k:1}"
-				if [[ "$c" == "\\" ]]; then
-					p+="${glob:k+1:1}"
-					k=$((k + 2))
-				elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$k"; then
-					inner="${glob:k+1:_dec_end-k-1}aA1:"
-					p+="${inner:RANDOM%${#inner}:1}"
-					k=$((_dec_end + 1))
-				elif [[ "$c" == '*' ]]; then
-					for ((j = 0; j < RANDOM % 3; j++)); do
-						p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
-					done
-					k=$((k + 1))
-				elif [[ "$c" == '?' ]]; then
-					p+="${r5_path_atoms[RANDOM % ${#r5_path_atoms[@]}]}"
-					k=$((k + 1))
-				else
-					p+="$c"
-					k=$((k + 1))
-				fi
-			done
-		fi
-		printf '%s\0%s\0' "$glob" "$p" >>"$r5_pairs"
-	done
+# I4 glob dialect: literal characters from [A-Za-z0-9._/@+=:%~ -], `*` and
+# `?`; anything else, and `**`, is an applies-to problem for both scripts.
+# Cells: every refused character class representative, plus `**`, and one
+# glob using every accepted character.
+dialect_failures=0
+# shellcheck disable=SC2016,SC1003  # metacharacters and backslashes are the test data
+for bad in '[' ']' '\' '{' '}' '(' ')' '!' '$' '#' ';' '|' '&' '<' '>' "'" '"' '`' '^' "$(printf '\t')" "$(printf '\377')" '**'; do
+	root="$tmp/dialect-$dialect_failures-$RANDOM"
+	record "$root" 20260101-bad.md active "src/a${bad}b*"
+	vrc=0
+	"$CHECK" "$root" >"$tmp/vout" 2>&1 || vrc=$?
+	run "$root" "src/a${bad}bx"
+	if [[ $vrc -ne 1 || $RC -ne 3 || -n "$(names "$OUT")" ]] || ! grep -q '20260101-bad.md: Applies to:' "$tmp/vout"; then
+		dialect_failures=$((dialect_failures + 1))
+		fail "dialect: '$bad' accepted (validator $vrc, selector $RC)"
+	fi
 done
-# The runner prints, per pair, bash's verdict then glob_match's.
+assert_eq "dialect: every character outside the alphabet, and '**', is refused by both scripts" "0" "$dialect_failures"
+root="$tmp/dialect-ok"
+record "$root" 20260101-ok.md active 'Az09._/@+=:%~ -?*'
+vrc=0
+"$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
+run "$root" 'Az09._/@+=:%~ -!rest'
+assert_eq "dialect: a glob using every accepted character is valid and matches" "0:0:20260101-ok.md" "$vrc:$RC:$(names "$OUT")"
+
+# I4 differential: glob_match equals `[[ $path == $glob ]]` under LC_ALL=C on
+# /bin/bash and on the default bash, over a few thousand generated pairs from
+# a fixed seed (awk, so both bashes read the same pairs). Globs come from the
+# dialect alphabet's metacharacters and a few literals, without `**`; paths
+# are random or instantiated from their glob, so both verdicts occur.
+diff_pairs="$tmp/diff-pairs"
+awk 'BEGIN {
+	srand(4242)
+	ng = split("a b / . - @ ~ * ?", G, " "); G[++ng] = " "
+	np = split("a b / . - @ ~ * ?", P, " "); P[++np] = " "
+	for (i = 0; i < 3000; i++) {
+		g = ""
+		for (k = int(rand() * 8) + 1; k > 0; k--) {
+			c = G[int(rand() * ng) + 1]
+			if (c == "*" && substr(g, length(g)) == "*") continue
+			g = g c
+		}
+		p = ""
+		if (i % 2) {
+			for (k = int(rand() * 10); k > 0; k--) p = p P[int(rand() * np) + 1]
+		} else {
+			for (k = 1; k <= length(g); k++) {
+				c = substr(g, k, 1)
+				if (c == "*") { for (j = int(rand() * 3); j > 0; j--) p = p P[int(rand() * np) + 1] }
+				else if (c == "?") p = p P[int(rand() * np) + 1]
+				else p = p c
+			}
+		}
+		printf "%s\t%s\n", g, p
+	}
+}' >"$diff_pairs"
 # shellcheck disable=SC2016  # the runner is evaluated by each bash
-r5_runner='. "$1/scripts/lib/decisions-common.sh"
-eval "$(sed -n "/^glob_segments()/,/^}/p;/^glob_match()/,/^}/p" "$1/scripts/decisions-active.sh")"
+diff_runner='eval "$(sed -n "/^glob_match()/,/^}/p" "$1")"
 export LC_ALL=C
-while IFS= read -r -d "" g && IFS= read -r -d "" p; do
+while IFS="	" read -r g p; do
 	w=1
 	m=1
 	[[ "$p" == $g ]] && w=0
 	glob_match "$p" "$g" && m=0
 	printf "%s %s\n" "$w" "$m"
 done <"$2"'
-r5_ref=""
-r5_failures=0
-for lb in "${locale_bashes[@]}"; do
-	r5_out="$("$lb" -c "$r5_runner" _ "$REPO_ROOT" "$r5_pairs")"
-	r5_self="$(grep -c -v -E '^(0 0|1 1)$' <<<"$r5_out" || true)"
-	r5_hits="$(grep -c '^0 0$' <<<"$r5_out" || true)"
-	r5_rows="$(wc -l <<<"$r5_out" | tr -d '[:space:]')"
-	if [[ "$r5_self" -eq 0 && "$r5_hits" -gt 0 && "$r5_hits" -lt "$r5_rows" ]]; then
-		pass "[$lb] R5-1: glob_match equals [[ == ]] on $r5_rows pairs over $r5_globs accepted globs ($r5_hits matches)"
+diff_bashes=(bash)
+[[ -x /bin/bash && "$(/bin/bash -c 'echo $BASH_VERSION')" != "$(bash -c 'echo $BASH_VERSION')" ]] && diff_bashes+=(/bin/bash)
+diff_ref=""
+for lb in "${diff_bashes[@]}"; do
+	diff_out="$("$lb" -c "$diff_runner" _ "$SEL" "$diff_pairs")"
+	diff_bad="$(grep -c -v -E '^(0 0|1 1)$' <<<"$diff_out" || true)"
+	diff_hits="$(grep -c '^0 0$' <<<"$diff_out" || true)"
+	diff_rows="$(wc -l <<<"$diff_out" | tr -d '[:space:]')"
+	if [[ "$diff_bad" -eq 0 && "$diff_rows" -eq 3000 && "$diff_hits" -gt 300 && "$diff_hits" -lt 2700 ]]; then
+		# shellcheck disable=SC2016  # $BASH_VERSION belongs to the child bash
+		pass "[$lb $("$lb" -c 'echo $BASH_VERSION')] glob_match equals [[ == ]] on $diff_rows pairs ($diff_hits matches)"
 	else
-		r5_failures=$((r5_failures + 1))
-		fail "[$lb] R5-1: $r5_self of $r5_rows pairs differ (matches: $r5_hits)"
+		fail "[$lb] glob_match differs from [[ == ]] on $diff_bad of $diff_rows pairs (matches: $diff_hits)"
 	fi
-	if [[ -z "$r5_ref" ]]; then
-		r5_ref="$r5_out"
-	elif [[ "$r5_out" != "$r5_ref" ]]; then
-		r5_failures=$((r5_failures + 1))
-		fail "[$lb] R5-1: the verdicts differ from ${locale_bashes[0]}'s on the same pairs"
+	if [[ -z "$diff_ref" ]]; then
+		diff_ref="$diff_out"
+	elif [[ "$diff_out" != "$diff_ref" ]]; then
+		fail "[$lb] verdicts differ from ${diff_bashes[0]}'s on the same pairs"
 	fi
-done
-[[ ${#locale_bashes[@]} -lt 2 || $r5_failures -gt 0 ]] || pass "R5-1: ${locale_bashes[*]} give the same verdict on every pair"
-# The reported cells: each glob is refused under both bashes, so the
-# matcher never sees it.
-# shellcheck disable=SC1003  # backslashes are the test data
-for g in 'src/*[[=a=]]' '[[=a=]]\[*]' '[[=a=]][]a]*' '-][:*-' ':/[a-*b' '*\' 'x\' '[[.a.]]' '[a[:b]' '[[:alpha:][[:]' '[a-[:digit:]]'; do
-	for lb in "${locale_bashes[@]}"; do
-		# shellcheck disable=SC2016  # $1 and $2 belong to the child bash
-		if "$lb" -c '. "$1/scripts/lib/decisions-common.sh"; dec_glob_problem "$2" >/dev/null' _ "$REPO_ROOT" "$g"; then
-			pass "[$lb] R5-1: '$g' is outside the dialect"
-		else
-			fail "[$lb] R5-1: '$g' is accepted"
-		fi
-	done
 done
 
-# R4-5 header parsing is byte-wise and keeps an escaped trailing space.
+# R4-5 header parsing is byte-wise in every locale.
 # Contract: validator and selector give the same verdict for the same record
-# in every locale. Cells: {Status + U+00A0, Applies to holding byte \377,
-# final glob `docs/foo\ `} x {C, en_US.UTF-8}.
+# in every locale. Cells: {Status + U+00A0, Applies to holding byte \377 (outside
+# the dialect), a trailing space after the final glob, `?` against a two-byte
+# character} x {C, en_US.UTF-8}.
 nbsp="$(printf '\302\240')"
 ff="$(printf '\377')"
 for loc in C en_US.UTF-8; do
@@ -1416,7 +1205,7 @@ for loc in C en_US.UTF-8; do
 		pass "R4-5: locale $loc is not installed; skipped"
 		continue
 	fi
-	for cell in nbsp-status ff-glob escaped-space; do
+	for cell in nbsp-status ff-glob trailing-space question-byte; do
 		root="$tmp/r4-locale-$loc-$cell"
 		case "$cell" in
 		nbsp-status)
@@ -1425,11 +1214,15 @@ for loc in C en_US.UTF-8; do
 			;;
 		ff-glob)
 			record "$root" 20260101-r.md active "src/$ff*"
-			want_v=0 want_s=0 want_names=20260101-r.md probe="src/${ff}x"
+			want_v=1 want_s=3 want_names="" probe="src/${ff}x"
 			;;
-		escaped-space)
-			record "$root" 20260101-r.md active 'docs/bar.md, docs/foo\ '
-			want_v=0 want_s=0 want_names=20260101-r.md probe="docs/foo "
+		trailing-space)
+			record "$root" 20260101-r.md active 'docs/bar.md, docs/foo '
+			want_v=0 want_s=0 want_names=20260101-r.md probe="docs/foo"
+			;;
+		question-byte)
+			record "$root" 20260101-r.md active 'src/caf??.py'
+			want_v=0 want_s=0 want_names=20260101-r.md probe="src/caf$(printf '\303\251').py"
 			;;
 		esac
 		vrc=0
@@ -1442,10 +1235,10 @@ for loc in C en_US.UTF-8; do
 		else
 			fail "R4-5: [$loc] $cell: validator $vrc (want $want_v), selector $RC (want $want_s), selected '$got_names'"
 		fi
-		if [[ "$cell" == escaped-space ]]; then
+		if [[ "$cell" == trailing-space ]]; then
 			RC=0
-			OUT="$(cd "$root" && LC_ALL="$loc" "$SEL" -- "docs/foo" 2>/dev/null)" || RC=$?
-			assert_eq "R4-5: [$loc] the escaped trailing space is kept, so docs/foo does not match" "" "$(names "$OUT")"
+			OUT="$(cd "$root" && LC_ALL="$loc" "$SEL" -- "docs/foo " 2>/dev/null)" || RC=$?
+			assert_eq "R4-5: [$loc] the trailing space is trimmed, so 'docs/foo ' does not match" "" "$(names "$OUT")"
 		fi
 	done
 done

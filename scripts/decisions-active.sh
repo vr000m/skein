@@ -53,15 +53,10 @@
 # Records are <repo-root>/docs/decisions/*.md (README.md excluded); <repo-root>
 # is the git top level, or the current directory outside a repository. A
 # record is selected when its Status is `active` and any of its `Applies to`
-# globs matches any path, with bash `[[ $path == $glob ]]` semantics (`*`
-# crosses `/`). Matching runs under LC_ALL=C, so a range such as `[a-c]` and
-# `?` match bytes, case-sensitively, in every locale and bash version. A glob
-# has at most four `*`, and no unclosed `[`, trailing lone backslash, `[=`,
-# `[.` or non-POSIX `[:` in a bracket expression (dec_glob_problem refuses the
-# shapes bash 3.2 and bash 5 read differently). The match never hands bash a
-# pattern holding a star: the glob is split at its stars and each star-free
-# segment is matched at its leftmost position, so the time is linear in the
-# path's length per segment rather than its length raised to the star count.
+# globs matches any path. A glob is literal characters, `*` (any characters,
+# `/` included) and `?` (one byte); the validator rejects anything else
+# (dec_glob_problem). glob_match equals bash `[[ $path == $glob ]]` on that
+# dialect under LC_ALL=C, without backtracking.
 # Superseded records are never printed.
 #
 # Output, in path-sorted record order, one block per selected record:
@@ -112,8 +107,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/lib/decisions-common.sh"
 
 # A glob from a record is matched case-sensitively: the shared lib clears
-# nocasematch. Extended patterns are rejected by dec_glob_problem instead:
-# `[[ == ]]` honours them whatever `extglob` says.
+# nocasematch.
 
 MAX_RECORDS=8
 MAX_BYTES=24576
@@ -302,73 +296,44 @@ fi
 
 dec_check_directory "$root" || exit 3
 
-# glob_segments <glob>: splits a glob at each `*` that bash reads as a star
-# (not escaped, not inside a bracket expression) into SEG[i], with SEG_LEN[i]
-# the number of characters segment i matches: every literal, escaped
-# character, `?` and bracket expression matches exactly one.
-glob_segments() {
-	local glob="$1" seg="" len=0 i=0 n=${#1} c
-	SEG=()
-	SEG_LEN=()
-	while ((i < n)); do
-		c="${glob:i:1}"
-		if [[ "$c" == "\\" ]]; then
-			seg+="${glob:i:2}"
-			i=$((i + 2))
-		elif [[ "$c" == '[' ]] && _dec_bracket_end "$glob" "$i"; then
-			seg+="${glob:i:_dec_end-i+1}"
-			i=$((_dec_end + 1))
-		elif [[ "$c" == '*' ]]; then
-			SEG+=("$seg")
-			SEG_LEN+=("$len")
-			seg=""
-			len=0
-			i=$((i + 1))
-			continue
-		else
-			seg+="$c"
-			i=$((i + 1))
-		fi
-		len=$((len + 1))
-	done
-	SEG+=("$seg")
-	SEG_LEN+=("$len")
-}
-
-# glob_match <path> <glob>: `[[ $path == $glob ]]` for the supported dialect,
-# where `*` matches any string. The first segment must match the path's start
-# and the last its end; each middle segment is taken at its leftmost match
-# after the one before, which finds a match whenever one exists. Bash only
-# ever sees star-free patterns of fixed length, so nothing backtracks.
+# glob_match <path> <glob>: `[[ $path == $glob ]]` for the dialect (literal
+# characters, `*`, `?`) without backtracking. The glob is split at its stars;
+# the first segment must match the path's start and the last its end, and
+# each middle segment is taken at its leftmost match after the one before,
+# which finds a match whenever one exists. Bash only ever sees star-free
+# segments, each matching a fixed number of characters.
 glob_match() {
-	local p="$1" k last pos end
-	glob_segments "$2"
-	last=$((${#SEG[@]} - 1))
-	if [[ $last -eq 0 ]]; then
-		# shellcheck disable=SC2053  # the segment is the pattern on purpose
-		[[ "$p" == ${SEG[0]} ]]
+	local p="$1" g="$2" first last rest seg pos end
+	if [[ "$g" != *'*'* ]]; then
+		# shellcheck disable=SC2053  # the glob is the pattern on purpose
+		[[ "$p" == $g ]]
 		return
 	fi
-	end=$((${#p} - SEG_LEN[last]))
-	[[ $end -ge ${SEG_LEN[0]} ]] || return 1
+	first="${g%%\**}"
+	last="${g##*\*}"
+	end=$((${#p} - ${#last}))
+	[[ $end -ge ${#first} ]] || return 1
 	# shellcheck disable=SC2053
-	[[ "${p:0:SEG_LEN[0]}" == ${SEG[0]} && "${p:end}" == ${SEG[last]} ]] || return 1
-	pos=${SEG_LEN[0]}
-	for ((k = 1; k < last; k++)); do
+	[[ "${p:0:${#first}}" == $first && "${p:end}" == $last ]] || return 1
+	pos=${#first}
+	rest="${g:${#first}+1}"
+	rest="${rest:0:${#rest}-${#last}}"
+	while [[ -n "$rest" ]]; do
+		seg="${rest%%\**}"
+		rest="${rest:${#seg}+1}"
+		[[ -n "$seg" ]] || continue
 		while :; do
-			[[ $((pos + SEG_LEN[k])) -le $end ]] || return 1
+			[[ $((pos + ${#seg})) -le $end ]] || return 1
 			# shellcheck disable=SC2053
-			[[ "${p:pos:SEG_LEN[k]}" == ${SEG[k]} ]] && break
+			[[ "${p:pos:${#seg}}" == $seg ]] && break
 			pos=$((pos + 1))
 		done
-		pos=$((pos + SEG_LEN[k]))
+		pos=$((pos + ${#seg}))
 	done
-	return 0
 }
 
 # applies <glob-list>: succeeds when any glob matches any path. LC_ALL=C makes
-# a range or `?` match bytes: bash 3.2 otherwise collates by locale, so
-# `src/[a-c]*.py` would match `src/Bar.py` under en_US.UTF-8.
+# `?` match one byte in every locale.
 applies() {
 	local glob p
 	local LC_ALL=C

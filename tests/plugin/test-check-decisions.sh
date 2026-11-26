@@ -138,54 +138,24 @@ root="$(fresh glob-star-star)"
 record "$root" 20260101-a.md active 'src/**/x.sh' none none "$PLAN"
 expect_fail "unsupported ** glob" "$root" "'**' is not supported"
 
-root="$(fresh glob-brace)"
-record "$root" 20260101-a.md active 'src/*.{sh,py}' none none "$PLAN"
-expect_fail "unsupported brace glob" "$root" "braces are not supported"
-
-# `[[ == ]]` honours extended patterns whatever `extglob` says, so each opener
-# is outside the dialect.
-for opener in '?' '*' '+' '@' '!'; do
-	root="$(fresh "glob-ext-$(printf '%s' "$opener" | od -An -tx1 | tr -d ' ')")"
-	record "$root" 20260101-a.md active "${opener}(src|lib)/x" none none "$PLAN"
-	expect_fail "extended pattern ${opener}( is rejected" "$root" "extended patterns are not supported"
-done
-root="$(fresh glob-literal-paren)"
-record "$root" 20260101-a.md active 'docs/(draft).md, src/[(]x' none none "$PLAN"
-expect_ok "a parenthesis that opens no extended pattern is accepted" "$root"
-
-# The dialect scan is the splitter's bracket scan: an operator character inside
-# a bracket expression or after a backslash is a literal member, so these are
-# accepted, while the same characters outside one are still rejected.
+# The dialect is literal characters from [A-Za-z0-9._/@+=:%~ -], `*` and `?`.
+# Brackets, backslashes, braces and extended-pattern characters are refused
+# outright, so no glob means one thing on bash 3.2 and another on bash 5. Each
+# row is judged by the validator under the default bash and /bin/bash.
+BAD_CHAR="a character outside letters, digits, spaces"
 glob_scan_rows=(
-	"ok|file[?(].txt"
-	"ok|a[*(]b, c[+(]d, e[@(]f, g[!(]h"
-	"ok|x[**]y"
-	"ok|src/\\*\\(x).py"
-	"ok|docs/[{]a[}].md"
-	"fail|a\\[?(b|extended patterns are not supported"
-	"fail|[ab]?(x)|extended patterns are not supported"
-	"fail|x[*]**|'**' is not supported"
-	"fail|[{]{a,b}|braces are not supported"
-	"ok|lit\\[x, docs/x\\\\"
-	"ok|[[:alpha:]]x, [[:upper:][:lower:]]y, [[:alpha:]-z]"
-	"ok|q[\\]]r, q[a\\]r, [!]a]b, [^]a]c"
-	"fail|src/*[[=a=]]|an equivalence class or collating symbol"
-	"fail|x[[.a.]]|an equivalence class or collating symbol"
-	"fail|x[a[=]y|an equivalence class or collating symbol"
-	"fail|src/[a|an unclosed '['"
-	"fail|-][:*-|an unclosed '['"
-	"fail|:/[a-*b|an unclosed '['"
-	"fail|[[:alpha:]|an unclosed '['"
-	"fail|*\\|a trailing unpaired backslash"
-	"fail|x\\\\\\|a trailing unpaired backslash"
-	"fail|[[:foo:]]|is not a POSIX character class outside a range"
-	"fail|[a[:b]|is not a POSIX character class outside a range"
-	"fail|[a-[:digit:]]|is not a POSIX character class outside a range"
+	"ok|src/*.sh, docs/?.md, a-b_c/@x+y=z:w%v~u.md, with space/*"
+	"fail|src/*.{sh,py}|$BAD_CHAR"
+	"fail|?(src)/x|$BAD_CHAR"
+	"fail|!(src)/x|$BAD_CHAR"
+	"fail|docs/(draft).md|$BAD_CHAR"
+	"fail|src/[ab].py|$BAD_CHAR"
+	"fail|src/x]|$BAD_CHAR"
+	"fail|docs/foo\\ |$BAD_CHAR"
+	"fail|x[**]y|$BAD_CHAR"
+	"fail|a\$b|$BAD_CHAR"
+	"fail|x*y**|'**' is not supported"
 )
-# Round 5: the dialect drops the shapes bash 3.2, bash 5 and the selector's
-# star-splitting matcher read differently (unclosed `[`, a trailing lone
-# backslash, `[=` / `[.`, a `[:` that is not a POSIX class or ends a range).
-# Each row is judged by the validator under the default bash and /bin/bash.
 glob_bashes=(bash)
 [[ -x /bin/bash ]] && glob_bashes+=(/bin/bash)
 for row in "${glob_scan_rows[@]}"; do
@@ -195,9 +165,9 @@ for row in "${glob_scan_rows[@]}"; do
 	root="$(fresh "glob-scan-$RANDOM")"
 	record "$root" 20260101-a.md active "$glob" none none "$PLAN"
 	if [[ "$verdict" == ok ]]; then
-		expect_ok "bracket-aware dialect scan accepts '$glob'" "$root"
+		expect_ok "dialect accepts '$glob'" "$root"
 	else
-		expect_fail "bracket-aware dialect scan rejects '$glob'" "$root" "${rest#*|}"
+		expect_fail "dialect rejects '$glob'" "$root" "${rest#*|}"
 	fi
 	want=0
 	[[ "$verdict" == ok ]] || want=1

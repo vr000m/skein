@@ -165,27 +165,15 @@ dec_target_problem() {
 
 # dec_header <file> <Field>: the trimmed value of the first `**Field**:` line in
 # the header, or nothing when absent. Exit status is 0 only when found, so an
-# empty value is distinguishable from a missing header. Trailing whitespace is
-# trimmed up to an escaped character, as dec_split_globs trims a glob, so a
-# final `Applies to` glob `docs/foo\ ` keeps its space.
+# empty value is distinguishable from a missing header.
 dec_header() {
-	local file="$1" field="$2" line value trimmed slashes
+	local file="$1" field="$2" line value
 	local LC_ALL=C
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		[[ "$line" == "## "* ]] && return 1
 		if [[ "$line" =~ ^\*\*([^*]+)\*\*:[[:space:]]*(.*)$ ]] && [[ "${BASH_REMATCH[1]}" == "$field" ]]; then
 			value="${BASH_REMATCH[2]}"
-			trimmed="${value%"${value##*[![:space:]]}"}"
-			slashes=0
-			while [[ $slashes -lt ${#trimmed} && "${trimmed:${#trimmed}-slashes-1:1}" == "\\" ]]; do
-				slashes=$((slashes + 1))
-			done
-			# An odd run of trailing backslashes escapes the first trimmed byte.
-			if [[ $((slashes % 2)) -eq 1 && ${#trimmed} -lt ${#value} ]]; then
-				trimmed="${value:0:${#trimmed}+1}"
-			fi
-			value="$trimmed"
-			printf '%s\n' "$value"
+			printf '%s\n' "${value%"${value##*[![:space:]]}"}"
 			return 0
 		fi
 	done 2>/dev/null <"$file"
@@ -193,73 +181,24 @@ dec_header() {
 }
 
 # dec_glob_problem <glob>: prints why a single `Applies to` glob is outside the
-# supported dialect (bash pattern, `*` crosses `/`, no `**`, at most
-# DEC_MAX_STARS `*`, no braces, no extended patterns, every `[` closed, no
-# `[=c=]`, `[.c.]` or `[:` other than a POSIX class `[:name:]` that does not
-# follow a `-` inside a bracket expression, no trailing unpaired backslash)
-# and returns 0; returns 1 when the glob is supported. The star cap
-# bounds matching cost: bash's matcher backtracks, so its time grows with a
-# path's length raised to the number of stars, and the validator and the
-# selector refuse such a record together.
-# `[[ == ]]` honours `?( *( +( @( !(` even with `shopt -u extglob`, so the
-# dialect rejects them rather than trusting the shell option. The scan is the
-# splitter's: a character after a backslash or inside a bracket expression
-# (`file[?(].txt`, `x[**]y`) is a literal member, never an operator.
-# The last four rules keep the dialect to shapes every bash reads the same
-# way, so the selector's star-splitting matcher (glob_match) can equal
-# `[[ $path == $glob ]]` on bash 3.2 and on bash 5: an unclosed `[`, a
-# trailing lone backslash, an equivalence class or collating symbol and a
-# `[:` that opens no POSIX class are each read differently by bash 3.2, bash 5
-# or a matcher that splits at stars.
-# Write `\[` for a literal `[` and `\\` for a literal backslash.
-DEC_MAX_STARS=4
+# dialect and returns 0; returns 1 when the glob is supported. The dialect is
+# literal characters from DEC_GLOB_BAD's complement, `*` (any characters,
+# `/` included) and `?` (one character), with no `**`. It has no bracket
+# expression, backslash or extended pattern, so the selector's matcher equals
+# bash `[[ $path == $glob ]]` on bash 3.2 and bash 5 alike.
+DEC_GLOB_BAD='[^-A-Za-z0-9._/@+=:%~ *?]'
 dec_glob_problem() {
-	local glob="$1" i=0 n c next stars=0
+	local glob="$1"
 	local LC_ALL=C
 	if [[ -z "$glob" ]]; then
 		printf 'empty glob\n'
-		return 0
+	elif [[ "$glob" =~ $DEC_GLOB_BAD ]]; then
+		printf "a character outside letters, digits, spaces, '. _ / - @ + = : %% ~', '*' and '?' in '%s'\n" "$glob"
+	elif [[ "$glob" == *'**'* ]]; then
+		printf "'**' is not supported in '%s'\n" "$glob"
+	else
+		return 1
 	fi
-	n=${#glob}
-	while ((i < n)); do
-		c="${glob:i:1}"
-		next="${glob:i+1:1}"
-		if [[ "$c" == "\\" ]]; then
-			if ((i + 1 >= n)); then
-				printf "a trailing unpaired backslash in '%s'\n" "$glob"
-				return 0
-			fi
-			i=$((i + 2))
-			continue
-		elif [[ "$c" == '[' ]]; then
-			if ! _dec_bracket_end "$glob" "$i"; then
-				printf "an unclosed '[' in '%s' (write '\\[' for a literal one)\n" "$glob"
-				return 0
-			elif [[ $_dec_collating -eq 1 ]]; then
-				printf "an equivalence class or collating symbol ('[=' or '[.') in '%s'\n" "$glob"
-				return 0
-			elif [[ $_dec_badclass -eq 1 ]]; then
-				printf "a '[:' that is not a POSIX character class outside a range in '%s'\n" "$glob"
-				return 0
-			fi
-			i=$((_dec_end + 1))
-			continue
-		elif [[ "$c" == '*' && "$next" == '*' ]]; then
-			printf "'**' is not supported in '%s'\n" "$glob"
-			return 0
-		elif [[ "$c" == '*' && "$next" != '(' ]] && ((++stars > DEC_MAX_STARS)); then
-			printf "more than %d '*' in '%s'\n" "$DEC_MAX_STARS" "$glob"
-			return 0
-		elif [[ "$c" == '{' || "$c" == '}' ]]; then
-			printf "braces are not supported in '%s'\n" "$glob"
-			return 0
-		elif [[ "$next" == '(' && ("$c" == '?' || "$c" == '*' || "$c" == '+' || "$c" == '@' || "$c" == '!') ]]; then
-			printf "extended patterns are not supported in '%s'\n" "$glob"
-			return 0
-		fi
-		i=$((i + 1))
-	done
-	return 1
 }
 
 # dec_validate_tree <physical repo root>: the one definition of a valid record,
@@ -387,94 +326,15 @@ dec_validate_tree() {
 	[[ ${#DEC_PROBLEMS[@]} -eq 0 ]]
 }
 
-# dec_split_globs <Applies to value>: one trimmed glob per line, empty entries
-# kept so the validator can name them. A comma separates globs only where bash
-# would read it as a literal comma between them: one inside a bracket
-# expression (`src/file[_,].py`) or after a backslash belongs to its glob, so
-# the selector matches what `[[ $path == $glob ]]` would for the whole glob.
-# Trimming stops at an escaped character, so `docs/foo\ ` keeps its space.
+# dec_split_globs <Applies to value>: one glob per line, split at every comma
+# and trimmed; empty entries are kept so the validator can name them.
 dec_split_globs() {
-	local value="$1" part="" c i=0 n kept=0
+	local rest="$1," part
 	local LC_ALL=C
-	n=${#value}
-	while ((i < n)); do
-		c="${value:i:1}"
-		if [[ "$c" == ',' ]]; then
-			_dec_emit_glob "$part" "$kept"
-			part=""
-			kept=0
-			i=$((i + 1))
-		elif [[ "$c" == "\\" ]]; then
-			part+="${value:i:2}"
-			kept=${#part}
-			i=$((i + 2))
-		elif [[ "$c" == '[' ]] && _dec_bracket_end "$value" "$i"; then
-			part+="${value:i:_dec_end-i+1}"
-			kept=${#part}
-			i=$((_dec_end + 1))
-		else
-			part+="$c"
-			i=$((i + 1))
-		fi
+	while [[ -n "$rest" ]]; do
+		part="${rest%%,*}"
+		rest="${rest#*,}"
+		part="${part#"${part%%[![:space:]]*}"}"
+		printf '%s\n' "${part%"${part##*[![:space:]]}"}"
 	done
-	_dec_emit_glob "$part" "$kept"
-}
-
-# _dec_emit_glob <glob> <length of its escaped prefix>: trailing whitespace is
-# trimmed only after that prefix; leading whitespace never precedes an escape.
-_dec_emit_glob() {
-	local head="${1:0:$2}" tail="${1:$2}" part
-	tail="${tail%"${tail##*[![:space:]]}"}"
-	part="$head$tail"
-	part="${part#"${part%%[![:space:]]*}"}"
-	printf '%s\n' "$part"
-}
-
-# _dec_bracket_end <text> <index of a [>: sets _dec_end to the index of the `]`
-# that closes the bracket expression bash reads there, and returns 0. A `]`
-# right after `[`, `[!` or `[^` is a member, a backslash quotes the next
-# character, and `[:class:]`, `[=c=]` and `[.c.]` are one member each. Returns 1
-# for an unclosed `[`, which bash matches literally. For dec_glob_problem, it
-# sets _dec_collating to 1 when an unescaped `[=` or `[.` opens inside the
-# expression (closed or not), and _dec_badclass to 1 when an unescaped `[:`
-# does not open one of the twelve POSIX classes `[:name:]` or follows a `-`
-# (bash reads `[a-[:digit:]]` as a range ending at `[`); each is 0 otherwise.
-DEC_GLOB_CLASSES='alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit'
-_dec_bracket_end() {
-	local text="$1" j=$(($2 + 1)) n=${#1} c rest
-	_dec_collating=0
-	_dec_badclass=0
-	c="${text:j:1}"
-	if [[ "$c" == '!' || "$c" == '^' ]]; then
-		j=$((j + 1))
-	fi
-	if [[ "${text:j:1}" == ']' ]]; then
-		j=$((j + 1))
-	fi
-	while ((j < n)); do
-		c="${text:j:1}"
-		if [[ "$c" == ']' ]]; then
-			_dec_end=$j
-			return 0
-		elif [[ "$c" == "\\" ]]; then
-			j=$((j + 2))
-		elif [[ "$c" == '[' && ("${text:j+1:1}" == ':' || "${text:j+1:1}" == '=' || "${text:j+1:1}" == '.') ]]; then
-			c="${text:j+1:1}"
-			if [[ "$c" != ':' ]]; then
-				_dec_collating=1
-			elif [[ "${text:j-1:1}" == - || ! "${text:j+2}" =~ ^($DEC_GLOB_CLASSES):\] ]]; then
-				_dec_badclass=1
-			fi
-			rest="${text:j+2}"
-			if [[ "$rest" == *"$c]"* ]]; then
-				rest="${rest%%"$c]"*}"
-				j=$((j + 2 + ${#rest} + 2))
-			else
-				j=$((j + 1))
-			fi
-		else
-			j=$((j + 1))
-		fi
-	done
-	return 1
 }
