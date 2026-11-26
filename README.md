@@ -105,6 +105,7 @@ brew install just jq shellcheck shfmt
 just check-sync                  # canonical scripts/ ↔ bundled skill scripts byte-identity
 just check-prompt-parity         # Claude vs Codex SKILL.md content parity for bundle skills
 just check-trunk-snippet-parity  # trunk-resolution snippet parity
+just check-decisions             # validate docs/decisions records (headers, status, supersession links, Applies to globs); part of just ci
 just parity-tests                # bundle + allowlist + orchestration-contract + no-fallback + marker + managed-skill/cleanup-boundary regression coverage
 just reconciliation-tests        # reconciliation parity + fixture + renderer + determinism
 just pi-tests                    # Pi mirror suites (tests/pi)
@@ -120,6 +121,7 @@ plugins/skein-codex/skills/<name>/   Codex skills (mirrored structure; per-harne
 .claude-plugin/marketplace.json      Claude marketplace entry for skein
 .agents/plugins/marketplace.json     Codex marketplace entry for skein
 scripts/                             Canonical shell scripts (bundle/check/reconcile/parity/render/auto-fix)
+docs/decisions/                      Decision records promoted from dev plans (format in its README; validated by `just check-decisions`)
 site/                                skein.sh static site (Cloudflare Workers assets; `just site-preview`, `just site-deploy`)
 ```
 
