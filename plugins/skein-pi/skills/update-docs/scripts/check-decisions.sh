@@ -17,8 +17,11 @@
 #   - no active record is superseded
 #   - Source plan resolves to a file under <repo-root>
 #   - Applies to is comma-separated globs without `**`, braces or extended
-#     patterns (`?( *( +( @( !(`); a comma inside a bracket expression or
-#     after a backslash belongs to its glob
+#     patterns (`?( *( +( @( !(`), at most four `*`, and none of the shapes
+#     bash versions read differently (an unclosed `[`, a trailing unpaired
+#     backslash, `[=`/`[.` or a non-POSIX or range-ending `[:` in a bracket
+#     expression); a comma inside a bracket expression or after a backslash
+#     belongs to its glob
 #
 # --targets is the write preflight for a promotion: each <path> is a
 # repo-relative file the promotion is about to create or edit (the new record,
