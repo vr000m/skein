@@ -731,7 +731,8 @@ fi
 diff_run --base HEAD --head HEAD
 assert_eq "--base/--head on an empty range is an empty success" "0:" "$RC:$OUT"
 diff_run --base missing-rev --head HEAD
-assert_eq "--base/--head on a bad range is exit 4 with no record text" "4:" "$RC:$OUT"
+assert_eq "--base/--head on an unresolvable revision is exit 2 with no record text" "2:" "$RC:$OUT"
+assert_eq "an unresolvable revision is named by its reason code, never its value" "decisions-active.sh: --base refused: not-a-commit" "$(cat "$tmp/stderr")"
 printf 'staged\n' >"$root/src/staged.py"
 gitc add -- src/staged.py
 printf 'two\n' >"$root/archive/moved.py"
@@ -750,6 +751,44 @@ fi
 RC=0
 (cd "$root" && "$SEL" --base -x --head HEAD >/dev/null 2>&1) || RC=$?
 assert_eq "a revision that starts with - is a usage error" "2" "$RC"
+
+# R5-5 the selector, not the skills' snippets, judges a --base/--head value.
+# Contract: any value git resolves to a commit is accepted, including refs the
+# snippets' old character allowlist refused (`fix#12`, `feat=x`, `a%b`, a
+# non-ASCII branch, `HEAD~1`); an empty value, a leading `-` and a value that
+# names no commit exit 2 with `decisions-active.sh: <option> refused: <code>`
+# and nothing else on stderr, and --output is emptied. Cells: value x
+# {--base, --head}.
+gitc checkout -q "$reviewed_head"
+cafe="$(printf 'caf\303\251-accent')"
+for ref in 'fix#12' 'feat=x' 'a%b' "$cafe" 'with,comma' 'x@y'; do
+	gitc branch -f -- "$ref" "$reviewed_head^"
+	diff_run --base "$ref" --head HEAD
+	if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q refused "$tmp/stderr"; then
+		pass "R5-5: --base '$ref' (a valid branch) is accepted and selects"
+	else
+		fail "R5-5: --base '$ref': exit $RC, stderr '$(cat "$tmp/stderr")'"
+	fi
+done
+diff_run --base 'HEAD~1' --head HEAD
+assert_eq "R5-5: a relative revision HEAD~1 is accepted" "0:20260101-scratch.md" "$RC:$(names "$OUT")"
+for cell in "--base||empty" "--base|-x|option-like" "--base|nope\$(id)|not-a-commit" "--head||empty" "--head|--all|option-like" "--head|HEAD:src|not-a-commit"; do
+	opt="${cell%%|*}"
+	rest="${cell#*|}"
+	value="${rest%|*}"
+	code="${rest##*|}"
+	printf 'stale\n' >"$root/.deep-review/lenses/d/out.txt"
+	if [[ "$opt" == --base ]]; then
+		diff_run --base "$value" --head HEAD
+	else
+		diff_run --base 'HEAD~1' --head "$value"
+	fi
+	if [[ $RC -eq 2 && -z "$OUT" && "$(cat "$tmp/stderr")" == "decisions-active.sh: $opt refused: $code" ]]; then
+		pass "R5-5: $opt '$value' exits 2 with reason $code and an empty --output"
+	else
+		fail "R5-5: $opt '$value': exit $RC, output '$OUT', stderr '$(cat "$tmp/stderr")'"
+	fi
+done
 
 # An exported BASHOPTS reaches every bash child. The validator and the selector
 # must still agree: Status, glob and record-name matches stay case-sensitive.

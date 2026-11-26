@@ -14,8 +14,14 @@
 #                  prefix means no path can end the here-document early; a
 #                  line without it is refused (exit 4). Blank lines are
 #                  skipped.
-#   --base/--head  the script runs `git diff --no-ext-diff --no-renames
-#                  --name-only -z <base>...<head>` itself (both rename paths;
+#   --base/--head  each value must name a commit: an empty value, one
+#                  starting with `-` or one `git rev-parse --verify
+#                  --end-of-options <rev>^{commit}` cannot resolve is refused
+#                  with exit 2 and `decisions-active.sh: --base refused:
+#                  <code>` (empty, option-like, not-a-commit) on stderr,
+#                  never the value. The script then runs `git diff
+#                  --no-ext-diff --no-renames --name-only -z
+#                  <base commit>...<head commit>` itself (both rename paths;
 #                  the merge base, as `gh pr diff`), plus the staged and
 #                  unstaged diffs with --uncommitted. No changed path is an
 #                  empty, successful selection. Records are always read from
@@ -89,7 +95,8 @@
 #
 # Exit codes:
 #   0  complete: no match, no docs/decisions directory, or every match printed
-#   2  usage error (an unknown option, or no path)
+#   2  usage error (an unknown option, or no path), or a --base/--head value
+#      refused with its reason code on stderr
 #   3  degraded: a record is malformed (check-decisions.sh would reject it:
 #      both call dec_validate_tree), docs/decisions is not a readable local
 #      directory, or more records matched than the cap shows. stderr names
@@ -99,8 +106,8 @@
 #      records the validator accepts are selected, and those matches are
 #      still printed, so the caller reports degraded coverage rather than
 #      "no applicable decisions".
-#   4  the path list is unavailable: a git diff failed, or a --paths-stdin line
-#      lacks its `p ` prefix
+#   4  the path list is unavailable: a git diff of the resolved commits
+#      failed, or a --paths-stdin line lacks its `p ` prefix
 #   5  --output or --paths-file was refused or could not be written
 # --output holds a selection exactly when the status is 0 or 3; on 2, 4 or 5
 # it is empty or absent, and callers read it only on 0 or 3.
@@ -130,17 +137,32 @@ output=""
 paths_file=""
 base=""
 head=""
+have_base=0
+have_head=0
 from_stdin=0
 uncommitted=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--output | --paths-file | --base | --head)
+	--output | --paths-file)
 		[[ $# -ge 2 && -n "$2" ]] || usage
 		case "$1" in
 		--output) output="$2" ;;
 		--paths-file) paths_file="$2" ;;
-		--base) base="$2" ;;
-		--head) head="$2" ;;
+		esac
+		shift 2
+		;;
+	--base | --head)
+		# An empty or option-like value is refused below with a reason code.
+		[[ $# -ge 2 ]] || usage
+		case "$1" in
+		--base)
+			base="$2"
+			have_base=1
+			;;
+		--head)
+			head="$2"
+			have_head=1
+			;;
 		esac
 		shift 2
 		;;
@@ -161,11 +183,9 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 mode=argv
-if [[ -n "$base" || -n "$head" ]]; then
+if [[ $have_base -eq 1 || $have_head -eq 1 ]]; then
 	mode=range
-	[[ -n "$base" && -n "$head" && $from_stdin -eq 0 && $# -eq 0 ]] || usage
-	# A revision starting with `-` would reach git as an option.
-	[[ "$base" != -* && "$head" != -* ]] || usage
+	[[ $have_base -eq 1 && $have_head -eq 1 && $from_stdin -eq 0 && $# -eq 0 ]] || usage
 elif [[ $from_stdin -eq 1 ]]; then
 	mode=stdin
 	[[ $# -eq 0 ]] || usage
@@ -174,6 +194,30 @@ fi
 
 logical_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 root="$(cd -P -- "$logical_root" && pwd -P)"
+
+# resolve_revision <option> <value>: prints the commit that <value> names. The
+# one place a --base or --head value is judged, so the skills' snippets carry
+# no allowlist of their own: any revision git resolves to a commit is accepted
+# (a SHA, `HEAD~2`, a branch such as `fix#12` or `feat=x`). Otherwise prints
+# `decisions-active.sh: <option> refused: <code>` on stderr, never the value,
+# and exits 2. Codes: empty; option-like (a leading `-`, which git would read
+# as an option); not-a-commit (`git rev-parse --verify --end-of-options
+# <value>^{commit}` fails).
+resolve_revision() {
+	local code="" sha=""
+	if [[ -z "$2" ]]; then
+		code=empty
+	elif [[ "$2" == -* ]]; then
+		code=option-like
+	elif ! sha="$(git -C "$root" rev-parse --verify --quiet --end-of-options "$2^{commit}" 2>/dev/null)" || [[ -z "$sha" ]]; then
+		code=not-a-commit
+	fi
+	if [[ -n "$code" ]]; then
+		echo "decisions-active.sh: $1 refused: $code" >&2
+		exit 2
+	fi
+	printf '%s\n' "$sha"
+}
 
 # Private temp files (mktemp, outside the repository); removed on any exit.
 # Nothing reaches the repository except through dec_scratch_write.
@@ -226,6 +270,12 @@ if [[ -n "$paths_file" || "$mode" != argv ]]; then
 	list_tmp="$(mktemp)"
 fi
 
+# A refused revision exits 2 after the trap is set, so --output is emptied.
+if [[ "$mode" == range ]]; then
+	base_commit="$(resolve_revision --base "$base")" || exit 2
+	head_commit="$(resolve_revision --head "$head")" || exit 2
+fi
+
 paths=()
 case "$mode" in
 argv)
@@ -260,7 +310,7 @@ stdin)
 	;;
 range)
 	if ! {
-		git -C "$root" diff --no-ext-diff --no-renames --name-only -z "$base...$head" -- &&
+		git -C "$root" diff --no-ext-diff --no-renames --name-only -z "$base_commit...$head_commit" -- &&
 			if [[ $uncommitted -eq 1 ]]; then
 				git -C "$root" diff --no-ext-diff --no-renames --name-only -z --cached -- &&
 					git -C "$root" diff --no-ext-diff --no-renames --name-only -z --
@@ -272,9 +322,8 @@ range)
 	while IFS= read -r -d '' entry; do
 		paths+=("$entry")
 	done <"$list_tmp"
-	reviewed="$(git -C "$root" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null || true)"
 	current="$(git -C "$root" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
-	[[ "$reviewed" == "$current" ]] || echo "$NOTICE" >&2
+	[[ "$head_commit" == "$current" ]] || echo "$NOTICE" >&2
 	if [[ $uncommitted -eq 0 ]]; then
 		dirty="$(git -C "$root" --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions 2>/dev/null)" || dirty=unknown
 		[[ -z "$dirty" ]] || echo "$DIRTY_NOTICE" >&2
