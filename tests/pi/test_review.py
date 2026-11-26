@@ -3,8 +3,8 @@
 import json
 import os
 import re
-import shutil
 import subprocess
+from pathlib import Path
 
 from test_package import ALLOWLIST, COMMANDS, ROOT
 
@@ -222,61 +222,65 @@ def with_paths(command, lines):
     )
 
 
+def selector_output(result):
+    lines = [
+        line.split("=", 1)[1]
+        for line in result.stdout.splitlines()
+        if line.startswith("selector-output=")
+    ]
+    assert len(lines) == 1, result.stdout
+    return lines[0]
+
+
 def exercise_plan_path_command(skill, tmp_path):
-    """Seam 1: paths reach the selector only as `p `-prefixed here-document
-    lines; the selector, not the shell, writes the lens files and refuses a
-    symlinked state directory; the status line prints for every exit."""
+    """Paths reach the selector only as `p `-prefixed here-document lines; the
+    selector writes its selection to a private temp file it creates under
+    $TMPDIR, names it only for exit 0 or 3, and writes nothing into the
+    repository; the status line prints for every exit."""
     repo, env, commands = decision_command_fixture(skill, tmp_path)
-    command = next(command for command in commands if "decision-paths.txt" in command)
-    lens = repo / f".{skill.parent.name}/lenses/fixture"
+    command = next(command for command in commands if "--paths-stdin" in command)
+    tmpdir = tmp_path / "tmpdir"
+    tmpdir.mkdir()
+    env = {**env, "TMPDIR": str(tmpdir)}
     paths = [
         "src/a b.py",
         "src/$(touch injected).py",
         "src/semi;quote'file.py",
         "SKEIN_PATHS",
     ]
-    result = subprocess.run(
-        ["/bin/bash", "-e", "-c", with_paths(command, [f"p {p}" for p in paths])],
-        cwd=repo,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+
+    def run_paths(lines, **extra):
+        return subprocess.run(
+            ["/bin/bash", "-e", "-c", with_paths(command, lines)],
+            cwd=repo,
+            env={**env, **extra},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    result = run_paths([f"p {p}" for p in paths])
     assert result.returncode == 0, result.stderr
     assert selector_status(result) == 0
-    assert f"selector-output={lens / 'decision-records.txt'}" in result.stdout
-    assert (lens / "decision-paths.txt").read_text() == "".join(f"{p}\n" for p in paths)
-    assert (lens / "decision-records.txt").read_text() == ""
+    named = Path(selector_output(result))
+    assert named.parent == tmpdir and named.name.startswith("skein-decisions.")
+    assert named.stat().st_mode & 0o777 == 0o600
+    assert named.read_text() == ""
     assert not (repo / "injected").exists()
-    unprefixed = subprocess.run(
-        ["/bin/bash", "-e", "-c", with_paths(command, ["src/a.py"])],
-        cwd=repo,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    unprefixed = run_paths(["src/a.py"])
     assert selector_status(unprefixed) == 4
-    assert "selector-output=\n" in unprefixed.stdout, "exit 4 names no file"
-    outside = tmp_path / "outside"
-    outside.mkdir()
-    state = repo / f".{skill.parent.name}"
-    shutil.rmtree(state)
-    state.symlink_to(outside)
-    linked = subprocess.run(
-        ["/bin/bash", "-e", "-c", with_paths(command, ["p src/a.py"])],
-        cwd=repo,
-        env=env,
+    assert selector_output(unprefixed) == "", "exit 4 names no file"
+    no_tmp = run_paths(["p src/a.py"], TMPDIR=str(tmp_path / "missing"))
+    assert selector_status(no_tmp) == 5
+    assert selector_output(no_tmp) == "", "exit 5 names no file"
+    assert sorted(tmpdir.iterdir()) == [named], "a failed run leaves no temp file"
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "--ignored"],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
     )
-    assert selector_status(linked) == 5
-    assert "selector-output=\n" in linked.stdout, "exit 5 names no file"
-    assert list(outside.iterdir()) == [], (
-        "a symlinked state directory must receive nothing"
-    )
+    assert status.stdout == "", "the selector writes nothing into the repository"
 
 
 def test_review_plan_executes_documented_path_command_fail_closed(tmp_path):

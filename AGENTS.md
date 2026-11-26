@@ -42,7 +42,7 @@ plugins/skein-codex/skills/  Codex CLI skills (mirrored structure; same generate
 plugins/skein/.claude-plugin/plugin.json       Claude plugin manifest
 plugins/skein-codex/.codex-plugin/plugin.json  Codex plugin manifest
 scripts/                     Canonical shell scripts for check-sync/reconcile/parity/render/auto-fix/bundle, plus render-report.py and report-hook.sh (opt-in `--report` HTML report; bundled into review-gauntlet and deep-review on both mirrors, never into Pi); `decisions-active.sh` (decision-record selector, bundled into review-plan and deep-review) and `check-decisions.sh` (record validator, bundled into update-docs)
-scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh), by the two persist-*.sh state-file scripts (persist-common.sh) and by the decisions scripts (decisions-common.sh, plus decisions-scratch.sh for the selector's scratch-file guard)
+scripts/lib/                 Shared bash helpers sourced by appliers (auto-fix-common.sh), by the two persist-*.sh state-file scripts (persist-common.sh) and by the decisions scripts (decisions-common.sh)
 plugins/*/skills/review-gauntlet/lib/  AUTHORED (not generated) harness-neutral bash helpers for review-gauntlet — see below
 tests/                       Reconciliation, parity, and auto-fix test harnesses; `tests/site/` guards the skein.sh site
 docs/dev_plans/              Development plans

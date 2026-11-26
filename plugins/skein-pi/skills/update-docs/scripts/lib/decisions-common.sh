@@ -2,9 +2,8 @@
 # decisions-common.sh — the one header parser and record validator for
 # docs/decisions records. Sourced by scripts/check-decisions.sh (validator) and
 # scripts/decisions-active.sh (selector), so the two cannot disagree about what
-# a record says or whether it is valid. It reads records only; the selector's
-# scratch-file writes live in decisions-scratch.sh, which ships with the lens
-# skills alone. The sourcing script owns `set -euo pipefail`.
+# a record says or whether it is valid. It reads records only. The sourcing
+# script owns `set -euo pipefail`.
 #
 # Every function that parses record text runs under `local LC_ALL=C`, so a
 # header, glob or status is parsed byte for byte and the validator and

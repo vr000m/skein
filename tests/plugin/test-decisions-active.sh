@@ -566,11 +566,6 @@ else
 	done
 fi
 
-# Scratch I/O (seam 1). Contract: the selector is the only writer of
-# --paths-file and --output; each must sit inside the repo with no symlink,
-# `..` or `.git` component below the root, no non-directory ancestor and no
-# non-regular leaf; a refusal exits 5, names the component and writes nothing
-# anywhere; an accepted --output is written whatever the exit status.
 scratch_repo() {
 	local root="$1"
 	rm -rf "$root"
@@ -578,106 +573,47 @@ scratch_repo() {
 	git -C "$root" init -q
 	record "$root" 20260101-scratch.md active 'src/*'
 }
-outside="$tmp/outside"
-# cells: shape -> the component the refusal names ("" for accepted)
-scratch_cells=(
-	"fresh|"
-	"existing-regular|"
-	"state-link|.deep-review is a symlink"
-	"lenses-link|.deep-review/lenses is a symlink"
-	"run-link|.deep-review/lenses/r is a symlink"
-	"output-link|.deep-review/lenses/r/out.txt is a symlink"
-	"paths-link|.deep-review/lenses/r/paths.txt is a symlink"
-	"output-dir|.deep-review/lenses/r/out.txt is not a regular file"
-	"state-file|.deep-review is not a directory"
-	"outside|not inside the repository"
-	"dotdot|a '..', '.', empty or .git component"
-	"dotgit|a '..', '.', empty or .git component"
-)
-for cell in "${scratch_cells[@]}"; do
-	shape="${cell%%|*}"
-	want="${cell#*|}"
-	root="$tmp/scratch-$shape"
-	scratch_repo "$root"
-	rm -rf "$outside"
-	mkdir -p "$outside"
-	printf 'victim\n' >"$outside/victim"
-	out_arg=".deep-review/lenses/r/out.txt"
-	case "$shape" in
-	existing-regular)
-		mkdir -p "$root/.deep-review/lenses/r"
-		printf 'stale\n' >"$root/.deep-review/lenses/r/out.txt"
-		;;
-	state-link) ln -s "$outside" "$root/.deep-review" ;;
-	lenses-link)
-		mkdir -p "$root/.deep-review"
-		ln -s "$outside" "$root/.deep-review/lenses"
-		;;
-	run-link)
-		mkdir -p "$root/.deep-review/lenses"
-		ln -s "$outside" "$root/.deep-review/lenses/r"
-		;;
-	output-link)
-		mkdir -p "$root/.deep-review/lenses/r"
-		ln -s "$outside/victim" "$root/.deep-review/lenses/r/out.txt"
-		;;
-	paths-link)
-		mkdir -p "$root/.deep-review/lenses/r"
-		ln -s "$outside/victim" "$root/.deep-review/lenses/r/paths.txt"
-		;;
-	output-dir) mkdir -p "$root/.deep-review/lenses/r/out.txt" ;;
-	state-file) printf 'x\n' >"$root/.deep-review" ;;
-	outside) out_arg="$outside/out.txt" ;;
-	dotdot) out_arg=".deep-review/../../outside/out.txt" ;;
-	dotgit) out_arg=".git/out.txt" ;;
-	esac
-	rc=0
-	err="$(
-		cd "$root" && "$SEL" --output "$out_arg" --paths-file .deep-review/lenses/r/paths.txt --paths-stdin 2>&1 >/dev/null <<'EOF'
-p src/a.py
-EOF
-	)" || rc=$?
-	untouched=0
-	if [[ "$(cat "$outside/victim")" == victim && "$(find "$outside" -mindepth 1 | wc -l | tr -d ' ')" == 1 ]]; then
-		untouched=1
-	fi
-	if [[ -z "$want" ]]; then
-		if [[ $rc -eq 0 && $untouched -eq 1 ]] &&
-			grep -qx '### Record: docs/decisions/20260101-scratch.md' "$root/.deep-review/lenses/r/out.txt" &&
-			[[ "$(cat "$root/.deep-review/lenses/r/paths.txt")" == src/a.py ]] &&
-			[[ -z "$(find "$root/.deep-review" -name '.*.??????')" ]]; then
-			pass "scratch $shape: both files written by the selector, no temp file left"
-		else
-			fail "scratch $shape: exit $rc, err '$err'"
-		fi
-	elif [[ $rc -eq 5 && $untouched -eq 1 && "$err" == *"$want"* ]]; then
-		pass "scratch $shape: refused with exit 5 ($want), nothing written outside"
-	else
-		fail "scratch $shape: exit $rc, untouched $untouched, err '$err' (want '$want')"
-	fi
-done
 
-# Every exit status still writes an accepted --output, so the snippet's
-# selector-output= file is never stale: exit 3 keeps the valid matches, exit 2
-# (no path) and exit 4 (an unprefixed line) leave it empty.
-root="$tmp/scratch-exits"
+# I1/I3 --temp-output. Contract: the selector writes its selection to a fresh
+# mode-0600 file it creates under $TMPDIR (never a caller path), prints only
+# `selector-output=<file>` on stdout after exit 0 or 3, and after any other
+# exit prints `selector-output=` and leaves no file; nothing is written into
+# the repository. Cells: exit 0, 3 (malformed record, valid match kept), 2 (no
+# path), 4 (unprefixed line), 5 (no writable $TMPDIR).
+root="$tmp/temp-output"
 scratch_repo "$root"
-record "$root" 20260102-broken.md active 'src/*'
-printf '# Broken\n' >"$root/docs/decisions/20260102-broken.md"
-mkdir -p "$root/.deep-review/lenses/r"
-for cell in "3|p src/a.py|20260101-scratch.md" "2||" "4|src/a.py|"; do
+mkdir -p "$tmp/T"
+before="$(git -C "$root" status --porcelain --ignored --untracked-files=all)"
+for cell in "0|p src/a.py|20260101-scratch.md" "3|p src/a.py|20260101-scratch.md" "2||" "4|src/a.py|" "5|p src/a.py|"; do
 	want_rc="${cell%%|*}"
 	rest="${cell#*|}"
 	line="${rest%|*}"
 	want_names="${rest#*|}"
-	printf 'stale\n' >"$root/.deep-review/lenses/r/out.txt"
+	tdir="$tmp/T"
+	[[ "$want_rc" == 5 ]] && tdir="$tmp/no-such-dir"
+	if [[ "$want_rc" == 3 ]]; then
+		printf '# Broken\n' >"$root/docs/decisions/20260102-broken.md"
+		before="$(git -C "$root" status --porcelain --ignored --untracked-files=all)"
+	fi
 	rc=0
-	(cd "$root" && printf '%s\n' "$line" | "$SEL" --output .deep-review/lenses/r/out.txt --paths-stdin >/dev/null 2>&1) || rc=$?
-	got="$(names "$(cat "$root/.deep-review/lenses/r/out.txt")")"
-	if [[ $rc -eq "$want_rc" && "$got" == "$want_names" ]] && ! grep -q stale "$root/.deep-review/lenses/r/out.txt"; then
-		pass "exit $want_rc rewrites --output ('$want_names')"
+	status_line="$(cd "$root" && printf '%s\n' "$line" | TMPDIR="$tdir" "$SEL" --temp-output --paths-stdin 2>/dev/null)" || rc=$?
+	file="${status_line#selector-output=}"
+	ok=1
+	[[ $rc -eq "$want_rc" && "$status_line" == selector-output=* && "$status_line" != *$'\n'* ]] || ok=0
+	[[ "$(git -C "$root" status --porcelain --ignored --untracked-files=all)" == "$before" ]] || ok=0
+	if [[ "$want_rc" == 0 || "$want_rc" == 3 ]]; then
+		[[ "$file" == "$tmp/T/skein-decisions."* && -f "$file" ]] || ok=0
+		[[ "$(stat -f %Lp "$file" 2>/dev/null || stat -c %a "$file" 2>/dev/null)" == 600 ]] || ok=0
+		[[ "$(names "$(cat "$file" 2>/dev/null)")" == "$want_names" ]] || ok=0
+		rm -f -- "$file"
 	else
-		fail "exit $want_rc: got exit $rc, output names '$got'"
+		[[ -z "$file" ]] || ok=0
+	fi
+	compgen -G "$tmp/T/*" >/dev/null && ok=0
+	if [[ $ok -eq 1 ]]; then
+		pass "--temp-output exit $want_rc: status line, 0600 temp file only on 0/3, no repo write ('$want_names')"
+	else
+		fail "--temp-output exit $want_rc: got exit $rc, status '$status_line'"
 	fi
 done
 
@@ -687,20 +623,22 @@ root="$tmp/scratch-stdin"
 scratch_repo "$root"
 # shellcheck disable=SC2016  # the metacharacters are the test data
 record "$root" 20260102-meta.md active 'src/$(touch*'
+record "$root" 20260103-lead.md active '  src/lead space.py'
+record "$root" 20260104-delim.md active 'SKEIN_PATHS'
 rc=0
 # shellcheck disable=SC2016  # the metacharacters are the test data
-(cd "$root" && "$SEL" --output out.txt --paths-file paths.txt --paths-stdin >/dev/null 2>&1 <<'EOF') || rc=$?
+OUT="$(
+	cd "$root" && "$SEL" --paths-stdin 2>/dev/null <<'EOF'
 p src/$(touch injected).py
 p   src/lead space.py
 
 p SKEIN_PATHS
 EOF
-# shellcheck disable=SC2016  # literal expected text
-if [[ $rc -eq 0 && ! -e "$root/injected" && "$(names "$(cat "$root/out.txt")")" == "20260101-scratch.md 20260102-meta.md" ]] &&
-	[[ "$(cat "$root/paths.txt")" == 'src/$(touch injected).py'$'\n''  src/lead space.py'$'\n''SKEIN_PATHS' ]]; then
+)" || rc=$?
+if [[ $rc -eq 0 && ! -e "$root/injected" && "$(names "$OUT")" == "20260101-scratch.md 20260102-meta.md 20260104-delim.md" ]]; then
 	pass "--paths-stdin keeps each path literal after its prefix and runs nothing"
 else
-	fail "--paths-stdin: exit $rc, paths '$(cat "$root/paths.txt" 2>/dev/null)'"
+	fail "--paths-stdin: exit $rc, names '$(names "$OUT")'"
 fi
 
 # --base/--head: the script runs the diff (both rename paths, the merge base),
@@ -718,15 +656,13 @@ gitc mv -- src/moved.py archive/moved.py
 gitc commit -qm move
 diff_run() {
 	RC=0
-	(cd "$root" && "$SEL" --output .deep-review/lenses/d/out.txt --paths-file .deep-review/lenses/d/paths.z "$@" 2>"$tmp/stderr" >/dev/null) || RC=$?
-	OUT="$(cat "$root/.deep-review/lenses/d/out.txt")"
+	OUT="$(cd "$root" && "$SEL" "$@" 2>"$tmp/stderr")" || RC=$?
 }
 diff_run --base 'HEAD^' --head HEAD
-paths_list="$(tr '\0' '\n' <"$root/.deep-review/lenses/d/paths.z" | sort | tr '\n' ' ')"
-if [[ $RC -eq 0 && "$paths_list" == "archive/moved.py src/moved.py " && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q notice "$tmp/stderr"; then
-	pass "--base/--head selects over both rename paths, no notice at the checked-out HEAD"
+if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q notice "$tmp/stderr"; then
+	pass "--base/--head selects over the rename source path, no notice at the checked-out HEAD"
 else
-	fail "--base/--head rename: exit $RC, paths '$paths_list', names '$(names "$OUT")'"
+	fail "--base/--head rename: exit $RC, names '$(names "$OUT")'"
 fi
 diff_run --base HEAD --head HEAD
 assert_eq "--base/--head on an empty range is an empty success" "0:" "$RC:$OUT"
@@ -736,9 +672,10 @@ assert_eq "an unresolvable revision is named by its reason code, never its value
 printf 'staged\n' >"$root/src/staged.py"
 gitc add -- src/staged.py
 printf 'two\n' >"$root/archive/moved.py"
+record "$root" 20260109-archive.md active 'archive/*'
 diff_run --base HEAD --head HEAD --uncommitted
-paths_list="$(tr '\0' '\n' <"$root/.deep-review/lenses/d/paths.z" | tr '\n' ' ')"
-assert_eq "--uncommitted adds the staged and unstaged paths" "0:src/staged.py archive/moved.py " "$RC:$paths_list"
+assert_eq "--uncommitted adds the staged and unstaged paths" "0:20260101-scratch.md 20260109-archive.md" "$RC:$(names "$OUT")"
+rm -f "$root/docs/decisions/20260109-archive.md"
 gitc stash -q
 reviewed_head="$(git -C "$root" rev-parse HEAD)"
 gitc checkout -q 'HEAD^'
@@ -757,7 +694,7 @@ assert_eq "a revision that starts with - is a usage error" "2" "$RC"
 # snippets' old character allowlist refused (`fix#12`, `feat=x`, `a%b`, a
 # non-ASCII branch, `HEAD~1`); an empty value, a leading `-` and a value that
 # names no commit exit 2 with `decisions-active.sh: <option> refused: <code>`
-# and nothing else on stderr, and --output is emptied. Cells: value x
+# and nothing else on stderr, and print no record text. Cells: value x
 # {--base, --head}.
 gitc checkout -q "$reviewed_head"
 cafe="$(printf 'caf\303\251-accent')"
@@ -777,14 +714,13 @@ for cell in "--base||empty" "--base|-x|option-like" "--base|nope\$(id)|not-a-com
 	rest="${cell#*|}"
 	value="${rest%|*}"
 	code="${rest##*|}"
-	printf 'stale\n' >"$root/.deep-review/lenses/d/out.txt"
 	if [[ "$opt" == --base ]]; then
 		diff_run --base "$value" --head HEAD
 	else
 		diff_run --base 'HEAD~1' --head "$value"
 	fi
 	if [[ $RC -eq 2 && -z "$OUT" && "$(cat "$tmp/stderr")" == "decisions-active.sh: $opt refused: $code" ]]; then
-		pass "R5-5: $opt '$value' exits 2 with reason $code and an empty --output"
+		pass "R5-5: $opt '$value' exits 2 with reason $code and no record text"
 	else
 		fail "R5-5: $opt '$value': exit $RC, output '$OUT', stderr '$(cat "$tmp/stderr")'"
 	fi
@@ -920,7 +856,7 @@ done
 # Round 4. Each block states its contract, then drives it as a table.
 
 # R4-1 truncation is reported by the exit status, never by record text.
-# Contract: stdout (the --output file) holds record text only; a capped
+# Contract: stdout (the selection) holds record text only; a capped
 # selection exits 3 with the DECISIONS-TRUNCATED line on stderr; a record
 # whose last line reads like the marker leaves a complete selection at exit 0
 # with nothing on stderr.
@@ -1538,177 +1474,22 @@ for cell in no-decisions with-decisions dangling; do
 	fi
 done
 
-# R4-7 the scratch guard's containment rule is persist_path_is_inside_root.
-# Contract: dec_scratch_prepare refuses a path as `not inside the repository`
-# exactly when persist_path_is_inside_root says it is outside both the
-# physical and the logical root. Cells: absolute, relative from the root and
-# from a subdirectory, the root itself, a sibling sharing the root's prefix,
-# an outside path, `..` spellings, an alias spelled through a symlink above
-# the root, and a relative path from outside the root.
-root="$(cd "$tmp" && pwd -P)/r4-scratch"
-mkdir -p "$root/sub" "$tmp/r4-scratch-x"
-ln -s "$root" "$tmp/r4-scratch-alias"
-boundary_failures=0
-boundary_cases=0
-while IFS='|' read -r cwd spelling; do
-	cwd="${cwd//@ROOT@/$root}"
-	cwd="${cwd//@TMP@/$tmp}"
-	spelling="${spelling//@ROOT@/$root}"
-	spelling="${spelling//@TMP@/$tmp}"
-	verdicts="$(cd "$cwd" && bash -c '
-		set -euo pipefail
-		. "$1/lib/decisions-scratch.sh"
-		r=1; persist_path_is_inside_root "$4" "$2" && r=0
-		d=0; dec_scratch_prepare "$2" "$3" "$4" >/dev/null 2>&1 || { [[ "$DEC_SCRATCH_REASON" == "not inside the repository" ]] && d=1; }
-		printf "%s %s\n" "$r" "$d"
-	' _ "$REPO_ROOT/scripts" "$root" "$root" "$spelling")"
-	boundary_cases=$((boundary_cases + 1))
-	if [[ "$verdicts" != "0 0" && "$verdicts" != "1 1" ]]; then
-		boundary_failures=$((boundary_failures + 1))
-		fail "R4-7: cwd $cwd, path $spelling: persist/dec verdicts $verdicts"
-	fi
-done <<'ROWS'
-@ROOT@|@ROOT@/.deep-review/lenses/r/out.txt
-@ROOT@|.deep-review/lenses/r/out.txt
-@ROOT@/sub|out.txt
-@ROOT@|@ROOT@
-@ROOT@|@ROOT@-x/out.txt
-@ROOT@|/etc/out.txt
-@ROOT@|../out.txt
-@ROOT@|@ROOT@/../out.txt
-@ROOT@|@TMP@/r4-scratch-alias/out.txt
-@TMP@|out.txt
-@TMP@|r4-scratch/out.txt
-ROWS
-[[ $boundary_failures -eq 0 ]] && pass "R4-7: dec_scratch_prepare's containment verdict equals persist_path_is_inside_root on $boundary_cases spellings"
-rm -rf "$root/.deep-review"
-
-# R5-2 the scratch write re-resolves no checked pathname.
-# Contract: no component below the root may equal `.git` in any letter case;
-# dec_scratch_write reaches the target directory by its own verified walk
-# (each component's kernel name must equal its spelling) and writes by leaf
-# name from there, so an ancestor swapped for a symlink or moved after
-# dec_scratch_prepare, or swapped between the walk's check and its `cd`,
-# makes the write fail with nothing written outside the root or into .git.
-# Cells: `.git` spellings x (selector end to end); swap after prepare, swap
-# during the walk, move before the rename x every bash on the machine.
-root="$tmp/r5-scratch"
-for spelling in .GIT/out.txt .Git/out.txt .gIT/x/out.txt sub/.GiT/out.txt .GIT; do
-	scratch_repo "$root"
-	head_before="$(cat "$root/.git/HEAD")"
-	rc=0
-	err="$(cd "$root" && "$SEL" --output "$spelling" -- src/a.py 2>&1 >/dev/null)" || rc=$?
-	if [[ $rc -eq 5 && "$err" == *"a '..', '.', empty or .git component"* && "$(cat "$root/.git/HEAD")" == "$head_before" ]] &&
-		[[ -z "$(find "$root/.git" -newer "$root/docs/decisions/20260101-scratch.md" -name 'out.txt')" ]]; then
-		pass "R5-2: --output $spelling is refused as a .git component (exit 5)"
-	else
-		fail "R5-2: --output $spelling: exit $rc, err '$err'"
-	fi
-done
-# On a case-insensitive volume a case alias of an existing directory is
-# refused by the walk itself, not only for .git.
-scratch_repo "$root"
-mkdir -p "$root/.deep-review/lenses"
-if [[ -d "$root/.DEEP-REVIEW" ]]; then
-	rc=0
-	err="$(cd "$root" && "$SEL" --output .DEEP-REVIEW/lenses/out.txt -- src/a.py 2>&1 >/dev/null)" || rc=$?
-	if [[ $rc -eq 5 && "$err" == *".DEEP-REVIEW is a link, an alias or was moved"* && ! -e "$root/.deep-review/lenses/out.txt" ]]; then
-		pass "R5-2: a case alias of an existing directory is refused by the walk"
-	else
-		fail "R5-2: case alias: exit $rc, err '$err'"
-	fi
-else
-	pass "R5-2: this volume is case-sensitive; the case-alias walk cell does not apply"
-fi
-# Function-level races, run in each bash. The child sources the guard, prepares
-# .deep-review/lenses/r/out.txt, then the cell's override (of `cd` or `cat`,
-# both of which the guard calls during the write) swaps or moves an ancestor
-# at the worst moment, and the write must fail.
-# shellcheck disable=SC2016  # the race script is evaluated by the child bash
-race_script='
-set -euo pipefail
-. "$1/lib/decisions-scratch.sh"
-root="$2" outside="$3" cell="$4"
-src="$(mktemp)"
-printf "payload\n" >"$src"
-mkdir -p "$root/.deep-review/lenses/r"
-dec_scratch_prepare "$root" "$root" "$root/.deep-review/lenses/r/out.txt" || { echo "prepare: $DEC_SCRATCH_REASON"; exit 9; }
-case "$cell" in
-after-prepare)
-	mv "$root/.deep-review/lenses" "$root/.deep-review/lenses.real"
-	ln -s "$outside" "$root/.deep-review/lenses"
-	mkdir -p "$outside/r"
-	;;
-during-walk)
-	cd() {
-		if [[ "${3:-}" == ./lenses && ! -L "$root/.deep-review/lenses" ]]; then
-			mv "$root/.deep-review/lenses" "$root/.deep-review/lenses.real"
-			ln -s "$outside" "$root/.deep-review/lenses"
-			mkdir -p "$outside/r"
-		fi
-		builtin cd "$@"
-	}
-	;;
-before-rename)
-	cat() {
-		command cat "$@"
-		mv "$root/.deep-review/lenses" "$outside/moved"
-	}
-	;;
-esac
-if dec_scratch_write "$root" "$DEC_SCRATCH_DIR" "$DEC_SCRATCH_LEAF" "$src"; then
-	echo "written"
-else
-	echo "refused: $DEC_SCRATCH_REASON"
-fi
-rm -f "$src"
-'
-for lb in "${locale_bashes[@]}"; do
-	for cell in after-prepare during-walk before-rename; do
-		scratch_repo "$root"
-		rm -rf "$outside"
-		mkdir -p "$outside"
-		got="$("$lb" -c "$race_script" _ "$REPO_ROOT/scripts" "$(cd "$root" && pwd -P)" "$(cd "$outside" && pwd -P)" "$cell" 2>&1 || true)"
-		leaked="$(find "$outside" -type f | wc -l | tr -d ' ')"
-		if [[ "$got" == refused:* && "$leaked" == 0 ]]; then
-			pass "[$lb] R5-2: an ancestor swapped or moved ($cell) refuses the write (${got#refused: }), nothing outside"
-		else
-			fail "[$lb] R5-2: $cell: '$got', $leaked file(s) outside"
-		fi
-	done
-done
-# The same child with no race writes the file, so the cells above are not
-# refusing for an unrelated reason.
-for lb in "${locale_bashes[@]}"; do
-	scratch_repo "$root"
-	rm -rf "$outside"
-	mkdir -p "$outside"
-	got="$("$lb" -c "$race_script" _ "$REPO_ROOT/scripts" "$(cd "$root" && pwd -P)" "$(cd "$outside" && pwd -P)" none 2>&1 || true)"
-	if [[ "$got" == written && "$(cat "$root/.deep-review/lenses/r/out.txt")" == payload ]] &&
-		[[ -z "$(find "$root/.deep-review" -name '.out.txt.*')" ]]; then
-		pass "[$lb] R5-2: without a race the write lands, with no temp file left"
-	else
-		fail "[$lb] R5-2: control: '$got'"
-	fi
-done
-
-# Shipping: the selector, parser and scratch guard reach all six lens-skill
-# directories and not review-gauntlet; the validator and parser, but not the
-# scratch guard, reach the three update-docs directories.
+# Shipping: the selector and parser reach all six lens-skill directories and
+# not review-gauntlet; the validator and parser, but not the selector, reach
+# the three update-docs directories.
 for mirror in skein skein-codex skein-pi; do
 	for skill in review-plan deep-review; do
 		d="$REPO_ROOT/plugins/$mirror/skills/$skill/scripts"
-		if [[ -f "$d/decisions-active.sh" && -f "$d/lib/decisions-common.sh" && -f "$d/lib/decisions-scratch.sh" ]] &&
+		if [[ -f "$d/decisions-active.sh" && -f "$d/lib/decisions-common.sh" ]] &&
 			cmp -s "$SEL" "$d/decisions-active.sh" &&
-			cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$d/lib/decisions-common.sh" &&
-			cmp -s "$REPO_ROOT/scripts/lib/decisions-scratch.sh" "$d/lib/decisions-scratch.sh"; then
-			pass "selector, parser and scratch guard are bundled byte-identically in $mirror/$skill"
+			cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$d/lib/decisions-common.sh"; then
+			pass "selector and parser are bundled byte-identically in $mirror/$skill"
 		else
-			fail "selector, parser and scratch guard are bundled byte-identically in $mirror/$skill"
+			fail "selector and parser are bundled byte-identically in $mirror/$skill"
 		fi
 	done
 	g="$REPO_ROOT/plugins/$mirror/skills/review-gauntlet/scripts"
-	if [[ ! -e "$g/decisions-active.sh" && ! -e "$g/lib/decisions-common.sh" && ! -e "$g/lib/decisions-scratch.sh" ]]; then
+	if [[ ! -e "$g/decisions-active.sh" && ! -e "$g/lib/decisions-common.sh" ]]; then
 		pass "the selector is absent from $mirror/review-gauntlet"
 	else
 		fail "the selector is absent from $mirror/review-gauntlet"
@@ -1721,10 +1502,10 @@ for mirror in skein skein-codex skein-pi; do
 	else
 		fail "validator and parser are bundled byte-identically in $mirror/update-docs"
 	fi
-	if [[ ! -e "$u/decisions-active.sh" && ! -e "$u/lib/decisions-scratch.sh" ]]; then
-		pass "the selector and its scratch guard are not bundled into $mirror/update-docs"
+	if [[ ! -e "$u/decisions-active.sh" ]]; then
+		pass "the selector is not bundled into $mirror/update-docs"
 	else
-		fail "the selector and its scratch guard are not bundled into $mirror/update-docs"
+		fail "the selector is not bundled into $mirror/update-docs"
 	fi
 done
 

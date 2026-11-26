@@ -3,10 +3,9 @@
 # of paths, escaped for embedding in a lens prompt.
 #
 # Usage:
-#   decisions-active.sh [--output <file>] [--paths-file <file>] --paths-stdin
-#   decisions-active.sh [--output <file>] [--paths-file <file>] \
-#       --base <rev> --head <rev> [--uncommitted]
-#   decisions-active.sh [--output <file>] [--paths-file <file>] [--] <path>...
+#   decisions-active.sh [--temp-output] --paths-stdin
+#   decisions-active.sh [--temp-output] --base <rev> --head <rev> [--uncommitted]
+#   decisions-active.sh [--temp-output] [--] <path>...
 #
 # Paths arrive one of three ways, and the skills never put one on a command
 # line:
@@ -44,19 +43,12 @@
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
 # matched as written.
 #
-# --paths-file records the path list the selection used (NUL-delimited for
-# --base/--head, one per line otherwise) and --output receives the selection
-# instead of stdout. The script is the only writer of both: each must lie
-# inside the repository, with no symlink, `..` or `.git` component below the
-# repo root, no non-directory ancestor and no non-regular leaf
-# (dec_scratch_prepare in lib/decisions-scratch.sh, which asks
-# persist_path_is_inside_root whether the path is inside the repository).
-# Missing directories are created. The selector writes each file to a private
-# temp file first; dec_scratch_write then walks from the physical root again,
-# one verified component at a time, and renames a fresh temp file into place
-# by its leaf name, so no pathname checked earlier is resolved again for the
-# write. `.git` is refused in any letter case. --output is written whatever
-# the exit status, once its path is accepted.
+# The selection goes to stdout. With --temp-output it goes instead to a fresh
+# private file the selector creates itself (mktemp under ${TMPDIR:-/tmp},
+# mode 0600; never a caller-supplied path), and stdout carries one status
+# line, `selector-output=<that file>` after exit 0 or 3, or `selector-output=`
+# (the file removed) after any other exit. The selector writes nothing into
+# the repository.
 #
 # Records are <repo-root>/docs/decisions/*.md (README.md excluded); <repo-root>
 # is the git top level, or the current directory outside a repository. A
@@ -93,8 +85,8 @@
 #
 # Cap: at most 8 records and 24 KiB of record text. When more records match,
 # stderr carries `decisions-active.sh: DECISIONS-TRUNCATED: N of M records
-# shown` and the exit status is 3. Nothing but record text reaches stdout (or
-# --output), so a record cannot forge the truncation report: callers judge
+# shown` and the exit status is 3. Nothing but record text reaches the
+# selection, so a record cannot forge the truncation report: callers judge
 # coverage by the exit status alone.
 #
 # Exit codes:
@@ -112,16 +104,12 @@
 #      "no applicable decisions".
 #   4  the path list is unavailable: a git diff of the resolved commits
 #      failed, or a --paths-stdin line lacks its `p ` prefix
-#   5  --output or --paths-file was refused or could not be written
-# --output holds a selection exactly when the status is 0 or 3; on 2, 4 or 5
-# it is empty or absent, and callers read it only on 0 or 3.
+#   5  --temp-output could not create its file
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
 . "$SCRIPT_DIR/lib/decisions-common.sh"
-# shellcheck source=scripts/lib/decisions-scratch.sh disable=SC1091
-. "$SCRIPT_DIR/lib/decisions-scratch.sh"
 
 # A glob from a record is matched case-sensitively: the shared lib clears
 # nocasematch. Extended patterns are rejected by dec_glob_problem instead:
@@ -134,12 +122,11 @@ DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes 
 OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope"
 
 usage() {
-	echo "usage: decisions-active.sh [--output <file>] [--paths-file <file>] (--paths-stdin | --base <rev> --head <rev> [--uncommitted] | [--] <path>...)" >&2
+	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | --base <rev> --head <rev> [--uncommitted] | [--] <path>...)" >&2
 	exit 2
 }
 
-output=""
-paths_file=""
+temp_output=0
 base=""
 head=""
 have_base=0
@@ -148,13 +135,9 @@ from_stdin=0
 uncommitted=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--output | --paths-file)
-		[[ $# -ge 2 && -n "$2" ]] || usage
-		case "$1" in
-		--output) output="$2" ;;
-		--paths-file) paths_file="$2" ;;
-		esac
-		shift 2
+	--temp-output)
+		temp_output=1
+		shift
 		;;
 	--base | --head)
 		# An empty or option-like value is refused below with a reason code.
@@ -197,8 +180,7 @@ elif [[ $from_stdin -eq 1 ]]; then
 fi
 [[ $uncommitted -eq 0 || "$mode" == range ]] || usage
 
-logical_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-root="$(cd -P -- "$logical_root" && pwd -P)"
+root="$(cd -P -- "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && pwd -P)"
 
 # resolve_revision <option> <value>: prints the commit that <value> names. The
 # one place a --base or --head value is judged, so the skills' snippets carry
@@ -224,58 +206,38 @@ resolve_revision() {
 	printf '%s\n' "$sha"
 }
 
-# Private temp files (mktemp, outside the repository); removed on any exit.
-# Nothing reaches the repository except through dec_scratch_write.
+# Private temp files (mktemp, outside the repository), removed on any exit
+# except a selection handed to the caller after exit 0 or 3.
 list_tmp=""
 out_tmp=""
-out_dir=""
-out_leaf=""
 on_exit() {
 	local rc=$?
 	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
-	[[ -n "$out_tmp" ]] || exit "$rc"
-	exec 1>&3 3>&-
-	if dec_scratch_write "$root" "$out_dir" "$out_leaf" "$out_tmp"; then
-		rm -f -- "$out_tmp"
-		exit "$rc"
+	if [[ -n "$out_tmp" ]]; then
+		exec 1>&3 3>&-
+		case "$rc" in
+		0 | 3) printf 'selector-output=%s\n' "$out_tmp" ;;
+		*)
+			rm -f -- "$out_tmp"
+			printf 'selector-output=\n'
+			;;
+		esac
 	fi
-	rm -f -- "$out_tmp"
-	echo "decisions-active.sh: --output not written: $DEC_SCRATCH_REASON" >&2
-	exit 5
+	exit "$rc"
 }
 trap on_exit EXIT
 
-# From here on every exit, success or failure, writes --output.
-if [[ -n "$output" ]]; then
-	if ! dec_scratch_prepare "$root" "$logical_root" "$output"; then
-		echo "decisions-active.sh: --output refused: $DEC_SCRATCH_REASON" >&2
+if [[ $temp_output -eq 1 ]]; then
+	if ! out_tmp="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX")"; then
+		out_tmp=""
+		echo "decisions-active.sh: --temp-output: cannot create a temp file" >&2
+		printf 'selector-output=\n'
 		exit 5
 	fi
-	out_dir="$DEC_SCRATCH_DIR"
-	out_leaf="$DEC_SCRATCH_LEAF"
-	out_tmp="$(mktemp)" || {
-		out_tmp=""
-		echo "decisions-active.sh: --output refused: cannot create a temp file" >&2
-		exit 5
-	}
 	exec 3>&1 1>"$out_tmp"
 fi
+[[ "$mode" != range ]] || list_tmp="$(mktemp)"
 
-paths_dir=""
-paths_leaf=""
-if [[ -n "$paths_file" ]]; then
-	if ! dec_scratch_prepare "$root" "$logical_root" "$paths_file"; then
-		echo "decisions-active.sh: --paths-file refused: $DEC_SCRATCH_REASON" >&2
-		exit 5
-	fi
-	paths_dir="$DEC_SCRATCH_DIR"
-	paths_leaf="$DEC_SCRATCH_LEAF"
-fi
-if [[ -n "$paths_file" || "$mode" != argv ]]; then
-	list_tmp="$(mktemp)"
-fi
-
-# A refused revision exits 2 after the trap is set, so --output is emptied.
 if [[ "$mode" == range ]]; then
 	base_commit="$(resolve_revision --base "$base")" || exit 2
 	head_commit="$(resolve_revision --head "$head")" || exit 2
@@ -285,9 +247,6 @@ paths=()
 case "$mode" in
 argv)
 	paths=("$@")
-	if [[ -n "$list_tmp" && ${#paths[@]} -gt 0 ]]; then
-		printf '%s\n' "${paths[@]}" >"$list_tmp"
-	fi
 	;;
 stdin)
 	entries="$(mktemp)"
@@ -308,9 +267,6 @@ stdin)
 	if [[ $unprefixed -eq 1 ]]; then
 		echo "decisions-active.sh: a --paths-stdin line lacks its 'p ' prefix" >&2
 		exit 4
-	fi
-	if [[ ${#paths[@]} -gt 0 ]]; then
-		printf '%s\n' "${paths[@]}" >"$list_tmp"
 	fi
 	;;
 range)
@@ -339,12 +295,6 @@ range)
 	fi
 	;;
 esac
-if [[ -n "$paths_leaf" ]]; then
-	if ! dec_scratch_write "$root" "$paths_dir" "$paths_leaf" "$list_tmp"; then
-		echo "decisions-active.sh: --paths-file not written: $DEC_SCRATCH_REASON" >&2
-		exit 5
-	fi
-fi
 if [[ ${#paths[@]} -eq 0 ]]; then
 	[[ "$mode" == range ]] && exit 0
 	usage

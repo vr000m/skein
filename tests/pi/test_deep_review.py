@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from test_package import (
     ALLOWLIST,
@@ -26,6 +27,7 @@ from test_review import (
     decision_command_fixture,
     exercise_decision_selection,
     exercise_plan_path_command,
+    selector_output,
     selector_status,
 )
 
@@ -290,13 +292,27 @@ def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
 def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_path):
     """The selector runs the three diffs itself (range, staged, unstaged),
     keeps hostile names as data, reports a failed source as exit 4 on the
-    status line, and records the list it used in decision-paths.z. The range
+    status line, and selects a record for each path it collected. The range
     arrives on quoted here-document lines, so a hostile ref name runs nothing,
-    and `selector-output=` names the file only for exit 0 or 3."""
+    and `selector-output=` names the selector's temp file only for exit 0 or
+    3."""
     repo, env, commands = decision_command_fixture(SKILL, tmp_path)
-    command = next(command for command in commands if "decision-paths.z" in command)
-    paths_file = repo / ".deep-review/lenses/fixture/decision-paths.z"
-    output_file = repo / ".deep-review/lenses/fixture/decision-records.txt"
+    command = next(command for command in commands if "--base" in command)
+    (repo / "docs/dev_plans").mkdir(parents=True)
+    (repo / "docs/dev_plans/plan.md").write_text("plan\n")
+    (repo / "docs/decisions").mkdir()
+    for name, applies in (
+        ("20260101-committed.md", "committed*"),
+        ("20260102-staged.md", "staged space.py"),
+        ("20260103-moved.md", "moved.py"),
+    ):
+        (repo / "docs/decisions" / name).write_text(
+            f"# {name}\n\n**Status**: active\n**Date**: 2026-11-24\n"
+            f"**Applies to**: {applies}\n**Supersedes**: none\n"
+            "**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n"
+            "## Decision\nKeep it.\n## Why\nBecause.\n"
+        )
+    selected = []
 
     def git(*args):
         return subprocess.check_output(["git", "-C", str(repo), *args])
@@ -316,15 +332,15 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
         )
         assert result.returncode == 0, result.stderr
         status = selector_status(result)
-        named = [
-            line.split("=", 1)[1]
-            for line in result.stdout.splitlines()
-            if line.startswith("selector-output=")
-        ]
-        assert named == ([str(output_file)] if status in (0, 3) else [""]), (
-            status,
-            named,
-        )
+        named = selector_output(result)
+        assert bool(named) == (status in (0, 3)), (status, named)
+        selected[:] = []
+        if named:
+            text = Path(named).read_text()
+            Path(named).unlink()
+            selected[:] = re.findall(
+                r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE
+            )
         return status
 
     ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
@@ -339,20 +355,18 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
     git("add", "--", staged)
     (repo / committed).write_text("unstaged\n")
     assert select(BASE=base, TIP="HEAD") == 0
-    assert paths_file.read_bytes().split(b"\0")[:-1] == [
-        item.encode() for item in [committed, staged, committed]
-    ]
+    assert selected == ["20260101-committed.md", "20260102-staged.md"]
     assert not (repo / "injected").exists()
     git("reset", "-q")
     git("checkout", "--", committed)
     git("mv", "--", committed, "moved.py")
     git(*ident, "commit", "-m", "move")
     assert select(BASE="HEAD^", TIP="HEAD") == 0
-    assert sorted(paths_file.read_bytes().split(b"\0")[:-1]) == sorted(
-        [committed.encode(), b"moved.py"]
-    ), "a rename must give the selector both its source and destination"
+    assert selected == ["20260101-committed.md", "20260103-moved.md"], (
+        "a rename must give the selector both its source and destination"
+    )
     assert select(BASE="HEAD", TIP="HEAD") == 0
-    assert paths_file.read_bytes() == b"", "no changed path is an empty selection"
+    assert selected == [], "no changed path is an empty selection"
     assert select(BASE="invalid-ref", TIP="HEAD") == 2, "the selector refuses it"
     git("branch", "-f", "--", "fix#12", "HEAD^")
     assert select(BASE="fix#12", TIP="HEAD") == 0, "a ref the old allowlist refused"
@@ -383,9 +397,6 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
             FAIL_SOURCE=source,
         )
         assert status == 4, f"a failed {source} diff must be exit 4"
-        assert (
-            repo / ".deep-review/lenses/fixture/decision-records.txt"
-        ).read_text() == ""
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

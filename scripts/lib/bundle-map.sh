@@ -38,11 +38,10 @@ BUNDLE_SHARED=(
 # file to arrive through that single edit; lib/persist-common.sh stays in the
 # group because lens-common.sh sources it. decisions-active.sh is the selector
 # whose output both architecture lenses receive; lib/decisions-common.sh is
-# the header parser it sources and lib/decisions-scratch.sh its scratch-file
-# guard (which sources lens-common.sh for containment). They ride this group
-# so each is added once; only the parser also ships to update-docs.
+# the header parser and validator it sources. They ride this group so each
+# is added once; only the parser also ships to update-docs.
 # shellcheck disable=SC2034  # consumed by sourcing scripts
-BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh decisions-active.sh lib/decisions-common.sh lib/decisions-scratch.sh)
+BUNDLE_LENS=(lib/persist-common.sh lib/lens-common.sh persist-lens-result.sh collect-lens-results.sh decisions-active.sh lib/decisions-common.sh)
 
 # The opt-in HTML report pair, bundled into exactly the two skills whose
 # SKILL.md invokes the report hook (review-gauntlet and deep-review). It is a
