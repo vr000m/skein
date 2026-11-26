@@ -1345,6 +1345,57 @@ for cell in no-decisions with-decisions dangling; do
 	fi
 done
 
+# Round 7 (I4): a NUL byte in a record is a `header` problem on every bash.
+# Bash 3.2 command substitution drops the NUL, so without the check
+# `src/foo<NUL>[` validated as `src/foo` there but was rejected on bash 5.
+for where in header body; do
+	root="$tmp/r7-nul-$where"
+	record "$root" 20260101-nul.md active 'src/*'
+	if [[ "$where" == header ]]; then
+		printf '# T\n\n**Status**: active\n**Date**: 2026-11-24\n**Applies to**: src/foo\000[\n**Supersedes**: none\n**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n## Decision\nX\n## Why\nY\n' >"$root/docs/decisions/20260101-nul.md"
+	else
+		printf 'NUL-BODY \000 tail\n' >>"$root/docs/decisions/20260101-nul.md"
+	fi
+	for b in "${locale_bashes[@]}"; do
+		vrc=0
+		"$b" "$CHECK" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+		RC=0
+		OUT="$(cd "$root" && "$b" "$SEL" src/foo 2>"$tmp/stderr")" || RC=$?
+		if [[ $vrc -eq 1 && $RC -eq 3 && -z "$OUT" ]] && grep -q 'contains a NUL byte' "$tmp/check-err" &&
+			grep -qx 'decisions-active.sh: malformed record 20260101-nul.md: header' "$tmp/stderr"; then
+			pass "R7: NUL in the $where on $b: validator 1, selector 3 (header), nothing selected"
+		else
+			fail "R7: NUL in the $where on $b: validator $vrc, selector $RC, out '$OUT', stderr $(cat "$tmp/stderr")"
+		fi
+	done
+done
+
+# Round 7 (I3): an escaping failure is exit 6 with a fixed reason and no
+# selection on stdout, not a bare sed status. A `sed` shim returns 17.
+root="$tmp/r7-escape"
+record "$root" 20260101-a.md active 'src/*'
+record "$root" 20260102-b.md active 'src/*'
+mkdir -p "$tmp/r7-sed"
+printf '#!/bin/sh\nexit 17\n' >"$tmp/r7-sed/sed"
+chmod +x "$tmp/r7-sed/sed"
+for b in "${locale_bashes[@]}"; do
+	for mode in plain temp; do
+		RC=0
+		if [[ "$mode" == temp ]]; then
+			OUT="$(cd "$root" && PATH="$tmp/r7-sed:$PATH" "$b" "$SEL" --temp-output src/x 2>"$tmp/stderr")" || RC=$?
+			want_out='selector-output='
+		else
+			OUT="$(cd "$root" && PATH="$tmp/r7-sed:$PATH" "$b" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+			want_out=''
+		fi
+		if [[ $RC -eq 6 && "$OUT" == "$want_out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: DECISIONS-ESCAPE-FAILED' ]]; then
+			pass "R7: escape failure on $b ($mode): exit 6, DECISIONS-ESCAPE-FAILED, no selection"
+		else
+			fail "R7: escape failure on $b ($mode): exit $RC, out '$OUT', stderr '$(cat "$tmp/stderr")'"
+		fi
+	done
+done
+
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
 # the three update-docs directories.

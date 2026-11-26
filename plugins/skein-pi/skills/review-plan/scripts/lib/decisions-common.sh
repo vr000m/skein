@@ -262,6 +262,13 @@ dec_validate_tree() {
 			_dec_problem "$index" file-type "expected a readable, regular, non-symlink file"
 			continue
 		fi
+		# A NUL byte is refused before any value is read: bash 3.2 command
+		# substitution drops it and bash 5 keeps the bytes after it, so the
+		# same header would validate differently per bash.
+		if dec_has_nul "$path"; then
+			_dec_problem "$index" header "contains a NUL byte"
+			continue
+		fi
 
 		complete=1
 		for field in Status Date "Applies to" Supersedes "Superseded by" "Source plan"; do
@@ -328,6 +335,18 @@ dec_validate_tree() {
 	done
 
 	[[ ${#DEC_PROBLEMS[@]} -eq 0 ]]
+}
+
+# dec_has_nul <file>: returns 0 when <file> holds a NUL byte (or cannot be
+# counted), 1 otherwise. Compares byte counts with and without NULs, so it
+# never puts file bytes through a shell variable, which works on bash 3.2.
+dec_has_nul() {
+	local all kept
+	all="$(LC_ALL=C wc -c <"$1" 2>/dev/null)" || return 0
+	kept="$(LC_ALL=C tr -d '\000' <"$1" 2>/dev/null | LC_ALL=C wc -c)" || return 0
+	all="${all//[!0-9]/}"
+	kept="${kept//[!0-9]/}"
+	[[ -z "$all" || "$all" != "$kept" ]]
 }
 
 # dec_split_globs <Applies to value>: one glob per line, split at every comma

@@ -104,6 +104,9 @@
 #      failed, or a --paths-stdin line lacks its `p ` prefix
 #   5  a private temp file (the --temp-output file or a path-list file)
 #      could not be created; stderr carries a fixed reason, never a path
+#   6  escaping record text failed: stderr carries the fixed reason
+#      `decisions-active.sh: DECISIONS-ESCAPE-FAILED` and stdout carries no
+#      selection (with --temp-output, the status line `selector-output=`)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -500,22 +503,29 @@ for ((index = 0; index < ${#DEC_RECORDS[@]}; index++)); do
 	fi
 done
 
+# The selection is held until every record is escaped, so an escaping failure
+# prints nothing: no unescaped or partial selection reaches a lens prompt.
 shown=0
 used=0
+selection=""
 for path in "${matched[@]+"${matched[@]}"}"; do
 	text="$(
 		printf '### Record: docs/decisions/%s\n' "${path##*/}"
 		block "$path"
 	)"
-	text="$(printf '%s\n' "$text" | escape)"
+	if ! text="$(printf '%s\n' "$text" | escape)"; then
+		echo "decisions-active.sh: DECISIONS-ESCAPE-FAILED" >&2
+		exit 6
+	fi
 	size="$(printf '%s\n' "$text" | LC_ALL=C wc -c | tr -d '[:space:]')"
 	if [[ $shown -ge $MAX_RECORDS || $((used + size)) -gt $MAX_BYTES ]]; then
 		break
 	fi
-	printf '%s\n' "$text"
+	selection+="$text"$'\n'
 	shown=$((shown + 1))
 	used=$((used + size))
 done
+[[ -z "$selection" ]] || printf '%s' "$selection"
 
 total=${#matched[@]}
 if [[ $shown -lt $total ]]; then
