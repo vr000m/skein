@@ -323,8 +323,8 @@ check_mirror() {
 	# Write preflight: before the offer and again immediately before the write.
 	expect_text "$name: preflights every target before offering, targets on stdin" "$section" \
 		"${check_path} --targets-file - <<'SKEIN_TARGETS'"
-	expect_text "$name: checks every file name before any shell use" "$section" \
-		"check each file name (the source plan's, the new record's and a superseded record's) against \`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md\$\`"
+	expect_text "$name: checks every record name with the gate's rule before any shell use" "$section" \
+		"check the new record's and a superseded record's file names with the Plan Name Gate's rule (the source plan passed the gate already)"
 	expect_text "$name: reports a plan link to a missing record" "$section" '`broken partial promotion: <link>`'
 	run_step1_guard "$name" "$section"
 	run_step1_containment "$name" "$section" 'only with your file-read and file-search (glob) tools'
@@ -718,11 +718,11 @@ run_marker_integrity() {
 # validator's.
 run_step1_guard() {
 	local name="$1" section="$2" shell_rule="${3:-only with your file-read and file-search (glob) tools, never with a shell command}" guard rule
-	guard='each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `'
-	rule="^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$"
 	# shellcheck disable=SC2016  # literal skill text
-	if [[ "$section" == *"$guard$rule\`"*"$shell_rule"*"a link whose record file does not exist"* ]]; then
-		pass "$name: step 1 checks link targets and record names (DEC_TARGET_NAME) before any use, existence via file tools only"
+	guard='each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` passes the Plan Name Gate'"'"'s rule'
+	# shellcheck disable=SC2016  # literal skill text
+	if [[ "$section" == *"$guard"*"$shell_rule"*"a link whose record file does not exist"* ]]; then
+		pass "$name: step 1 checks link targets and record names (the gate's DEC_TARGET_NAME rule) before any use, existence via file tools only"
 	else
 		fail "$name: step 1 uses a link target or record name before the DEC_TARGET_NAME check, or allows a shell existence check"
 	fi
@@ -748,31 +748,71 @@ run_step1_containment() {
 	fi
 }
 
-# run_plan_name_first <name> <SKILL.md>: round 6. Contract: the plan's own
-# file name is checked against DEC_TARGET_NAME, with no shell, before any
-# here-document or command could contain it: the check sentence precedes the
-# first `--targets-file`, the first `SKEIN_TARGETS` and the first mention of
-# the step 3 preflight anywhere in the skill, and a failing name is refused as
-# `unsafe name in step 1` with nothing run.
-run_plan_name_first() {
-	local name="$1" whole check rule name_at at needle ok=1
+# offset_of <text> <needle>: the byte offset of the first <needle>, or empty.
+offset_of() {
+	grep -bo -F -- "$2" <<<"$1" | head -1 | cut -d: -f1 || true
+}
+
+# run_gate_first <name> <SKILL.md> <needle>...: round 7 (class fix for rounds
+# 6 and 7). Contract: one Plan Name Gate holds the plan-name rule
+# (DEC_TARGET_NAME, checked with no shell, refused as `unsafe name` with
+# nothing run and no promotion or plan edit) and the invariant that no shell
+# command or here-document holds an unchecked name. The gate precedes the
+# first occurrence of every <needle>: each shell snippet or step that could
+# hold the plan name (`$PLAN`, `--targets-file`, `SKEIN_TARGETS`, the marker
+# classifier's `python3 -I -B -S`, Phase 4 item 3's classifier use).
+run_gate_first() {
+	local name="$1" whole rule gate_at check_at at needle ok=1
 	whole="$(cat "$2")"
+	shift 2
 	rule="^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$"
+	gate_at="$(offset_of "$whole" '## Plan Name Gate')"
+	check_at="$(offset_of "$whole" "Check the plan's own file name against \`$rule\` by comparing the name itself, never with a shell command")"
 	# shellcheck disable=SC2016  # literal skill text
-	check="Check the plan's own file name first, with no shell: before any here-document or command contains it, the plan file name must match \`$rule\`"
-	name_at="$(grep -bo -F -- "$check" <<<"$whole" | head -1 | cut -d: -f1 || true)"
-	if [[ -z "$name_at" || "$whole" != *"$check"*'report it as `unsafe name in step 1`, run nothing and offer nothing in this invocation'* ]]; then
-		fail "$name: no plan-name check (DEC_TARGET_NAME, unsafe name in step 1, run nothing) in the skill"
+	if [[ -z "$gate_at" || -z "$check_at" ]] || ((check_at < gate_at)) ||
+		[[ "$whole" != *'report it as `unsafe name`, run nothing for it'*'offer no promotion and no plan edit for it in this invocation.'* ]] ||
+		[[ "$whole" != *'The plan path must be exactly `docs/dev_plans/<file name>`, with no other directory component'* ]] ||
+		[[ "$whole" != *'Invariant: no shell command or here-document anywhere in this skill ever contains a plan or record name that has not passed this gate.'* ]]; then
+		fail "$name: no Plan Name Gate (DEC_TARGET_NAME, no shell, unsafe name, invariant) in the skill"
 		return
 	fi
-	for needle in '--targets-file' 'SKEIN_TARGETS' 'run the step 3 preflight'; do
-		at="$(grep -bo -F -- "$needle" <<<"$whole" | head -1 | cut -d: -f1 || true)"
-		if [[ -z "$at" ]] || ((at < name_at)); then
+	for needle in "$@"; do
+		at="$(offset_of "$whole" "$needle")"
+		if [[ -z "$at" ]] || ((at < check_at)); then
 			ok=0
-			fail "$name: '$needle' (at $at) precedes the plan-name check (at $name_at)"
+			fail "$name: '$needle' (at ${at:-absent}) precedes the Plan Name Gate (at $check_at)"
 		fi
 	done
-	[[ $ok -eq 1 ]] && pass "$name: the plan name is checked before any here-document or command holds it"
+	[[ $ok -eq 1 ]] && pass "$name: the Plan Name Gate precedes every shell use of a plan name ($#)"
+}
+
+# run_contain_after_approval <name> <SKILL.md> <step opener> <next step opener>
+# <first action> <read>...: round 7. Contract: after approval the repeated
+# containment preflight is the first action of the step, before every read of
+# the plan or an offered target that the step makes.
+run_contain_after_approval() {
+	local name="$1" whole step pre_at at needle ok=1
+	whole="$(cat "$2")"
+	step="${whole#*"$3"}"
+	step="${step%%"$4"*}"
+	if [[ "$step" == "$whole" ]]; then
+		fail "$name: cannot find the after-approval step '$3'"
+		return
+	fi
+	pre_at="$(offset_of "$step" "$5")"
+	if [[ -z "$pre_at" ]]; then
+		fail "$name: the after-approval step does not start with the repeated preflight"
+		return
+	fi
+	shift 5
+	for needle in "$@"; do
+		at="$(offset_of "$step" "$needle")"
+		if [[ -z "$at" ]] || ((at < pre_at)); then
+			ok=0
+			fail "$name: after approval, '$needle' (at ${at:-absent}) precedes the repeated preflight (at $pre_at)"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "$name: after approval the containment preflight runs before any read of the plan"
 }
 
 # run_link_only_guard <name> <section>: round 5. Contract: a link-only offer
@@ -831,6 +871,12 @@ run_name_rule() {
 	[[ $ok -eq 1 ]] && pass "$name: the name rule is DEC_TARGET_NAME and refuses every hostile name"
 }
 
+# The Claude and Codex step 5 (after approval): its repeated preflight comes
+# before the step re-reads the plan, classifies its marker or checks targets.
+CC_STEP5=('5. **After approval' '6. **Write exactly'
+	'The first action after approval, before reading the live plan or any offered target again, is to re-run the step 3 preflight over the same paths'
+	'Then classify the marker' 'python3 -I -B -S - "$PLAN"' 'Also confirm the candidate and offered link location still match the live plan')
+
 if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	check_mirror claude skein '"${CLAUDE_PLUGIN_ROOT}/skills/update-docs/scripts/check-decisions.sh"'
 	run_marker_classifier claude skein
@@ -838,8 +884,12 @@ if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	run_write_order claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
 	run_marker_integrity claude skein
 	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
-	run_plan_name_first claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
-	run_plan_name_first pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
+	run_gate_first claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" '"$PLAN"' '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'use the marker classifier below' '## Decision Promotion'
+	run_contain_after_approval claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" "${CC_STEP5[@]}"
+	run_gate_first pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'run the step 3 preflight' '## 1. Gather bounded evidence' '## 4. Decision Promotion'
+	run_contain_after_approval pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '4. After approval' '5. Write exactly' \
+		'first re-run the step 3 `--targets-file` preflight over the same paths, before re-reading the live source plan or any offered target' \
+		'Then re-read the live source plan' 'compare them byte-for-byte' '`marker.classify_marker(plan)`'
 	run_write_order pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '5. Write exactly the individually approved offer'
 	run_name_rule pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
 	run_step1_guard pi "$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")" 'Read files only with your read tool, never with a shell command'
@@ -853,7 +903,8 @@ if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	run_write_order codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
 	run_marker_integrity codex skein-codex
 	run_name_rule codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
-	run_plan_name_first codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
+	run_gate_first codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" '"$PLAN"' '--targets-file' 'SKEIN_TARGETS' 'python3 -I -B -S' 'use the marker classifier below' '## Decision Promotion'
+	run_contain_after_approval codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" "${CC_STEP5[@]}"
 fi
 
 echo "---"

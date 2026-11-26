@@ -211,9 +211,9 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         "with a valid marker, apply only edits below it and report any above-marker edit as deferred",
         "run the installed bundled `scripts/check-decisions.sh --targets-file -` with the targets in a quoted `<<'SKEIN_TARGETS'` here-document",
         "never on the command line",
-        "against `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` before it reaches any shell",
+        "check the new record's and a superseded record's file names with the Plan Name Gate's rule (the source plan passed the gate already) before they reach any shell",
         "`broken partial promotion: <link>`",
-        "each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` matches `^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$`",
+        "each `## Promoted Decisions` link target must be `docs/decisions/<name>` and each record file found in `docs/decisions/` must be named `<name>`, where `<name>` passes the Plan Name Gate's rule",
         "list the record file names with exactly `ls -1A -- docs/decisions` from the repo root, a fixed command that carries no text from the plan or a record",
         "Read files only with your read tool, never with a shell command, so no name from the plan or a record reaches a shell",
         "a link target exists only when the listing names it",
@@ -256,7 +256,7 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
     )
     offer = text.index("3. Offer each record on its own")
     approve = text.index("Ask for explicit per-record approval", offer)
-    recheck = text.index("4. After approval, re-read", approve)
+    recheck = text.index("4. After approval, first re-run the step 3", approve)
     write = text.index("5. Write exactly the individually approved offer", recheck)
     validate = text.index("6. From the repo root", write)
     assert offer < approve < recheck < write < validate
@@ -272,27 +272,71 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         ).read_bytes()
 
 
-PLAN_NAME_CHECK = (
-    "Check the plan's own file name first, with no shell: before any "
-    "here-document or command contains it, the plan file name must match "
-    "`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` (one line, so it cannot end a "
-    "here-document early); a plan name that fails is unsafe, so report it as "
-    "`unsafe name in step 1`, run nothing and offer nothing in this invocation."
+PLAN_NAME_GATE = (
+    "Check the plan's own file name against "
+    "`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` by comparing the name itself, never "
+    "with a shell command"
+)
+GATE_INVARIANT = (
+    "Invariant: no shell command or here-document anywhere in this skill ever "
+    "contains a plan or record name that has not passed this gate."
 )
 
 
-def test_plan_name_checked_before_any_preflight():
-    """Round 6: a plan name reaches no here-document before the name check."""
+def test_plan_name_gate_precedes_every_shell_use():
+    """Round 7: one Plan Name Gate precedes every command that could hold a plan name.
+
+    It replaces the per-step copies of rounds 6 and 7, so no later snippet
+    (the containment preflight, the marker classifier) reaches a plan name
+    first.
+    """
     text = SKILL.read_text()
-    first_check = text.index(PLAN_NAME_CHECK)
-    for needle in ("--targets-file", "SKEIN_TARGETS", "run the step 3 preflight"):
-        assert first_check < text.index(needle), needle
+    heading = text.index("## Plan Name Gate")
+    gate = text.index(PLAN_NAME_GATE)
+    assert heading < gate < text.index("## 1. Gather bounded evidence")
+    assert GATE_INVARIANT in text
+    assert (
+        "The plan path must be exactly `docs/dev_plans/<file name>`, with no other "
+        "directory component" in text
+    )
+    assert (
+        "report it as `unsafe name`, run nothing for it, send no plan to the audit"
+        in text
+    )
+    assert "offer no promotion and no plan edit for it in this invocation" in text
+    for needle in (
+        "--targets-file",
+        "SKEIN_TARGETS",
+        "run the step 3 preflight",
+        "python3 -I -B -S",
+        "## 4. Decision Promotion",
+    ):
+        assert gate < text.index(needle), needle
     step1 = text.index("1. Verify the live source path")
-    check = text.index(PLAN_NAME_CHECK, step1)
+    pointer = text.index("The plan has already passed the Plan Name Gate", step1)
     containment = text.index(
         "before reading the plan or any record, run the step 3 preflight", step1
     )
-    assert step1 < check < containment
+    assert step1 < pointer < containment
+    assert "Check the plan's own file name first" not in text, "no per-step copy"
+
+
+def test_containment_is_the_first_action_after_approval():
+    """Round 7: step 4 re-runs the preflight before it re-reads the plan."""
+    text = SKILL.read_text()
+    step4 = text.index("4. After approval")
+    step5 = text.index("5. Write exactly the individually approved offer", step4)
+    preflight = text.index(
+        "first re-run the step 3 `--targets-file` preflight over the same paths, "
+        "before re-reading the live source plan or any offered target",
+        step4,
+    )
+    for needle in (
+        "Then re-read the live source plan",
+        "compare them byte-for-byte",
+        "`marker.classify_marker(plan)`",
+    ):
+        assert preflight < text.index(needle, step4) < step5, needle
 
 
 def test_plan_contained_before_any_read_for_the_audit():
@@ -304,7 +348,8 @@ def test_plan_contained_before_any_read_for_the_audit():
     """
     text = SKILL.read_text()
     section1 = text.index("## 1. Gather bounded evidence")
-    check = text.index(PLAN_NAME_CHECK, section1)
+    gate = text.index(PLAN_NAME_GATE)
+    check = text.index("The plan has passed the Plan Name Gate above.", section1)
     preflight = text.index(
         "run the installed bundled `scripts/check-decisions.sh --targets-file -` "
         "with `docs/dev_plans/<plan file>` as the only line of a quoted "
@@ -318,8 +363,9 @@ def test_plan_contained_before_any_read_for_the_audit():
     )
     candidates = text.index("include both the plan's `### Architecture Decisions`")
     audit = text.index("## 2. Request one read-only audit")
-    assert section1 < check < preflight < gather < candidates < audit
-    assert text.index("relevant_plan") > preflight
+    assert gate < section1 < check < preflight < gather < candidates < audit
+    # The gate above section 1 names `relevant_plan` only to leave it empty.
+    assert text.index("relevant_plan", section1) > preflight
     assert (
         "On any other exit (`3`: the plan is a symlink or sits under one) read nothing from it"
         in text
