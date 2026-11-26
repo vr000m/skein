@@ -297,7 +297,7 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
     and `selector-output=` names the selector's temp file only for exit 0 or
     3."""
     repo, env, commands = decision_command_fixture(SKILL, tmp_path)
-    command = next(command for command in commands if "--base" in command)
+    command = next(command for command in commands if "--range-stdin" in command)
     (repo / "docs/dev_plans").mkdir(parents=True)
     (repo / "docs/dev_plans/plan.md").write_text("plan\n")
     (repo / "docs/decisions").mkdir()

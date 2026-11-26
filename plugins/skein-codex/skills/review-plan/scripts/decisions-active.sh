@@ -5,6 +5,7 @@
 # Usage:
 #   decisions-active.sh [--temp-output] --paths-stdin
 #   decisions-active.sh [--temp-output] --base <rev> --head <rev> [--uncommitted]
+#   decisions-active.sh [--temp-output] --range-stdin [--uncommitted]
 #   decisions-active.sh [--temp-output] [--] <path>...
 #
 # Paths arrive one of three ways, and the skills never put one on a command
@@ -38,6 +39,8 @@
 #                  outside the reviewed scope`, printed when git status
 #                  lists an untracked or ignored entry there (or cannot
 #                  tell): those records are read but were not reviewed.
+#                  --range-stdin reads <base> and <head> as the first two
+#                  stdin lines instead (the skills' quoted here-document).
 #   <path>...      literal arguments, for direct use.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
@@ -116,7 +119,7 @@ DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes 
 OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope"
 
 usage() {
-	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | --base <rev> --head <rev> [--uncommitted] | [--] <path>...)" >&2
+	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | (--base <rev> --head <rev> | --range-stdin) [--uncommitted] | [--] <path>...)" >&2
 	exit 2
 }
 
@@ -147,6 +150,12 @@ while [[ $# -gt 0 ]]; do
 			;;
 		esac
 		shift 2
+		;;
+	--range-stdin)
+		IFS= read -r base || true
+		IFS= read -r head || true
+		have_base=1 have_head=1
+		shift
 		;;
 	--paths-stdin)
 		from_stdin=1

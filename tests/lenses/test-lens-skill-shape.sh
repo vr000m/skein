@@ -952,8 +952,8 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"shared finding record shape is unchanged"
 			decision_has "$dec_all" '^below\. Only the Architecture Lens also takes active decision records' \
 				"the lens prompt input is optional and architecture-only"
-			decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh --temp-output --base "\$BASE" --head "\$TIP" \|\| selector_exit=\$\?$' \
-				"the selector runs the diff and owns its private output file, status captured"
+			decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh --temp-output --range-stdin <<'"'"'SKEIN_RANGE'"'"' \|\| selector_exit=\$\?$' \
+				"the selector reads the range from a quoted here-document, runs the diff and owns its output file"
 		else
 			dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
 			dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
@@ -961,14 +961,14 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 				"architecture finding record shape is unchanged"
 			decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
 				"architecture output fields are unchanged"
-			decision_has "$dec_all" '"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/decisions-active\.sh --temp-output --base "\$BASE" --head "\$TIP" \|\| selector_exit=\$\?$' \
-				"the selector runs the diff and owns its private output file, status captured"
+			decision_has "$dec_all" '"\$\{CLAUDE_PLUGIN_ROOT\}"/skills/deep-review/scripts/decisions-active\.sh --temp-output --range-stdin <<'"'"'SKEIN_RANGE'"'"' \|\| selector_exit=\$\?$' \
+				"the selector reads the range from a quoted here-document, runs the diff and owns its output file"
 		fi
 		decision_lacks "$dec_all" 'case "\$(BASE|TIP)" in' "the snippet carries no ref-name allowlist of its own"
 		decision_has "$dec_all" 'The selector itself judges each value, so the snippet carries no allowlist' "the selector judges --base/--head"
 		decision_has "$dec_all" '`decisions-active.sh: --base refused: <code>`.*`empty`, `option-like` or `not-a-commit`, never the value' \
 			"a refused revision is named by a closed reason code"
-		decision_has "$dec_all" 'The selector diffs `"\$BASE\.\.\.\$TIP"` with rename detection disabled' \
+		decision_has "$dec_all" 'The selector diffs `<base>\.\.\.<head>` with rename detection disabled' \
 			"the resolved diff contributes both rename paths"
 		decision_has "$dec_all" 'print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch' \
 			"a reviewed head off the checked-out HEAD is reported"
@@ -1072,7 +1072,7 @@ done
 # named file holds the selection and nothing else; deep-review hands the
 # selector both sides of a rename, runs no selector for an empty range,
 # reports a failed diff as exit 4 with no record text, and reads its range
-# from quoted here-documents, so a hostile ref name runs nothing and the
+# from a quoted here-document, so a hostile ref name runs nothing and the
 # selector (not a snippet allowlist) refuses it with exit 2.
 # dec_fence <SKILL.md> <section opener regex>: the first fence after the opener.
 dec_fence() {

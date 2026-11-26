@@ -28,17 +28,14 @@ added-comment findings; ordinary documentation review still applies.
 
 Before architecture dispatch, resolve `SELECTOR` to this installed skill's `scripts/decisions-active.sh`. From the resolved repo root, select records for the already resolved reviewed paths. For current-diff review, include the committed range and tracked staged/unstaged paths (not just HEAD): the selector collects all three itself and checks each path-source command succeeds. For a plan target, instead collect repo-relative paths from `**Impl files:**`, `### Files to Modify` and `### New Files to Create`, expanding braces (`src/{a,b}.py` becomes `src/a.py` and `src/b.py`). Do not substitute unrelated current-diff paths for a plan target. If paths or evidence cannot be resolved, show missing coverage rather than asserting no applicable decisions.
 
-For a diff, run the selector over the resolved range, writing its base and head, a commit SHA or a ref name exactly as resolved, each alone on its line in place of `<base>` and `<head>` inside the quoted here-documents, never inside shell quotes. A ref name or SHA cannot hold a newline, so it cannot end the here-document early, and the quoted delimiter expands nothing, so a base branch named `main$(id)` stays text. The selector itself judges each value, so the snippet carries no allowlist: a base or head that is empty, starts with `-` or names no commit (`git rev-parse --verify --end-of-options <rev>^{commit}` fails) is refused with exit `2` and one stderr line, `decisions-active.sh: --base refused: <code>` or `decisions-active.sh: --head refused: <code>`, the code `empty`, `option-like` or `not-a-commit`, never the value; any revision git resolves to a commit, a branch such as `fix#12` included, is accepted. The selector runs the diff itself, so no reviewed path reaches a command line:
+For a diff, run the selector over the resolved range, writing its base and head, a commit SHA or a ref name exactly as resolved, each alone on its line in place of `<base>` and `<head>` inside the quoted here-document, never inside shell quotes. A ref name or SHA cannot hold a newline, so it cannot end the here-document early, and the quoted delimiter expands nothing, so a base branch named `main$(id)` stays text. The selector itself judges each value, so the snippet carries no allowlist: a base or head that is empty, starts with `-` or names no commit (`git rev-parse --verify --end-of-options <rev>^{commit}` fails) is refused with exit `2` and one stderr line, `decisions-active.sh: --base refused: <code>` or `decisions-active.sh: --head refused: <code>`, the code `empty`, `option-like` or `not-a-commit`, never the value; any revision git resolves to a commit, a branch such as `fix#12` included, is accepted. The selector runs the diff itself, so no reviewed path reaches a command line:
 
 ```bash
-IFS= read -r BASE <<'SKEIN_BASE' || true
-<base>
-SKEIN_BASE
-IFS= read -r TIP <<'SKEIN_TIP' || true
-<head>
-SKEIN_TIP
 selector_exit=0
-"$SELECTOR" --temp-output --base "$BASE" --head "$TIP" --uncommitted || selector_exit=$?
+"$SELECTOR" --temp-output --range-stdin --uncommitted <<'SKEIN_RANGE' || selector_exit=$?
+<base>
+<head>
+SKEIN_RANGE
 printf 'selector-exit=%s\n' "$selector_exit"
 ```
 
