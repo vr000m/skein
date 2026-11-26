@@ -272,6 +272,29 @@ def test_promotion_main_session_contract_is_separate_from_audit_success():
         ).read_bytes()
 
 
+PLAN_NAME_CHECK = (
+    "Check the plan's own file name first, with no shell: before any "
+    "here-document or command contains it, the plan file name must match "
+    "`^[A-Za-z0-9][A-Za-z0-9._-]*[.]md$` (one line, so it cannot end a "
+    "here-document early); a plan name that fails is unsafe, so report it as "
+    "`unsafe name in step 1`, run nothing and offer nothing in this invocation."
+)
+
+
+def test_plan_name_checked_before_any_preflight():
+    """Round 6: a plan name reaches no here-document before the name check."""
+    text = SKILL.read_text()
+    first_check = text.index(PLAN_NAME_CHECK)
+    for needle in ("--targets-file", "SKEIN_TARGETS", "run the step 3 preflight"):
+        assert first_check < text.index(needle), needle
+    step1 = text.index("1. Verify the live source path")
+    check = text.index(PLAN_NAME_CHECK, step1)
+    containment = text.index(
+        "before reading the plan or any record, run the step 3 preflight", step1
+    )
+    assert step1 < check < containment
+
+
 def test_promotion_below_marker_link_preserves_signed_prefix(tmp_path):
     scripts = ROOT / "plugins/skein-pi/skills/update-docs/scripts"
     writer = ROOT / "plugins/skein-pi/skills/review-plan/scripts/write-review-marker.py"

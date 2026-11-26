@@ -748,6 +748,33 @@ run_step1_containment() {
 	fi
 }
 
+# run_plan_name_first <name> <SKILL.md>: round 6. Contract: the plan's own
+# file name is checked against DEC_TARGET_NAME, with no shell, before any
+# here-document or command could contain it: the check sentence precedes the
+# first `--targets-file`, the first `SKEIN_TARGETS` and the first mention of
+# the step 3 preflight anywhere in the skill, and a failing name is refused as
+# `unsafe name in step 1` with nothing run.
+run_plan_name_first() {
+	local name="$1" whole check rule name_at at needle ok=1
+	whole="$(cat "$2")"
+	rule="^$(sed -n "s/^DEC_TARGET_NAME='\(.*\)'\$/\1/p" "$REPO_ROOT/scripts/lib/decisions-common.sh")\$"
+	# shellcheck disable=SC2016  # literal skill text
+	check="Check the plan's own file name first, with no shell: before any here-document or command contains it, the plan file name must match \`$rule\`"
+	name_at="$(grep -bo -F -- "$check" <<<"$whole" | head -1 | cut -d: -f1 || true)"
+	if [[ -z "$name_at" || "$whole" != *"$check"*'report it as `unsafe name in step 1`, run nothing and offer nothing in this invocation'* ]]; then
+		fail "$name: no plan-name check (DEC_TARGET_NAME, unsafe name in step 1, run nothing) in the skill"
+		return
+	fi
+	for needle in '--targets-file' 'SKEIN_TARGETS' 'run the step 3 preflight'; do
+		at="$(grep -bo -F -- "$needle" <<<"$whole" | head -1 | cut -d: -f1 || true)"
+		if [[ -z "$at" ]] || ((at < name_at)); then
+			ok=0
+			fail "$name: '$needle' (at $at) precedes the plan-name check (at $name_at)"
+		fi
+	done
+	[[ $ok -eq 1 ]] && pass "$name: the plan name is checked before any here-document or command holds it"
+}
+
 # run_link_only_guard <name> <section>: round 5. Contract: a link-only offer
 # preflights its existing record, and confirms the record still exists (and
 # names this plan) before the offer, immediately before the write and after
@@ -811,6 +838,8 @@ if [[ "$mirror" == claude || "$mirror" == both ]]; then
 	run_write_order claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
 	run_marker_integrity claude skein
 	run_name_rule claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
+	run_plan_name_first claude "$REPO_ROOT/plugins/skein/skills/update-docs/SKILL.md"
+	run_plan_name_first pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
 	run_write_order pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md" '5. Write exactly the individually approved offer'
 	run_name_rule pi "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md"
 	run_step1_guard pi "$(cat "$REPO_ROOT/plugins/skein-pi/skills/update-docs/SKILL.md")" 'Read files only with your read tool, never with a shell command'
@@ -824,6 +853,7 @@ if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	run_write_order codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" '6. **Write exactly the approved offer'
 	run_marker_integrity codex skein-codex
 	run_name_rule codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
+	run_plan_name_first codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md"
 fi
 
 echo "---"
