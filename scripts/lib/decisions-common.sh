@@ -14,11 +14,12 @@
 # A record's header is the run of inline `**Field**: value` lines before its
 # first `## ` heading. The first occurrence of a field wins.
 
-# Status, glob and name matches are case-sensitive in every script that sources
-# this file. Bash takes options from an exported BASHOPTS, so a caller's
-# `nocasematch` or `nocaseglob` would otherwise reach one script and not
-# another.
-shopt -u nocasematch nocaseglob
+# Status, glob and name matches are case-sensitive, and the record glob skips
+# hidden files, in every script that sources this file. Bash takes options
+# from an exported BASHOPTS, so a caller's `nocasematch`, `nocaseglob` or
+# `dotglob` (which would make docs/decisions/.hidden.md a record) would
+# otherwise reach one script and not another.
+shopt -u nocasematch nocaseglob dotglob
 
 # Reject non-local directories even when the link target is missing. A linked
 # docs/ is refused only when a decisions entry exists through it: a repository

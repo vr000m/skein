@@ -778,6 +778,29 @@ else
 	pass "this bash ignores BASHOPTS; the inherited-option case is skipped"
 fi
 
+# R5-4 an exported dotglob does not change the record set. Contract: with
+# BASHOPTS=dotglob, a hidden docs/decisions/.hidden.md (Status bogus) is not a
+# record for the validator or the selector, under every bash on the machine
+# that honours BASHOPTS; without the hidden file both pass as before.
+root="$tmp/r5-dotglob"
+record "$root" 20260101-plain.md active 'src/*'
+record "$root" .hidden.md bogus 'src/*'
+dotglob_bashes=0
+for lb in "${locale_bashes[@]}"; do
+	env BASHOPTS=dotglob "$lb" -c 'shopt -q dotglob' 2>/dev/null || continue
+	dotglob_bashes=$((dotglob_bashes + 1))
+	vrc=0
+	env BASHOPTS=dotglob "$lb" "$CHECK" "$root" >"$tmp/vout" 2>&1 || vrc=$?
+	RC=0
+	OUT="$(cd "$root" && env BASHOPTS=dotglob "$lb" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+	if [[ $vrc -eq 0 && $RC -eq 0 && "$(names "$OUT")" == 20260101-plain.md && ! -s "$tmp/stderr" ]]; then
+		pass "[$lb] R5-4: BASHOPTS=dotglob leaves .hidden.md out of the record set (validator and selector exit 0)"
+	else
+		fail "[$lb] R5-4: dotglob: validator $vrc ($(cat "$tmp/vout")), selector $RC ($(cat "$tmp/stderr"))"
+	fi
+done
+[[ $dotglob_bashes -gt 0 ]] || pass "R5-4: no bash here honours BASHOPTS; the dotglob cell is skipped"
+
 # An unreadable record is a file-type problem: no read error, which would quote
 # the raw file name, reaches stderr from either script.
 if [[ "$(id -u)" -eq 0 ]]; then
@@ -1003,6 +1026,115 @@ if [[ $RC -eq 0 ]] && grep -qx 'DECISION-TAIL' <<<"$OUT" && grep -qx 'WHY-BODY' 
 	pass "R4-2: a tilde line inside a backtick fence keeps the Decision tail and the Why section"
 else
 	fail "R4-2: the backtick fence lost text (exit $RC)"
+fi
+
+# R5-3 a section ends at any heading CommonMark reads at level one or two.
+# Contract: after `## Why`, an ATX heading indented up to three spaces, an ATX
+# heading with a closing `#` run, a setext heading (`=` or `-` underline,
+# multi-line paragraphs included) or a level-one heading ends the kept
+# section, so no line under `Alternatives rejected` reaches the prompt; text
+# that only looks like a heading (four-space indent, a thematic break, a
+# fenced `##`, level three) stays in its section; an indented or setext
+# `Why` starts a kept section. Each cell's KEEP-/HIDE- markers are checked
+# against markdown-it-py when it is importable, and the selector's block()
+# runs under every bash on the machine.
+: >"$tmp/heading-cells"
+# shellcheck disable=SC2016  # backticks are the test data
+heading_cells=(
+	'## Why\nKEEP-w\n  ## Alternatives rejected\nHIDE-a\n'
+	'## Why\nKEEP-w\n   ## Alternatives rejected\nHIDE-a\n'
+	'## Why\nKEEP-w\n\nAlternatives rejected\n---\nHIDE-a\n'
+	'## Why\nKEEP-w\n\nAlternatives rejected\n=====\nHIDE-a\n'
+	'## Why\nKEEP-w\n\nAlternatives\nrejected\n  ---   \nHIDE-a\n'
+	'## Why\nHIDE-w\nHIDE-h\n---\nHIDE-a\n'
+	'## Why\nKEEP-w\n# Alternatives rejected\nHIDE-a\n'
+	'## Why\nKEEP-w\n## Alternatives rejected ##\nHIDE-a\n'
+	'## Alternatives rejected\nHIDE-a\n  ## Why\nKEEP-w\n'
+	'## Alternatives rejected\nHIDE-a\n\nWhy\n---\nKEEP-w\n'
+	'## Alternatives rejected\nHIDE-a\n## Why ##\nKEEP-w\n'
+	'## Why\nKEEP-w\n    ## not a heading\nKEEP-x\n'
+	'## Why\nKEEP-w\n\n    ## code\nKEEP-x\n'
+	'## Why\nKEEP-w\n\n---\nKEEP-x\n'
+	'## Why\nKEEP-w\n```\n## fenced\n```\nKEEP-x\n  ## Alternatives rejected\nHIDE-a\n'
+	'## Why\nKEEP-w\n### Sub\nKEEP-s\n'
+	'## Why\r\nKEEP-w\r\n  ## Alternatives rejected\r\nHIDE-a\r\n'
+)
+for cell in "${heading_cells[@]}"; do
+	printf '%s\n' "$cell" >>"$tmp/heading-cells"
+done
+python3 -I - "$tmp/heading-cells" >"$tmp/heading-ref" <<'PY'
+import sys
+
+try:
+    from markdown_it import MarkdownIt
+except ImportError:
+    MarkdownIt = None
+
+def doc(cell):
+    body = cell.encode().decode("unicode_escape")
+    return "# T\n\n**Status**: active\n\n## Decision\nKEEP-d\n" + body
+
+checked = disagree = 0
+for cell in open(sys.argv[1]).read().split("\n")[:-1]:
+    if MarkdownIt is None:
+        break
+    text = doc(cell)
+    tokens = MarkdownIt("commonmark").parse(text)
+    heads = []
+    for i, t in enumerate(tokens):
+        if t.type == "heading_open" and t.tag in ("h1", "h2"):
+            heads.append((t.map[0], int(t.tag[1]), tokens[i + 1].content.strip()))
+    lines = text.split("\n")
+    for number, line in enumerate(lines):
+        marker = line.strip("\r")
+        if not (marker.startswith("KEEP-") or marker.startswith("HIDE-")):
+            continue
+        keep, seen = True, False
+        for start, level, content in heads:
+            if start > number:
+                break
+            if level == 2:
+                seen, keep = True, content in ("Decision", "Why")
+            elif seen:
+                keep = False
+        checked += 1
+        if keep != marker.startswith("KEEP-"):
+            disagree += 1
+            print("cell %r marker %s: CommonMark keep=%s" % (cell, marker, keep))
+print("reference=%s markers=%d disagreements=%d" % ("markdown-it-py" if MarkdownIt else "none", checked, disagree))
+PY
+heading_ref="$(tail -n 1 "$tmp/heading-ref")"
+if [[ "$heading_ref" == *"disagreements=0" ]]; then
+	pass "R5-3: the cells' KEEP/HIDE markers match CommonMark ($heading_ref)"
+else
+	fail "R5-3: markers disagree with CommonMark: $(cat "$tmp/heading-ref")"
+fi
+# shellcheck disable=SC2016  # the child bash expands these
+heading_runner='eval "$(sed -n "/^FENCE_OPEN=/,/^}/p" "$1")"
+block "$2"'
+heading_failures=0
+for lb in "${locale_bashes[@]}"; do
+	for cell in "${heading_cells[@]}"; do
+		# shellcheck disable=SC2059  # the cell is the format on purpose
+		printf "# T\n\n**Status**: active\n\n## Decision\nKEEP-d\n$cell" >"$tmp/heading-record.md"
+		got="$("$lb" -c "$heading_runner" _ "$SEL" "$tmp/heading-record.md" | tr -d '\r')"
+		want_keep="$(grep -o 'KEEP-[a-z]*' "$tmp/heading-record.md" | sort | tr '\n' ' ')"
+		got_keep="$(grep -o 'KEEP-[a-z]*' <<<"$got" | sort | tr '\n' ' ' || true)"
+		if [[ "$got_keep" != "$want_keep" ]] || grep -q 'HIDE-' <<<"$got"; then
+			heading_failures=$((heading_failures + 1))
+			fail "[$lb] R5-3: cell '$cell' printed: $(tr '\n' '|' <<<"$got")"
+		fi
+	done
+done
+[[ $heading_failures -eq 0 ]] && pass "R5-3: ${#heading_cells[@]} heading cells keep exactly their KEEP lines under ${locale_bashes[*]}"
+root="$tmp/r5-heading-e2e"
+record "$root" 20260101-indent.md active 'src/*' 'Keep it.'
+sed -i.bak 's/^## Alternatives rejected$/  ## Alternatives rejected/' "$root/docs/decisions/20260101-indent.md"
+run "$root" src/x
+if [[ $RC -eq 0 ]] && ! grep -q 'REJECTED-MARKER' <<<"$OUT" && grep -qx 'Why 20260101-indent.md.' <<<"$OUT"; then
+	pass "R5-3: an indented Alternatives rejected heading keeps its body out of the selector output"
+else
+	fail "R5-3: indented heading end to end (exit $RC): $OUT"
 fi
 
 # R4-3 an uncommitted docs/decisions in a committed-range review is noticed.

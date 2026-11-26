@@ -65,8 +65,10 @@
 # Output, in path-sorted record order, one block per selected record:
 #   ### Record: docs/decisions/<name>
 #   <title and header lines>
-#   ## Decision ... and ## Why ... (those two sections only; a `## ` line
-#   inside a fenced code block is text, not a section boundary). Fences follow
+#   ## Decision ... and ## Why ... (those two sections only). A section ends
+#   at the next level-one or level-two heading as CommonMark reads one: ATX
+#   indented up to three spaces, or setext (a paragraph underlined with `=`
+#   or `-`); a heading inside a fenced code block is text. Fences follow
 #   CommonMark: an opener is up to three spaces, then at least three backticks
 #   (with no backtick in the rest of the line) or at least three tildes; only
 #   a line of the same character, at least as long, indented up to three
@@ -393,30 +395,93 @@ escape() {
 # trailing CR is a line ending, not content.
 FENCE_OPEN='^ {0,3}(`{3,}|~{3,})(.*)$'
 FENCE_CLOSE='^ {0,3}(`{3,}|~{3,})[[:blank:]]*$'
+# Headings follow CommonMark too. ATX_HEADING: up to three spaces, one or two
+# `#`, then a space, a tab or the end of the line (deeper levels are text
+# within a section). SETEXT_LINE: up to three spaces, a run of `=` (level 1)
+# or `-` (level 2), then only blanks; it makes the paragraph above it a
+# heading. CODE_INDENT: a line that cannot start a paragraph (four columns of
+# indentation make an indented code block).
+ATX_HEADING=$'^ {0,3}(#{1,2})([ \t](.*))?$'
+SETEXT_LINE='^ {0,3}(=+|-+)[[:blank:]]*$'
+CODE_INDENT=$'^(    | {0,3}\t)'
 
 # block <record path>: the header, then the Decision and Why sections. A
-# `## ` line inside a fence belongs to the section around it.
+# section is what follows a level-one or level-two heading, ATX (indented up
+# to three spaces, an optional closing `#` run) or setext, up to the next one;
+# Decision and Why are the level-two headings with exactly that text. Lines
+# before the first level-two heading (the title and the header) are kept, and
+# so is a level-one heading among them. A heading inside a fence is text. A
+# paragraph is held back until it ends, because a setext underline decides
+# after the fact that it was a heading.
 block() {
-	local line text keep=1 fence=""
+	local line text keep=1 fence="" seen=0 title level k
+	local -a para=()
 	local LC_ALL=C
+	# _block_emit <line>: prints the line when the current section is kept.
+	_block_emit() {
+		if [[ $keep -eq 1 ]]; then
+			printf '%s\n' "$1"
+		fi
+	}
+	# _block_flush: emits the held paragraph as body text.
+	_block_flush() {
+		for ((k = 0; k < ${#para[@]}; k++)); do
+			_block_emit "${para[$k]}"
+		done
+		para=()
+	}
+	# _block_heading <level> <text>: starts a section.
+	_block_heading() {
+		local t="$2"
+		t="${t#"${t%%[![:blank:]]*}"}"
+		t="${t%"${t##*[![:blank:]]}"}"
+		if [[ "$t" =~ (^|[[:blank:]])#+$ ]]; then
+			t="${t%"${BASH_REMATCH[0]}"}"
+			t="${t%"${t##*[![:blank:]]}"}"
+		fi
+		if [[ $1 -eq 2 ]]; then
+			seen=1
+			case "$t" in
+			Decision | Why) keep=1 ;;
+			*) keep=0 ;;
+			esac
+		elif [[ $seen -eq 1 ]]; then
+			keep=0
+		fi
+	}
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		text="${line%$'\r'}"
 		if [[ -n "$fence" ]]; then
 			if [[ "$text" =~ $FENCE_CLOSE ]] && [[ "${BASH_REMATCH[1]:0:1}" == "${fence:0:1}" && ${#BASH_REMATCH[1]} -ge ${#fence} ]]; then
 				fence=""
 			fi
+			_block_emit "$line"
 		elif [[ "$text" =~ $FENCE_OPEN ]] && [[ "${BASH_REMATCH[1]:0:1}" == '~' || "${BASH_REMATCH[2]}" != *'`'* ]]; then
+			_block_flush
 			fence="${BASH_REMATCH[1]}"
-		elif [[ "$line" == "## "* ]]; then
-			case "${line%"${line##*[![:space:]]}"}" in
-			"## Decision" | "## Why") keep=1 ;;
-			*) keep=0 ;;
-			esac
-		fi
-		if [[ $keep -eq 1 ]]; then
-			printf '%s\n' "$line"
+			_block_emit "$line"
+		elif [[ "$text" =~ $ATX_HEADING ]]; then
+			_block_flush
+			_block_heading "${#BASH_REMATCH[1]}" "${BASH_REMATCH[3]}"
+			_block_emit "$line"
+		elif [[ ${#para[@]} -gt 0 && "$text" =~ $SETEXT_LINE ]]; then
+			level=2
+			[[ "${BASH_REMATCH[1]:0:1}" == '=' ]] && level=1
+			title=""
+			for ((k = 0; k < ${#para[@]}; k++)); do
+				title+="${title:+ }${para[$k]%$'\r'}"
+			done
+			_block_heading "$level" "$title"
+			_block_flush
+			_block_emit "$line"
+		elif [[ "$text" =~ ^[[:blank:]]*$ ]] || [[ ${#para[@]} -eq 0 && "$text" =~ $CODE_INDENT ]]; then
+			_block_flush
+			_block_emit "$line"
+		else
+			para+=("$line")
 		fi
 	done 2>/dev/null <"$1"
+	_block_flush
 }
 
 malformed=0
