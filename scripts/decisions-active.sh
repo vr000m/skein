@@ -33,8 +33,12 @@
 #                  working tree has uncommitted changes under docs/decisions`
 #                  when git status shows a staged, unstaged, untracked or
 #                  ignored entry there (or cannot tell). With --uncommitted
-#                  the review covers the working tree, whose records are then
-#                  the reviewed ones, so that second notice is not printed.
+#                  the review covers tracked staged and unstaged changes, so
+#                  that notice is replaced by `decisions-active.sh: notice:
+#                  untracked or ignored entries under docs/decisions are
+#                  outside the reviewed scope`, printed when git status
+#                  lists an untracked or ignored entry there (or cannot
+#                  tell): those records are read but were not reviewed.
 #   <path>...      literal arguments, for direct use.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
@@ -127,6 +131,7 @@ MAX_RECORDS=8
 MAX_BYTES=24576
 NOTICE="decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head"
 DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions"
+OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope"
 
 usage() {
 	echo "usage: decisions-active.sh [--output <file>] [--paths-file <file>] (--paths-stdin | --base <rev> --head <rev> [--uncommitted] | [--] <path>...)" >&2
@@ -324,9 +329,13 @@ range)
 	done <"$list_tmp"
 	current="$(git -C "$root" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
 	[[ "$head_commit" == "$current" ]] || echo "$NOTICE" >&2
+	dirty="$(git -C "$root" --no-optional-locks status --porcelain -z --ignored --untracked-files=all -- docs/decisions 2>/dev/null | tr '\0' '\n')" || dirty=unknown
 	if [[ $uncommitted -eq 0 ]]; then
-		dirty="$(git -C "$root" --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions 2>/dev/null)" || dirty=unknown
 		[[ -z "$dirty" ]] || echo "$DIRTY_NOTICE" >&2
+	elif [[ "$dirty" == unknown ]] || grep -qE '^(\?\?|!!) ' <<<"$dirty"; then
+		# --uncommitted reviews tracked staged and unstaged changes; an
+		# untracked or ignored record is read but is not part of that scope.
+		echo "$OUTSIDE_NOTICE" >&2
 	fi
 	;;
 esac

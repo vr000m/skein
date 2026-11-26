@@ -1179,9 +1179,12 @@ fi
 # R4-3 an uncommitted docs/decisions in a committed-range review is noticed.
 # Contract: in --base/--head mode without --uncommitted, stderr carries the
 # working-tree notice exactly when git status lists any entry under
-# docs/decisions (or fails); with --uncommitted the working tree is the
-# reviewed scope and no notice is printed. Cells: tree state x flag.
+# docs/decisions (or fails); with --uncommitted (R5: Pi's deep-review scope,
+# committed plus tracked staged and unstaged) that notice never prints and the
+# outside-scope notice prints exactly for an untracked or ignored entry (or a
+# failed status). Cells: tree state x flag.
 DIRTY_LINE='decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions'
+OUTSIDE_LINE='decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope'
 root="$tmp/r4-dirty"
 record "$root" 20260101-a.md active 'src/*'
 mkdir -p "$root/src"
@@ -1223,13 +1226,17 @@ for cell in clean modified staged untracked ignored deleted status-fails; do
 		(cd "$root" && PATH="$shim_path" "$SEL" --base HEAD^ --head HEAD ${extra[@]+"${extra[@]}"} >/dev/null 2>"$tmp/stderr") || true
 		got=0
 		grep -qxF "$DIRTY_LINE" "$tmp/stderr" && got=1
-		if [[ $got -ne $want ]]; then
+		want_out=0
+		[[ "$flag" == uncommitted && ("$cell" == untracked || "$cell" == ignored || "$cell" == status-fails) ]] && want_out=1
+		got_out=0
+		grep -qxF "$OUTSIDE_LINE" "$tmp/stderr" && got_out=1
+		if [[ $got -ne $want || $got_out -ne $want_out ]]; then
 			dirty_failures=$((dirty_failures + 1))
-			fail "R4-3: $cell/$flag: notice $got, want $want ($(cat "$tmp/stderr"))"
+			fail "R4-3: $cell/$flag: notice $got (want $want), outside-scope notice $got_out (want $want_out) ($(cat "$tmp/stderr"))"
 		fi
 	done
 done
-[[ $dirty_failures -eq 0 ]] && pass "R4-3: the uncommitted-records notice fires exactly for a dirty docs/decisions in a committed-range review (7 states x 2 flags)"
+[[ $dirty_failures -eq 0 ]] && pass "R4-3/R5: the dirty notice fires exactly for a dirty docs/decisions in a committed-range review, the outside-scope notice exactly for untracked or ignored records under --uncommitted (7 states x 2 flags)"
 
 # R4-4 a glob has at most four stars, and matching never backtracks.
 # Contract (validator and selector together): a glob with a fifth `*`
