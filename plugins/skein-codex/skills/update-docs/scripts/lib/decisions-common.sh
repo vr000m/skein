@@ -15,23 +15,27 @@
 
 # Status, glob and name matches are case-sensitive, and the record glob skips
 # hidden files, in every script that sources this file. Bash takes options
-# from an exported BASHOPTS, so a caller's `nocasematch`, `nocaseglob` or
-# `dotglob` (which would make docs/decisions/.hidden.md a record) would
-# otherwise reach one script and not another.
+# from an exported BASHOPTS or SHELLOPTS, so a caller's `nocasematch`,
+# `nocaseglob` or `dotglob` (which would make docs/decisions/.hidden.md a
+# record), or `noglob` (which would leave the record glob unexpanded, an
+# empty record set) would otherwise reach one script and not another.
+set +f
 shopt -u nocasematch nocaseglob dotglob
 
 # Reject non-local directories even when the link target is missing. A linked
 # docs/ is refused only when a decisions entry exists through it: a repository
 # without docs/decisions passes, however its docs/ is stored. An unlistable
 # directory fails too: bash 3.2 leaves its glob unexpanded, so it would
-# otherwise read as an empty, valid record set.
+# otherwise read as an empty, valid record set. So does an unsearchable
+# docs/: no test can see docs/decisions through it, so it would otherwise read
+# as an absent folder.
 dec_check_directory() {
 	local root="$1" dir="$1/docs/decisions"
 	if [[ -L "$dir" || (-L "$root/docs" && -e "$dir") || (-e "$dir" && ! -d "$dir") ]]; then
 		printf '%s: expected a local decisions directory\n' "$dir" >&2
 		return 1
 	fi
-	if [[ -d "$dir" && (! -r "$dir" || ! -x "$dir") ]]; then
+	if [[ (-d "$dir" && (! -r "$dir" || ! -x "$dir")) || (-d "$root/docs" && ! -x "$root/docs") ]]; then
 		printf '%s: file-type: the decisions directory is not readable\n' "$dir" >&2
 		return 1
 	fi

@@ -102,7 +102,8 @@
 #      "no applicable decisions".
 #   4  the path list is unavailable: a git diff of the resolved commits
 #      failed, or a --paths-stdin line lacks its `p ` prefix
-#   5  --temp-output could not create its file
+#   5  a private temp file (the --temp-output file or a path-list file)
+#      could not be created; stderr carries a fixed reason, never a path
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -231,7 +232,7 @@ on_exit() {
 trap on_exit EXIT
 
 if [[ $temp_output -eq 1 ]]; then
-	if ! out_tmp="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX")"; then
+	if ! out_tmp="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX" 2>/dev/null)"; then
 		out_tmp=""
 		echo "decisions-active.sh: --temp-output: cannot create a temp file" >&2
 		printf 'selector-output=\n'
@@ -239,7 +240,20 @@ if [[ $temp_output -eq 1 ]]; then
 	fi
 	exec 3>&1 1>"$out_tmp"
 fi
-[[ "$mode" != range ]] || list_tmp="$(mktemp)"
+# private_tmp: a fresh mktemp file, or exit 5 with a fixed reason (mktemp's own
+# message, which names a random path, is dropped).
+private_tmp() {
+	mktemp 2>/dev/null || {
+		echo "decisions-active.sh: cannot create a private temp file" >&2
+		return 5
+	}
+}
+if [[ "$mode" == range ]]; then
+	list_tmp="$(private_tmp)" || {
+		list_tmp=""
+		exit 5
+	}
+fi
 
 if [[ "$mode" == range ]]; then
 	base_commit="$(resolve_revision --base "$base")" || exit 2
@@ -252,7 +266,7 @@ argv)
 	paths=("$@")
 	;;
 stdin)
-	entries="$(mktemp)"
+	entries="$(private_tmp)" || exit 5
 	if ! dec_read_list - >"$entries"; then
 		rm -f -- "$entries"
 		echo "decisions-active.sh: cannot read the path list" >&2
