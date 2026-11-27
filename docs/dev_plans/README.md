@@ -10,7 +10,7 @@ parser can pick up the slug.
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
 | 2026-11-22 | feature | decision-records | meta | #66 | feature/decision-records | [plan](20261122-feature-decision-records.md) |
-| 2026-11-22 | feature | comment-hygiene | meta | — | feature/comment-hygiene-and-decisions | [plan](20261122-feature-comment-hygiene.md) |
+| 2026-11-22 | feature | comment-hygiene | meta | [#65](https://github.com/vr000m/skein/pull/65) | feature/comment-hygiene-and-decisions | [plan](20261122-feature-comment-hygiene.md) |
 | 2026-11-14 | feature | in-your-own-words | planning-skills | — | feature/in-your-own-words | [plan](20261114-feature-in-your-own-words.md) |
 | 2026-11-10 | feature | release-editorial-preflight | meta | — | feature/release-editorial-preflight | [plan](20261110-feature-release-editorial-preflight.md) |
 | 2026-11-04 | feature | ai-writing-signs-refresh | content-skills | — | feature/ai-writing-signs-refresh | [plan](20261104-feature-ai-writing-signs-refresh.md) |

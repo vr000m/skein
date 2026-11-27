@@ -1,10 +1,10 @@
 # Task: Decision records (docs/decisions)
 
-**Status**: Not Started
+**Status**: Complete
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Low
-**Branch**: feature/comment-hygiene-and-decisions
+**Branch**: feature/decision-records
 **Created**: 2026-11-22
 **Review Gates**: full
 
@@ -368,7 +368,7 @@ sequenceDiagram
 - Tests passing (`just ci`)
 - Documentation updated
 
-<!-- reviewed: 2026-11-23 @ 0a8b9c770eabda3cc60712780ef5a16ed9d27c2e -->
+<!-- reviewed: 2026-11-27 @ ca7aa73f408b4d9fac0375a12834d0c42fea58b9 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
