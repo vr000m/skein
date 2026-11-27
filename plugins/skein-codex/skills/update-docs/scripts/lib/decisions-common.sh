@@ -59,10 +59,13 @@ dec_check_directory() {
 # from <file> (`-` is stdin). A list holding a NUL byte is NUL-delimited,
 # otherwise newline-delimited; empty entries are dropped. A file other than
 # `-` must be a regular, non-symlink file. Returns 1 when it is not one, and 2
-# when the list cannot be copied or its NUL bytes cannot be counted
-# (dec_nul_state), so a failed count never falls back to newline parsing.
+# when the list cannot be copied, its NUL bytes cannot be counted
+# (dec_nul_state), the copy cannot be reopened or an entry cannot be written,
+# so a failed count never falls back to newline parsing and a dropped entry
+# never leaves a successful prefix. The status is the conjunction of every
+# step, not the status of the final cleanup.
 dec_read_list() {
-	local file="$1" entry nul state=0
+	local file="$1" nul state=0 rc=0
 	local LC_ALL=C
 	if [[ "$file" != - ]]; then
 		[[ ! -L "$file" && -f "$file" && -r "$file" ]] || return 1
@@ -75,26 +78,25 @@ dec_read_list() {
 	fi
 	dec_nul_state "$nul" || state=$?
 	case "$state" in
-	0)
-		while IFS= read -r -d '' entry || [[ -n "$entry" ]]; do
-			if [[ -n "$entry" ]]; then
-				printf '%s\0' "$entry"
-			fi
-		done <"$nul"
-		;;
-	1)
-		while IFS= read -r entry || [[ -n "$entry" ]]; do
-			if [[ -n "$entry" ]]; then
-				printf '%s\0' "$entry"
-			fi
-		done <"$nul"
-		;;
-	*)
-		rm -f -- "$nul"
-		return 2
-		;;
+	0) _dec_emit_entries '' <"$nul" || rc=2 ;;
+	1) _dec_emit_entries $'\n' <"$nul" || rc=2 ;;
+	*) rc=2 ;;
 	esac
 	rm -f -- "$nul"
+	return "$rc"
+}
+
+# _dec_emit_entries <delimiter>: copies stdin's non-empty entries, split at
+# <delimiter> (empty for NUL), to stdout NUL-terminated. Returns 1 at the
+# first entry it cannot write.
+_dec_emit_entries() {
+	local entry
+	while IFS= read -r -d "$1" entry || [[ -n "$entry" ]]; do
+		if [[ -n "$entry" ]]; then
+			printf '%s\0' "$entry" || return 1
+		fi
+	done
+	return 0
 }
 
 # dec_record_files <dir>: appends the record paths to DEC_RECORDS in byte

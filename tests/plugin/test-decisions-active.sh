@@ -1960,6 +1960,64 @@ for mirror in skein skein-codex skein-pi; do
 	fi
 done
 
+# Fresh-ledger round 7, class 2: dec_read_list's status is the conjunction of
+# every step, so a failed entry write never leaves a successful prefix (I1: the
+# validator would check a surviving prefix of promotion targets; I3: the
+# selector would miss a record). Contract: when any entry cannot be written the
+# function returns non-zero. Cells: bash x {NUL list, newline list} x {write 2
+# fails (a printf stub), stdout closed (read-only, every write fails), no fault}.
+fault_bashes=(bash)
+[[ -x /bin/bash && "$(/bin/bash -c 'echo $BASH_VERSION')" != "$(bash -c 'echo $BASH_VERSION')" ]] && fault_bashes+=(/bin/bash)
+fault_failures=0
+fault_cells=0
+# shellcheck disable=SC2016  # the -c script expands in the child bash
+for b in "${fault_bashes[@]}"; do
+	for list in nul newline; do
+		for fault in second closed none; do
+			fault_cells=$((fault_cells + 1))
+			got="$(LIB="$REPO_ROOT/scripts/lib/decisions-common.sh" LIST="$list" FAULT="$fault" "$b" -c '
+				set -euo pipefail
+				. "$LIB"
+				if [[ "$FAULT" == second ]]; then
+					n=0
+					printf() {
+						if [[ "$1" == "%s\\0" ]]; then
+							n=$((n + 1))
+							[[ $n -ne 2 ]] || return 1
+						fi
+						builtin printf "$@"
+					}
+				fi
+				input="$(mktemp)"
+				if [[ "$LIST" == nul ]]; then builtin printf "a\0b\0" >"$input"; else builtin printf "a\nb\n" >"$input"; fi
+				out="$(mktemp)"
+				rc=0
+				if [[ "$FAULT" == closed ]]; then
+					dec_read_list "$input" 1</dev/null 2>/dev/null || rc=$?
+				else
+					dec_read_list "$input" >"$out" || rc=$?
+				fi
+				entries="$(tr "\0" " " <"$out")"
+				rm -f -- "$input" "$out"
+				# bash 3.2 can flush the buffered bytes of a failed write later, so
+				# the result is the last marked line, not the whole stdout.
+				builtin printf "\nRESULT=%s:%s\n" "$rc" "$entries"
+			' 2>/dev/null | tr -d '\000' | sed -n 's/^RESULT=//p')" || got="crash"
+			case "$fault" in
+			none) want="0:a b " ;;
+			*) want="nonzero" ;;
+			esac
+			if [[ "$want" == nonzero && "$got" =~ ^[1-9][0-9]*: ]] || [[ "$got" == "$want" ]]; then
+				:
+			else
+				fault_failures=$((fault_failures + 1))
+				fail "R7 class 2 [$b] $list list, fault $fault: got '$got', want '$want'"
+			fi
+		done
+	done
+done
+[[ $fault_failures -eq 0 ]] && pass "R7 class 2: dec_read_list fails on any dropped entry write and copies both entries otherwise ($fault_cells cells: bash x {NUL, newline} x {write 2 fails, stdout read-only, no fault})"
+
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
 [[ $FAIL_COUNT -eq 0 ]]
