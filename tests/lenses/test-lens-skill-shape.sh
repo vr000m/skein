@@ -1117,7 +1117,7 @@ dec_run_snippet() {
 	dec_mode=""
 	if [[ -n "$file" && -f "$file" && ! -L "$file" ]]; then
 		dec_text="$(cat "$file")"
-		dec_mode="$(stat -f %Lp "$file" 2>/dev/null || stat -c %a "$file")"
+		dec_mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file")"
 		rm -f -- "$file"
 	fi
 	return 0

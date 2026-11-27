@@ -524,7 +524,7 @@ for cell in "0|p src/a.py|20260101-scratch.md" "3|p src/a.py|20260101-scratch.md
 	[[ "$(git -C "$root" status --porcelain --ignored --untracked-files=all)" == "$before" ]] || ok=0
 	if [[ "$want_rc" == 0 || "$want_rc" == 3 ]]; then
 		[[ "$file" == "$tmp/T/skein-decisions."* && -f "$file" ]] || ok=0
-		[[ "$(stat -f %Lp "$file" 2>/dev/null || stat -c %a "$file" 2>/dev/null)" == 600 ]] || ok=0
+		[[ "$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file")" == 600 ]] || ok=0
 		[[ "$(names "$(cat "$file" 2>/dev/null)")" == "$want_names" ]] || ok=0
 		rm -f -- "$file"
 	else
