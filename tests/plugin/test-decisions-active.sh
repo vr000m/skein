@@ -1922,11 +1922,16 @@ r8_case() {
 	fi
 }
 r8_case empty 0 '[]' </dev/null
-printf 'not a patch\n' | r8_case garbage 1 -
-r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- del.py | r8_case no-prefix 1 -
-printf 'diff --git "a/nl\\nx" "b/nl\\nx"\nnew file mode 100644\n--- /dev/null\n+++ "b/nl\\nx"\n@@ -0,0 +1 @@\n+a\n' | r8_case newline-path 1 -
-printf 'diff --git a/x\377 b/x\377\nnew file mode 100644\n--- /dev/null\n+++ b/x\377\n@@ -0,0 +1 @@\n+a\n' | r8_case non-utf8 1 -
-printf 'diff --git a/sub b/sub\nindex 1111111..2222222 160000\n--- a/sub\n+++ b/sub\n@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222\n' | r8_case submodule 0 '["sub"]'
+printf 'not a patch\n' >"$tmp/case.patch"
+r8_case garbage 1 - <"$tmp/case.patch"
+r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- del.py >"$tmp/case.patch"
+r8_case no-prefix 1 - <"$tmp/case.patch"
+printf 'diff --git "a/nl\\nx" "b/nl\\nx"\nnew file mode 100644\n--- /dev/null\n+++ "b/nl\\nx"\n@@ -0,0 +1 @@\n+a\n' >"$tmp/case.patch"
+r8_case newline-path 1 - <"$tmp/case.patch"
+printf 'diff --git a/x\377 b/x\377\nnew file mode 100644\n--- /dev/null\n+++ b/x\377\n@@ -0,0 +1 @@\n+a\n' >"$tmp/case.patch"
+r8_case non-utf8 1 - <"$tmp/case.patch"
+printf 'diff --git a/sub b/sub\nindex 1111111..2222222 160000\n--- a/sub\n+++ b/sub\n@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222\n' >"$tmp/case.patch"
+r8_case submodule 0 '["sub"]' <"$tmp/case.patch"
 # --output: written once; a second write for the same file is refused (3).
 rc=0
 (cd "$r8" && "$DP" --output "$tmp/r8-once.json" <"$tmp/r8.patch" 2>/dev/null) || rc=$?
@@ -1938,6 +1943,70 @@ if [[ $rc -ne 0 || $rc2 -ne 3 ]] || ! jq -r '.[]' "$tmp/r8-once.json" | cmp -s -
 	fail "R8 class 1 --output once: first exit $rc, second exit $rc2"
 fi
 [[ $paths_failures -eq 0 ]] && pass "R8 class 1: decision-paths.sh derives every changed path with git, degrades loudly, and writes --output once ($paths_cells cells)"
+
+# Fresh-ledger round 9. Old invariant: decision-paths.sh derived paths from
+# whatever patch and cwd it was given (git apply skips file patches outside
+# the cwd, and -p1 strips a real directory from an unprefixed name, both with
+# exit 0). New invariant: it refuses (exit 1, the fixed reason, nothing
+# written) unless the patch is empty or every `diff --git` header carries the
+# a/ and b/ prefixes, and it reads the patch from the work tree's top level
+# whatever the caller's directory; git must name one file per header.
+# Table: cwd {top, src/cache, src/archive/a b} x the fixture patch (paths in
+# and outside each directory, a rename and copy source outside), then
+# nested unprefixed patches (noprefix, custom x/ y/, mnemonic i/ w/, a
+# noprefix rename), outside a work tree, and non-empty input with no header.
+r9_failures=0
+r9_cells=0
+for b in "${locale_bashes[@]}"; do
+	for sub in . src/cache 'src/archive/a b'; do
+		r9_cells=$((r9_cells + 1))
+		rc=0
+		(cd "$r8/$sub" && "$b" "$DP" <"$tmp/r8.patch" >"$tmp/r9.json" 2>"$tmp/stderr") || rc=$?
+		if [[ $rc -ne 0 ]] || ! jq -r '.[]' "$tmp/r9.json" | cmp -s - "$tmp/r8.want"; then
+			r9_failures=$((r9_failures + 1))
+			fail "R9 [$b] cwd '$sub': exit $rc, got '$(tr '\n' '|' <"$tmp/r9.json")'"
+		fi
+	done
+done
+# r9_case <name> <want exit> <want stdout for exit 0, else the reason> < patch
+# (never fed by a pipe: a pipe would run it, and its counters, in a subshell)
+r9_case() {
+	local rc=0 got
+	r9_cells=$((r9_cells + 1))
+	got="$(cd "${R9_CWD:-$r8}" && "$DP" 2>"$tmp/stderr")" || rc=$?
+	if [[ $rc -ne $2 ]] || { [[ $2 -eq 0 ]] && [[ "$got" != "$3" ]]; } ||
+		{ [[ $2 -ne 0 ]] && { [[ -n "$got" ]] || ! grep -qxF "decision-paths.sh: DECISION-PATHS-UNREADABLE: $3" "$tmp/stderr"; }; }; then
+		r9_failures=$((r9_failures + 1))
+		fail "R9 $1: exit $rc, stdout '$got', stderr '$(tr '\n' '|' <"$tmp/stderr")'"
+	fi
+}
+r9_prefix='a diff --git header lacks the a/ and b/ prefixes'
+r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- 'src/cache/café/q.py' >"$tmp/case.patch"
+r9_case noprefix-nested 1 "$r9_prefix" <"$tmp/case.patch"
+r8git -c diff.srcPrefix=x/ -c diff.dstPrefix=y/ diff --no-ext-diff HEAD^ HEAD -- 'src/cache/café/q.py' >"$tmp/case.patch"
+r9_case custom-prefix 1 "$r9_prefix" <"$tmp/case.patch"
+r8git -c diff.noprefix=true diff --no-ext-diff -M HEAD^ HEAD -- old/moved.py new.py >"$tmp/case.patch"
+r9_case noprefix-rename 1 "$r9_prefix" <"$tmp/case.patch"
+printf 'x\n' >>"$r8/src/cache/café/q.py"
+r8git -c diff.mnemonicPrefix=true diff --no-ext-diff -- 'src/cache/café/q.py' >"$tmp/case.patch"
+r9_case mnemonic-prefix 1 "$r9_prefix" <"$tmp/case.patch"
+r8git -c diff.mnemonicPrefix=true diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -- 'src/cache/café/q.py' >"$tmp/case.patch"
+r9_case mnemonic-pinned 0 '["src/cache/café/q.py"]' <"$tmp/case.patch"
+r8git checkout -q -- 'src/cache/café/q.py'
+# A noprefix patch whose path starts a/ and holds ` b/` reads as a prefixed
+# one to a header check that only looks for the two prefixes.
+printf 'diff --git a/u b/v a/u b/v\nindex 1111111..2222222 100644\n--- a/u b/v\n+++ a/u b/v\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/case.patch"
+r9_case noprefix-lookalike 1 "$r9_prefix" <"$tmp/case.patch"
+printf '\n' >"$tmp/case.patch"
+r9_case blank-line 1 'the patch holds no diff --git header' <"$tmp/case.patch"
+printf -- '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/case.patch"
+r9_case traditional-diff 1 'the patch holds no diff --git header' <"$tmp/case.patch"
+r9_out="$(mktemp -d "${TMPDIR:-/tmp}/skein-r9-outside.XXXXXX")"
+R9_CWD="$r9_out" r9_case outside-work-tree 1 'not inside a git work tree' <"$tmp/r8.patch"
+R9_CWD="$r9_out" r9_case outside-empty 1 'not inside a git work tree' </dev/null
+rm -rf "$r9_out"
+r9_case empty 0 '[]' </dev/null
+[[ $r9_failures -eq 0 ]] && pass "R9: decision-paths.sh reads the patch from the top level in any directory and refuses an unprefixed, headerless or out-of-tree patch ($r9_cells cells)"
 
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
