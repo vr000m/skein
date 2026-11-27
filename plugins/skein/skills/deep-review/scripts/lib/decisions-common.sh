@@ -351,6 +351,10 @@ dec_validate_tree() {
 		supersedes="$(_dec_field "$name" Supersedes)"
 		superseded_by="$(_dec_field "$name" "Superseded by")"
 
+		if ! dec_valid_date "$(_dec_field "$name" Date)"; then
+			_dec_problem "$index" header "invalid Date '$(_dec_field "$name" Date)' (expected a YYYY-MM-DD calendar date)"
+		fi
+
 		if [[ "$status" != active && "$status" != superseded ]]; then
 			_dec_problem "$index" status "invalid Status '$status' (expected active or superseded)"
 		fi
@@ -404,6 +408,30 @@ dec_validate_tree() {
 	done
 
 	[[ ${#DEC_PROBLEMS[@]} -eq 0 ]]
+}
+
+# dec_valid_date <value>: succeeds when <value> is exactly YYYY-MM-DD (ASCII
+# digits) and names a real calendar day, leap years included. The digits are
+# read base 10, so a leading zero is never octal.
+dec_valid_date() {
+	local y m d max
+	local LC_ALL=C
+	[[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+	y=$((10#${1:0:4}))
+	m=$((10#${1:5:2}))
+	d=$((10#${1:8:2}))
+	case "$m" in
+	1 | 3 | 5 | 7 | 8 | 10 | 12) max=31 ;;
+	4 | 6 | 9 | 11) max=30 ;;
+	2)
+		max=28
+		if ((y % 4 == 0 && (y % 100 != 0 || y % 400 == 0))); then
+			max=29
+		fi
+		;;
+	*) return 1 ;;
+	esac
+	((d >= 1 && d <= max))
 }
 
 # dec_nul_state <file>: the one NUL test. Returns 0 when <file> holds a NUL

@@ -535,6 +535,57 @@ for missing in skein-codex skein-pi; do
 	fi
 done
 
+# The Date header (code-review leftovers, item 2). Old invariant: any
+# non-empty Date passed. New invariant: Date is exactly YYYY-MM-DD in ASCII
+# digits and names a real calendar day (leap years included), else the
+# record fails with the `header` reason; the selector shares the check
+# (test-decisions-active.sh's agreement table). Table over the date space:
+# shape (separators, widths, trailing text, non-ASCII digits, the template)
+# x calendar (month 00 and 13, day 00, the last day of each month length,
+# 29 February in leap, century and non-leap years). Mutations: a shape-only
+# check and a check without the leap rule each fail the table.
+# date_cells <check-decisions.sh>: prints the failing cells.
+date_cells() {
+	local check="$1" cell value want root rc out
+	for cell in "2026-11-24|ok" "2026-01-31|ok" "2026-04-30|ok" "2024-02-29|ok" "2000-02-29|ok" "0001-12-31|ok" \
+		"2026-13-45|bad" "2026-00-10|bad" "2026-01-00|bad" "2026-04-31|bad" "2026-02-29|bad" "1900-02-29|bad" \
+		"2026-01-32|bad" "26-11-24|bad" "2026-1-24|bad" "2026/11/24|bad" "20261124|bad" "2026-11-24T00:00|bad" \
+		"2026-11-24 x|bad" "YYYY-MM-DD|bad" "$(printf '\357\274\222')026-11-24|bad" "2026-11-2a|bad"; do
+		value="${cell%|*}"
+		want="${cell##*|}"
+		root="$tmp/date-$RANDOM$RANDOM"
+		mkdir -p "$root/docs/dev_plans"
+		: >"$root/docs/dev_plans/plan.md"
+		record "$root" 20260101-a.md active 'src/*' none none "$PLAN"
+		DATE_VALUE="$value" perl -0pi -e 's/^\*\*Date\*\*: .*$/**Date**: $ENV{DATE_VALUE}/m' "$root/docs/decisions/20260101-a.md"
+		rc=0
+		out="$("$check" "$root" 2>&1)" || rc=$?
+		if [[ $want == ok && ($rc -ne 0 || -n "$out") ]] ||
+			[[ $want == bad && ($rc -ne 1 || "$out" != *"20260101-a.md: invalid Date "*"(expected a YYYY-MM-DD calendar date)"*) ]]; then
+			echo "'$value' (want $want): exit $rc, $out"
+		fi
+	done
+}
+date_fail="$(date_cells "$CHECK")"
+if [[ -z "$date_fail" ]]; then
+	pass "Date must be a YYYY-MM-DD calendar date (22 cells: shape x calendar)"
+else
+	fail "Date validation: $(tr '\n' ';' <<<"$date_fail")"
+fi
+date_mutant() {
+	local dir="$tmp/date-mutant-$1"
+	mkdir -p "$dir/lib"
+	cp "$CHECK" "$dir/check-decisions.sh"
+	sed "$2" "$REPO_ROOT/scripts/lib/decisions-common.sh" >"$dir/lib/decisions-common.sh"
+	if ! cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$dir/lib/decisions-common.sh" && [[ -n "$(date_cells "$dir/check-decisions.sh")" ]]; then
+		pass "mutation: a Date check $3 fails the date table"
+	else
+		fail "mutation: the date table does not catch a Date check $3"
+	fi
+}
+date_mutant shape 's/^	((d >= 1 \&\& d <= max))$/	true/' "that tests the shape only"
+date_mutant leap 's/^		if ((y % 4 == 0 \&\& (y % 100 != 0 || y % 400 == 0))); then$/		if ((y % 4 == 0)); then/' "without the century leap rule"
+
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
 [[ $FAIL_COUNT -eq 0 ]]

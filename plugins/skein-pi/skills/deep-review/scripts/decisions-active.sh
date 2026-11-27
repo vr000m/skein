@@ -12,7 +12,8 @@
 # a path is a usage error (exit 2). deep-review uses it: its architecture lens
 # judges applicability itself, by matching each record's `Applies to` against
 # the files of the diff it reviews, so no path list is derived from a patch.
-# Validation, the cap, escaping and every exit status but 4 work as below.
+# Validation, escaping and every exit status but 4 work as below; its cap is
+# larger (see Cap).
 #
 # Otherwise paths arrive one of two ways, and the skills never put one on a
 # command line:
@@ -75,9 +76,11 @@
 # the orchestrator can wrap it in `<untrusted-content>` without a record
 # closing it early.
 #
-# Cap: at most 8 records and 24 KiB of record text. When more records match,
-# stderr carries `decisions-active.sh: DECISIONS-TRUNCATED: N of M records
-# shown` and the exit status is 3. Nothing but record text reaches the
+# Cap: at most 8 records and 24 KiB of record text for a path selection, and
+# 16 records and 48 KiB with --all-active, which hands the lens every active
+# record rather than the ones a plan names. When more records match, stderr
+# carries `decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown`
+# and the exit status is 3. Nothing but record text reaches the
 # selection, so a record cannot forge the truncation report: callers judge
 # coverage by the exit status alone.
 #
@@ -175,9 +178,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 # A glob from a record is matched case-sensitively: the shared lib clears
 # nocasematch.
-
-MAX_RECORDS=8
-MAX_BYTES=24576
 
 usage() {
 	echo "usage: decisions-active.sh [--temp-output] (--all-active | --paths-stdin | [--] <path>...)" >&2
@@ -309,6 +309,13 @@ for ((k = 0; k < ${#paths[@]}; k++)); do
 	paths[k]="$NORM"
 done
 [[ $mode == all || ${#paths[@]} -gt 0 ]] || usage
+
+MAX_RECORDS=8
+MAX_BYTES=24576
+if [[ $mode == all ]]; then
+	MAX_RECORDS=16
+	MAX_BYTES=49152
+fi
 
 dec_check_directory "$root" || quit 3
 

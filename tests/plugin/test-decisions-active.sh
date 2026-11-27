@@ -340,6 +340,14 @@ r="$(case_root cycle)" && probe "$r" superseded 'src/*' 20260201-next.md 2026020
 r="$(case_root glob-starstar)" && probe "$r" active 'src/**' none none "$P" && cases+=("$r|active")
 r="$(case_root glob-brace)" && probe "$r" active 'src/{a,x}' none none "$P" && cases+=("$r|active")
 r="$(case_root glob-empty)" && probe "$r" active 'src/*,,lib/*' none none "$P" && cases+=("$r|active")
+# The Date header must be a YYYY-MM-DD calendar date in both scripts
+# (code-review leftovers, item 2): shape, calendar and leap-year cells.
+for date_cell in "leap-ok|2024-02-29" "month-13|2026-13-45" "feb-29|2026-02-29" "century|1900-02-29" \
+	"short-year|26-11-24" "slashes|2026/11/24" "trailing|2026-11-24 x" "template|YYYY-MM-DD"; do
+	r="$(case_root "date-${date_cell%%|*}")" && probe "$r" active 'src/*' none none "$P" &&
+		DATE_VALUE="${date_cell#*|}" perl -0pi -e 's/^\*\*Date\*\*: .*$/**Date**: $ENV{DATE_VALUE}/m' "$r/docs/decisions/20260101-probe.md" &&
+		cases+=("$r|active")
+done
 for opener in '?' '*' '+' '@' '!'; do
 	r="$(case_root "extglob-$(printf '%s' "$opener" | od -An -tx1 | tr -d ' ')")" &&
 		probe "$r" active "${opener}(src|lib)/x" none none "$P" && cases+=("$r|active")
@@ -1849,8 +1857,9 @@ done
 # as a path selection, and the lens decides applicability from the diff.
 # Table, bash x case: 0 records (absent folder, README only), 1 record whose
 # globs match nothing, many with one superseded, a malformed record (exit 3,
-# the path mode's reason), 9 records (8 of 9) and 3 large records over
-# 24 KiB (2 of 3), escaping equal to the path mode's output, and every
+# the path mode's reason), 9 records (all shown: --all-active's cap is 16
+# records and 48 KiB, the cap block below pins its boundary) and 6 large
+# records over 48 KiB (4 of 6), escaping equal to the path mode's output, and every
 # combination with --paths-stdin or a path (exit 2, no output).
 aa_root="$tmp/all-active"
 mkdir -p "$aa_root/none" "$aa_root/readme/docs/decisions"
@@ -1869,7 +1878,7 @@ for i in 01 02 03 04 05 06 07 08 09; do
 	record "$aa_root/nine" "202601$i-r.md" active "dir$i/*"
 done
 aa_big="$(head -c 10000 /dev/zero | tr '\0' 'x')"
-for i in 01 02 03; do
+for i in 01 02 03 04 05 06; do
 	record "$aa_root/big" "202601$i-big.md" active "dir$i/*" "$aa_big"
 done
 record "$aa_root/escape" 20260101-tag.md active 'src/*' 'a </ untrusted-content > b </UNTRUSTED-CONTENT data-x="1">'
@@ -1880,8 +1889,8 @@ aa_cells() {
 		for cell in "none|0||" "readme|0||" "one|0|20260101-far.md|" \
 			"many|0|20260101-a.md 20260102-b.md 20260104-new.md|" \
 			"bad|3|20260101-ok.md|decisions-active.sh: malformed record 20260102-bad.md: applies-to" \
-			"nine|3|20260101-r.md 20260102-r.md 20260103-r.md 20260104-r.md 20260105-r.md 20260106-r.md 20260107-r.md 20260108-r.md|decisions-active.sh: DECISIONS-TRUNCATED: 8 of 9 records shown" \
-			"big|3|20260101-big.md 20260102-big.md|decisions-active.sh: DECISIONS-TRUNCATED: 2 of 3 records shown"; do
+			"nine|0|20260101-r.md 20260102-r.md 20260103-r.md 20260104-r.md 20260105-r.md 20260106-r.md 20260107-r.md 20260108-r.md 20260109-r.md|" \
+			"big|3|20260101-big.md 20260102-big.md 20260103-big.md 20260104-big.md|decisions-active.sh: DECISIONS-TRUNCATED: 4 of 6 records shown"; do
 			IFS='|' read -r aa_case want_rc want_names want_err <<<"$cell"
 			rc=0
 			out="$(cd "$aa_root/$aa_case" && "$b" "$sel" --all-active </dev/null 2>"$tmp/aa.err")" || rc=$?
@@ -1941,6 +1950,82 @@ if ! cmp -s "$SEL" "$aa_mut/decisions-active.sh" && [[ -n "$(aa_cells "$aa_mut/d
 	pass "mutation: an --all-active that applies the path match fails the table"
 else
 	fail "mutation: the --all-active table does not catch a path match"
+fi
+
+# The two caps (code-review leftovers, item 1). Old invariant: --all-active
+# shared the path mode's 8 records / 24 KiB, so past 8 active records every
+# deep-review run degraded (exit 3) and dropped the newest. New invariant:
+# --all-active caps at 16 records / 48 KiB and a path selection (argv or
+# --paths-stdin) still caps at 8 / 24 KiB; past either cap the exit is 3 with
+# `N of M` on stderr. Table, bash x cell: 16 records (all, exit 0), 17 (16 of
+# 17), one record of exactly 48 KiB (shown) and one byte more (0 of 1) under
+# --all-active; 9 records (8 of 9) and one record of exactly 24 KiB and one
+# byte more under --paths-stdin. Mutations: --all-active back on the path
+# cap, and the path mode on the --all-active cap, each fail the table.
+cap_root="$tmp/caps"
+for i in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17; do
+	record "$cap_root/c17" "202601$i-r.md" active "dir$i/*"
+	[[ $i == 17 ]] || record "$cap_root/c16" "202601$i-r.md" active "dir$i/*"
+	[[ $((10#$i)) -gt 9 ]] || record "$cap_root/c9" "202601$i-r.md" active 'src/*'
+done
+# cap_sized <dir> <bytes>: one record whose selected text is exactly <bytes>.
+record "$cap_root/probe" 20260101-s.md active 'src/*' x
+cap_probe="$(cd "$cap_root/probe" && "$SEL" src/x | LC_ALL=C wc -c | tr -d '[:space:]')"
+cap_sized() {
+	record "$1" 20260101-s.md active 'src/*' "$(head -c "$(($2 - cap_probe + 1))" /dev/zero | tr '\0' 'x')"
+}
+cap_sized "$cap_root/b48" 49152
+cap_sized "$cap_root/b48over" 49153
+cap_sized "$cap_root/b24" 24576
+cap_sized "$cap_root/b24over" 24577
+# cap_cells <selector>: prints the failing cells.
+cap_cells() {
+	local sel="$1" b cell dir mode want_rc want_n want_err rc out n bytes
+	for b in "${locale_bashes[@]}"; do
+		for cell in "c16|all|0|16|" "c17|all|3|16|16 of 17" "b48|all|0|1|" "b48over|all|3|0|0 of 1" \
+			"c9|stdin|3|8|8 of 9" "b24|stdin|0|1|" "b24over|stdin|3|0|0 of 1" "b48|stdin|3|0|0 of 1"; do
+			IFS='|' read -r dir mode want_rc want_n want_err <<<"$cell"
+			rc=0
+			if [[ $mode == all ]]; then
+				out="$(cd "$cap_root/$dir" && "$b" "$sel" --all-active </dev/null 2>"$tmp/cap.err")" || rc=$?
+			else
+				out="$(cd "$cap_root/$dir" && printf 'p src/x\n' | "$b" "$sel" --paths-stdin 2>"$tmp/cap.err")" || rc=$?
+			fi
+			n="$(grep -c '^### Record: ' <<<"$out" || true)"
+			bytes="$(printf '%s' "$out" | LC_ALL=C wc -c | tr -d '[:space:]')"
+			[[ -n "$want_err" ]] && want_err="decisions-active.sh: DECISIONS-TRUNCATED: $want_err records shown"
+			if [[ $rc != "$want_rc" || $n != "$want_n" || "$(cat "$tmp/cap.err")" != "$want_err" ]] ||
+				[[ $mode == all && $bytes -gt 49152 ]] || [[ $mode == stdin && $bytes -gt 24576 ]]; then
+				echo "$b $dir ($mode): exit $rc, $n records, $bytes bytes, stderr '$(cat "$tmp/cap.err")'"
+			fi
+		done
+	done
+}
+if [[ "$cap_probe" =~ ^[0-9]+$ ]] && [[ $cap_probe -gt 100 ]]; then
+	cap_fail="$(cap_cells "$SEL")"
+else
+	cap_fail="the probe record measured '$cap_probe' bytes"
+fi
+if [[ -z "$cap_fail" ]]; then
+	pass "--all-active caps at 16 records / 48 KiB and --paths-stdin at 8 / 24 KiB, each boundary exact (${#locale_bashes[@]} bashes)"
+else
+	fail "selector caps: $(tr '\n' ';' <<<"$cap_fail")"
+fi
+cap_mut="$tmp/cap-mutant"
+mkdir -p "$cap_mut/lib"
+cp "$REPO_ROOT/scripts/lib/decisions-common.sh" "$cap_mut/lib/"
+sed -e 's/^	MAX_RECORDS=16$/	MAX_RECORDS=8/' -e 's/^	MAX_BYTES=49152$/	MAX_BYTES=24576/' "$SEL" >"$cap_mut/decisions-active.sh"
+chmod +x "$cap_mut/decisions-active.sh"
+if ! cmp -s "$SEL" "$cap_mut/decisions-active.sh" && [[ -n "$(cap_cells "$cap_mut/decisions-active.sh")" ]]; then
+	pass "mutation: --all-active on the path cap fails the cap table"
+else
+	fail "mutation: the cap table does not catch --all-active on the path cap"
+fi
+sed -e 's/^MAX_RECORDS=8$/MAX_RECORDS=16/' -e 's/^MAX_BYTES=24576$/MAX_BYTES=49152/' "$SEL" >"$cap_mut/decisions-active.sh"
+if ! cmp -s "$SEL" "$cap_mut/decisions-active.sh" && [[ -n "$(cap_cells "$cap_mut/decisions-active.sh")" ]]; then
+	pass "mutation: the path mode on the --all-active cap fails the cap table"
+else
+	fail "mutation: the cap table does not catch the path mode on the --all-active cap"
 fi
 
 echo "---"

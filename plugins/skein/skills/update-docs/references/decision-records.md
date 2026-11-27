@@ -39,7 +39,7 @@ One file per decision, named `yyyymmdd-slug.md` (the date is the day the record 
 | Field | Meaning |
 |---|---|
 | `Status` | `active` or `superseded`. Only active records are checked against new plans and diffs. |
-| `Date` | When the record was written. |
+| `Date` | When the record was written, as a `YYYY-MM-DD` calendar date; the validator rejects any other form. |
 | `Applies to` | Which paths the decision constrains; see below. |
 | `Supersedes` | The record this one replaces, or `none`. |
 | `Superseded by` | The record that replaces this one, or `none`. |
