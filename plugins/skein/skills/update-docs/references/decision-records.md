@@ -59,7 +59,7 @@ A comma-separated list of globs, each matched against a repo-relative path. The 
 - A glob is written in normal form: relative, no `./`, no `//`, no `.` or `..` components. The validator rejects any other spelling, which could never match a normalised path.
 - A comma always separates two globs, and the spaces around each glob are trimmed.
 
-A record whose globs match none of the paths under review is not shown to the reviewers.
+`/review-plan` shows its architecture lens only the records whose globs match a path the plan names. `/deep-review` shows its architecture lens every active record, and the lens holds the code to a record only when one of the record's globs matches a file changed in the diff it reviews.
 
 ## Superseding a record
 
