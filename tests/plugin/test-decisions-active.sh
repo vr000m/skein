@@ -1834,179 +1834,108 @@ for b in "${locale_bashes[@]}"; do
 done
 [[ $handoff_failures -eq 0 ]] && pass "R8 class 3: an unwritable handoff is selector exit 7 with the fixed reason and no temp file, and an unwritable validator stderr keeps exit 4 ($handoff_cells cells: bash x fault x script)"
 
-# Fresh-ledger round 8, class 1. Old invariant: the decision paths were
-# scraped from `diff --git a/X b/Y` header text, split at the first ` b/`.
-# New invariant: scripts/decision-paths.sh reads the same patch text with
-# `git apply --numstat -z`, forward and reversed, so git parses the headers:
-# a ` b/` inside a directory name, a C-quoted non-ASCII name, both sides of a
-# rename and a copy, a deletion, a mode-only and a binary change all arrive
-# byte for byte; a patch git cannot parse, a newline or a non-UTF-8 path is
-# exit 1 (degraded) and writes nothing; --output is written once. Each cell
-# is checked against an independent `git diff --no-renames --name-only -z`
-# of the same comparison (plus the copy source); the reference cell shows the header splitter gets
-# the ` b/` and non-ASCII cells wrong.
-DP="$REPO_ROOT/scripts/decision-paths.sh"
-r8="$tmp/r8-paths"
-rm -rf "$r8" && mkdir -p "$r8"
-git -C "$r8" init -q
-r8git() { git -C "$r8" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
-mkdir -p "$r8/src/archive/a b/src/cache" "$r8/src/cache/café" "$r8/old"
-printf 'x\n' >"$r8/src/archive/a b/src/cache/x.py"
-printf 'q\n' >"$r8/src/cache/café/q.py"
-printf 'm\n' >"$r8/old/moved.py"
-printf 'c%s\n' 1 2 3 4 5 6 7 8 >"$r8/orig.py"
-printf 'd\n' >"$r8/del.py"
-printf 'e\n' >"$r8/exec.sh"
-printf 's\n' >"$r8/sp ace.py"
-printf '\000\001' >"$r8/bin.dat"
-r8git add -A
-r8git commit -qm base
-printf 'y\n' >>"$r8/src/archive/a b/src/cache/x.py"
-printf 'r\n' >>"$r8/src/cache/café/q.py"
-r8git mv -- old/moved.py new.py
-cp "$r8/orig.py" "$r8/copy.py"
-printf 'more\n' >>"$r8/copy.py"
-r8git rm -q -- del.py
-chmod +x "$r8/exec.sh"
-printf 't\n' >>"$r8/sp ace.py"
-printf '\000\002' >"$r8/bin.dat"
-printf 'n\n' >"$r8/naïve.py"
-r8git add -A
-r8git commit -qm change
-r8git diff --no-ext-diff -M -C --find-copies-harder HEAD^ HEAD >"$tmp/r8.patch"
-# The oracle: every path the comparison changes, plus the copy's unchanged
-# source, which the patch names in its `copy from` line.
-{
-	r8git diff --no-ext-diff --no-renames --name-only -z HEAD^ HEAD | tr '\0' '\n'
-	echo orig.py
-} | LC_ALL=C sort -u >"$tmp/r8.want"
-paths_failures=0
-paths_cells=0
-for b in "${locale_bashes[@]}"; do
-	paths_cells=$((paths_cells + 1))
-	rc=0
-	(cd "$r8" && "$b" "$DP" <"$tmp/r8.patch" >"$tmp/r8.json" 2>"$tmp/stderr") || rc=$?
-	if [[ $rc -ne 0 ]] || ! jq -r '.[]' "$tmp/r8.json" | cmp -s - "$tmp/r8.want"; then
-		paths_failures=$((paths_failures + 1))
-		fail "R8 class 1 [$b] fixture patch: exit $rc, got '$(tr '\n' '|' <"$tmp/r8.json")'"
-	fi
+# --all-active (the decision-paths removal, option b). Old invariant:
+# deep-review selected records by a path list it derived from the
+# architecture lens's patch (decision-paths.sh); every derivation fix of
+# rounds 5-9 added surface. New invariant: deep-review derives no paths;
+# --all-active selects every valid active record (superseded and malformed
+# ones excluded) with the same validation, cap, escaping and exit statuses
+# as a path selection, and the lens decides applicability from the diff.
+# Table, bash x case: 0 records (absent folder, README only), 1 record whose
+# globs match nothing, many with one superseded, a malformed record (exit 3,
+# the path mode's reason), 9 records (8 of 9) and 3 large records over
+# 24 KiB (2 of 3), escaping equal to the path mode's output, and every
+# combination with --paths-stdin or a path (exit 2, no output).
+aa_root="$tmp/all-active"
+mkdir -p "$aa_root/none" "$aa_root/readme/docs/decisions"
+printf '# Decisions\n' >"$aa_root/readme/docs/decisions/README.md"
+record "$aa_root/one" 20260101-far.md active 'nowhere/*'
+record "$aa_root/many" 20260101-a.md active 'src/*'
+record "$aa_root/many" 20260102-b.md active 'lib/x.py, docs/*.md'
+record "$aa_root/many" 20260103-old.md superseded 'src/*'
+record "$aa_root/many" 20260104-new.md active 'src/*'
+sed -i.bak 's/^\*\*Superseded by\*\*: none$/**Superseded by**: 20260104-new.md/' "$aa_root/many/docs/decisions/20260103-old.md"
+sed -i.bak 's/^\*\*Supersedes\*\*: none$/**Supersedes**: 20260103-old.md/' "$aa_root/many/docs/decisions/20260104-new.md"
+rm -f "$aa_root"/many/docs/decisions/*.bak
+record "$aa_root/bad" 20260101-ok.md active 'src/*'
+record "$aa_root/bad" 20260102-bad.md active 'src/**'
+for i in 01 02 03 04 05 06 07 08 09; do
+	record "$aa_root/nine" "202601$i-r.md" active "dir$i/*"
 done
-for want in 'src/archive/a b/src/cache/x.py' 'src/cache/café/q.py' naïve.py old/moved.py new.py orig.py copy.py del.py exec.sh 'sp ace.py' bin.dat; do
-	paths_cells=$((paths_cells + 1))
-	if ! jq -e --arg p "$want" 'index($p) != null' "$tmp/r8.json" >/dev/null; then
-		paths_failures=$((paths_failures + 1))
-		fail "R8 class 1: the derived paths miss '$want'"
-	fi
+aa_big="$(head -c 10000 /dev/zero | tr '\0' 'x')"
+for i in 01 02 03; do
+	record "$aa_root/big" "202601$i-big.md" active "dir$i/*" "$aa_big"
 done
-if grep -q '^copy from orig.py$' "$tmp/r8.patch" && grep -q '^rename from old/moved.py$' "$tmp/r8.patch" &&
-	grep -q '^diff --git "a/' "$tmp/r8.patch" && grep -qF 'diff --git a/src/archive/a b/src/cache/x.py b/' "$tmp/r8.patch"; then
-	pass "R8 class 1 fixture: the patch holds a copy, a rename, a C-quoted name and a ' b/' directory"
-else
-	fail "R8 class 1 fixture does not exercise the header cases"
-fi
-# Reference (mutation): the header splitter the skills used before this round.
-awk 'index($0, "diff --git a/") == 1 { s = substr($0, 14); i = index(s, " b/"); print substr(s, 1, i - 1); print substr(s, i + 3) }' "$tmp/r8.patch" | LC_ALL=C sort -u >"$tmp/r8.split"
-if ! cmp -s "$tmp/r8.split" "$tmp/r8.want" && grep -qx 'src/cache/x.py b/src/archive/a b/src/cache/x.py' "$tmp/r8.split"; then
-	pass "R8 class 1 reference: header splitting invents a path and misses the C-quoted names on this fixture"
-else
-	fail "R8 class 1 reference: the fixture does not distinguish header splitting"
-fi
-# r8_case <name> <want exit> <want json or -> < patch
-r8_case() {
-	local rc=0 got
-	paths_cells=$((paths_cells + 1))
-	got="$(cd "$r8" && "$DP" 2>"$tmp/stderr")" || rc=$?
-	if [[ $rc -ne $2 || ($3 != - && "$got" != "$3") || ($2 -ne 0 && -n "$got") ]]; then
-		paths_failures=$((paths_failures + 1))
-		fail "R8 class 1 $1: exit $rc, stdout '$got', stderr '$(tr '\n' '|' <"$tmp/stderr")'"
-	fi
-}
-r8_case empty 0 '[]' </dev/null
-printf 'not a patch\n' >"$tmp/case.patch"
-r8_case garbage 1 - <"$tmp/case.patch"
-r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- del.py >"$tmp/case.patch"
-r8_case no-prefix 1 - <"$tmp/case.patch"
-printf 'diff --git "a/nl\\nx" "b/nl\\nx"\nnew file mode 100644\n--- /dev/null\n+++ "b/nl\\nx"\n@@ -0,0 +1 @@\n+a\n' >"$tmp/case.patch"
-r8_case newline-path 1 - <"$tmp/case.patch"
-printf 'diff --git a/x\377 b/x\377\nnew file mode 100644\n--- /dev/null\n+++ b/x\377\n@@ -0,0 +1 @@\n+a\n' >"$tmp/case.patch"
-r8_case non-utf8 1 - <"$tmp/case.patch"
-printf 'diff --git a/sub b/sub\nindex 1111111..2222222 160000\n--- a/sub\n+++ b/sub\n@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222\n' >"$tmp/case.patch"
-r8_case submodule 0 '["sub"]' <"$tmp/case.patch"
-# --output: written once; a second write for the same file is refused (3).
-rc=0
-(cd "$r8" && "$DP" --output "$tmp/r8-once.json" <"$tmp/r8.patch" 2>/dev/null) || rc=$?
-rc2=0
-printf '' | (cd "$r8" && "$DP" --output "$tmp/r8-once.json" 2>/dev/null) || rc2=$?
-paths_cells=$((paths_cells + 1))
-if [[ $rc -ne 0 || $rc2 -ne 3 ]] || ! jq -r '.[]' "$tmp/r8-once.json" | cmp -s - "$tmp/r8.want" || compgen -G "$tmp/.decision-paths.*" >/dev/null; then
-	paths_failures=$((paths_failures + 1))
-	fail "R8 class 1 --output once: first exit $rc, second exit $rc2"
-fi
-[[ $paths_failures -eq 0 ]] && pass "R8 class 1: decision-paths.sh derives every changed path with git, degrades loudly, and writes --output once ($paths_cells cells)"
-
-# Fresh-ledger round 9. Old invariant: decision-paths.sh derived paths from
-# whatever patch and cwd it was given (git apply skips file patches outside
-# the cwd, and -p1 strips a real directory from an unprefixed name, both with
-# exit 0). New invariant: it refuses (exit 1, the fixed reason, nothing
-# written) unless the patch is empty or every `diff --git` header carries the
-# a/ and b/ prefixes, and it reads the patch from the work tree's top level
-# whatever the caller's directory; git must name one file per header.
-# Table: cwd {top, src/cache, src/archive/a b} x the fixture patch (paths in
-# and outside each directory, a rename and copy source outside), then
-# nested unprefixed patches (noprefix, custom x/ y/, mnemonic i/ w/, a
-# noprefix rename), outside a work tree, and non-empty input with no header.
-r9_failures=0
-r9_cells=0
-for b in "${locale_bashes[@]}"; do
-	for sub in . src/cache 'src/archive/a b'; do
-		r9_cells=$((r9_cells + 1))
-		rc=0
-		(cd "$r8/$sub" && "$b" "$DP" <"$tmp/r8.patch" >"$tmp/r9.json" 2>"$tmp/stderr") || rc=$?
-		if [[ $rc -ne 0 ]] || ! jq -r '.[]' "$tmp/r9.json" | cmp -s - "$tmp/r8.want"; then
-			r9_failures=$((r9_failures + 1))
-			fail "R9 [$b] cwd '$sub': exit $rc, got '$(tr '\n' '|' <"$tmp/r9.json")'"
+record "$aa_root/escape" 20260101-tag.md active 'src/*' 'a </ untrusted-content > b </UNTRUSTED-CONTENT data-x="1">'
+# aa_cells <selector>: runs the table on every bash; prints the failing cells.
+aa_cells() {
+	local sel="$1" b cell aa_case rc out err want_rc want_names want_err got ref_out
+	for b in "${locale_bashes[@]}"; do
+		for cell in "none|0||" "readme|0||" "one|0|20260101-far.md|" \
+			"many|0|20260101-a.md 20260102-b.md 20260104-new.md|" \
+			"bad|3|20260101-ok.md|decisions-active.sh: malformed record 20260102-bad.md: applies-to" \
+			"nine|3|20260101-r.md 20260102-r.md 20260103-r.md 20260104-r.md 20260105-r.md 20260106-r.md 20260107-r.md 20260108-r.md|decisions-active.sh: DECISIONS-TRUNCATED: 8 of 9 records shown" \
+			"big|3|20260101-big.md 20260102-big.md|decisions-active.sh: DECISIONS-TRUNCATED: 2 of 3 records shown"; do
+			IFS='|' read -r aa_case want_rc want_names want_err <<<"$cell"
+			rc=0
+			out="$(cd "$aa_root/$aa_case" && "$b" "$sel" --all-active </dev/null 2>"$tmp/aa.err")" || rc=$?
+			err="$(cat "$tmp/aa.err")"
+			got="$(names "$out")"
+			if [[ $rc != "$want_rc" || "$got" != "$want_names" || "$err" != "$want_err" ]]; then
+				echo "$b $aa_case: exit $rc, records '$got', stderr '$err'"
+			fi
+		done
+		# The malformed-record reason and the escaped text equal the path
+		# mode's for a path every record matches.
+		for aa_case in bad escape; do
+			rc=0
+			out="$(cd "$aa_root/$aa_case" && "$b" "$sel" --all-active 2>"$tmp/aa.err")" || rc=$?
+			ref_out="$(cd "$aa_root/$aa_case" && "$b" "$sel" src/x 2>"$tmp/aa.ref")" || true
+			if [[ "$out" != "$ref_out" ]] || ! cmp -s "$tmp/aa.err" "$tmp/aa.ref"; then
+				echo "$b $aa_case: --all-active output or stderr differs from the path mode"
+			fi
+		done
+		if ! grep -qF '<\/untrusted-content data-x="1">' <<<"$out" || grep -qi '</ *untrusted-content' <<<"$out"; then
+			echo "$b escape: a closing-tag lookalike survived"
 		fi
+		for cell in "--all-active --paths-stdin" "--paths-stdin --all-active" "--all-active src/x" \
+			"--all-active -- src/x" "--temp-output --all-active src/x" "--all-active --base HEAD"; do
+			rc=0
+			# shellcheck disable=SC2086  # the option words split on purpose
+			out="$(cd "$aa_root/many" && printf 'p src/x\n' | "$b" "$sel" $cell 2>/dev/null)" || rc=$?
+			[[ $rc -eq 2 && -z "$out" ]] || echo "$b '$cell': exit $rc, stdout '$out'"
+		done
 	done
-done
-# r9_case <name> <want exit> <want stdout for exit 0, else the reason> < patch
-# (never fed by a pipe: a pipe would run it, and its counters, in a subshell)
-r9_case() {
-	local rc=0 got
-	r9_cells=$((r9_cells + 1))
-	got="$(cd "${R9_CWD:-$r8}" && "$DP" 2>"$tmp/stderr")" || rc=$?
-	if [[ $rc -ne $2 ]] || { [[ $2 -eq 0 ]] && [[ "$got" != "$3" ]]; } ||
-		{ [[ $2 -ne 0 ]] && { [[ -n "$got" ]] || ! grep -qxF "decision-paths.sh: DECISION-PATHS-UNREADABLE: $3" "$tmp/stderr"; }; }; then
-		r9_failures=$((r9_failures + 1))
-		fail "R9 $1: exit $rc, stdout '$got', stderr '$(tr '\n' '|' <"$tmp/stderr")'"
-	fi
 }
-r9_prefix='a diff --git header lacks the a/ and b/ prefixes'
-r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- 'src/cache/café/q.py' >"$tmp/case.patch"
-r9_case noprefix-nested 1 "$r9_prefix" <"$tmp/case.patch"
-r8git -c diff.srcPrefix=x/ -c diff.dstPrefix=y/ diff --no-ext-diff HEAD^ HEAD -- 'src/cache/café/q.py' >"$tmp/case.patch"
-r9_case custom-prefix 1 "$r9_prefix" <"$tmp/case.patch"
-r8git -c diff.noprefix=true diff --no-ext-diff -M HEAD^ HEAD -- old/moved.py new.py >"$tmp/case.patch"
-r9_case noprefix-rename 1 "$r9_prefix" <"$tmp/case.patch"
-printf 'x\n' >>"$r8/src/cache/café/q.py"
-r8git -c diff.mnemonicPrefix=true diff --no-ext-diff -- 'src/cache/café/q.py' >"$tmp/case.patch"
-r9_case mnemonic-prefix 1 "$r9_prefix" <"$tmp/case.patch"
-r8git -c diff.mnemonicPrefix=true diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -- 'src/cache/café/q.py' >"$tmp/case.patch"
-r9_case mnemonic-pinned 0 '["src/cache/café/q.py"]' <"$tmp/case.patch"
-r8git checkout -q -- 'src/cache/café/q.py'
-# A noprefix patch whose path starts a/ and holds ` b/` reads as a prefixed
-# one to a header check that only looks for the two prefixes.
-printf 'diff --git a/u b/v a/u b/v\nindex 1111111..2222222 100644\n--- a/u b/v\n+++ a/u b/v\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/case.patch"
-r9_case noprefix-lookalike 1 "$r9_prefix" <"$tmp/case.patch"
-printf '\n' >"$tmp/case.patch"
-r9_case blank-line 1 'the patch holds no diff --git header' <"$tmp/case.patch"
-printf -- '--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n' >"$tmp/case.patch"
-r9_case traditional-diff 1 'the patch holds no diff --git header' <"$tmp/case.patch"
-r9_out="$(mktemp -d "${TMPDIR:-/tmp}/skein-r9-outside.XXXXXX")"
-R9_CWD="$r9_out" r9_case outside-work-tree 1 'not inside a git work tree' <"$tmp/r8.patch"
-R9_CWD="$r9_out" r9_case outside-empty 1 'not inside a git work tree' </dev/null
-rm -rf "$r9_out"
-r9_case empty 0 '[]' </dev/null
-[[ $r9_failures -eq 0 ]] && pass "R9: decision-paths.sh reads the patch from the top level in any directory and refuses an unprefixed, headerless or out-of-tree patch ($r9_cells cells)"
+aa_fail="$(aa_cells "$SEL")"
+if [[ -z "$aa_fail" ]]; then
+	pass "--all-active selects every valid active record with the path mode's validation, cap, escaping and exits; combined with a path source it is exit 2 (${#locale_bashes[@]} bashes)"
+else
+	fail "--all-active: $(tr '\n' ';' <<<"$aa_fail")"
+fi
+# --temp-output: the status line names a 0600 file holding the selection.
+rc=0
+out="$(cd "$aa_root/one" && TMPDIR="$tmp" "$SEL" --temp-output --all-active 2>/dev/null)" || rc=$?
+aa_file="${out#selector-output=}"
+if [[ $rc -eq 0 && -f "$aa_file" && "$(names "$(cat "$aa_file")")" == 20260101-far.md ]]; then
+	pass "--all-active --temp-output hands the selection over in its private file"
+else
+	fail "--all-active --temp-output: exit $rc, '$out'"
+fi
+rm -f -- "$aa_file"
+# Mutation: an --all-active that still applies the path match selects
+# nothing, so the table must fail.
+aa_mut="$tmp/aa-mutant"
+mkdir -p "$aa_mut/lib"
+cp "$REPO_ROOT/scripts/lib/decisions-common.sh" "$aa_mut/lib/"
+# shellcheck disable=SC2016  # literal script text
+sed 's/if \[\[ \$mode == all \]\] || applies/if applies/' "$SEL" >"$aa_mut/decisions-active.sh"
+chmod +x "$aa_mut/decisions-active.sh"
+if ! cmp -s "$SEL" "$aa_mut/decisions-active.sh" && [[ -n "$(aa_cells "$aa_mut/decisions-active.sh")" ]]; then
+	pass "mutation: an --all-active that applies the path match fails the table"
+else
+	fail "mutation: the --all-active table does not catch a path match"
+fi
 
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"

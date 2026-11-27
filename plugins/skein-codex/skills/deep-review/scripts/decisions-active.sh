@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
 # decisions-active.sh — print the active decision records that apply to a set
-# of paths, escaped for embedding in a lens prompt.
+# of paths, or every active record, escaped for embedding in a lens prompt.
 #
 # Usage:
+#   decisions-active.sh [--temp-output] --all-active
 #   decisions-active.sh [--temp-output] --paths-stdin
 #   decisions-active.sh [--temp-output] [--] <path>...
 #
-# Paths arrive one of two ways, and the skills never put one on a command
-# line:
+# --all-active selects every valid active record and reads no paths: it
+# takes no stdin and no path argument, and combining it with --paths-stdin or
+# a path is a usage error (exit 2). deep-review uses it: its architecture lens
+# judges applicability itself, by matching each record's `Applies to` against
+# the files of the diff it reviews, so no path list is derived from a patch.
+# Validation, the cap, escaping and every exit status but 4 work as below.
+#
+# Otherwise paths arrive one of two ways, and the skills never put one on a
+# command line:
 #   --paths-stdin  stdin lines `p <path>`, normally a quoted here-document. The
 #                  prefix means no path can end the here-document early; a
 #                  line without it is refused (exit 4). Blank lines are
-#                  skipped. The skills pass exactly the paths their lens was
-#                  assigned (review-plan: the plan's named paths; deep-review:
-#                  the file paths of the architecture lens's assigned diff),
-#                  so the selector never derives a range of its own and cannot
-#                  disagree with what the lens reviews.
+#                  skipped. review-plan passes exactly the paths the plan
+#                  names, so the selector never derives a range of its own.
 #   <path>...      literal arguments, for direct use.
 # The selector takes no revision range: the range options of earlier
 # revisions (--base, --head, --range-stdin, --two-dot, --uncommitted) are
@@ -44,8 +49,8 @@
 #
 # Records are <repo-root>/docs/decisions/*.md (README.md excluded); <repo-root>
 # is the git top level, or the current directory outside a repository. A
-# record is selected when its Status is `active` and any of its `Applies to`
-# globs matches any path. A glob is literal characters, `*` (any characters,
+# record is selected when its Status is `active` and, unless --all-active is
+# given, any of its `Applies to` globs matches any path. A glob is literal characters, `*` (any characters,
 # `/` included) and `?` (one byte), written in the paths' normal form; the
 # validator rejects anything else (dec_glob_problem). glob_match equals bash `[[ $path == $glob ]]` on that
 # dialect under LC_ALL=C, without backtracking.
@@ -78,8 +83,8 @@
 #
 # Exit codes:
 #   0  complete: no match, no docs/decisions directory, or every match printed
-#   2  usage error: an unknown option (a removed range option included) or
-#      no path
+#   2  usage error: an unknown option (a removed range option included), no
+#      path, or --all-active beside --paths-stdin or a path
 #   3  degraded: a record is malformed (check-decisions.sh would reject it:
 #      both call dec_validate_tree), docs/decisions is not a readable local
 #      directory, or more records matched than the cap shows. stderr names
@@ -89,7 +94,8 @@
 #      records the validator accepts are selected, and those matches are
 #      still printed, so the caller reports degraded coverage rather than
 #      "no applicable decisions".
-#   4  the path list is unavailable: the --paths-stdin list cannot be read,
+#   4  the path list is unavailable (never with --all-active, which reads
+#      none): the --paths-stdin list cannot be read,
 #      a --paths-stdin line lacks its `p ` prefix, or a path cannot be
 #      normalised to a plain repo-relative path
 #      (DECISIONS-PATH-UNNORMALISABLE)
@@ -174,12 +180,13 @@ MAX_RECORDS=8
 MAX_BYTES=24576
 
 usage() {
-	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | [--] <path>...)" >&2
+	echo "usage: decisions-active.sh [--temp-output] (--all-active | --paths-stdin | [--] <path>...)" >&2
 	quit 2
 }
 
 temp_output=0
 from_stdin=0
+all_active=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--temp-output)
@@ -188,6 +195,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--paths-stdin)
 		from_stdin=1
+		shift
+		;;
+	--all-active)
+		all_active=1
 		shift
 		;;
 	--)
@@ -199,7 +210,10 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 mode=argv
-if [[ $from_stdin -eq 1 ]]; then
+if [[ $all_active -eq 1 ]]; then
+	mode=all
+	[[ $from_stdin -eq 0 && $# -eq 0 ]] || usage
+elif [[ $from_stdin -eq 1 ]]; then
 	mode=stdin
 	[[ $# -eq 0 ]] || usage
 fi
@@ -284,6 +298,7 @@ stdin)
 		quit 4
 	fi
 	;;
+all) ;;
 esac
 # Globs see only the normal spelling; a path with none is refused loudly.
 for ((k = 0; k < ${#paths[@]}; k++)); do
@@ -293,7 +308,7 @@ for ((k = 0; k < ${#paths[@]}; k++)); do
 	fi
 	paths[k]="$NORM"
 done
-[[ ${#paths[@]} -gt 0 ]] || usage
+[[ $mode == all || ${#paths[@]} -gt 0 ]] || usage
 
 dec_check_directory "$root" || quit 3
 
@@ -481,7 +496,7 @@ for ((index = 0; index < ${#DEC_RECORDS[@]}; index++)); do
 	path="${DEC_RECORDS[$index]}"
 	[[ "${DEC_VALID[$index]}" == 1 ]] || continue
 	[[ "$(dec_header "$path" Status || true)" == active ]] || continue
-	if applies "$(dec_header "$path" "Applies to" || true)"; then
+	if [[ $mode == all ]] || applies "$(dec_header "$path" "Applies to" || true)"; then
 		matched+=("$path")
 	fi
 done
