@@ -1223,6 +1223,48 @@ for dec_mirror in skein skein-codex; do
 		fail "$dec_mirror deep-review selected over the advanced base tip (exit '$dec_status', block '$dec_text')"
 	fi
 done
+# Fresh-ledger round 5: the selector sees exactly the paths the lens reviews.
+# Claude deep-review alone takes an explicit file target (Input Resolution
+# rule 3; Codex and Pi resolve only ranges and plans), and its own fence must
+# select records for the named file only, even when the branch range also
+# changes a path another record applies to. Cells: range snippet (both
+# records, the precondition) vs file-target snippet (cache record only), per
+# shell.
+git -C "$dec_tmp" checkout -q -b file-target pr-head
+mkdir -p "$dec_tmp/src/auth" "$dec_tmp/src/cache"
+printf 'store\n' >"$dec_tmp/src/cache/store.py"
+printf 'token\n' >"$dec_tmp/src/auth/token.py"
+git -C "$dec_tmp" add -- src/cache/store.py src/auth/token.py
+git -C "$dec_tmp" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false commit -qm 'Touch cache and auth'
+printf 'src/cache/store.py\n' >"$dec_tmp.ft-paths"
+dec_exec_skill=deep-review
+dec_ft_range="$(dec_range "$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')" 'HEAD^' HEAD)"
+dec_ft_fence="$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Explicit file target\.\*\*')"
+for dec_shell in "${dec_shells[@]}"; do
+	dec_run_snippet skein "$dec_ft_range"
+	if [[ "$dec_status" == 0 ]] && grep -qxF '### Record: docs/decisions/20261105-auth-tokens.md' <<<"$dec_text" &&
+		grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_text"; then
+		pass "[$dec_shell] file-target fixture: the branch range selects both the cache and the auth record"
+	else
+		fail "[$dec_shell] file-target fixture does not exercise a range wider than the file (exit '$dec_status')"
+	fi
+	dec_run_snippet skein "$(dec_heredoc "$dec_ft_fence" "$dec_tmp.ft-paths")"
+	if [[ -n "$dec_ft_fence" && "$dec_ft_fence" != *range-stdin* && "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_output_ok" == 1 ]] &&
+		[[ "$(grep '^### Record: ' <<<"$dec_text")" == '### Record: docs/decisions/20261101-cache-store.md' ]]; then
+		pass "[$dec_shell] skein deep-review: an explicit file target selects only that file's records"
+	else
+		fail "[$dec_shell] skein deep-review: file target src/cache/store.py selected '$(grep '^### Record: ' <<<"$dec_text" | tr '\n' ' ')' (exit '$dec_status')"
+	fi
+done
+# shellcheck disable=SC2016  # literal skill text
+if grep -qF '**Explicit file target.** The selector sees exactly the paths the lens reviews.' "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" &&
+	grep -qF 'A file path names the only files the lenses review.' "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"; then
+	pass "skein deep-review states that the selector sees exactly the paths the lens reviews"
+else
+	fail "skein deep-review lost the selector-sees-the-reviewed-paths rule"
+fi
+git -C "$dec_tmp" checkout -q base-tip
+rm -f "$dec_tmp.ft-paths"
 dec_exec_skill=review-plan
 for dec_mirror in skein skein-codex; do
 	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
