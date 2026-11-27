@@ -1263,7 +1263,128 @@ if grep -qF '**Explicit file target.** The selector sees exactly the paths the l
 else
 	fail "skein deep-review lost the selector-sees-the-reviewed-paths rule"
 fi
+# Fresh-ledger round 6. Old invariant: the selector sees the range the skill
+# resolved. New invariant: the selector sees exactly the path set or
+# comparison the lenses were assigned, saved once per run and reused on
+# resume.
+# F6-A: an explicit two-dot range (`A..B`) compares the two tips, so its own
+# fence must select the record reachable only by tip comparison: base-tip
+# alone adds src/cache/advanced.py, which the merge-base (range) fence
+# leaves out. Cells: range fence (empty, the precondition) vs two-dot fence
+# (cache record), per shell.
+dec_2d_fence="$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Explicit two-dot range\.\*\*')"
+dec_rs_fence="$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+for dec_shell in "${dec_shells[@]}"; do
+	dec_run_snippet skein "$(dec_range "$dec_rs_fence" base-tip pr-head)"
+	if [[ "$dec_status" == 0 && -z "$dec_text" ]]; then
+		pass "[$dec_shell] two-dot fixture: the merge-base fence selects nothing for base-tip..pr-head"
+	else
+		fail "[$dec_shell] two-dot fixture: the merge-base fence selected '$dec_text' (exit '$dec_status')"
+	fi
+	dec_run_snippet skein "$(dec_range "$dec_2d_fence" base-tip pr-head)"
+	if [[ "$dec_2d_fence" == *'--range-stdin --two-dot'* && "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_output_ok" == 1 ]] &&
+		[[ "$(grep '^### Record: ' <<<"$dec_text")" == '### Record: docs/decisions/20261101-cache-store.md' ]]; then
+		pass "[$dec_shell] skein deep-review: the two-dot fence selects the record reachable only by tip comparison"
+	else
+		fail "[$dec_shell] skein deep-review: two-dot fence selected '$(grep '^### Record: ' <<<"$dec_text" | tr '\n' ' ')' (exit '$dec_status')"
+	fi
+done
+# F6-B: a --continue reuses the run's saved selector scope. Model of the
+# documented routing (Saved selector scope, Step 2): the scope file decides
+# the fence; a paths scope writes its saved paths as `p ` lines on a resume
+# and on an incremental re-review, a range scope takes its comparison's fence
+# over the range, a fall back to --full ignores the file, and a missing or
+# malformed file is degraded (exit 4, no selector run). The model is tied to
+# the text by the pins below, and its routing is mutation-checked: routing a
+# paths scope through the stored range selects the auth record too.
+# dec_scope_route <scope file> <mode> <base> <head>: prints the snippet to run,
+# or nothing for degraded coverage.
+dec_scope_route() {
+	local kind cmp
+	if [[ "$2" == full ]]; then
+		dec_range "$dec_rs_fence" "$3" "$4"
+		return
+	fi
+	kind="$(jq -r 'if type == "object" then .kind // "" else "" end' "$1" 2>/dev/null)" || kind=""
+	case "$kind" in
+	range)
+		cmp="$(jq -r '.comparison // ""' "$1")"
+		if [[ "$2" == resume && "$cmp" == two-dot ]]; then
+			dec_range "$dec_2d_fence" "$3" "$4"
+		elif [[ "$cmp" == two-dot || "$cmp" == three-dot ]]; then
+			dec_range "$dec_rs_fence" "$3" "$4"
+		fi
+		;;
+	paths)
+		jq -e '(.paths | type == "array" and length > 0) and all(.paths[]; type == "string" and (contains("\n") | not))' "$1" >/dev/null 2>&1 || return 0
+		jq -r '.paths[]' "$1" >"$dec_tmp.scope-paths"
+		dec_heredoc "$dec_ft_fence" "$dec_tmp.scope-paths"
+		;;
+	esac
+}
+printf '{"kind":"paths","paths":["src/cache/store.py"]}\n' >"$dec_tmp.scope-ft"
+printf '{"kind":"range","comparison":"two-dot"}\n' >"$dec_tmp.scope-2d"
+printf '{"kind":"range","comparison":"three-dot"}\n' >"$dec_tmp.scope-3d"
+printf '{"kind":"paths","paths":[]}\n' >"$dec_tmp.scope-empty"
+printf 'not json\n' >"$dec_tmp.scope-bad"
+dec_ft_head="$(git -C "$dec_tmp" rev-parse file-target)"
+dec_ft_base="$(git -C "$dec_tmp" rev-parse 'file-target^')"
+git -C "$dec_tmp" checkout -q file-target
+for dec_shell in "${dec_shells[@]}"; do
+	# cells: scope {paths, two-dot, three-dot} x mode {resume, incremental,
+	# full}, plus {missing, empty paths, malformed} on resume.
+	for dec_cell in "scope-ft|resume|$dec_ft_base|$dec_ft_head|20261101-cache-store.md" \
+		"scope-ft|incremental|$dec_ft_base|$dec_ft_head|20261101-cache-store.md" \
+		"scope-ft|full|$dec_ft_base|$dec_ft_head|20261101-cache-store.md 20261105-auth-tokens.md" \
+		"scope-2d|resume|base-tip|pr-head|20261101-cache-store.md" \
+		"scope-3d|resume|base-tip|pr-head|" \
+		"scope-2d|incremental|$dec_ft_base|$dec_ft_head|20261101-cache-store.md 20261105-auth-tokens.md" \
+		"scope-missing|resume|$dec_ft_base|$dec_ft_head|degraded" \
+		"scope-empty|resume|$dec_ft_base|$dec_ft_head|degraded" \
+		"scope-bad|incremental|$dec_ft_base|$dec_ft_head|degraded"; do
+		IFS='|' read -r dec_sf dec_cmode dec_b dec_h dec_want <<<"$dec_cell"
+		dec_snip="$(dec_scope_route "$dec_tmp.$dec_sf" "$dec_cmode" "$dec_b" "$dec_h")"
+		if [[ -z "$dec_snip" ]]; then
+			dec_got=degraded
+		else
+			dec_run_snippet skein "$dec_snip"
+			dec_got="$(grep '^### Record: ' <<<"$dec_text" | sed 's|^### Record: docs/decisions/||' | sort | tr '\n' ' ' | sed 's/ $//' || true)"
+			[[ "$dec_status" == 0 ]] || dec_got="exit-$dec_status"
+		fi
+		if [[ "$dec_got" == "$dec_want" ]]; then
+			pass "[$dec_shell] F6-B saved scope $dec_sf on $dec_cmode selects '${dec_want}'"
+		else
+			fail "[$dec_shell] F6-B saved scope $dec_sf on $dec_cmode: want '$dec_want', got '$dec_got'"
+		fi
+	done
+	# Mutation reference: the pre-fix routing (every continuation through the
+	# stored range) widens a file-target resume to the auth record.
+	dec_run_snippet skein "$(dec_range "$dec_rs_fence" "$dec_ft_base" "$dec_ft_head")"
+	if grep -qxF '### Record: docs/decisions/20261105-auth-tokens.md' <<<"$dec_text"; then
+		pass "[$dec_shell] F6-B: routing a file-target resume through the stored range would select the auth record (the bug this guards)"
+	else
+		fail "[$dec_shell] F6-B fixture does not distinguish the stored range from the saved paths"
+	fi
+done
 git -C "$dec_tmp" checkout -q base-tip
+dec_md="$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+# shellcheck disable=SC2016  # literal skill text
+for dec_pin in \
+	'write `<repo-root>/.deep-review/lenses/<run_id>/decision-scope.json` beside it with your file-write tool, once, and never rewrite it for the rest of the run' \
+	'`{"kind":"range","comparison":"three-dot"}` for the range snippet, `{"kind":"range","comparison":"two-dot"}` for the two-dot snippet, or `{"kind":"paths","paths":[...]}`' \
+	'**Resume (same HEAD)** reuses the saved scope verbatim: a `range` scope takes its snippet (`comparison` names which) over the stored `base_commit..head_commit`' \
+	'a `paths` scope writes the saved paths as the `p ` lines, never the stored range.' \
+	'a `paths` scope keeps the saved paths, because the lenses still review only the named files.' \
+	'**Fall back to `--full`** discards the saved scope, never reads it' \
+	'is degraded coverage, never "no records": run no selector, treat the selection as `selector-exit=4`' \
+	'When Input Resolution rule 3 named a commit range written `A..B` (two dots), the lenses compare the two tips directly' \
+	'the decision selector reuses the run'"'"'s saved selector scope (Step 2) verbatim'; do
+	if grep -qF -- "$dec_pin" "$dec_md"; then
+		pass "skein deep-review pins: ${dec_pin:0:70}"
+	else
+		fail "skein deep-review lost: ${dec_pin:0:70}"
+	fi
+done
 rm -f "$dec_tmp.ft-paths"
 dec_exec_skill=review-plan
 for dec_mirror in skein skein-codex; do

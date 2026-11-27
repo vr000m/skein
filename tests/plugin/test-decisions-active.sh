@@ -663,6 +663,66 @@ for cell in "--base||empty" "--base|-x|option-like" "--base|nope\$(id)|not-a-com
 	fi
 done
 
+# F6-A the selector compares in the caller's mode. Root cause: a range was
+# always diffed as `<base>...<head>`, so for an explicit two-dot target
+# (`A..B`, the tips compared directly) a path changed only on A's side never
+# reached the selector, and the record for it was missed with exit 0.
+# Contract: default (three-dot) keeps the merge base; --two-dot lists exactly
+# `git diff --name-only <base> <head>`; for an ancestor range both agree;
+# --two-dot without a range is a usage error (exit 2), adding no exit code.
+# Cells: {default, --two-dot} x {--base/--head, --range-stdin} x {diverged
+# tips, ancestor range} x every bash, plus the usage cells.
+root="$tmp/two-dot"
+rm -rf "$root"
+mkdir -p "$root"
+git -C "$root" init -q
+record "$root" 20260101-cache.md active 'src/cache/*'
+record "$root" 20260102-notes.md active 'notes.txt'
+gitt() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
+gitt add -- docs
+gitt commit -qm base
+gitt checkout -q -b pr-head
+printf 'n\n' >"$root/notes.txt"
+gitt add -- notes.txt
+gitt commit -qm 'PR change'
+gitt checkout -q -b base-tip 'HEAD^'
+mkdir -p "$root/src/cache"
+printf 'a\n' >"$root/src/cache/advanced.py"
+gitt add -- src
+gitt commit -qm 'Base advances'
+if git -C "$root" diff --name-only base-tip pr-head | grep -qx src/cache/advanced.py &&
+	! git -C "$root" diff --name-only base-tip...pr-head | grep -qx src/cache/advanced.py; then
+	pass "F6-A fixture: the base-only change is in the tip comparison, not the merge-base one"
+else
+	fail "F6-A fixture does not separate the two comparisons"
+fi
+for b in "${locale_bashes[@]}"; do
+	for cell in "diverged|base-tip|pr-head||20260102-notes.md" \
+		"diverged|base-tip|pr-head|--two-dot|20260101-cache.md 20260102-notes.md" \
+		"ancestor|pr-head^|pr-head||20260102-notes.md" \
+		"ancestor|pr-head^|pr-head|--two-dot|20260102-notes.md"; do
+		IFS='|' read -r kind cb ch flag want <<<"$cell"
+		for form in argv stdin; do
+			RC=0
+			if [[ "$form" == argv ]]; then
+				OUT="$(cd "$root" && "$b" "$SEL" --base "$cb" --head "$ch" ${flag:+"$flag"} 2>"$tmp/stderr")" || RC=$?
+			else
+				OUT="$(cd "$root" && printf '%s\n%s\n' "$cb" "$ch" | "$b" "$SEL" --range-stdin ${flag:+"$flag"} 2>"$tmp/stderr")" || RC=$?
+			fi
+			assert_eq "F6-A $b: $kind ${flag:-three-dot} ($form) selects" "0:$want" "$RC:$(names "$OUT")"
+		done
+	done
+	for cell in "--paths-stdin" "--" "argv"; do
+		RC=0
+		case "$cell" in
+		--paths-stdin) OUT="$(cd "$root" && printf 'p notes.txt\n' | "$b" "$SEL" --two-dot --paths-stdin 2>"$tmp/stderr")" || RC=$? ;;
+		--) OUT="$(cd "$root" && "$b" "$SEL" --two-dot -- notes.txt 2>"$tmp/stderr")" || RC=$? ;;
+		argv) OUT="$(cd "$root" && "$b" "$SEL" --two-dot 2>"$tmp/stderr")" || RC=$? ;;
+		esac
+		assert_eq "F6-A $b: --two-dot with $cell (no range) is a usage error" "2:" "$RC:$OUT"
+	done
+done
+
 # An exported BASHOPTS reaches every bash child. The validator and the selector
 # must still agree: Status, glob and record-name matches stay case-sensitive.
 if env BASHOPTS=nocasematch:nocaseglob bash -c 'shopt -q nocasematch && shopt -q nocaseglob' 2>/dev/null; then

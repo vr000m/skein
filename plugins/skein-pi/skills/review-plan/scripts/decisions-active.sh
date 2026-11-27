@@ -4,8 +4,8 @@
 #
 # Usage:
 #   decisions-active.sh [--temp-output] --paths-stdin
-#   decisions-active.sh [--temp-output] --base <rev> --head <rev> [--uncommitted]
-#   decisions-active.sh [--temp-output] --range-stdin [--uncommitted]
+#   decisions-active.sh [--temp-output] --base <rev> --head <rev> [--two-dot] [--uncommitted]
+#   decisions-active.sh [--temp-output] --range-stdin [--two-dot] [--uncommitted]
 #   decisions-active.sh [--temp-output] [--] <path>...
 #
 # Paths arrive one of three ways, and the skills never put one on a command
@@ -43,6 +43,12 @@
 #                  tell): those records are read but were not reviewed.
 #                  --range-stdin reads <base> and <head> as the first two
 #                  stdin lines instead (the skills' quoted here-document).
+#                  --two-dot compares the two tips instead (`<base commit>
+#                  <head commit>`, what `git diff A..B` shows), so a path
+#                  changed only on <base>'s side is listed too: the caller
+#                  passes it when the paths it reviews come from that
+#                  comparison (an explicit two-dot range). It is valid only
+#                  with a range and changes nothing else.
 #   <path>...      literal arguments, for direct use.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
@@ -186,7 +192,7 @@ DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes 
 OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope"
 
 usage() {
-	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | (--base <rev> --head <rev> | --range-stdin) [--uncommitted] | [--] <path>...)" >&2
+	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | (--base <rev> --head <rev> | --range-stdin) [--two-dot] [--uncommitted] | [--] <path>...)" >&2
 	quit 2
 }
 
@@ -197,6 +203,7 @@ have_base=0
 have_head=0
 from_stdin=0
 uncommitted=0
+two_dot=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--temp-output)
@@ -232,6 +239,10 @@ while [[ $# -gt 0 ]]; do
 		uncommitted=1
 		shift
 		;;
+	--two-dot)
+		two_dot=1
+		shift
+		;;
 	--)
 		shift
 		break
@@ -249,6 +260,7 @@ elif [[ $from_stdin -eq 1 ]]; then
 	[[ $# -eq 0 ]] || usage
 fi
 [[ $uncommitted -eq 0 || "$mode" == range ]] || usage
+[[ $two_dot -eq 0 || "$mode" == range ]] || usage
 
 root="$(cd -P -- "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" >/dev/null && pwd -P)"
 
@@ -338,6 +350,13 @@ fi
 if [[ "$mode" == range ]]; then
 	base_commit="$(resolve_revision --base "$base")" || quit 2
 	head_commit="$(resolve_revision --head "$head")" || quit 2
+	# The comparison the caller's review uses: the merge base (`A...B`, as
+	# `gh pr diff`) by default, or the two tips with --two-dot (`A..B`).
+	if [[ $two_dot -eq 1 ]]; then
+		compare=("$base_commit" "$head_commit")
+	else
+		compare=("$base_commit...$head_commit")
+	fi
 fi
 
 paths=()
@@ -368,7 +387,7 @@ stdin)
 	;;
 range)
 	if ! {
-		git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z "$base_commit...$head_commit" -- &&
+		git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z "${compare[@]}" -- &&
 			if [[ $uncommitted -eq 1 ]]; then
 				git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --cached -- &&
 					git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --
