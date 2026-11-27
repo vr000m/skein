@@ -4,55 +4,26 @@
 #
 # Usage:
 #   decisions-active.sh [--temp-output] --paths-stdin
-#   decisions-active.sh [--temp-output] --base <rev> --head <rev> [--two-dot] [--uncommitted]
-#   decisions-active.sh [--temp-output] --range-stdin [--two-dot] [--uncommitted]
 #   decisions-active.sh [--temp-output] [--] <path>...
 #
-# Paths arrive one of three ways, and the skills never put one on a command
+# Paths arrive one of two ways, and the skills never put one on a command
 # line:
 #   --paths-stdin  stdin lines `p <path>`, normally a quoted here-document. The
 #                  prefix means no path can end the here-document early; a
 #                  line without it is refused (exit 4). Blank lines are
-#                  skipped.
-#   --base/--head  each value must name a commit: an empty value, one
-#                  starting with `-` or one `git rev-parse --verify
-#                  --end-of-options <rev>^{commit}` cannot resolve is refused
-#                  with exit 2 and `decisions-active.sh: --base refused:
-#                  <code>` (empty, option-like, not-a-commit) on stderr,
-#                  never the value. The script then runs `git diff
-#                  --no-ext-diff --no-renames --ignore-submodules=none
-#                  --name-only -z <base commit>...<head commit>` itself (both
-#                  rename paths; the merge base, as `gh pr diff`; a changed
-#                  submodule pointer is listed whatever diff.ignoreSubmodules
-#                  or a .gitmodules `ignore` says), plus the staged and
-#                  unstaged diffs with --uncommitted. No changed path is an
-#                  empty, successful selection. Records are always read from
-#                  the working tree, and two stderr notices say when that is
-#                  not the reviewed snapshot: `decisions-active.sh: notice:
-#                  decision records read from the checked-out tree, not the
-#                  reviewed head` when <head> is not the checked-out HEAD,
-#                  and, without --uncommitted, `decisions-active.sh: notice:
-#                  working tree has uncommitted changes under docs/decisions`
-#                  when git status shows a staged, unstaged, untracked or
-#                  ignored entry there (or cannot tell). With --uncommitted
-#                  the review covers tracked staged and unstaged changes, so
-#                  that notice is replaced by `decisions-active.sh: notice:
-#                  untracked or ignored entries under docs/decisions are
-#                  outside the reviewed scope`, printed when git status
-#                  lists an untracked or ignored entry there (or cannot
-#                  tell): those records are read but were not reviewed.
-#                  --range-stdin reads <base> and <head> as the first two
-#                  stdin lines instead (the skills' quoted here-document).
-#                  --two-dot compares the two tips instead (`<base commit>
-#                  <head commit>`, what `git diff A..B` shows), so a path
-#                  changed only on <base>'s side is listed too: the caller
-#                  passes it when the paths it reviews come from that
-#                  comparison (an explicit two-dot range). It is valid only
-#                  with a range and changes nothing else.
+#                  skipped. The skills pass exactly the paths their lens was
+#                  assigned (review-plan: the plan's named paths; deep-review:
+#                  the file paths of the architecture lens's assigned diff),
+#                  so the selector never derives a range of its own and cannot
+#                  disagree with what the lens reviews.
 #   <path>...      literal arguments, for direct use.
+# The selector takes no revision range: the range options of earlier
+# revisions (--base, --head, --range-stdin, --two-dot, --uncommitted) are
+# usage errors. Records are always read from the working tree; a caller
+# whose reviewed snapshot is not the checked-out tree says so itself.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
-# matched as written. Every path, from any of the three sources, is first
+# matched as written. Every path, from either source, is first
 # normalised by normalise_path: a leading `./` (repeated or not), `.`
 # components and repeated `/` are dropped (`./src//a/./b` is `src/a/b`; a
 # trailing `/` is kept as one `/`), and globs are matched against that
@@ -107,8 +78,8 @@
 #
 # Exit codes:
 #   0  complete: no match, no docs/decisions directory, or every match printed
-#   2  usage error (an unknown option, or no path), or a --base/--head value
-#      refused with its reason code on stderr
+#   2  usage error: an unknown option (a removed range option included) or
+#      no path
 #   3  degraded: a record is malformed (check-decisions.sh would reject it:
 #      both call dec_validate_tree), docs/decisions is not a readable local
 #      directory, or more records matched than the cap shows. stderr names
@@ -118,12 +89,13 @@
 #      records the validator accepts are selected, and those matches are
 #      still printed, so the caller reports degraded coverage rather than
 #      "no applicable decisions".
-#   4  the path list is unavailable: a git diff of the resolved commits
-#      failed, a --paths-stdin line lacks its `p ` prefix, or a path cannot
-#      be normalised to a plain repo-relative path
+#   4  the path list is unavailable: the --paths-stdin list cannot be read,
+#      a --paths-stdin line lacks its `p ` prefix, or a path cannot be
+#      normalised to a plain repo-relative path
 #      (DECISIONS-PATH-UNNORMALISABLE)
-#   5  a private temp file (the --temp-output file or a path-list file)
-#      could not be created; stderr carries a fixed reason, never a path
+#   5  a private temp file (the --temp-output file or the --paths-stdin
+#      copy) could not be created; stderr carries a fixed reason, never a
+#      path
 #   6  escaping record text failed: stderr carries the fixed reason
 #      `decisions-active.sh: DECISIONS-ESCAPE-FAILED` and stdout carries no
 #      selection (with --temp-output, the status line `selector-output=`)
@@ -155,7 +127,6 @@ quit() {
 
 # Private temp files (mktemp, outside the repository), removed on any exit
 # except a selection handed to the caller after exit 0 or 3.
-list_tmp=""
 out_tmp=""
 on_exit() {
 	local rc=$?
@@ -163,7 +134,6 @@ on_exit() {
 		echo "decisions-active.sh: DECISIONS-INTERNAL" >&2
 		rc=7
 	fi
-	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
 	if [[ -n "$out_tmp" ]]; then
 		exec 1>&3 3>&-
 		case "$rc" in
@@ -187,60 +157,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 MAX_RECORDS=8
 MAX_BYTES=24576
-NOTICE="decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head"
-DIRTY_NOTICE="decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions"
-OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope"
 
 usage() {
-	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | (--base <rev> --head <rev> | --range-stdin) [--two-dot] [--uncommitted] | [--] <path>...)" >&2
+	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | [--] <path>...)" >&2
 	quit 2
 }
 
 temp_output=0
-base=""
-head=""
-have_base=0
-have_head=0
 from_stdin=0
-uncommitted=0
-two_dot=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--temp-output)
 		temp_output=1
 		shift
 		;;
-	--base | --head)
-		# An empty or option-like value is refused below with a reason code.
-		[[ $# -ge 2 ]] || usage
-		case "$1" in
-		--base)
-			base="$2"
-			have_base=1
-			;;
-		--head)
-			head="$2"
-			have_head=1
-			;;
-		esac
-		shift 2
-		;;
-	--range-stdin)
-		IFS= read -r base || true
-		IFS= read -r head || true
-		have_base=1 have_head=1
-		shift
-		;;
 	--paths-stdin)
 		from_stdin=1
-		shift
-		;;
-	--uncommitted)
-		uncommitted=1
-		shift
-		;;
-	--two-dot)
-		two_dot=1
 		shift
 		;;
 	--)
@@ -252,41 +184,12 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 mode=argv
-if [[ $have_base -eq 1 || $have_head -eq 1 ]]; then
-	mode=range
-	[[ $have_base -eq 1 && $have_head -eq 1 && $from_stdin -eq 0 && $# -eq 0 ]] || usage
-elif [[ $from_stdin -eq 1 ]]; then
+if [[ $from_stdin -eq 1 ]]; then
 	mode=stdin
 	[[ $# -eq 0 ]] || usage
 fi
-[[ $uncommitted -eq 0 || "$mode" == range ]] || usage
-[[ $two_dot -eq 0 || "$mode" == range ]] || usage
 
 root="$(cd -P -- "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" >/dev/null && pwd -P)"
-
-# resolve_revision <option> <value>: prints the commit that <value> names. The
-# one place a --base or --head value is judged, so the skills' snippets carry
-# no allowlist of their own: any revision git resolves to a commit is accepted
-# (a SHA, `HEAD~2`, a branch such as `fix#12` or `feat=x`). Otherwise prints
-# `decisions-active.sh: <option> refused: <code>` on stderr, never the value,
-# and exits 2. Codes: empty; option-like (a leading `-`, which git would read
-# as an option); not-a-commit (`git rev-parse --verify --end-of-options
-# <value>^{commit}` fails).
-resolve_revision() {
-	local code="" sha=""
-	if [[ -z "$2" ]]; then
-		code=empty
-	elif [[ "$2" == -* ]]; then
-		code=option-like
-	elif ! sha="$(git -C "$root" rev-parse --verify --quiet --end-of-options "$2^{commit}" 2>/dev/null)" || [[ -z "$sha" ]]; then
-		code=not-a-commit
-	fi
-	if [[ -n "$code" ]]; then
-		echo "decisions-active.sh: $1 refused: $code" >&2
-		exit 2
-	fi
-	printf '%s\n' "$sha"
-}
 
 # normalise_path <path>: sets NORM to the path's normal spelling (see the
 # header): leading `./`, `.` components and repeated `/` dropped, one
@@ -340,25 +243,6 @@ private_tmp() {
 		return 5
 	}
 }
-if [[ "$mode" == range ]]; then
-	list_tmp="$(private_tmp)" || {
-		list_tmp=""
-		quit 5
-	}
-fi
-
-if [[ "$mode" == range ]]; then
-	base_commit="$(resolve_revision --base "$base")" || quit 2
-	head_commit="$(resolve_revision --head "$head")" || quit 2
-	# The comparison the caller's review uses: the merge base (`A...B`, as
-	# `gh pr diff`) by default, or the two tips with --two-dot (`A..B`).
-	if [[ $two_dot -eq 1 ]]; then
-		compare=("$base_commit" "$head_commit")
-	else
-		compare=("$base_commit...$head_commit")
-	fi
-fi
-
 paths=()
 case "$mode" in
 argv)
@@ -385,31 +269,6 @@ stdin)
 		quit 4
 	fi
 	;;
-range)
-	if ! {
-		git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z "${compare[@]}" -- &&
-			if [[ $uncommitted -eq 1 ]]; then
-				git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --cached -- &&
-					git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --
-			fi
-	} >"$list_tmp"; then
-		echo "decisions-active.sh: git diff failed for the reviewed range" >&2
-		quit 4
-	fi
-	while IFS= read -r -d '' entry; do
-		paths+=("$entry")
-	done <"$list_tmp"
-	current="$(git -C "$root" rev-parse --verify --quiet HEAD 2>/dev/null || true)"
-	[[ "$head_commit" == "$current" ]] || echo "$NOTICE" >&2
-	dirty="$(git -C "$root" --no-optional-locks status --porcelain -z --ignored --untracked-files=all -- docs/decisions 2>/dev/null | tr '\0' '\n')" || dirty=unknown
-	if [[ $uncommitted -eq 0 ]]; then
-		[[ -z "$dirty" ]] || echo "$DIRTY_NOTICE" >&2
-	elif [[ "$dirty" == unknown ]] || grep -qE '^(\?\?|!!) ' <<<"$dirty"; then
-		# --uncommitted reviews tracked staged and unstaged changes; an
-		# untracked or ignored record is read but is not part of that scope.
-		echo "$OUTSIDE_NOTICE" >&2
-	fi
-	;;
 esac
 # Globs see only the normal spelling; a path with none is refused loudly.
 for ((k = 0; k < ${#paths[@]}; k++)); do
@@ -419,10 +278,7 @@ for ((k = 0; k < ${#paths[@]}; k++)); do
 	fi
 	paths[k]="$NORM"
 done
-if [[ ${#paths[@]} -eq 0 ]]; then
-	[[ "$mode" == range ]] && quit 0
-	usage
-fi
+[[ ${#paths[@]} -gt 0 ]] || usage
 
 dec_check_directory "$root" || quit 3
 

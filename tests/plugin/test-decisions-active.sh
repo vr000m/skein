@@ -531,9 +531,8 @@ for cell in "0|p src/a.py|20260101-scratch.md" "3|p src/a.py|20260101-scratch.md
 done
 
 # R6-5 a path-list temp file that cannot be created is exit 5 with a fixed
-# reason. Contract: with TMPDIR=/dev/null and no --temp-output, both the
-# --paths-stdin and the range (--range-stdin) modes exit 5, print nothing on
-# stdout and exactly `decisions-active.sh: cannot create a private temp file`
+# reason. Contract: with TMPDIR=/dev/null and no --temp-output, --paths-stdin
+# exits 5, prints nothing on stdout and exactly `decisions-active.sh: cannot create a private temp file`
 # on stderr (no mktemp diagnostic, no random path). macOS mktemp falls back
 # from an unusable TMPDIR, so a failing mktemp first on PATH (GNU's message,
 # with a random path) stands in for it on every platform.
@@ -544,16 +543,13 @@ git -C "$root" -c user.name=t -c user.email=t@t commit -qm init
 mkdir -p "$tmp/failing-mktemp"
 printf '#!/bin/sh\necho "mktemp: failed to create file via template /dev/null/tmp.$$: Not a directory" >&2\nexit 1\n' >"$tmp/failing-mktemp/mktemp"
 chmod +x "$tmp/failing-mktemp/mktemp"
-for cell in "--paths-stdin|p src/a.py" "--range-stdin|HEAD"; do
-	opt="${cell%%|*}"
-	rc=0
-	out="$(cd "$root" && printf '%s\n%s\n' "${cell#*|}" HEAD | PATH="$tmp/failing-mktemp:$PATH" TMPDIR=/dev/null "$SEL" "$opt" 2>"$tmp/stderr")" || rc=$?
-	if [[ $rc -eq 5 && -z "$out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: cannot create a private temp file' ]]; then
-		pass "R6-5: $opt with TMPDIR=/dev/null exits 5 with the fixed reason"
-	else
-		fail "R6-5: $opt with TMPDIR=/dev/null: exit $rc, stdout '$out', stderr '$(cat "$tmp/stderr")'"
-	fi
-done
+rc=0
+out="$(cd "$root" && printf 'p src/a.py\n' | PATH="$tmp/failing-mktemp:$PATH" TMPDIR=/dev/null "$SEL" --paths-stdin 2>"$tmp/stderr")" || rc=$?
+if [[ $rc -eq 5 && -z "$out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: cannot create a private temp file' ]]; then
+	pass "R6-5: --paths-stdin with TMPDIR=/dev/null exits 5 with the fixed reason"
+else
+	fail "R6-5: --paths-stdin with TMPDIR=/dev/null: exit $rc, stdout '$out', stderr '$(cat "$tmp/stderr")'"
+fi
 
 # --paths-stdin: a path is data after its `p ` prefix; a line equal to a
 # here-document delimiter cannot occur because every line carries the prefix.
@@ -578,148 +574,19 @@ else
 	fail "--paths-stdin: exit $rc, names '$(names "$OUT")'"
 fi
 
-# --base/--head: the script runs the diff (both rename paths, the merge base),
-# --uncommitted adds staged and unstaged paths, an empty range is an empty
-# success, a bad range is exit 4, and a reviewed head that is not the
-# checked-out HEAD prints the notice.
-root="$tmp/scratch-diff"
+# Fresh-ledger round 7: the selector takes no revision range, so it can never
+# re-derive a range that differs from what a lens was assigned (the skills
+# pass the assigned paths with --paths-stdin). Contract: every removed range
+# option is a usage error (exit 2) with no record text, alone or beside
+# --paths-stdin, on every bash; the exit set is unchanged.
+root="$tmp/no-range"
 scratch_repo "$root"
-gitc() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
-mkdir -p "$root/src" "$root/archive"
-printf 'one\n' >"$root/src/moved.py"
-gitc add -- docs src
-gitc commit -qm base
-gitc mv -- src/moved.py archive/moved.py
-gitc commit -qm move
-diff_run() {
-	RC=0
-	OUT="$(cd "$root" && "$SEL" "$@" 2>"$tmp/stderr")" || RC=$?
-}
-diff_run --base 'HEAD^' --head HEAD
-if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q notice "$tmp/stderr"; then
-	pass "--base/--head selects over the rename source path, no notice at the checked-out HEAD"
-else
-	fail "--base/--head rename: exit $RC, names '$(names "$OUT")'"
-fi
-diff_run --base HEAD --head HEAD
-assert_eq "--base/--head on an empty range is an empty success" "0:" "$RC:$OUT"
-diff_run --base missing-rev --head HEAD
-assert_eq "--base/--head on an unresolvable revision is exit 2 with no record text" "2:" "$RC:$OUT"
-assert_eq "an unresolvable revision is named by its reason code, never its value" "decisions-active.sh: --base refused: not-a-commit" "$(cat "$tmp/stderr")"
-printf 'staged\n' >"$root/src/staged.py"
-gitc add -- src/staged.py
-printf 'two\n' >"$root/archive/moved.py"
-record "$root" 20260109-archive.md active 'archive/*'
-diff_run --base HEAD --head HEAD --uncommitted
-assert_eq "--uncommitted adds the staged and unstaged paths" "0:20260101-scratch.md 20260109-archive.md" "$RC:$(names "$OUT")"
-rm -f "$root/docs/decisions/20260109-archive.md"
-gitc stash -q
-reviewed_head="$(git -C "$root" rev-parse HEAD)"
-gitc checkout -q 'HEAD^'
-diff_run --base "$reviewed_head^" --head "$reviewed_head"
-if grep -qxF 'decisions-active.sh: notice: decision records read from the checked-out tree, not the reviewed head' "$tmp/stderr"; then
-	pass "a reviewed head other than the checked-out HEAD prints the checked-out-tree notice"
-else
-	fail "no checked-out-tree notice for a reviewed head off HEAD: $(cat "$tmp/stderr")"
-fi
-RC=0
-(cd "$root" && "$SEL" --base -x --head HEAD >/dev/null 2>&1) || RC=$?
-assert_eq "a revision that starts with - is a usage error" "2" "$RC"
-
-# R5-5 the selector, not the skills' snippets, judges a --base/--head value.
-# Contract: any value git resolves to a commit is accepted, including refs the
-# snippets' old character allowlist refused (`fix#12`, `feat=x`, `a%b`, a
-# non-ASCII branch, `HEAD~1`); an empty value, a leading `-` and a value that
-# names no commit exit 2 with `decisions-active.sh: <option> refused: <code>`
-# and nothing else on stderr, and print no record text. Cells: value x
-# {--base, --head}.
-gitc checkout -q "$reviewed_head"
-cafe="$(printf 'caf\303\251-accent')"
-for ref in 'fix#12' 'feat=x' 'a%b' "$cafe" 'with,comma' 'x@y'; do
-	gitc branch -f -- "$ref" "$reviewed_head^"
-	diff_run --base "$ref" --head HEAD
-	if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-scratch.md ]] && ! grep -q refused "$tmp/stderr"; then
-		pass "R5-5: --base '$ref' (a valid branch) is accepted and selects"
-	else
-		fail "R5-5: --base '$ref': exit $RC, stderr '$(cat "$tmp/stderr")'"
-	fi
-done
-diff_run --base 'HEAD~1' --head HEAD
-assert_eq "R5-5: a relative revision HEAD~1 is accepted" "0:20260101-scratch.md" "$RC:$(names "$OUT")"
-for cell in "--base||empty" "--base|-x|option-like" "--base|nope\$(id)|not-a-commit" "--head||empty" "--head|--all|option-like" "--head|HEAD:src|not-a-commit"; do
-	opt="${cell%%|*}"
-	rest="${cell#*|}"
-	value="${rest%|*}"
-	code="${rest##*|}"
-	if [[ "$opt" == --base ]]; then
-		diff_run --base "$value" --head HEAD
-	else
-		diff_run --base 'HEAD~1' --head "$value"
-	fi
-	if [[ $RC -eq 2 && -z "$OUT" && "$(cat "$tmp/stderr")" == "decisions-active.sh: $opt refused: $code" ]]; then
-		pass "R5-5: $opt '$value' exits 2 with reason $code and no record text"
-	else
-		fail "R5-5: $opt '$value': exit $RC, output '$OUT', stderr '$(cat "$tmp/stderr")'"
-	fi
-done
-
-# F6-A the selector compares in the caller's mode. Root cause: a range was
-# always diffed as `<base>...<head>`, so for an explicit two-dot target
-# (`A..B`, the tips compared directly) a path changed only on A's side never
-# reached the selector, and the record for it was missed with exit 0.
-# Contract: default (three-dot) keeps the merge base; --two-dot lists exactly
-# `git diff --name-only <base> <head>`; for an ancestor range both agree;
-# --two-dot without a range is a usage error (exit 2), adding no exit code.
-# Cells: {default, --two-dot} x {--base/--head, --range-stdin} x {diverged
-# tips, ancestor range} x every bash, plus the usage cells.
-root="$tmp/two-dot"
-rm -rf "$root"
-mkdir -p "$root"
-git -C "$root" init -q
-record "$root" 20260101-cache.md active 'src/cache/*'
-record "$root" 20260102-notes.md active 'notes.txt'
-gitt() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
-gitt add -- docs
-gitt commit -qm base
-gitt checkout -q -b pr-head
-printf 'n\n' >"$root/notes.txt"
-gitt add -- notes.txt
-gitt commit -qm 'PR change'
-gitt checkout -q -b base-tip 'HEAD^'
-mkdir -p "$root/src/cache"
-printf 'a\n' >"$root/src/cache/advanced.py"
-gitt add -- src
-gitt commit -qm 'Base advances'
-if git -C "$root" diff --name-only base-tip pr-head | grep -qx src/cache/advanced.py &&
-	! git -C "$root" diff --name-only base-tip...pr-head | grep -qx src/cache/advanced.py; then
-	pass "F6-A fixture: the base-only change is in the tip comparison, not the merge-base one"
-else
-	fail "F6-A fixture does not separate the two comparisons"
-fi
 for b in "${locale_bashes[@]}"; do
-	for cell in "diverged|base-tip|pr-head||20260102-notes.md" \
-		"diverged|base-tip|pr-head|--two-dot|20260101-cache.md 20260102-notes.md" \
-		"ancestor|pr-head^|pr-head||20260102-notes.md" \
-		"ancestor|pr-head^|pr-head|--two-dot|20260102-notes.md"; do
-		IFS='|' read -r kind cb ch flag want <<<"$cell"
-		for form in argv stdin; do
-			RC=0
-			if [[ "$form" == argv ]]; then
-				OUT="$(cd "$root" && "$b" "$SEL" --base "$cb" --head "$ch" ${flag:+"$flag"} 2>"$tmp/stderr")" || RC=$?
-			else
-				OUT="$(cd "$root" && printf '%s\n%s\n' "$cb" "$ch" | "$b" "$SEL" --range-stdin ${flag:+"$flag"} 2>"$tmp/stderr")" || RC=$?
-			fi
-			assert_eq "F6-A $b: $kind ${flag:-three-dot} ($form) selects" "0:$want" "$RC:$(names "$OUT")"
-		done
-	done
-	for cell in "--paths-stdin" "--" "argv"; do
+	for opt in "--base HEAD --head HEAD" --range-stdin --two-dot --uncommitted "--paths-stdin --two-dot"; do
 		RC=0
-		case "$cell" in
-		--paths-stdin) OUT="$(cd "$root" && printf 'p notes.txt\n' | "$b" "$SEL" --two-dot --paths-stdin 2>"$tmp/stderr")" || RC=$? ;;
-		--) OUT="$(cd "$root" && "$b" "$SEL" --two-dot -- notes.txt 2>"$tmp/stderr")" || RC=$? ;;
-		argv) OUT="$(cd "$root" && "$b" "$SEL" --two-dot 2>"$tmp/stderr")" || RC=$? ;;
-		esac
-		assert_eq "F6-A $b: --two-dot with $cell (no range) is a usage error" "2:" "$RC:$OUT"
+		# shellcheck disable=SC2086  # the option words split on purpose
+		OUT="$(cd "$root" && printf 'p src/a.py\n' | "$b" "$SEL" $opt 2>"$tmp/stderr")" || RC=$?
+		assert_eq "R7 $b: removed range option '$opt' is a usage error" "2:" "$RC:$OUT"
 	done
 done
 
@@ -1161,68 +1028,6 @@ if [[ $RC -eq 0 ]] && ! grep -q 'REJECTED-MARKER' <<<"$OUT" && grep -qx 'Why 202
 else
 	fail "R5-3: indented heading end to end (exit $RC): $OUT"
 fi
-
-# R4-3 an uncommitted docs/decisions in a committed-range review is noticed.
-# Contract: in --base/--head mode without --uncommitted, stderr carries the
-# working-tree notice exactly when git status lists any entry under
-# docs/decisions (or fails); with --uncommitted (R5: Pi's deep-review scope,
-# committed plus tracked staged and unstaged) that notice never prints and the
-# outside-scope notice prints exactly for an untracked or ignored entry (or a
-# failed status). Cells: tree state x flag.
-DIRTY_LINE='decisions-active.sh: notice: working tree has uncommitted changes under docs/decisions'
-OUTSIDE_LINE='decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope'
-root="$tmp/r4-dirty"
-record "$root" 20260101-a.md active 'src/*'
-mkdir -p "$root/src"
-printf 'x\n' >"$root/src/x"
-git -C "$root" init -q
-printf 'ignored.md\n' >"$root/.gitignore"
-git -C "$root" add -- .gitignore docs src
-git -C "$root" -c user.name=T -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm base
-printf 'y\n' >>"$root/src/x"
-git -C "$root" add -- src/x
-git -C "$root" -c user.name=T -c user.email=t@example.invalid -c commit.gpgsign=false commit -qm change
-dirty_failures=0
-for cell in clean modified staged untracked ignored deleted status-fails; do
-	git -C "$root" reset -q --hard
-	git -C "$root" clean -qfdx -- docs
-	shim_path="$PATH"
-	case "$cell" in
-	modified) printf 'edit\n' >>"$root/docs/decisions/20260101-a.md" ;;
-	staged)
-		printf 'edit\n' >>"$root/docs/decisions/20260101-a.md"
-		git -C "$root" add -- docs/decisions/20260101-a.md
-		;;
-	untracked) record "$root" 20260102-new.md active 'other/*' ;;
-	ignored) printf 'x\n' >"$root/docs/decisions/ignored.md" ;;
-	deleted) rm "$root/docs/decisions/20260101-a.md" ;;
-	status-fails)
-		mkdir -p "$tmp/r4-shim"
-		# shellcheck disable=SC2016  # the shim's own "$@" is literal
-		printf '#!/bin/bash\nfor a in "$@"; do [ "$a" = status ] && exit 7; done\nexec %s "$@"\n' "$(command -v git)" >"$tmp/r4-shim/git"
-		chmod +x "$tmp/r4-shim/git"
-		shim_path="$tmp/r4-shim:$PATH"
-		;;
-	esac
-	for flag in committed uncommitted; do
-		want=0
-		[[ "$cell" != clean && "$flag" == committed ]] && want=1
-		extra=()
-		[[ "$flag" == uncommitted ]] && extra=(--uncommitted)
-		(cd "$root" && PATH="$shim_path" "$SEL" --base HEAD^ --head HEAD ${extra[@]+"${extra[@]}"} >/dev/null 2>"$tmp/stderr") || true
-		got=0
-		grep -qxF "$DIRTY_LINE" "$tmp/stderr" && got=1
-		want_out=0
-		[[ "$flag" == uncommitted && ("$cell" == untracked || "$cell" == ignored || "$cell" == status-fails) ]] && want_out=1
-		got_out=0
-		grep -qxF "$OUTSIDE_LINE" "$tmp/stderr" && got_out=1
-		if [[ $got -ne $want || $got_out -ne $want_out ]]; then
-			dirty_failures=$((dirty_failures + 1))
-			fail "R4-3: $cell/$flag: notice $got (want $want), outside-scope notice $got_out (want $want_out) ($(cat "$tmp/stderr"))"
-		fi
-	done
-done
-[[ $dirty_failures -eq 0 ]] && pass "R4-3/R5: the dirty notice fires exactly for a dirty docs/decisions in a committed-range review, the outside-scope notice exactly for untracked or ignored records under --uncommitted (7 states x 2 flags)"
 
 # R4-4 matching never backtracks. Contract: a many-star glob against a long
 # path is decided in bounded time, by validator and selector alike, and still
@@ -1762,49 +1567,10 @@ else
 	fail "FL1-A: process substitutions remain: $procsubs"
 fi
 
-# B (I3): a local diff.ignoreSubmodules=all, or a reviewed .gitmodules with
-# `ignore = all`, hid a changed submodule pointer from the selector's
-# `git diff --name-only`, so a record whose Applies to names the submodule
-# path was skipped while coverage read as complete. Contract: in each cell
-# the pointer change (committed in the range, or staged with --uncommitted)
-# selects the record with exit 0.
-for cell in config gitmodules plain staged; do
-	root="$tmp/fl1-sub-$cell"
-	scratch_repo "$root"
-	record "$root" 20260101-sub.md active 'vendor/lib'
-	subc() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
-	subc commit -q --allow-empty -m z1
-	z1="$(git -C "$root" rev-parse HEAD)"
-	subc commit -q --allow-empty -m z2
-	z2="$(git -C "$root" rev-parse HEAD)"
-	if [[ "$cell" == gitmodules ]]; then
-		printf '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n\tignore = all\n' >"$root/.gitmodules"
-		subc add -- .gitmodules
-	fi
-	subc update-index --add --cacheinfo "160000,$z1,vendor/lib"
-	subc add -- docs
-	subc commit -qm base
-	[[ "$cell" == config || "$cell" == staged ]] && git -C "$root" config diff.ignoreSubmodules all
-	subc update-index --cacheinfo "160000,$z2,vendor/lib"
-	RC=0
-	if [[ "$cell" == staged ]]; then
-		OUT="$(cd "$root" && "$SEL" --base HEAD --head HEAD --uncommitted 2>"$tmp/stderr")" || RC=$?
-	else
-		subc commit -qm bump
-		OUT="$(cd "$root" && "$SEL" --base 'HEAD^' --head HEAD 2>"$tmp/stderr")" || RC=$?
-	fi
-	if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-sub.md ]]; then
-		pass "FL1-B: a submodule pointer change ($cell) selects its record"
-	else
-		fail "FL1-B: a submodule pointer change ($cell): exit $RC, selected '$(names "$OUT")' ($(cat "$tmp/stderr"))"
-	fi
-done
-
 # Fresh-ledger round 3: byte semantics do not depend on the caller's locale.
-# Contract: every NUL-delimited list the selector reads (changed paths,
-# --paths-stdin) yields every entry in a UTF-8 locale, even after a name that
+# Contract: every NUL-delimited list the selector reads (--paths-stdin) yields every entry in a UTF-8 locale, even after a name that
 # ends in an incomplete multibyte sequence (0xCD); an unpatched Bash 5.2 can
-# otherwise skip the next NUL and lose the next path. Cells: {range, stdin} x
+# otherwise skip the next NUL and lose the next path. Cells: stdin x
 # {each bash}. The bug is in 5.2, so these may pass on 3.2/5.3 without the fix;
 # the structural check below pins the fix itself.
 utf8_locale=""
@@ -1835,9 +1601,6 @@ else
 	gitm commit -qm change
 	printf 'p a\315\0p src/cache/store.py\0' >"$tmp/mb-paths"
 	for b in "${locale_bashes[@]}"; do
-		RC=0
-		OUT="$(cd "$root" && LC_ALL="$utf8_locale" "$b" "$SEL" --base 'HEAD^' --head HEAD 2>"$tmp/stderr")" || RC=$?
-		assert_eq "$b $utf8_locale: a range path after an invalid multibyte name is still matched" "0:20260101-store.md" "$RC:$(names "$OUT")"
 		RC=0
 		OUT="$(cd "$root" && LC_ALL="$utf8_locale" "$b" "$SEL" --paths-stdin <"$tmp/mb-paths" 2>"$tmp/stderr")" || RC=$?
 		assert_eq "$b $utf8_locale: a --paths-stdin path after an invalid multibyte name is still matched" "0:20260101-store.md" "$RC:$(names "$OUT")"

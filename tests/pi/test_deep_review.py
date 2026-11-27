@@ -29,6 +29,7 @@ from test_review import (
     exercise_plan_path_command,
     selector_output,
     selector_status,
+    with_paths,
 )
 
 
@@ -271,17 +272,17 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
     for phrase in (
         "tracked staged/unstaged paths",
         "Do not substitute unrelated current-diff paths for a plan target",
-        "checks each path-source command succeeds",
-        "Decision records: read from the checked-out tree, not the reviewed head",
+        "The selector's input has one source, the architecture worker's assigned units, the same list written for that lens to `expected.json`",
+        "a rename counts as both its old and its new path",
+        "the narrowed assignment is the one written to `expected.json`, and the selector takes that narrowed list, never the full diff",
+        "it takes no range",
         "`--continue` remains unsupported",
-        "The selector itself judges each value, so the snippet carries no allowlist",
-        "untracked and ignored files are not, and the selector still reads records from them",
-        "`decisions-active.sh: notice: untracked or ignored entries under docs/decisions are outside the reviewed scope`",
+        "untracked and ignored files are not part of it, and the selector still reads records from them",
         "Decision records: untracked or ignored records under docs/decisions are outside the reviewed scope",
     ):
-        assert phrase in text
-    assert 'case "$BASE" in' not in text and 'case "$TIP" in' not in text
-    assert "does not fire here" not in text
+        assert phrase in text, phrase
+    for removed in ("--range-stdin", "SKEIN_RANGE", "--uncommitted", "--two-dot"):
+        assert removed not in text, removed
     exercise_decision_selection(SKILL, tmp_path)
 
 
@@ -289,22 +290,25 @@ def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
     exercise_plan_path_command(SKILL, tmp_path)
 
 
-def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_path):
-    """The selector runs the three diffs itself (range, staged, unstaged),
-    keeps hostile names as data, reports a failed source as exit 4 on the
-    status line, and selects a record for each path it collected. The range
-    arrives on quoted here-document lines, so a hostile ref name runs nothing,
-    and `selector-output=` names the selector's temp file only for exit 0 or
-    3."""
+def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
+    """Fresh-ledger round 7. Old invariant: the selector re-derived the
+    reviewed range itself (committed, staged and unstaged diffs). New
+    invariant: the selector sees exactly the architecture worker's assigned
+    paths, the list written to `expected.json`, so a narrowed packet narrows
+    the selection too. Cells: target mode x shell; each checks (assigned
+    paths) == (selector input paths) and the records selected, and the
+    reference cell shows the full diff would select a record the narrowed
+    worker never reviews."""
     repo, env, commands = decision_command_fixture(SKILL, tmp_path)
-    command = next(command for command in commands if "--range-stdin" in command)
+    command = next(command for command in commands if "--paths-stdin" in command)
+    assert "--range-stdin" not in "".join(commands)
     (repo / "docs/dev_plans").mkdir(parents=True)
     (repo / "docs/dev_plans/plan.md").write_text("plan\n")
     (repo / "docs/decisions").mkdir()
     for name, applies in (
-        ("20260101-committed.md", "committed*"),
-        ("20260102-staged.md", "staged space.py"),
-        ("20260103-moved.md", "moved.py"),
+        ("20260101-cache.md", "src/cache/*"),
+        ("20260102-auth.md", "src/auth/*"),
+        ("20260103-moved.md", "old/moved.py"),
     ):
         (repo / "docs/decisions" / name).write_text(
             f"# {name}\n\n**Status**: active\n**Date**: 2026-11-24\n"
@@ -312,91 +316,74 @@ def test_deep_review_diff_command_preserves_paths_and_propagates_failures(tmp_pa
             "**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n"
             "## Decision\nKeep it.\n## Why\nBecause.\n"
         )
-    selected = []
 
     def git(*args):
-        return subprocess.check_output(["git", "-C", str(repo), *args])
+        return subprocess.check_output(["git", "-C", str(repo), *args]).decode()
 
-    def select(BASE, TIP, shell="/bin/bash", **extra):
-        assert "\n<base>\n" in command and "\n<head>\n" in command
-        ranged = command.replace("\n<base>\n", f"\n{BASE}\n").replace(
-            "\n<head>\n", f"\n{TIP}\n"
+    ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
+    (repo / "old").mkdir()
+    (repo / "old/moved.py").write_text("x\n")
+    git("add", "--", "docs", "old")
+    git(*ident, "commit", "-qm", "base")
+    for path in ("src/cache/store.py", "src/auth/token.py"):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("change\n")
+    git("add", "--", "src")
+    git(*ident, "commit", "-qm", "change")
+    git("mv", "--", "old/moved.py", "new.py")
+
+    def units_paths(diff_text):
+        # The documented derivation: both paths of every diff header.
+        paths = set()
+        for line in diff_text.splitlines():
+            if line.startswith("diff --git a/"):
+                old, new = line[len("diff --git a/") :].split(" b/", 1)
+                paths.update((old, new))
+        return sorted(paths)
+
+    full = units_paths(git("diff", "-M", "HEAD^"))
+    assert set(full) == set(
+        git("diff", "--no-renames", "--name-only", "HEAD^").split()
+    ), "the derivation covers every path the diff changes"
+
+    def select(paths, shell):
+        expected = tmp_path / "expected.json"
+        expected.write_text(json.dumps({"architecture": paths}))
+        assigned = json.loads(expected.read_text())["architecture"]
+        script = with_paths(command, [f"p {path}" for path in assigned])
+        written = sorted(
+            line[2:] for line in script.splitlines() if line.startswith("p ")
         )
+        assert written == sorted(paths), "selector input == assigned paths"
         result = subprocess.run(
-            [shell, "-e", "-c", ranged],
+            [shell, "-e", "-c", script],
             cwd=repo,
-            env={**env, **extra},
+            env=env,
             capture_output=True,
             text=True,
             check=False,
         )
         assert result.returncode == 0, result.stderr
-        status = selector_status(result)
-        named = selector_output(result)
-        assert bool(named) == (status in (0, 3)), (status, named)
-        selected[:] = []
-        if named:
-            text = Path(named).read_text()
-            Path(named).unlink()
-            selected[:] = re.findall(
-                r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE
-            )
-        return status
+        assert selector_status(result) == 0, result.stderr
+        named = Path(selector_output(result))
+        text = named.read_text()
+        named.unlink()
+        return re.findall(r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE)
 
-    ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
-    git(*ident, "commit", "--allow-empty", "-m", "base")
-    base = git("rev-parse", "HEAD").decode().strip()
-    committed = "committed\n$(touch injected).py"
-    (repo / committed).write_text("original\n")
-    git("add", "--", committed)
-    git(*ident, "commit", "-m", "changed")
-    staged = "staged space.py"
-    (repo / staged).write_text("staged\n")
-    git("add", "--", staged)
-    (repo / committed).write_text("unstaged\n")
-    assert select(BASE=base, TIP="HEAD") == 0
-    assert selected == ["20260101-committed.md", "20260102-staged.md"]
-    assert not (repo / "injected").exists()
-    git("reset", "-q")
-    git("checkout", "--", committed)
-    git("mv", "--", committed, "moved.py")
-    git(*ident, "commit", "-m", "move")
-    assert select(BASE="HEAD^", TIP="HEAD") == 0
-    assert selected == ["20260101-committed.md", "20260103-moved.md"], (
-        "a rename must give the selector both its source and destination"
-    )
-    assert select(BASE="HEAD", TIP="HEAD") == 0
-    assert selected == [], "no changed path is an empty selection"
-    assert select(BASE="invalid-ref", TIP="HEAD") == 2, "the selector refuses it"
-    git("branch", "-f", "--", "fix#12", "HEAD^")
-    assert select(BASE="fix#12", TIP="HEAD") == 0, "a ref the old allowlist refused"
     shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
-    hostile = ["main$(touch pwned1)", 'a`touch pwned2`"b', "x'$(touch pwned3)'", ""]
-    for shell in shells:
-        for name in hostile:
-            assert select(BASE=name, TIP="HEAD", shell=shell) == 2, (shell, name)
-            assert select(BASE="HEAD^", TIP=name, shell=shell) == 2, (shell, name)
-        assert not list(repo.glob("pwned*")), "a ref name must never run"
-    shim = tmp_path / "bin"
-    shim.mkdir()
-    wrapper = shim / "git"
-    wrapper.write_text(
-        '#!/bin/bash\ncase " $* " in\n'
-        '*" diff "*" --cached "*) [ "$FAIL_SOURCE" = cached ] && exit 23 ;;\n'
-        '*" diff "*"..."*) ;;\n'
-        '*" diff "*) [ "$FAIL_SOURCE" = unstaged ] && exit 24 ;;\n'
-        'esac\nexec "$REAL_GIT" "$@"\n'
+    cells = (
+        # current diff: committed range plus staged/unstaged, rename both sides
+        (full, ["20260101-cache.md", "20260102-auth.md", "20260103-moved.md"]),
+        # narrowed packet: only the units the worker is assigned
+        (["src/cache/store.py"], ["20260101-cache.md"]),
+        # plan target without a diff: the plan's named paths
+        (["src/auth/token.py"], ["20260102-auth.md"]),
     )
-    wrapper.chmod(0o700)
-    for source in ("cached", "unstaged"):
-        status = select(
-            BASE="HEAD^",
-            TIP="HEAD",
-            PATH=str(shim) + os.pathsep + env["PATH"],
-            REAL_GIT=shutil.which("git"),
-            FAIL_SOURCE=source,
-        )
-        assert status == 4, f"a failed {source} diff must be exit 4"
+    for shell in shells:
+        for paths, want in cells:
+            assert select(paths, shell) == want, (shell, paths)
+    # Reference: the full diff selects records the narrowed worker never saw.
+    assert select(full, "/bin/bash") != select(["src/cache/store.py"], "/bin/bash")
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):
