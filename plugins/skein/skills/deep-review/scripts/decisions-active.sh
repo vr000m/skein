@@ -128,21 +128,36 @@ quit() {
 # Private temp files (mktemp, outside the repository), removed on any exit
 # except a selection handed to the caller after exit 0 or 3.
 out_tmp=""
+# Every write here is guarded: under `set -e` a failed handoff write (a closed
+# or read-only stdout) would end the handler with bash's own error and exit 1,
+# skipping the fixed reason. A handoff that cannot be written hands nothing
+# over and is internal failure 7. The status line is written in a subshell:
+# Bash 3.2 keeps a failed printf in its stdout buffer and would flush it into
+# the next write, the reason on stderr.
 on_exit() {
-	local rc=$?
+	local rc=$? da_line da_reason=0
+	set +e
 	if [[ $rc -ne 0 && $da_documented -ne 1 ]]; then
-		echo "decisions-active.sh: DECISIONS-INTERNAL" >&2
 		rc=7
+		da_reason=1
 	fi
 	if [[ -n "$out_tmp" ]]; then
-		exec 1>&3 3>&-
 		case "$rc" in
-		0 | 3) printf 'selector-output=%s\n' "$out_tmp" ;;
+		0 | 3) da_line="selector-output=$out_tmp" ;;
 		*)
-			rm -f -- "$out_tmp"
-			printf 'selector-output=\n'
+			rm -f -- "$out_tmp" 2>/dev/null
+			da_line="selector-output="
 			;;
 		esac
+		if ! { exec 1>&3 3>&-; } 2>/dev/null || ! (printf '%s\n' "$da_line") 2>/dev/null; then
+			rm -f -- "$out_tmp" 2>/dev/null
+			# A documented exit 7 has already printed the reason.
+			[[ $rc -eq 7 ]] || da_reason=1
+			rc=7
+		fi
+	fi
+	if [[ $da_reason -eq 1 ]]; then
+		echo "decisions-active.sh: DECISIONS-INTERNAL" >&2 2>/dev/null
 	fi
 	exit "$rc"
 }

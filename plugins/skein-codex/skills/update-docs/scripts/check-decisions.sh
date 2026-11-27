@@ -66,16 +66,19 @@ quit() {
 	cd_documented=1
 	exit "$1"
 }
+# The reason write is guarded: under `set -e` a failed write to a closed or
+# read-only stderr would otherwise exit 1, which means "the record graph has a
+# problem".
 cd_internal() {
-	echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2
 	cd_documented=1
+	echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2 2>/dev/null || true
 	exit 4
 }
 # shellcheck disable=SC2329  # invoked by the EXIT trap
 cd_on_exit() {
 	local rc=$?
 	if [[ $rc -ne 0 && $cd_documented -ne 1 ]]; then
-		echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2
+		echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2 2>/dev/null || true
 		exit 4
 	fi
 }

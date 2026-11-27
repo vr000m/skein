@@ -1781,6 +1781,59 @@ for b in "${fault_bashes[@]}"; do
 done
 [[ $fault_failures -eq 0 ]] && pass "R7 class 2: dec_read_list fails on any dropped entry write and copies both entries otherwise ($fault_cells cells: bash x {NUL, newline} x {write 2 fails, stdout read-only, no fault})"
 
+# Fresh-ledger round 8, class 3. Old invariant: the EXIT handler printed the
+# reason only for an undocumented status, then wrote the handoff unguarded, so
+# a read-only or closed stdout ended the handler with bash's own
+# `Bad file descriptor` and exit 1. New invariant: every handler write is
+# guarded; a handoff that cannot be written hands nothing over, leaves no
+# temp file, and exits 7 with exactly the fixed reason as the last stderr
+# line. The validator's handler keeps exit 4 when its stderr is unwritable
+# (exit 1 would mean "the record graph has a problem"). Cells: bash x stdout
+# fault for the selector; bash x stderr fault for the validator.
+root="$tmp/r8-handoff"
+scratch_repo "$root"
+mkdir -p "$tmp/r8-ro"
+: >"$tmp/r8-ro/readonly"
+handoff_failures=0
+handoff_cells=0
+for b in "${locale_bashes[@]}"; do
+	for fault in readonly closed; do
+		handoff_cells=$((handoff_cells + 1))
+		rm -rf "$tmp/r8-T" && mkdir -p "$tmp/r8-T"
+		rc=0
+		if [[ $fault == readonly ]]; then
+			(cd "$root" && printf 'p src/a.py\n' | TMPDIR="$tmp/r8-T" "$b" "$SEL" --temp-output --paths-stdin 1<"$tmp/r8-ro/readonly" 2>"$tmp/stderr") || rc=$?
+		else
+			(cd "$root" && printf 'p src/a.py\n' | TMPDIR="$tmp/r8-T" "$b" "$SEL" --temp-output --paths-stdin 1>&- 2>"$tmp/stderr") || rc=$?
+		fi
+		last="$(tail -n 1 "$tmp/stderr")"
+		if [[ $rc -ne 7 || "$last" != 'decisions-active.sh: DECISIONS-INTERNAL' ]] ||
+			grep -q 'selector-output\|### Record' "$tmp/stderr" || compgen -G "$tmp/r8-T/*" >/dev/null; then
+			handoff_failures=$((handoff_failures + 1))
+			fail "R8 class 3 [$b] stdout $fault: exit $rc, stderr '$(tr '\n' '|' <"$tmp/stderr")'"
+		fi
+	done
+done
+mkdir -p "$tmp/r8-failing-mktemp"
+printf '#!/bin/sh\nexit 1\n' >"$tmp/r8-failing-mktemp/mktemp"
+chmod +x "$tmp/r8-failing-mktemp/mktemp"
+for b in "${locale_bashes[@]}"; do
+	for fault in readonly closed; do
+		handoff_cells=$((handoff_cells + 1))
+		rc=0
+		if [[ $fault == readonly ]]; then
+			(cd "$root" && printf 'docs/x.md\n' | PATH="$tmp/r8-failing-mktemp:$PATH" "$b" "$CHECK" --targets-file - 2<"$tmp/r8-ro/readonly" >/dev/null) || rc=$?
+		else
+			(cd "$root" && printf 'docs/x.md\n' | PATH="$tmp/r8-failing-mktemp:$PATH" "$b" "$CHECK" --targets-file - 2>&- >/dev/null) || rc=$?
+		fi
+		if [[ $rc -ne 4 ]]; then
+			handoff_failures=$((handoff_failures + 1))
+			fail "R8 class 3 [$b] check-decisions stderr $fault: exit $rc, want 4"
+		fi
+	done
+done
+[[ $handoff_failures -eq 0 ]] && pass "R8 class 3: an unwritable handoff is selector exit 7 with the fixed reason and no temp file, and an unwritable validator stderr keeps exit 4 ($handoff_cells cells: bash x fault x script)"
+
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
 [[ $FAIL_COUNT -eq 0 ]]
