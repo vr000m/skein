@@ -1762,6 +1762,74 @@ for f in "$SEL" "$CHECK" "$REPO_ROOT/scripts/lib/decisions-common.sh"; do
 	fi
 done
 
+# F4-A equivalent spellings of one repo path select alike. Root cause: plan
+# paths reached glob_match byte-wise, so `./src/cache/store.py` missed the
+# `src/cache/*` record that `src/cache/store.py` selects, silently (exit 0,
+# empty selection). Contract: every path, from argv or --paths-stdin, is
+# normalised once (leading `./`, `.` components, repeated `/` dropped) before
+# matching, so each spelling below gives the same exit 0 and the same stdout;
+# a path with no plain repo-relative spelling (absolute, a `..` component,
+# `.`, empty) exits 4 with exactly the DECISIONS-PATH-UNNORMALISABLE reason on
+# stderr and nothing on stdout, under every bash on the machine.
+root="$tmp/f4-spellings"
+cp -R "$REPO_ROOT/tests/lenses/fixtures/decisions/repo" "$root"
+f4_good=("src/cache/store.py" "./src/cache/store.py" "././src/cache/store.py" "src/cache//store.py" "src/./cache/store.py")
+f4_bad=("/abs/path" "../x" "src/../x" "." "")
+for lb in "${locale_bashes[@]}"; do
+	want="$(cd "$root" && "$lb" "$SEL" -- src/cache/store.py 2>/dev/null)" || true
+	if [[ "$(names "$want")" == *20261101-cache-store.md* ]]; then
+		pass "[$lb] F4-A: the canonical spelling selects the cache-store record"
+	else
+		fail "[$lb] F4-A: the canonical spelling selects the cache-store record (got '$(names "$want")')"
+	fi
+	for spelling in "${f4_good[@]}"; do
+		for mode in argv stdin; do
+			RC=0
+			if [[ $mode == argv ]]; then
+				OUT="$(cd "$root" && "$lb" "$SEL" -- "$spelling" 2>"$tmp/stderr")" || RC=$?
+			else
+				OUT="$(cd "$root" && printf 'p %s\n' "$spelling" | "$lb" "$SEL" --paths-stdin 2>"$tmp/stderr")" || RC=$?
+			fi
+			if [[ $RC -eq 0 && "$OUT" == "$want" && ! -s "$tmp/stderr" ]]; then
+				pass "[$lb] F4-A: $mode '$spelling' selects as src/cache/store.py"
+			else
+				fail "[$lb] F4-A: $mode '$spelling': exit $RC, selected '$(names "$OUT")', stderr '$(cat "$tmp/stderr")'"
+			fi
+		done
+	done
+	for spelling in "${f4_bad[@]}"; do
+		for mode in argv stdin temp; do
+			RC=0
+			case $mode in
+			argv) OUT="$(cd "$root" && "$lb" "$SEL" -- "$spelling" 2>"$tmp/stderr")" || RC=$? ;;
+			stdin) OUT="$(cd "$root" && printf 'p %s\n' "$spelling" | "$lb" "$SEL" --paths-stdin 2>"$tmp/stderr")" || RC=$? ;;
+			temp) OUT="$(cd "$root" && printf 'p src/cache/store.py\np %s\n' "$spelling" | "$lb" "$SEL" --temp-output --paths-stdin 2>"$tmp/stderr")" || RC=$? ;;
+			esac
+			wout=""
+			[[ $mode != temp ]] || wout="selector-output="
+			if [[ $RC -eq 4 && "$OUT" == "$wout" && "$(cat "$tmp/stderr")" == "decisions-active.sh: DECISIONS-PATH-UNNORMALISABLE" ]]; then
+				pass "[$lb] F4-A: $mode '$spelling' is refused loudly (exit 4, fixed reason, no selection)"
+			else
+				fail "[$lb] F4-A: $mode '$spelling': exit $RC, stdout '$OUT', stderr '$(cat "$tmp/stderr")'"
+			fi
+		done
+	done
+done
+# The normaliser leaves an already-normal path (every git-derived range path)
+# unchanged, keeps one trailing `/`, and is idempotent.
+eval "$(sed -n '/^normalise_path() {/,/^}/p' "$SEL")"
+f4_ok=1
+for cell in "src/cache/store.py|src/cache/store.py" "a b/\$(x)*?.sh|a b/\$(x)*?.sh" "...|..." "a/..b/c..|a/..b/c.." ".hidden/x|.hidden/x" "src/cache/|src/cache/" "src/cache//|src/cache/" "src/cache/.|src/cache/" "./a/./b//c|a/b/c" "  lead/x|  lead/x"; do
+	normalise_path "${cell%%|*}" || NORM="<refused>"
+	first="$NORM"
+	normalise_path "$first" || NORM="<refused>"
+	if [[ "$first" != "${cell#*|}" || "$NORM" != "$first" ]]; then
+		f4_ok=0
+		fail "F4-A: normalise_path '${cell%%|*}' gives '$first' then '$NORM' (want '${cell#*|}')"
+	fi
+done
+[[ $f4_ok -eq 0 ]] || pass "F4-A: normalise_path keeps normal paths, keeps one trailing slash, and is idempotent"
+
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
 # the three update-docs directories.

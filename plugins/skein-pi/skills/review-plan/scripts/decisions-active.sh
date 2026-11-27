@@ -46,7 +46,17 @@
 #   <path>...      literal arguments, for direct use.
 # Each path is a literal, repo-relative path (braces already expanded by the
 # caller). A path is data, never a pattern: spaces and shell metacharacters are
-# matched as written.
+# matched as written. Every path, from any of the three sources, is first
+# normalised by normalise_path: a leading `./` (repeated or not), `.`
+# components and repeated `/` are dropped (`./src//a/./b` is `src/a/b`; a
+# trailing `/` is kept as one `/`), and globs are matched against that
+# spelling only, so spellings of one repo path select the same records. A
+# git-derived path is already normal and passes unchanged. A path that is not
+# a plain repo-relative path (empty, absolute, holding a `..` component, or
+# nothing left after normalising, such as `.`) is never skipped: the selector
+# prints no selection, stderr carries the fixed reason
+# `decisions-active.sh: DECISIONS-PATH-UNNORMALISABLE` (never the path) and
+# the exit status is 4.
 #
 # The selection goes to stdout. With --temp-output it goes instead to a fresh
 # private file the selector creates itself (mktemp under ${TMPDIR:-/tmp},
@@ -103,7 +113,9 @@
 #      still printed, so the caller reports degraded coverage rather than
 #      "no applicable decisions".
 #   4  the path list is unavailable: a git diff of the resolved commits
-#      failed, or a --paths-stdin line lacks its `p ` prefix
+#      failed, a --paths-stdin line lacks its `p ` prefix, or a path cannot
+#      be normalised to a plain repo-relative path
+#      (DECISIONS-PATH-UNNORMALISABLE)
 #   5  a private temp file (the --temp-output file or a path-list file)
 #      could not be created; stderr carries a fixed reason, never a path
 #   6  escaping record text failed: stderr carries the fixed reason
@@ -264,6 +276,41 @@ resolve_revision() {
 	printf '%s\n' "$sha"
 }
 
+# normalise_path <path>: sets NORM to the path's normal spelling (see the
+# header): leading `./`, `.` components and repeated `/` dropped, one
+# trailing `/` kept. Returns 1, NORM empty, when the path is empty, absolute,
+# holds a `..` component, or is empty after normalising. The one normaliser
+# for every input mode.
+normalise_path() {
+	local p="$1" out="" comp trail=0
+	NORM=""
+	[[ -n "$p" && "$p" != /* ]] || return 1
+	case "/$p/" in
+	*/./* | *//* | */../*) ;;
+	*)
+		NORM="$p"
+		return 0
+		;;
+	esac
+	[[ "$p" != */ && "$p" != */. ]] || trail=1
+	while [[ -n "$p" ]]; do
+		comp="${p%%/*}"
+		if [[ "$comp" == "$p" ]]; then
+			p=""
+		else
+			p="${p#*/}"
+		fi
+		case "$comp" in
+		"" | .) ;;
+		..) return 1 ;;
+		*) out+="${out:+/}$comp" ;;
+		esac
+	done
+	[[ -n "$out" ]] || return 1
+	[[ $trail -eq 0 ]] || out+=/
+	NORM="$out"
+}
+
 if [[ $temp_output -eq 1 ]]; then
 	if ! out_tmp="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX" 2>/dev/null)"; then
 		out_tmp=""
@@ -309,7 +356,7 @@ stdin)
 	while IFS= read -r -d '' entry; do
 		if [[ "$entry" != "p "* ]]; then
 			unprefixed=1
-		elif [[ -n "${entry#p }" ]]; then
+		else
 			paths+=("${entry#p }")
 		fi
 	done <"$entries"
@@ -345,6 +392,14 @@ range)
 	fi
 	;;
 esac
+# Globs see only the normal spelling; a path with none is refused loudly.
+for ((k = 0; k < ${#paths[@]}; k++)); do
+	if ! normalise_path "${paths[$k]}"; then
+		echo "decisions-active.sh: DECISIONS-PATH-UNNORMALISABLE" >&2
+		quit 4
+	fi
+	paths[k]="$NORM"
+done
 if [[ ${#paths[@]} -eq 0 ]]; then
 	[[ "$mode" == range ]] && quit 0
 	usage
