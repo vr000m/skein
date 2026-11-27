@@ -8,7 +8,8 @@
 # their format is defined in docs/decisions/README.md. A repo without a
 # docs/decisions directory passes: the folder is adopted, never required.
 #
-# Checks, each reported as `<record>: <message>` on stderr:
+# Checks, each reported as `<record>: <message>` on stderr (a control byte in a
+# quoted record value is printed as `?`):
 #   - every header present and non-empty: Status, Date, Applies to, Supersedes,
 #     Superseded by, Source plan
 #   - Status is `active` or `superseded`
@@ -149,7 +150,10 @@ if dec_check_directory "$root"; then
 	[[ $tree_rc -ne 2 ]] || cd_internal
 	[[ $tree_rc -eq 0 ]] || rc=1
 	for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
-		printf '%s\n' "$problem" >&2
+		# A message quotes record values, so a control byte (an escape sequence,
+		# a CR, a newline in a file name) reaches the terminal as `?`.
+		printf '%s' "$problem" | tr '\000-\037\177' '?' >&2
+		printf '\n' >&2
 	done
 else
 	rc=1

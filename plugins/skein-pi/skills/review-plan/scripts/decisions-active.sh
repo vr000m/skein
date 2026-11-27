@@ -393,6 +393,12 @@ FENCE_CLOSE='^ {0,3}(`{3,}|~{3,})[[:blank:]]*$'
 # start a paragraph (four columns of indentation make an indented code block).
 SETEXT_LINE='^ {0,3}(=+|-+)[[:blank:]]*$'
 CODE_INDENT=$'^(    | {0,3}\t)'
+# BLOCK_START: a line that opens a block quote or a list item (up to three
+# spaces, then `>`, or a bullet or ordered marker followed by a blank or the end
+# of the line). It interrupts a paragraph, and below it a `---` or `===` line is
+# a thematic break or lazy text, never a setext underline: the lines up to the
+# next blank line are text, so no heading is made from them.
+BLOCK_START='^ {0,3}(>|([-+*]|[0-9]{1,9}[.)])([[:blank:]]|$))'
 
 # block <record path>: the header, then the Decision and Why sections. A
 # section is what follows a level-one or level-two heading, ATX (indented up
@@ -403,7 +409,7 @@ CODE_INDENT=$'^(    | {0,3}\t)'
 # paragraph is held back until it ends, because a setext underline decides
 # after the fact that it was a heading.
 block() {
-	local line text keep=1 fence="" seen=0 title level k
+	local line text keep=1 fence="" seen=0 title level k inblock=0
 	local -a para=()
 	local LC_ALL=C
 	# _block_emit <line>: prints the line when the current section is kept.
@@ -447,10 +453,12 @@ block() {
 			_block_emit "$line"
 		elif [[ "$text" =~ $FENCE_OPEN ]] && [[ "${BASH_REMATCH[1]:0:1}" == '~' || "${BASH_REMATCH[2]}" != *'`'* ]]; then
 			_block_flush
+			inblock=0
 			fence="${BASH_REMATCH[1]}"
 			_block_emit "$line"
 		elif dec_heading "$text"; then
 			_block_flush
+			inblock=0
 			if [[ $DEC_HEADING_LEVEL -le 2 ]]; then
 				_block_heading "$DEC_HEADING_LEVEL" "$DEC_HEADING_TEXT"
 			fi
@@ -465,8 +473,18 @@ block() {
 			_block_heading "$level" "$title"
 			_block_flush
 			_block_emit "$line"
-		elif [[ "$text" =~ ^[[:blank:]]*$ ]] || [[ ${#para[@]} -eq 0 && "$text" =~ $CODE_INDENT ]]; then
+		elif [[ "$text" =~ ^[[:blank:]]*$ ]]; then
 			_block_flush
+			inblock=0
+			_block_emit "$line"
+		elif [[ ${#para[@]} -eq 0 && "$text" =~ $CODE_INDENT ]]; then
+			_block_flush
+			_block_emit "$line"
+		elif [[ $inblock -eq 1 ]]; then
+			_block_emit "$line"
+		elif [[ "$text" =~ $BLOCK_START ]]; then
+			_block_flush
+			inblock=1
 			_block_emit "$line"
 		else
 			para+=("$line")

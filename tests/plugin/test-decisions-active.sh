@@ -539,7 +539,7 @@ done
 root="$tmp/r6-mktemp"
 scratch_repo "$root"
 git -C "$root" add -A
-git -C "$root" -c user.name=t -c user.email=t@t commit -qm init
+git -C "$root" -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm init
 mkdir -p "$tmp/failing-mktemp"
 printf '#!/bin/sh\necho "mktemp: failed to create file via template /dev/null/tmp.$$: Not a directory" >&2\nexit 1\n' >"$tmp/failing-mktemp/mktemp"
 chmod +x "$tmp/failing-mktemp/mktemp"
@@ -948,6 +948,12 @@ heading_cells=(
 	'## Why\nKEEP-w\n\n---\nKEEP-x\n'
 	'## Why\nKEEP-w\n```\n## fenced\n```\nKEEP-x\n  ## Alternatives rejected\nHIDE-a\n'
 	'## Why\nKEEP-w\n### Sub\nKEEP-s\n'
+	'## Why\nKEEP-w\n- item\n---\nKEEP-x\n'
+	'## Why\nKEEP-w\n- item\n===\nKEEP-x\n'
+	'## Why\nKEEP-w\n> quote\n---\nKEEP-x\n'
+	'## Why\nKEEP-w\nlead\n- item\n---\nKEEP-x\n'
+	'## Why\nKEEP-w\n1. item\n---\nKEEP-x\n'
+	'## Why\nKEEP-w\n- item\n\nAlternatives rejected\n---\nHIDE-a\n'
 	'## Why\r\nKEEP-w\r\n  ## Alternatives rejected\r\nHIDE-a\r\n'
 )
 for cell in "${heading_cells[@]}"; do
