@@ -191,6 +191,64 @@ else
 	fail "classify_marker disagrees with its four-state table"
 fi
 
+# A placeholder line quoted below a real marker. Old behaviour: the hash cut
+# at the last real-or-placeholder line while read_marker read the last real
+# one, so an unchanged plan classified stale. New invariant: the hash boundary
+# is the line read_marker reads whenever a real marker exists, so the plan is
+# valid, an edit above the marker is still stale, the writer and the checker
+# agree, and a plan with no placeholder below its marker hashes as before.
+# Mutation: a marker.py that prefers the placeholder fails the same table.
+placeholder_below() {
+	python3 - "$1" "$TEMPLATE" "$tmp/pb" <<'PY'
+import os
+import sys
+
+sys.path.insert(0, sys.argv[1])
+import marker
+
+template = open(sys.argv[2], encoding="utf-8").read()
+tmp = sys.argv[3]
+os.makedirs(tmp, exist_ok=True)
+quote = "\n## Findings\n\nThe template divider reads:\n\n<!-- reviewed: YYYY-MM-DD @ <hash> -->\n"
+
+def signed(name):
+    path = f"{tmp}/{name}.md"
+    open(path, "w", encoding="utf-8").write(template)
+    marker.write_marker(path)
+    return path
+
+plain = signed("plain")
+plain_hash = marker.compute_plan_hash(plain)
+quoted = signed("quoted")
+open(quoted, "a", encoding="utf-8").write(quote)
+assert marker.compute_plan_hash(quoted) == plain_hash, "the quoted placeholder moved the hash"
+assert marker.classify_marker(quoted) == "valid", marker.classify_marker(quoted)
+assert marker.marker_is_stale(quoted) is False
+edited = signed("edited")
+open(edited, "a", encoding="utf-8").write(quote)
+body = open(edited, encoding="utf-8").read()
+open(edited, "w", encoding="utf-8").write(body.replace("## Objective", "## Objective (edited)", 1))
+assert marker.classify_marker(edited) == "stale", marker.classify_marker(edited)
+# The writer re-signs at the real marker and keeps the quote as workspace.
+marker.write_marker(edited)
+assert marker.classify_marker(edited) == "valid", marker.classify_marker(edited)
+assert open(edited, encoding="utf-8").read().endswith("<!-- reviewed: YYYY-MM-DD @ <hash> -->\n")
+PY
+}
+if placeholder_below "$MARKER_LIB" >/dev/null 2>&1; then
+	pass "a placeholder quoted below a real marker: valid, an edit above is stale, the writer and checker agree"
+else
+	fail "a placeholder quoted below a real marker misclassifies ($(placeholder_below "$MARKER_LIB" 2>&1 | tail -n 1))"
+fi
+mkdir -p "$tmp/pb-mutant"
+sed 's/last_idx = last_real if last_real is not None else last_placeholder/last_idx = last_placeholder if last_placeholder is not None else last_real/' \
+	"$MARKER_LIB/marker.py" >"$tmp/pb-mutant/marker.py"
+if ! cmp -s "$MARKER_LIB/marker.py" "$tmp/pb-mutant/marker.py" && ! placeholder_below "$tmp/pb-mutant" >/dev/null 2>&1; then
+	pass "mutation: a marker.py that cuts the hash at the placeholder fails the placeholder-below table"
+else
+	fail "mutation: the placeholder-below table does not catch a placeholder hash boundary"
+fi
+
 # Supersession: an old active record replaced by a new one.
 sup_record() {
 	local root="$1" name="$2" status="$3" supersedes="$4" superseded_by="$5"
@@ -974,6 +1032,39 @@ if [[ "$mirror" == codex || "$mirror" == both ]]; then
 	run_contain_after_approval codex "$REPO_ROOT/plugins/skein-codex/skills/update-docs/SKILL.md" "${CC_STEP5[@]}"
 	run_gate_containment codex skein-codex
 fi
+
+# Code-review leftovers, item 4. Old text: "Set `PLAN`", then `"$PLAN"` in a
+# later command, although shell calls share no state; nothing said marker.py
+# needs Python 3.11. New invariant: every mirror inlines the gated plan path
+# in the classifier's own command, states the 3.11 requirement and refuses
+# the promotion on an ImportError. The Claude and Codex snippet also runs
+# as one command with the inline first line and classifies the plan.
+# shellcheck disable=SC2016  # literal skill text
+for plugin in skein skein-codex skein-pi; do
+	md="$REPO_ROOT/plugins/$plugin/skills/update-docs/SKILL.md"
+	if [[ $plugin == skein-pi ]]; then
+		inline="Pass the gated plan's path inline in that same command (\`PLAN='docs/dev_plans/<name>'\` on its first line, or the path as a literal argument): separate shell calls share no state"
+	else
+		inline="Separate shell calls share no state, so a \`PLAN\` set in an earlier call is empty in this one: run the snippet as one command whose first line is \`PLAN='docs/dev_plans/<name>'\`, the gated plan's path written inline."
+	fi
+	py='`marker.py` needs Python 3.11 or newer (it imports `datetime.UTC`): an `ImportError` means refuse the promotion, write nothing and report that Python 3.11 or newer is required'
+	if grep -qF -- "$inline" "$md" && grep -qF -- "$py" "$md"; then
+		pass "$plugin: the classifier inlines the gated plan path and states the Python 3.11 requirement"
+	else
+		fail "$plugin: the classifier text lacks the inline plan path or the Python 3.11 requirement"
+	fi
+done
+for plugin in skein skein-codex; do
+	md="$REPO_ROOT/plugins/$plugin/skills/update-docs/SKILL.md"
+	script="$(awk '/^   python3 -I -B -S - "\$PLAN" /{on=1} on{sub(/^   /, ""); print} on && /^PY$/{exit}' "$md")"
+	got="$(cd "$tmp" && SKILL_DIR="$REPO_ROOT/plugins/$plugin/skills/update-docs" CLAUDE_PLUGIN_ROOT="$REPO_ROOT/plugins/skein" \
+		bash -e <<<"PLAN='$tmp/valid.md'"$'\n'"$script" 2>&1 | head -n 1)" || true
+	if [[ "$got" == valid ]]; then
+		pass "$plugin: the classifier run as one command with the inline PLAN line prints valid"
+	else
+		fail "$plugin: the classifier with the inline PLAN line printed '$got'"
+	fi
+done
 
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"

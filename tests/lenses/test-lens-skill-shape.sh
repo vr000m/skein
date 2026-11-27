@@ -1321,6 +1321,79 @@ for f in "$ROOT_DIR"/plugins/skein{,-codex,-pi}/skills/deep-review/SKILL.md; do
 	fi
 done
 
+# Code-review leftovers, item 3. Old invariant: the --temp-output selection
+# file stayed in ${TMPDIR:-/tmp} after every run and no skill said to delete
+# it. New invariant: every review-plan and deep-review mirror, after its
+# selector fence, deletes the named file with a fence of its own, whether the
+# read succeeded or not; the read alone decides coverage and the delete is
+# best-effort. The cleanup is executed: the selector fence, then the cleanup
+# fence with the named file written in, leaves no file. Mutation: a mirror
+# without the cleanup fence fails the shape check.
+# cleanup_problems <SKILL.md>: prints what is missing.
+# shellcheck disable=SC2016  # literal skill text
+cleanup_problems() {
+	local md="$1" sel_line rm_line
+	sel_line="$(grep -n -- ' --temp-output --' "$md" | head -n 1 | cut -d: -f1)"
+	rm_line="$(grep -nxF -- "rm -f -- '<selector-output file>'" "$md" | head -n 1 | cut -d: -f1)"
+	if [[ -z "$sel_line" || -z "$rm_line" || $rm_line -le $sel_line ]]; then
+		echo "no cleanup fence after the selector fence"
+		return
+	fi
+	[[ "$(sed -n "$((rm_line - 1))p" "$md")" == '```bash' && "$(sed -n "$((rm_line + 1))p" "$md")" == '```' ]] ||
+		echo "the cleanup command is not its own fence"
+	grep -qF -- 'Once the selection is read, delete the file `selector-output=` named, whether the read succeeded or not' "$md" ||
+		echo "no rule to delete the file whether or not the read succeeded"
+	grep -qF -- 'The read alone decides coverage; this cleanup is best-effort, so a failed delete changes no result and no coverage line.' "$md" ||
+		echo "no rule that the read decides coverage and the delete is best-effort"
+}
+for f in "$ROOT_DIR"/plugins/skein{,-codex,-pi}/skills/{review-plan,deep-review}/SKILL.md; do
+	problems="$(cleanup_problems "$f")"
+	if [[ -z "$problems" ]]; then
+		pass "the selection file is deleted after the read: ${f#"$ROOT_DIR"/}"
+	else
+		fail "${f#"$ROOT_DIR"/}: $(tr '\n' ';' <<<"$problems")"
+	fi
+done
+cleanup_tmp="$(mktemp -d)"
+mkdir -p "$cleanup_tmp/repo" "$cleanup_tmp/T"
+cp -R "$ROOT_DIR/tests/lenses/fixtures/decisions/repo/." "$cleanup_tmp/repo/"
+git -C "$cleanup_tmp/repo" init -q
+cleanup_cells=0
+cleanup_failures=0
+for cleanup_mirror in skein skein-codex; do
+	for cleanup_skill in deep-review review-plan; do
+		md="$ROOT_DIR/plugins/$cleanup_mirror/skills/$cleanup_skill/SKILL.md"
+		if [[ $cleanup_skill == deep-review ]]; then
+			snippet="$(dec_fence "$md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+		else
+			snippet="$(dec_fence "$md" '^\*\*Active decision records \(architecture lens only\)\.')"
+			snippet="${snippet//p <path>/p src/cache/index.py}"
+		fi
+		cleanup="$(dec_fence "$md" '^Once the selection is read, delete the file' "rm -f -- '<selector-output file>'")"
+		out="$(cd "$cleanup_tmp/repo" && TMPDIR="$cleanup_tmp/T" SKILL_DIR="$ROOT_DIR/plugins/$cleanup_mirror/skills/$cleanup_skill" \
+			CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$cleanup_mirror" bash -e <<<"$snippet" 2>/dev/null)" || true
+		file="$(sed -n 's/^selector-output=//p' <<<"$out")"
+		cleanup_cells=$((cleanup_cells + 1))
+		if [[ -n "$file" && -f "$file" && "$cleanup" == "rm -f -- '<selector-output file>'" ]] &&
+			(cd "$cleanup_tmp/repo" && bash -e <<<"${cleanup//<selector-output file>/$file}") && [[ ! -e "$file" ]] &&
+			! compgen -G "$cleanup_tmp/T/*" >/dev/null; then
+			:
+		else
+			cleanup_failures=$((cleanup_failures + 1))
+			fail "$cleanup_mirror $cleanup_skill: the cleanup fence did not remove the selection file '$file'"
+		fi
+		rm -f "$cleanup_tmp"/T/*
+	done
+done
+[[ $cleanup_failures -eq 0 ]] && pass "each mirror's cleanup fence removes the selection file its selector fence named ($cleanup_cells cells: mirror x skill)"
+grep -vxF -- "rm -f -- '<selector-output file>'" "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" >"$cleanup_tmp/mutant.md"
+if [[ -n "$(cleanup_problems "$cleanup_tmp/mutant.md")" ]]; then
+	pass "mutation: a mirror without the cleanup fence fails the shape check"
+else
+	fail "mutation: the shape check does not catch a missing cleanup fence"
+fi
+rm -rf "$cleanup_tmp"
+
 echo "Summary: $pass_count passed, $fail_count failed"
 
 if [[ $fail_count -ne 0 ]]; then
