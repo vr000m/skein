@@ -275,7 +275,9 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
         "The selector's input has one source, the architecture worker's assigned units, the same list written for that lens to `expected.json`",
         "a rename counts as both its old and its new path",
         "Git reads a diff's file paths, never you and never the `diff --git` header text, which is a display format",
-        "into this installed skill's `scripts/decision-paths.sh`",
+        "only then hand that file to this installed skill's `scripts/decision-paths.sh`",
+        "Never pipe the diff into the script: the fence checks the diff's exit status first",
+        "--src-prefix=a/ --dst-prefix=b/ --no-relative --ignore-submodules=none <packet diff arguments>",
         "the narrowed assignment is the one written to `expected.json`, and the selector takes that narrowed list, never the full diff",
         "it takes no range",
         "`--continue` remains unsupported",
@@ -350,20 +352,14 @@ def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
     git(*ident, "commit", "-qm", "change")
     git("mv", "--", "old/moved.py", "new.py")
 
-    def units_paths(diff_cmd):
-        # The documented derivation: the packet's diff command piped into the
-        # bundled decision-paths.sh, so git reads every path.
-        result = subprocess.run(
-            ["bash", "-c", 'set -o pipefail; "$@" | "$DP"', "_", *diff_cmd],
-            cwd=repo,
-            env={**os.environ, "DP": str(SKILL.parent / "scripts/decision-paths.sh")},
-            capture_output=True,
-            check=True,
-        )
-        return json.loads(result.stdout.decode())
+    def units_paths(diff_args):
+        # The documented derivation: the skill's paths fence, which writes
+        # the packet's diff to a file and hands it to decision-paths.sh.
+        status, paths = run_paths_fence(repo, diff_args, "/bin/bash", repo)
+        assert status == ("0", "0"), status
+        return paths
 
-    diff_cmd = ["git", "diff", "--no-ext-diff", "-M", "HEAD~1"]
-    full = units_paths(diff_cmd)
+    full = units_paths("-M HEAD~1")
     oracle = subprocess.check_output(
         ["git", "-C", str(repo), "diff", "--no-renames", "--name-only", "-z", "HEAD~1"]
     )
@@ -414,6 +410,119 @@ def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
             assert select(paths, shell) == want, (shell, paths)
     # Reference: the full diff selects records the narrowed worker never saw.
     assert select(full, "/bin/bash") != select(["src/cache/store.py"], "/bin/bash")
+
+
+def paths_fence():
+    """The Pi skill's documented decision-paths fence."""
+    return next(
+        command
+        for command in re.findall(r"```bash\n(.*?)\n```", SKILL.read_text(), re.DOTALL)
+        if "$DECISION_PATHS" in command
+    )
+
+
+def run_paths_fence(repo, diff_args, shell, cwd, path_prefix=""):
+    """Runs the paths fence with `<packet diff arguments>` filled in; returns
+    ((diff-exit, paths-exit), the paths or None) and removes its folder."""
+    script = paths_fence().replace("<packet diff arguments>", diff_args)
+    result = subprocess.run(
+        [shell, "-e", "-c", script],
+        cwd=cwd,
+        env={
+            **os.environ,
+            "PATH": path_prefix + os.environ["PATH"],
+            "REAL_GIT": shutil.which("git"),
+            "DECISION_PATHS": str(SKILL.parent / "scripts/decision-paths.sh"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    fields = dict(
+        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
+    )
+    status = (fields.get("diff-exit"), fields.get("paths-exit"))
+    paths_file = Path(fields["paths-file"])
+    folder = paths_file.parent
+    assert not (folder / "lens-diff.patch").exists(), "the patch is removed"
+    paths = None
+    if status == ("0", "0"):
+        paths = json.loads(paths_file.read_text())
+    else:
+        assert not paths_file.exists(), "a failed step publishes no paths"
+    shutil.rmtree(folder)
+    return status, paths
+
+
+def test_deep_review_paths_fence_reads_a_complete_prefixed_patch_from_the_top(
+    tmp_path,
+):
+    """Fresh-ledger round 9. Old invariant: the paths came from whatever patch
+    and cwd decision-paths.sh was given, piped from the packet's diff. New
+    invariant: the fence pins the diff's prefixes, checks the diff's exit
+    status before the script reads it, and the script reads the patch from
+    the repo's top level. Cells: shell x {top, subdirectory, diff.noprefix,
+    custom prefixes, diff.relative from a subdirectory, a diff that prints one
+    complete file patch and then exits 9}."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo),
+                "-c",
+                "user.name=F",
+                "-c",
+                "user.email=f@f",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    for path in ("outside/a.txt", "outside/mv.txt", "sub/deep/in.py"):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("base\n")
+    git("add", "--", "outside", "sub")
+    git("commit", "-qm", "base")
+    (repo / "outside/a.txt").write_text("change\n")
+    (repo / "sub/deep/in.py").write_text("change\n")
+    git("mv", "--", "outside/mv.txt", "sub/mv.txt")
+    git("commit", "-qam", "change")
+    want = ["outside/a.txt", "outside/mv.txt", "sub/deep/in.py", "sub/mv.txt"]
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(
+        '#!/bin/sh\nif [ "$1" = diff ]; then\n'
+        '\t"$REAL_GIT" "$@" -- sub/deep/in.py\n\texit 9\nfi\nexec "$REAL_GIT" "$@"\n'
+    )
+    (shim / "git").chmod(0o755)
+    configs = {
+        "top": ((), repo),
+        "subdirectory": ((), repo / "sub"),
+        "noprefix": ((("diff.noprefix", "true"),), repo),
+        "custom": ((("diff.srcPrefix", "x/"), ("diff.dstPrefix", "y/")), repo),
+        "relative": ((("diff.relative", "true"),), repo / "sub"),
+    }
+    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
+    for shell in shells:
+        for name, (settings, cwd) in configs.items():
+            for key, value in settings:
+                git("config", key, value)
+            try:
+                status, paths = run_paths_fence(repo, "-M HEAD~1 HEAD", shell, cwd)
+            finally:
+                for key, _value in settings:
+                    git("config", "--unset", key)
+            assert (status, paths) == (("0", "0"), want), (shell, name)
+        status, paths = run_paths_fence(
+            repo, "-M HEAD~1 HEAD", shell, repo, f"{shim}{os.pathsep}"
+        )
+        assert status == ("9", "skipped") and paths is None, (shell, status)
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

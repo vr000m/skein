@@ -1379,7 +1379,7 @@ dec_r8_paths() {
 	local fence out
 	fence="$(dec_fence "$ROOT_DIR/plugins/$1/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.' decision-paths.sh)"
 	fence="${fence//<run_id>/$2}"
-	fence="${fence//<lens diff command>/git diff --no-ext-diff -M $3 $4}"
+	fence="${fence//<lens diff arguments>/-M $3 $4}"
 	mkdir -p "$dec_tmp/.deep-review/lenses/$2"
 	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/deep-review" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$fence" 2>/dev/null)" || true
 	dec_r8_exit="$(sed -n 's/^paths-exit=//p' <<<"$out")"
@@ -1476,6 +1476,140 @@ if [[ "$dec_r8_ref_ab" == 20261101-cache-store.md && -z "$dec_r8_ref_cafe" ]]; t
 else
 	fail "R8 reference: the fixture does not distinguish header splitting (got '$dec_r8_ref_ab', '$dec_r8_ref_cafe')"
 fi
+# Fresh-ledger round 9, the decision-paths fence of each deep-review mirror
+# (bash and zsh). Old invariant: decision-paths.sh derived paths from whatever
+# patch and cwd it was given, piped from the lens's diff. New invariant: it
+# refuses (exit 1, no file) unless it was given a complete, a/-b/-prefixed
+# patch, and reads it relative to the repo root; a published file proves the
+# diff command exited 0. Cells, mirror x shell:
+#   cwd: the fence run from src/ over a diff touching paths in and outside
+#     src/ (a rename whose source is outside): the full list, exit 0.
+#   config: diff.noprefix, diff.srcPrefix/dstPrefix, diff.mnemonicPrefix and
+#     diff.relative set in the fixture repo: the fence's pinned diff still
+#     gives the nested path list, exit 0.
+#   producer: a git shim whose `diff` prints one complete file patch and
+#     exits 9: diff-exit=9, paths-exit=skipped, no decision paths file, no
+#     patch left; the documented resume rule then reads degraded.
+#   leftover: a decision paths file with no lens-diff.patch beside it (a
+#     failed step, or a run from before this rule) reads degraded on resume.
+dec_r7 checkout -q r8
+mkdir -p "$dec_tmp/outside" "$dec_tmp/src/r9/deep"
+printf 'a\n' >"$dec_tmp/outside/a.txt"
+printf 'mv\n' >"$dec_tmp/outside/mv.txt"
+printf 'in\n' >"$dec_tmp/src/r9/deep/in.py"
+dec_r7 add -- outside src/r9
+dec_r7 commit -qm 'R9 base'
+dec_r9_base="$(git -C "$dec_tmp" rev-parse HEAD)"
+printf 'b\n' >>"$dec_tmp/outside/a.txt"
+printf 'more\n' >>"$dec_tmp/src/r9/deep/in.py"
+dec_r7 mv -- outside/mv.txt src/r9/mv.txt
+dec_r7 commit -qam 'R9 change'
+dec_r9_head="$(git -C "$dec_tmp" rev-parse HEAD)"
+dec_r9_want="$(git -C "$dec_tmp" diff --no-renames --name-only -z "$dec_r9_base" "$dec_r9_head" | tr '\0' '\n' | LC_ALL=C sort -u)"
+if [[ "$dec_r9_want" == *outside/mv.txt* && "$dec_r9_want" == *outside/a.txt* && "$dec_r9_want" == *src/r9/deep/in.py* ]] &&
+	git -C "$dec_tmp" diff -M "$dec_r9_base" "$dec_r9_head" | grep -q '^rename from outside/mv.txt$'; then
+	pass "R9 fixture: a rename into src/ from outside it, a change outside and a nested change inside"
+else
+	fail "R9 fixture does not separate the paths in and outside src/"
+fi
+dec_r9_real_git="$(command -v git)"
+dec_r9_shim="$dec_tmp.r9-shim"
+mkdir -p "$dec_r9_shim"
+# The shim's `diff` prints one complete file patch, then fails.
+cat >"$dec_r9_shim/git" <<'SHIM'
+#!/bin/sh
+if [ "$1" = diff ]; then
+	"$DEC_R9_REAL_GIT" "$@" -- src/r9/deep/in.py
+	exit 9
+fi
+exec "$DEC_R9_REAL_GIT" "$@"
+SHIM
+chmod +x "$dec_r9_shim/git"
+# dec_r9_fence <mirror> <run id> <cwd> [<PATH prefix>]: runs the documented
+# fence over base..head; sets dec_r9_diff and dec_r9_exit.
+dec_r9_fence() {
+	local fence out
+	fence="$(dec_fence "$ROOT_DIR/plugins/$1/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.' decision-paths.sh)"
+	fence="${fence//<run_id>/$2}"
+	fence="${fence//<lens diff arguments>/-M $dec_r9_base $dec_r9_head}"
+	out="$(cd "$3" && PATH="${4:-}$PATH" DEC_R9_REAL_GIT="$dec_r9_real_git" SKILL_DIR="$ROOT_DIR/plugins/$1/skills/deep-review" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$fence" 2>/dev/null)" || true
+	dec_r9_diff="$(sed -n 's/^diff-exit=//p' <<<"$out")"
+	dec_r9_exit="$(sed -n 's/^paths-exit=//p' <<<"$out")"
+}
+# dec_r9_resume <lens dir>: the documented same-HEAD resume rule for a run
+# whose paths came from a diff: reuse the decision paths file only beside
+# lens-diff.patch; anything else is degraded.
+dec_r9_resume() {
+	if [[ -f "$1/decision-paths.json" && -f "$1/lens-diff.patch" ]] &&
+		jq -e 'type == "array" and all(.[]; type == "string")' "$1/decision-paths.json" >/dev/null 2>&1; then
+		jq -r '.[]' "$1/decision-paths.json"
+	else
+		echo degraded
+	fi
+}
+dec_r9_failures=0
+dec_r9_cells=0
+dec_r9_n=0
+for dec_mirror in skein skein-codex; do
+	for dec_shell in "${dec_shells[@]}"; do
+		for dec_r9_cell in cwd noprefix custom mnemonic relative; do
+			dec_r9_n=$((dec_r9_n + 1))
+			dec_r9_cells=$((dec_r9_cells + 1))
+			dec_r9_cwd="$dec_tmp"
+			case "$dec_r9_cell" in
+			cwd) dec_r9_cwd="$dec_tmp/src" ;;
+			noprefix) git -C "$dec_tmp" config diff.noprefix true ;;
+			custom) git -C "$dec_tmp" config diff.srcPrefix x/ && git -C "$dec_tmp" config diff.dstPrefix y/ ;;
+			mnemonic) git -C "$dec_tmp" config diff.mnemonicPrefix true ;;
+			relative) git -C "$dec_tmp" config diff.relative true && dec_r9_cwd="$dec_tmp/src" ;;
+			esac
+			dec_r9_run="r9-$dec_r9_cell-$dec_r9_n"
+			mkdir -p "$dec_tmp/.deep-review/lenses/$dec_r9_run"
+			dec_r9_fence "$dec_mirror" "$dec_r9_run" "$dec_r9_cwd"
+			for dec_r9_key in diff.noprefix diff.srcPrefix diff.dstPrefix diff.mnemonicPrefix diff.relative; do
+				git -C "$dec_tmp" config --unset "$dec_r9_key" || true
+			done
+			dec_r9_dir="$dec_tmp/.deep-review/lenses/$dec_r9_run"
+			if [[ "$dec_r9_diff" != 0 || "$dec_r9_exit" != 0 || "$(dec_r9_resume "$dec_r9_dir")" != "$dec_r9_want" || -e "$dec_r9_dir/lens-diff.partial" ]]; then
+				dec_r9_failures=$((dec_r9_failures + 1))
+				fail "[$dec_shell] R9 $dec_mirror $dec_r9_cell: diff-exit '$dec_r9_diff', paths-exit '$dec_r9_exit', resume read '$(dec_r9_resume "$dec_r9_dir" | tr '\n' ' ')'"
+			fi
+		done
+		# producer: one complete file patch, then exit 9.
+		dec_r9_n=$((dec_r9_n + 1))
+		dec_r9_cells=$((dec_r9_cells + 1))
+		dec_r9_run="r9-producer-$dec_r9_n"
+		mkdir -p "$dec_tmp/.deep-review/lenses/$dec_r9_run"
+		dec_r9_fence "$dec_mirror" "$dec_r9_run" "$dec_tmp" "$dec_r9_shim:"
+		dec_r9_dir="$dec_tmp/.deep-review/lenses/$dec_r9_run"
+		if [[ "$dec_r9_diff" != 9 || "$dec_r9_exit" != skipped || -e "$dec_r9_dir/decision-paths.json" || -e "$dec_r9_dir/lens-diff.partial" || -e "$dec_r9_dir/lens-diff.patch" ]] ||
+			[[ "$(dec_r9_resume "$dec_r9_dir")" != degraded ]]; then
+			dec_r9_failures=$((dec_r9_failures + 1))
+			fail "[$dec_shell] R9 $dec_mirror producer failure: diff-exit '$dec_r9_diff', paths-exit '$dec_r9_exit', files '$(find "$dec_r9_dir" -mindepth 1 -maxdepth 1 2>/dev/null | tr '\n' ' ')'"
+		fi
+		# leftover: a paths file with no completed patch beside it.
+		dec_r9_cells=$((dec_r9_cells + 1))
+		printf '["src/r9/deep/in.py"]\n' >"$dec_r9_dir/decision-paths.json"
+		if [[ "$(dec_r9_resume "$dec_r9_dir")" != degraded ]]; then
+			dec_r9_failures=$((dec_r9_failures + 1))
+			fail "[$dec_shell] R9 $dec_mirror leftover: a decision paths file without lens-diff.patch was reused"
+		fi
+	done
+done
+[[ $dec_r9_failures -eq 0 ]] && pass "R9: the documented decision-paths fence gives the full path list from any directory and under any diff prefix config, and a failed diff publishes nothing a resume accepts ($dec_r9_cells cells: mirror x shell x case)"
+# Reference (mutation): the round-8 pipe over the same failing producer
+# publishes the one path it saw, and a resume that trusts any existing file
+# reuses it.
+dec_r9_ref="$dec_tmp/.deep-review/lenses/r9-ref"
+mkdir -p "$dec_r9_ref"
+dec_r9_ref_rc=0
+(cd "$dec_tmp" && PATH="$dec_r9_shim:$PATH" DEC_R9_REAL_GIT="$dec_r9_real_git" bash -c 'set -o pipefail; git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/ -M "$1" "$2" | "$3" --output "$4"' _ "$dec_r9_base" "$dec_r9_head" "$ROOT_DIR/scripts/decision-paths.sh" "$dec_r9_ref/decision-paths.json" 2>/dev/null) || dec_r9_ref_rc=$?
+if [[ $dec_r9_ref_rc -ne 0 && "$(jq -c . "$dec_r9_ref/decision-paths.json" 2>/dev/null)" == '["src/r9/deep/in.py"]' ]]; then
+	pass "R9 reference: the piped fence publishes an incomplete list when the diff fails part-way"
+else
+	fail "R9 reference: the failing producer does not distinguish the pipe (exit $dec_r9_ref_rc)"
+fi
+rm -rf "$dec_r9_shim"
 rm -rf "$dec_r8_dir" "$dec_tmp/.deep-review"
 dec_md="$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
 # shellcheck disable=SC2016  # literal skill text
@@ -1483,7 +1617,10 @@ for dec_pin in \
 	'the run'"'"'s decision paths file `<repo-root>/.deep-review/lenses/<run_id>/decision-paths.json`: a JSON array of the repo-relative file paths of exactly the diff the Architecture Lens is given' \
 	'Git derives it from that diff text, never you and never the `diff --git` header text, which is a display format' \
 	'with both paths of a rename or copy, the removed path of a deletion, and a mode-only, binary or submodule change' \
-	'for a `--pr` target, the `gh pr diff` the lenses review' \
+	'for a `--pr` target, replace the whole `git diff` command with the `gh pr diff <number> --color=never` the lenses review' \
+	'Never pipe the diff into the script: the fence checks the diff'"'"'s exit status before the script reads anything, so a diff that fails part-way publishes no path file' \
+	'It reuses a decision paths file derived from a diff only when `lens-diff.patch` is beside it' \
+	'was derived from a diff but has no `lens-diff.patch` beside it' \
 	'it is written once per `run_id`, with `expected.json`, and the script refuses to rewrite it' \
 	'So every invocation that assigns the lenses a new diff mints a new `run_id` and writes both files' \
 	'Only a same-HEAD `--continue` resume reuses the stored `run_id`: it re-runs the assignment it already has, so it reuses both files verbatim and writes neither' \
