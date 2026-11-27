@@ -386,8 +386,8 @@ sequenceDiagram
 - [x] Phase 3c: Lens checks against active records (Pi session)
 - [x] Phase 4c: update-docs promotion (Pi session)
 - [x] Phase 5c: conduct nudge (Pi session)
-- [ ] Phase 6: Verify and docs (docs done; `just ci` stops at the pre-existing SIM102 `lint-python` failure in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261`, and every other CI recipe was green on the last verified HEAD, see Findings and Issues & Solutions; manual lens and promotion runs still open)
-- [ ] After Phase 6: hand-run review-gauntlet, then /update-docs
+- [ ] Phase 6: Verify and docs (docs done; `just ci` stops at the pre-existing SIM102 `lint-python` failure in `plugins/skein-codex/skills/review-gauntlet/native_gates.py:261`, and the split job (every other CI recipe) was green on the last verified HEAD, see Findings and Issues & Solutions; manual lens and promotion runs still open)
+- [x] After Phase 6: review-gauntlet (two ledgers; the fresh one stopped after 9 rounds without converging, then deep-review path derivation was removed), `/code-review xhigh --fix`, `/update-docs`; see "Gauntlet outcome and review-gauntlet stop" in Findings
 
 ## Findings
 
@@ -577,6 +577,12 @@ sequenceDiagram
   - Files removed after sign-off: `scripts/decision-paths.sh` (added in round 8, recorded above under round 9) and its three bundled copies under `plugins/{skein,skein-codex,skein-pi}/skills/deep-review/scripts/`.
   - Supersedes the decision-paths parts of the round 8 and round 9 entries above (round 8 classes 1-2, all of round 9); round 8 class 3 (the selector's guarded EXIT handler) stands. Those entries stay as history.
   - Tests: `test-decisions-active.sh` gains an `--all-active` table (bash 3.2.57 and 5.x x {absent folder, README only, 1 unmatched record, many with a superseded one, malformed exit 3 with the path mode's reason, 8 of 9, 2 of 3 over 24 KiB, escaping equal to the path mode, six flag combinations exit 2}) and a mutation (`--all-active` still applying the match) that fails it; its R8/R9 `decision-paths.sh` cells are removed. `test-lens-skill-shape.sh` and `tests/pi/test_deep_review.py` lose the R7-R9 derivation cells and run each mirror's own fence under bash and zsh against the fixture repo, which yields exactly the active records, with a path-matching mutant that drops one.
+
+- Gauntlet outcome and review-gauntlet stop (2026-11-27)
+  - The `--fresh` ledger ran 9 rounds with finding counts [4, 2, 1, 2, 4, 4, 5, 4, 4] and did not converge (the earlier ledger ran 24, 18, 19, 15, 15). Round 10 was not run. Lenses and the security gate were clean in most rounds; the recurring findings were Codex environment edge cases (cwd, git config, locale, partial producer failure) in the deep-review path derivation, and each fix added surface.
+  - Resolution: the path derivation was removed (see the decision-paths removal entry above) rather than patched again. The gauntlet was not re-run after that change; the evidence for it is the split job (green) and `just ci` (red only at the known `lint-python` SIM102 under local ruff 0.17.6; the pinned 0.16.6 in `.pre-commit-config.yaml` and CI does not flag it).
+  - `/code-review xhigh --fix` then found and fixed three items (commit `45ab408`): the selector dropped a record's Decision/Why text when a `---` or `===` line followed a list or block quote (I4); `check-decisions.sh` printed record values raw to stderr; one test commit did not disable gpgsign. Reported and left open: `--all-active` reuses the 8-record / 24 KiB cap; the `Date` header is not format-checked; the `--temp-output` file is never removed; the update-docs marker snippet and Python 3.11 requirement wording in the three mirrors; the plan's `**Branch**` header above the marker still names `feature/comment-hygiene-and-decisions`; `marker.py` classifies a plan with a placeholder marker line below the real marker as stale (pre-existing).
+  - Still manual: Claude and Pi lens fixture exercises, and an approve/decline promotion run on a real plan.
 
 ### Review Waivers
 
