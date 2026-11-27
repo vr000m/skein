@@ -1834,6 +1834,111 @@ for b in "${locale_bashes[@]}"; do
 done
 [[ $handoff_failures -eq 0 ]] && pass "R8 class 3: an unwritable handoff is selector exit 7 with the fixed reason and no temp file, and an unwritable validator stderr keeps exit 4 ($handoff_cells cells: bash x fault x script)"
 
+# Fresh-ledger round 8, class 1. Old invariant: the decision paths were
+# scraped from `diff --git a/X b/Y` header text, split at the first ` b/`.
+# New invariant: scripts/decision-paths.sh reads the same patch text with
+# `git apply --numstat -z`, forward and reversed, so git parses the headers:
+# a ` b/` inside a directory name, a C-quoted non-ASCII name, both sides of a
+# rename and a copy, a deletion, a mode-only and a binary change all arrive
+# byte for byte; a patch git cannot parse, a newline or a non-UTF-8 path is
+# exit 1 (degraded) and writes nothing; --output is written once. Each cell
+# is checked against an independent `git diff --no-renames --name-only -z`
+# of the same comparison (plus the copy source); the reference cell shows the header splitter gets
+# the ` b/` and non-ASCII cells wrong.
+DP="$REPO_ROOT/scripts/decision-paths.sh"
+r8="$tmp/r8-paths"
+rm -rf "$r8" && mkdir -p "$r8"
+git -C "$r8" init -q
+r8git() { git -C "$r8" -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
+mkdir -p "$r8/src/archive/a b/src/cache" "$r8/src/cache/café" "$r8/old"
+printf 'x\n' >"$r8/src/archive/a b/src/cache/x.py"
+printf 'q\n' >"$r8/src/cache/café/q.py"
+printf 'm\n' >"$r8/old/moved.py"
+printf 'c%s\n' 1 2 3 4 5 6 7 8 >"$r8/orig.py"
+printf 'd\n' >"$r8/del.py"
+printf 'e\n' >"$r8/exec.sh"
+printf 's\n' >"$r8/sp ace.py"
+printf '\000\001' >"$r8/bin.dat"
+r8git add -A
+r8git commit -qm base
+printf 'y\n' >>"$r8/src/archive/a b/src/cache/x.py"
+printf 'r\n' >>"$r8/src/cache/café/q.py"
+r8git mv -- old/moved.py new.py
+cp "$r8/orig.py" "$r8/copy.py"
+printf 'more\n' >>"$r8/copy.py"
+r8git rm -q -- del.py
+chmod +x "$r8/exec.sh"
+printf 't\n' >>"$r8/sp ace.py"
+printf '\000\002' >"$r8/bin.dat"
+printf 'n\n' >"$r8/naïve.py"
+r8git add -A
+r8git commit -qm change
+r8git diff --no-ext-diff -M -C --find-copies-harder HEAD^ HEAD >"$tmp/r8.patch"
+# The oracle: every path the comparison changes, plus the copy's unchanged
+# source, which the patch names in its `copy from` line.
+{
+	r8git diff --no-ext-diff --no-renames --name-only -z HEAD^ HEAD | tr '\0' '\n'
+	echo orig.py
+} | LC_ALL=C sort -u >"$tmp/r8.want"
+paths_failures=0
+paths_cells=0
+for b in "${locale_bashes[@]}"; do
+	paths_cells=$((paths_cells + 1))
+	rc=0
+	(cd "$r8" && "$b" "$DP" <"$tmp/r8.patch" >"$tmp/r8.json" 2>"$tmp/stderr") || rc=$?
+	if [[ $rc -ne 0 ]] || ! jq -r '.[]' "$tmp/r8.json" | cmp -s - "$tmp/r8.want"; then
+		paths_failures=$((paths_failures + 1))
+		fail "R8 class 1 [$b] fixture patch: exit $rc, got '$(tr '\n' '|' <"$tmp/r8.json")'"
+	fi
+done
+for want in 'src/archive/a b/src/cache/x.py' 'src/cache/café/q.py' naïve.py old/moved.py new.py orig.py copy.py del.py exec.sh 'sp ace.py' bin.dat; do
+	paths_cells=$((paths_cells + 1))
+	if ! jq -e --arg p "$want" 'index($p) != null' "$tmp/r8.json" >/dev/null; then
+		paths_failures=$((paths_failures + 1))
+		fail "R8 class 1: the derived paths miss '$want'"
+	fi
+done
+if grep -q '^copy from orig.py$' "$tmp/r8.patch" && grep -q '^rename from old/moved.py$' "$tmp/r8.patch" &&
+	grep -q '^diff --git "a/' "$tmp/r8.patch" && grep -qF 'diff --git a/src/archive/a b/src/cache/x.py b/' "$tmp/r8.patch"; then
+	pass "R8 class 1 fixture: the patch holds a copy, a rename, a C-quoted name and a ' b/' directory"
+else
+	fail "R8 class 1 fixture does not exercise the header cases"
+fi
+# Reference (mutation): the header splitter the skills used before this round.
+awk 'index($0, "diff --git a/") == 1 { s = substr($0, 14); i = index(s, " b/"); print substr(s, 1, i - 1); print substr(s, i + 3) }' "$tmp/r8.patch" | LC_ALL=C sort -u >"$tmp/r8.split"
+if ! cmp -s "$tmp/r8.split" "$tmp/r8.want" && grep -qx 'src/cache/x.py b/src/archive/a b/src/cache/x.py' "$tmp/r8.split"; then
+	pass "R8 class 1 reference: header splitting invents a path and misses the C-quoted names on this fixture"
+else
+	fail "R8 class 1 reference: the fixture does not distinguish header splitting"
+fi
+# r8_case <name> <want exit> <want json or -> < patch
+r8_case() {
+	local rc=0 got
+	paths_cells=$((paths_cells + 1))
+	got="$(cd "$r8" && "$DP" 2>"$tmp/stderr")" || rc=$?
+	if [[ $rc -ne $2 || ($3 != - && "$got" != "$3") || ($2 -ne 0 && -n "$got") ]]; then
+		paths_failures=$((paths_failures + 1))
+		fail "R8 class 1 $1: exit $rc, stdout '$got', stderr '$(tr '\n' '|' <"$tmp/stderr")'"
+	fi
+}
+r8_case empty 0 '[]' </dev/null
+printf 'not a patch\n' | r8_case garbage 1 -
+r8git -c diff.noprefix=true diff --no-ext-diff HEAD^ HEAD -- del.py | r8_case no-prefix 1 -
+printf 'diff --git "a/nl\\nx" "b/nl\\nx"\nnew file mode 100644\n--- /dev/null\n+++ "b/nl\\nx"\n@@ -0,0 +1 @@\n+a\n' | r8_case newline-path 1 -
+printf 'diff --git a/x\377 b/x\377\nnew file mode 100644\n--- /dev/null\n+++ b/x\377\n@@ -0,0 +1 @@\n+a\n' | r8_case non-utf8 1 -
+printf 'diff --git a/sub b/sub\nindex 1111111..2222222 160000\n--- a/sub\n+++ b/sub\n@@ -1 +1 @@\n-Subproject commit 1111111111111111111111111111111111111111\n+Subproject commit 2222222222222222222222222222222222222222\n' | r8_case submodule 0 '["sub"]'
+# --output: written once; a second write for the same file is refused (3).
+rc=0
+(cd "$r8" && "$DP" --output "$tmp/r8-once.json" <"$tmp/r8.patch" 2>/dev/null) || rc=$?
+rc2=0
+printf '' | (cd "$r8" && "$DP" --output "$tmp/r8-once.json" 2>/dev/null) || rc2=$?
+paths_cells=$((paths_cells + 1))
+if [[ $rc -ne 0 || $rc2 -ne 3 ]] || ! jq -r '.[]' "$tmp/r8-once.json" | cmp -s - "$tmp/r8.want" || compgen -G "$tmp/.decision-paths.*" >/dev/null; then
+	paths_failures=$((paths_failures + 1))
+	fail "R8 class 1 --output once: first exit $rc, second exit $rc2"
+fi
+[[ $paths_failures -eq 0 ]] && pass "R8 class 1: decision-paths.sh derives every changed path with git, degrades loudly, and writes --output once ($paths_cells cells)"
+
 echo "---"
 echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
 [[ $FAIL_COUNT -eq 0 ]]

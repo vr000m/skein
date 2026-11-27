@@ -274,6 +274,8 @@ def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
         "Do not substitute unrelated current-diff paths for a plan target",
         "The selector's input has one source, the architecture worker's assigned units, the same list written for that lens to `expected.json`",
         "a rename counts as both its old and its new path",
+        "Git reads a diff's file paths, never you and never the `diff --git` header text, which is a display format",
+        "into this installed skill's `scripts/decision-paths.sh`",
         "the narrowed assignment is the one written to `expected.json`, and the selector takes that narrowed list, never the full diff",
         "it takes no range",
         "`--continue` remains unsupported",
@@ -325,26 +327,51 @@ def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
     (repo / "old/moved.py").write_text("x\n")
     git("add", "--", "docs", "old")
     git(*ident, "commit", "-qm", "base")
+    # Round 8: names git C-quotes or that hold ` b/`, plus a deletion and a
+    # mode-only change, so a header splitter would get the paths wrong.
+    hostile = ("src/archive/a b/src/cache/x.py", "src/r8/naïve.py", "src/r8/del.py")
+    for path in (*hostile, "src/r8/mode.sh", "src/r8/sp ace.py"):
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("base\n")
+    git("add", "--", "src")
+    git(*ident, "commit", "-qm", "hostile names")
     for path in ("src/cache/store.py", "src/auth/token.py"):
         (repo / path).parent.mkdir(parents=True, exist_ok=True)
         (repo / path).write_text("change\n")
+    for path in (
+        "src/archive/a b/src/cache/x.py",
+        "src/r8/naïve.py",
+        "src/r8/sp ace.py",
+    ):
+        (repo / path).write_text("change\n")
+    (repo / "src/r8/mode.sh").chmod(0o755)
+    git("rm", "-q", "--", "src/r8/del.py")
     git("add", "--", "src")
     git(*ident, "commit", "-qm", "change")
     git("mv", "--", "old/moved.py", "new.py")
 
-    def units_paths(diff_text):
-        # The documented derivation: both paths of every diff header.
-        paths = set()
-        for line in diff_text.splitlines():
-            if line.startswith("diff --git a/"):
-                old, new = line[len("diff --git a/") :].split(" b/", 1)
-                paths.update((old, new))
-        return sorted(paths)
+    def units_paths(diff_cmd):
+        # The documented derivation: the packet's diff command piped into the
+        # bundled decision-paths.sh, so git reads every path.
+        result = subprocess.run(
+            ["bash", "-c", 'set -o pipefail; "$@" | "$DP"', "_", *diff_cmd],
+            cwd=repo,
+            env={**os.environ, "DP": str(SKILL.parent / "scripts/decision-paths.sh")},
+            capture_output=True,
+            check=True,
+        )
+        return json.loads(result.stdout.decode())
 
-    full = units_paths(git("diff", "-M", "HEAD^"))
-    assert set(full) == set(
-        git("diff", "--no-renames", "--name-only", "HEAD^").split()
-    ), "the derivation covers every path the diff changes"
+    diff_cmd = ["git", "diff", "--no-ext-diff", "-M", "HEAD~1"]
+    full = units_paths(diff_cmd)
+    oracle = subprocess.check_output(
+        ["git", "-C", str(repo), "diff", "--no-renames", "--name-only", "-z", "HEAD~1"]
+    )
+    assert full == sorted({p.decode() for p in oracle.split(b"\0") if p}), (
+        "the derivation covers every path the diff changes, byte for byte"
+    )
+    assert {"old/moved.py", "new.py", "src/r8/naïve.py", "src/r8/mode.sh"} <= set(full)
+    assert "src/cache/x.py b/src/archive/a b/src/cache/x.py" not in full
 
     def select(paths, shell):
         expected = tmp_path / "expected.json"
@@ -372,8 +399,11 @@ def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
 
     shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
     cells = (
-        # current diff: committed range plus staged/unstaged, rename both sides
+        # current diff: committed range plus staged/unstaged, rename both sides;
+        # `src/archive/a b/src/cache/x.py` is not a cache path
         (full, ["20260101-cache.md", "20260102-auth.md", "20260103-moved.md"]),
+        # the ` b/` directory alone selects no record
+        (["src/archive/a b/src/cache/x.py"], []),
         # narrowed packet: only the units the worker is assigned
         (["src/cache/store.py"], ["20260101-cache.md"]),
         # plan target without a diff: the plan's named paths

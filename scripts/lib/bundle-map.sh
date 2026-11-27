@@ -165,6 +165,8 @@ bundle_extra_for() {
 		;;
 	deep-review)
 		printf 'persist-deep-review-state.sh\n'
+		# Only deep-review derives its selector paths from a patch.
+		printf 'decision-paths.sh\n'
 		printf '%s\n' "${BUNDLE_LENS[@]}"
 		printf '%s\n' "${BUNDLE_REPORT[@]}"
 		;;

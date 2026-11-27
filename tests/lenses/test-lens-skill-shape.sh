@@ -964,7 +964,7 @@ for dec_entry in "${DECISION_SKILLS[@]}"; do
 			"no range transport, two-dot mode or per-mode saved scope remains (R7)"
 		decision_has "$dec_all" 'The selector'"'"'s input has one source, the run'"'"'s decision paths file' \
 			"the selector's one input is the run's decision paths file (R7)"
-		decision_has "$dec_all" 'The selector never reads it and takes no range' "the selector derives no range of its own (R7)"
+		decision_has "$dec_all" 'The selector never reads the file and takes no range' "the selector derives no range of its own (R7)"
 		decision_has "$dec_all" 'lists any entry or fails, print `Decision records: working tree has uncommitted changes under docs/decisions`' \
 			"an uncommitted docs/decisions is reported"
 		decision_has "$dec_all" 'print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch' \
@@ -1069,13 +1069,15 @@ done
 # reports a failed diff as exit 4 with no record text, and reads its range
 # from a quoted here-document, so a hostile ref name runs nothing and the
 # selector (not a snippet allowlist) refuses it with exit 2.
-# dec_fence <SKILL.md> <section opener regex>: the first fence after the opener.
+# dec_fence <SKILL.md> <section opener regex> [<script>]: the first fence
+# after the opener that names <script> (default decisions-active.sh, the
+# selector call); deep-review's section also holds the decision-paths.sh fence.
 dec_fence() {
-	DEC_OPENER="$2" awk '
+	DEC_OPENER="$2" DEC_WANT="${3:-decisions-active.sh}" awk '
 		$0 ~ ENVIRON["DEC_OPENER"] { section = 1; next }
-		code && /^```$/ { exit }
+		code && /^```$/ { if (index(buf, ENVIRON["DEC_WANT"])) { printf "%s", buf; exit } code = 0; buf = ""; next }
 		section && /^```(bash)?$/ { code = 1; next }
-		code { print }
+		code { buf = buf $0 "\n" }
 	' "$1"
 }
 # dec_run_snippet <mirror> <snippet>: runs it in $dec_tmp; sets dec_status,
@@ -1146,7 +1148,8 @@ dec_exec_skill=deep-review
 # exactly the architecture lens's assigned paths, derived once from the diff
 # text the lens is given, in the same step as the assignment; it takes no
 # range. Model of the documented derivation (Step 2, decision paths file):
-# both paths of every `diff --git a/<old> b/<new>` header of the lens's diff;
+# every path decision-paths.sh reads from the lens's diff with git (both
+# sides of a rename);
 # the named files for a file target; a same-HEAD resume reuses the file the
 # previous invocation wrote; a missing, malformed, newline-holding or
 # wrongly empty file is degraded (no selector run). The model is tied to the
@@ -1182,11 +1185,12 @@ fi
 dec_r7_dir="$dec_tmp.r7"
 mkdir -p "$dec_r7_dir"
 # dec_r7_diff_paths <git diff args...>: the documented derivation from the
-# lens's diff text (renames detected, as the lens sees them).
+# lens's diff text (renames detected, as the lens sees them): git reads the
+# patch through decision-paths.sh (round 8), never a header splitter.
 dec_r7_diff_paths() {
 	git -C "$dec_tmp" diff --no-ext-diff -M "$@" |
-		awk 'index($0, "diff --git a/") == 1 { s = substr($0, 14); i = index(s, " b/"); print substr(s, 1, i - 1); print substr(s, i + 3) }' |
-		LC_ALL=C sort -u
+		(cd "$dec_tmp" && "$ROOT_DIR/scripts/decision-paths.sh") |
+		jq -r '.[]'
 }
 # dec_r7_oracle <git diff args...>: the independent path set of that diff.
 dec_r7_oracle() {
@@ -1314,21 +1318,184 @@ else
 	fail "R7 reference: the fallback fixture does not distinguish a stale paths file"
 fi
 rm -rf "$dec_r7_dir"
+# Fresh-ledger round 8, classes 1 and 2, executed through the documented
+# decision-paths fence of each deep-review mirror (bash and zsh).
+# Class 1. Old invariant: the paths were scraped from `diff --git` header
+# text. New invariant: the fence pipes the lens's diff command into
+# decision-paths.sh, so git reads every path: a ` b/` inside a directory name
+# no longer invents a src/cache path (no cache record), a C-quoted non-ASCII
+# name is no longer dropped (cache record kept), and a rename, a deletion, a
+# mode-only change and a name with a space all arrive (checked against an
+# independent `git diff --no-renames --name-only -z`). The reference cells
+# run the pre-round-8 header splitter on the same diffs and select wrongly.
+# Class 2. Old invariant: an incremental re-review kept the run id and
+# rewrote decision-paths.json while expected.json stayed immutable, so a
+# same-HEAD resume read two different assignments. New invariant: the path
+# set travels with the assignment: each invocation that assigns a new diff
+# mints a run id and writes both files once; a same-HEAD resume reuses both.
+# Cells: initial review of the cache change, incremental over an auth
+# change, then a same-HEAD resume; the reference cell shows the old rule
+# (incremental reusing the first run id) is refused (paths-exit=3, degraded),
+# never a rewritten file that disagrees with expected.json.
+dec_r8_dir="$dec_tmp.r8"
+mkdir -p "$dec_r8_dir"
+# dec_r7_route writes its `p ` lines under dec_r7_dir.
+dec_r7_dir="$dec_r8_dir"
+dec_r7 checkout -q -b r8 r7-pr
+mkdir -p "$dec_tmp/src/archive/a b/src/cache" "$dec_tmp/src/cache/café" "$dec_tmp/src/r8"
+printf 'x\n' >"$dec_tmp/src/archive/a b/src/cache/x.py"
+printf 'q\n' >"$dec_tmp/src/cache/café/q.py"
+printf 'old\n' >"$dec_tmp/src/r8/old.py"
+printf 'del\n' >"$dec_tmp/src/r8/del.py"
+printf 'mode\n' >"$dec_tmp/src/r8/mode.sh"
+printf 'sp\n' >"$dec_tmp/src/r8/sp ace.py"
+dec_r7 add -- src
+dec_r7 commit -qm 'R8 base'
+printf 'y\n' >>"$dec_tmp/src/archive/a b/src/cache/x.py"
+dec_r7 commit -qam 'R8 a b directory'
+dec_r8_ab="$(git -C "$dec_tmp" rev-parse HEAD)"
+dec_r7 mv -- src/r8/old.py src/r8/new.py
+dec_r7 rm -q -- src/r8/del.py
+chmod +x "$dec_tmp/src/r8/mode.sh"
+printf 'more\n' >>"$dec_tmp/src/r8/sp ace.py"
+dec_r7 commit -qam 'R8 rename, delete, mode, space'
+dec_r8_misc="$(git -C "$dec_tmp" rev-parse HEAD)"
+printf 'r\n' >>"$dec_tmp/src/cache/café/q.py"
+dec_r7 commit -qam 'R8 non-ASCII'
+dec_r8_cafe="$(git -C "$dec_tmp" rev-parse HEAD)"
+printf 'more token\n' >>"$dec_tmp/src/auth/token.py"
+dec_r7 commit -qam 'R8 auth'
+dec_r8_auth="$(git -C "$dec_tmp" rev-parse HEAD)"
+if git -C "$dec_tmp" diff "$dec_r8_ab^" "$dec_r8_ab" | grep -qF 'diff --git a/src/archive/a b/src/cache/x.py b/' &&
+	git -C "$dec_tmp" diff "$dec_r8_cafe^" "$dec_r8_cafe" | grep -q '^diff --git "a/src/cache/caf\\303\\251/q.py"' &&
+	git -C "$dec_tmp" diff -M "$dec_r8_misc^" "$dec_r8_misc" | grep -q '^rename from src/r8/old.py$'; then
+	pass "R8 fixture: a ' b/' directory, a C-quoted name and a rename in the lens diffs"
+else
+	fail "R8 fixture does not exercise the header cases"
+fi
+# dec_r8_paths <mirror> <run id> <from> <to>: runs the documented paths fence
+# with the lens's diff command; sets dec_r8_exit (the paths-exit= value).
+dec_r8_paths() {
+	local fence out
+	fence="$(dec_fence "$ROOT_DIR/plugins/$1/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.' decision-paths.sh)"
+	fence="${fence//<run_id>/$2}"
+	fence="${fence//<lens diff command>/git diff --no-ext-diff -M $3 $4}"
+	mkdir -p "$dec_tmp/.deep-review/lenses/$2"
+	out="$(cd "$dec_tmp" && SKILL_DIR="$ROOT_DIR/plugins/$1/skills/deep-review" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$fence" 2>/dev/null)" || true
+	dec_r8_exit="$(sed -n 's/^paths-exit=//p' <<<"$out")"
+}
+# dec_r8_select <paths file> <units>: the records the selector picks, or
+# degraded/empty, through the documented routing.
+dec_r8_select() {
+	local snip
+	snip="$(dec_r7_route "$1" "$2")"
+	case "$snip" in
+	degraded | empty) echo "$snip" ;;
+	*)
+		dec_run_snippet "$dec_mirror" "$snip"
+		if [[ "$dec_status" == 0 ]]; then
+			grep '^### Record: ' <<<"$dec_text" | sed 's|^### Record: docs/decisions/||' | sort | tr '\n' ' ' | sed 's/ $//' || true
+		else
+			echo "exit-$dec_status"
+		fi
+		;;
+	esac
+}
+dec_r8_failures=0
+dec_r8_cells=0
+dec_r8_n=0
+for dec_mirror in skein skein-codex; do
+	dec_r7_fence="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+	for dec_shell in "${dec_shells[@]}"; do
+		# cell: from | to | records wanted
+		for dec_cell in "$dec_r8_ab^|$dec_r8_ab|" \
+			"$dec_r8_cafe^|$dec_r8_cafe|20261101-cache-store.md" \
+			"$dec_r8_misc^|$dec_r8_misc|" \
+			"$dec_r8_ab^|$dec_r8_auth|20261101-cache-store.md 20261105-auth-tokens.md"; do
+			IFS='|' read -r dec_r8_from dec_r8_to dec_want <<<"$dec_cell"
+			dec_r8_cells=$((dec_r8_cells + 1))
+			dec_r8_n=$((dec_r8_n + 1))
+			dec_r8_paths "$dec_mirror" "r8-cell-$dec_r8_n" "$dec_r8_from" "$dec_r8_to"
+			dec_r8_file="$dec_tmp/.deep-review/lenses/r8-cell-$dec_r8_n/decision-paths.json"
+			dec_got="$(dec_r8_select "$dec_r8_file" 1)"
+			if [[ "$dec_r8_exit" != 0 ]] || [[ "$(jq -r '.[]' "$dec_r8_file" 2>/dev/null)" != "$(git -C "$dec_tmp" diff --no-renames --name-only -z "$dec_r8_from" "$dec_r8_to" | tr '\0' '\n' | LC_ALL=C sort -u)" ]] ||
+				[[ "$dec_got" != "$dec_want" ]]; then
+				dec_r8_failures=$((dec_r8_failures + 1))
+				fail "[$dec_shell] R8 class 1 $dec_mirror $dec_r8_from..$dec_r8_to: paths-exit '$dec_r8_exit', want '$dec_want', got '$dec_got'"
+			fi
+		done
+		# Class 2: initial review (cache change), incremental over the auth
+		# change under a new run id, then a same-HEAD resume of the stored id.
+		dec_r8_n=$((dec_r8_n + 1))
+		dec_r8_a="r8-a-$dec_r8_n"
+		dec_r8_b="r8-b-$dec_r8_n"
+		printf '{"architecture":["src/cache/café/q.py"]}\n' >"$dec_r8_dir/a-expected.json"
+		dec_r8_paths "$dec_mirror" "$dec_r8_a" "$dec_r8_cafe^" "$dec_r8_cafe"
+		dec_r8_exit_a="$dec_r8_exit"
+		cp "$dec_r8_dir/a-expected.json" "$dec_tmp/.deep-review/lenses/$dec_r8_a/expected.json"
+		dec_r8_paths "$dec_mirror" "$dec_r8_b" "$dec_r8_cafe" "$dec_r8_auth"
+		dec_r8_exit_b="$dec_r8_exit"
+		printf '{"architecture":["src/auth/token.py"]}\n' >"$dec_tmp/.deep-review/lenses/$dec_r8_b/expected.json"
+		dec_r8_stored="$dec_r8_b"
+		dec_r8_resume="$dec_tmp/.deep-review/lenses/$dec_r8_stored"
+		dec_got="$(dec_r8_select "$dec_r8_resume/decision-paths.json" 1)"
+		dec_r8_cells=$((dec_r8_cells + 1))
+		if [[ "$dec_r8_exit_a" != 0 || "$dec_r8_exit_b" != 0 || "$dec_got" != 20261105-auth-tokens.md ]] ||
+			[[ "$(jq -c . "$dec_r8_resume/decision-paths.json")" != "$(jq -c .architecture "$dec_r8_resume/expected.json")" ]]; then
+			dec_r8_failures=$((dec_r8_failures + 1))
+			fail "[$dec_shell] R8 class 2 $dec_mirror: paths-exit $dec_r8_exit_a/$dec_r8_exit_b, resume selected '$dec_got' (want the auth record, paths == assignment)"
+		fi
+		# Reference: the old rule (the incremental re-review keeps the first run
+		# id and rewrites its decision paths) is refused, so the resume reads
+		# degraded coverage, never auth paths beside a cache assignment.
+		dec_r8_paths "$dec_mirror" "$dec_r8_a" "$dec_r8_cafe" "$dec_r8_auth"
+		dec_r8_cells=$((dec_r8_cells + 1))
+		if [[ "$dec_r8_exit" != 3 || "$(jq -c . "$dec_tmp/.deep-review/lenses/$dec_r8_a/decision-paths.json")" != '["src/cache/café/q.py"]' ]]; then
+			dec_r8_failures=$((dec_r8_failures + 1))
+			fail "[$dec_shell] R8 class 2 reference $dec_mirror: a rewrite under the first run id gave paths-exit '$dec_r8_exit'"
+		fi
+	done
+done
+[[ $dec_r8_failures -eq 0 ]] && pass "R8: the documented decision-paths fence derives the lens diff paths with git and keeps them with their assignment ($dec_r8_cells cells: mirror x shell x case)"
+# Reference: the pre-round-8 header splitter on the same diffs.
+dec_r8_split() {
+	git -C "$dec_tmp" diff --no-ext-diff -M "$1" "$2" |
+		awk 'index($0, "diff --git a/") == 1 { s = substr($0, 14); i = index(s, " b/"); print substr(s, 1, i - 1); print substr(s, i + 3) }' |
+		LC_ALL=C sort -u | dec_r7_write "$dec_r8_dir/split.json"
+}
+dec_mirror=skein
+dec_shell=bash
+dec_r7_fence="$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+dec_r8_split "$dec_r8_ab^" "$dec_r8_ab"
+dec_r8_ref_ab="$(dec_r8_select "$dec_r8_dir/split.json" 1)"
+# The rename, deletion, mode and space changes plus the non-ASCII one.
+dec_r8_split "$dec_r8_misc^" "$dec_r8_cafe"
+dec_r8_ref_cafe="$(dec_r8_select "$dec_r8_dir/split.json" 1)"
+if [[ "$dec_r8_ref_ab" == 20261101-cache-store.md && -z "$dec_r8_ref_cafe" ]]; then
+	pass "R8 reference: header splitting selects the cache record for the ' b/' directory and silently misses it for the C-quoted name (exit 0)"
+else
+	fail "R8 reference: the fixture does not distinguish header splitting (got '$dec_r8_ref_ab', '$dec_r8_ref_cafe')"
+fi
+rm -rf "$dec_r8_dir" "$dec_tmp/.deep-review"
 dec_md="$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
 # shellcheck disable=SC2016  # literal skill text
 for dec_pin in \
 	'the run'"'"'s decision paths file `<repo-root>/.deep-review/lenses/<run_id>/decision-paths.json`: a JSON array of the repo-relative file paths of exactly the diff the Architecture Lens is given' \
-	'with both paths of a rename or copy (its `diff --git a/<old> b/<new>` header)' \
-	'for a `--pr` target those are the files of the `gh pr diff` patch the lenses review' \
-	'A same-HEAD `--continue` resume re-runs the assignment it already has, so it reuses the file verbatim and never rewrites it' \
+	'Git derives it from that diff text, never you and never the `diff --git` header text, which is a display format' \
+	'with both paths of a rename or copy, the removed path of a deletion, and a mode-only, binary or submodule change' \
+	'for a `--pr` target, the `gh pr diff` the lenses review' \
+	'it is written once per `run_id`, with `expected.json`, and the script refuses to rewrite it' \
+	'So every invocation that assigns the lenses a new diff mints a new `run_id` and writes both files' \
+	'Only a same-HEAD `--continue` resume reuses the stored `run_id`: it re-runs the assignment it already has, so it reuses both files verbatim and writes neither' \
 	'is empty while the Architecture Lens has assigned units, is degraded coverage, never "no records": run no selector, treat the selection as `selector-exit=4`' \
 	'An empty array for a diff that changes no file is an empty, successful selection' \
 	'the file holds each named file, repo-relative, exactly as named' \
-	'so the rewritten file holds the named files that the new range changes' \
+	'so its new run'"'"'s file holds the named files that the new range changes' \
 	'the file holds the paths of that tip comparison, the diff the lenses review' \
-	'rewrite the decision paths file from that new diff (Step 2), the one the lenses are given' \
-	'rewrite the decision paths file from that diff (Step 2)' \
-	'the decision selector reuses the run'"'"'s decision paths file (Step 2) verbatim'; do
+	'under a new `run_id`; write that run'"'"'s `expected.json` and its decision paths file from that new diff (Step 2), the one the lenses are given' \
+	'under a new `run_id`; write that run'"'"'s `expected.json` and its decision paths file from that diff (Step 2)' \
+	'the stored `run_id` is kept; the decision selector reuses the run'"'"'s decision paths file (Step 2) verbatim' \
+	'A same-HEAD `--continue` resume reuses the prior run'"'"'s `run_id` (an incremental re-review or a fall back to `--full` mints a new one'; do
 	if grep -qF -- "$dec_pin" "$dec_md"; then
 		pass "skein deep-review pins: ${dec_pin:0:70}"
 	else
@@ -1337,9 +1504,10 @@ for dec_pin in \
 done
 # shellcheck disable=SC2016  # literal skill text
 for dec_pin in \
-	'The decision selector reuses the run'"'"'s decision paths file verbatim' \
-	'rewrite the decision paths file from that new' \
-	'A fall back to `--full` rewrites the decision paths file from the new `merge-base..HEAD` diff'; do
+	'Keep the stored `run_id`: the decision selector reuses the run'"'"'s decision paths file verbatim' \
+	'run an incremental re-review under a new `run_id`' \
+	'A fall back to `--full` mints a new `run_id` and writes its `expected.json` and decision paths file from the new `merge-base..HEAD` diff' \
+	'A same-HEAD `--continue` resume reuses the prior run'"'"'s `run_id` (an incremental re-review or a fall back to `--full` mints a new one'; do
 	if tr '\n' ' ' <"$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md" | sed 's/  */ /g' | grep -qF -- "$dec_pin"; then
 		pass "skein-codex deep-review pins: ${dec_pin:0:70}"
 	else
@@ -1455,6 +1623,8 @@ dec_shared() {
 	awk '/^\*\*Active decision records \(Architecture Lens only\)\./{on=1} on{print} on && /^Select once per invocation|Select once per invocation and reuse/{exit}' "$1" |
 		sed -e 's#"\${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/decisions-active.sh#<selector>#' \
 			-e 's#"\$SKILL_DIR"/scripts/decisions-active.sh#<selector>#' \
+			-e 's#"\${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/decision-paths.sh#<paths>#' \
+			-e 's#"\$SKILL_DIR"/scripts/decision-paths.sh#<paths>#' \
 			-e 's#(the §1a banner'"'"'s#(the <banner>'"'"'s#' \
 			-e 's#(the \[pre-dispatch banner\](\#pre-dispatch-banner)'"'"'s#(the <banner>'"'"'s#'
 }
