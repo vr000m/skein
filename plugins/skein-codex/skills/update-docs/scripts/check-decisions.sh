@@ -75,7 +75,7 @@ cd_internal() {
 	echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2 2>/dev/null || true
 	exit 4
 }
-# shellcheck disable=SC2329  # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked by the EXIT trap
 cd_on_exit() {
 	local rc=$?
 	if [[ $rc -ne 0 && $cd_documented -ne 1 ]]; then
