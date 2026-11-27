@@ -20,9 +20,11 @@
 #                  with exit 2 and `decisions-active.sh: --base refused:
 #                  <code>` (empty, option-like, not-a-commit) on stderr,
 #                  never the value. The script then runs `git diff
-#                  --no-ext-diff --no-renames --name-only -z
-#                  <base commit>...<head commit>` itself (both rename paths;
-#                  the merge base, as `gh pr diff`), plus the staged and
+#                  --no-ext-diff --no-renames --ignore-submodules=none
+#                  --name-only -z <base commit>...<head commit>` itself (both
+#                  rename paths; the merge base, as `gh pr diff`; a changed
+#                  submodule pointer is listed whatever diff.ignoreSubmodules
+#                  or a .gitmodules `ignore` says), plus the staged and
 #                  unstaged diffs with --uncommitted. No changed path is an
 #                  empty, successful selection. Records are always read from
 #                  the working tree, and two stderr notices say when that is
@@ -315,10 +317,10 @@ stdin)
 	;;
 range)
 	if ! {
-		git -C "$root" diff --no-ext-diff --no-renames --name-only -z "$base_commit...$head_commit" -- &&
+		git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z "$base_commit...$head_commit" -- &&
 			if [[ $uncommitted -eq 1 ]]; then
-				git -C "$root" diff --no-ext-diff --no-renames --name-only -z --cached -- &&
-					git -C "$root" diff --no-ext-diff --no-renames --name-only -z --
+				git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --cached -- &&
+					git -C "$root" diff --no-ext-diff --no-renames --ignore-submodules=none --name-only -z --
 			fi
 	} >"$list_tmp"; then
 		echo "decisions-active.sh: git diff failed for the reviewed range" >&2

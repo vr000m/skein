@@ -1667,6 +1667,44 @@ else
 	fail "FL1-A: process substitutions remain: $procsubs"
 fi
 
+# B (I3): a local diff.ignoreSubmodules=all, or a reviewed .gitmodules with
+# `ignore = all`, hid a changed submodule pointer from the selector's
+# `git diff --name-only`, so a record whose Applies to names the submodule
+# path was skipped while coverage read as complete. Contract: in each cell
+# the pointer change (committed in the range, or staged with --uncommitted)
+# selects the record with exit 0.
+for cell in config gitmodules plain staged; do
+	root="$tmp/fl1-sub-$cell"
+	scratch_repo "$root"
+	record "$root" 20260101-sub.md active 'vendor/lib'
+	subc() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
+	subc commit -q --allow-empty -m z1
+	z1="$(git -C "$root" rev-parse HEAD)"
+	subc commit -q --allow-empty -m z2
+	z2="$(git -C "$root" rev-parse HEAD)"
+	if [[ "$cell" == gitmodules ]]; then
+		printf '[submodule "lib"]\n\tpath = vendor/lib\n\turl = ./lib\n\tignore = all\n' >"$root/.gitmodules"
+		subc add -- .gitmodules
+	fi
+	subc update-index --add --cacheinfo "160000,$z1,vendor/lib"
+	subc add -- docs
+	subc commit -qm base
+	[[ "$cell" == config || "$cell" == staged ]] && git -C "$root" config diff.ignoreSubmodules all
+	subc update-index --cacheinfo "160000,$z2,vendor/lib"
+	RC=0
+	if [[ "$cell" == staged ]]; then
+		OUT="$(cd "$root" && "$SEL" --base HEAD --head HEAD --uncommitted 2>"$tmp/stderr")" || RC=$?
+	else
+		subc commit -qm bump
+		OUT="$(cd "$root" && "$SEL" --base 'HEAD^' --head HEAD 2>"$tmp/stderr")" || RC=$?
+	fi
+	if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-sub.md ]]; then
+		pass "FL1-B: a submodule pointer change ($cell) selects its record"
+	else
+		fail "FL1-B: a submodule pointer change ($cell): exit $RC, selected '$(names "$OUT")' ($(cat "$tmp/stderr"))"
+	fi
+done
+
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
 # the three update-docs directories.
