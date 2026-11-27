@@ -403,6 +403,51 @@ else
 	fail "this repository's docs/decisions validates"
 fi
 
+# Round 9 A (I1): exit 1 means only "every target safe, graph invalid", which
+# the Plan Name Gate passes. A failing mktemp used to exit 1 under set -e before
+# any target was checked, so a symlinked plan passed the gate. Now any
+# unexpected failure is exit 4 with a fixed reason, which the gate refuses.
+# A `mktemp` shim fails; the gate model passes only 0 or 1.
+mkdir -p "$tmp/r9-mktemp"
+printf '#!/bin/sh\nexit 1\n' >"$tmp/r9-mktemp/mktemp"
+chmod +x "$tmp/r9-mktemp/mktemp"
+root="$(fresh r9-internal)"
+ln -s plan.md "$root/docs/dev_plans/linked.md"
+r9_bashes=(bash)
+[[ -x /bin/bash ]] && r9_bashes+=(/bin/bash)
+for b in "${r9_bashes[@]}"; do
+	for plan in docs/dev_plans/plan.md docs/dev_plans/linked.md; do
+		rc=0
+		(cd "$root" && PATH="$tmp/r9-mktemp:$PATH" "$b" "$CHECK" --targets-file - >/dev/null 2>"$tmp/r9-err" <<<"$plan") || rc=$?
+		gate=refused
+		[[ $rc -eq 0 || $rc -eq 1 ]] && gate=passed
+		if [[ $rc -eq 4 && $gate == refused && "$(cat "$tmp/r9-err")" == 'check-decisions.sh: CHECK-DECISIONS-INTERNAL' ]]; then
+			pass "R9A: mktemp failure on $b ($plan): exit 4, CHECK-DECISIONS-INTERNAL, gate refuses"
+		else
+			fail "R9A: mktemp failure on $b ($plan): exit $rc, gate $gate, stderr '$(cat "$tmp/r9-err")'"
+		fi
+	done
+	# Without the shim the documented statuses are unchanged (and below, every
+	# update-docs mirror's gate refuses exit 4 in words).
+	rc=0
+	(cd "$root" && "$b" "$CHECK" --targets-file - >/dev/null 2>&1 <<<docs/dev_plans/linked.md) || rc=$?
+	if [[ $rc -eq 3 ]]; then
+		pass "R9A: on $b a symlinked plan still exits 3 without the shim"
+	else
+		fail "R9A: on $b a symlinked plan exits $rc without the shim (want 3)"
+	fi
+done
+for mirror in skein skein-codex skein-pi; do
+	skill="$REPO_ROOT/plugins/$mirror/skills/update-docs/SKILL.md"
+	# shellcheck disable=SC2016  # literal skill text
+	if grep -qF 'means the validator failed internally before it checked the plan, and `2` is a usage error: both are other exits, so the plan is unsafe and refused the same way' "$skill" &&
+		grep -qF 'Any other exit (`4`, `check-decisions.sh: CHECK-DECISIONS-INTERNAL`: the validator failed internally before it checked every path' "$skill"; then
+		pass "R9A: $mirror update-docs refuses exit 4 at the gate and the step 1 preflight"
+	else
+		fail "R9A: $mirror update-docs does not refuse exit 4 at the gate and the step 1 preflight"
+	fi
+done
+
 # Each mirror's shipped format reference must equal the canonical README; a
 # missing copy is a failure in every mirror.
 # ref_parity_problems <root>: prints one line per missing or differing copy.

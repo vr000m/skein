@@ -40,11 +40,38 @@
 # <file> other than `-` must be a regular, non-symlink file.
 #
 # Exit codes: 0 valid, 1 the record graph has a problem (every target is safe),
-# 2 usage error, 3 at least one --targets path is unsafe (whatever the graph).
+# 2 usage error, 3 at least one --targets path is unsafe (whatever the graph),
+# 4 internal failure: a command failed unexpectedly (mktemp, a read, a
+# pipeline) before the script reached a documented result, so neither the
+# targets nor the graph are known; stderr carries the fixed reason
+# `check-decisions.sh: CHECK-DECISIONS-INTERNAL`. Every documented status leaves
+# through quit, so exit 1 always means every target was checked and is safe;
+# any other non-zero exit (an unexpected `set -e` failure) becomes 4.
 set -euo pipefail
 # An inherited CDPATH makes `cd` print the directory, which would corrupt
 # SCRIPT_DIR before the shared lib resets the environment.
 unset CDPATH
+
+# quit <status>: the only way out with a documented status.
+cd_documented=0
+quit() {
+	cd_documented=1
+	exit "$1"
+}
+cd_internal() {
+	echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2
+	cd_documented=1
+	exit 4
+}
+# shellcheck disable=SC2329  # invoked by the EXIT trap
+cd_on_exit() {
+	local rc=$?
+	if [[ $rc -ne 0 && $cd_documented -ne 1 ]]; then
+		echo "check-decisions.sh: CHECK-DECISIONS-INTERNAL" >&2
+		exit 4
+	fi
+}
+trap cd_on_exit EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
@@ -52,7 +79,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 
 usage() {
 	echo "usage: check-decisions.sh [<repo-root>] [--targets [--] <path>... | --targets-file <file>]" >&2
-	exit 2
+	quit 2
 }
 root=""
 if [[ $# -gt 0 && "$1" != -* ]]; then
@@ -70,11 +97,11 @@ if [[ $# -gt 0 ]]; then
 		;;
 	--targets-file)
 		[[ $# -eq 2 && -n "$2" ]] || usage
-		list="$(mktemp)"
+		list="$(mktemp 2>/dev/null)" || cd_internal
 		if ! dec_read_list "$2" >"$list"; then
 			rm -f -- "$list"
 			echo "check-decisions.sh: cannot read the targets file" >&2
-			exit 2
+			quit 2
 		fi
 		while IFS= read -r -d '' target; do
 			targets+=("$target")
@@ -87,7 +114,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 [[ -n "$root" ]] || root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-root="$(cd -P -- "$root" >/dev/null && pwd -P)" || exit 2
+root="$(cd -P -- "$root" >/dev/null && pwd -P)" || quit 2
 rc=0
 # Containment first: dec_target_problem inspects path metadata only, so an
 # unsafe target exits 3 before any record or plan is read.
@@ -97,7 +124,7 @@ for target in "${targets[@]+"${targets[@]}"}"; do
 		rc=3
 	fi
 done
-[[ $rc -eq 0 ]] || exit "$rc"
+[[ $rc -eq 0 ]] || quit "$rc"
 # The per-record rules live in dec_validate_tree, which the selector shares.
 if dec_check_directory "$root"; then
 	dec_validate_tree "$root" || rc=1
@@ -107,4 +134,4 @@ if dec_check_directory "$root"; then
 else
 	rc=1
 fi
-exit "$rc"
+quit "$rc"
