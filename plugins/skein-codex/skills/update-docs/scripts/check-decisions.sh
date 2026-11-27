@@ -42,15 +42,19 @@
 # Exit codes: 0 valid, 1 the record graph has a problem (every target is safe),
 # 2 usage error, 3 at least one --targets path is unsafe (whatever the graph),
 # 4 internal failure: a command failed unexpectedly (mktemp, a read, a
-# pipeline) before the script reached a documented result, so neither the
+# pipeline, counting the NUL bytes of a targets file, listing the records)
+# before the script reached a documented result, so neither the
 # targets nor the graph are known; stderr carries the fixed reason
 # `check-decisions.sh: CHECK-DECISIONS-INTERNAL`. Every documented status leaves
 # through quit, so exit 1 always means every target was checked and is safe;
 # any other non-zero exit (an unexpected `set -e` failure) becomes 4.
 set -euo pipefail
 # An inherited CDPATH makes `cd` print the directory, which would corrupt
-# SCRIPT_DIR before the shared lib resets the environment.
+# SCRIPT_DIR before the shared lib resets the environment; an inherited
+# failglob or nullglob changes what a glob expands to (the lib clears both
+# again for every script that sources it).
 unset CDPATH
+shopt -u failglob nullglob
 
 # quit <status>: the only way out with a documented status.
 cd_documented=0
@@ -98,8 +102,13 @@ if [[ $# -gt 0 ]]; then
 	--targets-file)
 		[[ $# -eq 2 && -n "$2" ]] || usage
 		list="$(mktemp 2>/dev/null)" || cd_internal
-		if ! dec_read_list "$2" >"$list"; then
+		read_rc=0
+		dec_read_list "$2" >"$list" || read_rc=$?
+		if [[ $read_rc -ne 0 ]]; then
 			rm -f -- "$list"
+			# 2: the list could not be copied or its NUL bytes counted, so
+			# its entries are unknown.
+			[[ $read_rc -eq 1 ]] || cd_internal
 			echo "check-decisions.sh: cannot read the targets file" >&2
 			quit 2
 		fi
@@ -127,7 +136,11 @@ done
 [[ $rc -eq 0 ]] || quit "$rc"
 # The per-record rules live in dec_validate_tree, which the selector shares.
 if dec_check_directory "$root"; then
-	dec_validate_tree "$root" || rc=1
+	tree_rc=0
+	dec_validate_tree "$root" || tree_rc=$?
+	# 2: the records could not be listed, so the graph is unknown.
+	[[ $tree_rc -ne 2 ]] || cd_internal
+	[[ $tree_rc -eq 0 ]] || rc=1
 	for problem in "${DEC_PROBLEMS[@]+"${DEC_PROBLEMS[@]}"}"; do
 		printf '%s\n' "$problem" >&2
 	done

@@ -20,6 +20,8 @@
 # `nocaseglob` or `dotglob` (which would make docs/decisions/.hidden.md a
 # record), or `noglob` (which would leave the record glob unexpanded, an
 # empty record set) would otherwise reach one script and not another.
+# `failglob` would make an empty record glob an error, and `nullglob` would
+# change what it expands to, so both are cleared too (extglob is left alone).
 #
 # Ambient variables are reset for the same reason: an inherited CDPATH makes
 # `cd` print the directory it found, so `$(cd dir && pwd -P)` returns two
@@ -28,7 +30,7 @@
 unset CDPATH GLOBIGNORE
 IFS=$' \t\n'
 set +f
-shopt -u nocasematch nocaseglob dotglob
+shopt -u nocasematch nocaseglob dotglob failglob nullglob
 
 # Reject non-local directories even when the link target is missing. A linked
 # docs/ is refused only when a decisions entry exists through it: a repository
@@ -52,36 +54,49 @@ dec_check_directory() {
 # dec_read_list <file>: one entry per line on stdout, NUL-terminated, read
 # from <file> (`-` is stdin). A list holding a NUL byte is NUL-delimited,
 # otherwise newline-delimited; empty entries are dropped. A file other than
-# `-` must be a regular, non-symlink file. Returns 1 when it cannot be read.
+# `-` must be a regular, non-symlink file. Returns 1 when it is not one, and 2
+# when the list cannot be copied or its NUL bytes cannot be counted
+# (dec_nul_state), so a failed count never falls back to newline parsing.
 dec_read_list() {
-	local file="$1" entry nul
+	local file="$1" entry nul state=0
 	local LC_ALL=C
 	if [[ "$file" != - ]]; then
 		[[ ! -L "$file" && -f "$file" && -r "$file" ]] || return 1
 	fi
 	# A here-document cannot carry a NUL, so stdin is copied once to test for one.
-	nul="$(mktemp)" || return 1
+	nul="$(mktemp 2>/dev/null)" || return 2
 	if ! cat -- "$file" >"$nul"; then
 		rm -f -- "$nul"
-		return 1
+		return 2
 	fi
-	if [[ "$(tr -cd '\000' <"$nul" | wc -c | tr -d '[:space:]')" -gt 0 ]]; then
+	dec_nul_state "$nul" || state=$?
+	case "$state" in
+	0)
 		while IFS= read -r -d '' entry || [[ -n "$entry" ]]; do
 			if [[ -n "$entry" ]]; then
 				printf '%s\0' "$entry"
 			fi
 		done <"$nul"
-	else
+		;;
+	1)
 		while IFS= read -r entry || [[ -n "$entry" ]]; do
 			if [[ -n "$entry" ]]; then
 				printf '%s\0' "$entry"
 			fi
 		done <"$nul"
-	fi
+		;;
+	*)
+		rm -f -- "$nul"
+		return 2
+		;;
+	esac
 	rm -f -- "$nul"
 }
 
-# NUL-delimited entries in byte order, including invalid file types to diagnose.
+# dec_record_files <dir>: appends the record paths to DEC_RECORDS in byte
+# order, including invalid file types to diagnose. It fills the array itself
+# rather than feeding a process substitution, whose failure the reader could
+# not see: a non-zero return means the records could not be listed.
 dec_record_files() {
 	local dir="$1" f
 	local LC_ALL=C
@@ -89,7 +104,7 @@ dec_record_files() {
 	for f in "$dir"/*.md; do
 		[[ -e "$f" || -L "$f" ]] || continue
 		[[ "${f##*/}" == README.md ]] && continue
-		printf '%s\0' "$f"
+		DEC_RECORDS+=("$f")
 	done
 }
 
@@ -242,7 +257,9 @@ dec_glob_problem() {
 #                   record value: file-type, header, status, supersession,
 #                   source-plan, applies-to
 #   DEC_PROBLEM_INDEX[k]  the index into DEC_RECORDS of problem k's record
-# Returns 0 when no record has a problem.
+# Returns 0 when no record has a problem, 1 when one has, and 2 when the
+# records cannot be listed (nothing was validated; callers must not read an
+# empty record set as a valid one).
 # shellcheck disable=SC2034  # DEC_VALID is read by the sourcing script
 dec_validate_tree() {
 	local root="$1" dir="$1/docs/decisions" path name field status supersedes
@@ -253,9 +270,7 @@ dec_validate_tree() {
 	DEC_PROBLEMS=()
 	DEC_CODES=()
 	DEC_PROBLEM_INDEX=()
-	while IFS= read -r -d '' path; do
-		DEC_RECORDS+=("$path")
-	done < <(dec_record_files "$dir")
+	dec_record_files "$dir" || return 2
 	# One NUL pass before any header is read for any purpose: bash 3.2 command
 	# substitution drops a NUL and bash 5 keeps the bytes after it, so a value
 	# read from such a file differs per bash. A flagged file is a `header`
@@ -348,11 +363,12 @@ dec_validate_tree() {
 			_dec_problem "$index" source-plan "Source plan '$(_dec_field "$name" "Source plan")' does not resolve to a file inside the repository"
 		fi
 
-		while IFS= read -r glob; do
+		dec_split_globs "$(_dec_field "$name" "Applies to")"
+		for glob in "${DEC_GLOBS[@]}"; do
 			if reason="$(dec_glob_problem "$glob")"; then
 				_dec_problem "$index" applies-to "Applies to: $reason"
 			fi
-		done < <(dec_split_globs "$(_dec_field "$name" "Applies to")")
+		done
 	done
 
 	# Follow verified edges once. A node visited from the current start is a cycle.
@@ -373,27 +389,45 @@ dec_validate_tree() {
 	[[ ${#DEC_PROBLEMS[@]} -eq 0 ]]
 }
 
-# dec_has_nul <file>: returns 0 when <file> holds a NUL byte (or cannot be
-# counted), 1 otherwise. Compares byte counts with and without NULs, so it
-# never puts file bytes through a shell variable, which works on bash 3.2.
-dec_has_nul() {
+# dec_nul_state <file>: the one NUL test. Returns 0 when <file> holds a NUL
+# byte, 1 when it holds none, and 2 when its bytes cannot be counted (a failed
+# wc or tr, or a count that is not a number). Compares byte counts with and
+# without NULs, so it never puts file bytes through a shell variable, which
+# works on bash 3.2.
+dec_nul_state() {
 	local all kept
-	all="$(LC_ALL=C wc -c <"$1" 2>/dev/null)" || return 0
-	kept="$(LC_ALL=C tr -d '\000' <"$1" 2>/dev/null | LC_ALL=C wc -c)" || return 0
-	all="${all//[!0-9]/}"
-	kept="${kept//[!0-9]/}"
-	[[ -z "$all" || "$all" != "$kept" ]]
+	local LC_ALL=C
+	all="$(LC_ALL=C wc -c <"$1" 2>/dev/null)" || return 2
+	kept="$(
+		set -o pipefail
+		LC_ALL=C tr -d '\000' <"$1" 2>/dev/null | LC_ALL=C wc -c
+	)" || return 2
+	all="${all//[[:space:]]/}"
+	kept="${kept//[[:space:]]/}"
+	[[ "$all" =~ ^[0-9]+$ && "$kept" =~ ^[0-9]+$ ]] || return 2
+	[[ "$all" != "$kept" ]] || return 1
 }
 
-# dec_split_globs <Applies to value>: one glob per line, split at every comma
-# and trimmed; empty entries are kept so the validator can name them.
+# dec_has_nul <file>: returns 0 when <file> holds a NUL byte or cannot be
+# counted, 1 otherwise, so an uncountable record is refused.
+dec_has_nul() {
+	local state=0
+	dec_nul_state "$1" || state=$?
+	[[ $state -ne 1 ]]
+}
+
+# dec_split_globs <Applies to value>: sets DEC_GLOBS to one glob per entry,
+# split at every comma and trimmed; empty entries are kept so the validator
+# can name them. It fills the array itself, so no reader depends on a
+# producer's status.
 dec_split_globs() {
 	local rest="$1," part
 	local LC_ALL=C
+	DEC_GLOBS=()
 	while [[ -n "$rest" ]]; do
 		part="${rest%%,*}"
 		rest="${rest#*,}"
 		part="${part#"${part%%[![:space:]]*}"}"
-		printf '%s\n' "${part%"${part##*[![:space:]]}"}"
+		DEC_GLOBS+=("${part%"${part##*[![:space:]]}"}")
 	done
 }

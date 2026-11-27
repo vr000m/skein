@@ -1550,6 +1550,123 @@ else
 	fail "R8-D: heading rules in the record parsers: $heading_rules"
 fi
 
+# Fresh-ledger round 1, class A: a failed producer feeding a security result
+# is never read as an empty or alternate result.
+#
+# A1 (I1, I3): dec_read_list chose NUL or newline parsing from a NUL count
+# with no failure check, so a failed `tr` or `wc` (or a count that is not a
+# number) fell back to newline parsing; on bash 3.2 that kept only the first
+# entry of a NUL-delimited list. Contract, on every bash and for each shim:
+# the validator's --targets-file (a safe plan, then a symlinked one) exits 4
+# with its fixed reason, never 0 or 1, and the selector's --paths-stdin (a
+# path no record names, then one a record names) exits 4, never 0. Without a
+# shim the validator exits 3 and the selector selects the record.
+for shim in tr-fail wc-fail wc-garbage; do
+	mkdir -p "$tmp/fl1-$shim"
+	case "$shim" in
+	tr-fail) printf '#!/bin/sh\nexit 1\n' >"$tmp/fl1-$shim/tr" ;;
+	wc-fail) printf '#!/bin/sh\nexit 1\n' >"$tmp/fl1-$shim/wc" ;;
+	wc-garbage) printf '#!/bin/sh\ncat >/dev/null\necho x\n' >"$tmp/fl1-$shim/wc" ;;
+	esac
+	chmod +x "$tmp/fl1-$shim"/*
+done
+root="$tmp/fl1-tree"
+record "$root" 20260101-y.md active 'src/y'
+ln -s plan.md "$root/docs/dev_plans/linked.md"
+for b in "${locale_bashes[@]}"; do
+	for shim in none tr-fail wc-fail wc-garbage; do
+		shim_path="$PATH"
+		[[ "$shim" == none ]] || shim_path="$tmp/fl1-$shim:$PATH"
+		vrc=0
+		(cd "$root" && printf 'docs/dev_plans/plan.md\0docs/dev_plans/linked.md\0' |
+			PATH="$shim_path" "$b" "$CHECK" --targets-file - >/dev/null 2>"$tmp/check-err") || vrc=$?
+		RC=0
+		OUT="$(cd "$root" && printf 'p src/x\0p src/y\0' | PATH="$shim_path" "$b" "$SEL" --paths-stdin 2>"$tmp/stderr")" || RC=$?
+		ok=0
+		if [[ "$shim" == none ]]; then
+			[[ $vrc -eq 3 && $RC -eq 0 && "$(names "$OUT")" == 20260101-y.md ]] && ok=1
+		else
+			[[ $vrc -eq 4 && "$(cat "$tmp/check-err")" == 'check-decisions.sh: CHECK-DECISIONS-INTERNAL' &&
+			$RC -eq 4 && -z "$OUT" ]] && ok=1
+		fi
+		if [[ $ok -eq 1 ]]; then
+			pass "FL1-A1: NUL list, shim $shim on $b: validator $vrc, selector $RC"
+		else
+			fail "FL1-A1: NUL list, shim $shim on $b: validator $vrc ($(cat "$tmp/check-err")), selector $RC, out '$(names "$OUT")'"
+		fi
+	done
+done
+
+# A2 (I3, I4): the record list came from a process substitution whose status
+# was dropped, so a failed listing (an exported BASHOPTS=failglob over a
+# folder with no record) read as an empty, valid record set. The scripts and
+# the lib now clear failglob and nullglob, and the lib fills DEC_RECORDS
+# itself and returns 2 when the listing fails. Contract: under failglob an
+# empty folder is still a clean exit 0 with no glob error on stderr; with a
+# failing lister (a copy of the scripts whose lib overrides
+# dec_record_files) the validator exits 4 and the selector exits 7, each with
+# its fixed reason and no selection, on every bash.
+root="$tmp/fl1-empty"
+mkdir -p "$root/docs/decisions"
+fg_bashes=0
+for b in "${locale_bashes[@]}"; do
+	env BASHOPTS=failglob "$b" -c 'shopt -q failglob' 2>/dev/null || continue
+	fg_bashes=$((fg_bashes + 1))
+	vrc=0
+	env BASHOPTS=failglob "$b" "$CHECK" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+	RC=0
+	OUT="$(cd "$root" && env BASHOPTS=failglob "$b" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+	if [[ $vrc -eq 0 && ! -s "$tmp/check-err" && $RC -eq 0 && -z "$OUT" && ! -s "$tmp/stderr" ]]; then
+		pass "[$b] FL1-A2: BASHOPTS=failglob over an empty folder: validator and selector exit 0, no glob error"
+	else
+		fail "[$b] FL1-A2: BASHOPTS=failglob: validator $vrc ($(cat "$tmp/check-err")), selector $RC ($(cat "$tmp/stderr"))"
+	fi
+done
+[[ $fg_bashes -gt 0 ]] || pass "FL1-A2: no bash here honours BASHOPTS; the failglob cell is skipped"
+stub="$tmp/fl1-stub"
+mkdir -p "$stub/lib"
+cp "$CHECK" "$SEL" "$stub/"
+cp "$REPO_ROOT/scripts/lib/decisions-common.sh" "$stub/lib/"
+printf 'dec_record_files() { return 1; }\n' >>"$stub/lib/decisions-common.sh"
+root="$tmp/fl1-lister"
+record "$root" 20260101-x.md active 'src/x'
+for b in "${locale_bashes[@]}"; do
+	vrc=0
+	"$b" "$stub/check-decisions.sh" "$root" >/dev/null 2>"$tmp/check-err" || vrc=$?
+	for mode in plain temp; do
+		RC=0
+		if [[ "$mode" == temp ]]; then
+			OUT="$(cd "$root" && "$b" "$stub/decisions-active.sh" --temp-output src/x 2>"$tmp/stderr")" || RC=$?
+			want_out='selector-output='
+		else
+			OUT="$(cd "$root" && "$b" "$stub/decisions-active.sh" src/x 2>"$tmp/stderr")" || RC=$?
+			want_out=''
+		fi
+		if [[ $vrc -eq 4 && "$(cat "$tmp/check-err")" == 'check-decisions.sh: CHECK-DECISIONS-INTERNAL' &&
+		$RC -eq 7 && "$OUT" == "$want_out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: DECISIONS-INTERNAL' ]]; then
+			pass "FL1-A2: failing record lister on $b ($mode): validator 4, selector 7, no selection"
+		else
+			fail "FL1-A2: failing record lister on $b ($mode): validator $vrc ($(cat "$tmp/check-err")), selector $RC, out '$OUT', stderr '$(cat "$tmp/stderr")'"
+		fi
+	done
+	# The unmodified scripts select the same record.
+	RC=0
+	OUT="$(cd "$root" && "$b" "$SEL" src/x 2>/dev/null)" || RC=$?
+	if [[ $RC -eq 0 && "$(names "$OUT")" == 20260101-x.md ]]; then
+		pass "FL1-A2: on $b the same tree selects with the real lister"
+	else
+		fail "FL1-A2: on $b the same tree exits $RC with the real lister"
+	fi
+done
+# The class, structurally: no decisions script reads a record list, glob
+# list or path list from a process substitution, whose status is lost.
+procsubs="$(grep -nE '<[[:space:]]*<\(' "$SEL" "$CHECK" "$REPO_ROOT/scripts/lib/decisions-common.sh" || true)"
+if [[ -z "$procsubs" ]]; then
+	pass "FL1-A: no process substitution feeds a decisions script"
+else
+	fail "FL1-A: process substitutions remain: $procsubs"
+fi
+
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
 # the three update-docs directories.

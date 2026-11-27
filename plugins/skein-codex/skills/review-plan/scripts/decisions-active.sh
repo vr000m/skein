@@ -108,15 +108,19 @@
 #      `decisions-active.sh: DECISIONS-ESCAPE-FAILED` and stdout carries no
 #      selection (with --temp-output, the status line `selector-output=`)
 #   7  internal failure: a command failed unexpectedly under `set -e` (a
-#      pipeline, a read, a substitution) before a documented result; stderr
+#      pipeline, a read, a substitution), or the records could not be
+#      listed, before a documented result; stderr
 #      carries the fixed reason `decisions-active.sh: DECISIONS-INTERNAL` and no
 #      selection is handed over (with --temp-output, `selector-output=`).
 #      Every documented status leaves through quit; any other non-zero exit
 #      becomes 7, so a failure is never silent and never reads as another code.
 set -euo pipefail
 # An inherited CDPATH makes `cd` print the directory, which would corrupt
-# SCRIPT_DIR before the shared lib resets the environment.
+# SCRIPT_DIR before the shared lib resets the environment; an inherited
+# failglob or nullglob changes what a glob expands to (the lib clears both
+# again for every script that sources it).
 unset CDPATH
+shopt -u failglob nullglob
 
 # quit <status>: the only way out with a documented status.
 da_documented=0
@@ -383,11 +387,12 @@ glob_match() {
 applies() {
 	local glob p
 	local LC_ALL=C
-	while IFS= read -r glob; do
+	dec_split_globs "$1"
+	for glob in "${DEC_GLOBS[@]}"; do
 		for p in "${paths[@]}"; do
 			glob_match "$p" "$glob" && return 0
 		done
-	done < <(dec_split_globs "$1")
+	done
 	return 1
 }
 
@@ -505,7 +510,13 @@ block() {
 }
 
 malformed=0
-dec_validate_tree "$root" || malformed=1
+dec_validate_tree "$root" || malformed=$?
+# The records could not be listed: nothing was validated, so an empty
+# selection would read as "no decision applies".
+if [[ $malformed -eq 2 ]]; then
+	echo "decisions-active.sh: DECISIONS-INTERNAL" >&2
+	quit 7
+fi
 # stderr reaches the skills' degraded-coverage line, so it names the record
 # and a fixed reason code only, never a record value.
 for ((k = 0; k < ${#DEC_CODES[@]}; k++)); do
