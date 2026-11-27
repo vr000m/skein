@@ -800,7 +800,8 @@ gate_fence() {
 # run_gate_containment <name> <plugin>: round 8 (I1). Contract: the Plan Name
 # Gate's last step is the containment preflight over the plan path, so it
 # precedes every read of the plan (Phase 4's marker classifier, Decision
-# Promotion); a plan it refuses is `unsafe plan` and is never read. Executed:
+# Promotion); a plan it refuses is never read, reported as `unsafe plan` on
+# exit 3 and `plan check failed` on exit 2 or 4. Executed:
 # the gate's own fence over a `feature.md` symlink to a signed plan outside
 # the tree exits 3, so the classifier never runs and the marker stays unread;
 # over a real plan it exits 0 and the classifier runs.
@@ -813,7 +814,8 @@ run_gate_containment() {
 	gate_end="$(offset_of "$whole" '## Phases 1')"
 	if [[ -z "$check_at" || -z "$fence_at" || -z "$gate_end" ]] || ((fence_at < check_at || fence_at > gate_end)) ||
 		[[ "$whole" != *"The gate's last step contains the plan, before anything reads it"* ]] ||
-		[[ "$whole" != *'report it as `unsafe plan`, read nothing from it (no marker classification, no snapshot, no candidate)'* ]] ||
+		[[ "$whole" != *'Any other exit refuses the plan: read nothing from it (no marker classification, no snapshot, no candidate)'* ]] ||
+		[[ "$whole" != *'`3` (the plan is a symlink or sits under one) as `unsafe plan`; `2` (a usage error) as `plan check failed (exit 2, usage)`; `4` (`check-decisions.sh: CHECK-DECISIONS-INTERNAL` on stderr: the validator failed internally before it checked the plan) as `plan check failed (exit 4, internal)`'* ]] ||
 		[[ "$whole" != *'A plan passes the gate only when its name and this containment check both pass'* ]]; then
 		fail "$name: the Plan Name Gate does not end with the containment preflight ($check_at, $fence_at, $gate_end)"
 		return

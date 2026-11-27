@@ -440,7 +440,9 @@ done
 for mirror in skein skein-codex skein-pi; do
 	skill="$REPO_ROOT/plugins/$mirror/skills/update-docs/SKILL.md"
 	# shellcheck disable=SC2016  # literal skill text
-	if grep -qF 'means the validator failed internally before it checked the plan, and `2` is a usage error: both are other exits, so the plan is unsafe and refused the same way' "$skill" &&
+	if grep -qF '`4` (`check-decisions.sh: CHECK-DECISIONS-INTERNAL` on stderr: the validator failed internally before it checked the plan) as `plan check failed (exit 4, internal)`' "$skill" &&
+		grep -qF 'Any other exit refuses the plan: read nothing from it' "$skill" &&
+		! grep -qF 'so the plan is unsafe and refused the same way' "$skill" &&
 		grep -qF 'Any other exit (`4`, `check-decisions.sh: CHECK-DECISIONS-INTERNAL`: the validator failed internally before it checked every path' "$skill"; then
 		pass "R9A: $mirror update-docs refuses exit 4 at the gate and the step 1 preflight"
 	else

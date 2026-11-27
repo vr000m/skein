@@ -375,9 +375,18 @@ def test_plan_contained_before_any_read_for_the_audit():
     assert containment < promotion
     gate_text = text[containment:section1]
     assert (
-        "On any other exit (`3`: the plan is a symlink or sits under one) the plan "
-        "is unsafe: report it as `unsafe plan`, read nothing from it" in gate_text
+        "Any other exit refuses the plan: read nothing from it (no marker "
+        "classification, no snapshot, no candidate)" in gate_text
     )
+    # Exit 3 alone is the containment refusal; 2 and 4 are check failures.
+    assert (
+        "`3` (the plan is a symlink or sits under one) as `unsafe plan`; "
+        "`2` (a usage error) as `plan check failed (exit 2, usage)`; `4` "
+        "(`check-decisions.sh: CHECK-DECISIONS-INTERNAL` on stderr: the "
+        "validator failed internally before it checked the plan) as "
+        "`plan check failed (exit 4, internal)`" in gate_text
+    )
+    assert "so the plan is unsafe and refused the same way" not in gate_text
     assert (
         "send no plan to the audit (leave `relevant_plan_path` and `relevant_plan` empty)"
         in gate_text
