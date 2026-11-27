@@ -123,6 +123,10 @@ set -euo pipefail
 # again for every script that sources it).
 unset CDPATH
 shopt -u failglob nullglob
+# Byte semantics for the whole run, before the first read: under a UTF-8
+# locale an unpatched Bash 5.2 `read -d ''` can skip the NUL after an
+# incomplete multibyte sequence and lose the next path (the lib sets it too).
+export LC_ALL=C
 
 # quit <status>: the only way out with a documented status.
 da_documented=0

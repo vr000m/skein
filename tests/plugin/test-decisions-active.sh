@@ -1705,6 +1705,63 @@ for cell in config gitmodules plain staged; do
 	fi
 done
 
+# Fresh-ledger round 3: byte semantics do not depend on the caller's locale.
+# Contract: every NUL-delimited list the selector reads (changed paths,
+# --paths-stdin) yields every entry in a UTF-8 locale, even after a name that
+# ends in an incomplete multibyte sequence (0xCD); an unpatched Bash 5.2 can
+# otherwise skip the next NUL and lose the next path. Cells: {range, stdin} x
+# {each bash}. The bug is in 5.2, so these may pass on 3.2/5.3 without the fix;
+# the structural check below pins the fix itself.
+utf8_locale=""
+# grep -q would close the pipe early and fail `locale -a` under pipefail.
+all_locales="$(locale -a 2>/dev/null || true)"
+for l in C.UTF-8 en_US.UTF-8 C.utf8 en_US.utf8; do
+	if grep -qx "$l" <<<"$all_locales"; then
+		utf8_locale="$l"
+		break
+	fi
+done
+if [[ -z "$utf8_locale" ]]; then
+	pass "no UTF-8 locale installed: the invalid-multibyte path cases are skipped"
+else
+	root="$tmp/mb-range"
+	rm -rf "$root"
+	mkdir -p "$root"
+	git -C "$root" init -q
+	record "$root" 20260101-store.md active 'src/cache/store.py'
+	gitm() { git -C "$root" -c user.name=Skein -c user.email=skein@example.invalid -c commit.gpgsign=false "$@"; }
+	gitm add -- docs
+	gitm commit -qm base
+	# The file system may refuse an invalid UTF-8 name, so the commit is built
+	# in the index: `a<0xCD>` sorts before src/cache/store.py in the diff.
+	blob="$(printf 'x\n' | git -C "$root" hash-object -w --stdin)"
+	gitm update-index --add --cacheinfo "100644,$blob,a"$'\xcd'
+	gitm update-index --add --cacheinfo "100644,$blob,src/cache/store.py"
+	gitm commit -qm change
+	printf 'p a\315\0p src/cache/store.py\0' >"$tmp/mb-paths"
+	for b in "${locale_bashes[@]}"; do
+		RC=0
+		OUT="$(cd "$root" && LC_ALL="$utf8_locale" "$b" "$SEL" --base 'HEAD^' --head HEAD 2>"$tmp/stderr")" || RC=$?
+		assert_eq "$b $utf8_locale: a range path after an invalid multibyte name is still matched" "0:20260101-store.md" "$RC:$(names "$OUT")"
+		RC=0
+		OUT="$(cd "$root" && LC_ALL="$utf8_locale" "$b" "$SEL" --paths-stdin <"$tmp/mb-paths" 2>"$tmp/stderr")" || RC=$?
+		assert_eq "$b $utf8_locale: a --paths-stdin path after an invalid multibyte name is still matched" "0:20260101-store.md" "$RC:$(names "$OUT")"
+	done
+fi
+
+# Structural: each entry script exports LC_ALL=C at top level before it
+# sources the lib or reads a NUL-delimited list, and the lib exports it before
+# its first function, so no read runs in the caller's locale.
+for f in "$SEL" "$CHECK" "$REPO_ROOT/scripts/lib/decisions-common.sh"; do
+	set_at="$(grep -n -m1 -x 'export LC_ALL=C' "$f" | cut -d: -f1 || true)"
+	first_use="$(grep -n -m1 -E "read -r -d ''|^\. \"\\\$SCRIPT_DIR/lib/decisions-common.sh\"|^[a-z_]+\(\) \{" "$f" | cut -d: -f1 || true)"
+	if [[ -n "$set_at" && -n "$first_use" && $set_at -lt $first_use ]]; then
+		pass "${f#"$REPO_ROOT"/} exports LC_ALL=C before its first NUL-delimited read"
+	else
+		fail "${f#"$REPO_ROOT"/} exports LC_ALL=C before its first NUL-delimited read (set at '${set_at}', first use at '${first_use}')"
+	fi
+done
+
 # Shipping: the selector and parser reach all six lens-skill directories and
 # not review-gauntlet; the validator and parser, but not the selector, reach
 # the three update-docs directories.

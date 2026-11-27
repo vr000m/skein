@@ -26,8 +26,12 @@
 # Ambient variables are reset for the same reason: an inherited CDPATH makes
 # `cd` print the directory it found, so `$(cd dir && pwd -P)` returns two
 # lines; GLOBIGNORE filters the record glob (and turns on dotglob); a
-# non-default IFS changes word splitting.
+# non-default IFS changes word splitting. LC_ALL=C is exported for the whole
+# run, not only inside the parsers: every NUL-delimited list (changed paths,
+# --paths-stdin, --targets) is then read byte for byte, so an invalid
+# multibyte file name cannot make `read -d ''` swallow the next entry.
 unset CDPATH GLOBIGNORE
+export LC_ALL=C
 IFS=$' \t\n'
 set +f
 shopt -u nocasematch nocaseglob dotglob failglob nullglob

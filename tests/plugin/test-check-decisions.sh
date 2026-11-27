@@ -363,6 +363,35 @@ targets_file_case "an empty targets file is a usage error" 2 "" "$root" "$tmp/ta
 ln -s "$tmp/targets.txt" "$tmp/targets-link.txt"
 targets_file_case "a symlinked targets file is refused" 2 "cannot read" "$root" "$tmp/targets-link.txt"
 targets_file_case "a missing targets file is refused" 2 "cannot read" "$root" "$tmp/no-such-file"
+# Fresh-ledger round 3: in a UTF-8 locale, a NUL-delimited target after a name
+# ending in an incomplete multibyte sequence (0xCD) is still read and checked
+# on every bash (an unpatched Bash 5.2 can otherwise skip that NUL and leave
+# the next target unchecked). The unsafe second target must exit 3.
+utf8_locale=""
+# grep -q would close the pipe early and fail `locale -a` under pipefail.
+all_locales="$(locale -a 2>/dev/null || true)"
+for l in C.UTF-8 en_US.UTF-8 C.utf8 en_US.utf8; do
+	if grep -qx "$l" <<<"$all_locales"; then
+		utf8_locale="$l"
+		break
+	fi
+done
+if [[ -z "$utf8_locale" ]]; then
+	pass "targets-file: no UTF-8 locale installed: the invalid-multibyte case is skipped"
+else
+	printf 'docs/decisions/20261125-a\315.md\0-x.md\0' >"$tmp/targets-mb.z"
+	mb_bashes=(bash)
+	[[ -x /bin/bash ]] && mb_bashes+=(/bin/bash)
+	for b in "${mb_bashes[@]}"; do
+		rc=0
+		out="$(LC_ALL="$utf8_locale" "$b" "$CHECK" "$root" --targets-file "$tmp/targets-mb.z" 2>&1)" || rc=$?
+		if [[ $rc -eq 3 && "$out" == *"-x.md: $SHAPE"* ]]; then
+			pass "targets-file: $b $utf8_locale: a target after an invalid multibyte name is checked"
+		else
+			fail "targets-file: $b $utf8_locale: target after invalid multibyte name: exit $rc, output $out"
+		fi
+	done
+fi
 printf '%s\n' docs/decisions/20261125-x.md "$PLAN" >"$tmp/targets-stdin.txt"
 targets_file_case "stdin (-) is read" 0 "" "$root" - "$tmp/targets-stdin.txt"
 rc=0
