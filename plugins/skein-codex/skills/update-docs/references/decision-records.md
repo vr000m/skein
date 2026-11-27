@@ -56,6 +56,7 @@ A comma-separated list of globs, each matched against a repo-relative path. The 
 - `*` matches any characters, including `/`, so `plugins/skein/*` matches every file under that directory.
 - `?` matches exactly one character (one byte, case-sensitively, in every locale).
 - Every other character is literal, and a glob may hold only letters, digits, spaces and `. _ / - @ + = : % ~` besides `*` and `?`. The validator rejects anything else (brackets, backslashes, braces, `!`, `(`, `)`, `$` and the like) and `**`.
+- A glob is written in normal form: relative, no `./`, no `//`, no `.` or `..` components. The validator rejects any other spelling, which could never match a normalised path.
 - A comma always separates two globs, and the spaces around each glob are trimmed.
 
 A record whose globs match none of the paths under review is not shown to the reviewers.

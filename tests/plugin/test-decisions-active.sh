@@ -1208,6 +1208,41 @@ vrc=0
 run "$root" 'Az09._/@+=:%~ -!rest'
 assert_eq "dialect: a glob using every accepted character is valid and matches" "0:0:20260101-ok.md" "$vrc:$RC:$(names "$OUT")"
 
+# I4 glob normal form: the selector matches normalised paths only, so a glob
+# spelled any other way (leading `/` or `./`, `//`, a `.` or `..` component)
+# could never match. Both scripts refuse it as an applies-to problem and the
+# selector exits 3 with no selection; normal spellings, including names that
+# merely contain dots, are valid and match. Cells: glob|path.
+normal_form_failures=0
+for cell in '/src/*|src/a' '/|x' './src/*|src/a' './|x' '.|x' '..|x' 'src//a*|src/a' 'src/a//|src/a/' \
+	'src/./a*|src/a' 'src/../a*|a' 'src/.|src/' 'src/..|src' 'docs/./|docs/' '*/./x|a/x'; do
+	glob="${cell%%|*}"
+	root="$tmp/normal-bad-$normal_form_failures-$RANDOM"
+	record "$root" 20260101-bad.md active "$glob"
+	vrc=0
+	"$CHECK" "$root" >"$tmp/vout" 2>&1 || vrc=$?
+	run "$root" "${cell#*|}"
+	if [[ $vrc -ne 1 || $RC -ne 3 || -n "$(names "$OUT")" ]] || ! grep -q '^20260101-bad.md: Applies to:' "$tmp/vout" ||
+		[[ "$(cat "$tmp/stderr")" != "decisions-active.sh: malformed record 20260101-bad.md: applies-to" ]]; then
+		normal_form_failures=$((normal_form_failures + 1))
+		fail "normal form: '$glob' not refused alike (validator $vrc, selector $RC, $(cat "$tmp/stderr"))"
+	fi
+done
+for cell in 'src/cache/*|src/cache/store.py' 'src/*/store.py|src/cache/store.py' 'docs/|docs/' '*.md|README.md' \
+	'.github/*|.github/ci.yml' 'a.b/c|a.b/c' '.../x|.../x' 'a/...|a/...' '.a/b|.a/b' 'src/.a|src/.a' '*./x|y./x'; do
+	glob="${cell%%|*}"
+	root="$tmp/normal-ok-$normal_form_failures-$RANDOM"
+	record "$root" 20260101-ok.md active "$glob"
+	vrc=0
+	"$CHECK" "$root" >/dev/null 2>&1 || vrc=$?
+	run "$root" "./${cell#*|}"
+	if [[ "$vrc:$RC:$(names "$OUT")" != "0:0:20260101-ok.md" ]]; then
+		normal_form_failures=$((normal_form_failures + 1))
+		fail "normal form: '$glob' should be valid and match ./${cell#*|} (validator $vrc, selector $RC)"
+	fi
+done
+assert_eq "normal form: a non-normal glob is refused by both scripts; normal spellings are valid and match" "0" "$normal_form_failures"
+
 # I4 differential: glob_match equals `[[ $path == $glob ]]` under LC_ALL=C on
 # /bin/bash and on the default bash, over a few thousand generated pairs from
 # a fixed seed (awk, so both bashes read the same pairs). Globs come from the

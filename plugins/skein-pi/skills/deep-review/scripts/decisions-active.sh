@@ -69,8 +69,8 @@
 # is the git top level, or the current directory outside a repository. A
 # record is selected when its Status is `active` and any of its `Applies to`
 # globs matches any path. A glob is literal characters, `*` (any characters,
-# `/` included) and `?` (one byte); the validator rejects anything else
-# (dec_glob_problem). glob_match equals bash `[[ $path == $glob ]]` on that
+# `/` included) and `?` (one byte), written in the paths' normal form; the
+# validator rejects anything else (dec_glob_problem). glob_match equals bash `[[ $path == $glob ]]` on that
 # dialect under LC_ALL=C, without backtracking.
 # Superseded records are never printed.
 #

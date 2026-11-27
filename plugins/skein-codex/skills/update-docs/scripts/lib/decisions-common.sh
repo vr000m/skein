@@ -234,7 +234,12 @@ dec_header() {
 # literal characters from DEC_GLOB_BAD's complement, `*` (any characters,
 # `/` included) and `?` (one character), with no `**`. It has no bracket
 # expression, backslash or extended pattern, so the selector's matcher equals
-# bash `[[ $path == $glob ]]` on bash 3.2 and bash 5 alike.
+# bash `[[ $path == $glob ]]` on bash 3.2 and bash 5 alike. A glob is also in
+# the selector's path normal form (normalise_path): relative, with no empty
+# (`//`), `.` or `..` component, so a leading `./` is refused too. The
+# selector matches normalised paths only, so a glob in any other spelling
+# could never match and would be a valid record that silently selects nothing.
+# One trailing `/` stays allowed, as it does on a path.
 DEC_GLOB_BAD='[^-A-Za-z0-9._/@+=:%~ *?]'
 dec_glob_problem() {
 	local glob="$1"
@@ -245,6 +250,12 @@ dec_glob_problem() {
 		printf "a character outside letters, digits, spaces, '. _ / - @ + = : %% ~', '*' and '?' in '%s'\n" "$glob"
 	elif [[ "$glob" == *'**'* ]]; then
 		printf "'**' is not supported in '%s'\n" "$glob"
+	elif [[ "$glob" == /* ]]; then
+		printf "a glob is repo-relative; '%s' starts with '/'\n" "$glob"
+	elif [[ "$glob" == *//* ]]; then
+		printf "an empty path component ('//') in '%s'\n" "$glob"
+	elif [[ "/$glob/" == */./* || "/$glob/" == */../* ]]; then
+		printf "a '.' or '..' path component in '%s'\n" "$glob"
 	else
 		return 1
 	fi
