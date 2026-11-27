@@ -9,7 +9,7 @@ parser can pick up the slug.
 
 | Date | Type | Name | Comp | PR | Branch | Plan |
 |------|------|------|------|----|--------|------|
-| 2026-11-22 | feature | decision-records | meta | — | feature/decision-records | [plan](20261122-feature-decision-records.md) |
+| 2026-11-22 | feature | decision-records | meta | #66 | feature/decision-records | [plan](20261122-feature-decision-records.md) |
 | 2026-11-22 | feature | comment-hygiene | meta | — | feature/comment-hygiene-and-decisions | [plan](20261122-feature-comment-hygiene.md) |
 | 2026-11-14 | feature | in-your-own-words | planning-skills | — | feature/in-your-own-words | [plan](20261114-feature-in-your-own-words.md) |
 | 2026-11-10 | feature | release-editorial-preflight | meta | — | feature/release-editorial-preflight | [plan](20261110-feature-release-editorial-preflight.md) |
