@@ -107,10 +107,48 @@
 #   6  escaping record text failed: stderr carries the fixed reason
 #      `decisions-active.sh: DECISIONS-ESCAPE-FAILED` and stdout carries no
 #      selection (with --temp-output, the status line `selector-output=`)
+#   7  internal failure: a command failed unexpectedly under `set -e` (a
+#      pipeline, a read, a substitution) before a documented result; stderr
+#      carries the fixed reason `decisions-active.sh: DECISIONS-INTERNAL` and no
+#      selection is handed over (with --temp-output, `selector-output=`).
+#      Every documented status leaves through quit; any other non-zero exit
+#      becomes 7, so a failure is never silent and never reads as another code.
 set -euo pipefail
 # An inherited CDPATH makes `cd` print the directory, which would corrupt
 # SCRIPT_DIR before the shared lib resets the environment.
 unset CDPATH
+
+# quit <status>: the only way out with a documented status.
+da_documented=0
+quit() {
+	da_documented=1
+	exit "$1"
+}
+
+# Private temp files (mktemp, outside the repository), removed on any exit
+# except a selection handed to the caller after exit 0 or 3.
+list_tmp=""
+out_tmp=""
+on_exit() {
+	local rc=$?
+	if [[ $rc -ne 0 && $da_documented -ne 1 ]]; then
+		echo "decisions-active.sh: DECISIONS-INTERNAL" >&2
+		rc=7
+	fi
+	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
+	if [[ -n "$out_tmp" ]]; then
+		exec 1>&3 3>&-
+		case "$rc" in
+		0 | 3) printf 'selector-output=%s\n' "$out_tmp" ;;
+		*)
+			rm -f -- "$out_tmp"
+			printf 'selector-output=\n'
+			;;
+		esac
+	fi
+	exit "$rc"
+}
+trap on_exit EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
 # shellcheck source=scripts/lib/decisions-common.sh disable=SC1091
@@ -127,7 +165,7 @@ OUTSIDE_NOTICE="decisions-active.sh: notice: untracked or ignored entries under 
 
 usage() {
 	echo "usage: decisions-active.sh [--temp-output] (--paths-stdin | (--base <rev> --head <rev> | --range-stdin) [--uncommitted] | [--] <path>...)" >&2
-	exit 2
+	quit 2
 }
 
 temp_output=0
@@ -216,33 +254,12 @@ resolve_revision() {
 	printf '%s\n' "$sha"
 }
 
-# Private temp files (mktemp, outside the repository), removed on any exit
-# except a selection handed to the caller after exit 0 or 3.
-list_tmp=""
-out_tmp=""
-on_exit() {
-	local rc=$?
-	[[ -z "$list_tmp" ]] || rm -f -- "$list_tmp"
-	if [[ -n "$out_tmp" ]]; then
-		exec 1>&3 3>&-
-		case "$rc" in
-		0 | 3) printf 'selector-output=%s\n' "$out_tmp" ;;
-		*)
-			rm -f -- "$out_tmp"
-			printf 'selector-output=\n'
-			;;
-		esac
-	fi
-	exit "$rc"
-}
-trap on_exit EXIT
-
 if [[ $temp_output -eq 1 ]]; then
 	if ! out_tmp="$(mktemp "${TMPDIR:-/tmp}/skein-decisions.XXXXXX" 2>/dev/null)"; then
 		out_tmp=""
 		echo "decisions-active.sh: --temp-output: cannot create a temp file" >&2
 		printf 'selector-output=\n'
-		exit 5
+		quit 5
 	fi
 	exec 3>&1 1>"$out_tmp"
 fi
@@ -257,13 +274,13 @@ private_tmp() {
 if [[ "$mode" == range ]]; then
 	list_tmp="$(private_tmp)" || {
 		list_tmp=""
-		exit 5
+		quit 5
 	}
 fi
 
 if [[ "$mode" == range ]]; then
-	base_commit="$(resolve_revision --base "$base")" || exit 2
-	head_commit="$(resolve_revision --head "$head")" || exit 2
+	base_commit="$(resolve_revision --base "$base")" || quit 2
+	head_commit="$(resolve_revision --head "$head")" || quit 2
 fi
 
 paths=()
@@ -272,11 +289,11 @@ argv)
 	paths=("$@")
 	;;
 stdin)
-	entries="$(private_tmp)" || exit 5
+	entries="$(private_tmp)" || quit 5
 	if ! dec_read_list - >"$entries"; then
 		rm -f -- "$entries"
 		echo "decisions-active.sh: cannot read the path list" >&2
-		exit 4
+		quit 4
 	fi
 	unprefixed=0
 	while IFS= read -r -d '' entry; do
@@ -289,7 +306,7 @@ stdin)
 	rm -f -- "$entries"
 	if [[ $unprefixed -eq 1 ]]; then
 		echo "decisions-active.sh: a --paths-stdin line lacks its 'p ' prefix" >&2
-		exit 4
+		quit 4
 	fi
 	;;
 range)
@@ -301,7 +318,7 @@ range)
 			fi
 	} >"$list_tmp"; then
 		echo "decisions-active.sh: git diff failed for the reviewed range" >&2
-		exit 4
+		quit 4
 	fi
 	while IFS= read -r -d '' entry; do
 		paths+=("$entry")
@@ -319,11 +336,11 @@ range)
 	;;
 esac
 if [[ ${#paths[@]} -eq 0 ]]; then
-	[[ "$mode" == range ]] && exit 0
+	[[ "$mode" == range ]] && quit 0
 	usage
 fi
 
-dec_check_directory "$root" || exit 3
+dec_check_directory "$root" || quit 3
 
 # glob_match <path> <glob>: `[[ $path == $glob ]]` for the dialect (literal
 # characters, `*`, `?`) without backtracking. The glob is split at its stars;
@@ -519,7 +536,7 @@ for path in "${matched[@]+"${matched[@]}"}"; do
 	)"
 	if ! text="$(printf '%s\n' "$text" | escape)"; then
 		echo "decisions-active.sh: DECISIONS-ESCAPE-FAILED" >&2
-		exit 6
+		quit 6
 	fi
 	size="$(printf '%s\n' "$text" | LC_ALL=C wc -c | tr -d '[:space:]')"
 	if [[ $shown -ge $MAX_RECORDS || $((used + size)) -gt $MAX_BYTES ]]; then
@@ -534,7 +551,7 @@ done
 total=${#matched[@]}
 if [[ $shown -lt $total ]]; then
 	printf 'decisions-active.sh: DECISIONS-TRUNCATED: %d of %d records shown\n' "$shown" "$total" >&2
-	exit 3
+	quit 3
 fi
 
-[[ $malformed -eq 0 ]] || exit 3
+[[ $malformed -eq 0 ]] || quit 3

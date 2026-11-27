@@ -1399,6 +1399,43 @@ for b in "${locale_bashes[@]}"; do
 	done
 done
 
+# Round 9 B (I3): an unexpected failure (here the output-size `wc -c`) used to
+# exit 1 under set -e with empty stdout and stderr. Now any status outside the
+# documented set is exit 7 with a fixed reason and no selection. The `wc` shim
+# fails only for the size call, whose input starts with the record heading;
+# every other wc call (the NUL check) runs the real wc.
+mkdir -p "$tmp/r9-wc"
+# shellcheck disable=SC2016  # the shim's own expansions
+printf '#!/bin/sh\nt="$(mktemp)"\ncat >"$t"\nif [ "$(head -c 11 "$t")" = "### Record:" ]; then rm -f "$t"; exit 1; fi\n%s "$@" <"$t"\nrc=$?\nrm -f "$t"\nexit $rc\n' "$(command -v wc)" >"$tmp/r9-wc/wc"
+chmod +x "$tmp/r9-wc/wc"
+root="$tmp/r7-escape"
+for b in "${locale_bashes[@]}"; do
+	for mode in plain temp; do
+		RC=0
+		if [[ "$mode" == temp ]]; then
+			OUT="$(cd "$root" && PATH="$tmp/r9-wc:$PATH" "$b" "$SEL" --temp-output src/x 2>"$tmp/stderr")" || RC=$?
+			want_out='selector-output='
+		else
+			OUT="$(cd "$root" && PATH="$tmp/r9-wc:$PATH" "$b" "$SEL" src/x 2>"$tmp/stderr")" || RC=$?
+			want_out=''
+		fi
+		if [[ $RC -eq 7 && "$OUT" == "$want_out" && "$(cat "$tmp/stderr")" == 'decisions-active.sh: DECISIONS-INTERNAL' ]]; then
+			pass "R9B: size-count failure on $b ($mode): exit 7, DECISIONS-INTERNAL, no selection"
+		else
+			fail "R9B: size-count failure on $b ($mode): exit $RC, out '$OUT', stderr '$(cat "$tmp/stderr")'"
+		fi
+	done
+	# The shim passes the NUL check through: without the size failure the
+	# same tree selects normally.
+	RC=0
+	OUT="$(cd "$root" && "$b" "$SEL" src/x 2>/dev/null)" || RC=$?
+	if [[ $RC -eq 0 && "$OUT" == *'### Record: docs/decisions/20260101-a.md'* ]]; then
+		pass "R9B: on $b the same tree selects without the shim"
+	else
+		fail "R9B: on $b the same tree exits $RC without the shim"
+	fi
+done
+
 # Round 8 B (I4): an inherited CDPATH changes neither verdict. With CDPATH
 # set, `cd` to a relative directory prints it, so `$(cd dir && pwd -P)` held
 # two lines: the validator walked a path that does not exist and passed
