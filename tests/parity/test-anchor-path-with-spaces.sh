@@ -74,7 +74,7 @@ mkdir -p "$SCRATCH"
 # The Step 5 block is the fenced pair of lines ending in `--from-collector`.
 # Strip only the bracketed optional flags, which are documentation placeholders.
 dr_cmd="$(grep -B1 -- '--from-collector$' "$DR_SKILL" | grep -v '^--$' |
-	sed -E 's/ \[--attempts "<lens>:<n>" \.\.\.\] \[--running "<lens>:<n>" \.\.\.\]//')"
+	sed -E 's/ \[--attempts "<lens>:<n>" \.\.\.\] \[--running "<lens>:<n>" \.\.\.\]( \[--from-attempt "architecture:<N>"\])?//')"
 if [[ "$(printf '%s\n' "$dr_cmd" | wc -l | tr -d ' ')" != "2" ]]; then
 	fail "(b) could not extract the deep-review Step 5 persist block from SKILL.md"
 else

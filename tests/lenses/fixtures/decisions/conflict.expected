@@ -1,0 +1,19 @@
+# Selector input: conflict.paths (the brace-expanded paths of conflict-plan.md). Exit 0.
+# review-plan architecture lens on conflict-plan.md: one Constraint finding (Important) citing docs/decisions/20261101-cache-store.md; the plan should follow the record or supersede it.
+# deep-review architecture lens on conflict.diff: one Architecture finding (Important) at src/cache/index.py citing the same record.
+# Exact selector output follows.
+### Record: docs/decisions/20261101-cache-store.md
+# Cache entries live in one SQLite store
+
+**Status**: active
+**Date**: 2026-11-01
+**Applies to**: src/cache/*
+**Supersedes**: 20261001-cache-files.md
+**Superseded by**: none
+**Source plan**: docs/dev_plans/20261001-cache.md
+
+## Decision
+All cache reads and writes go through `src/cache/store.py`, backed by one SQLite database. No module writes cache entries to files directly.
+
+## Why
+Per-entry JSON files were corrupted by concurrent writers.

@@ -3,8 +3,10 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 from test_package import (
     ALLOWLIST,
@@ -20,6 +22,13 @@ SKILL = ROOT / "plugins/skein-pi/skills/deep-review/SKILL.md"
 sys.path.insert(0, str(ROOT / "plugins/skein-pi/lib"))
 
 import review_gauntlet
+from test_review import (
+    assert_decision_packet_contract,
+    decision_command_fixture,
+    exercise_decision_selection,
+    selector_output,
+    selector_status,
+)
 
 
 def test_deep_review_is_registered_after_readiness_review():
@@ -235,6 +244,7 @@ def test_deep_review_bundles_canonical_required_scripts():
     names = {
         "audit-auto-fix-eligibility.sh",
         "collect-lens-results.sh",
+        "decisions-active.sh",
         "lens-budget.sh",
         "persist-deep-review-state.sh",
         "persist-lens-result.sh",
@@ -243,10 +253,113 @@ def test_deep_review_bundles_canonical_required_scripts():
     assert names <= {path.name for path in bundled.iterdir() if path.is_file()}
     for name in names:
         assert (bundled / name).read_bytes() == (ROOT / "scripts" / name).read_bytes()
-    for name in ("auto-fix-common.sh", "lens-common.sh", "persist-common.sh"):
+    for name in (
+        "auto-fix-common.sh",
+        "lens-common.sh",
+        "persist-common.sh",
+        "decisions-common.sh",
+    ):
         assert (bundled / "lib" / name).read_bytes() == (
             ROOT / "scripts/lib" / name
         ).read_bytes()
+
+
+def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
+    assert_decision_packet_contract(SKILL, "Architecture", all_active=True)
+    text = SKILL.read_text()
+    for phrase in (
+        "run it once with `--all-active`: it derives no paths, takes no range and reads no stdin",
+        "a record binds only if at least one of its `Applies to` globs matches a file changed in the diff the worker reviews",
+        "Tell the architecture worker that the block holds every active record, not only those that apply",
+        "Decision records omitted: N of M active records shown; coverage is partial.",
+        "`--continue` remains unsupported",
+        "untracked and ignored files are not part of it, and the selector still reads records from them",
+        "Decision records: untracked or ignored records under docs/decisions are outside the reviewed scope",
+    ):
+        assert phrase in text, phrase
+    for removed in (
+        "--range-stdin",
+        "SKEIN_RANGE",
+        "--uncommitted",
+        "--two-dot",
+        "decision-paths",
+        "DECISION_PATHS",
+        "--paths-stdin",
+        "SKEIN_PATHS",
+    ):
+        assert removed not in text, removed
+    exercise_decision_selection(SKILL, tmp_path)
+
+
+def test_deep_review_all_active_command_yields_every_active_record(tmp_path):
+    """The decision-paths removal (option b). Old invariant: the Pi skill fed
+    the selector the paths decision-paths.sh read from the packet's diff. New
+    invariant: its one selector command runs --all-active with no path, so
+    under bash and zsh it yields every active record (an independent read of
+    the Status headers), never a superseded one, whatever the reviewed diff;
+    a path-matching mutant of the same command drops a record."""
+    repo, env, commands = decision_command_fixture(SKILL, tmp_path)
+    selector_commands = [c for c in commands if '"$SELECTOR"' in c]
+    assert len(selector_commands) == 1, selector_commands
+    command = selector_commands[0]
+    assert '"$SELECTOR" --temp-output --all-active || selector_exit=$?' in command
+    records = repo / "docs/decisions"
+    records.mkdir(parents=True)
+    (repo / "docs/dev_plans").mkdir()
+    (repo / "docs/dev_plans/source.md").write_text("# Source\n")
+
+    def record(name, applies, status="active", supersedes="none", successor="none"):
+        (records / name).write_text(
+            f"# Choice\n\n**Status**: {status}\n**Date**: 2026-11-22\n"
+            f"**Applies to**: {applies}\n"
+            f"**Supersedes**: {supersedes}\n**Superseded by**: {successor}\n"
+            "**Source plan**: docs/dev_plans/source.md\n\n"
+            "## Decision\nKeep it.\n## Why\nBecause.\n"
+        )
+
+    record("20261101-old.md", "src/*", "superseded", successor="20261102-new.md")
+    record("20261102-new.md", "src/*", supersedes="20261101-old.md")
+    record("20261103-far.md", "nowhere/*")
+    want = sorted(
+        path.name
+        for path in records.iterdir()
+        if "**Status**: active\n" in path.read_text()
+    )
+    assert want == ["20261102-new.md", "20261103-far.md"]
+    tmpdir = tmp_path / "tmpdir"
+    tmpdir.mkdir()
+    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
+
+    def selected(script, shell):
+        result = subprocess.run(
+            [shell, "-e", "-c", script],
+            cwd=repo,
+            env={**env, "TMPDIR": str(tmpdir)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert selector_status(result) == 0, (shell, result.stderr)
+        named = Path(selector_output(result))
+        assert named.parent == tmpdir and named.stat().st_mode & 0o777 == 0o600
+        text = named.read_text()
+        named.unlink()
+        return sorted(
+            re.findall(r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE)
+        )
+
+    for shell in shells:
+        assert selected(command, shell) == want, shell
+    mutant = command.replace("--all-active", "-- src/x.py")
+    assert mutant != command
+    assert selected(mutant, "/bin/bash") == ["20261102-new.md"], "mutant drops a record"
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "--ignored", "--", "."],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert ".deep-review" not in status.stdout, "the command writes no state"
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

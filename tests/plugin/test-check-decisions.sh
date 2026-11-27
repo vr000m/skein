@@ -1,0 +1,591 @@
+#!/usr/bin/env bash
+# Fixture test for scripts/check-decisions.sh: a good record graph passes and
+# each way a graph can be broken fails with its own message (invariant I2).
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+CHECK="$REPO_ROOT/scripts/check-decisions.sh"
+
+PASS_COUNT=0
+FAIL_COUNT=0
+
+pass() {
+	PASS_COUNT=$((PASS_COUNT + 1))
+	echo "ok: $1"
+}
+
+fail() {
+	FAIL_COUNT=$((FAIL_COUNT + 1))
+	echo "FAIL: $1" >&2
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# record <root> <name> <status> <applies> <supersedes> <superseded_by> <plan>
+record() {
+	local root="$1" name="$2"
+	mkdir -p "$root/docs/decisions"
+	cat >"$root/docs/decisions/$name" <<EOF
+# Decision $name
+
+**Status**: $3
+**Date**: 2026-11-24
+**Applies to**: $4
+**Supersedes**: $5
+**Superseded by**: $6
+**Source plan**: $7
+
+## Decision
+Keep it.
+## Why
+Because.
+## Alternatives rejected
+None.
+## Consequences
+None.
+EOF
+}
+
+# fresh <label>: a root holding the source plan every record points at.
+fresh() {
+	local root="$tmp/$1"
+	mkdir -p "$root/docs/dev_plans"
+	: >"$root/docs/dev_plans/plan.md"
+	printf '%s\n' "$root"
+}
+
+PLAN=docs/dev_plans/plan.md
+
+# expect_ok <label> <root>
+expect_ok() {
+	local out rc=0
+	out="$("$CHECK" "$2" 2>&1)" || rc=$?
+	if [[ $rc -eq 0 && -z "$out" ]]; then
+		pass "$1"
+	else
+		fail "$1 (exit $rc, output: $out)"
+	fi
+}
+
+# expect_fail <label> <root> <message fragment>
+expect_fail() {
+	local out rc=0
+	out="$("$CHECK" "$2" 2>&1)" || rc=$?
+	if [[ $rc -eq 1 && "$out" == *"$3"* ]]; then
+		pass "$1"
+	else
+		fail "$1 (want exit 1 naming '$3'; got exit $rc, output: $out)"
+	fi
+}
+
+# Good graph: a superseded record, its active successor, and an unrelated one.
+root="$(fresh good)"
+record "$root" 20260101-old.md superseded 'src/*' none 20260201-new.md "$PLAN"
+record "$root" 20260201-new.md active 'src/*, docs/*.md' 20260101-old.md none "$PLAN"
+record "$root" 20260301-other.md active 'scripts/*' none none "$PLAN"
+printf '# Decisions\n' >"$root/docs/decisions/README.md"
+expect_ok "good graph passes (README.md is not parsed as a record)" "$root"
+record "$root" 20260201-new.md superseded 'src/*' 20260101-old.md 20260401-latest.md "$PLAN"
+record "$root" 20260401-latest.md active 'src/*' 20260201-new.md none "$PLAN"
+expect_ok "a longer chain ending in an active record passes" "$root"
+
+root="$(fresh readme-only)"
+mkdir -p "$root/docs/decisions"
+printf '# Decisions\n' >"$root/docs/decisions/README.md"
+expect_ok "a folder holding only README.md passes" "$root"
+
+root="$(fresh no-folder)"
+expect_ok "an absent docs/decisions passes" "$root"
+
+# Each broken case gets its own root so one fixture cannot mask another.
+root="$(fresh missing-header)"
+record "$root" 20260101-a.md active 'src/*' none none "$PLAN"
+sed -i.bak '/^\*\*Date\*\*/d' "$root/docs/decisions/20260101-a.md"
+expect_fail "missing header" "$root" "missing header Date"
+
+root="$(fresh empty-header)"
+record "$root" 20260101-a.md active '' none none "$PLAN"
+expect_fail "empty header value" "$root" "missing header Applies to"
+
+root="$(fresh bad-status)"
+record "$root" 20260101-a.md draft 'src/*' none none "$PLAN"
+expect_fail "invalid Status" "$root" "invalid Status 'draft'"
+
+root="$(fresh dangling-supersedes)"
+record "$root" 20260101-a.md active 'src/*' 20260909-gone.md none "$PLAN"
+expect_fail "dangling Supersedes link" "$root" "Supersedes '20260909-gone.md' does not resolve"
+
+root="$(fresh dangling-superseded-by)"
+record "$root" 20260101-a.md superseded 'src/*' none 20260909-gone.md "$PLAN"
+expect_fail "dangling Superseded by link" "$root" "Superseded by '20260909-gone.md' does not resolve"
+
+root="$(fresh non-reciprocal)"
+record "$root" 20260101-old.md superseded 'src/*' none none "$PLAN"
+record "$root" 20260201-new.md active 'src/*' 20260101-old.md none "$PLAN"
+expect_fail "non-reciprocal link" "$root" "is not reciprocal"
+
+root="$(fresh active-superseded)"
+record "$root" 20260101-old.md active 'src/*' none 20260201-new.md "$PLAN"
+record "$root" 20260201-new.md active 'src/*' 20260101-old.md none "$PLAN"
+expect_fail "active but superseded" "$root" "active record is superseded"
+
+root="$(fresh dangling-plan)"
+record "$root" 20260101-a.md active 'src/*' none none docs/dev_plans/nope.md
+expect_fail "dangling Source plan link" "$root" "Source plan 'docs/dev_plans/nope.md' does not resolve"
+
+root="$(fresh glob-star-star)"
+record "$root" 20260101-a.md active 'src/**/x.sh' none none "$PLAN"
+expect_fail "unsupported ** glob" "$root" "'**' is not supported"
+
+# The dialect is literal characters from [A-Za-z0-9._/@+=:%~ -], `*` and `?`.
+# Brackets, backslashes, braces and extended-pattern characters are refused
+# outright, so no glob means one thing on bash 3.2 and another on bash 5. Each
+# row is judged by the validator under the default bash and /bin/bash.
+BAD_CHAR="a character outside letters, digits, spaces"
+glob_scan_rows=(
+	"ok|src/*.sh, docs/?.md, a-b_c/@x+y=z:w%v~u.md, with space/*"
+	"fail|src/*.{sh,py}|$BAD_CHAR"
+	"fail|?(src)/x|$BAD_CHAR"
+	"fail|!(src)/x|$BAD_CHAR"
+	"fail|docs/(draft).md|$BAD_CHAR"
+	"fail|src/[ab].py|$BAD_CHAR"
+	"fail|src/x]|$BAD_CHAR"
+	"fail|docs/foo\\ |$BAD_CHAR"
+	"fail|x[**]y|$BAD_CHAR"
+	"fail|a\$b|$BAD_CHAR"
+	"fail|x*y**|'**' is not supported"
+	"fail|/src/*|starts with '/'"
+	"fail|/|starts with '/'"
+	"fail|src//cache/*|('//')"
+	"fail|src/cache//|('//')"
+	"fail|./src/*|'.' or '..' path component"
+	"fail|./|'.' or '..' path component"
+	"fail|.|'.' or '..' path component"
+	"fail|..|'.' or '..' path component"
+	"fail|src/./cache/*|'.' or '..' path component"
+	"fail|src/../cache/*|'.' or '..' path component"
+	"fail|src/.|'.' or '..' path component"
+	"fail|docs/./|'.' or '..' path component"
+	"ok|src/cache/*"
+	"ok|src/*/store.py"
+	"ok|docs/"
+	"ok|*.md"
+	"ok|.github/*"
+	"ok|a.b/c"
+	"ok|.../x, a/..., .a/b, src/.a, *./x, x/.*"
+)
+glob_bashes=(bash)
+[[ -x /bin/bash ]] && glob_bashes+=(/bin/bash)
+for row in "${glob_scan_rows[@]}"; do
+	verdict="${row%%|*}"
+	rest="${row#*|}"
+	glob="${rest%%|*}"
+	root="$(fresh "glob-scan-$RANDOM")"
+	record "$root" 20260101-a.md active "$glob" none none "$PLAN"
+	if [[ "$verdict" == ok ]]; then
+		expect_ok "dialect accepts '$glob'" "$root"
+	else
+		expect_fail "dialect rejects '$glob'" "$root" "${rest#*|}"
+	fi
+	want=0
+	[[ "$verdict" == ok ]] || want=1
+	for gb in "${glob_bashes[@]}"; do
+		grc=0
+		"$gb" "$CHECK" "$root" >/dev/null 2>&1 || grc=$?
+		if [[ $grc -ne $want ]]; then
+			fail "[$gb] dialect verdict for '$glob': exit $grc, want $want"
+		fi
+	done
+done
+
+root="$(fresh glob-empty-entry)"
+record "$root" 20260101-a.md active 'src/*,,docs/*' none none "$PLAN"
+expect_fail "empty entry in Applies to" "$root" "empty glob"
+
+root="$(fresh link-escapes-folder)"
+record "$root" 20260101-a.md active 'src/*' ../dev_plans/plan.md none "$PLAN"
+expect_fail "a Supersedes link may not leave the folder" "$root" "does not resolve"
+
+root="$(fresh link-to-readme)"
+mkdir -p "$root/docs/decisions"
+printf '# Decisions\n' >"$root/docs/decisions/README.md"
+record "$root" 20260101-a.md active 'src/*' README.md none "$PLAN"
+expect_fail "README.md is not a link target" "$root" "does not resolve"
+
+root="$(fresh link-to-non-record)"
+record "$root" 20260101-old.md superseded 'src/*' none successor.txt "$PLAN"
+record "$root" successor.txt active 'src/*' 20260101-old.md none "$PLAN"
+expect_fail "a reciprocal successor must be in the record inventory" "$root" "Superseded by 'successor.txt' does not resolve"
+
+root="$(fresh cyclic)"
+record "$root" 20260101-a.md superseded 'src/*' 20260102-b.md 20260102-b.md "$PLAN"
+record "$root" 20260102-b.md superseded 'src/*' 20260101-a.md 20260101-a.md "$PLAN"
+expect_fail "reciprocal links may not form a cycle" "$root" "20260101-a.md: supersession cycle"
+
+root="$(fresh self-link)"
+record "$root" 20260101-a.md superseded 'src/*' 20260101-a.md 20260101-a.md "$PLAN"
+expect_fail "a record cannot supersede itself" "$root" "supersession cycle"
+
+root="$(fresh outside-plan)"
+touch "$tmp/outside-plan.md"
+record "$root" 20260101-a.md active 'src/*' none none ../outside-plan.md
+expect_fail "a source plan cannot traverse outside the repo" "$root" "inside the repository"
+ln -s "$tmp/outside-plan.md" "$root/docs/dev_plans/outside.md"
+record "$root" 20260101-a.md active 'src/*' none none docs/dev_plans/outside.md
+expect_fail "a source plan symlink cannot resolve outside the repo" "$root" "inside the repository"
+ln -s plan.md "$root/docs/dev_plans/local.md"
+record "$root" 20260101-a.md active 'src/*' none none docs/dev_plans/local.md
+expect_ok "an in-repo source plan symlink still resolves" "$root"
+
+root="$(fresh symlink-record)"
+outside="$(fresh record-target)"
+record "$outside" 20260101-outside.md active 'src/*' none none "$PLAN"
+mkdir -p "$root/docs/decisions"
+ln -s "$outside/docs/decisions/20260101-outside.md" "$root/docs/decisions/20260101-link.md"
+expect_fail "the validator rejects a symlinked record" "$root" "expected a readable, regular, non-symlink file"
+
+# Every problem in a folder is reported in one run, not just the first.
+root="$(fresh multi)"
+record "$root" 20260101-a.md draft 'src/**' none none docs/dev_plans/nope.md
+out="$("$CHECK" "$root" 2>&1 || true)"
+count="$(grep -c '^20260101-a.md:' <<<"$out")"
+if [[ "$count" -ge 3 ]]; then
+	pass "all problems in a record are reported together"
+else
+	fail "all problems in a record are reported together (got $count lines: $out)"
+fi
+
+# --targets: the promotion write preflight. Each row is a root shape and the
+# targets a promotion would write; the verdict must be 0 only when every target
+# is `docs/dev_plans/<name>` or `docs/decisions/<name>` (one component matching
+# the record name grammar) and each ancestor below the root is a real, in-repo
+# directory. An unsafe target exits 3; a broken graph with safe targets exits 1.
+# targets_case <label> <want exit> <message fragment> <root> <target>...
+targets_case() {
+	local label="$1" want="$2" frag="$3" root="$4" out rc=0
+	shift 4
+	out="$("$CHECK" "$root" --targets -- "$@" 2>&1)" || rc=$?
+	if [[ $rc -eq $want && "$out" == *"$frag"* ]]; then
+		pass "targets: $label"
+	else
+		fail "targets: $label (want exit $want naming '$frag'; got exit $rc, output: $out)"
+	fi
+}
+SHAPE="expected docs/dev_plans/<name>.md or docs/decisions/<name>.md"
+outside_dir="$tmp/targets-outside"
+mkdir -p "$outside_dir/decisions"
+root="$(fresh targets-first)"
+targets_case "a first promotion into a real docs/ passes" 0 "" "$root" docs/decisions/README.md docs/decisions/20261125-x.md "$PLAN"
+root="$(fresh targets-existing)"
+record "$root" 20260101-old.md active 'src/*' none none "$PLAN"
+targets_case "existing real records and plan pass" 0 "" "$root" docs/decisions/20261125-x.md docs/decisions/20260101-old.md "$PLAN"
+root="$(fresh targets-linked-decisions)"
+ln -s "$outside_dir/decisions" "$root/docs/decisions"
+targets_case "a symlinked docs/decisions is refused" 3 "docs/decisions is a symlink" "$root" docs/decisions/20261125-x.md "$PLAN"
+root="$tmp/targets-linked-docs"
+mkdir -p "$root"
+ln -s "$outside_dir" "$root/docs"
+targets_case "a symlinked docs is refused" 3 "docs is a symlink" "$root" docs/decisions/20261125-x.md
+root="$(fresh targets-linked-record)"
+record "$root" 20260101-real.md active 'src/*' none none "$PLAN"
+ln -s "$outside_dir/decisions/x.md" "$root/docs/decisions/20261125-x.md"
+targets_case "a symlink at the new record path is refused" 3 "docs/decisions/20261125-x.md is a symlink" "$root" docs/decisions/20261125-x.md
+root="$(fresh targets-linked-plan)"
+ln -s plan.md "$root/docs/dev_plans/linked.md"
+targets_case "a symlinked source plan is refused as a write target" 3 "docs/dev_plans/linked.md is a symlink" "$root" docs/dev_plans/linked.md
+root="$(fresh targets-dotdot)"
+targets_case "a '..' component is refused" 3 "may leave the repository" "$root" docs/../../escape.md
+targets_case "a '..' after a missing directory is refused" 3 "may leave the repository" "$root" docs/missing/../../../escape.md
+targets_case "a '..' after a missing docs/decisions is refused" 3 "may leave the repository" "$root" docs/decisions/../../../escape.md
+targets_case "a trailing '..' is refused" 3 "may leave the repository" "$root" docs/missing/..
+targets_case "a name that only contains dots is allowed" 0 "" "$root" docs/decisions/a..b.md
+targets_case "an absolute path is refused" 3 "expected a repo-relative path" "$root" "$outside_dir/escape.md"
+mkdir -p "$root/docs/decisions/sub.md"
+targets_case "a directory at a record path is refused" 3 "expected a regular file" "$root" docs/decisions/sub.md
+root="$(fresh targets-file-parent)"
+mkdir -p "$root/docs"
+: >"$root/docs/decisions"
+targets_case "a file where docs/decisions should be is refused" 3 "docs/decisions is not a directory" "$root" docs/decisions/x.md
+# Scope: only the two promotion directories, one name component each.
+root="$(fresh targets-scope)"
+mkdir -p "$root/docs/decisions"
+for bad in .git/hooks/pre-commit -x.md README.md docs/decisions/-x.md docs/decisions/.x.md \
+	docs/decisions/.git docs/decisions/x.txt docs/decisions/sub/x.md docs/dev_plans/sub/p.md \
+	docs/other/x.md ./docs/decisions/x.md docs//decisions/x.md "docs/decisions/a b.md" \
+	docs/dev_plans/.git/x.md docs/decisions/.md; do
+	targets_case "a target outside the promotion scope is refused: $bad" 3 "$SHAPE" "$root" "$bad"
+done
+targets_case "one unsafe target fails a list of safe ones" 3 "-x.md: $SHAPE" "$root" docs/decisions/20261125-x.md -x.md "$PLAN"
+root="$(fresh targets-bad-graph)"
+record "$root" 20260101-a.md draft 'src/*' none none "$PLAN"
+targets_case "an invalid record graph with safe targets exits 1" 1 "invalid Status" "$root" docs/decisions/20261125-x.md
+targets_case "an unsafe target exits 3 even when the graph is also invalid" 3 "$SHAPE" "$root" .git/hooks/pre-commit
+# Round 7 (I1): containment runs before any record is read. Every record read
+# the validator makes outside bash builtins goes through `wc` or `tr`
+# (dec_has_nul), so PATH shims that log each call observe it. The safe-target
+# run proves the probe sees record reads; the unsafe-target run must log none.
+shim="$tmp/read-shim"
+mkdir -p "$shim"
+for tool in wc tr; do
+	printf '#!/bin/sh\necho %s >>"%s/reads.log"\nexec %s "$@"\n' "$tool" "$shim" "$(command -v "$tool")" >"$shim/$tool"
+	chmod +x "$shim/$tool"
+done
+root="$(fresh targets-read-order)"
+record "$root" 20260101-sentinel.md active 'src/*' none none "$PLAN"
+for cell in safe:0:docs/decisions/20261125-x.md unsafe:3:.git/hooks/pre-commit; do
+	label="${cell%%:*}"
+	want="${cell#*:}"
+	want="${want%%:*}"
+	rm -f "$shim/reads.log"
+	rc=0
+	PATH="$shim:$PATH" "$CHECK" "$root" --targets -- "${cell##*:}" >/dev/null 2>&1 || rc=$?
+	reads=0
+	[[ -f "$shim/reads.log" ]] && reads="$(wc -l <"$shim/reads.log" | tr -d '[:space:]')"
+	if [[ "$label" == safe && $rc -eq 0 && $reads -gt 0 ]] || [[ "$label" == unsafe && $rc -eq 3 && $reads -eq 0 ]]; then
+		pass "targets: read order, $label target: exit $rc after $reads record reads"
+	else
+		fail "targets: read order, $label target: exit $rc (want $want) after $reads record reads"
+	fi
+done
+rc=0
+"$CHECK" "$root" --targets >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+	pass "--targets with no path is a usage error"
+else
+	fail "--targets with no path is a usage error (exit $rc)"
+fi
+
+# --targets-file: the same preflight with the targets read from a file or
+# stdin, never the command line. A quoted here-document carries a hostile name
+# as data: it is refused (exit 3) and nothing in it runs.
+# targets_file_case <label> <want exit> <message fragment> <root> <file>
+targets_file_case() {
+	local label="$1" want="$2" frag="$3" root="$4" file="$5" rc=0 out
+	out="$("$CHECK" "$root" --targets-file "$file" 2>&1 <"${6:-/dev/null}")" || rc=$?
+	if [[ $rc -eq $want && "$out" == *"$frag"* ]]; then
+		pass "targets-file: $label"
+	else
+		fail "targets-file: $label (want exit $want naming '$frag'; got exit $rc, output: $out)"
+	fi
+}
+root="$(fresh targets-file)"
+mkdir -p "$root/docs/decisions"
+printf '%s\n' docs/decisions/20261125-x.md docs/decisions/README.md "$PLAN" >"$tmp/targets.txt"
+targets_file_case "a newline-delimited file of safe targets passes" 0 "" "$root" "$tmp/targets.txt"
+printf '%s\0' docs/decisions/20261125-x.md "$PLAN" >"$tmp/targets.z"
+targets_file_case "a NUL-delimited file of safe targets passes" 0 "" "$root" "$tmp/targets.z"
+printf '%s\n\n%s\n' docs/decisions/20261125-x.md -x.md >"$tmp/targets-bad.txt"
+targets_file_case "an unsafe target in the file exits 3" 3 "-x.md: $SHAPE" "$root" "$tmp/targets-bad.txt"
+: >"$tmp/targets-empty.txt"
+targets_file_case "an empty targets file is a usage error" 2 "" "$root" "$tmp/targets-empty.txt"
+ln -s "$tmp/targets.txt" "$tmp/targets-link.txt"
+targets_file_case "a symlinked targets file is refused" 2 "cannot read" "$root" "$tmp/targets-link.txt"
+targets_file_case "a missing targets file is refused" 2 "cannot read" "$root" "$tmp/no-such-file"
+# Fresh-ledger round 3: in a UTF-8 locale, a NUL-delimited target after a name
+# ending in an incomplete multibyte sequence (0xCD) is still read and checked
+# on every bash (an unpatched Bash 5.2 can otherwise skip that NUL and leave
+# the next target unchecked). The unsafe second target must exit 3.
+utf8_locale=""
+# grep -q would close the pipe early and fail `locale -a` under pipefail.
+all_locales="$(locale -a 2>/dev/null || true)"
+for l in C.UTF-8 en_US.UTF-8 C.utf8 en_US.utf8; do
+	if grep -qx "$l" <<<"$all_locales"; then
+		utf8_locale="$l"
+		break
+	fi
+done
+if [[ -z "$utf8_locale" ]]; then
+	pass "targets-file: no UTF-8 locale installed: the invalid-multibyte case is skipped"
+else
+	printf 'docs/decisions/20261125-a\315.md\0-x.md\0' >"$tmp/targets-mb.z"
+	mb_bashes=(bash)
+	[[ -x /bin/bash ]] && mb_bashes+=(/bin/bash)
+	for b in "${mb_bashes[@]}"; do
+		rc=0
+		out="$(LC_ALL="$utf8_locale" "$b" "$CHECK" "$root" --targets-file "$tmp/targets-mb.z" 2>&1)" || rc=$?
+		if [[ $rc -eq 3 && "$out" == *"-x.md: $SHAPE"* ]]; then
+			pass "targets-file: $b $utf8_locale: a target after an invalid multibyte name is checked"
+		else
+			fail "targets-file: $b $utf8_locale: target after invalid multibyte name: exit $rc, output $out"
+		fi
+	done
+fi
+printf '%s\n' docs/decisions/20261125-x.md "$PLAN" >"$tmp/targets-stdin.txt"
+targets_file_case "stdin (-) is read" 0 "" "$root" - "$tmp/targets-stdin.txt"
+rc=0
+# shellcheck disable=SC2016  # the metacharacters are the test data
+out="$(
+	cd "$root" && "$CHECK" --targets-file - 2>&1 <<'EOF'
+docs/decisions/x$(touch pwned).md
+docs/decisions/20261125-x.md
+EOF
+)" || rc=$?
+# shellcheck disable=SC2016  # literal expected text
+if [[ $rc -eq 3 && ! -e "$root/pwned" && "$out" == *'docs/decisions/x$(touch pwned).md: '"$SHAPE"* ]]; then
+	pass "targets-file: a hostile name in a quoted here-document is refused as data and never runs"
+else
+	fail "targets-file: hostile here-document name: exit $rc, pwned $([[ -e "$root/pwned" ]] && echo yes || echo no), output $out"
+fi
+rc=0
+"$CHECK" "$root" --targets-file >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+	pass "--targets-file with no file is a usage error"
+else
+	fail "--targets-file with no file is a usage error (exit $rc)"
+fi
+
+# Usage errors.
+rc=0
+"$CHECK" --bad >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 2 ]]; then
+	pass "an option is a usage error (exit 2)"
+else
+	fail "an option is a usage error (exit $rc)"
+fi
+
+# The repo's own records, when any exist, must validate.
+if "$CHECK" "$REPO_ROOT" >/dev/null 2>&1; then
+	pass "this repository's docs/decisions validates"
+else
+	fail "this repository's docs/decisions validates"
+fi
+
+# Round 9 A (I1): exit 1 means only "every target safe, graph invalid", which
+# the Plan Name Gate passes. A failing mktemp used to exit 1 under set -e before
+# any target was checked, so a symlinked plan passed the gate. Now any
+# unexpected failure is exit 4 with a fixed reason, which the gate refuses.
+# A `mktemp` shim fails; the gate model passes only 0 or 1.
+mkdir -p "$tmp/r9-mktemp"
+printf '#!/bin/sh\nexit 1\n' >"$tmp/r9-mktemp/mktemp"
+chmod +x "$tmp/r9-mktemp/mktemp"
+root="$(fresh r9-internal)"
+ln -s plan.md "$root/docs/dev_plans/linked.md"
+r9_bashes=(bash)
+[[ -x /bin/bash ]] && r9_bashes+=(/bin/bash)
+for b in "${r9_bashes[@]}"; do
+	for plan in docs/dev_plans/plan.md docs/dev_plans/linked.md; do
+		rc=0
+		(cd "$root" && PATH="$tmp/r9-mktemp:$PATH" "$b" "$CHECK" --targets-file - >/dev/null 2>"$tmp/r9-err" <<<"$plan") || rc=$?
+		gate=refused
+		[[ $rc -eq 0 || $rc -eq 1 ]] && gate=passed
+		if [[ $rc -eq 4 && $gate == refused && "$(cat "$tmp/r9-err")" == 'check-decisions.sh: CHECK-DECISIONS-INTERNAL' ]]; then
+			pass "R9A: mktemp failure on $b ($plan): exit 4, CHECK-DECISIONS-INTERNAL, gate refuses"
+		else
+			fail "R9A: mktemp failure on $b ($plan): exit $rc, gate $gate, stderr '$(cat "$tmp/r9-err")'"
+		fi
+	done
+	# Without the shim the documented statuses are unchanged (and below, every
+	# update-docs mirror's gate refuses exit 4 in words).
+	rc=0
+	(cd "$root" && "$b" "$CHECK" --targets-file - >/dev/null 2>&1 <<<docs/dev_plans/linked.md) || rc=$?
+	if [[ $rc -eq 3 ]]; then
+		pass "R9A: on $b a symlinked plan still exits 3 without the shim"
+	else
+		fail "R9A: on $b a symlinked plan exits $rc without the shim (want 3)"
+	fi
+done
+for mirror in skein skein-codex skein-pi; do
+	skill="$REPO_ROOT/plugins/$mirror/skills/update-docs/SKILL.md"
+	# shellcheck disable=SC2016  # literal skill text
+	if grep -qF '`4` (`check-decisions.sh: CHECK-DECISIONS-INTERNAL` on stderr: the validator failed internally before it checked the plan) as `plan check failed (exit 4, internal)`' "$skill" &&
+		grep -qF 'Any other exit refuses the plan: read nothing from it' "$skill" &&
+		! grep -qF 'so the plan is unsafe and refused the same way' "$skill" &&
+		grep -qF 'Any other exit (`4`, `check-decisions.sh: CHECK-DECISIONS-INTERNAL`: the validator failed internally before it checked every path' "$skill"; then
+		pass "R9A: $mirror update-docs refuses exit 4 at the gate and the step 1 preflight"
+	else
+		fail "R9A: $mirror update-docs does not refuse exit 4 at the gate and the step 1 preflight"
+	fi
+done
+
+# Each mirror's shipped format reference must equal the canonical README; a
+# missing copy is a failure in every mirror.
+# ref_parity_problems <root>: prints one line per missing or differing copy.
+ref_parity_problems() {
+	local root="$1" mirror ref
+	for mirror in skein skein-codex skein-pi; do
+		ref="$root/plugins/$mirror/skills/update-docs/references/decision-records.md"
+		if [[ ! -f "$ref" ]]; then
+			printf '%s update-docs/references/decision-records.md is missing\n' "$mirror"
+		elif ! cmp -s "$root/docs/decisions/README.md" "$ref"; then
+			printf '%s update-docs/references/decision-records.md differs from docs/decisions/README.md\n' "$mirror"
+		fi
+	done
+}
+problems_out="$(ref_parity_problems "$REPO_ROOT")"
+if [[ -z "$problems_out" ]]; then
+	pass "every mirror's update-docs/references/decision-records.md is byte-identical to docs/decisions/README.md"
+else
+	fail "reference parity: $problems_out"
+fi
+# The parity check itself must fail when a Codex or Pi copy is absent.
+for missing in skein-codex skein-pi; do
+	scratch="$tmp/parity-$missing"
+	mkdir -p "$scratch/docs/decisions"
+	cp "$REPO_ROOT/docs/decisions/README.md" "$scratch/docs/decisions/README.md"
+	for mirror in skein skein-codex skein-pi; do
+		[[ "$mirror" == "$missing" ]] && continue
+		mkdir -p "$scratch/plugins/$mirror/skills/update-docs/references"
+		cp "$REPO_ROOT/docs/decisions/README.md" "$scratch/plugins/$mirror/skills/update-docs/references/decision-records.md"
+	done
+	if [[ "$(ref_parity_problems "$scratch")" == "$missing update-docs/references/decision-records.md is missing" ]]; then
+		pass "a missing $missing reference copy fails the parity check"
+	else
+		fail "a missing $missing reference copy fails the parity check"
+	fi
+done
+
+# The Date header (code-review leftovers, item 2). Old invariant: any
+# non-empty Date passed. New invariant: Date is exactly YYYY-MM-DD in ASCII
+# digits and names a real calendar day (leap years included), else the
+# record fails with the `header` reason; the selector shares the check
+# (test-decisions-active.sh's agreement table). Table over the date space:
+# shape (separators, widths, trailing text, non-ASCII digits, the template)
+# x calendar (month 00 and 13, day 00, the last day of each month length,
+# 29 February in leap, century and non-leap years). Mutations: a shape-only
+# check and a check without the leap rule each fail the table.
+# date_cells <check-decisions.sh>: prints the failing cells.
+date_cells() {
+	local check="$1" cell value want root rc out
+	for cell in "2026-11-24|ok" "2026-01-31|ok" "2026-04-30|ok" "2024-02-29|ok" "2000-02-29|ok" "0001-12-31|ok" \
+		"2026-13-45|bad" "2026-00-10|bad" "2026-01-00|bad" "2026-04-31|bad" "2026-02-29|bad" "1900-02-29|bad" \
+		"2026-01-32|bad" "26-11-24|bad" "2026-1-24|bad" "2026/11/24|bad" "20261124|bad" "2026-11-24T00:00|bad" \
+		"2026-11-24 x|bad" "YYYY-MM-DD|bad" "$(printf '\357\274\222')026-11-24|bad" "2026-11-2a|bad"; do
+		value="${cell%|*}"
+		want="${cell##*|}"
+		root="$tmp/date-$RANDOM$RANDOM"
+		mkdir -p "$root/docs/dev_plans"
+		: >"$root/docs/dev_plans/plan.md"
+		record "$root" 20260101-a.md active 'src/*' none none "$PLAN"
+		DATE_VALUE="$value" perl -0pi -e 's/^\*\*Date\*\*: .*$/**Date**: $ENV{DATE_VALUE}/m' "$root/docs/decisions/20260101-a.md"
+		rc=0
+		out="$("$check" "$root" 2>&1)" || rc=$?
+		if [[ $want == ok && ($rc -ne 0 || -n "$out") ]] ||
+			[[ $want == bad && ($rc -ne 1 || "$out" != *"20260101-a.md: invalid Date "*"(expected a YYYY-MM-DD calendar date)"*) ]]; then
+			echo "'$value' (want $want): exit $rc, $out"
+		fi
+	done
+}
+date_fail="$(date_cells "$CHECK")"
+if [[ -z "$date_fail" ]]; then
+	pass "Date must be a YYYY-MM-DD calendar date (22 cells: shape x calendar)"
+else
+	fail "Date validation: $(tr '\n' ';' <<<"$date_fail")"
+fi
+date_mutant() {
+	local dir="$tmp/date-mutant-$1"
+	mkdir -p "$dir/lib"
+	cp "$CHECK" "$dir/check-decisions.sh"
+	sed "$2" "$REPO_ROOT/scripts/lib/decisions-common.sh" >"$dir/lib/decisions-common.sh"
+	if ! cmp -s "$REPO_ROOT/scripts/lib/decisions-common.sh" "$dir/lib/decisions-common.sh" && [[ -n "$(date_cells "$dir/check-decisions.sh")" ]]; then
+		pass "mutation: a Date check $3 fails the date table"
+	else
+		fail "mutation: the date table does not catch a Date check $3"
+	fi
+}
+date_mutant shape 's/^	((d >= 1 \&\& d <= max))$/	true/' "that tests the shape only"
+date_mutant leap 's/^		if ((y % 4 == 0 \&\& (y % 100 != 0 || y % 400 == 0))); then$/		if ((y % 4 == 0)); then/' "without the century leap rule"
+
+echo "---"
+echo "passed: $PASS_COUNT, failed: $FAIL_COUNT"
+[[ $FAIL_COUNT -eq 0 ]]

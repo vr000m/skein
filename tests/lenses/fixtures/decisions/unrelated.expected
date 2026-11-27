@@ -1,0 +1,2 @@
+# Selector input: unrelated.paths. Exit 0, empty output: no record applies.
+# Both architecture lenses: an empty Active Decision Records block and no decision finding. This is genuine, not degraded coverage.

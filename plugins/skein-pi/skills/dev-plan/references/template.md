@@ -13,7 +13,7 @@ Use this template when creating new development plans.
 **Branch**: [branch-name]
 **Created**: YYYY-MM-DD
 **Completed**: YYYY-MM-DD (fill when done)
-**Review Gates**: none | quick | full (optional, default `none` - above-marker header field; `/conduct`/`/fan-out` read it to decide whether to auto-chain `review-gauntlet`. The `quick` value is Codex-only; Claude-side `conduct`/`fan-out` readers treat it as `none` with a warning. Changing it after `/review-plan` invalidates the marker hash, same as any other header-contract edit.)
+**Review Gates**: none | full (optional, default `none` — above-marker header field; `/conduct`/`/fan-out` read it to decide whether to auto-chain `review-gauntlet`. Changing it after `/review-plan` invalidates the marker hash, same as any other header-contract edit.)
 
 ## Objective
 
@@ -194,6 +194,10 @@ Per-phase completion tracked here so ticking a box during a run does not bust th
 Durable notes that survive after the run: diagnostic query results (with explicit filters stated), decision rationale, "checked / accepted behaviour" outcomes. Group by phase if useful.
 
 - (append findings here as work proceeds)
+
+## Promoted Decisions
+
+Links to the `docs/decisions/` records `/update-docs` promoted from this plan, one line per approved record. This section sits below the marker, so adding a link does not invalidate the review.
 
 ## Issues & Solutions
 

@@ -68,6 +68,15 @@ def test_pi_plan_assets_match_canonical_templates():
         assert (target / name).read_bytes() == (source / name).read_bytes()
 
 
+def test_pi_promoted_decisions_heading_is_below_marker():
+    source = ROOT / "plugins/skein-codex/skills/dev-plan/template.md"
+    target = ROOT / "plugins/skein-pi/skills/dev-plan/references/template.md"
+    assert target.read_bytes() == source.read_bytes()
+    text = target.read_text()
+    assert text.count("## Promoted Decisions") == 1
+    assert text.index("<!-- reviewed:") < text.index("## Promoted Decisions")
+
+
 def test_dev_plan_create_and_update_require_approval_and_fresh_target():
     dev_plan = (ROOT / DEV_PLAN).read_text()
     create = dev_plan.index("6. Show the full proposed file/path")

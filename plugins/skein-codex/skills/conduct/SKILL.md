@@ -371,6 +371,21 @@ After the CI-parity gate resolves (or is skipped/not activated), at the point wh
 - conduct treats those commits exactly as any other follow-up commits landed during handback: the next `--resume` preflight refreshes `state.resume_base_sha = git rev-parse HEAD`, folding the gauntlet's commits into the new baseline for the rogue-commit check.
 - conduct does not rewrite any completed phase's frozen `commit_sha` to account for the gauntlet's commits, and does not treat the gauntlet's commits as rogue. The rogue-commit check only fires on HEAD movement observed during a phase's subagent work; the gauntlet runs after the last phase boundary, outside every phase's subagent window.
 
+## Completion Handback
+
+Only on the healthy terminal path, where conduct sets `status = complete` after the CI-parity gate and after any selected `review-gauntlet` auto-chain has returned clean, end the final handback with this line:
+
+```
+Next: run /update-docs to sync the docs and offer decision-record promotion.
+```
+
+Use this line on each healthy terminal route:
+- Absent field or `none`: once CI parity resolves, with no gauntlet run.
+- `quick`: once the gate 1 review returns clean.
+- `full`: once the Codex gate matrix returns clean.
+
+The pointer is text only: conduct never invokes the update-docs skill itself. Print it after any comment notices (Step 9a) and the gauntlet's terminal report. Leave it out of the Step 9a intermediate phase summary, every Step 9b hard-stop handback, a `ci_failed` handback and a non-clean `review-gauntlet` handback: the work is not finished on those routes.
+
 ## Fallbacks
 
 - Missing `Impl files:` / `Test files:` → sequential spawn (Step 2).

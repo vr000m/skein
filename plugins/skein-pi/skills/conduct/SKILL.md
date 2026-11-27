@@ -83,3 +83,27 @@ phase handback, or as one notice block per phase boundary in autonomous mode.
 This is best-effort transcript text, not persisted, and may be lost on `--resume`.
 Never expose credentials or raw worker event streams. The command never
 publishes, pushes, creates worktrees, or invokes release operations.
+
+## Completion Handback
+
+Only when all declared phases, tests/validation and approval/verification
+requirements are complete, end the healthy terminal handback with this line,
+after any validated comment notices:
+
+```
+Next: run /skill:skein-update-docs to sync the docs and offer decision-record promotion.
+```
+
+The pointer is text only: conduct never invokes the update-docs skill itself.
+Use these route rules; no automatic chain or new execution modes are added:
+
+| Handback route | Completion pointer |
+|---|---|
+| Healthy terminal: all declared phases, tests/validation and approval/verification complete | Print after comment notices |
+| Intermediate phase summary: more phases remain | Omit |
+| Blocked: tests or validation failed, or a required step is unresolved | Omit |
+| Declined: worker, patch or commit approval was declined or unanswered | Omit |
+| Degraded: unavailable worker, partial result, skipped tests or unverified patch | Omit |
+
+Keep the ordinary phase handback and its `Excuse:` / `Decision candidate:`
+notices on every route; a completion pointer never replaces them.

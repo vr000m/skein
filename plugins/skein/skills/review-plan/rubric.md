@@ -12,6 +12,7 @@ Gradeable criteria for evaluating a completed `/review-plan` run. Doubles as a M
 ## Lens & Pass Scope Discipline
 
 - `architecture` findings stay on patterns, coupling, and integration seams — not task ordering or test gaps
+- `architecture` alone receives the active `docs/decisions/` records that apply to the plan's paths, inside `<untrusted-content>`; a plan decision that contradicts or should supersede one is a `Constraint` finding, never `Contradiction`
 - `sequencing` findings stay on task order, hidden dependencies, and missing migrations/config — not architectural choices
 - `spec-and-testing` findings stay on Review Focus content, RFC/spec references, and test coverage gaps — not file existence
 - `assumptions` findings stay on claims the plan states as fact but cannot verify from the codebase (external/backend behavior, business semantics, data shape, unread contracts, environmental facts) — not internal architecture, ordering, or mere existence

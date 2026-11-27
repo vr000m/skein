@@ -128,6 +128,136 @@ assert_grep "$SKILL_MD" '(not|without).*rewrit(e|ing).*commit_sha|commit_sha.*(n
 assert_grep "$SKILL_MD" 'review-gauntlet' \
 	"SKILL.md's handback/terminal prose references \`review-gauntlet\` (automated path)"
 
+# --- /update-docs pointer: healthy terminal handback only ---------------
+
+# section FILE HEADING — the exact heading line through the line before the
+# next heading of the same or a higher level.
+section() {
+	awk -v h="$2" '
+		$0 == h { on = 1; split(h, p, " "); level = length(p[1]); print; next }
+		on && /^#+ / { split($0, q, " "); if (length(q[1]) <= level) exit }
+		on
+	' "$1"
+}
+
+# assert_section_lacks FILE HEADING LABEL — the section exists and has no pointer.
+assert_section_lacks() {
+	local file="$1" heading="$2" label="$3"
+	local text
+	text="$(section "$file" "$heading")"
+	if [[ -z "$text" ]]; then
+		fail "$label (section not found: $heading)"
+	elif grep -q '/update-docs' <<<"$text"; then
+		fail "$label (/update-docs found in: $heading)"
+	else
+		pass "$label"
+	fi
+}
+
+completion="$(section "$SKILL_MD" '## Completion Handback')"
+pointer='Next: run /update-docs to sync the docs and offer decision-record promotion.'
+if grep -qxF "$pointer" <<<"$completion"; then
+	pass "healthy terminal path: the completion handback carries the /update-docs pointer"
+else
+	fail "healthy terminal path: the completion handback lacks the line: $pointer"
+fi
+if grep -q 'status = complete' <<<"$completion" && grep -q 'review-gauntlet` auto-chain has returned clean' <<<"$completion"; then
+	pass "healthy terminal path: the pointer is gated on status = complete after a clean gauntlet"
+else
+	fail "healthy terminal path: the pointer is not gated on status = complete after a clean gauntlet"
+fi
+if grep -q 'conduct never invokes the update-docs skill itself' <<<"$completion"; then
+	pass "the pointer is text only, never an invocation"
+else
+	fail "the completion handback does not say the pointer is text only"
+fi
+
+# Placement: the pointer appears nowhere outside the completion section, and
+# that section follows the auto-chain, so it comes after any gauntlet run.
+outside="$(awk '$0 == "## Completion Handback" { skip = 1; next } skip && /^## / { skip = 0 } !skip' "$SKILL_MD" | grep -c '/update-docs' || true)"
+if [[ "$outside" -eq 0 ]]; then
+	pass "/update-docs appears only in the completion handback"
+else
+	fail "/update-docs appears $outside time(s) outside the completion handback"
+fi
+chain_line="$(grep -n '^## Review Gauntlet Auto-Chain$' "$SKILL_MD" | cut -d: -f1)"
+done_line="$(grep -n '^## Completion Handback$' "$SKILL_MD" | cut -d: -f1)"
+if [[ -n "$chain_line" && -n "$done_line" && "$done_line" -gt "$chain_line" ]]; then
+	pass "the completion handback follows the review-gauntlet auto-chain"
+else
+	fail "the completion handback does not follow the review-gauntlet auto-chain"
+fi
+
+assert_section_lacks "$SKILL_MD" '#### Step 9a — Phase success transition (autonomous-aware)' \
+	"intermediate route: the Step 9a phase summary has no /update-docs pointer"
+assert_section_lacks "$SKILL_MD" '#### Step 9b — Hard-stop handback' \
+	"blocked route: the Step 9b hard-stop handback has no /update-docs pointer"
+assert_section_lacks "$SKILL_MD" '## CI Parity Gate' \
+	"CI-failed route: the ci_failed handback has no /update-docs pointer"
+assert_section_lacks "$SKILL_MD" '## Review Gauntlet Auto-Chain' \
+	"non-clean gauntlet route: the non-clean gauntlet handback has no /update-docs pointer"
+# shellcheck disable=SC2016  # backticks are literal skill text
+for route in 'Step 9a intermediate phase summary' 'Step 9b hard-stop handback' '`ci_failed` handback' 'non-clean `review-gauntlet` handback'; do
+	if grep -qF "$route" <<<"$completion"; then
+		pass "the completion handback excludes the route: $route"
+	else
+		fail "the completion handback does not exclude the route: $route"
+	fi
+done
+
+CODEX_SKILL_MD="$ROOT_DIR/plugins/skein-codex/skills/conduct/SKILL.md"
+require_file "$CODEX_SKILL_MD" || exit 1
+codex_chain="$(section "$CODEX_SKILL_MD" '## Review Gauntlet Auto-Chain')"
+codex_completion="$(section "$CODEX_SKILL_MD" '## Completion Handback')"
+
+# One section name and level in every mirror: a top-level `## Completion
+# Handback` after the auto-chain, not nested in it (it also fires on the
+# no-gauntlet route).
+codex_chain_line="$(grep -n '^## Review Gauntlet Auto-Chain$' "$CODEX_SKILL_MD" | cut -d: -f1)"
+codex_done_line="$(grep -n '^## Completion Handback$' "$CODEX_SKILL_MD" | cut -d: -f1 || true)"
+if [[ -n "$codex_chain_line" && -n "$codex_done_line" && "$codex_done_line" -gt "$codex_chain_line" ]] &&
+	! grep -qE '^#+ Completion (Handback|pointer)$' <<<"$codex_chain" &&
+	[[ "$(grep -cF '/update-docs' "$CODEX_SKILL_MD")" -eq 1 ]] &&
+	grep -qxF "$pointer" <<<"$codex_completion"; then
+	pass "Codex: the pointer appears only in a top-level completion handback after the auto-chain"
+else
+	fail "Codex: the pointer must appear once, in a top-level ## Completion Handback after the auto-chain"
+fi
+for mirror_md in "$SKILL_MD" "$CODEX_SKILL_MD" "$ROOT_DIR/plugins/skein-pi/skills/conduct/SKILL.md"; do
+	if [[ "$(grep -cxF '## Completion Handback' "$mirror_md")" -eq 1 ]] &&
+		! grep -qE '^#+ Completion pointer$|^#{3,} Completion Handback$' "$mirror_md"; then
+		pass "$(basename "$(dirname "$(dirname "$(dirname "$mirror_md")")")"): one top-level ## Completion Handback heading"
+	else
+		fail "$mirror_md: the completion section is not exactly one top-level ## Completion Handback"
+	fi
+done
+
+# shellcheck disable=SC2016  # backticks are literal skill text
+for route in \
+	'Absent field or `none`: once CI parity resolves, with no gauntlet run.' \
+	'`quick`: once the gate 1 review returns clean.' \
+	'`full`: once the Codex gate matrix returns clean.'; do
+	if grep -qxF -- "- $route" <<<"$codex_completion" &&
+		grep -qxF "$pointer" <<<"$codex_completion"; then
+		pass "Codex healthy completion includes the pointer for $route"
+	else
+		fail "Codex healthy completion lacks the pointer for $route"
+	fi
+done
+
+assert_section_lacks "$CODEX_SKILL_MD" '#### Step 9a — Successful Phase Boundary' \
+	"Codex intermediate route: Step 9a has no pointer"
+assert_section_lacks "$CODEX_SKILL_MD" '#### Step 9b — Hard-Stop Handback' \
+	"Codex blocked route: Step 9b has no pointer"
+assert_section_lacks "$CODEX_SKILL_MD" '## CI Parity Gate' \
+	"Codex CI-failed route: the CI parity gate has no pointer"
+assert_section_lacks "$CODEX_SKILL_MD" '### Dispatch' \
+	"Codex non-clean gauntlet route: the auto-chain dispatch has no pointer"
+
+# Plan A's comment-notice handback stays intact.
+assert_grep "$SKILL_MD" '^\*\*Comment notices\.\*\* The implementer' \
+	"Step 9a keeps the comment-notice handback"
+
 # Sanity: guard against a gross truncation of the file passing the above
 # greps vacuously.
 if [[ -s "$SKILL_MD" ]]; then

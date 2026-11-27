@@ -54,6 +54,89 @@ def test_conduct_is_pi_native_sequential_and_main_owned():
         assert phrase in normalized, phrase
 
 
+def test_conduct_completion_pointer_is_terminal_text_after_comment_notices():
+    text = read_skill("conduct")
+    pointer = text.split("## Completion Handback", 1)[1]
+    normalized = " ".join(pointer.split())
+    assert (
+        "Only when all declared phases, tests/validation and approval/verification "
+        "requirements are complete"
+    ) in normalized
+    assert "after any validated comment notices" in normalized
+    assert (
+        "Next: run /skill:skein-update-docs to sync the docs and offer decision-record promotion."
+    ) in pointer
+    assert "text only: conduct never invokes the update-docs skill itself" in pointer
+    assert "no automatic chain or new execution modes" in pointer
+    assert "`Excuse:` / `Decision candidate:`" in pointer
+    assert "a completion pointer never replaces them" in pointer
+    assert (
+        "| Healthy terminal: all declared phases, tests/validation and approval/verification complete | Print after comment notices |"
+        in pointer
+    )
+
+
+POINTER = "Next: run /skill:skein-update-docs"
+
+
+def pointer_routes():
+    """Each route-table row of the Pi conduct completion pointer, as (route, rule)."""
+    section = read_skill("conduct").split("## Completion Handback", 1)[1]
+    rows = [
+        [cell.strip() for cell in line.strip().strip("|").split("|")]
+        for line in section.splitlines()
+        if line.startswith("| ") and not line.startswith("| Handback route")
+    ]
+    return {route.split(":", 1)[0]: rule for route, rule in rows}
+
+
+def test_conduct_pointer_is_emitted_only_by_the_healthy_terminal_route():
+    text = read_skill("conduct")
+    before, section = text.split("## Completion Handback", 1)
+    # One pointer line, inside the completion-pointer section, and no other
+    # handback instruction names the update-docs skill.
+    assert text.count(POINTER) == 1
+    assert POINTER in section
+    assert "skein-update-docs" not in before
+    routes = pointer_routes()
+    assert set(routes) == {
+        "Healthy terminal",
+        "Intermediate phase summary",
+        "Blocked",
+        "Declined",
+        "Degraded",
+    }
+    assert routes.pop("Healthy terminal") == "Print after comment notices"
+    assert set(routes.values()) == {"Omit"}, routes
+
+
+def test_conduct_intermediate_handback_omits_completion_pointer():
+    assert "| Intermediate phase summary: more phases remain | Omit |" in read_skill(
+        "conduct"
+    )
+
+
+def test_conduct_blocked_handback_omits_completion_pointer():
+    assert (
+        "| Blocked: tests or validation failed, or a required step is unresolved | Omit |"
+        in read_skill("conduct")
+    )
+
+
+def test_conduct_declined_handback_omits_completion_pointer():
+    assert (
+        "| Declined: worker, patch or commit approval was declined or unanswered | Omit |"
+        in read_skill("conduct")
+    )
+
+
+def test_conduct_degraded_handback_omits_completion_pointer():
+    assert (
+        "| Degraded: unavailable worker, partial result, skipped tests or unverified patch | Omit |"
+        in read_skill("conduct")
+    )
+
+
 def test_release_is_user_invoked_read_only_by_default():
     text = read_skill("release")
     assert "disable-model-invocation: true" in text

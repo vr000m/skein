@@ -61,6 +61,15 @@ for skill in "${BUNDLE_SKILLS[@]}"; do
 	check_bundle_dir "$ROOT_DIR/plugins/skein-codex/skills/$skill/scripts" "${bundle_files[@]}"
 done
 
+for skill in "${BUNDLE_DOCS_SKILLS[@]}"; do
+	bundle_files=()
+	while IFS= read -r extra; do
+		[[ -n "$extra" ]] && bundle_files+=("$extra")
+	done < <(bundle_docs_extra_for "$skill")
+	check_bundle_dir "$ROOT_DIR/plugins/skein/skills/$skill/scripts" "${bundle_files[@]}"
+	check_bundle_dir "$ROOT_DIR/plugins/skein-codex/skills/$skill/scripts" "${bundle_files[@]}"
+done
+
 if [[ "$BUNDLE_DIFF" -eq 1 ]]; then
 	echo "check-sync failed"
 	exit 1

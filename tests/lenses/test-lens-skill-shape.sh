@@ -884,7 +884,516 @@ else
 	fail "documentation lens fixture is a corrupt patch: git apply --numstat rejects it"
 fi
 
+# ---------------------------------------------------------------------------
+# Active decision records reach the architecture lenses only.
+# ---------------------------------------------------------------------------
+
+DECISION_SKILLS=(
+	"review-plan:$ROOT_DIR/plugins/skein/skills/review-plan/SKILL.md"
+	"deep-review:$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"
+	"review-plan:$ROOT_DIR/plugins/skein-codex/skills/review-plan/SKILL.md"
+	"deep-review:$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md"
+)
+
+decision_has() {
+	local text="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" <<<"$text"; then
+		pass "decisions ($dec_mirror/$dec_skill): $label"
+	else
+		fail "decisions ($dec_mirror/$dec_skill): $label"
+	fi
+}
+
+decision_lacks() {
+	local text="$1" pattern="$2" label="$3"
+	if grep -Eq -- "$pattern" <<<"$text"; then
+		fail "decisions ($dec_mirror/$dec_skill): $label"
+	else
+		pass "decisions ($dec_mirror/$dec_skill): $label"
+	fi
+}
+
+# Backticks in these patterns are literal Markdown, not expansions.
+# shellcheck disable=SC2016
+for dec_entry in "${DECISION_SKILLS[@]}"; do
+	dec_skill="${dec_entry%%:*}"
+	dec_md="${dec_entry#*:}"
+	dec_mirror="${dec_md#"$ROOT_DIR/plugins/"}"
+	dec_mirror="${dec_mirror%%/*}"
+	require_file "$dec_md" || continue
+	dec_all="$(cat "$dec_md")"
+	case "$dec_skill" in
+	review-plan)
+		dec_arch="$(awk '/^<!-- BEGIN GENERIC LENS PROMPT: architecture -->$/{f=1} f; /^<!-- END GENERIC LENS PROMPT: architecture -->$/{f=0}' "$dec_md")"
+		dec_others="$(awk '/^<!-- BEGIN GENERIC LENS PROMPT: /{f=($0 !~ /: architecture -->$/)} f; /^<!-- END GENERIC LENS PROMPT: /{f=0}' "$dec_md")"
+		decision_has "$dec_arch" '"category":"<category>"' "architecture finding record keeps the open category slot"
+		decision_has "$dec_arch" 'as a `Constraint` finding citing the record path' "a decision conflict is a Constraint finding"
+		decision_has "$dec_arch" '^- `category` — one of \{Assumption, Constraint, Ambiguity, Risk, Sequencing, Missing Task, Testing Gap, Nonexistent Reference, Contradiction\}\.' \
+			"architecture category vocabulary is unchanged"
+		decision_has "$dec_all" 'Collect every repo-relative path the plan names in its `\*\*Impl files:\*\*` lines and its `### Files to Modify` and `### New Files to Create` sections, and expand braces yourself' \
+			"paths come from the plan's file sections, brace-expanded"
+		decision_has "$dec_all" 'the architecture lens alone also gets the active decision records block' \
+			"Step 2's allowed inputs name the block for the architecture lens alone"
+		if [[ "$dec_mirror" == skein-codex ]]; then
+			decision_has "$dec_all" 'run the same lens prompts sequentially.*same allowed inputs, active decision records block' \
+				"the sequential fallback receives the same architecture input"
+		fi
+		decision_has "$dec_all" 'a plan that names no paths' "a plan with no paths is degraded coverage"
+		decision_has "$dec_all" 'a path that holds a newline cannot be one `p ` line, and its continuation line could equal `SKEIN_PATHS`' \
+			"a plan path holding a newline is never written into the here-document"
+		decision_has "$dec_all" 'treat the selection as `selector-exit=4` with `selector-output=` empty' "that path is refused with a stated exit"
+		;;
+	deep-review)
+		if [[ "$dec_mirror" == skein-codex ]]; then
+			dec_arch="$(awk '/^### Architecture Lens$/{f=1; next} /^### /{f=0} f' "$dec_md")"
+			dec_others="$(awk '/^### /{f=($0 ~ /Lens$/ && $0 !~ /Architecture Lens$/)} /^## /{f=0} f' "$dec_md")"
+			decision_has "$dec_arch" '^- `category`: `Architecture`$' "architecture category is unchanged"
+			decision_has "$dec_all" '"category":"<category>","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
+				"shared finding record shape is unchanged"
+			decision_has "$dec_all" '^below\. Only the Architecture Lens also takes active decision records' \
+				"the lens prompt input is optional and architecture-only"
+		else
+			dec_arch="$(awk '/^#### Architecture Lens/{f=1; next} /^#### /{f=0} f' "$dec_md")"
+			dec_others="$(awk '/^#### Architecture Lens/{f=0; next} /^#### .*Lens/{f=1; next} /^### /{f=0} f' "$dec_md")"
+			decision_has "$dec_arch" '"category":"Architecture","location":"<file:line>","summary":"<one line>","evidence":"<evidence>","suggestion":"<suggestion>"\}' \
+				"architecture finding record shape is unchanged"
+			decision_has "$dec_arch" '^\*\*Location\*\* \(file_path:line\), \*\*Finding\*\*, \*\*Evidence\*\* \(pattern/convention violated\), \*\*Suggestion\*\*\.$' \
+				"architecture output fields are unchanged"
+		fi
+		decision_lacks "$dec_all" 'range-stdin|SKEIN_RANGE|--two-dot|decision-scope|saved selector scope' \
+			"no range transport, two-dot mode or per-mode saved scope remains (R7)"
+		decision_has "$dec_all" 'The selector derives no paths and takes no range: run it once with `--all-active`' \
+			"the selector derives no paths and selects every active record (option b)"
+		decision_has "$dec_all" 'a record binds only if at least one of its `Applies to` globs matches a file changed in the diff the lens reviews' \
+			"the orchestrator text states the binding rule (option b)"
+		decision_has "$dec_arch" 'a record binds only if at least one of its `Applies to` globs matches a file changed in the diff you review; otherwise ignore it' \
+			"the architecture prompt tells the lens to ignore a record whose globs match no changed file (option b)"
+		decision_has "$dec_arch" '^\{\{DECISIONS_OMITTED\}\}$' "the architecture prompt carries the omitted-records line"
+		decision_has "$dec_all" 'then it is `Decision records omitted: N of M active records shown; coverage is partial.`' \
+			"a truncation passes its count into the prompt"
+		decision_lacks "$dec_all" 'decision-paths|--paths-stdin|SKEIN_PATHS|lens-diff' \
+			"no path derivation, decision-paths file or path here-document remains (option b)"
+		decision_has "$dec_all" 'lists any entry or fails, print `Decision records: working tree has uncommitted changes under docs/decisions`' \
+			"an uncommitted docs/decisions is reported"
+		decision_has "$dec_all" 'print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch' \
+			"a reviewed head off the checked-out HEAD is reported"
+		decision_has "$dec_arch" '^- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one' \
+			"architecture scope covers decision conflicts"
+		;;
+	esac
+	if [[ "$(grep -c '^<untrusted-content>$' <<<"$dec_arch")" -eq "$(grep -c '^</untrusted-content>$' <<<"$dec_arch")" ]] &&
+		[[ "$(grep -A1 '^<untrusted-content>$' <<<"$dec_arch" | grep -c '^{{ACTIVE_DECISIONS}}$')" -eq 1 ]] &&
+		[[ "$(grep -A1 '^{{ACTIVE_DECISIONS}}$' <<<"$dec_arch" | grep -c '^</untrusted-content>$')" -eq 1 ]]; then
+		pass "decisions ($dec_mirror/$dec_skill): exactly one wrapped block in the architecture prompt"
+	else
+		fail "decisions ($dec_mirror/$dec_skill): the architecture prompt's block is missing, unwrapped or duplicated"
+	fi
+	if [[ -n "$dec_others" ]]; then
+		decision_lacks "$dec_others" 'ACTIVE_DECISIONS' "no other lens prompt carries the block"
+	else
+		fail "decisions ($dec_mirror/$dec_skill): other lens prompts not found, layout drift"
+	fi
+	decision_lacks "$dec_arch" 'as a `?Contradiction`? finding' "decision conflicts never use the reserved Contradiction category"
+	if [[ "$dec_mirror" == skein-codex ]]; then
+		decision_has "$dec_all" '"\$SKILL_DIR"/scripts/decisions-active\.sh' "runs the bundled selector through the Codex path anchor"
+		decision_lacks "$dec_all" 'CLAUDE_PLUGIN_ROOT.*decisions-active' "never uses the Claude selector anchor"
+	else
+		decision_has "$dec_all" "\"\\\$\\{CLAUDE_PLUGIN_ROOT\\}\"/skills/$dec_skill/scripts/decisions-active\\.sh" \
+			"runs the bundled selector through the Claude path anchor"
+		decision_lacks "$dec_all" 'SKILL_DIR"?/scripts/decisions-active' "never uses the Codex selector anchor"
+	fi
+	if [[ "$dec_skill" == review-plan ]]; then
+		decision_has "$dec_all" "decisions-active\\.sh --temp-output --paths-stdin <<'SKEIN_PATHS' \\|\\| selector_exit=\\\$\\?\$" \
+			"paths travel as a quoted here-document, status captured"
+	else
+		decision_has "$dec_all" "decisions-active\\.sh --temp-output --all-active \\|\\| selector_exit=\\\$\\?\$" \
+			"the selector runs with --all-active, status captured"
+	fi
+	decision_lacks "$dec_all" 'exec "\$1" -- "\$\{p\[@\]\}"' "no path reaches the selector's command line"
+	decision_lacks "$dec_all" 'mkdir -p "\$LENS_DIR"' "the snippet never creates the lens directory itself"
+	decision_lacks "$dec_all" 'mapfile|readarray|\$\{[^}]*,,' "the selector call runs on bash 3.2"
+	decision_has "$dec_all" 'Exit `0` with empty output means no record applies, a genuine result' "an empty match is genuine"
+	decision_has "$dec_all" 'Exit `3`, any other non-zero exit, a missing selector' "exit 3 or an unavailable selector is degraded coverage"
+	decision_has "$dec_all" 'which the selector reports on stderr as `decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown`' "truncation is exit 3, reported on stderr"
+	decision_has "$dec_all" 'Judge coverage by `selector-exit=` alone, never by the file'"'"'s text, which is record text' "coverage comes from the exit status, never record text"
+	decision_has "$dec_all" '`selector-output=` names the file only when `selector-exit=` is `0` or `3`' "the output file is read only after exit 0 or 3"
+	decision_lacks "$dec_all" 'final `DECISIONS-TRUNCATED:` line' "no rule reads a truncation line out of the record text"
+	decision_has "$dec_all" 'Never report that as "no applicable decisions"' "degraded coverage is never no applicable decisions"
+	decision_has "$dec_all" 'reuse the same block for every attempt of the [Aa]rchitecture [Ll]ens, including a respawn' "a retry reuses the same block"
+	# Both mirrors refresh architecture on every same-scope resume and fence off
+	# its earlier attempts, so a stale or vanished record cannot linger.
+	decision_has "$dec_all" 'Re-run architecture over all its assigned units, even if it completed and the fresh selection is empty' \
+		"resume refreshes architecture even after the last applicable record disappears"
+	decision_has "$dec_all" '--from-attempt architecture:N. on every collector call' \
+		"every collector call excludes earlier architecture attempts"
+	decision_lacks "$dec_all" 'when it selects none, reuse it as above' \
+		"no mirror reuses a completed architecture lens on resume"
+	dec_collectors="$(grep -E 'collect-lens-results\.sh --root' <<<"$dec_all" || true)"
+	if [[ -n "$dec_collectors" ]] && ! grep -v -- '--from-attempt "architecture:<N>"' <<<"$dec_collectors" | grep -q .; then
+		pass "decisions ($dec_mirror/$dec_skill): every collector command line carries the architecture attempt boundary"
+	else
+		fail "decisions ($dec_mirror/$dec_skill): a collector command line lacks [--from-attempt \"architecture:<N>\"]"
+	fi
+done
+
+DEC_RUBRIC="$ROOT_DIR/plugins/skein/skills/review-plan/rubric.md"
+# shellcheck disable=SC2016
+if grep -qF -- '- `architecture` alone receives the active `docs/decisions/` records that apply to the plan'"'"'s paths, inside `<untrusted-content>`; a plan decision that contradicts or should supersede one is a `Constraint` finding, never `Contradiction`' "$DEC_RUBRIC"; then
+	pass "review-plan rubric scopes decision records to architecture as Constraint"
+else
+	fail "review-plan rubric lacks the architecture decision-records bullet"
+fi
+
+# The committed lens fixtures: each case's selector output must match the
+# exact block its .expected file records after its leading "# " notes.
+DEC_FIXTURES="$ROOT_DIR/tests/lenses/fixtures/decisions"
+dec_tmp="$(mktemp -d)"
+cp -R "$DEC_FIXTURES/repo/." "$dec_tmp/"
+git -C "$dec_tmp" init -q
+if "$ROOT_DIR/scripts/check-decisions.sh" "$dec_tmp" >/dev/null 2>&1; then
+	pass "decision lens fixture records pass the validator"
+else
+	fail "decision lens fixture records fail check-decisions.sh"
+fi
+for dec_case in conflict unrelated superseded lookalike; do
+	if [[ ! -s "$DEC_FIXTURES/$dec_case.paths" || ! -f "$DEC_FIXTURES/$dec_case.expected" ]]; then
+		fail "decision lens fixture $dec_case: paths or expected file missing"
+		continue
+	fi
+	dec_paths=()
+	while IFS= read -r dec_line; do dec_paths+=("$dec_line"); done <"$DEC_FIXTURES/$dec_case.paths"
+	dec_rc=0
+	dec_out="$(cd "$dec_tmp" && "$ROOT_DIR/scripts/decisions-active.sh" -- "${dec_paths[@]}")" || dec_rc=$?
+	dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
+	if [[ $dec_rc -eq 0 && "$dec_out" == "$dec_want" ]]; then
+		pass "decision lens fixture $dec_case: selector output matches its expected result"
+	else
+		fail "decision lens fixture $dec_case: selector exit $dec_rc or output differs from $dec_case.expected"
+	fi
+done
+# Executable selector snippets, each mirror's own fence run as written (the
+# Claude anchor resolved through the environment). Contract: the snippet's
+# stdout is exactly two status lines, `selector-exit=` and `selector-output=`
+# (only `selector-exit=` when the selector is missing); `selector-output=`
+# names the selector's private temp file exactly when `selector-exit=` is 0
+# or 3, so a refused or missing selector never sends a file to the lens; the
+# named file holds the selection and nothing else; review-plan passes its
+# paths as a quoted here-document and deep-review passes none (--all-active).
+# dec_fence <SKILL.md> <section opener regex> [<script>]: the first fence
+# after the opener that names <script> (default decisions-active.sh, the
+# selector call).
+dec_fence() {
+	DEC_OPENER="$2" DEC_WANT="${3:-decisions-active.sh}" awk '
+		$0 ~ ENVIRON["DEC_OPENER"] { section = 1; next }
+		code && /^```$/ { if (index(buf, ENVIRON["DEC_WANT"])) { printf "%s", buf; exit } code = 0; buf = ""; next }
+		section && /^```(bash)?$/ { code = 1; next }
+		code { buf = buf $0 "\n" }
+	' "$1"
+}
+# dec_run_snippet <mirror> <snippet>: runs it in $dec_tmp; sets dec_status,
+# dec_file (the `selector-output=` value), dec_text (that file's content, read
+# as the orchestrator would: only a named, regular, non-symlink file) and
+# dec_lines (stdout line count). dec_output_ok is 1 when the file is named
+# exactly for exit 0 or 3.
+# The Bash tool may run zsh, where `path`, `status` and `argv` are special
+# parameters (assigning `path` rewrites PATH), so each snippet also runs under
+# zsh when it is installed: dec_shell is bash or zsh.
+dec_shell=bash
+dec_tmpdir="$dec_tmp.T"
+mkdir -p "$dec_tmpdir"
+dec_run_snippet() {
+	local out file
+	out="$(cd "$dec_tmp" && TMPDIR="$dec_tmpdir" SKILL_DIR="$ROOT_DIR/plugins/$1/skills/$dec_exec_skill" CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$1" "$dec_shell" -e <<<"$2" 2>"$dec_tmp.stderr")" || true
+	dec_lines="$(grep -c '' <<<"$out" || true)"
+	dec_status="$(sed -n 's/^selector-exit=//p' <<<"$out")"
+	file="$(sed -n 's/^selector-output=//p' <<<"$out")"
+	dec_file="$file"
+	dec_output_ok=0
+	case "$dec_status" in
+	0 | 3) [[ -n "$file" ]] && dec_output_ok=1 ;;
+	*) [[ -z "$file" ]] && dec_output_ok=1 ;;
+	esac
+	dec_text=""
+	dec_mode=""
+	if [[ -n "$file" && -f "$file" && ! -L "$file" ]]; then
+		dec_text="$(cat "$file")"
+		dec_mode="$(stat -c %a "$file" 2>/dev/null || stat -f %Lp "$file")"
+		rm -f -- "$file"
+	fi
+	return 0
+}
+dec_shells=(bash)
+if command -v zsh >/dev/null 2>&1; then
+	dec_shells+=(zsh)
+else
+	pass "zsh is not installed; the selector snippets run under bash only"
+fi
+# dec_heredoc <snippet> <paths file>: the review-plan snippet with its
+# `p <path>` template line replaced by one `p ` line per listed path.
+dec_heredoc() {
+	local line
+	while IFS= read -r line; do
+		if [[ "$line" == 'p <path>' ]]; then
+			sed 's/^/p /' "$2"
+		else
+			printf '%s\n' "$line"
+		fi
+	done <<<"${1//<run_id>/decisions-shape}"
+}
+dec_exec_skill=deep-review
+# The decision-paths removal (option b). Old invariant: each deep-review
+# mirror derived the architecture lens's paths from its patch and fed them to
+# the selector. New invariant: each mirror's fence runs the selector with
+# --all-active and no path; run as written, under bash and zsh, against the
+# fixture repo it yields exactly the active records (an independent read of
+# the Status headers), never the superseded one.
+dec_aa_want="$(grep -l '^\*\*Status\*\*: active$' "$dec_tmp"/docs/decisions/*.md | sed 's|.*/||' | sort | tr '\n' ' ' | sed 's/ $//')"
+dec_aa_failures=0
+dec_aa_cells=0
+for dec_mirror in skein skein-codex; do
+	dec_aa_fence="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+	for dec_shell in "${dec_shells[@]}"; do
+		dec_aa_cells=$((dec_aa_cells + 1))
+		dec_run_snippet "$dec_mirror" "$dec_aa_fence"
+		dec_got="$(grep '^### Record: ' <<<"$dec_text" | sed 's|^### Record: docs/decisions/||' | sort | tr '\n' ' ' | sed 's/ $//' || true)"
+		if [[ "$dec_status" != 0 || "$dec_lines" != 2 || $dec_output_ok -ne 1 || "$dec_got" != "$dec_aa_want" || "$dec_aa_want" != "20261101-cache-store.md 20261105-auth-tokens.md" ]]; then
+			dec_aa_failures=$((dec_aa_failures + 1))
+			fail "[$dec_shell] $dec_mirror deep-review --all-active fence: exit '$dec_status', want '$dec_aa_want', got '$dec_got'"
+		fi
+	done
+done
+[[ $dec_aa_failures -eq 0 ]] && pass "each deep-review mirror's fence yields every active record and no superseded one ($dec_aa_cells cells: mirror x shell)"
+# Reference (mutation): the same fence with a path match instead of
+# --all-active selects fewer records, so the cells above distinguish them.
+dec_aa_ref="$(dec_fence "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+dec_shell=bash
+dec_run_snippet skein "${dec_aa_ref/--all-active/-- src/auth/x.py}"
+if [[ "$dec_aa_ref" == *--all-active* && "$dec_status" == 0 ]] && ! grep -q '20261101-cache-store' <<<"$dec_text"; then
+	pass "mutation: a path-matching fence drops an active record the --all-active fence keeps"
+else
+	fail "mutation: the fixture does not distinguish --all-active from a path match"
+fi
+dec_exec_skill=review-plan
+for dec_mirror in skein skein-codex; do
+	selector_snippet="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
+	if [[ "$selector_snippet" == *mktemp* || "$selector_snippet" == *"> "* || "$selector_snippet" == *LENS_DIR* ]]; then
+		fail "$dec_mirror review-plan snippet names or redirects into an output path of its own"
+	else
+		pass "$dec_mirror review-plan snippet leaves the output file to the selector"
+	fi
+	for dec_shell in "${dec_shells[@]}"; do
+		for dec_case in conflict unrelated; do
+			dec_run_snippet "$dec_mirror" "$(dec_heredoc "$selector_snippet" "$DEC_FIXTURES/$dec_case.paths")"
+			dec_want="$(awk 'body || !/^# / {body=1; print}' "$DEC_FIXTURES/$dec_case.expected")"
+			if [[ "$dec_status" == 0 && "$dec_lines" == 2 && "$dec_text" == "$dec_want" ]]; then
+				pass "[$dec_shell] $dec_mirror review-plan keeps the selector status out of the $dec_case block"
+			else
+				fail "[$dec_shell] $dec_mirror review-plan $dec_case: exit '$dec_status', $dec_lines status lines, or the block differs from $dec_case.expected"
+			fi
+		done
+	done
+done
+# I1, the snippet side. Contract: whatever the selector exits with, each
+# snippet prints both status lines under `-e` in bash and zsh, the selection
+# lands in a mode-0600 file under $TMPDIR, and nothing is written into the
+# repository. Cells: mirror x skill x shell, with a malformed record so the
+# exit is 3 and the valid match is kept.
+printf '# Broken record\n' >"$dec_tmp/docs/decisions/20261199-broken.md"
+dec_before="$(git -C "$dec_tmp" status --porcelain --ignored --untracked-files=all)"
+for dec_exec_skill in deep-review review-plan; do
+	for dec_mirror in skein skein-codex; do
+		printf 'src/cache/index.py\n' >"$dec_tmp.rp-paths"
+		if [[ "$dec_exec_skill" == deep-review ]]; then
+			selector_snippet="$(dec_heredoc "$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')" "$dec_tmp.rp-paths")"
+		else
+			selector_snippet="$(dec_heredoc "$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')" "$dec_tmp.rp-paths")"
+		fi
+		for dec_shell in "${dec_shells[@]}"; do
+			dec_run_snippet "$dec_mirror" "$selector_snippet"
+			if [[ "$dec_status" == 3 && "$dec_lines" == 2 && "$dec_file" == "$dec_tmpdir"/skein-decisions.* && "$dec_mode" == 600 ]] &&
+				grep -qxF '### Record: docs/decisions/20261101-cache-store.md' <<<"$dec_text" &&
+				[[ "$(git -C "$dec_tmp" status --porcelain --ignored --untracked-files=all)" == "$dec_before" ]]; then
+				pass "[$dec_shell] $dec_mirror $dec_exec_skill: exit 3 prints both status lines, keeps the valid match in a 0600 temp file, writes nothing in the repo"
+			else
+				fail "[$dec_shell] $dec_mirror $dec_exec_skill: exit '$dec_status', $dec_lines lines, file '$dec_file' mode '$dec_mode'"
+			fi
+		done
+	done
+done
+rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
+rm -f "$dec_tmp.stderr" "$dec_tmp.rp-paths"
+# The output gate as one table. Contract: `selector-output=` names the
+# selector's temp file exactly when `selector-exit=` is 0 or 3, and on any
+# other exit the selector leaves no temp file behind, so neither a refused
+# nor a missing selector hands the orchestrator a file. Cells: mirror x skill
+# x shell x {0, 2 (no path), 3, 4 (unprefixed path), 5 (no writable $TMPDIR),
+# 127 (no selector)}; deep-review's --all-active reads no path, so it has no
+# 2 or 4 cell.
+dec_gate_failures=0
+dec_gate_cells=0
+printf 'src/cache/index.py\n' >"$dec_tmp.rp-paths"
+: >"$dec_tmp.rp-none"
+for dec_exec_skill in deep-review review-plan; do
+	for dec_mirror in skein skein-codex; do
+		if [[ "$dec_exec_skill" == deep-review ]]; then
+			dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/deep-review/SKILL.md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+		else
+			dec_fenced="$(dec_fence "$ROOT_DIR/plugins/$dec_mirror/skills/review-plan/SKILL.md" '^\*\*Active decision records \(architecture lens only\)\.')"
+		fi
+		for dec_shell in "${dec_shells[@]}"; do
+			for dec_cell in 0 2 3 4 5 127; do
+				# --all-active takes no path: no missing-path or unprefixed cell.
+				[[ "$dec_exec_skill" == deep-review && ($dec_cell == 2 || $dec_cell == 4) ]] && continue
+				rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
+				dec_run_mirror="$dec_mirror"
+				dec_want_lines=2
+				case "$dec_cell" in
+				2) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-none")" ;;
+				4) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-paths")" && selector_snippet="${selector_snippet/p src\/cache\/index.py/src\/cache\/index.py}" ;;
+				*) selector_snippet="$(dec_heredoc "$dec_fenced" "$dec_tmp.rp-paths")" ;;
+				esac
+				case "$dec_cell" in
+				3) printf '# Broken record\n' >"$dec_tmp/docs/decisions/20261199-broken.md" ;;
+				5) dec_tmpdir="$dec_tmp.no-such-dir" ;;
+				127)
+					dec_run_mirror="no-such-mirror"
+					dec_want_lines=1
+					;;
+				esac
+				dec_run_snippet "$dec_run_mirror" "$selector_snippet"
+				dec_tmpdir="$dec_tmp.T"
+				dec_gate_cells=$((dec_gate_cells + 1))
+				if [[ "$dec_status" != "$dec_cell" || $dec_output_ok -ne 1 || "$dec_lines" != "$dec_want_lines" ]] ||
+					[[ "$dec_cell" != 0 && "$dec_cell" != 3 && -n "$dec_text" ]] || compgen -G "$dec_tmpdir/*" >/dev/null; then
+					dec_gate_failures=$((dec_gate_failures + 1))
+					fail "[$dec_shell] $dec_mirror $dec_exec_skill: cell $dec_cell gave exit '$dec_status', selector-output '$dec_file', $dec_lines lines"
+				fi
+			done
+		done
+	done
+done
+rm -f "$dec_tmp/docs/decisions/20261199-broken.md"
+[[ $dec_gate_failures -eq 0 ]] && pass "selector-output names a file exactly for exit 0 or 3, no temp file left otherwise ($dec_gate_cells cells: mirror x skill x shell x {0,2,3,4,5,127}; deep-review {0,3,5,127})"
+rm -f "$dec_tmp.rp-none" "$dec_tmp.rp-paths" "$dec_tmp.stderr"
+# The decision-records paragraph and snippet are the same text in both
+# deep-review mirrors, apart from the selector anchor and the banner link.
+# shellcheck disable=SC2016  # the sed and grep patterns are literal skill text
+dec_shared() {
+	awk '/^\*\*Active decision records \(Architecture Lens only\)\./{on=1} on{print} on && /^Select once per invocation|Select once per invocation and reuse/{exit}' "$1" |
+		sed -e 's#"\${CLAUDE_PLUGIN_ROOT}"/skills/deep-review/scripts/decisions-active.sh#<selector>#' \
+			-e 's#"\$SKILL_DIR"/scripts/decisions-active.sh#<selector>#' \
+			-e 's#(the §1a banner'"'"'s#(the <banner>'"'"'s#' \
+			-e 's#(the \[pre-dispatch banner\](\#pre-dispatch-banner)'"'"'s#(the <banner>'"'"'s#'
+}
+# shellcheck disable=SC2016  # literal skill text
+if diff <(dec_shared "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md") \
+	<(dec_shared "$ROOT_DIR/plugins/skein-codex/skills/deep-review/SKILL.md") >/dev/null &&
+	grep -qF 'substituted only inside the Architecture Lens prompt'"'"'s `<untrusted-content>` block for active decision records' \
+		"$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md"; then
+	pass "deep-review decision-records text matches across Claude and Codex except anchors"
+else
+	fail "deep-review decision-records text drifts between Claude and Codex"
+fi
+rm -rf "$dec_tmp" "$dec_tmpdir"
+if grep -q '^### Record: docs/decisions/20261101-cache-store\.md$' "$DEC_FIXTURES/conflict.expected" &&
+	! grep -q '^### Record: ' "$DEC_FIXTURES/superseded.expected" &&
+	! grep -q '^### Record: ' "$DEC_FIXTURES/unrelated.expected" &&
+	grep -qF '<\/untrusted-content data-x="1">' "$DEC_FIXTURES/lookalike.expected" &&
+	! grep -qi '</untrusted-content' "$DEC_FIXTURES/lookalike.expected" &&
+	git apply --numstat "$DEC_FIXTURES/conflict.diff" >/dev/null 2>&1; then
+	pass "decision lens fixtures cover the conflict, superseded and closing-tag cases"
+else
+	fail "decision lens fixtures do not cover the conflict, superseded and closing-tag cases"
+fi
+
 echo ""
+# No deep-review mirror passes a range (round 7) or a path list (option b) to
+# the selector: each fence runs --all-active, and each mirror states the
+# binding rule.
+# shellcheck disable=SC2016  # literal skill text
+for f in "$ROOT_DIR"/plugins/skein{,-codex,-pi}/skills/deep-review/SKILL.md; do
+	if ! grep -qE 'SKEIN_RANGE|--range-stdin|--two-dot|--uncommitted|decision-scope|decision-paths|--paths-stdin|SKEIN_PATHS' "$f" &&
+		grep -qF -- "--temp-output --all-active || selector_exit=\$?" "$f" &&
+		grep -qF -- 'binds only if at least one of its `Applies to` globs matches a file changed in the diff' "$f"; then
+		pass "deep-review selector runs --all-active and the lens checks Applies to against the diff: ${f#"$ROOT_DIR"/}"
+	else
+		fail "deep-review selector still takes a range or paths, or lacks the --all-active fence or binding rule: ${f#"$ROOT_DIR"/}"
+	fi
+done
+
+# Code-review leftovers, item 3. Old invariant: the --temp-output selection
+# file stayed in ${TMPDIR:-/tmp} after every run and no skill said to delete
+# it. New invariant: every review-plan and deep-review mirror, after its
+# selector fence, deletes the named file with a fence of its own, whether the
+# read succeeded or not; the read alone decides coverage and the delete is
+# best-effort. The cleanup is executed: the selector fence, then the cleanup
+# fence with the named file written in, leaves no file. Mutation: a mirror
+# without the cleanup fence fails the shape check.
+# cleanup_problems <SKILL.md>: prints what is missing.
+# shellcheck disable=SC2016  # literal skill text
+cleanup_problems() {
+	local md="$1" sel_line rm_line
+	sel_line="$(grep -n -- ' --temp-output --' "$md" | head -n 1 | cut -d: -f1)"
+	rm_line="$(grep -nxF -- "rm -f -- '<selector-output file>'" "$md" | head -n 1 | cut -d: -f1)"
+	if [[ -z "$sel_line" || -z "$rm_line" || $rm_line -le $sel_line ]]; then
+		echo "no cleanup fence after the selector fence"
+		return
+	fi
+	[[ "$(sed -n "$((rm_line - 1))p" "$md")" == '```bash' && "$(sed -n "$((rm_line + 1))p" "$md")" == '```' ]] ||
+		echo "the cleanup command is not its own fence"
+	grep -qF -- 'Once the selection is read, delete the file `selector-output=` named, whether the read succeeded or not' "$md" ||
+		echo "no rule to delete the file whether or not the read succeeded"
+	grep -qF -- 'The read alone decides coverage; this cleanup is best-effort, so a failed delete changes no result and no coverage line.' "$md" ||
+		echo "no rule that the read decides coverage and the delete is best-effort"
+}
+for f in "$ROOT_DIR"/plugins/skein{,-codex,-pi}/skills/{review-plan,deep-review}/SKILL.md; do
+	problems="$(cleanup_problems "$f")"
+	if [[ -z "$problems" ]]; then
+		pass "the selection file is deleted after the read: ${f#"$ROOT_DIR"/}"
+	else
+		fail "${f#"$ROOT_DIR"/}: $(tr '\n' ';' <<<"$problems")"
+	fi
+done
+cleanup_tmp="$(mktemp -d)"
+mkdir -p "$cleanup_tmp/repo" "$cleanup_tmp/T"
+cp -R "$ROOT_DIR/tests/lenses/fixtures/decisions/repo/." "$cleanup_tmp/repo/"
+git -C "$cleanup_tmp/repo" init -q
+cleanup_cells=0
+cleanup_failures=0
+for cleanup_mirror in skein skein-codex; do
+	for cleanup_skill in deep-review review-plan; do
+		md="$ROOT_DIR/plugins/$cleanup_mirror/skills/$cleanup_skill/SKILL.md"
+		if [[ $cleanup_skill == deep-review ]]; then
+			snippet="$(dec_fence "$md" '^\*\*Active decision records \(Architecture Lens only\)\.')"
+		else
+			snippet="$(dec_fence "$md" '^\*\*Active decision records \(architecture lens only\)\.')"
+			snippet="${snippet//p <path>/p src/cache/index.py}"
+		fi
+		cleanup="$(dec_fence "$md" '^Once the selection is read, delete the file' "rm -f -- '<selector-output file>'")"
+		out="$(cd "$cleanup_tmp/repo" && TMPDIR="$cleanup_tmp/T" SKILL_DIR="$ROOT_DIR/plugins/$cleanup_mirror/skills/$cleanup_skill" \
+			CLAUDE_PLUGIN_ROOT="$ROOT_DIR/plugins/$cleanup_mirror" bash -e <<<"$snippet" 2>/dev/null)" || true
+		file="$(sed -n 's/^selector-output=//p' <<<"$out")"
+		cleanup_cells=$((cleanup_cells + 1))
+		if [[ -n "$file" && -f "$file" && "$cleanup" == "rm -f -- '<selector-output file>'" ]] &&
+			(cd "$cleanup_tmp/repo" && bash -e <<<"${cleanup//<selector-output file>/$file}") && [[ ! -e "$file" ]] &&
+			! compgen -G "$cleanup_tmp/T/*" >/dev/null; then
+			:
+		else
+			cleanup_failures=$((cleanup_failures + 1))
+			fail "$cleanup_mirror $cleanup_skill: the cleanup fence did not remove the selection file '$file'"
+		fi
+		rm -f "$cleanup_tmp"/T/*
+	done
+done
+[[ $cleanup_failures -eq 0 ]] && pass "each mirror's cleanup fence removes the selection file its selector fence named ($cleanup_cells cells: mirror x skill)"
+grep -vxF -- "rm -f -- '<selector-output file>'" "$ROOT_DIR/plugins/skein/skills/deep-review/SKILL.md" >"$cleanup_tmp/mutant.md"
+if [[ -n "$(cleanup_problems "$cleanup_tmp/mutant.md")" ]]; then
+	pass "mutation: a mirror without the cleanup fence fails the shape check"
+else
+	fail "mutation: the shape check does not catch a missing cleanup fence"
+fi
+rm -rf "$cleanup_tmp"
+
 echo "Summary: $pass_count passed, $fail_count failed"
 
 if [[ $fail_count -ne 0 ]]; then

@@ -23,6 +23,7 @@ marker. Collision resistance is not part of the threat model.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from datetime import UTC, date, datetime
@@ -81,23 +82,32 @@ def last_marker_index(
 
 
 def _marker_line_span(plan_text: str) -> tuple[int, int] | None:
-    """Return ``(start, end)`` byte offsets of the last unfenced marker (or
-    placeholder) line, or ``None`` if no such line exists.
+    """Return ``(start, end)`` byte offsets of the hash boundary line: the
+    last unfenced real marker, or, when the plan has none, the last unfenced
+    placeholder line. ``None`` if neither exists.
 
     ``start`` is the offset of the marker line's first character; ``end`` is
     the offset just past its line terminator. Offsets are reconstructed from
     ``splitlines(keepends=True)`` so they are exact even for CRLF input — the
     caller can slice ``plan_text`` byte-faithfully on either side.
 
-    Always includes the placeholder (the hashing path consumes the template
-    divider on first review); ``read_marker`` excludes it via
-    ``last_marker_index``'s default. Both go through the same
-    :func:`_scan_marker_lines` core so they locate the identical line.
+    The placeholder counts only without a real marker (the hashing path
+    consumes the template divider on first review). A placeholder quoted below
+    a real marker is workspace text: were it the boundary, the hash would
+    cover bytes other than the ones above the marker ``read_marker`` returns,
+    and an unchanged plan would read as stale. So the boundary is always the
+    line ``read_marker`` reads whenever that line exists. Both go through the
+    same :func:`_scan_marker_lines` core. A plan without a placeholder below
+    its last real marker hashes exactly as before.
     """
     lines = plan_text.splitlines(keepends=True)
-    last_idx = None
+    last_real = last_placeholder = None
     for i in _scan_marker_lines(lines, include_placeholder=True):
-        last_idx = i
+        if MARKER_RE.match(lines[i].rstrip("\r\n")):
+            last_real = i
+        else:
+            last_placeholder = i
+    last_idx = last_real if last_real is not None else last_placeholder
     if last_idx is None:
         return None
     start = sum(len(lines[k]) for k in range(last_idx))
@@ -125,8 +135,9 @@ def strip_marker_for_hashing(plan_text: str) -> str:
     then hash differently from what wrote it and report a false staleness.
 
     Locating the marker: scan for the last unfenced line that matches the
-    marker regex (so a plan documenting marker syntax in prose earlier in the
-    file is unaffected).
+    marker regex, or the last unfenced placeholder when no real marker exists
+    (so a plan documenting marker syntax in prose earlier in the file, or
+    quoting the placeholder below its marker, is unaffected).
     """
     if not plan_text:
         return plan_text
@@ -270,3 +281,42 @@ def marker_is_stale(plan_path: str | Path) -> bool | None:
     _, recorded_sha = marker
     current_sha = compute_plan_hash(plan_path)
     return current_sha != recorded_sha
+
+
+def signed_prefix_sha256(plan_path: str | Path) -> str | None:
+    """Return the sha256 hex digest of the plan's bytes from its first byte
+    through the end of its marker line (the last unfenced marker or
+    placeholder line, terminator included), or ``None`` without one.
+
+    `/update-docs` compares this digest before and after a promotion's writes.
+    ``classify_marker`` alone cannot catch every above-the-workspace edit: a
+    rewritten marker date keeps the same hash and still classifies ``valid``.
+    The file is read as bytes, so line endings are compared exactly.
+    """
+    text = Path(plan_path).read_bytes().decode("utf-8")
+    span = _marker_line_span(text)
+    if span is None:
+        return None
+    return hashlib.sha256(text[: span[1]].encode("utf-8")).hexdigest()
+
+
+def classify_marker(plan_path: str | Path) -> str:
+    """Return the plan's review-marker state, one of:
+
+    - ``"valid"``: a real marker whose hash matches the signed prefix.
+    - ``"stale"``: a real marker whose hash no longer matches.
+    - ``"placeholder"``: no real marker, only the template's
+      ``<!-- reviewed: YYYY-MM-DD @ <hash> -->`` divider.
+    - ``"missing"``: no marker line of either kind (outside code fences).
+
+    The one four-state classification `/update-docs` acts on in every mirror,
+    so no SKILL.md reaches into marker internals to rebuild it.
+    """
+    state = marker_is_stale(plan_path)
+    if state is False:
+        return "valid"
+    if state is True:
+        return "stale"
+    lines = Path(plan_path).read_text(encoding="utf-8").splitlines()
+    found = last_marker_index(lines, include_placeholder=True)
+    return "missing" if found is None else "placeholder"
