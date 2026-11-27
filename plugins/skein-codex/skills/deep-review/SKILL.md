@@ -149,37 +149,15 @@ lens the resolved command prefix `{{PERSIST_CMD}}` (the resolved absolute `persi
 
   This on-disk record is authoritative — the lens's own returned reply is a fallback only.
 
-**Active decision records (Architecture Lens only).** Before dispatch, select the `docs/decisions/` records that apply to the paths the Architecture Lens is assigned. The selector's input has one source, the run's decision paths file `<repo-root>/.deep-review/lenses/<run_id>/decision-paths.json`: a JSON array of the repo-relative file paths of exactly the diff the Architecture Lens is given, never from a range resolved again. Git derives it from that diff text, never you and never the `diff --git` header text, which is a display format: a name can hold ` b/`, and git C-quotes a non-ASCII name. In the step that writes `expected.json`, write the lens's diff to a file in the run's lens folder and hand that file to the bundled `decision-paths.sh`. The diff is the one whose output is the lens's `{{DIFF}}`, with the same arguments, and its output shape is pinned so no diff setting of the repository can change the names it prints: `git diff --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ --no-relative --ignore-submodules=none <lens diff arguments>` (run the lens's own `{{DIFF}}` diff with the same flags); for a `--pr` target, replace the whole `git diff` command with the `gh pr diff <number> --color=never` the lenses review. Never pipe the diff into the script: the fence checks the diff's exit status before the script reads anything, so a diff that fails part-way publishes no path file:
-```bash
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUN_ID="<run_id>"
-LENS_DIR="$REPO_ROOT/.deep-review/lenses/$RUN_ID"
-diff_exit=0
-paths_exit=skipped
-git diff --no-ext-diff --no-color --src-prefix=a/ --dst-prefix=b/ --no-relative --ignore-submodules=none <lens diff arguments> >"$LENS_DIR/lens-diff.partial" || diff_exit=$?
-if [ "$diff_exit" -eq 0 ]; then
-  paths_exit=0
-  "$SKILL_DIR"/scripts/decision-paths.sh --output "$LENS_DIR/decision-paths.json" <"$LENS_DIR/lens-diff.partial" || paths_exit=$?
-fi
-if [ "$paths_exit" = 0 ]; then
-  mv -f -- "$LENS_DIR/lens-diff.partial" "$LENS_DIR/lens-diff.patch"
-else
-  rm -f -- "$LENS_DIR/lens-diff.partial"
-fi
-printf 'diff-exit=%s\n' "$diff_exit"
-printf 'paths-exit=%s\n' "$paths_exit"
-```
-The script reads the patch with `git apply --numstat -z`, forward and reversed, from the repository's top level whatever the current directory, so each file the diff names counts once, with both paths of a rename or copy, the removed path of a deletion, and a mode-only, binary or submodule change. Any `diff-exit=` or `paths-exit=` other than `0`, or a missing status line, is degraded coverage (below): `paths-exit=skipped` means the diff failed (`diff-exit=` is its status), so no path file was written and its partial output was removed; `1` means the script ran outside a work tree, the patch is not empty but holds no `diff --git` header, a header lacks the `a/` and `b/` prefixes, git cannot parse the patch or names a different number of files than it has headers, or a path holds a newline or is not UTF-8; `3` means the file already exists. An empty diff gives `[]`. The file belongs to the lens assignment it describes: it is written once per `run_id`, with `expected.json`, and the script refuses to rewrite it. So every invocation that assigns the lenses a new diff mints a new `run_id` and writes both files: a fresh run, a `--continue` incremental re-review (the diff of `<stored.head_commit>..HEAD`) and a `--continue` that falls back to `--full` (the new `merge-base..HEAD` diff). Only a same-HEAD `--continue` resume reuses the stored `run_id`: it re-runs the assignment it already has, so it reuses both files verbatim and writes neither. It reuses a decision paths file derived from a diff only when `lens-diff.patch` is beside it: the fence gives the patch that name only after the diff exited `0` and the script wrote the file, so the pair records a complete patch; a decision paths file without it (a failed or interrupted step, or a run started before this rule) is degraded coverage. The selector never reads the file and takes no range: read it back with your file-read tool and write each entry, verbatim, as one `p <path>` line in the selector's quoted here-document, so the selector selects for exactly the paths the lens reviews:
+**Active decision records (Architecture Lens only).** Before dispatch, give the Architecture Lens every active `docs/decisions/` record. The selector derives no paths and takes no range: run it once with `--all-active`, and it selects every valid active record, superseded and malformed records excluded. The lens decides which records bind: a record binds only if at least one of its `Applies to` globs matches a file changed in the diff the lens reviews (its `{{DIFF}}`), and the lens ignores every other record. No path list is derived from the diff, written to a file or passed to the selector:
 ```bash
 selector_exit=0
-"$SKILL_DIR"/scripts/decisions-active.sh --temp-output --paths-stdin <<'SKEIN_PATHS' || selector_exit=$?
-p <path>
-SKEIN_PATHS
+"$SKILL_DIR"/scripts/decisions-active.sh --temp-output --all-active || selector_exit=$?
 printf 'selector-exit=%s\n' "$selector_exit"
 ```
 
-Write nothing but the `p ` lines: no other changed path from the branch or the working tree. Never put a path on a command line or write a path list for the selector to read: the selector reads the here-document as data and normalises each path (a leading `./` is dropped). Check every path before writing it: a path that holds a newline cannot be one `p ` line, and its continuation line could equal `SKEIN_PATHS` and end the here-document early, leaving the rest for the shell, so never write it into the here-document. A `diff-exit=` or `paths-exit=` other than `0`, or a decision paths file that is missing or unreadable, was derived from a diff but has no `lens-diff.patch` beside it, is not a JSON array of strings, holds a path with a newline, or is empty while the Architecture Lens has assigned units, is degraded coverage, never "no records": run no selector, treat the selection as `selector-exit=4` with `selector-output=` empty, and print `Decision records: degraded (decision paths missing or unreadable)` before dispatch and again in the Step 5 report. An empty array for a diff that changes no file is an empty, successful selection: run no selector and substitute an empty block. The selector writes the selection to a private file it creates itself with `mktemp` under `${TMPDIR:-/tmp}`, never a path you name, and prints `selector-output=<file>`; it writes nothing into the repository. The snippet is one selector call whose status `|| selector_exit=$?` captures, so `selector-exit=` prints whatever it exits with, under `bash -e` and `zsh -e` alike; its variable names avoid zsh's special parameters (`path`, `status`, `argv` and the like), because a variable named `path` would rewrite zsh's `PATH`. Records are read from the checked-out working tree, never from the reviewed head: when the reviewed head (the [pre-dispatch banner](#pre-dispatch-banner)'s `<head>`, or the stored head on a resume) is not the checked-out `HEAD`, print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch and again in the Step 5 report. When `git --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions`, run from the repo root, lists any entry or fails, print `Decision records: working tree has uncommitted changes under docs/decisions` before dispatch and again in the Step 5 report.
-The snippet's stdout is only the `selector-exit=` and `selector-output=` status lines; neither is ever part of the block. `selector-output=` names the file only when `selector-exit=` is `0` or `3`, the two statuses after which the selector has written a selection; on any other status it is empty or absent, and you read no file. When it names one, `{{ACTIVE_DECISIONS}}` is the whole content of that file, read with your file-read tool, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Judge coverage by `selector-exit=` alone, never by the file's text, which is record text. Exit `0` with empty output means no record applies, a genuine result: substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or degraded decision paths means coverage is missing or degraded: pass whatever records the named file holds (none unless the exit is `3`), and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report, the reason taken from the exit status and the selector's stderr. Exit `3` covers a malformed record, an unreadable decisions folder and more matches than the cap of 8 records or 24 KiB, which the selector reports on stderr as `decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown`. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
+The selector writes the selection to a private file it creates itself with `mktemp` under `${TMPDIR:-/tmp}`, never a path you name, and prints `selector-output=<file>`; it writes nothing into the repository. The snippet is one selector call whose status `|| selector_exit=$?` captures, so `selector-exit=` prints whatever it exits with, under `bash -e` and `zsh -e` alike; its variable names avoid zsh's special parameters (`path`, `status`, `argv` and the like), because a variable named `path` would rewrite zsh's `PATH`. Records are read from the checked-out working tree, never from the reviewed head: when the reviewed head (the [pre-dispatch banner](#pre-dispatch-banner)'s `<head>`, or the stored head on a resume) is not the checked-out `HEAD`, print `Decision records: read from the checked-out tree, not the reviewed head` before dispatch and again in the Step 5 report. When `git --no-optional-locks status --porcelain --ignored --untracked-files=all -- docs/decisions`, run from the repo root, lists any entry or fails, print `Decision records: working tree has uncommitted changes under docs/decisions` before dispatch and again in the Step 5 report.
+The snippet's stdout is only the `selector-exit=` and `selector-output=` status lines; neither is ever part of the block. `selector-output=` names the file only when `selector-exit=` is `0` or `3`, the two statuses after which the selector has written a selection; on any other status it is empty or absent, and you read no file. When it names one, `{{ACTIVE_DECISIONS}}` is the whole content of that file, read with your file-read tool, substituted only inside the Architecture Lens prompt's `<untrusted-content>` block for active decision records. The selector has already escaped it; the escape rule above still applies and changes nothing. Judge coverage by `selector-exit=` alone, never by the file's text, which is record text. Exit `0` with empty output means no record applies, a genuine result: no active record exists, so substitute an empty block. Exit `3`, any other non-zero exit, a missing selector or an unreadable selection file means coverage is missing or degraded: pass whatever records the named file holds (none unless the exit is `3`), and print `Decision records: degraded (<reason>)` before dispatch and again in the Step 5 report, the reason taken from the exit status and the selector's stderr. Exit `3` covers a malformed record, an unreadable decisions folder and more active records than the cap of 8 records or 24 KiB, which the selector reports on stderr as `decisions-active.sh: DECISIONS-TRUNCATED: N of M records shown`. Past the cap every run degrades, and the selector drops the records that sort last by file name, the newest. `{{DECISIONS_OMITTED}}`, the line after the block, is empty unless stderr carries that truncation line; then it is `Decision records omitted: N of M active records shown; coverage is partial.`, with the two numbers copied from it, so the lens knows records were omitted. Never report that as "no applicable decisions". Select once per invocation and reuse the same block for every attempt of the Architecture Lens, including a respawn.
 
 ### Logic Lens
 
@@ -293,9 +271,10 @@ Apply the prose rule to `evidence`, `suggestion`, and overall summaries, even wh
 <untrusted-content>
 {{ACTIVE_DECISIONS}}
 </untrusted-content>
+{{DECISIONS_OMITTED}}
 
 Look for:
-- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one; cite the record path in Evidence. An empty block means no record applies.
+- Decision records: code that contradicts a record under Active Decision Records, or that should supersede one; cite the record path in Evidence. The block holds every active record, not only those that apply: a record binds only if at least one of its `Applies to` globs matches a file changed in the diff you review; otherwise ignore it. An empty block means no active record exists. When the line after the block says records were omitted, say in your summary that decision coverage is partial.
 - Coupling and layering problems
 - Backward compatibility regressions
 - Public API surface changes
@@ -404,7 +383,7 @@ Otherwise the collector reports it as `missing`, `.lenses` records it as unresol
 **Collect, don't just wait.** A `spawn_agent` worker delivers a completion notification per lens as each one finishes — not all at once — but a silent lens never delivers one at all, so waiting on notifications alone is not a detection strategy. Budgets differ per lens, so there is no single expiry. Set a wake at **each distinct per-lens deadline** (and one immediately when all lenses have returned). At every wake, run:
 ```bash
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUN_ID="<run_id>"   # the run id resolved before dispatch; only a same-HEAD --continue resume reuses the prior one
+RUN_ID="<run_id>"   # the run id resolved before dispatch; a --continue reuses the prior one
 "$SKILL_DIR"/scripts/collect-lens-results.sh --root "$REPO_ROOT" --skill deep-review --run-id "$RUN_ID" --expected-file "$REPO_ROOT/.deep-review/lenses/$RUN_ID/expected.json" [--attempts "<lens>:<n>" ...] [--running "<lens>:<n>" ...] [--from-attempt "architecture:<N>"]
 ```
 Pass the highest attempt number you spawned for each lens (`<lens>:2` after a respawn) so a spawned-but-silent attempt is reported `timed_out` rather than `partial`. **While a respawned attempt 2 is in flight, every collect must carry BOTH `--attempts <lens>:2 --running <lens>:2`** — not `--attempts` alone. `--attempts` on its own declares the retry *exhausted*: with attempt 1 holding a `start` and `progress` but no `done`, `--attempts <lens>:2` alone collects as `timed_out`, and adding `--running <lens>:2` collects as `partial`. Drop `--running` only once that attempt returns or its own deadline passes. Also pass `--running "<lens>:<n>"` for every lens whose attempt `<n>` is still in flight (each lens you have just respawned on a `--continue`): `--running` is a status FLOOR, not an override: the collector reports `partial` instead of the terminal `timed_out`, so a healthy attempt 3 is not misread as exhausted and does not stop the wait — **unless a `done` line has been recorded by attempt `<n>` itself (or by a later attempt)**, in which case that terminal status (`completed`/`errored`/`skipped`) wins, because a `done` record written by the attempt still declared in flight is evidence it actually finished. A `done` line from an *earlier* attempt is stale — it says nothing about the retry still in flight — so the `partial` floor still applies. Collecting all expected lenses is always safe, but respawn **only** a lens whose *own* deadline has passed and whose collected status is non-terminal (`partial`/`missing`; `completed`/`skipped`/`errored`/`timed_out` are terminal). Never respawn a lens before its own deadline, however long another lens has overrun. After each collection, IMMEDIATELY persist the merged result — pipe the collector's stdout into `"$SKILL_DIR"/scripts/persist-deep-review-state.sh --harness codex --run-id ... --from-collector` (same flags as the [Output](#output) persistence paragraph, plus `--from-collector`). Do not wait for all remaining lenses to resolve before this first checkpoint — repeat collect→persist after every subsequent deadline wake or batch of returns, so the persisted state is never more than one collection cycle stale. Branch on the persist script's exit code exactly as the [Output](#output) persistence paragraph documents (a non-zero exit surfaces the diagnostic and forces full-verbose rendering for the eventual report). This is why the invocation immediately before `## Output` is not a special first write — it is simply the final incremental checkpoint (collect → persist --from-collector), taken once all lenses (and reconciliation/auto-fix) have completed.
@@ -422,9 +401,8 @@ key and the `missing` status are
 
 Before dispatching that fresh architecture attempt, derive its next on-disk attempt number `N` as described below. Pass `--from-attempt architecture:N` on every collector call for this invocation, including checkpoint, final summary and findings JSONL calls. Use the same `N` through any retry. Start collection for the new attempt at `N`; its one retry uses `N + 1` with the usual absolute `--attempts` and `--running` values. Older architecture attempts stay on disk but contribute no findings, progress or status. Other lenses continue to merge their attempts as before.
 
-**`--continue` re-run attempts.** A same-HEAD `--continue` resume reuses the prior run's `run_id`
-(an incremental re-review or a fall back to `--full` mints a new one, with a new `expected.json` and
-decision paths file, so its attempts start at 1). The next attempt number is **derived, never guessed**: it is **1 + the highest on-disk attempt index**
+**`--continue` re-run attempts.** A `--continue` invocation reuses the prior run's `run_id`. The
+next attempt number is **derived, never guessed**: it is **1 + the highest on-disk attempt index**
 for that lens (and never below the highest `--attempts <lens>:<n>` this invocation has passed). Do
 not assume the prior invocation reached attempt 2 — persisted state carries no spawn counter, so a
 crash *before* dispatch leaves attempt 2 free and unused (guessing 3 skips it), while a
@@ -438,7 +416,7 @@ script is entered. The respawn prompt template must therefore NOT write its own
 `start` — an orchestrator-written record is already blessed by the skipped-lens and
 Codex-sequential clauses. One writer per attempt file is what makes this safe. The "respawn exactly
 once" cap is scoped to a single orchestrator invocation, not to the run-id's lifetime. A
-same-HEAD `--continue` resume **reuses the existing `expected.json` as it stands** — it is written once per
+`--continue` **reuses the existing `expected.json` as it stands** — it is written once per
 `run_id` and belongs to the run, not to the invocation. If the continuation brings in a lens
 the prior run never had, APPEND that key; never remove a key and never narrow an existing one,
 however few of its units are still outstanding. The units file is the run's assignment, and a
@@ -535,16 +513,11 @@ Suggested schema. The per-lens entries are the collector's shape; concrete model
   status is not `completed` and not `skipped`, plus every lens whose key is entirely absent from
   the persisted `.lenses` object (never resolved before the prior run terminated); reuse completed
   and skipped lens findings, and keep the range `base_commit..head_commit`. Include the
-  architecture lens on every same-HEAD resume, using the fresh attempt boundary above. Keep the
-  stored `run_id`: the decision selector reuses the run's decision paths file verbatim, because
-  the assignment is unchanged.
-- If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review under a
-  new `run_id`: rerun all lenses over only `<stored.head_commit>..HEAD`, write that run's
-  `expected.json` and its decision paths file from that new diff, the one the lenses are given,
-  and list prior findings (from the stored state, under the prior `run_id`) separately for reference
+  architecture lens on every same-HEAD resume, using the fresh attempt boundary above, so it
+  reads a fresh `--all-active` selection.
+- If stored `head_commit` is an ancestor of current `HEAD`, run an incremental re-review: rerun all
+  lenses over only `<stored.head_commit>..HEAD` and list prior findings separately for reference
 - If stored `head_commit` is not an ancestor of current `HEAD`, warn and fall back to `--full`
-- A fall back to `--full` mints a new `run_id` and writes its `expected.json` and decision paths
-  file from the new `merge-base..HEAD` diff; no invocation rewrites another run's decision paths file
 - `--full` always overwrites the state file
 
 If the target comes from a plan file, keep the plan path in `review_focus_source` and store a
@@ -723,7 +696,7 @@ Deep review will run 4 lenses:
 
 ```
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-RUN_ID="<run_id>"   # the run id resolved before dispatch; only a same-HEAD --continue resume reuses the prior one
+RUN_ID="<run_id>"   # the run id resolved before dispatch; a --continue reuses the prior one
 BASE_COMMIT="<base-commit>"              # resolved in Step 0 (Resolve Identity and Check Scope)
 HEAD_COMMIT="<head-commit>"              # resolved in Step 0 (Resolve Identity and Check Scope)
 DIFF_HASH="<sha256:…>"                   # resolved in Step 0 (Resolve Identity and Check Scope)

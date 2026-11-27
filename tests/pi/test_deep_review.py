@@ -26,10 +26,8 @@ from test_review import (
     assert_decision_packet_contract,
     decision_command_fixture,
     exercise_decision_selection,
-    exercise_plan_path_command,
     selector_output,
     selector_status,
-    with_paths,
 )
 
 
@@ -267,262 +265,101 @@ def test_deep_review_bundles_canonical_required_scripts():
 
 
 def test_deep_review_decision_packet_contract_and_selector_fixtures(tmp_path):
-    assert_decision_packet_contract(SKILL, "Architecture")
+    assert_decision_packet_contract(SKILL, "Architecture", all_active=True)
     text = SKILL.read_text()
     for phrase in (
-        "tracked staged/unstaged paths",
-        "Do not substitute unrelated current-diff paths for a plan target",
-        "The selector's input has one source, the architecture worker's assigned units, the same list written for that lens to `expected.json`",
-        "a rename counts as both its old and its new path",
-        "Git reads a diff's file paths, never you and never the `diff --git` header text, which is a display format",
-        "only then hand that file to this installed skill's `scripts/decision-paths.sh`",
-        "Never pipe the diff into the script: the fence checks the diff's exit status first",
-        "--src-prefix=a/ --dst-prefix=b/ --no-relative --ignore-submodules=none <packet diff arguments>",
-        "the narrowed assignment is the one written to `expected.json`, and the selector takes that narrowed list, never the full diff",
-        "it takes no range",
+        "run it once with `--all-active`: it derives no paths, takes no range and reads no stdin",
+        "a record binds only if at least one of its `Applies to` globs matches a file changed in the diff the worker reviews",
+        "Tell the architecture worker that the block holds every active record, not only those that apply",
+        "Decision records omitted: N of M active records shown; coverage is partial.",
         "`--continue` remains unsupported",
         "untracked and ignored files are not part of it, and the selector still reads records from them",
         "Decision records: untracked or ignored records under docs/decisions are outside the reviewed scope",
     ):
         assert phrase in text, phrase
-    for removed in ("--range-stdin", "SKEIN_RANGE", "--uncommitted", "--two-dot"):
+    for removed in (
+        "--range-stdin",
+        "SKEIN_RANGE",
+        "--uncommitted",
+        "--two-dot",
+        "decision-paths",
+        "DECISION_PATHS",
+        "--paths-stdin",
+        "SKEIN_PATHS",
+    ):
         assert removed not in text, removed
     exercise_decision_selection(SKILL, tmp_path)
 
 
-def test_deep_review_executes_documented_plan_command_fail_closed(tmp_path):
-    exercise_plan_path_command(SKILL, tmp_path)
-
-
-def test_deep_review_selector_input_is_the_architecture_assignment(tmp_path):
-    """Fresh-ledger round 7. Old invariant: the selector re-derived the
-    reviewed range itself (committed, staged and unstaged diffs). New
-    invariant: the selector sees exactly the architecture worker's assigned
-    paths, the list written to `expected.json`, so a narrowed packet narrows
-    the selection too. Cells: target mode x shell; each checks (assigned
-    paths) == (selector input paths) and the records selected, and the
-    reference cell shows the full diff would select a record the narrowed
-    worker never reviews."""
+def test_deep_review_all_active_command_yields_every_active_record(tmp_path):
+    """The decision-paths removal (option b). Old invariant: the Pi skill fed
+    the selector the paths decision-paths.sh read from the packet's diff. New
+    invariant: its one selector command runs --all-active with no path, so
+    under bash and zsh it yields every active record (an independent read of
+    the Status headers), never a superseded one, whatever the reviewed diff;
+    a path-matching mutant of the same command drops a record."""
     repo, env, commands = decision_command_fixture(SKILL, tmp_path)
-    command = next(command for command in commands if "--paths-stdin" in command)
-    assert "--range-stdin" not in "".join(commands)
-    (repo / "docs/dev_plans").mkdir(parents=True)
-    (repo / "docs/dev_plans/plan.md").write_text("plan\n")
-    (repo / "docs/decisions").mkdir()
-    for name, applies in (
-        ("20260101-cache.md", "src/cache/*"),
-        ("20260102-auth.md", "src/auth/*"),
-        ("20260103-moved.md", "old/moved.py"),
-    ):
-        (repo / "docs/decisions" / name).write_text(
-            f"# {name}\n\n**Status**: active\n**Date**: 2026-11-24\n"
-            f"**Applies to**: {applies}\n**Supersedes**: none\n"
-            "**Superseded by**: none\n**Source plan**: docs/dev_plans/plan.md\n\n"
+    selector_commands = [c for c in commands if '"$SELECTOR"' in c]
+    assert len(selector_commands) == 1, selector_commands
+    command = selector_commands[0]
+    assert '"$SELECTOR" --temp-output --all-active || selector_exit=$?' in command
+    records = repo / "docs/decisions"
+    records.mkdir(parents=True)
+    (repo / "docs/dev_plans").mkdir()
+    (repo / "docs/dev_plans/source.md").write_text("# Source\n")
+
+    def record(name, applies, status="active", supersedes="none", successor="none"):
+        (records / name).write_text(
+            f"# Choice\n\n**Status**: {status}\n**Date**: 2026-11-22\n"
+            f"**Applies to**: {applies}\n"
+            f"**Supersedes**: {supersedes}\n**Superseded by**: {successor}\n"
+            "**Source plan**: docs/dev_plans/source.md\n\n"
             "## Decision\nKeep it.\n## Why\nBecause.\n"
         )
 
-    def git(*args):
-        return subprocess.check_output(["git", "-C", str(repo), *args]).decode()
-
-    ident = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid"]
-    (repo / "old").mkdir()
-    (repo / "old/moved.py").write_text("x\n")
-    git("add", "--", "docs", "old")
-    git(*ident, "commit", "-qm", "base")
-    # Round 8: names git C-quotes or that hold ` b/`, plus a deletion and a
-    # mode-only change, so a header splitter would get the paths wrong.
-    hostile = ("src/archive/a b/src/cache/x.py", "src/r8/naïve.py", "src/r8/del.py")
-    for path in (*hostile, "src/r8/mode.sh", "src/r8/sp ace.py"):
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text("base\n")
-    git("add", "--", "src")
-    git(*ident, "commit", "-qm", "hostile names")
-    for path in ("src/cache/store.py", "src/auth/token.py"):
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text("change\n")
-    for path in (
-        "src/archive/a b/src/cache/x.py",
-        "src/r8/naïve.py",
-        "src/r8/sp ace.py",
-    ):
-        (repo / path).write_text("change\n")
-    (repo / "src/r8/mode.sh").chmod(0o755)
-    git("rm", "-q", "--", "src/r8/del.py")
-    git("add", "--", "src")
-    git(*ident, "commit", "-qm", "change")
-    git("mv", "--", "old/moved.py", "new.py")
-
-    def units_paths(diff_args):
-        # The documented derivation: the skill's paths fence, which writes
-        # the packet's diff to a file and hands it to decision-paths.sh.
-        status, paths = run_paths_fence(repo, diff_args, "/bin/bash", repo)
-        assert status == ("0", "0"), status
-        return paths
-
-    full = units_paths("-M HEAD~1")
-    oracle = subprocess.check_output(
-        ["git", "-C", str(repo), "diff", "--no-renames", "--name-only", "-z", "HEAD~1"]
+    record("20261101-old.md", "src/*", "superseded", successor="20261102-new.md")
+    record("20261102-new.md", "src/*", supersedes="20261101-old.md")
+    record("20261103-far.md", "nowhere/*")
+    want = sorted(
+        path.name
+        for path in records.iterdir()
+        if "**Status**: active\n" in path.read_text()
     )
-    assert full == sorted({p.decode() for p in oracle.split(b"\0") if p}), (
-        "the derivation covers every path the diff changes, byte for byte"
-    )
-    assert {"old/moved.py", "new.py", "src/r8/naïve.py", "src/r8/mode.sh"} <= set(full)
-    assert "src/cache/x.py b/src/archive/a b/src/cache/x.py" not in full
+    assert want == ["20261102-new.md", "20261103-far.md"]
+    tmpdir = tmp_path / "tmpdir"
+    tmpdir.mkdir()
+    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
 
-    def select(paths, shell):
-        expected = tmp_path / "expected.json"
-        expected.write_text(json.dumps({"architecture": paths}))
-        assigned = json.loads(expected.read_text())["architecture"]
-        script = with_paths(command, [f"p {path}" for path in assigned])
-        written = sorted(
-            line[2:] for line in script.splitlines() if line.startswith("p ")
-        )
-        assert written == sorted(paths), "selector input == assigned paths"
+    def selected(script, shell):
         result = subprocess.run(
             [shell, "-e", "-c", script],
             cwd=repo,
-            env=env,
+            env={**env, "TMPDIR": str(tmpdir)},
             capture_output=True,
             text=True,
             check=False,
         )
-        assert result.returncode == 0, result.stderr
-        assert selector_status(result) == 0, result.stderr
+        assert selector_status(result) == 0, (shell, result.stderr)
         named = Path(selector_output(result))
+        assert named.parent == tmpdir and named.stat().st_mode & 0o777 == 0o600
         text = named.read_text()
         named.unlink()
-        return re.findall(r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE)
+        return sorted(
+            re.findall(r"^### Record: docs/decisions/(\S+)$", text, re.MULTILINE)
+        )
 
-    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
-    cells = (
-        # current diff: committed range plus staged/unstaged, rename both sides;
-        # `src/archive/a b/src/cache/x.py` is not a cache path
-        (full, ["20260101-cache.md", "20260102-auth.md", "20260103-moved.md"]),
-        # the ` b/` directory alone selects no record
-        (["src/archive/a b/src/cache/x.py"], []),
-        # narrowed packet: only the units the worker is assigned
-        (["src/cache/store.py"], ["20260101-cache.md"]),
-        # plan target without a diff: the plan's named paths
-        (["src/auth/token.py"], ["20260102-auth.md"]),
-    )
     for shell in shells:
-        for paths, want in cells:
-            assert select(paths, shell) == want, (shell, paths)
-    # Reference: the full diff selects records the narrowed worker never saw.
-    assert select(full, "/bin/bash") != select(["src/cache/store.py"], "/bin/bash")
-
-
-def paths_fence():
-    """The Pi skill's documented decision-paths fence."""
-    return next(
-        command
-        for command in re.findall(r"```bash\n(.*?)\n```", SKILL.read_text(), re.DOTALL)
-        if "$DECISION_PATHS" in command
-    )
-
-
-def run_paths_fence(repo, diff_args, shell, cwd, path_prefix=""):
-    """Runs the paths fence with `<packet diff arguments>` filled in; returns
-    ((diff-exit, paths-exit), the paths or None) and removes its folder."""
-    script = paths_fence().replace("<packet diff arguments>", diff_args)
-    result = subprocess.run(
-        [shell, "-e", "-c", script],
-        cwd=cwd,
-        env={
-            **os.environ,
-            "PATH": path_prefix + os.environ["PATH"],
-            "REAL_GIT": shutil.which("git"),
-            "DECISION_PATHS": str(SKILL.parent / "scripts/decision-paths.sh"),
-        },
+        assert selected(command, shell) == want, shell
+    mutant = command.replace("--all-active", "-- src/x.py")
+    assert mutant != command
+    assert selected(mutant, "/bin/bash") == ["20261102-new.md"], "mutant drops a record"
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain", "--ignored", "--", "."],
         capture_output=True,
         text=True,
-        check=False,
+        check=True,
     )
-    fields = dict(
-        line.split("=", 1) for line in result.stdout.splitlines() if "=" in line
-    )
-    status = (fields.get("diff-exit"), fields.get("paths-exit"))
-    paths_file = Path(fields["paths-file"])
-    folder = paths_file.parent
-    assert not (folder / "lens-diff.patch").exists(), "the patch is removed"
-    paths = None
-    if status == ("0", "0"):
-        paths = json.loads(paths_file.read_text())
-    else:
-        assert not paths_file.exists(), "a failed step publishes no paths"
-    shutil.rmtree(folder)
-    return status, paths
-
-
-def test_deep_review_paths_fence_reads_a_complete_prefixed_patch_from_the_top(
-    tmp_path,
-):
-    """Fresh-ledger round 9. Old invariant: the paths came from whatever patch
-    and cwd decision-paths.sh was given, piped from the packet's diff. New
-    invariant: the fence pins the diff's prefixes, checks the diff's exit
-    status before the script reads it, and the script reads the patch from
-    the repo's top level. Cells: shell x {top, subdirectory, diff.noprefix,
-    custom prefixes, diff.relative from a subdirectory, a diff that prints one
-    complete file patch and then exits 9}."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-
-    def git(*args):
-        subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "-c",
-                "user.name=F",
-                "-c",
-                "user.email=f@f",
-                *args,
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-    git("init", "-q")
-    for path in ("outside/a.txt", "outside/mv.txt", "sub/deep/in.py"):
-        (repo / path).parent.mkdir(parents=True, exist_ok=True)
-        (repo / path).write_text("base\n")
-    git("add", "--", "outside", "sub")
-    git("commit", "-qm", "base")
-    (repo / "outside/a.txt").write_text("change\n")
-    (repo / "sub/deep/in.py").write_text("change\n")
-    git("mv", "--", "outside/mv.txt", "sub/mv.txt")
-    git("commit", "-qam", "change")
-    want = ["outside/a.txt", "outside/mv.txt", "sub/deep/in.py", "sub/mv.txt"]
-    shim = tmp_path / "shim"
-    shim.mkdir()
-    (shim / "git").write_text(
-        '#!/bin/sh\nif [ "$1" = diff ]; then\n'
-        '\t"$REAL_GIT" "$@" -- sub/deep/in.py\n\texit 9\nfi\nexec "$REAL_GIT" "$@"\n'
-    )
-    (shim / "git").chmod(0o755)
-    configs = {
-        "top": ((), repo),
-        "subdirectory": ((), repo / "sub"),
-        "noprefix": ((("diff.noprefix", "true"),), repo),
-        "custom": ((("diff.srcPrefix", "x/"), ("diff.dstPrefix", "y/")), repo),
-        "relative": ((("diff.relative", "true"),), repo / "sub"),
-    }
-    shells = ["/bin/bash"] + ([shutil.which("zsh")] if shutil.which("zsh") else [])
-    for shell in shells:
-        for name, (settings, cwd) in configs.items():
-            for key, value in settings:
-                git("config", key, value)
-            try:
-                status, paths = run_paths_fence(repo, "-M HEAD~1 HEAD", shell, cwd)
-            finally:
-                for key, _value in settings:
-                    git("config", "--unset", key)
-            assert (status, paths) == (("0", "0"), want), (shell, name)
-        status, paths = run_paths_fence(
-            repo, "-M HEAD~1 HEAD", shell, repo, f"{shim}{os.pathsep}"
-        )
-        assert status == ("9", "skipped") and paths is None, (shell, status)
+    assert ".deep-review" not in status.stdout, "the command writes no state"
 
 
 def test_staged_deep_review_installs_and_expands_in_disposable_pi(tmp_path, sandbox):

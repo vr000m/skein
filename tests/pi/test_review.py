@@ -145,7 +145,10 @@ def test_pi_review_state_persistence_writes_distinct_latest_file(tmp_path):
     assert json.loads(state.read_text())["plan_path"] == "docs/dev_plans/fixture.md"
 
 
-def assert_decision_packet_contract(skill, category):
+def assert_decision_packet_contract(skill, category, all_active=False):
+    """The shared decision-records contract. review-plan passes its paths as
+    a quoted here-document; deep-review (all_active) runs --all-active and
+    passes no path."""
     text = skill.read_text()
     section = text.split("## Active decision records (architecture only)", 1)[1]
     for phrase in (
@@ -173,9 +176,13 @@ def assert_decision_packet_contract(skill, category):
         "reviewed_units or persistence schemas or model tiers",
     ):
         assert phrase in section, phrase
+    assert 'exec "$1"' not in section, "no path may reach the selector's argv"
+    if all_active:
+        assert "--temp-output --all-active || selector_exit=$?" in section
+        assert "--paths-stdin" not in section and "SKEIN_PATHS" not in section
+        return
     assert "--paths-stdin" in section
     assert "<<'SKEIN_PATHS' || selector_exit=$?" in section
-    assert 'exec "$1"' not in section, "no path may reach the selector's argv"
     assert "Never write the path list yourself" in section
     # Round 5: a newline in a plan path could end the here-document, so the
     # path is never written and the selection is a stated exit 4.

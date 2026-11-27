@@ -17,7 +17,7 @@
 
 ## Active decision records
 
-- Architecture alone receives the bounded, already-escaped active `docs/decisions/` records inside `<untrusted-content>`, with the installed-rubric scope in the existing worker prompt.
+- Architecture alone receives the bounded, already-escaped active `docs/decisions/` records inside `<untrusted-content>`, with the installed-rubric scope in the existing worker prompt. The block holds every active record: a record binds only if at least one of its `Applies to` globs matches a file changed in the reviewed diff (for a plan target without a diff, a file the plan names); ignore every other record.
 - Code or a plan decision that contradicts or should supersede an active record is an `Architecture` finding citing the record path in evidence; superseded records are not active constraints.
 - Empty successful selection means no match; selector failure, unresolved evidence or truncation is degraded coverage. Retries use the exact selected snapshot, not a fresh selection. No model-tier, schema, resume or cache change.
 
