@@ -51,7 +51,7 @@ The body sections are short: one paragraph for the decision, the reasons, the op
 
 ## `Applies to` globs
 
-A comma-separated list of globs, each matched against a repo-relative path. The dialect is deliberately small, so it means the same thing on every bash:
+A comma-separated list of globs, each matched against a repo-relative path. The selector normalises each path first (a leading `./`, `.` components and repeated `/` are dropped), and refuses an absolute path or one with a `..` component rather than skipping it. The dialect is deliberately small, so it means the same thing on every bash:
 
 - `*` matches any characters, including `/`, so `plugins/skein/*` matches every file under that directory.
 - `?` matches exactly one character (one byte, case-sensitively, in every locale).
