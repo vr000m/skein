@@ -1,6 +1,6 @@
 # Task: Decision records (docs/decisions)
 
-**Status**: Complete
+**Status**: Shipped (v0.13.0)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Low
@@ -368,7 +368,7 @@ sequenceDiagram
 - Tests passing (`just ci`)
 - Documentation updated
 
-<!-- reviewed: 2026-11-27 @ ca7aa73f408b4d9fac0375a12834d0c42fea58b9 -->
+<!-- reviewed: 2026-11-28 @ 52e6198b78aee1103c9a9b888e28859d432986d1 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 

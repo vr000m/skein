@@ -1,6 +1,6 @@
 # Task: Comment hygiene for new code
 
-**Status**: Complete
+**Status**: Shipped (v0.13.0)
 **Component**: meta
 **Assigned to**: Claude
 **Priority**: Medium
@@ -316,7 +316,7 @@ sequenceDiagram
 - Tests passing (`just ci`)
 - Documentation updated
 
-<!-- reviewed: 2026-11-27 @ 7e3a66dc90b62c75438f58237945b7e6db2778ce -->
+<!-- reviewed: 2026-11-28 @ 3abb01283fd585d4ae016fefecceee19aa1a5d69 -->
 
 <!-- /review-plan writes the marker line above. Everything below is the workspace: edits here do NOT invalidate the marker. -->
 
